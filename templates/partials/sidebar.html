@@ -1,0 +1,44 @@
+<nav id="sidebar" class="bg-light border-end position-fixed" style="top:56px;width:250px;height:calc(100vh - 56px);overflow-y:auto;z-index:1030">
+  <div class="p-3">
+    <ul class="nav flex-column">
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'dashboard' %}active fw-bold{% endif %}" href="{% url 'dashboard:index' %}">
+          <i class="bi bi-speedometer2 me-2"></i>Dashboard
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'documents' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
+          <i class="bi bi-file-earmark-text me-2"></i>Invoices
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" href="{% url 'documents:po_list' %}">
+          <i class="bi bi-cart-check me-2"></i>Purchase Orders
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" href="{% url 'documents:grn_list' %}">
+          <i class="bi bi-box-seam me-2"></i>GRNs
+        </a>
+      </li>
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'reconciliation' %}active fw-bold{% endif %}" href="{% url 'reconciliation:result_list' %}">
+          <i class="bi bi-arrow-left-right me-2"></i>Reconciliation
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'reviews' %}active fw-bold{% endif %}" href="{% url 'reviews:assignment_list' %}">
+          <i class="bi bi-clipboard-check me-2"></i>Reviews
+          {% if pending_review_count %}<span class="badge bg-warning text-dark ms-1">{{ pending_review_count }}</span>{% endif %}
+        </a>
+      </li>
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item">
+        <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
+          <i class="bi bi-robot me-2"></i>Agent Monitor
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>

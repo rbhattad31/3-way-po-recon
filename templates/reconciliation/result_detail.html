@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Result #{{ result.pk }} – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'reconciliation:result_list' %}">Results</a></li>
+  <li class="breadcrumb-item active">#{{ result.pk }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-3">
+  <!-- Header -->
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header bg-white"><strong>Reconciliation Summary</strong></div>
+      <table class="table table-sm mb-0">
+        <tr><th>Invoice #</th><td><a href="{% url 'documents:invoice_detail' result.invoice_id %}">{{ result.invoice.invoice_number }}</a></td></tr>
+        <tr><th>PO #</th><td>{{ result.purchase_order.po_number|default:"—" }}</td></tr>
+        <tr><th>Vendor</th><td>{% if result.invoice.vendor %}{{ result.invoice.vendor.name }}{% else %}{{ result.invoice.raw_vendor_name }}{% endif %}</td></tr>
+        <tr><th>Match Status</th><td><span class="badge status-badge status-{{ result.match_status }}">{{ result.match_status }}</span></td></tr>
+        <tr><th>Confidence</th><td>{{ result.deterministic_confidence|floatformat:2|default:"—" }}</td></tr>
+        <tr><th>Amount Diff</th><td>{{ result.total_amount_difference|default:"0" }} ({{ result.total_amount_difference_pct|default:"0" }}%)</td></tr>
+        <tr><th>Vendor Match</th><td>{% if result.vendor_match %}<i class="bi bi-check-circle text-success"></i>{% elif result.vendor_match == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
+        <tr><th>Currency Match</th><td>{% if result.currency_match %}<i class="bi bi-check-circle text-success"></i>{% elif result.currency_match == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
+        <tr><th>GRN Available</th><td>{% if result.grn_available %}<i class="bi bi-check-circle text-success"></i>{% else %}<i class="bi bi-x-circle text-secondary"></i>{% endif %}</td></tr>
+        <tr><th>GRN Fully Received</th><td>{% if result.grn_fully_received %}<i class="bi bi-check-circle text-success"></i>{% elif result.grn_fully_received == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="col-md-6">
+    {% if result.summary %}
+    <div class="card mb-3">
+      <div class="card-header bg-white"><strong>Summary</strong></div>
+      <div class="card-body">{{ result.summary }}</div>
+    </div>
+    {% endif %}
+    <!-- Exceptions -->
+    <div class="card">
+      <div class="card-header bg-white"><strong>Exceptions ({{ exceptions|length }})</strong></div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Type</th><th>Severity</th><th>Message</th><th>Resolved</th></tr></thead>
+          <tbody>
+            {% for exc in exceptions %}
+            <tr>
+              <td>{{ exc.exception_type }}</td>
+              <td><span class="severity-{{ exc.severity }}">{{ exc.severity }}</span></td>
+              <td>{{ exc.message|truncatechars:80 }}</td>
+              <td>{% if exc.resolved %}<i class="bi bi-check text-success"></i>{% else %}<i class="bi bi-clock text-muted"></i>{% endif %}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4" class="text-muted text-center">No exceptions</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Line Results -->
+<div class="card mb-3">
+  <div class="card-header bg-white"><strong>Line-Level Comparison</strong></div>
+  <div class="card-body p-0" style="overflow-x:auto">
+    <table class="table table-sm mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Status</th>
+          <th>Qty (Inv)</th><th>Qty (PO)</th><th>Qty (GRN)</th><th>Qty Diff</th>
+          <th>Price (Inv)</th><th>Price (PO)</th><th>Price Diff</th>
+          <th>Amt (Inv)</th><th>Amt (PO)</th><th>Desc Sim</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ln in line_results %}
+        <tr>
+          <td><span class="badge status-badge status-{{ ln.match_status }}">{{ ln.match_status }}</span></td>
+          <td>{{ ln.qty_invoice|default:"—" }}</td>
+          <td>{{ ln.qty_po|default:"—" }}</td>
+          <td>{{ ln.qty_received|default:"—" }}</td>
+          <td>{{ ln.qty_difference|default:"—" }}</td>
+          <td>{{ ln.price_invoice|default:"—" }}</td>
+          <td>{{ ln.price_po|default:"—" }}</td>
+          <td>{{ ln.price_difference|default:"—" }}</td>
+          <td>{{ ln.amount_invoice|default:"—" }}</td>
+          <td>{{ ln.amount_po|default:"—" }}</td>
+          <td>{% if ln.description_similarity %}{{ ln.description_similarity|floatformat:0 }}%{% else %}—{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="11" class="text-muted text-center">No line results</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Agent Recommendations -->
+{% if recommendations %}
+<div class="card">
+  <div class="card-header bg-white"><strong>Agent Recommendations</strong></div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr><th>Type</th><th>Confidence</th><th>Reasoning</th><th>Accepted</th></tr></thead>
+      <tbody>
+        {% for rec in recommendations %}
+        <tr>
+          <td><span class="badge bg-info">{{ rec.recommendation_type }}</span></td>
+          <td>{{ rec.confidence|floatformat:2 }}</td>
+          <td>{{ rec.reasoning|truncatechars:120 }}</td>
+          <td>{% if rec.accepted == True %}<i class="bi bi-check text-success"></i>{% elif rec.accepted == False %}<i class="bi bi-x text-danger"></i>{% else %}Pending{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

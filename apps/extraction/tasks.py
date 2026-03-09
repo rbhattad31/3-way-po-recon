@@ -1,0 +1,119 @@
+"""Celery tasks for the extraction pipeline."""
+from __future__ import annotations
+
+import logging
+
+from celery import shared_task
+from django.db import transaction
+
+from apps.core.enums import FileProcessingState, InvoiceStatus
+from apps.documents.models import DocumentUpload
+
+logger = logging.getLogger(__name__)
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=30)
+def process_invoice_upload_task(self, upload_id: int) -> dict:
+    """End-to-end extraction pipeline for a single DocumentUpload.
+
+    Steps executed sequentially:
+      1. Extract raw data (adapter)
+      2. Parse into structured dataclass
+      3. Normalise fields
+      4. Validate mandatory fields & thresholds
+      5. Duplicate detection
+      6. Persist invoice + line items + extraction result
+      7. Transition upload & invoice status
+    """
+    from apps.extraction.services.extraction_adapter import InvoiceExtractionAdapter, ExtractionResponse
+    from apps.extraction.services.parser_service import ExtractionParserService
+    from apps.extraction.services.normalization_service import NormalizationService
+    from apps.extraction.services.validation_service import ValidationService
+    from apps.extraction.services.duplicate_detection_service import DuplicateDetectionService
+    from apps.extraction.services.persistence_service import (
+        InvoicePersistenceService,
+        ExtractionResultPersistenceService,
+    )
+
+    try:
+        upload = DocumentUpload.objects.get(pk=upload_id)
+    except DocumentUpload.DoesNotExist:
+        logger.error("DocumentUpload %s not found", upload_id)
+        return {"status": "error", "message": f"Upload {upload_id} not found"}
+
+    upload.processing_state = FileProcessingState.PROCESSING
+    upload.save(update_fields=["processing_state", "updated_at"])
+
+    try:
+        # 1. Extract
+        adapter = InvoiceExtractionAdapter()
+        extraction_resp: ExtractionResponse = adapter.extract(upload.file.path)
+
+        if not extraction_resp.success:
+            _fail_upload(upload, extraction_resp.error_message)
+            ExtractionResultPersistenceService.save(upload, None, extraction_resp)
+            return {"status": "error", "message": extraction_resp.error_message}
+
+        # 2. Parse
+        parser = ExtractionParserService()
+        parsed = parser.parse(extraction_resp.raw_json)
+
+        # 3. Normalise
+        normalizer = NormalizationService()
+        normalized = normalizer.normalize(parsed)
+
+        # 4. Validate
+        validator = ValidationService()
+        validation_result = validator.validate(normalized)
+
+        # 5. Duplicate check
+        dup_service = DuplicateDetectionService()
+        dup_result = dup_service.check(normalized)
+
+        # 6. Persist
+        persistence = InvoicePersistenceService()
+        invoice = persistence.save(
+            normalized=normalized,
+            upload=upload,
+            extraction_raw_json=extraction_resp.raw_json,
+            validation_result=validation_result,
+            duplicate_result=dup_result,
+        )
+        ExtractionResultPersistenceService.save(upload, invoice, extraction_resp)
+
+        # 7. Finalise upload state
+        upload.processing_state = FileProcessingState.COMPLETED
+        upload.save(update_fields=["processing_state", "updated_at"])
+
+        # If valid and not duplicate, mark ready for reconciliation
+        if validation_result.is_valid and not dup_result.is_duplicate:
+            invoice.status = InvoiceStatus.READY_FOR_RECON
+            invoice.save(update_fields=["status", "updated_at"])
+
+        logger.info(
+            "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",
+            upload_id, invoice.pk, invoice.status,
+        )
+        return {
+            "status": "ok",
+            "upload_id": upload_id,
+            "invoice_id": invoice.pk,
+            "invoice_status": invoice.status,
+            "is_duplicate": dup_result.is_duplicate,
+            "is_valid": validation_result.is_valid,
+        }
+
+    except Exception as exc:
+        logger.exception("Extraction pipeline failed for upload %s", upload_id)
+        _fail_upload(upload, str(exc))
+        try:
+            raise self.retry(exc=exc)
+        except (AttributeError, TypeError):
+            # Running outside Celery context (sync fallback) — re-raise directly
+            raise exc
+
+
+def _fail_upload(upload: DocumentUpload, message: str) -> None:
+    upload.processing_state = FileProcessingState.FAILED
+    upload.processing_message = message[:2000]
+    upload.save(update_fields=["processing_state", "processing_message", "updated_at"])

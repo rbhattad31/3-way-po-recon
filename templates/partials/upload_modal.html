@@ -1,0 +1,38 @@
+<!-- Upload Invoice Modal -->
+<div class="modal fade" id="uploadInvoiceModal" tabindex="-1" aria-labelledby="uploadInvoiceModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" action="{% url 'documents:upload_invoice' %}" enctype="multipart/form-data">
+      {% csrf_token %}
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="uploadInvoiceModalLabel">
+            <i class="bi bi-cloud-arrow-up me-2"></i>Upload Invoice
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="invoiceFile" class="form-label">Invoice File</label>
+            <input type="file" class="form-control" id="invoiceFile" name="file"
+                   accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif" required>
+            <div class="form-text">Accepted formats: PDF, PNG, JPG, TIFF</div>
+          </div>
+          <div class="mb-3">
+            <label for="documentType" class="form-label">Document Type</label>
+            <select class="form-select" id="documentType" name="document_type">
+              <option value="INVOICE" selected>Invoice</option>
+              <option value="PO">Purchase Order</option>
+              <option value="GRN">Goods Receipt Note</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-upload me-1"></i>Upload &amp; Process
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>

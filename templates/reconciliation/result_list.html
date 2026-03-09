@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Reconciliation Results – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item active">Reconciliation Results</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">Reconciliation Results</h5>
+  <form class="d-inline-flex gap-2" method="get">
+    <select name="match_status" class="form-select form-select-sm" onchange="this.form.submit()">
+      <option value="">All Statuses</option>
+      {% for val, label in match_status_choices %}
+        <option value="{{ val }}" {% if request.GET.match_status == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0 table-fixed-header">
+      <thead class="table-light">
+        <tr>
+          <th>ID</th><th>Invoice #</th><th>PO #</th><th>Vendor</th>
+          <th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in results %}
+        <tr>
+          <td><a href="{% url 'reconciliation:result_detail' r.pk %}">{{ r.pk }}</a></td>
+          <td>{{ r.invoice.invoice_number|default:"—" }}</td>
+          <td>{{ r.purchase_order.po_number|default:"—" }}</td>
+          <td>{% if r.invoice.vendor %}{{ r.invoice.vendor.name }}{% else %}{{ r.invoice.raw_vendor_name }}{% endif %}</td>
+          <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
+          <td>{% if r.deterministic_confidence %}{{ r.deterministic_confidence|floatformat:2 }}{% else %}—{% endif %}</td>
+          <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
+          <td>{{ r.exceptions.count }}</td>
+          <td class="text-muted">{{ r.created_at|date:"d M Y" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9" class="text-center text-muted py-3">No results found</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

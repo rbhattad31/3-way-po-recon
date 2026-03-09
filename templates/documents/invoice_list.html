@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Invoices – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item active">Invoices</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">Invoices</h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
+      <i class="bi bi-cloud-arrow-up me-1"></i>Upload Invoice
+    </button>
+    <form class="d-inline-flex gap-2" method="get">
+      <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Statuses</option>
+        {% for val, label in status_choices %}
+          <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="q" class="form-control form-control-sm" placeholder="Search…"
+             value="{{ request.GET.q }}">
+    </form>
+  </div>
+</div>
+
+{% if pending_uploads %}
+<div class="card mb-3 border-warning">
+  <div class="card-header bg-warning bg-opacity-10 d-flex align-items-center">
+    <i class="bi bi-hourglass-split me-2 text-warning"></i>
+    <strong>Pending Uploads</strong>
+    <span class="badge bg-warning text-dark ms-2">{{ pending_uploads|length }}</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light">
+        <tr><th>Filename</th><th>Type</th><th>Size</th><th>Status</th><th>Uploaded</th></tr>
+      </thead>
+      <tbody>
+        {% for upload in pending_uploads %}
+        <tr>
+          <td><i class="bi bi-file-earmark-pdf me-1 text-danger"></i>{{ upload.original_filename }}</td>
+          <td><span class="badge bg-info text-dark">{{ upload.document_type }}</span></td>
+          <td class="text-muted">{{ upload.file_size|filesizeformat }}</td>
+          <td>
+            {% if upload.processing_state == 'PROCESSING' %}
+              <span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Processing</span>
+            {% else %}
+              <span class="badge bg-secondary">Queued</span>
+            {% endif %}
+          </td>
+          <td class="text-muted">{{ upload.created_at|timesince }} ago</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0 table-fixed-header">
+      <thead class="table-light">
+        <tr>
+          <th>Invoice #</th><th>Vendor</th><th>PO #</th>
+          <th>Amount</th><th>Status</th><th>Confidence</th><th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inv in invoices %}
+        <tr>
+          <td><a href="{% url 'documents:invoice_detail' inv.pk %}">{{ inv.invoice_number|default:"—" }}</a></td>
+          <td>{{ inv.vendor.name|default:inv.raw_vendor_name }}</td>
+          <td>{{ inv.po_number|default:"—" }}</td>
+          <td>{{ inv.currency }} {{ inv.total_amount|default:"—" }}</td>
+          <td><span class="badge status-badge status-{{ inv.status }}">{{ inv.status }}</span></td>
+          <td>{% if inv.extraction_confidence %}{{ inv.extraction_confidence|floatformat:0 }}%{% else %}—{% endif %}</td>
+          <td class="text-muted">{{ inv.created_at|date:"d M Y" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-3">No invoices found</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% include "partials/pagination.html" %}
+{% include "partials/upload_modal.html" %}
+{% endblock %}

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Agent Monitor – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active">Agent Monitor</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<!-- Agent Performance Chart -->
+<div class="row g-3 mb-4">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header bg-white"><strong>Agent Runs by Type</strong></div>
+      <div class="card-body"><canvas id="agentPerfChart" height="200"></canvas></div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-header bg-white"><strong>Summary</strong></div>
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex justify-content-between">
+          Total Agent Runs <span class="badge bg-primary">{{ total_runs }}</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between">
+          Successful <span class="badge bg-success">{{ success_runs }}</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between">
+          Failed <span class="badge bg-danger">{{ failed_runs }}</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between">
+          Total Tokens Used <span class="fw-bold">{{ total_tokens|default:"0" }}</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Agent Runs Table -->
+<div class="card">
+  <div class="card-header bg-white"><strong>Recent Agent Runs</strong></div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>ID</th><th>Agent Type</th><th>Status</th>
+          <th>Confidence</th><th>Tokens</th><th>Duration</th><th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in agent_runs %}
+        <tr>
+          <td>{{ run.pk }}</td>
+          <td>{{ run.agent_type }}</td>
+          <td><span class="badge status-badge status-{{ run.status }}">{{ run.status }}</span></td>
+          <td>{% if run.confidence %}{{ run.confidence|floatformat:2 }}{% else %}—{% endif %}</td>
+          <td>{{ run.total_tokens|default:"—" }}</td>
+          <td>{% if run.duration_ms %}{{ run.duration_ms }}ms{% else %}—{% endif %}</td>
+          <td class="text-muted">{{ run.created_at|timesince }} ago</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-3">No agent runs yet</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Review #{{ assignment.pk }} – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'reviews:assignment_list' %}">Reviews</a></li>
+  <li class="breadcrumb-item active">#{{ assignment.pk }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <!-- Left: Review Info -->
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-header bg-white d-flex justify-content-between">
+        <strong>Review Assignment</strong>
+        <span class="badge status-badge status-{{ assignment.status }}">{{ assignment.status }}</span>
+      </div>
+      <table class="table table-sm mb-0">
+        <tr><th>Invoice #</th><td><a href="{% url 'documents:invoice_detail' assignment.reconciliation_result.invoice_id %}">{{ assignment.reconciliation_result.invoice.invoice_number }}</a></td></tr>
+        <tr><th>Recon Result</th><td><a href="{% url 'reconciliation:result_detail' assignment.reconciliation_result_id %}">Result #{{ assignment.reconciliation_result_id }}</a></td></tr>
+        <tr><th>Match Status</th><td><span class="badge status-badge status-{{ assignment.reconciliation_result.match_status }}">{{ assignment.reconciliation_result.match_status }}</span></td></tr>
+        <tr><th>Priority</th><td>{{ assignment.priority }}</td></tr>
+        <tr><th>Assigned To</th><td>{{ assignment.assigned_to.get_full_name|default:"Unassigned" }}</td></tr>
+        <tr><th>Notes</th><td>{{ assignment.notes|default:"—" }}</td></tr>
+      </table>
+    </div>
+
+    <!-- Decision Actions -->
+    {% if assignment.status != "APPROVED" and assignment.status != "REJECTED" and assignment.status != "REPROCESSED" %}
+    <div class="card mb-3">
+      <div class="card-header bg-white"><strong>Take Action</strong></div>
+      <div class="card-body">
+        <form method="post" action="{% url 'reviews:decide' assignment.pk %}">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label">Decision</label>
+            <select name="decision" class="form-select" required>
+              <option value="">— Select —</option>
+              <option value="APPROVED">Approve</option>
+              <option value="REJECTED">Reject</option>
+              <option value="REPROCESSED">Reprocess</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Reason</label>
+            <textarea name="reason" class="form-control" rows="2"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">Submit Decision</button>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <div class="card mb-3">
+      <div class="card-header bg-white"><strong>Decision</strong></div>
+      <div class="card-body">
+        <p><strong>{{ assignment.decision.decision }}</strong> by {{ assignment.decision.decided_by.get_full_name|default:"System" }}</p>
+        {% if assignment.decision.reason %}<p class="text-muted">{{ assignment.decision.reason }}</p>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Right: Comments + Actions Audit -->
+  <div class="col-md-6">
+    <!-- Add comment -->
+    <div class="card mb-3">
+      <div class="card-header bg-white"><strong>Add Comment</strong></div>
+      <div class="card-body">
+        <form method="post" action="{% url 'reviews:add_comment' assignment.pk %}">
+          {% csrf_token %}
+          <div class="mb-2">
+            <textarea name="body" class="form-control" rows="2" placeholder="Write a comment…" required></textarea>
+          </div>
+          <button type="submit" class="btn btn-sm btn-outline-secondary">Post Comment</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Comment history -->
+    <div class="card mb-3">
+      <div class="card-header bg-white"><strong>Comments</strong></div>
+      <div class="card-body">
+        {% for c in comments %}
+        <div class="border-bottom pb-2 mb-2">
+          <strong>{{ c.author.get_full_name|default:"System" }}</strong>
+          <span class="text-muted small">{{ c.created_at|timesince }} ago</span>
+          <p class="mb-0">{{ c.body }}</p>
+        </div>
+        {% empty %}
+        <p class="text-muted mb-0">No comments yet</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Action audit trail -->
+    <div class="card">
+      <div class="card-header bg-white"><strong>Action History</strong></div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Action</th><th>By</th><th>Reason</th><th>When</th></tr></thead>
+          <tbody>
+            {% for act in actions %}
+            <tr>
+              <td><span class="badge bg-secondary">{{ act.action_type }}</span></td>
+              <td>{{ act.performed_by.get_full_name|default:"System" }}</td>
+              <td>{{ act.reason|truncatechars:60|default:"—" }}</td>
+              <td class="text-muted">{{ act.created_at|timesince }} ago</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4" class="text-muted text-center">No actions recorded</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

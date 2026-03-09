@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Purchase Orders – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item active">Purchase Orders</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<h5 class="mb-3">Purchase Orders</h5>
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0 table-fixed-header">
+      <thead class="table-light">
+        <tr><th>PO #</th><th>Vendor</th><th>Date</th><th>Amount</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for po in purchase_orders %}
+        <tr>
+          <td>{{ po.po_number }}</td>
+          <td>{{ po.vendor.name|default:"—" }}</td>
+          <td>{{ po.po_date|date:"d M Y"|default:"—" }}</td>
+          <td>{{ po.currency }} {{ po.total_amount|default:"—" }}</td>
+          <td><span class="badge bg-secondary">{{ po.status }}</span></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-center text-muted py-3">No purchase orders found</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

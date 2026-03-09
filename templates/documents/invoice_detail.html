@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Invoice {{ invoice.invoice_number }} – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'documents:invoice_list' %}">Invoices</a></li>
+  <li class="breadcrumb-item active">{{ invoice.invoice_number|default:"Detail" }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <!-- Header Info -->
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header bg-white"><strong>Invoice Details</strong></div>
+      <table class="table table-sm mb-0">
+        <tr><th>Invoice #</th><td>{{ invoice.invoice_number }}</td></tr>
+        <tr><th>Date</th><td>{{ invoice.invoice_date|date:"d M Y"|default:"—" }}</td></tr>
+        <tr><th>Vendor</th><td>{{ invoice.vendor.name|default:invoice.raw_vendor_name }}</td></tr>
+        <tr><th>PO #</th><td>{{ invoice.po_number|default:"—" }}</td></tr>
+        <tr><th>Currency</th><td>{{ invoice.currency }}</td></tr>
+        <tr><th>Subtotal</th><td>{{ invoice.subtotal|default:"—" }}</td></tr>
+        <tr><th>Tax</th><td>{{ invoice.tax_amount|default:"—" }}</td></tr>
+        <tr><th>Total</th><td><strong>{{ invoice.total_amount|default:"—" }}</strong></td></tr>
+        <tr><th>Status</th><td><span class="badge status-badge status-{{ invoice.status }}">{{ invoice.status }}</span></td></tr>
+        <tr><th>Confidence</th><td>{% if invoice.extraction_confidence %}{{ invoice.extraction_confidence|floatformat:0 }}%{% else %}—{% endif %}</td></tr>
+      </table>
+    </div>
+  </div>
+  <!-- Line Items -->
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header bg-white"><strong>Line Items</strong></div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr>
+          </thead>
+          <tbody>
+            {% for line in invoice.line_items.all %}
+            <tr>
+              <td>{{ line.line_number }}</td>
+              <td>{{ line.description|truncatechars:50 }}</td>
+              <td>{{ line.quantity }}</td>
+              <td>{{ line.unit_price }}</td>
+              <td>{{ line.line_amount }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="text-center text-muted">No line items</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reconciliation Results -->
+{% if recon_results %}
+<div class="card mt-3">
+  <div class="card-header bg-white"><strong>Reconciliation Results</strong></div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0">
+      <thead class="table-light">
+        <tr><th>ID</th><th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        {% for r in recon_results %}
+        <tr>
+          <td><a href="{% url 'reconciliation:result_detail' r.pk %}">{{ r.pk }}</a></td>
+          <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
+          <td>{% if r.deterministic_confidence %}{{ r.deterministic_confidence|floatformat:2 }}{% else %}—{% endif %}</td>
+          <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
+          <td>{{ r.exceptions.count }}</td>
+          <td class="text-muted">{{ r.created_at|date:"d M Y" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

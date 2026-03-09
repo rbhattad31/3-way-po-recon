@@ -1,0 +1,34 @@
+"""Application-wide constants."""
+
+# Tolerance defaults (percent)
+DEFAULT_QTY_TOLERANCE_PCT = 2.0
+DEFAULT_PRICE_TOLERANCE_PCT = 1.0
+DEFAULT_AMOUNT_TOLERANCE_PCT = 1.0
+
+# Extraction
+EXTRACTION_CONFIDENCE_THRESHOLD = 0.75
+MAX_UPLOAD_SIZE_MB = 25
+ALLOWED_UPLOAD_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"]
+
+# Reconciliation
+MAX_LINE_MATCH_CANDIDATES = 10
+FUZZY_MATCH_THRESHOLD = 80  # fuzzywuzzy score
+
+# Agent
+AGENT_MAX_RETRIES = 2
+AGENT_TIMEOUT_SECONDS = 120
+AGENT_CONFIDENCE_THRESHOLD = 0.70
+
+# Review
+REVIEW_AUTO_CLOSE_THRESHOLD = 0.95
+
+# Pagination
+DEFAULT_PAGE_SIZE = 25
+MAX_PAGE_SIZE = 200
+
+# Date formats
+STANDARD_DATE_FORMAT = "%Y-%m-%d"
+DISPLAY_DATE_FORMAT = "%d %b %Y"
+
+# Currency
+DEFAULT_CURRENCY = "USD"
