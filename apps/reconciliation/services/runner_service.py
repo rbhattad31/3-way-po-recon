@@ -197,7 +197,16 @@ class ReconciliationRunnerService:
             from apps.reconciliation.models import ReconciliationException
             ReconciliationException.objects.bulk_create(exceptions)
 
-        # 7. Transition invoice status
+        # 7. Auto-create review assignment for items needing human review
+        if match_status == MatchStatus.REQUIRES_REVIEW:
+            from apps.reviews.services import ReviewWorkflowService
+            ReviewWorkflowService.create_assignment(
+                result=result,
+                priority=3 if exceptions else 5,
+                notes=f"Auto-created: {len(exceptions)} exception(s) found during reconciliation.",
+            )
+
+        # 8. Transition invoice status
         self._transition_invoice(invoice, match_status)
 
         return match_status

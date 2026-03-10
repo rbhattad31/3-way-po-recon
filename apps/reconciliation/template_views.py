@@ -1,10 +1,12 @@
 """Reconciliation template views (server-side rendered)."""
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.agents.models import AgentRecommendation
-from apps.core.enums import MatchStatus
+from apps.core.enums import InvoiceStatus, MatchStatus
+from apps.documents.models import Invoice
 from apps.reconciliation.models import ReconciliationResult
 
 
@@ -21,10 +23,19 @@ def result_list(request):
         qs = qs.filter(match_status=match_status)
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
+
+    ready_invoices = (
+        Invoice.objects
+        .filter(status=InvoiceStatus.READY_FOR_RECON)
+        .select_related("vendor")
+        .order_by("-created_at")
+    )
+
     return render(request, "reconciliation/result_list.html", {
         "results": page_obj,
         "page_obj": page_obj,
         "match_status_choices": MatchStatus.choices,
+        "ready_invoices": ready_invoices,
     })
 
 
@@ -43,3 +54,49 @@ def result_detail(request, pk):
         "line_results": result.line_results.all(),
         "recommendations": recommendations,
     })
+
+
+@login_required
+def start_reconciliation(request):
+    """Trigger reconciliation for selected invoices."""
+    if request.method != "POST":
+        return redirect("reconciliation:result_list")
+
+    invoice_ids = request.POST.getlist("invoice_ids")
+    if not invoice_ids:
+        messages.warning(request, "No invoices selected for reconciliation.")
+        return redirect("reconciliation:result_list")
+
+    invoice_ids = [int(i) for i in invoice_ids]
+
+    from django.conf import settings as django_settings
+
+    if getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        # Run synchronously — no broker needed
+        from apps.reconciliation.services.runner_service import ReconciliationRunnerService
+        from apps.documents.models import Invoice as InvoiceModel
+
+        invoices = list(
+            InvoiceModel.objects.filter(pk__in=invoice_ids)
+            .select_related("vendor", "document_upload")
+        )
+        runner = ReconciliationRunnerService()
+        run = runner.run(invoices=invoices, triggered_by=request.user)
+        messages.success(
+            request,
+            f"Reconciliation complete for {run.total_invoices} invoice(s): "
+            f"{run.matched_count} matched, {run.partial_count} partial, "
+            f"{run.unmatched_count} unmatched.",
+        )
+    else:
+        from apps.reconciliation.tasks import run_reconciliation_task
+        run_reconciliation_task.delay(
+            invoice_ids=invoice_ids,
+            triggered_by_id=request.user.pk,
+        )
+        messages.success(
+            request,
+            f"Reconciliation started for {len(invoice_ids)} invoice(s). Results will appear shortly.",
+        )
+
+    return redirect("reconciliation:result_list")

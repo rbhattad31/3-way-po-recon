@@ -20,6 +20,53 @@
     </select>
   </form>
 </div>
+
+{% if unassigned_results %}
+<div class="card mb-3 border-warning">
+  <div class="card-header bg-warning bg-opacity-10 d-flex justify-content-between align-items-center">
+    <div>
+      <i class="bi bi-exclamation-triangle me-2 text-warning"></i>
+      <strong>Results Awaiting Review Assignment</strong>
+      <span class="badge bg-warning text-dark ms-2">{{ unassigned_results|length }}</span>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <form method="post" action="{% url 'reviews:create_assignments' %}" id="assignForm">
+      {% csrf_token %}
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:40px"><input type="checkbox" id="selectAllReview" class="form-check-input"></th>
+            <th>Invoice #</th><th>Vendor</th><th>PO #</th><th>Match Status</th><th>Exceptions</th><th>Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in unassigned_results %}
+          <tr>
+            <td><input type="checkbox" name="result_ids" value="{{ r.pk }}" class="form-check-input result-check"></td>
+            <td>{{ r.invoice.invoice_number|default:"—" }}</td>
+            <td>{% if r.invoice.vendor %}{{ r.invoice.vendor.name }}{% else %}{{ r.invoice.raw_vendor_name }}{% endif %}</td>
+            <td>{{ r.purchase_order.po_number|default:"—" }}</td>
+            <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
+            <td>{{ r.exceptions.count }}</td>
+            <td class="text-muted">{{ r.created_at|timesince }} ago</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="card-footer d-flex justify-content-between align-items-center">
+        <small class="text-muted"><span id="selectedReviewCount">0</span> result(s) selected</small>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-outline-warning btn-sm" id="selectAllReviewBtn">Select All</button>
+          <button type="submit" class="btn btn-warning btn-sm" id="createAssignBtn" disabled>
+            <i class="bi bi-person-plus me-1"></i>Create Review Assignments
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 <div class="card">
   <div class="card-body p-0">
     <table class="table table-hover table-sm mb-0 table-fixed-header">
@@ -49,4 +96,34 @@
   </div>
 </div>
 {% include "partials/pagination.html" %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const checks = document.querySelectorAll('.result-check');
+  const selectAll = document.getElementById('selectAllReview');
+  const selectAllBtn = document.getElementById('selectAllReviewBtn');
+  const createBtn = document.getElementById('createAssignBtn');
+  const countSpan = document.getElementById('selectedReviewCount');
+
+  function updateState() {
+    const checked = document.querySelectorAll('.result-check:checked').length;
+    if (countSpan) countSpan.textContent = checked;
+    if (createBtn) createBtn.disabled = checked === 0;
+    if (selectAll) selectAll.checked = checked === checks.length && checks.length > 0;
+  }
+
+  if (selectAll) selectAll.addEventListener('change', function() {
+    checks.forEach(cb => cb.checked = this.checked);
+    updateState();
+  });
+
+  if (selectAllBtn) selectAllBtn.addEventListener('click', function() {
+    checks.forEach(cb => cb.checked = true);
+    if (selectAll) selectAll.checked = true;
+    updateState();
+  });
+
+  checks.forEach(cb => cb.addEventListener('change', updateState));
+});
+</script>
 {% endblock %}

@@ -140,7 +140,7 @@ PENDING → ASSIGNED → IN_REVIEW → APPROVED | REJECTED | REPROCESSED
 
 ### Agent Run Status
 ```
-PENDING → RUNNING → COMPLETED | FAILED | TIMED_OUT
+PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 ```
 
 ---
@@ -169,10 +169,11 @@ PENDING → RUNNING → COMPLETED | FAILED | TIMED_OUT
 5. Create `AgentDefinition` record (via admin or migration).
 
 ### When adding a new tool
-1. Create tool function in `apps/tools/registry/tools.py`.
-2. Decorate with `@register_tool(name, description, input_schema, output_schema)`.
-3. Add `ToolDefinition` record.
-4. Reference in relevant agent's `allowed_tools`.
+1. Create tool class in `apps/tools/registry/tools.py` extending `BaseTool`.
+2. Decorate with `@register_tool`.
+3. Implement `execute()` method.
+4. Add `ToolDefinition` record.
+5. Reference in relevant agent's `allowed_tools`.
 
 ### When adding a new template view
 1. Create view in `apps/<app>/template_views.py`.
@@ -185,25 +186,26 @@ PENDING → RUNNING → COMPLETED | FAILED | TIMED_OUT
 ## What's Implemented vs. What's Next
 
 ### ✅ Fully implemented
-- All models, migrations, enums, permissions, middleware
-- Extraction pipeline (6 services + Celery task; adapter is a test stub)
-- Reconciliation engine (11 services + Celery tasks)
-- Agent orchestration (7 agents, policy engine, tool registry, LLM client)
+- All models, migrations, enums (14 enum classes), permissions, middleware
+- Extraction pipeline (8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction)
+- Reconciliation engine (10 services + Celery tasks)
+- Agent orchestration (7 agents, policy engine, tool registry, LLM client, decision log service)
+- 6 class-based tools (POLookupTool, GRNLookupTool, VendorSearchTool, InvoiceDetailsTool, ExceptionListTool, ReconciliationSummaryTool)
 - Review workflow (service + API + templates)
 - Dashboard analytics (service + 6 API endpoints)
 - DRF APIs (all ViewSets, serializers, routing)
-- Bootstrap 5 templates (15 templates)
+- Bootstrap 5 templates (16 templates incl. partials)
 - Admin panel registration
 - Audit logging models
+- Seed data management command (`python manage.py seed_data`)
 
 ### ⬜ Not yet implemented (next steps)
 - **Tests**: pytest + factory-boy configured but no tests written. Need unit tests for services, integration tests for API endpoints, and factory classes for all models.
-- **Real extraction adapter**: Replace stub with Azure Form Recognizer client.
+- **Extraction refinement**: Tune LLM extraction prompts, add support for multi-page invoices, handle edge-case layouts.
 - **ERP integrations**: Build actual connectors for PO/GRN ingestion (PO_API, GRN_API).
 - **Report export services**: GeneratedReport model exists but CSV/Excel export logic not built.
 - **Celery Beat schedules**: No periodic tasks configured yet.
 - **Email notifications**: No notification system for review assignments.
-- **Seed data / fixtures**: No sample POs, GRNs, or invoices for testing.
 - **Docker / deployment**: No Dockerfile or docker-compose.
 - **CI/CD pipeline**: No GitHub Actions or similar.
 - **Frontend JS interactivity**: Templates are server-rendered; AJAX calls to API endpoints could enhance UX.
@@ -213,7 +215,8 @@ PENDING → RUNNING → COMPLETED | FAILED | TIMED_OUT
 ## Debugging Tips
 
 - **Celery tasks not running?** Ensure Redis is running and Celery worker is started: `celery -A config worker -l info`
-- **LLM calls failing?** Check `OPENAI_API_KEY` or `AZURE_OPENAI_*` env vars in settings.
+- **LLM calls failing?** Check `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` env vars in settings.
+- **Extraction failing?** Check `AZURE_DI_ENDPOINT` and `AZURE_DI_KEY` env vars for Azure Document Intelligence.
 - **Login redirect loop?** `LoginRequiredMiddleware` redirects all anonymous requests except /admin/, /accounts/, /api/.
 - **Migration issues?** MySQL requires utf8mb4; check `DATABASES` charset setting.
 - **Template not found?** Templates are in `templates/<app>/`; check `TEMPLATES` setting in settings.py.
@@ -232,5 +235,8 @@ PENDING → RUNNING → COMPLETED | FAILED | TIMED_OUT
 | `apps/reconciliation/services/runner_service.py` | Core 3-way matching orchestration |
 | `apps/agents/services/orchestrator.py` | Agent pipeline orchestration |
 | `apps/agents/services/base_agent.py` | Base agent with ReAct loop |
+| `apps/agents/services/agent_classes.py` | All 7 agent implementations |
+| `apps/tools/registry/tools.py` | All 6 tool classes |
+| `apps/tools/registry/base.py` | BaseTool, ToolRegistry, @register_tool |
 | `apps/extraction/tasks.py` | Extraction pipeline task |
 | `apps/reviews/services.py` | Review workflow lifecycle |

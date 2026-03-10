@@ -14,8 +14,8 @@ An enterprise Django application that automates **3-way Purchase Order (PO) reco
 | **Language** | Python 3.8+ |
 | **Database** | MySQL (utf8mb4 charset, STRICT_TRANS_TABLES) |
 | **Task Queue** | Celery 5.3+ with Redis broker |
-| **LLM / AI** | OpenAI API or Azure OpenAI, LangChain Core 0.3+, Tiktoken |
-| **Document Extraction** | Azure Form Recognizer, pdfplumber, PyPDF2, pytesseract, Pillow |
+| **LLM / AI** | Azure OpenAI (GPT-4o), LangChain Core 0.3+, Tiktoken |
+| **Document Extraction** | Azure Document Intelligence (prebuilt-read OCR) + Azure OpenAI GPT-4o (structured extraction) |
 | **Fuzzy Matching** | thefuzz, RapidFuzz, python-Levenshtein |
 | **Data Processing** | pandas, openpyxl, XlsxWriter, dateparser, pydantic |
 | **Frontend** | Django Templates, Bootstrap 5, Chart.js |
@@ -34,7 +34,7 @@ DocumentUpload (QUEUED)
     │
     ▼
 process_invoice_upload_task (Celery)
-    ├── Extract (Azure Form Recognizer / custom ML / stub)
+    ├── Extract (Azure Document Intelligence OCR → Azure OpenAI GPT-4o structured JSON)
     ├── Parse → structured data (ParsedInvoice + ParsedLineItem)
     ├── Normalize (dates, amounts, text, PO/invoice numbers)
     ├── Validate (mandatory fields, confidence threshold ≥ 0.75)
@@ -61,7 +61,7 @@ run_reconciliation_task (Celery)
 run_agent_pipeline_task (Celery)
     ├── PolicyEngine → determines agent execution plan
     ├── Execute agents in sequence (ReAct loop: LLM → tool calls → feedback)
-    │   └── Tools: lookup_vendor, lookup_po, lookup_grn, check_variance, fuzzy_match_item
+    │   └── Tools: POLookupTool, GRNLookupTool, VendorSearchTool, InvoiceDetailsTool, ExceptionListTool, ReconciliationSummaryTool
     └── AgentRun + AgentMessages + DecisionLog + ToolCalls persisted
         Recommendations generated
     │
@@ -90,7 +90,7 @@ c:\3-way-po-recon\
 │   ├── asgi.py / wsgi.py        # ASGI/WSGI entry points
 │
 ├── apps/                        # All Django apps
-│   ├── core/                    # Shared infrastructure (base models, enums, utils, permissions)
+│   ├── core/                    # Shared infrastructure (base models, enums, utils, permissions, seed_data command)
 │   ├── accounts/                # Custom User model (email-based auth, roles)
 │   ├── vendors/                 # Vendor master data + aliases for fuzzy matching
 │   ├── documents/               # Invoice, PO, GRN models + DocumentUpload
@@ -127,7 +127,8 @@ c:\3-way-po-recon\
 | Component | Description |
 |---|---|
 | **Models** | `TimestampMixin` (created_at/updated_at), `AuditMixin` (created_by/updated_by), `BaseModel` (combines both), `SoftDeleteMixin`, `NotesMixin` |
-| **Enums** | `InvoiceStatus`, `MatchStatus`, `ReviewStatus`, `UserRole`, `AgentType`, `ExceptionType`, `ExceptionSeverity`, `ReviewActionType`, `AgentRunStatus`, `ToolCallStatus`, `ReconciliationRunStatus` |
+| **Enums** | `InvoiceStatus`, `MatchStatus`, `ReviewStatus`, `UserRole`, `AgentType`, `ExceptionType`, `ExceptionSeverity`, `ReviewActionType`, `AgentRunStatus`, `ToolCallStatus`, `ReconciliationRunStatus`, `RecommendationType`, `DocumentType`, `FileProcessingState` |
+| **Management Commands** | `seed_data` — populates test data (users, vendors, sample POs, invoices) |
 | **Permissions** | `IsAdmin`, `IsAPProcessor`, `IsReviewer`, `IsFinanceManager`, `IsAuditor`, `IsAdminOrReadOnly`, `IsReviewAssignee`, `HasAnyRole` |
 | **Middleware** | `LoginRequiredMiddleware` — redirects anonymous users (exempts /admin/, /accounts/, /api/) |
 | **Utils** | `normalize_string()`, `normalize_po_number()`, `normalize_invoice_number()`, `parse_date()`, `to_decimal()`, `pct_difference()`, `within_tolerance()` |
@@ -162,31 +163,33 @@ c:\3-way-po-recon\
 
 ### extraction — Invoice Extraction Pipeline
 
-| Service | Purpose |
-|---|---|
-| `InvoiceExtractionAdapter` | Wraps extraction engine (Azure Form Recognizer / custom ML / **stub for testing**) |
-| `ExtractionParserService` | Parses raw JSON → `ParsedInvoice` + `ParsedLineItem` dataclasses |
-| `NormalizationService` | Normalizes vendor names, PO/invoice numbers, dates, amounts (4-decimal qty, 2-decimal money) |
-| `ValidationService` | Checks mandatory fields + confidence threshold |
-| `DuplicateDetectionService` | Checks vendor + invoice_number uniqueness |
-| `InvoicePersistenceService` | Persists Invoice + InvoiceLineItems to DB |
-| `ExtractionResultPersistenceService` | Persists ExtractionResult metadata |
+| Service | File | Purpose |
+|---|---|---|
+| `InvoiceUploadService` | `upload_service.py` | Handles file upload, creates `DocumentUpload` record with SHA-256 hash |
+| `InvoiceExtractionAdapter` | `extraction_adapter.py` | Two-step pipeline: Azure Document Intelligence (prebuilt-read) for OCR + Azure OpenAI GPT-4o for structured JSON extraction |
+| `ExtractionParserService` | `parser_service.py` | Parses raw JSON → `ParsedInvoice` + `ParsedLineItem` dataclasses |
+| `NormalizationService` | `normalization_service.py` | Normalizes vendor names, PO/invoice numbers, dates, amounts (4-decimal qty, 2-decimal money) |
+| `ValidationService` | `validation_service.py` | Checks mandatory fields + confidence threshold; returns `ValidationResult` with errors/warnings |
+| `DuplicateDetectionService` | `duplicate_detection_service.py` | Checks vendor + invoice_number uniqueness |
+| `InvoicePersistenceService` | `persistence_service.py` | Persists Invoice + InvoiceLineItems to DB; resolves vendor via fuzzy match |
+| `ExtractionResultPersistenceService` | `persistence_service.py` | Persists ExtractionResult metadata |
 
-**Celery Task:** `process_invoice_upload_task` — full pipeline: extract → parse → normalize → validate → duplicate check → persist. Retries=2.
+**Celery Task:** `process_invoice_upload_task` — full pipeline: upload → OCR (Azure DI) → LLM extract (Azure OpenAI) → parse → normalize → validate → duplicate check → persist. Retries=2.
 
 ### reconciliation — 3-Way Matching Engine
 
-| Service | Purpose |
-|---|---|
-| `ReconciliationRunnerService` | Orchestrates full 3-way match pipeline per batch of invoices |
-| `POLookupService` | Finds PO by normalized po_number |
-| `HeaderMatchService` | Matches vendor, currency, total amount with tolerance |
-| `LineMatchService` | Matches line-level qty/price/amount + fuzzy item description |
-| `GRNLookupService` | Finds GRNs for matched PO |
-| `GRNMatchService` | Checks receipt quantities (received vs accepted vs rejected) |
-| `ClassificationService` | Classifies result: MATCHED / PARTIAL_MATCH / UNMATCHED / REQUIRES_REVIEW |
-| `ExceptionBuilderService` | Builds structured exceptions (typed, severity-rated) |
-| `ToleranceEngine` | Tolerance-based comparison (qty: 2%, price: 1%, amount: 1%) |
+| Service | File | Purpose |
+|---|---|---|
+| `ReconciliationRunnerService` | `runner_service.py` | Orchestrates full 3-way match pipeline per batch of invoices |
+| `POLookupService` | `po_lookup_service.py` | Finds PO by normalized po_number |
+| `HeaderMatchService` | `header_match_service.py` | Matches vendor, currency, total amount with tolerance |
+| `LineMatchService` | `line_match_service.py` | Matches line-level qty/price/amount + fuzzy item description |
+| `GRNLookupService` | `grn_lookup_service.py` | Finds GRNs for matched PO |
+| `GRNMatchService` | `grn_match_service.py` | Checks receipt quantities (received vs accepted vs rejected) |
+| `ClassificationService` | `classification_service.py` | Classifies result: MATCHED / PARTIAL_MATCH / UNMATCHED / REQUIRES_REVIEW / ERROR |
+| `ExceptionBuilderService` | `exception_builder_service.py` | Builds structured exceptions (typed, severity-rated) |
+| `ReconciliationResultService` | `result_service.py` | Persists reconciliation results, result lines, and links to invoices/POs |
+| `ToleranceEngine` | `tolerance_engine.py` | Tolerance-based comparison (qty: 2%, price: 1%, amount: 1%) |
 
 **Models:** `ReconciliationConfig`, `ReconciliationRun`, `ReconciliationResult`, `ReconciliationResultLine`, `ReconciliationException`
 
@@ -202,7 +205,7 @@ c:\3-way-po-recon\
 | `LLMClient` | Abstracts OpenAI / Azure OpenAI, supports function calling |
 | **7 Agent Types** | INVOICE_UNDERSTANDING, PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY |
 
-**Models:** `AgentDefinition`, `AgentRun`, `AgentStep`, `AgentMessage`, `DecisionLog`
+**Models:** `AgentDefinition`, `AgentRun`, `AgentStep`, `AgentMessage`, `DecisionLog`, `AgentRecommendation`, `AgentEscalation`
 
 **Celery Task:** `run_agent_pipeline_task` — full agent orchestration for a reconciliation result
 
@@ -210,9 +213,14 @@ c:\3-way-po-recon\
 
 | Component | Purpose |
 |---|---|
-| `ToolRegistry` | Central registry mapping tool_name → callable; decorator-based registration |
-| **Tools** | `lookup_vendor`, `lookup_po`, `lookup_grn`, `check_variance`, `fuzzy_match_item`, etc. |
-| `ToolCallLogger` | Logs every tool invocation to `ToolCall` model |
+| `BaseTool` / `ToolRegistry` | Abstract base class + central registry; decorator-based `@register_tool` registration (`registry/base.py`) |
+| `POLookupTool` | Look up PO by number, returns header + line items |
+| `GRNLookupTool` | Retrieve GRN details by PO number |
+| `VendorSearchTool` | Search vendors by name or code |
+| `InvoiceDetailsTool` | Get invoice details by ID |
+| `ExceptionListTool` | List exceptions for a reconciliation result |
+| `ReconciliationSummaryTool` | Get reconciliation summary for a result |
+| `ToolCallLogger` | Logs every tool invocation to `ToolCall` model (`registry/tool_call_logger.py`) |
 
 ### reviews — Human Review Workflow
 
@@ -300,9 +308,9 @@ c:\3-way-po-recon\
 | REST Pagination | 25 per page |
 | REST Auth | SessionAuthentication, IsAuthenticated |
 | REST Filters | DjangoFilterBackend, SearchFilter, OrderingFilter |
-| LLM Provider | OpenAI or Azure OpenAI (via env vars) |
+| LLM Provider | Azure OpenAI (via env vars) |
 | LLM Model | `gpt-4o` (default) |
-| LLM Temperature | 0.1 |
+| LLM Temperature | 0.1 (agents) / 0.0 (extraction) |
 | Qty Tolerance | 2% |
 | Price Tolerance | 1% |
 | Amount Tolerance | 1% |
@@ -315,10 +323,13 @@ c:\3-way-po-recon\
 | `SECRET_KEY` | Django secret key |
 | `DATABASE_URL` or `DB_*` | MySQL connection |
 | `REDIS_URL` | Redis for Celery + cache |
-| `OPENAI_API_KEY` | OpenAI API access |
-| `AZURE_OPENAI_*` | Azure OpenAI config (endpoint, key, deployment) |
-| `LLM_PROVIDER` | `openai` or `azure` |
-| `LLM_MODEL` | Model name override |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint URL |
+| `AZURE_OPENAI_API_VERSION` | Azure OpenAI API version (default: `2024-02-01`) |
+| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI deployment name |
+| `LLM_MODEL_NAME` | Model name override (default: `gpt-4o`) |
+| `AZURE_DI_ENDPOINT` | Azure Document Intelligence endpoint URL |
+| `AZURE_DI_KEY` | Azure Document Intelligence API key |
 
 ---
 
@@ -327,23 +338,23 @@ c:\3-way-po-recon\
 | Component | Status | Notes |
 |---|---|---|
 | Project structure & config | ✅ Complete | Django project, settings, URLs, Celery |
-| Models & migrations | ✅ Complete | All 11 apps, all models defined |
-| Core utilities & enums | ✅ Complete | Normalization, permissions, middleware |
-| Extraction services | ✅ Complete | 6/7 services real; adapter is stub awaiting Azure integration |
+| Models & migrations | ✅ Complete | All 13 apps, all models defined |
+| Core utilities & enums | ✅ Complete | Normalization, permissions, middleware, 14 enum classes |
+| Extraction services | ✅ Complete | 8 service classes in 7 files; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction |
 | Extraction Celery task | ✅ Complete | Full pipeline task with retries |
-| Reconciliation services | ✅ Complete | Full 3-way matching pipeline (11 services) |
+| Reconciliation services | ✅ Complete | Full 3-way matching pipeline (10 services) |
 | Reconciliation Celery tasks | ✅ Complete | Batch + single invoice tasks |
-| Agent orchestration | ✅ Complete | Orchestrator, PolicyEngine, BaseAgent, LLMClient |
-| Agent classes (7 types) | ✅ Complete | All 7 agent types implemented |
-| Tool registry | ✅ Complete | Registry, tools, call logger |
+| Agent orchestration | ✅ Complete | Orchestrator, PolicyEngine, BaseAgent, LLMClient, DecisionLogService |
+| Agent classes (7 types) | ✅ Complete | All 7 agent types implemented in `agent_classes.py` |
+| Tool registry | ✅ Complete | BaseTool, 6 tool classes, ToolCallLogger |
 | Review workflow | ✅ Complete | Full lifecycle service |
 | DRF APIs | ✅ Complete | All ViewSets, serializers, URL routing |
 | Dashboard analytics | ✅ Complete | Service + 6 API views |
-| Templates (Bootstrap 5) | ✅ Complete | 15 templates with full layout |
+| Templates (Bootstrap 5) | ✅ Complete | 16 templates with full layout (incl. partials) |
 | Admin panel | ✅ Complete | All models registered |
 | Audit logging models | ✅ Complete | ProcessingLog, AuditEvent, FileProcessingStatus |
+| Seed data command | ✅ Complete | `python manage.py seed_data` — creates users, vendors, sample POs, invoices |
 | Tests | ⬜ Not started | pytest + factory-boy configured but no tests written |
-| Extraction adapter (real) | ⬜ Stub | Awaiting Azure Form Recognizer integration |
 | ERP integrations | ⬜ Stub | IntegrationConfig models exist, no connectors |
 | Report export logic | ⬜ Partial | Model exists, export services not implemented |
 
@@ -356,13 +367,18 @@ c:\3-way-po-recon\
 pip install -r requirements.txt
 
 # Set environment variables (create .env file)
-# DATABASE, REDIS, OPENAI_API_KEY, SECRET_KEY
+# DATABASE, REDIS, SECRET_KEY
+# AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT
+# AZURE_DI_ENDPOINT, AZURE_DI_KEY
 
 # Run migrations
 python manage.py migrate
 
 # Create superuser
 python manage.py createsuperuser
+
+# Seed sample data (optional — creates users, vendors, POs, invoices)
+python manage.py seed_data
 
 # Start Redis (required for Celery)
 redis-server
