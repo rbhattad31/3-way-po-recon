@@ -44,29 +44,30 @@ process_invoice_upload_task (Celery)
         Invoice → READY_FOR_RECON (if valid & not duplicate)
     │
     ▼
-run_reconciliation_task (Celery)
+run_reconciliation_task (Celery) — or synchronous call via start_reconciliation view
     ├── PO Lookup (normalized PO number + fuzzy vendor match)
     ├── Header Match (vendor, currency, total amount within tolerance)
     ├── Line Match (qty / price / amount per line, fuzzy item description)
     ├── GRN Lookup + Match (receipt quantities)
     ├── Classification → MATCHED | PARTIAL_MATCH | UNMATCHED | REQUIRES_REVIEW
     ├── Exception Building (structured, typed exceptions)
+    ├── Auto-create ReviewAssignment (if REQUIRES_REVIEW)
     └── ReconciliationResult + ResultLines + Exceptions persisted
         Invoice → RECONCILED or flagged REQUIRES_REVIEW
     │
     ▼
-[if REQUIRES_REVIEW or policy triggers agents]
+[Automatically for non-MATCHED results — wired into both sync and async paths]
     │
     ▼
-run_agent_pipeline_task (Celery)
-    ├── PolicyEngine → determines agent execution plan
+run_agent_pipeline_task (Celery) — or synchronous AgentOrchestrator call in eager mode
+    ├── PolicyEngine → determines agent execution plan based on match status + exceptions
     ├── Execute agents in sequence (ReAct loop: LLM → tool calls → feedback)
-    │   └── Tools: POLookupTool, GRNLookupTool, VendorSearchTool, InvoiceDetailsTool, ExceptionListTool, ReconciliationSummaryTool
+    │   └── Tools: po_lookup, grn_lookup, vendor_search, invoice_details, exception_list, reconciliation_summary
     └── AgentRun + AgentMessages + DecisionLog + ToolCalls persisted
         Recommendations generated
     │
     ▼
-[if requires human review]
+[if requires human review — ReviewAssignment auto-created by runner]
     │
     ▼
 ReviewAssignment
@@ -128,7 +129,7 @@ c:\3-way-po-recon\
 |---|---|
 | **Models** | `TimestampMixin` (created_at/updated_at), `AuditMixin` (created_by/updated_by), `BaseModel` (combines both), `SoftDeleteMixin`, `NotesMixin` |
 | **Enums** | `InvoiceStatus`, `MatchStatus`, `ReviewStatus`, `UserRole`, `AgentType`, `ExceptionType`, `ExceptionSeverity`, `ReviewActionType`, `AgentRunStatus`, `ToolCallStatus`, `ReconciliationRunStatus`, `RecommendationType`, `DocumentType`, `FileProcessingState` |
-| **Management Commands** | `seed_data` — populates test data (users, vendors, sample POs, invoices) |
+| **Management Commands** | `seed_data` — populates test data: users (5 roles), vendors (5+aliases), 13 invoices (matching edge cases), POs, GRNs, 7 agent definitions with `config_json`, 6 tool definitions. Supports `--only` flag for selective seeding. |
 | **Permissions** | `IsAdmin`, `IsAPProcessor`, `IsReviewer`, `IsFinanceManager`, `IsAuditor`, `IsAdminOrReadOnly`, `IsReviewAssignee`, `HasAnyRole` |
 | **Middleware** | `LoginRequiredMiddleware` — redirects anonymous users (exempts /admin/, /accounts/, /api/) |
 | **Utils** | `normalize_string()`, `normalize_po_number()`, `normalize_invoice_number()`, `parse_date()`, `to_decimal()`, `pct_difference()`, `within_tolerance()` |
@@ -180,7 +181,7 @@ c:\3-way-po-recon\
 
 | Service | File | Purpose |
 |---|---|---|
-| `ReconciliationRunnerService` | `runner_service.py` | Orchestrates full 3-way match pipeline per batch of invoices |
+| `ReconciliationRunnerService` | `runner_service.py` | Orchestrates full 3-way match pipeline per batch of invoices; auto-creates `ReviewAssignment` for REQUIRES_REVIEW results |
 | `POLookupService` | `po_lookup_service.py` | Finds PO by normalized po_number |
 | `HeaderMatchService` | `header_match_service.py` | Matches vendor, currency, total amount with tolerance |
 | `LineMatchService` | `line_match_service.py` | Matches line-level qty/price/amount + fuzzy item description |
@@ -193,16 +194,18 @@ c:\3-way-po-recon\
 
 **Models:** `ReconciliationConfig`, `ReconciliationRun`, `ReconciliationResult`, `ReconciliationResultLine`, `ReconciliationException`
 
-**Celery Tasks:** `run_reconciliation_task` (batch), `reconcile_single_invoice_task` (single)
+**Celery Tasks:** `run_reconciliation_task` (batch — also dispatches `run_agent_pipeline_task` for non-MATCHED results), `reconcile_single_invoice_task` (single)
+
+**Template Views:** `start_reconciliation` — UI to select READY_FOR_RECON invoices and trigger reconciliation (runs synchronously in eager mode, dispatches Celery task otherwise). Automatically chains agent pipeline for non-MATCHED results.
 
 ### agents — LLM-Powered Decision Layer
 
 | Component | Purpose |
 |---|---|
-| `AgentOrchestrator` | Main entry point; loads result + exceptions, calls PolicyEngine, executes agents in sequence |
-| `PolicyEngine` | Analyzes result + exceptions, decides which agents to run, generates `AgentPlan` |
-| `BaseAgent` | Abstract base; ReAct loop (LLM → tool calls → feedback, up to 6 iterations) |
-| `LLMClient` | Abstracts OpenAI / Azure OpenAI, supports function calling |
+| `AgentOrchestrator` | Main entry point; loads result + exceptions, calls PolicyEngine, executes agents in sequence. Called automatically after reconciliation (sync path via `start_reconciliation` view, async path via `run_agent_pipeline_task`). |
+| `PolicyEngine` | Analyzes result + exceptions, decides which agents to run based on match status and exception types, generates `AgentPlan` |
+| `BaseAgent` | Abstract base; ReAct loop (LLM → tool calls → feedback, up to 6 iterations). Uses OpenAI-compliant tool-calling format (tool_calls on assistant messages, tool_call_id on tool responses). |
+| `LLMClient` | Abstracts OpenAI / Azure OpenAI, supports function calling with tool_calls serialization |
 | **7 Agent Types** | INVOICE_UNDERSTANDING, PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY |
 
 **Models:** `AgentDefinition`, `AgentRun`, `AgentStep`, `AgentMessage`, `DecisionLog`, `AgentRecommendation`, `AgentEscalation`
@@ -227,6 +230,8 @@ c:\3-way-po-recon\
 | Component | Purpose |
 |---|---|
 | `ReviewWorkflowService` | Full lifecycle: create assignment, assign reviewer, start review, record actions, approve/reject/reprocess |
+
+**Template Views:** `assignment_list` shows active assignments + "Results Awaiting Review Assignment" panel for unassigned results; `create_assignments` allows bulk assignment creation from the UI.
 | **Models** | `ReviewAssignment`, `ReviewComment`, `ManualReviewAction`, `ReviewDecision` |
 | **Actions** | APPROVE, REJECT, REQUEST_INFO, REPROCESS, ESCALATE, CORRECT_FIELD, ADD_COMMENT |
 
@@ -274,9 +279,11 @@ c:\3-way-po-recon\
 | `/invoices/<pk>/` | Invoice detail |
 | `/invoices/purchase-orders/` | PO list |
 | `/invoices/grns/` | GRN list |
-| `/reconciliation/` | Reconciliation results |
-| `/reconciliation/<pk>/` | Result detail |
-| `/reviews/` | Review queue |
+| `/reconciliation/` | Reconciliation results + "Start Reconciliation" panel for READY_FOR_RECON invoices |
+| `/reconciliation/start/` | Trigger reconciliation for selected invoices (POST) |
+| `/reconciliation/<pk>/` | Result detail (full agent reasoning, exception details) |
+| `/reviews/` | Review queue + "Awaiting Assignment" panel |
+| `/reviews/create-assignments/` | Create review assignments for unassigned results (POST) |
 | `/reviews/<pk>/` | Assignment detail |
 | `/agents/` | Agent runs |
 
@@ -301,10 +308,13 @@ c:\3-way-po-recon\
 | Setting | Value |
 |---|---|
 | `AUTH_USER_MODEL` | `accounts.User` |
+| `LOGIN_URL` | `/accounts/login/` |
 | `LOGIN_REDIRECT_URL` | `/dashboard/` |
+| Root URL (`/`) | Redirects to `/dashboard/` |
 | Database | MySQL with utf8mb4, STRICT_TRANS_TABLES |
 | Celery Broker | `redis://127.0.0.1:6379/0` |
 | Celery Result Backend | `django-db` |
+| `CELERY_TASK_ALWAYS_EAGER` | `True` by default (synchronous execution for Windows dev without Redis) |
 | REST Pagination | 25 per page |
 | REST Auth | SessionAuthentication, IsAuthenticated |
 | REST Filters | DjangoFilterBackend, SearchFilter, OrderingFilter |
@@ -353,7 +363,10 @@ c:\3-way-po-recon\
 | Templates (Bootstrap 5) | ✅ Complete | 16 templates with full layout (incl. partials) |
 | Admin panel | ✅ Complete | All models registered |
 | Audit logging models | ✅ Complete | ProcessingLog, AuditEvent, FileProcessingStatus |
-| Seed data command | ✅ Complete | `python manage.py seed_data` — creates users, vendors, sample POs, invoices |
+| Seed data command | ✅ Complete | `python manage.py seed_data` — creates users, vendors, 13 invoices covering all scenarios, POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions |
+| Agent pipeline wiring | ✅ Complete | Agent pipeline runs automatically after reconciliation for non-MATCHED results (sync + async paths) |
+| Reconciliation UI | ✅ Complete | Start reconciliation panel with checkbox invoice selection |
+| Review assignment UI | ✅ Complete | Auto-creation from runner + manual bulk creation from UI |
 | Tests | ⬜ Not started | pytest + factory-boy configured but no tests written |
 | ERP integrations | ⬜ Stub | IntegrationConfig models exist, no connectors |
 | Report export logic | ⬜ Partial | Model exists, export services not implemented |
@@ -380,13 +393,14 @@ python manage.py createsuperuser
 # Seed sample data (optional — creates users, vendors, POs, invoices)
 python manage.py seed_data
 
-# Start Redis (required for Celery)
+# Option A: Windows dev mode (no Redis needed — Celery runs synchronously)
+# CELERY_TASK_ALWAYS_EAGER=True is the default in settings.py
+python manage.py runserver
+
+# Option B: Full async mode (requires Redis)
+# Set CELERY_TASK_ALWAYS_EAGER=False in settings or env
 redis-server
-
-# Start Celery worker
 celery -A config worker -l info
-
-# Start development server
 python manage.py runserver
 ```
 

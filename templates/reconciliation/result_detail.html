@@ -47,8 +47,8 @@
             <tr>
               <td>{{ exc.exception_type }}</td>
               <td><span class="severity-{{ exc.severity }}">{{ exc.severity }}</span></td>
-              <td>{{ exc.message|truncatechars:80 }}</td>
-              <td>{% if exc.resolved %}<i class="bi bi-check text-success"></i>{% else %}<i class="bi bi-clock text-muted"></i>{% endif %}</td>
+              <td>{{ exc.message }}</td>
+              <td>{% if exc.resolved %}<i class="bi bi-check-circle text-success"></i> Resolved{% else %}<span class="badge bg-warning text-dark">Open</span>{% endif %}</td>
             </tr>
             {% empty %}
             <tr><td colspan="4" class="text-muted text-center">No exceptions</td></tr>
@@ -108,7 +108,7 @@
         <tr>
           <td><span class="badge bg-info">{{ rec.recommendation_type }}</span></td>
           <td>{{ rec.confidence|floatformat:2 }}</td>
-          <td>{{ rec.reasoning|truncatechars:120 }}</td>
+          <td>{{ rec.reasoning }}</td>
           <td>{% if rec.accepted == True %}<i class="bi bi-check text-success"></i>{% elif rec.accepted == False %}<i class="bi bi-x text-danger"></i>{% else %}Pending{% endif %}</td>
         </tr>
         {% endfor %}

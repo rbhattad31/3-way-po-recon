@@ -112,7 +112,16 @@ class BaseAgent(ABC):
                 # LLM call
                 step_counter += 1
                 llm_resp = self.llm.chat(
-                    messages=[LLMMessage(role=m["role"], content=m["content"]) for m in messages],
+                    messages=[
+                        LLMMessage(
+                            role=m["role"],
+                            content=m["content"],
+                            tool_call_id=m.get("tool_call_id"),
+                            name=m.get("name"),
+                            tool_calls=m.get("tool_calls"),
+                        )
+                        for m in messages
+                    ],
                     tools=tool_specs if tool_specs else None,
                 )
 
@@ -130,13 +139,28 @@ class BaseAgent(ABC):
                     self._finalise_run(agent_run, output, start)
                     return agent_run
 
-                # Process tool calls
-                messages.append({"role": "assistant", "content": llm_resp.content or ""})
+                # Process tool calls — include tool_calls on the assistant msg
+                # and tool_call_id on each tool response (required by OpenAI API)
+                messages.append({
+                    "role": "assistant",
+                    "content": llm_resp.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments),
+                            },
+                        }
+                        for tc in llm_resp.tool_calls
+                    ],
+                })
                 for tc in llm_resp.tool_calls:
                     step_counter += 1
                     tool_result = self._execute_tool(tc.name, tc.arguments, agent_run, step_counter)
                     tool_msg = json.dumps(tool_result.data if tool_result.success else {"error": tool_result.error})
-                    messages.append({"role": "tool", "content": tool_msg})
+                    messages.append({"role": "tool", "content": tool_msg, "tool_call_id": tc.id, "name": tc.name})
                     self._save_message(agent_run, "tool", tool_msg, len(messages), name=tc.name)
 
             # Exhausted rounds — use last content

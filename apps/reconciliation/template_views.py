@@ -82,11 +82,34 @@ def start_reconciliation(request):
         )
         runner = ReconciliationRunnerService()
         run = runner.run(invoices=invoices, triggered_by=request.user)
+
+        # Run agent pipeline for non-matched results
+        from apps.agents.services.orchestrator import AgentOrchestrator
+        from apps.reconciliation.models import ReconciliationResult as ReconResult
+
+        agent_count = 0
+        results_needing_agents = ReconResult.objects.filter(
+            run=run,
+        ).exclude(match_status=MatchStatus.MATCHED).select_related(
+            "invoice", "invoice__vendor", "purchase_order",
+        )
+        orchestrator = AgentOrchestrator()
+        for recon_result in results_needing_agents:
+            try:
+                orchestrator.execute(recon_result)
+                agent_count += 1
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).exception(
+                    "Agent pipeline failed for result %s", recon_result.pk
+                )
+
+        agent_msg = f" Agent analysis ran on {agent_count} result(s)." if agent_count else ""
         messages.success(
             request,
             f"Reconciliation complete for {run.total_invoices} invoice(s): "
             f"{run.matched_count} matched, {run.partial_count} partial, "
-            f"{run.unmatched_count} unmatched.",
+            f"{run.unmatched_count} unmatched.{agent_msg}",
         )
     else:
         from apps.reconciliation.tasks import run_reconciliation_task

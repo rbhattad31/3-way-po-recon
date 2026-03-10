@@ -45,10 +45,13 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 ### Agent System
 - All agents extend `BaseAgent` (in `apps/agents/services/`).
 - Agents use **ReAct loop**: LLM → parse tool calls → execute tools → loop (max 6 iterations).
-- Tools are registered in `apps/tools/registry/` via decorator pattern.
-- `AgentOrchestrator` is the entry point; `PolicyEngine` decides which agents to run.
+- Tool-calling uses **OpenAI-compliant format**: `tool_calls` array on assistant messages, `tool_call_id` + `name` on tool response messages.
+- Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`.
+- `AgentOrchestrator` is the entry point; `PolicyEngine` decides which agents to run based on match status + exception types.
+- Agent pipeline is **wired to run automatically** after reconciliation for non-MATCHED results (sync via `start_reconciliation` view, async via `run_agent_pipeline_task`).
 - Every agent run, message, tool call, and decision is persisted for auditability.
 - LLM client supports both OpenAI and Azure OpenAI (configurable via env vars).
+- Agent definitions include `config_json` with `allowed_tools` per agent type.
 
 ### Templates
 - Templates use **Bootstrap 5** with Django template inheritance from `base.html`.
@@ -190,14 +193,20 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Extraction pipeline (8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction)
 - Reconciliation engine (10 services + Celery tasks)
 - Agent orchestration (7 agents, policy engine, tool registry, LLM client, decision log service)
-- 6 class-based tools (POLookupTool, GRNLookupTool, VendorSearchTool, InvoiceDetailsTool, ExceptionListTool, ReconciliationSummaryTool)
-- Review workflow (service + API + templates)
+- Agent pipeline wired to run automatically after reconciliation for non-MATCHED results (sync + async paths)
+- 6 class-based tools (po_lookup, grn_lookup, vendor_search, invoice_details, exception_list, reconciliation_summary)
+- OpenAI-compliant tool-calling format (tool_calls on assistant messages, tool_call_id on tool responses)
+- Review workflow (service + API + templates) with auto-creation of ReviewAssignment for REQUIRES_REVIEW results
+- Review UI: "Awaiting Assignment" panel + bulk assignment creation
+- Reconciliation UI: "Start Reconciliation" panel with checkbox invoice selection (triggers matching + agent pipeline)
 - Dashboard analytics (service + 6 API endpoints)
 - DRF APIs (all ViewSets, serializers, routing)
 - Bootstrap 5 templates (16 templates incl. partials)
 - Admin panel registration
 - Audit logging models
-- Seed data management command (`python manage.py seed_data`)
+- Seed data management command (`python manage.py seed_data`) — 5 users, 5 vendors, 13 invoices (with edge-case scenarios), POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions
+- Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
+- Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
 ### ⬜ Not yet implemented (next steps)
 - **Tests**: pytest + factory-boy configured but no tests written. Need unit tests for services, integration tests for API endpoints, and factory classes for all models.
@@ -214,12 +223,14 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 
 ## Debugging Tips
 
-- **Celery tasks not running?** Ensure Redis is running and Celery worker is started: `celery -A config worker -l info`
+- **Celery tasks not running?** If on Windows without Redis, ensure `CELERY_TASK_ALWAYS_EAGER=True` (default in settings.py) — tasks run synchronously. For async mode, set `CELERY_TASK_ALWAYS_EAGER=False`, start Redis, and run: `celery -A config worker -l info`
 - **LLM calls failing?** Check `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` env vars in settings.
+- **Agent 400 errors from OpenAI?** Ensure tool-calling messages follow the format: assistant messages include `tool_calls` array, tool response messages include `tool_call_id` and `name`.
 - **Extraction failing?** Check `AZURE_DI_ENDPOINT` and `AZURE_DI_KEY` env vars for Azure Document Intelligence.
-- **Login redirect loop?** `LoginRequiredMiddleware` redirects all anonymous requests except /admin/, /accounts/, /api/.
+- **Login redirect loop?** `LoginRequiredMiddleware` redirects all anonymous requests except /admin/, /accounts/, /api/. `LOGIN_URL` is `/accounts/login/`.
 - **Migration issues?** MySQL requires utf8mb4; check `DATABASES` charset setting.
 - **Template not found?** Templates are in `templates/<app>/`; check `TEMPLATES` setting in settings.py.
+- **Confidence showing 1%?** `extraction_confidence` is stored as 0.0–1.0 float; templates use `{% widthratio %}` to display as percentage.
 
 ---
 
@@ -232,7 +243,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/core/utils.py` | Normalization, parsing, tolerance utilities |
 | `apps/core/permissions.py` | Role-based permission classes |
 | `apps/documents/models.py` | Invoice, PO, GRN data models |
-| `apps/reconciliation/services/runner_service.py` | Core 3-way matching orchestration |
+| `apps/reconciliation/template_views.py` | Start reconciliation view + agent pipeline wiring |
+| `apps/reconciliation/services/runner_service.py` | Core 3-way matching orchestration + auto-ReviewAssignment |
 | `apps/agents/services/orchestrator.py` | Agent pipeline orchestration |
 | `apps/agents/services/base_agent.py` | Base agent with ReAct loop |
 | `apps/agents/services/agent_classes.py` | All 7 agent implementations |

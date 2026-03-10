@@ -19,7 +19,8 @@ body {
 .status-badge { font-size: .8rem; }
 .status-MATCHED,
 .status-APPROVED,
-.status-RECONCILED { color: #fff; background: #198754; }
+.status-RECONCILED,
+.status-COMPLETED  { color: #fff; background: #198754; }
 .status-PARTIAL_MATCH,
 .status-ASSIGNED,
 .status-IN_REVIEW,
@@ -32,9 +33,11 @@ body {
 .status-FAILED     { color: #fff; background: #dc3545; }
 .status-REQUIRES_REVIEW,
 .status-PENDING,
-.status-UPLOADED   { color: #fff; background: #6c757d; }
+.status-UPLOADED,
+.status-SKIPPED    { color: #fff; background: #6c757d; }
 .status-EXTRACTION_IN_PROGRESS,
-.status-EXTRACTED  { color: #fff; background: #0d6efd; }
+.status-EXTRACTED,
+.status-RUNNING    { color: #fff; background: #0d6efd; }
 
 .severity-LOW      { color: #198754; }
 .severity-MEDIUM   { color: #ffc107; }

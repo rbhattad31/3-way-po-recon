@@ -79,7 +79,7 @@
           <td>{{ inv.po_number|default:"—" }}</td>
           <td>{{ inv.currency }} {{ inv.total_amount|default:"—" }}</td>
           <td><span class="badge status-badge status-{{ inv.status }}">{{ inv.status }}</span></td>
-          <td>{% if inv.extraction_confidence %}{{ inv.extraction_confidence|floatformat:0 }}%{% else %}—{% endif %}</td>
+          <td>{% if inv.extraction_confidence %}{% widthratio inv.extraction_confidence 1 100 %}%{% else %}—{% endif %}</td>
           <td class="text-muted">{{ inv.created_at|date:"d M Y" }}</td>
         </tr>
         {% empty %}

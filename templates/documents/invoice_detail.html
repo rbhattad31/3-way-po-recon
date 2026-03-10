@@ -25,7 +25,7 @@
         <tr><th>Tax</th><td>{{ invoice.tax_amount|default:"—" }}</td></tr>
         <tr><th>Total</th><td><strong>{{ invoice.total_amount|default:"—" }}</strong></td></tr>
         <tr><th>Status</th><td><span class="badge status-badge status-{{ invoice.status }}">{{ invoice.status }}</span></td></tr>
-        <tr><th>Confidence</th><td>{% if invoice.extraction_confidence %}{{ invoice.extraction_confidence|floatformat:0 }}%{% else %}—{% endif %}</td></tr>
+        <tr><th>Confidence</th><td>{% if invoice.extraction_confidence %}{% widthratio invoice.extraction_confidence 1 100 %}%{% else %}—{% endif %}</td></tr>
       </table>
     </div>
   </div>

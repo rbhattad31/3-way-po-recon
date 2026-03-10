@@ -25,6 +25,7 @@ class LLMMessage:
     content: str
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -122,6 +123,8 @@ class LLMClient:
                 d["tool_call_id"] = m.tool_call_id
             if m.name:
                 d["name"] = m.name
+            if m.tool_calls:
+                d["tool_calls"] = m.tool_calls
             out.append(d)
         return out
 
