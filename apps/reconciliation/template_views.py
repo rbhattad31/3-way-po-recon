@@ -4,10 +4,12 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 
-from apps.agents.models import AgentRecommendation
-from apps.core.enums import InvoiceStatus, MatchStatus
+from apps.agents.models import AgentRecommendation, AgentRun
+from apps.auditlog.timeline_service import CaseTimelineService
+from apps.core.enums import InvoiceStatus, MatchStatus, UserRole
 from apps.documents.models import Invoice
 from apps.reconciliation.models import ReconciliationResult
+from apps.tools.models import ToolCall
 
 
 @login_required
@@ -55,11 +57,30 @@ def result_detail(request, pk):
         if rec.recommendation_type not in seen_types:
             seen_types.add(rec.recommendation_type)
             recommendations.append(rec)
+
+    # Governance: Agent decision flow
+    agent_runs = (
+        AgentRun.objects.filter(reconciliation_result=result)
+        .select_related("agent_definition")
+        .prefetch_related("steps", "tool_calls", "decisions")
+        .order_by("created_at")
+    )
+
+    # Governance: Case timeline
+    timeline = CaseTimelineService.get_case_timeline(result.invoice_id)
+
+    # Security: only admins/auditors see full trace; reviewers see summary only
+    user_role = getattr(request.user, "role", None)
+    show_full_trace = user_role in (UserRole.ADMIN, UserRole.AUDITOR)
+
     return render(request, "reconciliation/result_detail.html", {
         "result": result,
         "exceptions": result.exceptions.all(),
         "line_results": result.line_results.all(),
         "recommendations": recommendations,
+        "agent_runs": agent_runs,
+        "timeline": timeline,
+        "show_full_trace": show_full_trace,
     })
 
 

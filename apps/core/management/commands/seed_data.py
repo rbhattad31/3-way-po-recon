@@ -11,14 +11,16 @@ Usage:
     python manage.py seed_data --only config
     python manage.py seed_data --only invoices
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.agents.models import AgentDefinition
-from apps.core.enums import AgentType
+from apps.auditlog.models import AuditEvent
+from apps.core.enums import AgentType, AuditEventType
 from apps.tools.models import ToolDefinition
 from apps.documents.models import (
     GoodsReceiptNote,
@@ -1272,7 +1274,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--only",
             type=str,
-            choices=["vendors", "pos", "grns", "config", "invoices", "agents", "tools", "all"],
+            choices=["vendors", "pos", "grns", "config", "invoices", "agents", "tools", "audit", "all"],
             default="all",
             help="Seed only a specific data category.",
         )
@@ -1306,6 +1308,8 @@ class Command(BaseCommand):
                     self._seed_tool_definitions()
                 if with_invoices or target in ("all", "invoices"):
                     self._seed_invoices()
+                if target in ("all", "audit"):
+                    self._seed_audit_events()
         except Exception as exc:
             raise CommandError(f"Seeding failed: {exc}") from exc
 
@@ -1332,6 +1336,8 @@ class Command(BaseCommand):
             AgentDefinition.objects.all().delete()
         if target in ("all", "tools"):
             ToolDefinition.objects.all().delete()
+        if target in ("all", "audit"):
+            AuditEvent.objects.all().delete()
         self.stdout.write("  Flush complete.")
 
     # ── vendors ────────────────────────────────────────────────────────
@@ -1532,3 +1538,117 @@ class Command(BaseCommand):
             inv_data["status"] = status
 
         self.stdout.write(self.style.SUCCESS(f"  {len(SAMPLE_INVOICES)} invoices seeded."))
+
+    # ── audit events ───────────────────────────────────────────────────
+    def _seed_audit_events(self):
+        """Create realistic audit events covering the full invoice lifecycle."""
+        self.stdout.write("Seeding audit events...")
+
+        from apps.accounts.models import User
+
+        # Pick the first admin user as actor, or None
+        admin_user = User.objects.filter(role="ADMIN").first()
+
+        invoices = list(Invoice.objects.all().order_by("id"))
+        if not invoices:
+            self.stderr.write(self.style.WARNING("  No invoices found — seed invoices first."))
+            return
+
+        events_to_create = []
+        base_time = timezone.now() - timedelta(days=len(invoices))
+
+        for idx, inv in enumerate(invoices):
+            t = base_time + timedelta(days=idx, hours=1)
+
+            # 1. INVOICE_UPLOADED
+            events_to_create.append(AuditEvent(
+                entity_type="Invoice",
+                entity_id=inv.id,
+                action=AuditEventType.INVOICE_UPLOADED,
+                event_type=AuditEventType.INVOICE_UPLOADED,
+                event_description=f"Invoice {inv.invoice_number} uploaded for vendor {inv.raw_vendor_name}",
+                performed_by=admin_user,
+                metadata_json={"invoice_number": inv.invoice_number, "vendor": inv.raw_vendor_name, "po_number": inv.po_number},
+                created_at=t,
+            ))
+
+            # 2. EXTRACTION_COMPLETED
+            t += timedelta(minutes=3)
+            events_to_create.append(AuditEvent(
+                entity_type="Invoice",
+                entity_id=inv.id,
+                action=AuditEventType.EXTRACTION_COMPLETED,
+                event_type=AuditEventType.EXTRACTION_COMPLETED,
+                event_description=f"Data extraction completed with {inv.extraction_confidence:.0%} confidence",
+                performed_by=None,
+                performed_by_agent="ExtractionPipeline",
+                metadata_json={"confidence": float(inv.extraction_confidence or 0), "line_count": inv.line_items.count()},
+                created_at=t,
+            ))
+
+            # 3. Events for invoices that went through reconciliation
+            if inv.status in ("RECONCILED", "READY_FOR_RECON"):
+                t += timedelta(minutes=10)
+                events_to_create.append(AuditEvent(
+                    entity_type="Invoice",
+                    entity_id=inv.id,
+                    action=AuditEventType.RECONCILIATION_STARTED,
+                    event_type=AuditEventType.RECONCILIATION_STARTED,
+                    event_description=f"Reconciliation started for {inv.invoice_number} against {inv.po_number}",
+                    performed_by=admin_user,
+                    metadata_json={"po_number": inv.po_number},
+                    created_at=t,
+                ))
+
+                t += timedelta(minutes=2)
+                events_to_create.append(AuditEvent(
+                    entity_type="Invoice",
+                    entity_id=inv.id,
+                    action=AuditEventType.RECONCILIATION_COMPLETED,
+                    event_type=AuditEventType.RECONCILIATION_COMPLETED,
+                    event_description=f"Reconciliation completed for {inv.invoice_number}",
+                    performed_by=admin_user,
+                    metadata_json={"po_number": inv.po_number, "status": inv.status},
+                    created_at=t,
+                ))
+
+            # 4. Agent events for reconciled invoices
+            if inv.status == "RECONCILED":
+                t += timedelta(minutes=1)
+                events_to_create.append(AuditEvent(
+                    entity_type="Invoice",
+                    entity_id=inv.id,
+                    action=AuditEventType.AGENT_RUN_STARTED,
+                    event_type=AuditEventType.AGENT_RUN_STARTED,
+                    event_description=f"Agent pipeline started for {inv.invoice_number}",
+                    performed_by_agent="AgentOrchestrator",
+                    metadata_json={"invoice_number": inv.invoice_number},
+                    created_at=t,
+                ))
+
+                t += timedelta(minutes=5)
+                events_to_create.append(AuditEvent(
+                    entity_type="Invoice",
+                    entity_id=inv.id,
+                    action=AuditEventType.AGENT_RUN_COMPLETED,
+                    event_type=AuditEventType.AGENT_RUN_COMPLETED,
+                    event_description=f"Agent pipeline completed for {inv.invoice_number}",
+                    performed_by_agent="AgentOrchestrator",
+                    metadata_json={"invoice_number": inv.invoice_number},
+                    created_at=t,
+                ))
+
+                t += timedelta(seconds=30)
+                events_to_create.append(AuditEvent(
+                    entity_type="Invoice",
+                    entity_id=inv.id,
+                    action=AuditEventType.AGENT_RECOMMENDATION_CREATED,
+                    event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
+                    event_description=f"Agent 'CASE_SUMMARY' created recommendation for {inv.invoice_number}",
+                    performed_by_agent="CASE_SUMMARY",
+                    metadata_json={"recommendation_type": "ESCALATE_TO_MANAGER", "confidence": 0.85},
+                    created_at=t,
+                ))
+
+        AuditEvent.objects.bulk_create(events_to_create, ignore_conflicts=False)
+        self.stdout.write(self.style.SUCCESS(f"  {len(events_to_create)} audit events seeded."))

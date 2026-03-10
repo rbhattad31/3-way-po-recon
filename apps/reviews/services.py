@@ -46,6 +46,19 @@ class ReviewWorkflowService:
         )
         result.requires_review = True
         result.save(update_fields=["requires_review", "updated_at"])
+
+        # Audit: review assigned
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+        AuditService.log_event(
+            entity_type="Invoice",
+            entity_id=result.invoice_id,
+            event_type=AuditEventType.REVIEW_ASSIGNED,
+            description=f"Review assignment #{assignment.pk} created (priority: {priority})",
+            user=assigned_to,
+            metadata={"assignment_id": assignment.pk, "result_id": result.pk},
+        )
+
         logger.info("Created review assignment %s for result %s", assignment.pk, result.pk)
         return assignment
 
@@ -78,7 +91,7 @@ class ReviewWorkflowService:
         new_value: str = "",
         reason: str = "",
     ) -> ManualReviewAction:
-        return ManualReviewAction.objects.create(
+        action = ManualReviewAction.objects.create(
             assignment=assignment,
             performed_by=user,
             action_type=action_type,
@@ -87,6 +100,21 @@ class ReviewWorkflowService:
             new_value=new_value,
             reason=reason,
         )
+
+        # Audit: field correction
+        if action_type == ReviewActionType.CORRECT_FIELD and field_name:
+            from apps.auditlog.services import AuditService
+            from apps.core.enums import AuditEventType
+            AuditService.log_event(
+                entity_type="Invoice",
+                entity_id=assignment.reconciliation_result.invoice_id,
+                event_type=AuditEventType.FIELD_CORRECTED,
+                description=f"Field '{field_name}' corrected: '{old_value}' -> '{new_value}'",
+                user=user,
+                metadata={"field": field_name, "old": old_value, "new": new_value, "assignment_id": assignment.pk},
+            )
+
+        return action
 
     @staticmethod
     def add_comment(
@@ -152,6 +180,24 @@ class ReviewWorkflowService:
         result.save(update_fields=["match_status", "requires_review", "updated_at"])
 
         cls._record_action(assignment, user, decision_status, reason)
+
+        # Audit: review decision
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+        event_type_map = {
+            ReviewStatus.APPROVED: AuditEventType.REVIEW_APPROVED,
+            ReviewStatus.REJECTED: AuditEventType.REVIEW_REJECTED,
+            ReviewStatus.REPROCESSED: AuditEventType.RECONCILIATION_RERUN,
+        }
+        AuditService.log_event(
+            entity_type="Invoice",
+            entity_id=result.invoice_id,
+            event_type=event_type_map.get(decision_status, decision_status),
+            description=f"Review decision: {decision_status} by {user}",
+            user=user,
+            metadata={"assignment_id": assignment.pk, "decision": decision_status, "reason": reason[:300]},
+        )
+
         logger.info("Review %s decided: %s by %s", assignment.pk, decision_status, user)
         return decision
 

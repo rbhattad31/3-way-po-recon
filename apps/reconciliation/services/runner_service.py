@@ -78,6 +78,19 @@ class ReconciliationRunnerService:
             triggered_by=triggered_by,
         )
 
+        # Audit: reconciliation started
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+        for inv in invoices:
+            AuditService.log_event(
+                entity_type="Invoice",
+                entity_id=inv.pk,
+                event_type=AuditEventType.RECONCILIATION_STARTED,
+                description=f"Reconciliation run #{recon_run.pk} started",
+                user=triggered_by,
+                metadata={"run_id": recon_run.pk, "config": self.config.name},
+            )
+
         logger.info(
             "Starting reconciliation run %s for %d invoices (config=%s)",
             recon_run.pk, len(invoices), self.config.name,
@@ -111,6 +124,20 @@ class ReconciliationRunnerService:
         recon_run.error_count = errors
         recon_run.review_count = review
         recon_run.save()
+
+        # Audit: reconciliation completed for each invoice
+        for inv in invoices:
+            AuditService.log_event(
+                entity_type="Invoice",
+                entity_id=inv.pk,
+                event_type=AuditEventType.RECONCILIATION_COMPLETED,
+                description=f"Reconciliation run #{recon_run.pk} completed",
+                user=triggered_by,
+                metadata={
+                    "run_id": recon_run.pk, "matched": matched,
+                    "partial": partial, "unmatched": unmatched, "errors": errors,
+                },
+            )
 
         logger.info(
             "Reconciliation run %s completed: matched=%d partial=%d unmatched=%d errors=%d review=%d",

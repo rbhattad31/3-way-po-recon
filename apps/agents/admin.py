@@ -169,26 +169,33 @@ class AgentMessageAdmin(admin.ModelAdmin):
 class DecisionLogAdmin(admin.ModelAdmin):
     list_display = ("id", "agent_run", "decision_short", "confidence", "created_at")
     list_per_page = 25
-    readonly_fields = ("created_at", "updated_at")
+    readonly_fields = ("created_at", "updated_at", "agent_run", "decision", "rationale", "confidence", "evidence_refs")
 
     @admin.display(description="Decision")
     def decision_short(self, obj):
         return obj.decision[:100]
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(AgentRecommendation)
 class AgentRecommendationAdmin(admin.ModelAdmin):
     list_display = (
         "id", "agent_run", "recommendation_type", "confidence",
-        "accepted_display", "accepted_by", "created_at",
+        "recommended_action", "accepted_display", "accepted_by", "accepted_at", "created_at",
     )
     list_filter = ("recommendation_type", "accepted")
     list_per_page = 25
-    readonly_fields = ("created_at", "updated_at")
+    readonly_fields = ("created_at", "updated_at", "agent_run", "reconciliation_result", "invoice",
+                       "recommendation_type", "confidence", "reasoning", "evidence", "recommended_action")
     fieldsets = (
-        ("Links", {"fields": ("agent_run", "reconciliation_result")}),
-        ("Recommendation", {"fields": ("recommendation_type", "confidence", "reasoning", "evidence")}),
-        ("Acceptance", {"fields": ("accepted", "accepted_by")}),
+        ("Links", {"fields": ("agent_run", "reconciliation_result", "invoice")}),
+        ("Recommendation", {"fields": ("recommendation_type", "confidence", "reasoning", "evidence", "recommended_action")}),
+        ("Acceptance", {"fields": ("accepted", "accepted_by", "accepted_at")}),
         ("Audit", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
     )
 

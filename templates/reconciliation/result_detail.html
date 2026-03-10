@@ -10,6 +10,11 @@
 {% endblock %}
 
 {% block content %}
+<div class="d-flex justify-content-end mb-2">
+  <a href="{% url 'governance:invoice_governance' result.invoice_id %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-shield-lock me-1"></i>Full Governance View
+  </a>
+</div>
 <div class="row g-3 mb-3">
   <!-- Header -->
   <div class="col-md-6">
@@ -98,11 +103,13 @@
 
 <!-- Agent Recommendations -->
 {% if recommendations %}
-<div class="card">
-  <div class="card-header bg-white"><strong>Agent Recommendations</strong></div>
+<div class="card mb-3">
+  <div class="card-header bg-white d-flex align-items-center">
+    <i class="bi bi-lightbulb me-2 text-warning"></i><strong>Agent Recommendations</strong>
+  </div>
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
-      <thead class="table-light"><tr><th>Type</th><th>Agent</th><th>Confidence</th><th>Reasoning</th><th>Accepted</th></tr></thead>
+      <thead class="table-light"><tr><th>Type</th><th>Agent</th><th>Confidence</th><th>Reasoning</th><th>Action</th><th>Accepted</th></tr></thead>
       <tbody>
         {% for rec in recommendations %}
         <tr>
@@ -110,7 +117,8 @@
           <td><small class="text-muted">{{ rec.agent_run.agent_type }}</small></td>
           <td>{% widthratio rec.confidence 1 100 %}%</td>
           <td>{{ rec.reasoning }}</td>
-          <td>{% if rec.accepted == True %}<i class="bi bi-check text-success"></i>{% elif rec.accepted == False %}<i class="bi bi-x text-danger"></i>{% else %}Pending{% endif %}</td>
+          <td>{{ rec.recommended_action|default:"—" }}</td>
+          <td>{% if rec.accepted == True %}<i class="bi bi-check-circle text-success"></i> Accepted{% elif rec.accepted == False %}<i class="bi bi-x-circle text-danger"></i> Rejected{% else %}<span class="badge bg-warning text-dark">Pending</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -118,4 +126,157 @@
   </div>
 </div>
 {% endif %}
+
+<!-- ============================================================ -->
+<!-- GOVERNANCE PANELS                                            -->
+<!-- ============================================================ -->
+
+<!-- 1. Agent Decision Flow -->
+{% if agent_runs %}
+<div class="card mb-3">
+  <div class="card-header bg-white d-flex align-items-center">
+    <i class="bi bi-diagram-3 me-2 text-primary"></i><strong>Agent Decision Flow</strong>
+  </div>
+  <div class="card-body p-0">
+    <div class="accordion" id="agentFlowAccordion">
+      {% for run in agent_runs %}
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="agentHead{{ run.pk }}">
+          <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#agentBody{{ run.pk }}">
+            <span class="me-2">
+              {% if run.status == "COMPLETED" %}<i class="bi bi-check-circle-fill text-success"></i>
+              {% elif run.status == "FAILED" %}<i class="bi bi-x-circle-fill text-danger"></i>
+              {% elif run.status == "RUNNING" %}<i class="bi bi-arrow-repeat text-primary"></i>
+              {% else %}<i class="bi bi-hourglass text-muted"></i>{% endif %}
+            </span>
+            <strong class="me-2">{{ forloop.counter }}. {{ run.agent_definition.name|default:run.agent_type }}</strong>
+            <small class="text-muted me-3">{{ run.status }}</small>
+            {% if run.confidence %}<span class="badge bg-secondary">{% widthratio run.confidence 1 100 %}% conf</span>{% endif %}
+            {% if run.duration_ms %}<small class="text-muted ms-2">{{ run.duration_ms }}ms</small>{% endif %}
+          </button>
+        </h2>
+        <div id="agentBody{{ run.pk }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}" data-bs-parent="#agentFlowAccordion">
+          <div class="accordion-body">
+            <!-- Reasoning summary -->
+            {% if run.summarized_reasoning %}
+            <div class="mb-3">
+              <h6 class="text-muted">Reasoning</h6>
+              <p>{{ run.summarized_reasoning }}</p>
+            </div>
+            {% endif %}
+
+            <!-- Decisions -->
+            {% with decisions=run.decisions.all %}
+            {% if decisions %}
+            <div class="mb-3">
+              <h6 class="text-muted">Decisions</h6>
+              <ul class="list-group list-group-flush">
+                {% for d in decisions %}
+                <li class="list-group-item px-0">
+                  <strong>{{ d.decision }}</strong>
+                  {% if d.confidence %}<span class="badge bg-secondary ms-1">{% widthratio d.confidence 1 100 %}%</span>{% endif %}
+                  {% if d.rationale %}<br><small class="text-muted">{{ d.rationale }}</small>{% endif %}
+                </li>
+                {% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+            {% endwith %}
+
+            <!-- Tool calls (full trace for admins/auditors only) -->
+            {% if show_full_trace %}
+            {% with tool_calls=run.tool_calls.all %}
+            {% if tool_calls %}
+            <div class="mb-3">
+              <h6 class="text-muted">Tool Calls</h6>
+              <table class="table table-sm table-bordered mb-0">
+                <thead class="table-light"><tr><th>Tool</th><th>Status</th><th>Duration</th></tr></thead>
+                <tbody>
+                  {% for tc in tool_calls %}
+                  <tr>
+                    <td><code>{{ tc.tool_name }}</code></td>
+                    <td>{% if tc.status == "SUCCESS" %}<span class="badge bg-success">{{ tc.status }}</span>{% else %}<span class="badge bg-danger">{{ tc.status }}</span>{% endif %}</td>
+                    <td>{{ tc.duration_ms|default:"—" }}ms</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% endif %}
+            {% endwith %}
+
+            <!-- Steps -->
+            {% with steps=run.steps.all %}
+            {% if steps %}
+            <div class="mb-3">
+              <h6 class="text-muted">Steps</h6>
+              <ol class="list-group list-group-numbered list-group-flush">
+                {% for s in steps %}
+                <li class="list-group-item px-0">
+                  {{ s.action }}
+                  {% if not s.success %}<span class="badge bg-danger ms-1">Failed</span>{% endif %}
+                  {% if s.duration_ms %}<small class="text-muted ms-1">({{ s.duration_ms }}ms)</small>{% endif %}
+                </li>
+                {% endfor %}
+              </ol>
+            </div>
+            {% endif %}
+            {% endwith %}
+            {% endif %}{# show_full_trace #}
+
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- 2. Case Timeline -->
+{% if timeline %}
+<div class="card mb-3">
+  <div class="card-header bg-white d-flex align-items-center">
+    <i class="bi bi-clock-history me-2 text-info"></i><strong>Case Timeline</strong>
+  </div>
+  <div class="card-body">
+    <div class="timeline-governance">
+      {% for event in timeline %}
+      <div class="d-flex mb-3">
+        <div class="flex-shrink-0 me-3 text-center" style="width:32px;">
+          {% if event.event_category == "audit" %}
+            <i class="bi bi-file-earmark-text fs-5 text-primary"></i>
+          {% elif event.event_category == "agent_run" %}
+            <i class="bi bi-robot fs-5 text-success"></i>
+          {% elif event.event_category == "tool_call" %}
+            <i class="bi bi-tools fs-5 text-secondary"></i>
+          {% elif event.event_category == "recommendation" %}
+            <i class="bi bi-lightbulb fs-5 text-warning"></i>
+          {% elif event.event_category == "review" or event.event_category == "review_action" %}
+            <i class="bi bi-person-check fs-5 text-info"></i>
+          {% elif event.event_category == "review_decision" %}
+            <i class="bi bi-shield-check fs-5 text-danger"></i>
+          {% else %}
+            <i class="bi bi-circle fs-5 text-muted"></i>
+          {% endif %}
+        </div>
+        <div class="flex-grow-1 border-start ps-3" style="border-color:#dee2e6 !important;">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <strong>{{ event.description }}</strong>
+              <br><small class="text-muted">
+                <span class="badge bg-light text-dark border">{{ event.event_category }}</span>
+                by {{ event.actor }}
+              </small>
+            </div>
+            <small class="text-muted text-nowrap ms-2">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}

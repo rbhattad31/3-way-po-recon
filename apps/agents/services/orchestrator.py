@@ -118,13 +118,28 @@ class AgentOrchestrator:
                 output_payload = agent_run.output_payload or {}
                 rec_type = output_payload.get("recommendation_type")
                 if rec_type and agent_type in _RECOMMENDING_AGENTS:
-                    self.decision_service.log_recommendation(
+                    rec = self.decision_service.log_recommendation(
                         agent_run=agent_run,
                         reconciliation_result=result,
                         recommendation_type=rec_type,
                         confidence=agent_run.confidence or 0.0,
                         reasoning=agent_run.summarized_reasoning or "",
                         evidence=output_payload.get("evidence"),
+                    )
+                    # Backfill invoice FK on recommendation
+                    rec.invoice_id = result.invoice_id
+                    rec.save(update_fields=["invoice_id"])
+
+                    # Audit: agent recommendation created
+                    from apps.auditlog.services import AuditService
+                    from apps.core.enums import AuditEventType
+                    AuditService.log_event(
+                        entity_type="Invoice",
+                        entity_id=result.invoice_id,
+                        event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
+                        description=f"Agent '{agent_type}' recommended {rec_type} (confidence: {agent_run.confidence or 0:.0%})",
+                        agent=agent_type,
+                        metadata={"recommendation_id": rec.pk, "recommendation_type": rec_type, "confidence": agent_run.confidence},
                     )
 
             except Exception as exc:
