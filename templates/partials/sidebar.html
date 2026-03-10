@@ -39,6 +39,11 @@
           <i class="bi bi-robot me-2"></i>Agent Monitor
         </a>
       </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'agent_reference' %}active fw-bold{% endif %}" href="{% url 'agents:agent_reference' %}">
+          <i class="bi bi-book me-2"></i>Agent Reference
+        </a>
+      </li>
     </ul>
   </div>
 </nav>

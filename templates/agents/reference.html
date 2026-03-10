@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}Agent &amp; Tool Reference – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active">Agent &amp; Tool Reference</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<!-- Intro -->
+<div class="card mb-4">
+  <div class="card-body">
+    <h4 class="card-title mb-2"><i class="bi bi-robot"></i> How the AI Agent System Works</h4>
+    <p class="text-muted mb-2">
+      After reconciliation, invoices that don't fully match their PO/GRN are automatically analysed by
+      <strong>LLM-powered agents</strong>. Each agent uses a <strong>ReAct loop</strong>
+      (Reason → Act → Observe) with up to <strong>{{ max_tool_rounds }} tool-calling rounds</strong>
+      to investigate exceptions, look up data, and produce a recommendation.
+    </p>
+    <div class="row text-center g-2">
+      <div class="col-md-2">
+        <div class="border rounded p-2">
+          <i class="bi bi-file-earmark-text fs-3 text-primary"></i>
+          <div class="small mt-1">Reconciliation<br>flags exceptions</div>
+        </div>
+      </div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center"><i class="bi bi-arrow-right fs-4 text-muted"></i></div>
+      <div class="col-md-2">
+        <div class="border rounded p-2">
+          <i class="bi bi-gear fs-3 text-info"></i>
+          <div class="small mt-1">Policy Engine<br>picks agents</div>
+        </div>
+      </div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center"><i class="bi bi-arrow-right fs-4 text-muted"></i></div>
+      <div class="col-md-2">
+        <div class="border rounded p-2">
+          <i class="bi bi-robot fs-3 text-success"></i>
+          <div class="small mt-1">Agents reason<br>&amp; use tools</div>
+        </div>
+      </div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center"><i class="bi bi-arrow-right fs-4 text-muted"></i></div>
+      <div class="col-md-2">
+        <div class="border rounded p-2">
+          <i class="bi bi-lightbulb fs-3 text-warning"></i>
+          <div class="small mt-1">Recommendation<br>generated</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Navigation tabs -->
+<ul class="nav nav-tabs mb-4" role="tablist">
+  <li class="nav-item">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-agents" type="button">
+      <i class="bi bi-robot me-1"></i> Agents ({{ agents_info|length }})
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tools" type="button">
+      <i class="bi bi-tools me-1"></i> Tools ({{ tools_info|length }})
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-recommendations" type="button">
+      <i class="bi bi-lightbulb me-1"></i> Recommendation Types
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-prompts" type="button">
+      <i class="bi bi-chat-left-text me-1"></i> Prompts ({{ prompts|length }})
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- AGENTS TAB -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade show active" id="tab-agents" role="tabpanel">
+    <div class="accordion" id="agentAccordion">
+      {% for agent in agents_info %}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
+                  type="button" data-bs-toggle="collapse"
+                  data-bs-target="#agent-{{ forloop.counter }}">
+            <span class="me-2">
+              {% if agent.type == "EXCEPTION_ANALYSIS" %}<i class="bi bi-exclamation-triangle text-warning"></i>
+              {% elif agent.type == "INVOICE_UNDERSTANDING" %}<i class="bi bi-file-earmark-text text-primary"></i>
+              {% elif agent.type == "PO_RETRIEVAL" %}<i class="bi bi-search text-info"></i>
+              {% elif agent.type == "GRN_RETRIEVAL" %}<i class="bi bi-box-seam text-success"></i>
+              {% elif agent.type == "REVIEW_ROUTING" %}<i class="bi bi-signpost-split text-danger"></i>
+              {% elif agent.type == "CASE_SUMMARY" %}<i class="bi bi-journal-text text-secondary"></i>
+              {% elif agent.type == "RECONCILIATION_ASSIST" %}<i class="bi bi-arrow-left-right text-primary"></i>
+              {% else %}<i class="bi bi-robot"></i>
+              {% endif %}
+            </span>
+            <strong>{{ agent.label }}</strong>
+            <span class="text-muted ms-3 small">{{ agent.type }}</span>
+          </button>
+        </h2>
+        <div id="agent-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
+             data-bs-parent="#agentAccordion">
+          <div class="accordion-body">
+            <!-- Description -->
+            <p class="mb-3"><em>{{ agent.description }}</em></p>
+
+            <!-- Tools Used -->
+            <h6><i class="bi bi-tools me-1"></i> Tools Used</h6>
+            <div class="mb-3">
+              {% for tool_name in agent.allowed_tools %}
+              <span class="badge bg-info text-dark me-1 mb-1">
+                <i class="bi bi-wrench me-1"></i>{{ tool_name }}
+              </span>
+              {% endfor %}
+            </div>
+
+            <!-- System Prompt -->
+            <h6><i class="bi bi-chat-left-text me-1"></i> System Prompt</h6>
+            <div class="bg-light border rounded p-3 mb-2" style="max-height:300px;overflow-y:auto">
+              <pre class="mb-0" style="white-space:pre-wrap;font-size:.85rem">{{ agent.system_prompt }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- TOOLS TAB -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade" id="tab-tools" role="tabpanel">
+    <div class="row g-3">
+      {% for tool in tools_info %}
+      <div class="col-lg-6">
+        <div class="card h-100">
+          <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <strong><i class="bi bi-wrench me-1"></i> {{ tool.name }}</strong>
+          </div>
+          <div class="card-body">
+            <p class="text-muted mb-3">{{ tool.description }}</p>
+            <h6 class="mb-2">Parameters</h6>
+            <table class="table table-sm table-bordered mb-0">
+              <thead class="table-light">
+                <tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                {% for param_name, param_info in tool.parameters.items %}
+                <tr>
+                  <td><code>{{ param_name }}</code></td>
+                  <td><span class="badge bg-secondary">{{ param_info.type }}</span></td>
+                  <td>
+                    {% if param_name in tool.required %}
+                      <i class="bi bi-check-circle-fill text-success"></i>
+                    {% else %}
+                      <i class="bi bi-dash text-muted"></i>
+                    {% endif %}
+                  </td>
+                  <td class="small">{{ param_info.description|default:"—" }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- RECOMMENDATION TYPES TAB -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade" id="tab-recommendations" role="tabpanel">
+    <div class="card">
+      <div class="card-header bg-white"><strong>Possible Recommendation Types</strong></div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr><th>Code</th><th>Label</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            {% for rec in recommendation_types %}
+            <tr>
+              <td><code>{{ rec.value }}</code></td>
+              <td><strong>{{ rec.label }}</strong></td>
+              <td class="text-muted small">
+                {% if rec.value == "AUTO_CLOSE" %}
+                  Differences are within tolerance or clearly explainable — no human action needed.
+                {% elif rec.value == "SEND_TO_AP_REVIEW" %}
+                  Standard discrepancy that an Accounts Payable processor should review.
+                {% elif rec.value == "SEND_TO_PROCUREMENT" %}
+                  Price or quantity issue that requires procurement team attention.
+                {% elif rec.value == "SEND_TO_VENDOR_CLARIFICATION" %}
+                  Vendor mismatch or data issue — contact the vendor for clarification.
+                {% elif rec.value == "REPROCESS_EXTRACTION" %}
+                  Extraction quality is low — re-extract the invoice with improved processing.
+                {% elif rec.value == "ESCALATE_TO_MANAGER" %}
+                  Complex or high-value case that needs management review and decision.
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header bg-white"><strong>How Agents Choose a Recommendation</strong></div>
+      <div class="card-body">
+        <ul class="mb-0">
+          <li>Each agent receives the reconciliation exceptions and uses tools to gather context.</li>
+          <li>The agent reasons through the exceptions and picks the most appropriate recommendation type.</li>
+          <li>A <strong>confidence score (0–100%)</strong> indicates how certain the agent is about its recommendation.</li>
+          <li>If confidence is below the threshold, the case is <strong>escalated</strong> for human review.</li>
+          <li>Multiple agents may run in sequence (e.g., Exception Analysis → Review Routing → Case Summary).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- PROMPTS TAB -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade" id="tab-prompts" role="tabpanel">
+    <!-- Prompt overview -->
+    <div class="alert alert-info mb-4">
+      <i class="bi bi-info-circle me-1"></i>
+      These are the LLM prompts (system messages) used across the application.
+      Each prompt instructs Azure OpenAI on how to process data and produce structured output.
+    </div>
+
+    <!-- Category summary cards -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-4">
+        <div class="card card-metric info">
+          <div class="card-body text-center py-3">
+            <div class="fs-3 fw-bold text-primary">{{ prompts|length }}</div>
+            <small class="text-muted">Total Prompts</small>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card card-metric info">
+          <div class="card-body text-center py-3">
+            <div class="fs-3 fw-bold" style="color:#0d6efd">1</div>
+            <small class="text-muted">Extraction Prompts</small>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card card-metric matched">
+          <div class="card-body text-center py-3">
+            <div class="fs-3 fw-bold text-success">{{ agents_info|length }}</div>
+            <small class="text-muted">Agent Prompts</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prompt cards -->
+    <div class="accordion" id="promptAccordion">
+      {% for prompt in prompts %}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
+                  type="button" data-bs-toggle="collapse"
+                  data-bs-target="#prompt-{{ forloop.counter }}">
+            <span class="badge bg-{{ prompt.color }} me-2"><i class="bi {{ prompt.icon }}"></i></span>
+            <strong>{{ prompt.name }}</strong>
+            <span class="badge bg-light text-dark ms-2">{{ prompt.category }}</span>
+          </button>
+        </h2>
+        <div id="prompt-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
+             data-bs-parent="#promptAccordion">
+          <div class="accordion-body">
+            <!-- Meta info -->
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <small class="text-muted d-block"><strong>Description:</strong></small>
+                <p class="mb-0">{{ prompt.description }}</p>
+              </div>
+              <div class="col-md-3">
+                <small class="text-muted d-block"><strong>Model:</strong></small>
+                <span class="badge bg-dark">{{ prompt.model }}</span>
+              </div>
+              <div class="col-md-3">
+                <small class="text-muted d-block"><strong>Source File:</strong></small>
+                <code class="small">{{ prompt.used_in }}</code>
+              </div>
+            </div>
+
+            <!-- Prompt text -->
+            <h6><i class="bi bi-chat-left-text me-1"></i> Prompt Text</h6>
+            <div class="bg-light border rounded p-3" style="max-height:400px;overflow-y:auto">
+              <pre class="mb-0" style="white-space:pre-wrap;font-size:.85rem">{{ prompt.prompt_text }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}
