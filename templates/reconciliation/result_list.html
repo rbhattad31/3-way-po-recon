@@ -83,7 +83,7 @@
           <td>{{ r.purchase_order.po_number|default:"—" }}</td>
           <td>{% if r.invoice.vendor %}{{ r.invoice.vendor.name }}{% else %}{{ r.invoice.raw_vendor_name }}{% endif %}</td>
           <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
-          <td>{% if r.deterministic_confidence %}{{ r.deterministic_confidence|floatformat:2 }}{% else %}—{% endif %}</td>
+          <td>{% if r.deterministic_confidence %}{% widthratio r.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td>
           <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
           <td>{{ r.exceptions.count }}</td>
           <td class="text-muted">{{ r.created_at|date:"d M Y" }}</td>

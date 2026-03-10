@@ -47,7 +47,14 @@ def result_detail(request, pk):
         .prefetch_related("exceptions", "line_results"),
         pk=pk,
     )
-    recommendations = AgentRecommendation.objects.filter(reconciliation_result=result).order_by("-confidence")
+    # Deduplicate recommendations: keep the highest-confidence entry per type
+    all_recs = AgentRecommendation.objects.filter(reconciliation_result=result).order_by("-confidence")
+    seen_types = set()
+    recommendations = []
+    for rec in all_recs:
+        if rec.recommendation_type not in seen_types:
+            seen_types.add(rec.recommendation_type)
+            recommendations.append(rec)
     return render(request, "reconciliation/result_detail.html", {
         "result": result,
         "exceptions": result.exceptions.all(),
