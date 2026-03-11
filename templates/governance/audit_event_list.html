@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Audit Log – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item active">Audit Log</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Audit Log</h4>
+  <small class="text-muted">{{ page_obj.paginator.count }} event{{ page_obj.paginator.count|pluralize }}</small>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label form-label-sm mb-0">Entity Type</label>
+        <select name="entity_type" class="form-select form-select-sm">
+          <option value="">All</option>
+          {% for et in entity_types %}
+          <option value="{{ et }}" {% if et == current_entity_type %}selected{% endif %}>{{ et }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label form-label-sm mb-0">Event Type</label>
+        <select name="event_type" class="form-select form-select-sm">
+          <option value="">All</option>
+          {% for ev in event_types %}
+          <option value="{{ ev }}" {% if ev == current_event_type %}selected{% endif %}>{{ ev }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label form-label-sm mb-0">Entity ID</label>
+        <input type="number" name="entity_id" class="form-control form-control-sm" value="{{ current_entity_id }}" placeholder="e.g. 42">
+      </div>
+      <div class="col-md-2">
+        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
+        <a href="{% url 'governance:audit_event_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Event Table -->
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th style="width:50px">ID</th>
+          <th>Event Type</th>
+          <th>Entity</th>
+          <th>Description</th>
+          <th>Actor</th>
+          <th style="width:160px">Timestamp</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ev in events %}
+        <tr>
+          <td class="text-muted">{{ ev.id }}</td>
+          <td>
+            {% if ev.event_type %}
+            <span class="badge
+              {% if 'COMPLETED' in ev.event_type or 'APPROVED' in ev.event_type %}bg-success
+              {% elif 'FAILED' in ev.event_type or 'REJECTED' in ev.event_type %}bg-danger
+              {% elif 'STARTED' in ev.event_type or 'UPLOADED' in ev.event_type %}bg-primary
+              {% elif 'ASSIGNED' in ev.event_type %}bg-info
+              {% elif 'RECOMMENDATION' in ev.event_type %}bg-warning text-dark
+              {% elif 'CORRECTED' in ev.event_type %}bg-secondary
+              {% else %}bg-dark{% endif %}">{{ ev.event_type }}</span>
+            {% else %}
+              <span class="badge bg-secondary">{{ ev.action }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {{ ev.entity_type }}
+            {% if ev.entity_type == "Invoice" %}
+              <a href="{% url 'governance:invoice_governance' ev.entity_id %}" class="ms-1">#{{ ev.entity_id }}</a>
+            {% else %}
+              <span class="text-muted">#{{ ev.entity_id }}</span>
+            {% endif %}
+          </td>
+          <td>{{ ev.event_description|default:ev.action|truncatewords:20 }}</td>
+          <td>
+            {% if ev.performed_by %}
+              <small>{{ ev.performed_by.email }}</small>
+            {% elif ev.performed_by_agent %}
+              <small class="text-muted"><i class="bi bi-robot me-1"></i>{{ ev.performed_by_agent }}</small>
+            {% else %}
+              <small class="text-muted">system</small>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ ev.created_at|date:"M d, Y H:i:s" }}</small></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted py-4">No audit events found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Pagination -->
+{% if page_obj.has_other_pages %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm justify-content-center">
+    {% if page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if current_entity_type %}&entity_type={{ current_entity_type }}{% endif %}{% if current_event_type %}&event_type={{ current_event_type }}{% endif %}{% if current_entity_id %}&entity_id={{ current_entity_id }}{% endif %}">&laquo;</a></li>
+    {% endif %}
+    {% for num in page_obj.paginator.page_range %}
+      {% if page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?page={{ num }}{% if current_entity_type %}&entity_type={{ current_entity_type }}{% endif %}{% if current_event_type %}&event_type={{ current_event_type }}{% endif %}{% if current_entity_id %}&entity_id={{ current_entity_id }}{% endif %}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if current_entity_type %}&entity_type={{ current_entity_type }}{% endif %}{% if current_event_type %}&event_type={{ current_event_type }}{% endif %}{% if current_entity_id %}&entity_id={{ current_entity_id }}{% endif %}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}

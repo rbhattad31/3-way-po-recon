@@ -121,3 +121,21 @@ class ReviewActionType(models.TextChoices):
     ESCALATE = "ESCALATE", "Escalate"
     CORRECT_FIELD = "CORRECT_FIELD", "Correct Field"
     ADD_COMMENT = "ADD_COMMENT", "Add Comment"
+
+
+class AuditEventType(models.TextChoices):
+    INVOICE_UPLOADED = "INVOICE_UPLOADED", "Invoice Uploaded"
+    EXTRACTION_COMPLETED = "EXTRACTION_COMPLETED", "Extraction Completed"
+    EXTRACTION_FAILED = "EXTRACTION_FAILED", "Extraction Failed"
+    VALIDATION_FAILED = "VALIDATION_FAILED", "Validation Failed"
+    RECONCILIATION_STARTED = "RECONCILIATION_STARTED", "Reconciliation Started"
+    RECONCILIATION_COMPLETED = "RECONCILIATION_COMPLETED", "Reconciliation Completed"
+    AGENT_RECOMMENDATION_CREATED = "AGENT_RECOMMENDATION_CREATED", "Agent Recommendation Created"
+    REVIEW_ASSIGNED = "REVIEW_ASSIGNED", "Review Assigned"
+    REVIEW_APPROVED = "REVIEW_APPROVED", "Review Approved"
+    REVIEW_REJECTED = "REVIEW_REJECTED", "Review Rejected"
+    FIELD_CORRECTED = "FIELD_CORRECTED", "Field Corrected"
+    RECONCILIATION_RERUN = "RECONCILIATION_RERUN", "Reconciliation Rerun"
+    AGENT_RUN_STARTED = "AGENT_RUN_STARTED", "Agent Run Started"
+    AGENT_RUN_COMPLETED = "AGENT_RUN_COMPLETED", "Agent Run Completed"
+    AGENT_RUN_FAILED = "AGENT_RUN_FAILED", "Agent Run Failed"
