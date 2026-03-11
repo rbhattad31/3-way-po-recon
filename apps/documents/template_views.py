@@ -131,11 +131,62 @@ def invoice_detail(request, pk):
 @login_required
 def po_list(request):
     qs = PurchaseOrder.objects.select_related("vendor").order_by("-po_date")
+
+    status_filter = request.GET.get("status")
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+
+    vendor_filter = request.GET.get("vendor")
+    if vendor_filter:
+        qs = qs.filter(vendor_id=vendor_filter)
+
+    q = request.GET.get("q")
+    if q:
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(po_number__icontains=q)
+            | Q(vendor__name__icontains=q)
+            | Q(buyer_name__icontains=q)
+            | Q(department__icontains=q)
+        )
+
+    # Distinct status values for the filter dropdown
+    status_choices = (
+        PurchaseOrder.objects.order_by("status")
+        .values_list("status", flat=True)
+        .distinct()
+    )
+    # Vendors that have POs
+    from apps.vendors.models import Vendor
+    vendor_choices = (
+        Vendor.objects.filter(purchase_orders__isnull=False)
+        .distinct()
+        .order_by("name")
+        .values_list("pk", "name")
+    )
+
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     return render(request, "documents/po_list.html", {
         "purchase_orders": page_obj,
         "page_obj": page_obj,
+        "status_choices": status_choices,
+        "vendor_choices": vendor_choices,
+    })
+
+
+@login_required
+def po_detail(request, pk):
+    po = get_object_or_404(
+        PurchaseOrder.objects.select_related("vendor").prefetch_related(
+            "line_items", "grns__line_items",
+        ),
+        pk=pk,
+    )
+    recon_results = po.recon_results.select_related("invoice").prefetch_related("exceptions").order_by("-created_at")
+    return render(request, "documents/po_detail.html", {
+        "po": po,
+        "recon_results": recon_results,
     })
 
 

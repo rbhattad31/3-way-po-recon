@@ -262,17 +262,26 @@ def ensure_vendor_alias(vendor: Vendor, alias_name: str, source: str = "seed") -
 # ===================================================================
 
 
-def create_scn_poag_001_exact_normalized_recovery() -> Invoice:
+def create_scn_poag_001_reordered_po_recovery() -> Invoice:
     """
-    SCN-POAG-001 — EXACT NORMALIZED PO RECOVERY
-    ─────────────────────────────────────────────
-    Invoice contains PO number with formatting issues:
-      raw_po_number = "PO-KSA 1001" (space instead of dash)
+    SCN-POAG-001 — REORDERED PO SEGMENT RECOVERY
+    ──────────────────────────────────────────────
+    Invoice contains PO number with reordered segments:
+      raw_po_number = "PO-1001-KSA" (segments reversed vs canonical "PO-KSA-1001")
     The valid PO "PO-KSA-1001" exists (from master seed, Arabian Food Supplies).
+
+    Deterministic lookup fails:
+    - Exact match: "PO-1001-KSA" ≠ "PO-KSA-1001"
+    - Normalized match: "1001KSA" ≠ "KSA1001" (segment reorder survives simple normalization)
+
+    Agent recovery via intelligent normalization:
+    The LLM recognises "PO-1001-KSA" contains the same segments as "PO-KSA-1001"
+    (prefix PO, region KSA, sequence 1001) and tries reordered variants until a
+    match is found.
 
     Expected PO Retrieval Agent outcome:
     - Should find PO? Yes
-    - Primary strategy: normalized PO lookup
+    - Primary strategy: intelligent PO normalization (segment reordering)
     - Expected recommendation_type: null (PO found successfully)
     - Expected confidence: high (0.90+)
     - Expected evidence keys: po_number, normalized_match, vendor_confirmed
@@ -304,14 +313,14 @@ def create_scn_poag_001_exact_normalized_recovery() -> Invoice:
         invoice_number="INV-POAG-2026-001",
         vendor=vendor,
         raw_vendor_name="Arabian Food Supplies Co.",
-        po_number="PO-KSA 1001",          # space instead of dash — malformed
-        raw_po_number="PO-KSA 1001",
+        po_number="PO-1001-KSA",           # segments reordered — malformed
+        raw_po_number="PO-1001-KSA",
         invoice_date=INVOICE_DATE,
         subtotal=subtotal,
         tax_amount=tax,
         total_amount=subtotal + tax,
         extraction_confidence=0.91,
-        notes="Malformed PO ref 'PO-KSA 1001'; valid PO is PO-KSA-1001",
+        notes="Reordered PO ref 'PO-1001-KSA'; valid PO is PO-KSA-1001",
     )
     create_invoice_lines(inv, lines_data, confidence=0.91)
     return inv
@@ -924,7 +933,7 @@ def create_scn_poag_010_high_confidence_exact_recovery() -> Invoice:
 # ===================================================================
 
 ALL_SCENARIO_FNS = [
-    ("SCN-POAG-001", "Exact normalized PO recovery", create_scn_poag_001_exact_normalized_recovery),
+    ("SCN-POAG-001", "Reordered PO segment recovery", create_scn_poag_001_reordered_po_recovery),
     ("SCN-POAG-002", "Vendor-based PO discovery", create_scn_poag_002_vendor_based_discovery),
     ("SCN-POAG-003", "Multiple open POs — ambiguity", create_scn_poag_003_multiple_open_pos),
     ("SCN-POAG-004", "Amount-based PO fallback", create_scn_poag_004_amount_based_fallback),
@@ -1012,7 +1021,7 @@ class Command(BaseCommand):
             "\n  Expected Agent Strategies per Scenario:"
         ))
         strategy_map = [
-            ("SCN-POAG-001", "normalized PO lookup", "null", "high"),
+            ("SCN-POAG-001", "intelligent PO normalization (segment reorder)", "null", "high"),
             ("SCN-POAG-002", "vendor search + amount match", "null", "medium-high"),
             ("SCN-POAG-003", "vendor search (3 candidates)", "SEND_TO_AP_REVIEW", "low-medium"),
             ("SCN-POAG-004", "vendor alias + amount match", "null", "medium"),

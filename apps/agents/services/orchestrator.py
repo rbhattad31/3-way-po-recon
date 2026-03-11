@@ -25,6 +25,10 @@ from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchS
 # Only these agents should emit formal recommendations to avoid duplicates.
 # Other agents contribute analysis/reasoning via summarized_reasoning on the run.
 _RECOMMENDING_AGENTS = {AgentType.REVIEW_ROUTING, AgentType.CASE_SUMMARY}
+
+# Agents whose findings can be applied back to re-run deterministic matching.
+_FEEDBACK_AGENTS = {AgentType.PO_RETRIEVAL}
+
 from apps.reconciliation.models import ReconciliationResult
 
 logger = logging.getLogger(__name__)
@@ -165,6 +169,26 @@ class AgentOrchestrator:
                 orch_result.error = str(exc)[:1000]
                 # Continue with remaining agents
 
+            # --- Agent feedback loop: apply findings back to reconciliation ---
+            if agent_type in _FEEDBACK_AGENTS and last_output:
+                new_status = self._apply_agent_findings(
+                    agent_type, last_output, result, ctx,
+                )
+                if new_status is not None:
+                    # Refresh context for subsequent agents
+                    ctx.po_number = (
+                        result.purchase_order.po_number
+                        if result.purchase_order else ctx.po_number
+                    )
+                    ctx.exceptions = list(
+                        result.exceptions.values(
+                            "id", "exception_type", "severity",
+                            "message", "details", "resolved",
+                        )
+                    )
+                    ctx.extra["grn_available"] = result.grn_available
+                    ctx.extra["grn_fully_received"] = result.grn_fully_received
+
         # 4. Determine final recommendation (from last agent with a recommendation)
         self._resolve_final_recommendation(orch_result, result)
 
@@ -219,3 +243,72 @@ class AgentOrchestrator:
                     suggested_assignee_role="FINANCE_MANAGER",
                 )
             logger.info("Escalated result %s", result.pk)
+
+    # ------------------------------------------------------------------
+    # Agent findings → re-reconciliation feedback loop
+    # ------------------------------------------------------------------
+    def _apply_agent_findings(
+        self,
+        agent_type: str,
+        agent_run: AgentRun,
+        result: ReconciliationResult,
+        ctx: AgentContext,
+    ) -> Optional[MatchStatus]:
+        """Check if the agent found actionable data (e.g. a PO) and re-reconcile.
+
+        Returns the new match status if re-reconciliation happened, else None.
+        """
+        output_payload = agent_run.output_payload or {}
+        evidence = output_payload.get("evidence", {})
+
+        if agent_type == AgentType.PO_RETRIEVAL:
+            return self._apply_po_finding(agent_run, result, evidence)
+
+        return None
+
+    def _apply_po_finding(
+        self,
+        agent_run: AgentRun,
+        result: ReconciliationResult,
+        evidence: dict,
+    ) -> Optional[MatchStatus]:
+        """If the PO Retrieval Agent found a PO, link it and re-reconcile."""
+        found_po_number = (
+            evidence.get("found_po")
+            or evidence.get("po_number")
+            or evidence.get("matched_po")
+        )
+        if not found_po_number:
+            logger.info(
+                "PO Retrieval Agent for result %s did not find a PO (evidence=%s)",
+                result.pk, evidence,
+            )
+            return None
+
+        from apps.documents.models import PurchaseOrder
+        po = PurchaseOrder.objects.filter(po_number=found_po_number).first()
+        if not po:
+            # Try normalized lookup
+            from apps.core.utils import normalize_po_number
+            norm = normalize_po_number(found_po_number)
+            po = PurchaseOrder.objects.filter(normalized_po_number=norm).first()
+
+        if not po:
+            logger.warning(
+                "PO Retrieval Agent reported PO '%s' but it doesn't exist in DB",
+                found_po_number,
+            )
+            return None
+
+        from apps.reconciliation.services.agent_feedback_service import AgentFeedbackService
+        feedback = AgentFeedbackService()
+        new_status = feedback.apply_found_po(
+            result=result,
+            po=po,
+            agent_run_id=agent_run.pk,
+        )
+        logger.info(
+            "Agent feedback: PO %s applied to result %s → new status %s",
+            po.po_number, result.pk, new_status,
+        )
+        return new_status

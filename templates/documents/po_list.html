@@ -9,24 +9,61 @@
 {% endblock %}
 
 {% block content %}
-<h5 class="mb-3">Purchase Orders</h5>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">Purchase Orders</h5>
+  <form class="d-inline-flex gap-2" method="get">
+    <select name="status" class="form-select form-select-sm" style="min-width:120px" onchange="this.form.submit()">
+      <option value="">All Statuses</option>
+      {% for s in status_choices %}
+        <option value="{{ s }}" {% if request.GET.status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="vendor" class="form-select form-select-sm" style="min-width:180px" onchange="this.form.submit()">
+      <option value="">All Vendors</option>
+      {% for vid, vname in vendor_choices %}
+        <option value="{{ vid }}" {% if request.GET.vendor == vid|stringformat:"d" %}selected{% endif %}>{{ vname|truncatechars:30 }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="q" class="form-control form-control-sm" style="min-width:200px"
+           placeholder="Search PO #, vendor, buyer…" value="{{ request.GET.q|default:'' }}">
+    {% if request.GET.status or request.GET.vendor or request.GET.q %}
+      <a href="{% url 'documents:po_list' %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">
+        <i class="bi bi-x-circle"></i>
+      </a>
+    {% endif %}
+  </form>
+</div>
+
 <div class="card">
   <div class="card-body p-0">
     <table class="table table-hover table-sm mb-0 table-fixed-header">
       <thead class="table-light">
-        <tr><th>PO #</th><th>Vendor</th><th>Date</th><th>Amount</th><th>Status</th></tr>
+        <tr>
+          <th>PO #</th><th>Vendor</th><th>Date</th>
+          <th>Amount</th><th>Status</th><th>Buyer</th><th>Dept</th>
+        </tr>
       </thead>
       <tbody>
         {% for po in purchase_orders %}
         <tr>
-          <td>{{ po.po_number }}</td>
+          <td><a href="{% url 'documents:po_detail' po.pk %}">{{ po.po_number }}</a></td>
           <td>{{ po.vendor.name|default:"—" }}</td>
           <td>{{ po.po_date|date:"d M Y"|default:"—" }}</td>
           <td>{{ po.currency }} {{ po.total_amount|default:"—" }}</td>
-          <td><span class="badge bg-secondary">{{ po.status }}</span></td>
+          <td>
+            {% if po.status == "OPEN" %}
+              <span class="badge bg-success">{{ po.status }}</span>
+            {% elif po.status == "CLOSED" %}
+              <span class="badge bg-secondary">{{ po.status }}</span>
+            {% else %}
+              <span class="badge bg-info text-dark">{{ po.status }}</span>
+            {% endif %}
+          </td>
+          <td class="text-muted">{{ po.buyer_name|default:"—"|truncatechars:20 }}</td>
+          <td class="text-muted">{{ po.department|default:"—"|truncatechars:20 }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="5" class="text-center text-muted py-3">No purchase orders found</td></tr>
+        <tr><td colspan="7" class="text-center text-muted py-3">No purchase orders found</td></tr>
         {% endfor %}
       </tbody>
     </table>
