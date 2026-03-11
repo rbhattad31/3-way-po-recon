@@ -6,7 +6,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 
 from apps.accounts.models import User
-from apps.core.permissions import IsReviewer
+from apps.core.permissions import IsAdminOrReadOnly
 from apps.reviews.models import ReviewAssignment
 from apps.reviews.serializers import (
     ReviewAssignmentDetailSerializer,
@@ -28,7 +28,7 @@ class ReviewAssignmentViewSet(viewsets.ModelViewSet):
         .prefetch_related("comments", "actions")
         .order_by("priority", "-created_at")
     )
-    permission_classes = [IsReviewer]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ["status", "assigned_to", "priority"]
     ordering_fields = ["priority", "created_at", "due_date"]

@@ -33,6 +33,7 @@ Upload PDF → OCR (Azure DI) → LLM Extract (Azure OpenAI GPT-4o) → Normaliz
 - **16 Bootstrap 5 templates** — invoices, POs, GRNs, reconciliation results, reviews, agent monitor
 - **Full DRF API** — REST endpoints under `/api/v1/` with filtering, search, and pagination
 - **Seed data** — `python manage.py seed_data` — 5 users, 5 vendors, 13 invoices (covering match/mismatch/edge cases), POs, GRNs, 7 agent definitions, 6 tool definitions
+- **Saudi McD test data** — `python manage.py seed_saudi_mcd_data` + `seed_invoice_test_data` — 10 vendors, 25 POs, 30 GRNs, 12 invoice test scenarios (SCN-KSA-001..012) for Saudi Arabia McDonald's distributor reconciliation testing
 
 ## Quick Start
 
@@ -53,6 +54,10 @@ python manage.py createsuperuser
 
 # Seed sample data (optional)
 python manage.py seed_data
+
+# Or: Seed Saudi McD master data + 12 invoice test scenarios
+python manage.py seed_saudi_mcd_data
+python manage.py seed_invoice_test_data
 
 # Option A: Windows dev mode (no Redis needed — runs synchronously)
 # CELERY_TASK_ALWAYS_EAGER=True is the default in settings.py
@@ -84,6 +89,7 @@ See [PROJECT.md](PROJECT.md) for full architecture details, model reference, ser
 | Reconciliation UI (start recon with checkbox selection) | ✅ Complete |
 | Review workflow + auto-assignment + bulk assignment UI | ✅ Complete |
 | DRF APIs, templates, admin, seed data (13 invoices) | ✅ Complete |
+| Saudi McD seed data (25 POs, 30 GRNs, 12 invoice scenarios) | ✅ Complete |
 | Tests (pytest + factory-boy) | ⬜ Not started |
 | Extraction refinement (edge-case layouts, multi-page) | ⬜ Not started |
 | ERP integrations, report exports | ⬜ Stub |
