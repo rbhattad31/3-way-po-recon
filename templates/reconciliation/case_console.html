@@ -89,7 +89,7 @@
             <button class="btn btn-sm btn-danger cc-action-btn" data-action="reject" title="Reject"><i class="bi bi-x-lg me-1"></i>Reject</button>
             <button class="btn btn-sm btn-warning cc-action-btn" data-action="escalate" title="Escalate"><i class="bi bi-arrow-up-circle me-1"></i>Escalate</button>
             <a href="{% url 'reconciliation:start_reconciliation' %}" class="btn btn-sm btn-outline-primary" title="Re-run"><i class="bi bi-arrow-clockwise me-1"></i>Re-run</a>
-            <button class="btn btn-sm btn-outline-secondary" title="Download Report"><i class="bi bi-download me-1"></i>Report</button>
+            <a href="{% url 'reconciliation:case_export_csv' result.pk %}" class="btn btn-sm btn-outline-secondary" title="Download Report"><i class="bi bi-download me-1"></i>Report</a>
           </div>
         </div>
       </div>
@@ -340,10 +340,12 @@
 </div>
 
 {# ================================================================== #}
-{#  SECTION 5 — EXCEPTIONS PANEL                                     #}
+{#  SECTION 5+6 — EXCEPTIONS & AGENT DECISION FLOW (2-column)        #}
 {# ================================================================== #}
-<div id="sec-exceptions" class="mb-3">
-  <div class="card">
+<div class="row g-3 mb-3">
+<div class="col-lg-6">
+<div id="sec-exceptions" class="h-100">
+  <div class="card h-100">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
       <div>
         <i class="bi bi-exclamation-triangle me-2 text-warning"></i><strong>Exceptions</strong>
@@ -418,12 +420,11 @@
     </div>
   </div>
 </div>
+</div>{# /col-lg-6 exceptions #}
 
-{# ================================================================== #}
-{#  SECTION 6 — AGENT DECISION FLOW                                  #}
-{# ================================================================== #}
-<div id="sec-agents" class="mb-3">
-  <div class="card">
+<div class="col-lg-6">
+<div id="sec-agents" class="h-100">
+  <div class="card h-100">
     <div class="card-header bg-white">
       <i class="bi bi-diagram-3 me-2 text-primary"></i><strong>Agent Decision Flow</strong>
       <small class="text-muted ms-2">{{ agent_runs|length }} agent{{ agent_runs|length|pluralize }} executed</small>
@@ -542,6 +543,8 @@
     </div>
   </div>
 </div>
+</div>{# /col-lg-6 agents #}
+</div>{# /row #}
 
 {# ================================================================== #}
 {#  SECTION 7 — AGENT RECOMMENDATION                                 #}

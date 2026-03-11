@@ -1,14 +1,17 @@
 """Reconciliation template views (server-side rendered)."""
+import csv
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.agents.models import AgentRecommendation, AgentRun
 from apps.auditlog.timeline_service import CaseTimelineService
 from apps.core.enums import InvoiceStatus, MatchStatus, UserRole
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
-from apps.reconciliation.models import ReconciliationResult
+from apps.reconciliation.models import ReconciliationConfig, ReconciliationResult
 from apps.reviews.models import ReviewAssignment
 from apps.tools.models import ToolCall
 
@@ -262,3 +265,192 @@ def case_console(request, pk):
         "match_status_choices": MatchStatus.choices,
     }
     return render(request, "reconciliation/case_console.html", context)
+
+
+@login_required
+def case_export_csv(request, pk):
+    """Export reconciliation case data as CSV."""
+    result = get_object_or_404(
+        ReconciliationResult.objects
+        .select_related("invoice", "invoice__vendor", "purchase_order")
+        .prefetch_related(
+            "exceptions",
+            "line_results", "line_results__invoice_line", "line_results__po_line",
+        ),
+        pk=pk,
+    )
+
+    invoice = result.invoice
+    po = result.purchase_order
+
+    filename = f"recon_case_{result.pk}_{invoice.invoice_number}.csv"
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    writer = csv.writer(response)
+
+    # --- Header summary ---
+    writer.writerow(["RECONCILIATION CASE REPORT"])
+    writer.writerow([])
+    writer.writerow(["Case ID", result.pk])
+    writer.writerow(["Match Status", result.get_match_status_display()])
+    writer.writerow(["Confidence", f"{result.deterministic_confidence * 100:.0f}%" if result.deterministic_confidence else "N/A"])
+    writer.writerow(["Summary", result.summary or ""])
+    writer.writerow([])
+
+    # --- Invoice info ---
+    writer.writerow(["INVOICE DETAILS"])
+    writer.writerow(["Invoice Number", invoice.invoice_number])
+    writer.writerow(["Vendor", invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name])
+    writer.writerow(["Invoice Date", invoice.invoice_date or ""])
+    writer.writerow(["Currency", invoice.currency])
+    writer.writerow(["Subtotal", invoice.subtotal or ""])
+    writer.writerow(["Tax", invoice.tax_amount or ""])
+    writer.writerow(["Total", invoice.total_amount or ""])
+    writer.writerow([])
+
+    # --- PO info ---
+    writer.writerow(["PURCHASE ORDER DETAILS"])
+    if po:
+        writer.writerow(["PO Number", po.po_number])
+        writer.writerow(["Vendor", po.vendor.name if po.vendor else ""])
+        writer.writerow(["PO Date", po.po_date or ""])
+        writer.writerow(["Total", po.total_amount or ""])
+        writer.writerow(["Status", po.status])
+    else:
+        writer.writerow(["PO Number", invoice.po_number or "NOT FOUND"])
+    writer.writerow([])
+
+    # --- Header-level checks ---
+    writer.writerow(["HEADER-LEVEL CHECKS"])
+    writer.writerow(["Check", "Result"])
+    writer.writerow(["Vendor Match", "Yes" if result.vendor_match else "No" if result.vendor_match is False else "N/A"])
+    writer.writerow(["Currency Match", "Yes" if result.currency_match else "No" if result.currency_match is False else "N/A"])
+    writer.writerow(["PO Total Match", "Yes" if result.po_total_match else "No" if result.po_total_match is False else "N/A"])
+    writer.writerow(["GRN Available", "Yes" if result.grn_available else "No"])
+    writer.writerow(["GRN Fully Received", "Yes" if result.grn_fully_received else "No" if result.grn_fully_received is False else "N/A"])
+    writer.writerow(["Amount Difference", result.total_amount_difference or "0.00"])
+    writer.writerow(["Amount Difference %", f"{result.total_amount_difference_pct or 0}%"])
+    writer.writerow([])
+
+    # --- Line-level comparison ---
+    line_results = list(result.line_results.select_related("invoice_line", "po_line").all())
+    writer.writerow(["LINE-LEVEL COMPARISON"])
+    writer.writerow([
+        "#", "Item", "Inv Qty", "PO Qty", "GRN Qty",
+        "Inv Price", "PO Price", "Inv Amt", "PO Amt",
+        "Variance", "Status",
+    ])
+    for i, ln in enumerate(line_results, 1):
+        desc = ""
+        if ln.invoice_line:
+            desc = ln.invoice_line.description
+        elif ln.po_line:
+            desc = ln.po_line.description
+        writer.writerow([
+            i, desc,
+            ln.qty_invoice or "", ln.qty_po or "", ln.qty_received or "",
+            ln.price_invoice or "", ln.price_po or "",
+            ln.amount_invoice or "", ln.amount_po or "",
+            ln.amount_difference or "0.00",
+            ln.get_match_status_display(),
+        ])
+    writer.writerow([])
+
+    # --- Exceptions ---
+    exceptions = list(result.exceptions.all().order_by("-severity", "exception_type"))
+    writer.writerow(["EXCEPTIONS"])
+    writer.writerow(["Severity", "Type", "Message", "Resolved"])
+    for exc in exceptions:
+        writer.writerow([
+            exc.severity,
+            exc.get_exception_type_display(),
+            exc.message,
+            "Yes" if exc.resolved else "No",
+        ])
+    if not exceptions:
+        writer.writerow(["No exceptions"])
+    writer.writerow([])
+
+    # --- Agent runs ---
+    agent_runs = list(
+        AgentRun.objects.filter(reconciliation_result=result)
+        .select_related("agent_definition")
+        .prefetch_related("decisions")
+        .order_by("created_at")
+    )
+    writer.writerow(["AGENT DECISION FLOW"])
+    writer.writerow(["Agent", "Status", "Confidence", "Reasoning"])
+    for run in agent_runs:
+        writer.writerow([
+            run.agent_definition.name if run.agent_definition else run.agent_type,
+            run.status,
+            f"{run.confidence * 100:.0f}%" if run.confidence else "",
+            run.summarized_reasoning or "",
+        ])
+    if not agent_runs:
+        writer.writerow(["No agent runs"])
+
+    return response
+
+
+@login_required
+def recon_settings(request):
+    """View and edit reconciliation config profiles. Admin-only for writes."""
+    configs = ReconciliationConfig.objects.all().order_by("-is_default", "name")
+    user_role = getattr(request.user, "role", None)
+    is_admin = user_role == UserRole.ADMIN
+
+    if request.method == "POST" and is_admin:
+        config_id = request.POST.get("config_id")
+        action = request.POST.get("action")
+
+        if action == "delete" and config_id:
+            config = get_object_or_404(ReconciliationConfig, pk=config_id)
+            if config.is_default:
+                messages.error(request, "Cannot delete the default config profile.")
+            else:
+                config.delete()
+                messages.success(request, f"Config '{config.name}' deleted.")
+            return redirect("reconciliation:recon_settings")
+
+        if action == "set_default" and config_id:
+            ReconciliationConfig.objects.filter(is_default=True).update(is_default=False)
+            ReconciliationConfig.objects.filter(pk=config_id).update(is_default=True)
+            messages.success(request, "Default config updated.")
+            return redirect("reconciliation:recon_settings")
+
+        # Create or update
+        if config_id:
+            config = get_object_or_404(ReconciliationConfig, pk=config_id)
+        else:
+            config = ReconciliationConfig()
+
+        config.name = request.POST.get("name", "").strip()
+        if not config.name:
+            messages.error(request, "Config name is required.")
+            return redirect("reconciliation:recon_settings")
+
+        try:
+            config.quantity_tolerance_pct = float(request.POST.get("quantity_tolerance_pct", 2.0))
+            config.price_tolerance_pct = float(request.POST.get("price_tolerance_pct", 1.0))
+            config.amount_tolerance_pct = float(request.POST.get("amount_tolerance_pct", 1.0))
+            config.auto_close_qty_tolerance_pct = float(request.POST.get("auto_close_qty_tolerance_pct", 5.0))
+            config.auto_close_price_tolerance_pct = float(request.POST.get("auto_close_price_tolerance_pct", 3.0))
+            config.auto_close_amount_tolerance_pct = float(request.POST.get("auto_close_amount_tolerance_pct", 3.0))
+            config.extraction_confidence_threshold = float(request.POST.get("extraction_confidence_threshold", 0.75))
+        except (ValueError, TypeError):
+            messages.error(request, "Invalid numeric value in form.")
+            return redirect("reconciliation:recon_settings")
+
+        config.auto_close_on_match = request.POST.get("auto_close_on_match") == "on"
+        config.enable_agents = request.POST.get("enable_agents") == "on"
+
+        config.save()
+        verb = "updated" if config_id else "created"
+        messages.success(request, f"Config '{config.name}' {verb}.")
+        return redirect("reconciliation:recon_settings")
+
+    return render(request, "reconciliation/settings.html", {
+        "configs": configs,
+        "is_admin": is_admin,
+    })

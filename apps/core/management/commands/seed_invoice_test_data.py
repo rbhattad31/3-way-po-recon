@@ -1,9 +1,13 @@
 """
 Management command: seed_invoice_test_data
 
-Seeds 12 invoice-side test scenarios (SCN-KSA-001 through SCN-KSA-012)
+Seeds 18 invoice-side test scenarios (SCN-KSA-001 through SCN-KSA-018)
 for reconciliation testing against already-seeded PO/GRN master data
 (from seed_saudi_mcd_data).
+
+Scenarios 001-012: Core reconciliation test cases (match, mismatch, etc.)
+Scenarios 013-015: Auto-close tolerance band test cases
+Scenarios 016-018: AI-agent resolvable partial-match cases
 
 Creates ONLY:
   - Invoice headers
@@ -61,6 +65,12 @@ SCENARIO_INVOICE_NUMBERS = [
     "INV-RBC-2026-010",   # SCN-KSA-010
     "INV-AKD-2026-011",   # SCN-KSA-011
     "INV-SPS-2026-012",   # SCN-KSA-012
+    "INV-AFS-2026-013",   # SCN-KSA-013
+    "INV-SPS-2026-014",   # SCN-KSA-014
+    "INV-NEO-2026-015",   # SCN-KSA-015
+    "INV-GFF-2026-016",   # SCN-KSA-016
+    "INV-AKD-2026-017",   # SCN-KSA-017
+    "INV-RSRC-2026-018",  # SCN-KSA-018
 ]
 
 
@@ -877,12 +887,369 @@ def create_scn_ksa_012_review_case_packaging() -> Invoice:
 
 
 # ===================================================================
+#  3 AUTO-CLOSE TOLERANCE BAND SCENARIOS (SCN-KSA-013..015)
+# ===================================================================
+
+
+def create_scn_ksa_013_qty_within_autoclose() -> Invoice:
+    """
+    SCN-KSA-013 — QTY WITHIN AUTO-CLOSE BAND (≤5%)
+    ────────────────────────────────────────────────
+    References PO-KSA-1011 (Arabian Food Supplies — sesame buns).
+    Invoice qty 309 vs PO/GRN 300 → 3.0% over (within 5% auto-close, above 2% strict).
+    Price matches exactly.
+    Expected: PARTIAL_MATCH → auto-close (skip AI agents) → upgraded to MATCHED
+    """
+    vendor = get_vendor("VND-AFS-001")
+
+    lines_data = [
+        {
+            "raw": "Sesame Burger Bun 4 inch / خبز برجر بالسمسم ٤ انش",
+            "desc": "Sesame Burger Bun 4 inch",
+            "qty": _d(309),        # PO/GRN = 300 → +3.0%
+            "price": _d("45.00"),  # exact match
+        },
+    ]
+
+    subtotal = sum(_line_amt(l["qty"], l["price"]) for l in lines_data)
+    tax = _tax(subtotal)
+
+    inv = create_invoice(
+        scenario_code="SCN-KSA-013",
+        invoice_number="INV-AFS-2026-013",
+        vendor=vendor,
+        raw_vendor_name="Arabian Food Supplies Co.",
+        po_number="PO-KSA-1011",
+        invoice_date=INVOICE_DATE + timedelta(days=1),
+        subtotal=subtotal,
+        tax_amount=tax,
+        total_amount=subtotal + tax,
+        extraction_confidence=0.94,
+        notes="Auto-close tolerance test — qty 3% over (within 5% band)",
+    )
+
+    for i, ld in enumerate(lines_data, 1):
+        add_line(inv, line_number=i, raw_description=ld["raw"],
+                 description=ld["desc"], quantity=ld["qty"],
+                 unit_price=ld["price"], confidence=0.94)
+
+    return inv
+
+
+def create_scn_ksa_014_price_within_autoclose() -> Invoice:
+    """
+    SCN-KSA-014 — PRICE WITHIN AUTO-CLOSE BAND (≤3%)
+    ─────────────────────────────────────────────────
+    References PO-KSA-1014 (Saudi Packaging Solutions — cups & lids).
+    Quantities match exactly. Prices inflated ~2.3%:
+      Paper Cup: 0.87 vs PO 0.85 → +2.35%
+      Plastic Lid: 0.46 vs PO 0.45 → +2.22%
+    Expected: PARTIAL_MATCH → auto-close (skip AI agents) → upgraded to MATCHED
+    """
+    vendor = get_vendor("VND-SPS-004")
+
+    lines_data = [
+        {
+            "raw": "Paper Cup 16oz / كوب ورقي ١٦ اونص",
+            "desc": "Paper Cup 16oz",
+            "qty": _d(5000),         # exact match
+            "price": _d("0.87"),     # PO = 0.85 → +2.35%
+        },
+        {
+            "raw": "Plastic Lid 16oz / غطاء بلاستيك ١٦ اونص",
+            "desc": "Plastic Lid 16oz",
+            "qty": _d(5000),         # exact match
+            "price": _d("0.46"),     # PO = 0.45 → +2.22%
+        },
+    ]
+
+    subtotal = sum(_line_amt(l["qty"], l["price"]) for l in lines_data)
+    tax = _tax(subtotal)
+
+    inv = create_invoice(
+        scenario_code="SCN-KSA-014",
+        invoice_number="INV-SPS-2026-014",
+        vendor=vendor,
+        raw_vendor_name="Saudi Packaging Solutions",
+        po_number="PO-KSA-1014",
+        invoice_date=INVOICE_DATE + timedelta(days=2),
+        subtotal=subtotal,
+        tax_amount=tax,
+        total_amount=subtotal + tax,
+        extraction_confidence=0.93,
+        notes="Auto-close tolerance test — price ~2.3% over (within 3% band)",
+    )
+
+    for i, ld in enumerate(lines_data, 1):
+        add_line(inv, line_number=i, raw_description=ld["raw"],
+                 description=ld["desc"], quantity=ld["qty"],
+                 unit_price=ld["price"], confidence=0.93)
+
+    return inv
+
+
+def create_scn_ksa_015_qty_beyond_autoclose() -> Invoice:
+    """
+    SCN-KSA-015 — QTY BEYOND AUTO-CLOSE BAND (>5%)
+    ────────────────────────────────────────────────
+    References PO-KSA-1024 (Najd Edible Oils — cooking oil).
+    Line 1: Invoice qty 535 vs PO/GRN 500 → +7.0% (exceeds 5% auto-close).
+    Line 2: Exact match (300 @ 9.50).
+    Expected: PARTIAL_MATCH → NOT auto-closed → AI agents triggered
+    """
+    vendor = get_vendor("VND-NEO-008")
+
+    lines_data = [
+        {
+            "raw": "Cooking Oil Fryer Grade 20L / زيت قلي ٢٠ لتر",
+            "desc": "Cooking Oil Fryer Grade 20L",
+            "qty": _d(535),          # PO/GRN = 500 → +7.0%
+            "price": _d("32.00"),    # exact match
+        },
+        {
+            "raw": "Cooking Oil Fryer Grade 5L / زيت قلي ٥ لتر",
+            "desc": "Cooking Oil Fryer Grade 5L",
+            "qty": _d(300),          # exact match
+            "price": _d("9.50"),     # exact match
+        },
+    ]
+
+    subtotal = sum(_line_amt(l["qty"], l["price"]) for l in lines_data)
+    tax = _tax(subtotal)
+
+    inv = create_invoice(
+        scenario_code="SCN-KSA-015",
+        invoice_number="INV-NEO-2026-015",
+        vendor=vendor,
+        raw_vendor_name="Najd Edible Oils Trading",
+        po_number="PO-KSA-1024",
+        invoice_date=INVOICE_DATE + timedelta(days=3),
+        subtotal=subtotal,
+        tax_amount=tax,
+        total_amount=subtotal + tax,
+        extraction_confidence=0.92,
+        notes="Beyond auto-close test — qty 7% over (exceeds 5% band, triggers AI agents)",
+    )
+
+    for i, ld in enumerate(lines_data, 1):
+        add_line(inv, line_number=i, raw_description=ld["raw"],
+                 description=ld["desc"], quantity=ld["qty"],
+                 unit_price=ld["price"], confidence=0.92)
+
+    return inv
+
+
+# ===================================================================
+#  3 AI-AGENT RESOLVABLE SCENARIOS (SCN-KSA-016..018)
+# ===================================================================
+
+
+def create_scn_ksa_016_misspelled_desc_qty_over() -> Invoice:
+    """
+    SCN-KSA-016 — MISSPELLED DESCRIPTIONS + QTY 6% OVER
+    ─────────────────────────────────────────────────────
+    References PO-KSA-1016 (Gulf Frozen Foods — nuggets & chicken strips).
+
+    Invoice descriptions contain realistic spelling errors / abbreviations:
+      "Nugget Prmeium Frozn"  vs PO "Nuggets Premium Frozen"
+      "Chiken Strips Frzn"   vs PO "Chicken Strips Frozen"
+
+    Line 1 (nuggets): qty exact match 250, price exact.
+    Line 2 (strips):  qty 191 vs PO 180 → +6.1% (beyond 5% auto-close).
+
+    Expected: PARTIAL_MATCH → outside auto-close band → Rule 4 →
+      ReconciliationAssistAgent sees fuzzy-matched items + minor overage →
+      recommends AP_REVIEW or AUTO_CLOSE.
+    """
+    vendor = get_vendor("VND-GFF-002")
+
+    lines_data = [
+        {
+            "raw": "Nugget Prmeium Frozn / ناجت بريميوم مجمد",
+            "desc": "Nugget Prmeium Frozn",       # misspelled Premium, Frozen
+            "qty": _d(250),                        # exact match to PO
+            "price": _d("145.00"),                 # exact match
+        },
+        {
+            "raw": "Chiken Strips Frzn / شرائح دجاج مجمده",
+            "desc": "Chiken Strips Frzn",          # misspelled Chicken, Frozen
+            "qty": _d(191),                        # PO = 180 → +6.1%
+            "price": _d("162.00"),                 # exact match
+        },
+    ]
+
+    subtotal = sum(_line_amt(l["qty"], l["price"]) for l in lines_data)
+    tax = _tax(subtotal)
+
+    inv = create_invoice(
+        scenario_code="SCN-KSA-016",
+        invoice_number="INV-GFF-2026-016",
+        vendor=vendor,
+        raw_vendor_name="Gulf Frozn Foods Trdng",    # vendor name also misspelled
+        po_number="PO-KSA-1016",
+        invoice_date=INVOICE_DATE + timedelta(days=4),
+        subtotal=subtotal,
+        tax_amount=tax,
+        total_amount=subtotal + tax,
+        extraction_confidence=0.88,
+        extraction_remarks="Low OCR quality; multiple description fields fuzzy",
+        notes="AI-resolvable: misspelled descriptions + qty 6% over on strips",
+    )
+
+    for i, ld in enumerate(lines_data, 1):
+        add_line(inv, line_number=i, raw_description=ld["raw"],
+                 description=ld["desc"], quantity=ld["qty"],
+                 unit_price=ld["price"], confidence=0.85)
+
+    return inv
+
+
+def create_scn_ksa_017_systematic_price_inflation() -> Invoice:
+    """
+    SCN-KSA-017 — SYSTEMATIC PRICE INFLATION ~4% (CONTRACT UPDATE)
+    ───────────────────────────────────────────────────────────────
+    References PO-KSA-1022 (Al Khobar Dairy — milkshake & soft serve mixes).
+
+    All quantities match exactly. Prices inflated on 2 of 3 lines as if
+    a vendor applied a new price list:
+      Milkshake Vanilla:  88.50 vs PO 85.00  → +4.12%
+      Soft Serve Dairy:   95.50 vs PO 92.00  → +3.80%
+      Milkshake Chocolate: 88.00 (exact match)
+
+    Expected: PARTIAL_MATCH → PRICE_MISMATCH on lines 1 & 2 (MEDIUM) →
+      outside 3% auto-close band → Rule 4 → AI agents.
+      ReconciliationAssistAgent sees consistent price pattern →
+      recommends vendor contract review / AP approval.
+    """
+    vendor = get_vendor("VND-AKD-009")
+
+    lines_data = [
+        {
+            "raw": "Milkshake Vanilla Mix / ميلك شيك فانيلا",
+            "desc": "Milkshake Vanilla Mix",
+            "qty": _d(120),                        # exact match
+            "price": _d("88.50"),                  # PO = 85.00 → +4.12%
+        },
+        {
+            "raw": "Soft Serve Dairy Mix / سوفت سيرف حليب",
+            "desc": "Soft Serve Dairy Mix",
+            "qty": _d(100),                        # exact match
+            "price": _d("95.50"),                  # PO = 92.00 → +3.80%
+        },
+        {
+            "raw": "Milkshake Chocolate Mix / ميلك شيك شوكولاته",
+            "desc": "Milkshake Chocolate Mix",
+            "qty": _d(80),                         # exact match
+            "price": _d("88.00"),                  # exact match
+        },
+    ]
+
+    subtotal = sum(_line_amt(l["qty"], l["price"]) for l in lines_data)
+    tax = _tax(subtotal)
+
+    inv = create_invoice(
+        scenario_code="SCN-KSA-017",
+        invoice_number="INV-AKD-2026-017",
+        vendor=vendor,
+        raw_vendor_name="Al Khobar Dairy Ingredients",
+        po_number="PO-KSA-1022",
+        invoice_date=INVOICE_DATE + timedelta(days=5),
+        subtotal=subtotal,
+        tax_amount=tax,
+        total_amount=subtotal + tax,
+        extraction_confidence=0.93,
+        notes="AI-resolvable: systematic ~4% price increase on 2 of 3 lines",
+    )
+
+    for i, ld in enumerate(lines_data, 1):
+        add_line(inv, line_number=i, raw_description=ld["raw"],
+                 description=ld["desc"], quantity=ld["qty"],
+                 unit_price=ld["price"], confidence=0.93)
+
+    return inv
+
+
+def create_scn_ksa_018_extra_line_surcharge() -> Invoice:
+    """
+    SCN-KSA-018 — EXTRA LINE ITEM (DELIVERY SURCHARGE) + WORD REORDERING
+    ─────────────────────────────────────────────────────────────────────
+    References PO-KSA-1020 (Red Sea Consumables — gloves, degreaser, sanitizer).
+
+    Lines 1-3 match PO exactly in qty & price but with reordered descriptions:
+      "Gloves Food Safe Medium"    vs PO "Food Safe Gloves Medium"
+      "Heavy Duty Kitchen Degrsr"  vs PO "Degreaser Kitchen Heavy Duty"
+      "Surface Use Sanitizer"      vs PO "Sanitizer Surface Use"
+
+    Line 4 is an extra surcharge line not on the PO:
+      "Delivery Surcharge - Hazmat Chemicals"  qty=1  @SAR 250.00
+
+    Expected: PARTIAL_MATCH with ITEM_MISMATCH (HIGH) for the un-matched
+      surcharge line → agents triggered.
+      ExceptionAnalysisAgent sees 3 of 4 lines match perfectly, identifies
+      surcharge as add-on → recommends AP approval for surcharge.
+    """
+    vendor = get_vendor("VND-RSRC-007")
+
+    lines_data = [
+        {
+            "raw": "Gloves Food Safe Medium / قفازات آمنة للطعام وسط",
+            "desc": "Gloves Food Safe Medium",         # PO: "Food Safe Gloves Medium" — reordered
+            "qty": _d(1000),                            # exact match
+            "price": _d("12.50"),                       # exact match
+        },
+        {
+            "raw": "Heavy Duty Kitchen Degrsr / منظف مطبخ شديد التحمل",
+            "desc": "Heavy Duty Kitchen Degrsr",        # PO: "Degreaser Kitchen Heavy Duty" — reordered + abbreviated
+            "qty": _d(200),                             # exact match
+            "price": _d("45.00"),                       # exact match
+        },
+        {
+            "raw": "Surface Use Sanitizer / معقم للأسطح",
+            "desc": "Surface Use Sanitizer",            # PO: "Sanitizer Surface Use" — reordered
+            "qty": _d(300),                             # exact match
+            "price": _d("28.00"),                       # exact match
+        },
+        {
+            "raw": "Delivery Surcharge - Hazmat Chemicals / رسوم توصيل مواد خطرة",
+            "desc": "Delivery Surcharge - Hazmat Chemicals",  # NOT in PO
+            "qty": _d(1),
+            "price": _d("250.00"),
+        },
+    ]
+
+    subtotal = sum(_line_amt(l["qty"], l["price"]) for l in lines_data)
+    tax = _tax(subtotal)
+
+    inv = create_invoice(
+        scenario_code="SCN-KSA-018",
+        invoice_number="INV-RSRC-2026-018",
+        vendor=vendor,
+        raw_vendor_name="Red Sea Rstaurant Consumbles",  # misspelled vendor name
+        po_number="PO-KSA-1020",
+        invoice_date=INVOICE_DATE + timedelta(days=6),
+        subtotal=subtotal,
+        tax_amount=tax,
+        total_amount=subtotal + tax,
+        extraction_confidence=0.90,
+        extraction_remarks="Extra line item not on PO; description word order differs",
+        notes="AI-resolvable: 3 lines match PO (reordered words) + 1 extra surcharge line",
+    )
+
+    for i, ld in enumerate(lines_data, 1):
+        add_line(inv, line_number=i, raw_description=ld["raw"],
+                 description=ld["desc"], quantity=ld["qty"],
+                 unit_price=ld["price"], confidence=0.90)
+
+    return inv
+
+
+# ===================================================================
 #  COMMAND CLASS
 # ===================================================================
 
 class Command(BaseCommand):
     help = (
-        "Seed 12 invoice test scenarios (SCN-KSA-001..012) for "
+        "Seed 18 invoice test scenarios (SCN-KSA-001..018) for "
         "reconciliation testing against existing PO/GRN master data."
     )
 
@@ -899,7 +1266,7 @@ class Command(BaseCommand):
             self._flush()
 
         self.stdout.write(self.style.MIGRATE_HEADING(
-            "\n=== Invoice Test Data — 12 Scenarios (SCN-KSA-001..012) ===\n"
+            "\n=== Invoice Test Data — 18 Scenarios (SCN-KSA-001..018) ===\n"
         ))
 
         # Pre-flight: verify master data exists
@@ -989,6 +1356,42 @@ class Command(BaseCommand):
         self.stdout.write("  SCN-KSA-012: Review case — packaging supplies...")
         inv = create_scn_ksa_012_review_case_packaging()
         results.append(("SCN-KSA-012", inv.invoice_number, "Desc + price variance", "REQUIRES_REVIEW"))
+        self.stdout.write(self.style.SUCCESS(f"    ✓ {inv.invoice_number}"))
+
+        # --- SCN-KSA-013 ---
+        self.stdout.write("  SCN-KSA-013: Qty within auto-close band — buns...")
+        inv = create_scn_ksa_013_qty_within_autoclose()
+        results.append(("SCN-KSA-013", inv.invoice_number, "Qty +3% (within 5% band)", "AUTO_CLOSE"))
+        self.stdout.write(self.style.SUCCESS(f"    ✓ {inv.invoice_number}"))
+
+        # --- SCN-KSA-014 ---
+        self.stdout.write("  SCN-KSA-014: Price within auto-close band — packaging...")
+        inv = create_scn_ksa_014_price_within_autoclose()
+        results.append(("SCN-KSA-014", inv.invoice_number, "Price +2.3% (within 3% band)", "AUTO_CLOSE"))
+        self.stdout.write(self.style.SUCCESS(f"    ✓ {inv.invoice_number}"))
+
+        # --- SCN-KSA-015 ---
+        self.stdout.write("  SCN-KSA-015: Qty beyond auto-close band — cooking oil...")
+        inv = create_scn_ksa_015_qty_beyond_autoclose()
+        results.append(("SCN-KSA-015", inv.invoice_number, "Qty +7% (exceeds 5% band)", "AI_AGENTS"))
+        self.stdout.write(self.style.SUCCESS(f"    ✓ {inv.invoice_number}"))
+
+        # --- SCN-KSA-016 ---
+        self.stdout.write("  SCN-KSA-016: Misspelled descriptions + qty 6% over...")
+        inv = create_scn_ksa_016_misspelled_desc_qty_over()
+        results.append(("SCN-KSA-016", inv.invoice_number, "Fuzzy desc + qty +6.1%", "AI_RESOLVABLE"))
+        self.stdout.write(self.style.SUCCESS(f"    ✓ {inv.invoice_number}"))
+
+        # --- SCN-KSA-017 ---
+        self.stdout.write("  SCN-KSA-017: Systematic price inflation ~4%...")
+        inv = create_scn_ksa_017_systematic_price_inflation()
+        results.append(("SCN-KSA-017", inv.invoice_number, "Price +4% on 2/3 lines", "AI_RESOLVABLE"))
+        self.stdout.write(self.style.SUCCESS(f"    ✓ {inv.invoice_number}"))
+
+        # --- SCN-KSA-018 ---
+        self.stdout.write("  SCN-KSA-018: Extra surcharge line + word reordering...")
+        inv = create_scn_ksa_018_extra_line_surcharge()
+        results.append(("SCN-KSA-018", inv.invoice_number, "3 match + 1 extra surcharge", "AI_RESOLVABLE"))
         self.stdout.write(self.style.SUCCESS(f"    ✓ {inv.invoice_number}"))
 
         # --- Summary ---

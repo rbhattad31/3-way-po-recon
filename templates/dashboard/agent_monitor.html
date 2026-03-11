@@ -193,12 +193,13 @@
             <th>ID</th>
             <th>Agent Type</th>
             <th>Invoice</th>
-            <th>Recon Run</th>
+            <th>Recon Result</th>
             <th>Status</th>
             <th class="text-center">Confidence</th>
             <th class="text-center">Tokens</th>
             <th class="text-center">Duration</th>
             <th>Created</th>
+            <th class="text-center">Console</th>
           </tr>
         </thead>
         <tbody>
@@ -217,7 +218,9 @@
             </td>
             <td>
               {% if run.reconciliation_result %}
-                <a href="?run={{ run.reconciliation_result.run_id }}">#{{ run.reconciliation_result.run_id }}</a>
+                <a href="{% url 'reconciliation:case_console' run.reconciliation_result.pk %}" class="text-decoration-none">
+                  #{{ run.reconciliation_result.pk }}
+                </a>
               {% else %}
                 —
               {% endif %}
@@ -233,9 +236,16 @@
             <td class="text-center">{{ run.total_tokens|default:"—" }}</td>
             <td class="text-center">{% if run.duration_ms %}{{ run.duration_ms|floatformat:0 }}ms{% else %}—{% endif %}</td>
             <td class="text-muted text-nowrap">{{ run.created_at|timesince }} ago</td>
+            <td class="text-center">
+              {% if run.reconciliation_result %}
+                <a href="{% url 'reconciliation:case_console' run.reconciliation_result.pk %}" class="btn btn-sm btn-outline-primary py-0 px-1" title="Open Case Console">
+                  <i class="bi bi-display"></i>
+                </a>
+              {% else %}—{% endif %}
+            </td>
           </tr>
           {% empty %}
-          <tr><td colspan="9" class="text-center text-muted py-4">No agent runs found{% if selected_run or selected_agent_type or selected_status %} matching filters{% endif %}</td></tr>
+          <tr><td colspan="10" class="text-center text-muted py-4">No agent runs found{% if selected_run or selected_agent_type or selected_status %} matching filters{% endif %}</td></tr>
           {% endfor %}
         </tbody>
       </table>
