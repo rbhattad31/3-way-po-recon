@@ -61,7 +61,25 @@ class AgentOrchestrator:
         if plan.skip_agents:
             orch_result.skipped = True
             orch_result.skip_reason = plan.reason
-            logger.info("Agents skipped for result %s: %s", result.pk, plan.reason)
+
+            # Auto-close by tolerance band: upgrade PARTIAL_MATCH → MATCHED
+            if plan.auto_close:
+                result.match_status = MatchStatus.MATCHED
+                result.requires_review = False
+                result.summary = (
+                    f"Auto-closed: all line discrepancies within auto-close tolerance band. "
+                    f"{plan.reason}"
+                )
+                result.save(update_fields=["match_status", "requires_review", "summary", "updated_at"])
+                # Resolve tolerance-level exceptions
+                result.exceptions.filter(
+                    severity__in=["LOW", "MEDIUM"],
+                ).update(resolved=True)
+                logger.info("Auto-closed result %s by tolerance band (no AI agents)", result.pk)
+
+            else:
+                logger.info("Agents skipped for result %s: %s", result.pk, plan.reason)
+
             return orch_result
 
         if not plan.agents:
