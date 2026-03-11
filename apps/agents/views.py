@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 
-from apps.core.permissions import IsAdminOrReadOnly, IsReviewer
+from apps.core.permissions import IsAdminOrReadOnly
 from apps.agents.models import AgentDefinition, AgentRun
 from apps.agents.serializers import (
     AgentDefinitionSerializer,
@@ -31,7 +31,7 @@ class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
         .prefetch_related("steps", "tool_calls", "decisions", "recommendations", "escalations")
         .order_by("-created_at")
     )
-    permission_classes = [IsReviewer]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ["agent_type", "status", "reconciliation_result"]
     ordering_fields = ["created_at", "confidence", "total_tokens"]
