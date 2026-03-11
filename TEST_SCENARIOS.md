@@ -61,16 +61,16 @@
 | GRNAG-011 | INV-GRNAG-2026-011 | PO-KSA-3010 | VND-RSRC-007 | Service Invoice | **PARTIAL_MATCH** | No GRN expected (services) |
 | GRNAG-012 | INV-GRNAG-2026-012 | PO-KSA-3011 | VND-DCCL-006 | Cold-Chain Shortage | **PARTIAL_MATCH** | Fries -80, nuggets -50 |
 | **PO Agent** | | | | | | |
-| POAG-001 | INV-POAG-2026-001 | PO-KSA-1001 (malformed) | VND-AFS-001 | Normalized PO Recovery | **UNMATCHED** → Agent finds PO | Normalized lookup succeeds |
-| POAG-002 | INV-POAG-2026-002 | *(blank)* | VND-GFF-002 | Vendor-Based Discovery | **UNMATCHED** → Agent finds PO | Vendor search + amount match |
-| POAG-003 | INV-POAG-2026-003 | *(blank)* | VND-SPS-004 | Multiple Open POs | **UNMATCHED** → Ambiguous | 3 candidate POs, can't commit |
-| POAG-004 | INV-POAG-2026-004 | PO/KSA/XXXX (garbled) | VND-SPS-004 (alias) | Amount-Based Fallback | **UNMATCHED** → Agent finds PO | Alias + amount match |
-| POAG-005 | INV-POAG-2026-005 | PO-KSA-9999 | VND-NEO-008 | No PO Found | **UNMATCHED** | All strategies fail |
-| POAG-006 | INV-POAG-2026-006 | PO-KSA-1001 (wrong vendor) | VND-RBC-005 | Wrong Vendor PO | **UNMATCHED** → Vendor mismatch | PO found but vendor doesn't match |
-| POAG-007 | INV-POAG-2026-007 | po_ksa_1002 (malformed) | VND-AFS-001 (Arabic alias) | Arabic Alias Resolution | **UNMATCHED** → Agent finds PO | Arabic alias + normalized PO |
-| POAG-008 | INV-POAG-2026-008 | PO-KSA-1017 | VND-AFS-001 | Closed PO Referenced | **UNMATCHED** → PO not usable | PO found but status CLOSED |
-| POAG-009 | INV-POAG-2026-009 | *(blank)* | VND-RSRC-007 | Branch vs Warehouse | **UNMATCHED** → Ambiguous | Location context narrows candidates |
-| POAG-010 | INV-POAG-2026-010 | PO/KSA/1003 (malformed) | VND-GFF-002 | High-Confidence Recovery | **UNMATCHED** → Agent finds PO | All signals converge on correct PO |
+| POAG-001 | INV-POAG-2026-001 | PO-1001-KSA (reordered) | VND-AFS-001 | Reordered PO Recovery | **UNMATCHED** → Agent → **MATCHED** | Agent resolves segments → re-reconciles to full match |
+| POAG-002 | INV-POAG-2026-002 | *(blank)* | VND-GFF-002 | Vendor-Based Discovery | **UNMATCHED** → Agent → **MATCHED** | Agent finds PO via vendor+amount → re-reconciles |
+| POAG-003 | INV-POAG-2026-003 | *(blank)* | VND-SPS-004 | Multiple Open POs | **UNMATCHED** (stays) | 3 candidate POs, agent can't commit → no re-recon |
+| POAG-004 | INV-POAG-2026-004 | PO/KSA/XXXX (garbled) | VND-SPS-004 (alias) | Amount-Based Fallback | **UNMATCHED** → Agent → **MATCHED** | Agent finds PO via alias+amount → re-reconciles |
+| POAG-005 | INV-POAG-2026-005 | PO-KSA-9999 | VND-NEO-008 | No PO Found | **UNMATCHED** (stays) | All agent strategies fail → no re-recon |
+| POAG-006 | INV-POAG-2026-006 | PO-KSA-1001 (wrong vendor) | VND-RBC-005 | Wrong Vendor PO | **UNMATCHED** (stays) | PO found but vendor mismatch → agent doesn't apply |
+| POAG-007 | INV-POAG-2026-007 | po_ksa_1002 (malformed) | VND-AFS-001 (Arabic alias) | Arabic Alias Resolution | **UNMATCHED** → Agent → **MATCHED** | Agent resolves alias+PO → re-reconciles to full match |
+| POAG-008 | INV-POAG-2026-008 | PO-KSA-1017 | VND-AFS-001 | Closed PO Referenced | **UNMATCHED** (stays) | PO found but CLOSED → agent doesn't apply |
+| POAG-009 | INV-POAG-2026-009 | *(blank)* | VND-RSRC-007 | Branch vs Warehouse | **UNMATCHED** (stays) | 2 candidates, location ambiguity → no re-recon |
+| POAG-010 | INV-POAG-2026-010 | PO/KSA/1003 (malformed) | VND-GFF-002 | High-Confidence Recovery | **UNMATCHED** → Agent → **MATCHED** | All signals converge → re-reconciles to full match |
 
 ---
 
@@ -568,10 +568,10 @@ Two Arabic VendorAlias records are added for alias-resolution scenarios.
 
 ---
 
-### SCN-POAG-001 — Exact Normalized PO Recovery
+### SCN-POAG-001 — Reordered PO Segment Recovery
 
 **Invoice:** INV-POAG-2026-001  
-**Raw PO:** `"PO-KSA 1001"` (space instead of dash)  
+**Raw PO:** `"PO-1001-KSA"` (segments reordered vs canonical `PO-KSA-1001`)  
 **Target PO:** PO-KSA-1001 (Arabian Food Supplies, from master seed)  
 **Vendor:** Arabian Food Supplies Co. (VND-AFS-001)  
 **Confidence:** 0.91  
@@ -584,14 +584,22 @@ Two Arabic VendorAlias records are added for alias-resolution scenarios.
 
 **Totals:** Subtotal 31,600.00 | Tax 4,740.00 | Total 36,340.00
 
-**Why Deterministic Lookup Fails:** PO number has a space (`PO-KSA 1001`) instead of a dash, so exact string match fails.
+**Why Deterministic Lookup Fails:** PO segments are reordered (`PO-1001-KSA` vs `PO-KSA-1001`). Exact match fails (different strings). Simple normalized match also fails: `normalize("PO-1001-KSA")` → `"1001KSA"` ≠ `"KSA1001"` ← `normalize("PO-KSA-1001")`. Segment reordering survives the deterministic normalization utility.
+
+**How Agent Recovers (Intelligent Normalization):** The LLM recognises that `PO-1001-KSA` contains the same segments as `PO-KSA-1001` (prefix `PO`, region `KSA`, sequence `1001`) and tries reordered variants via the `po_lookup` tool until a match is found.
 
 **Expected PO Retrieval Agent Outcome:**
 - Should find PO? **Yes**
-- Primary strategy: **Normalized PO lookup** (strip/normalize → `POKSA1001` matches)
+- Primary strategy: **Intelligent PO normalization** (LLM-driven segment reordering)
 - Expected `recommendation_type`: **null** (PO successfully found)
 - Expected `confidence`: **high (0.90+)**
 - Expected `evidence` keys: `po_number`, `normalized_match`, `vendor_confirmed`
+
+**After Agent Feedback (Re-Reconciliation):**
+- Agent returns `evidence.found_po = "PO-KSA-1001"` → orchestrator applies feedback
+- PO linked to result, deterministic matching re-runs
+- Lines match exactly (500 buns, 200 lettuce, 100 pickles) with GRN fully received
+- **Final match status: MATCHED**
 
 ---
 
@@ -1222,18 +1230,18 @@ No ReconciliationResult, AgentRun, ReviewAssignment, or AuditEvent records are c
 
 ### PO Retrieval Agent Scenario Verification
 
-| # | Invoice | Raw PO | Strategy | Expected Agent Result | Evidence | Pass? |
-|---|---------|--------|----------|-----------------------|----------|-------|
-| POAG-001 | INV-POAG-2026-001 | `PO-KSA 1001` | Normalized PO | Finds PO-KSA-1001, rec=null, conf=high | po_number, normalized_match | ☐ |
-| POAG-002 | INV-POAG-2026-002 | `[unreadable]` | Vendor + Amount | Finds PO-KSA-2001, rec=null, conf=med-high | po_number, amount_match | ☐ |
-| POAG-003 | INV-POAG-2026-003 | *(empty)* | Vendor (3 POs) | Ambiguous, rec=SEND_TO_AP_REVIEW, conf=low-med | candidate_pos | ☐ |
-| POAG-004 | INV-POAG-2026-004 | `PO/KSA/XXXX` | Alias + Amount | Finds PO-KSA-2005, rec=null, conf=medium | alias_resolved, amount_match | ☐ |
-| POAG-005 | INV-POAG-2026-005 | `PO-KSA-9999` | All fail | No PO found, rec=SEND_TO_AP_REVIEW, conf=low-med | search_attempts | ☐ |
-| POAG-006 | INV-POAG-2026-006 | `PO-KSA-1001` | PO found, vendor ≠ | Vendor mismatch, rec=SEND_TO_AP_REVIEW, conf=med | vendor_mismatch | ☐ |
-| POAG-007 | INV-POAG-2026-007 | `po_ksa_1002` | Arabic alias + norm | Finds PO-KSA-1002, rec=null, conf=med-high | alias_used, po_number | ☐ |
-| POAG-008 | INV-POAG-2026-008 | `PO-KSA-1017` | PO found, CLOSED | PO unusable, rec=SEND_TO_AP_REVIEW, conf=medium | po_status | ☐ |
-| POAG-009 | INV-POAG-2026-009 | *(empty)* | Vendor + Location | 2 candidates, location may narrow, conf=medium | candidate_pos, destination | ☐ |
-| POAG-010 | INV-POAG-2026-010 | `PO/KSA/1003` | All converge | Finds PO-KSA-1003, rec=null, conf=high | po_number, vendor, amount | ☐ |
+| # | Invoice | Raw PO | Strategy | Expected Agent Result | Re-Recon Status | Evidence | Pass? |
+|---|---------|--------|----------|-----------------------|-----------------|----------|-------|
+| POAG-001 | INV-POAG-2026-001 | `PO-1001-KSA` | Intelligent normalization | Finds PO-KSA-1001, conf=high | **MATCHED** | po_number, normalized_match, vendor_confirmed | ☐ |
+| POAG-002 | INV-POAG-2026-002 | `[unreadable]` | Vendor + Amount | Finds PO-KSA-2001, conf=med-high | **MATCHED** | po_number, amount_match | ☐ |
+| POAG-003 | INV-POAG-2026-003 | *(empty)* | Vendor (3 POs) | Ambiguous, rec=SEND_TO_AP_REVIEW | UNMATCHED (no re-recon) | candidate_pos | ☐ |
+| POAG-004 | INV-POAG-2026-004 | `PO/KSA/XXXX` | Alias + Amount | Finds PO-KSA-2005, conf=medium | **MATCHED** | alias_resolved, amount_match | ☐ |
+| POAG-005 | INV-POAG-2026-005 | `PO-KSA-9999` | All fail | No PO found, rec=SEND_TO_AP_REVIEW | UNMATCHED (no re-recon) | search_attempts | ☐ |
+| POAG-006 | INV-POAG-2026-006 | `PO-KSA-1001` | PO found, vendor ≠ | Vendor mismatch, rec=SEND_TO_AP_REVIEW | UNMATCHED (no re-recon) | vendor_mismatch | ☐ |
+| POAG-007 | INV-POAG-2026-007 | `po_ksa_1002` | Arabic alias + norm | Finds PO-KSA-1002, conf=med-high | **MATCHED** | alias_used, po_number | ☐ |
+| POAG-008 | INV-POAG-2026-008 | `PO-KSA-1017` | PO found, CLOSED | PO unusable, rec=SEND_TO_AP_REVIEW | UNMATCHED (no re-recon) | po_status | ☐ |
+| POAG-009 | INV-POAG-2026-009 | *(empty)* | Vendor + Location | 2 candidates, location may narrow | UNMATCHED (no re-recon) | candidate_pos, destination | ☐ |
+| POAG-010 | INV-POAG-2026-010 | `PO/KSA/1003` | All converge | Finds PO-KSA-1003, conf=high | **MATCHED** | po_number, vendor, amount | ☐ |
 
 ### GRN Specialist Agent Scenario Verification
 

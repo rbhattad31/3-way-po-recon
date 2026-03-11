@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}PO {{ po.po_number }} – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'documents:po_list' %}">Purchase Orders</a></li>
+  <li class="breadcrumb-item active">{{ po.po_number }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <!-- PO Header -->
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header bg-white"><strong>Purchase Order Details</strong></div>
+      <table class="table table-sm mb-0">
+        <tr><th style="width:35%">PO #</th><td>{{ po.po_number }}</td></tr>
+        <tr><th>Vendor</th><td>{{ po.vendor.name|default:"—" }}{% if po.vendor.code %} <span class="text-muted">({{ po.vendor.code }})</span>{% endif %}</td></tr>
+        <tr><th>Date</th><td>{{ po.po_date|date:"d M Y"|default:"—" }}</td></tr>
+        <tr><th>Currency</th><td>{{ po.currency }}</td></tr>
+        <tr><th>Tax</th><td>{{ po.tax_amount|default:"—" }}</td></tr>
+        <tr><th>Total Amount</th><td><strong>{{ po.currency }} {{ po.total_amount|default:"—" }}</strong></td></tr>
+        <tr>
+          <th>Status</th>
+          <td>
+            {% if po.status == "OPEN" %}
+              <span class="badge bg-success">{{ po.status }}</span>
+            {% elif po.status == "CLOSED" %}
+              <span class="badge bg-secondary">{{ po.status }}</span>
+            {% else %}
+              <span class="badge bg-info text-dark">{{ po.status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr><th>Buyer</th><td>{{ po.buyer_name|default:"—" }}</td></tr>
+        <tr><th>Department</th><td>{{ po.department|default:"—" }}</td></tr>
+        {% if po.notes %}<tr><th>Notes</th><td>{{ po.notes }}</td></tr>{% endif %}
+        <tr><th>Created</th><td class="text-muted">{{ po.created_at|date:"d M Y H:i" }}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Line Items -->
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header bg-white d-flex justify-content-between">
+        <strong>Line Items</strong>
+        <span class="badge bg-primary">{{ po.line_items.count }} items</span>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>#</th><th>Item Code</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr>
+          </thead>
+          <tbody>
+            {% for line in po.line_items.all %}
+            <tr>
+              <td>{{ line.line_number }}</td>
+              <td><code>{{ line.item_code|default:"—" }}</code></td>
+              <td>{{ line.description|truncatechars:40 }}</td>
+              <td>{{ line.quantity }} <small class="text-muted">{{ line.unit_of_measure }}</small></td>
+              <td>{{ line.unit_price }}</td>
+              <td>{{ line.line_amount }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="text-center text-muted py-3">No line items</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GRNs -->
+{% with grns=po.grns.all %}
+{% if grns %}
+<div class="card mt-3">
+  <div class="card-header bg-white d-flex justify-content-between">
+    <strong>Goods Receipt Notes</strong>
+    <span class="badge bg-primary">{{ grns|length }} GRN{{ grns|length|pluralize }}</span>
+  </div>
+  <div class="card-body p-0">
+    {% for grn in grns %}
+    <div class="{% if not forloop.first %}border-top{% endif %} p-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div>
+          <strong>{{ grn.grn_number }}</strong>
+          <span class="text-muted ms-2">{{ grn.receipt_date|date:"d M Y"|default:"—" }}</span>
+          {% if grn.warehouse %}<span class="text-muted ms-2"><i class="bi bi-geo-alt"></i> {{ grn.warehouse }}</span>{% endif %}
+        </div>
+        <span class="badge {% if grn.status == 'RECEIVED' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ grn.status }}</span>
+      </div>
+      <table class="table table-sm table-bordered mb-0">
+        <thead class="table-light">
+          <tr><th>#</th><th>Description</th><th>Received</th><th>Accepted</th><th>Rejected</th></tr>
+        </thead>
+        <tbody>
+          {% for gl in grn.line_items.all %}
+          <tr>
+            <td>{{ gl.line_number }}</td>
+            <td>{{ gl.description|truncatechars:40 }}</td>
+            <td>{{ gl.quantity_received }}</td>
+            <td>{{ gl.quantity_accepted|default:"—" }}</td>
+            <td>{% if gl.quantity_rejected %}<span class="text-danger">{{ gl.quantity_rejected }}</span>{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endwith %}
+
+<!-- Reconciliation Results -->
+{% if recon_results %}
+<div class="card mt-3">
+  <div class="card-header bg-white"><strong>Reconciliation Results</strong></div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0">
+      <thead class="table-light">
+        <tr><th>ID</th><th>Invoice</th><th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        {% for r in recon_results %}
+        <tr>
+          <td><a href="{% url 'reconciliation:result_detail' r.pk %}">{{ r.pk }}</a></td>
+          <td><a href="{% url 'documents:invoice_detail' r.invoice.pk %}">{{ r.invoice.invoice_number|default:"—" }}</a></td>
+          <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
+          <td>{% if r.deterministic_confidence %}{% widthratio r.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td>
+          <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
+          <td>{{ r.exceptions.count }}</td>
+          <td class="text-muted">{{ r.created_at|date:"d M Y" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
