@@ -129,7 +129,9 @@ c:\3-way-po-recon\
 |---|---|
 | **Models** | `TimestampMixin` (created_at/updated_at), `AuditMixin` (created_by/updated_by), `BaseModel` (combines both), `SoftDeleteMixin`, `NotesMixin` |
 | **Enums** | `InvoiceStatus`, `MatchStatus`, `ReviewStatus`, `UserRole`, `AgentType`, `ExceptionType`, `ExceptionSeverity`, `ReviewActionType`, `AgentRunStatus`, `ToolCallStatus`, `ReconciliationRunStatus`, `RecommendationType`, `DocumentType`, `FileProcessingState` |
-| **Management Commands** | `seed_data` — populates test data: users (5 roles), vendors (5+aliases), 13 invoices (matching edge cases), POs, GRNs, 7 agent definitions with `config_json`, 6 tool definitions. Supports `--only` flag for selective seeding. |
+| **Management Commands** | `seed_data` — populates initial test data: users (5 roles), vendors (5+aliases), 13 invoices (matching edge cases), POs, GRNs, 7 agent definitions with `config_json`, 6 tool definitions. Supports `--only` flag for selective seeding. |
+|  | `seed_saudi_mcd_data` — seeds Saudi Arabia McDonald's master distributor data: 6 users, 10 vendors + aliases, 25 POs (~62 line items), 30 GRNs (~70 line items) across 25 scenario-driven PO/GRN shapes. Supports `--flush`. |
+|  | `seed_invoice_test_data` — seeds 12 invoice test scenarios (SCN-KSA-001..012, 13 invoices, 34 line items) for reconciliation testing against the Saudi McD master data. Creates only invoice-side data — no reconciliation output. Supports `--flush`. |
 | **Permissions** | `IsAdmin`, `IsAPProcessor`, `IsReviewer`, `IsFinanceManager`, `IsAuditor`, `IsAdminOrReadOnly`, `IsReviewAssignee`, `HasAnyRole` |
 | **Middleware** | `LoginRequiredMiddleware` — redirects anonymous users (exempts /admin/, /accounts/, /api/) |
 | **Utils** | `normalize_string()`, `normalize_po_number()`, `normalize_invoice_number()`, `parse_date()`, `to_decimal()`, `pct_difference()`, `within_tolerance()` |
@@ -364,6 +366,8 @@ c:\3-way-po-recon\
 | Admin panel | ✅ Complete | All models registered |
 | Audit logging models | ✅ Complete | ProcessingLog, AuditEvent, FileProcessingStatus |
 | Seed data command | ✅ Complete | `python manage.py seed_data` — creates users, vendors, 13 invoices covering all scenarios, POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions |
+| Saudi McD master data | ✅ Complete | `python manage.py seed_saudi_mcd_data` — 6 users, 10 vendors, 25 POs, 30 GRNs for Saudi Arabia McDonald's distributor scenarios |
+| Invoice test scenarios | ✅ Complete | `python manage.py seed_invoice_test_data` — 12 scenarios (SCN-KSA-001..012): perfect match, qty/price/VAT mismatch, missing PO, missing GRN, multi-GRN aggregation, duplicate invoice, low-confidence Arabic, location mismatch, GRN shortage, review case |
 | Agent pipeline wiring | ✅ Complete | Agent pipeline runs automatically after reconciliation for non-MATCHED results (sync + async paths) |
 | Reconciliation UI | ✅ Complete | Start reconciliation panel with checkbox invoice selection |
 | Review assignment UI | ✅ Complete | Auto-creation from runner + manual bulk creation from UI |
@@ -392,6 +396,10 @@ python manage.py createsuperuser
 
 # Seed sample data (optional — creates users, vendors, POs, invoices)
 python manage.py seed_data
+
+# Or: Seed Saudi McD master data + invoice test scenarios
+python manage.py seed_saudi_mcd_data
+python manage.py seed_invoice_test_data
 
 # Option A: Windows dev mode (no Redis needed — Celery runs synchronously)
 # CELERY_TASK_ALWAYS_EAGER=True is the default in settings.py

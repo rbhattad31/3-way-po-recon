@@ -59,6 +59,18 @@ def upload_invoice(request):
         uploaded_by=request.user,
     )
 
+    # Audit: invoice uploaded
+    from apps.auditlog.services import AuditService
+    from apps.core.enums import AuditEventType
+    AuditService.log_event(
+        entity_type="DocumentUpload",
+        entity_id=doc_upload.pk,
+        event_type=AuditEventType.INVOICE_UPLOADED,
+        description=f"File '{uploaded_file.name}' uploaded ({uploaded_file.size} bytes)",
+        user=request.user,
+        metadata={"filename": uploaded_file.name, "file_hash": file_hash, "document_type": document_type},
+    )
+
     # Trigger extraction pipeline — try async first, fall back to sync
     try:
         from apps.extraction.tasks import process_invoice_upload_task

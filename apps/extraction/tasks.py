@@ -90,6 +90,17 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             invoice.status = InvoiceStatus.READY_FOR_RECON
             invoice.save(update_fields=["status", "updated_at"])
 
+        # Audit: extraction completed
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+        AuditService.log_event(
+            entity_type="Invoice",
+            entity_id=invoice.pk,
+            event_type=AuditEventType.EXTRACTION_COMPLETED,
+            description=f"Extraction completed for invoice {invoice.invoice_number} (confidence: {invoice.extraction_confidence})",
+            metadata={"upload_id": upload_id, "is_duplicate": dup_result.is_duplicate, "is_valid": validation_result.is_valid},
+        )
+
         logger.info(
             "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",
             upload_id, invoice.pk, invoice.status,
@@ -106,6 +117,19 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
     except Exception as exc:
         logger.exception("Extraction pipeline failed for upload %s", upload_id)
         _fail_upload(upload, str(exc))
+        # Audit: extraction failed
+        try:
+            from apps.auditlog.services import AuditService
+            from apps.core.enums import AuditEventType
+            AuditService.log_event(
+                entity_type="DocumentUpload",
+                entity_id=upload_id,
+                event_type=AuditEventType.EXTRACTION_FAILED,
+                description=f"Extraction failed: {str(exc)[:200]}",
+                metadata={"error": str(exc)[:500]},
+            )
+        except Exception:
+            pass
         try:
             raise self.retry(exc=exc)
         except (AttributeError, TypeError):

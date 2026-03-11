@@ -205,6 +205,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Admin panel registration
 - Audit logging models
 - Seed data management command (`python manage.py seed_data`) — 5 users, 5 vendors, 13 invoices (with edge-case scenarios), POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions
+- Saudi McD master data (`python manage.py seed_saudi_mcd_data`) — 6 users, 10 vendors + aliases, 25 POs (~62 line items), 30 GRNs (~70 line items) across Riyadh/Jeddah/Dammam warehouses
+- Invoice test scenarios (`python manage.py seed_invoice_test_data`) — 12 scenarios (SCN-KSA-001..012, 13 invoices, 34 line items): perfect match, qty/price/VAT mismatch, missing PO, missing GRN, multi-GRN aggregation, duplicate invoice, low-confidence Arabic-English, location mismatch, GRN shortage, review case
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 

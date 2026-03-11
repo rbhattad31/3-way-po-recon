@@ -1,0 +1,957 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Case Console — {{ invoice.invoice_number }} — PO Reconciliation{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css">
+<link rel="stylesheet" href="{% static 'css/case_console.css' %}">
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb mb-0">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'reconciliation:result_list' %}">Results</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'reconciliation:result_detail' result.pk %}">#{{ result.pk }}</a></li>
+  <li class="breadcrumb-item active">Case Console</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+
+{# ================================================================== #}
+{#  SECTION NAVIGATION BAR (quick-jump)                               #}
+{# ================================================================== #}
+<nav id="caseNav" class="case-section-nav mb-3">
+  <div class="d-flex flex-wrap gap-1">
+    <a href="#sec-summary" class="btn btn-sm btn-outline-secondary active"><i class="bi bi-grid me-1"></i>Summary</a>
+    <a href="#sec-documents" class="btn btn-sm btn-outline-secondary"><i class="bi bi-file-earmark me-1"></i>Documents</a>
+    <a href="#sec-reconciliation" class="btn btn-sm btn-outline-secondary"><i class="bi bi-table me-1"></i>Reconciliation</a>
+    <a href="#sec-exceptions" class="btn btn-sm btn-outline-secondary"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions <span class="badge bg-danger ms-1">{{ exceptions|length }}</span></a>
+    <a href="#sec-agents" class="btn btn-sm btn-outline-secondary"><i class="bi bi-robot me-1"></i>Agents</a>
+    <a href="#sec-recommendation" class="btn btn-sm btn-outline-secondary"><i class="bi bi-lightbulb me-1"></i>Recommendation</a>
+    <a href="#sec-timeline" class="btn btn-sm btn-outline-secondary"><i class="bi bi-clock-history me-1"></i>Timeline</a>
+    <a href="#sec-review" class="btn btn-sm btn-outline-secondary"><i class="bi bi-clipboard-check me-1"></i>Review</a>
+  </div>
+</nav>
+
+{# ================================================================== #}
+{#  SECTION 1 — STICKY HEADER SUMMARY                                #}
+{# ================================================================== #}
+<div id="sec-summary" class="cc-sticky-header sticky-top mb-3">
+  <div class="card shadow-sm border-0">
+    <div class="card-body py-2">
+      <div class="row align-items-center g-2">
+        {# Left: Key identifiers #}
+        <div class="col-lg-7">
+          <div class="d-flex flex-wrap align-items-center gap-3">
+            <div>
+              <small class="text-muted d-block">Invoice</small>
+              <strong class="fs-6">{{ invoice.invoice_number|default:"—" }}</strong>
+            </div>
+            <div class="vr d-none d-md-block"></div>
+            <div>
+              <small class="text-muted d-block">Vendor</small>
+              <span>{% if invoice.vendor %}{{ invoice.vendor.name }}{% else %}{{ invoice.raw_vendor_name|default:"—" }}{% endif %}</span>
+            </div>
+            <div class="vr d-none d-md-block"></div>
+            <div>
+              <small class="text-muted d-block">PO</small>
+              <span>{{ po.po_number|default:"—" }}</span>
+            </div>
+            <div class="vr d-none d-md-block"></div>
+            <div>
+              <small class="text-muted d-block">Amount</small>
+              <strong>{{ invoice.currency }} {{ invoice.total_amount|default:"0.00" }}</strong>
+            </div>
+            <div class="vr d-none d-md-block"></div>
+            <div>
+              <small class="text-muted d-block">Status</small>
+              <span class="badge status-badge status-{{ result.match_status }}">{{ result.get_match_status_display }}</span>
+            </div>
+            <div class="vr d-none d-md-block"></div>
+            <div>
+              <small class="text-muted d-block">Confidence</small>
+              {% if result.deterministic_confidence %}
+              <span class="fw-semibold">{% widthratio result.deterministic_confidence 1 100 %}%</span>
+              {% else %}—{% endif %}
+            </div>
+            <div class="vr d-none d-md-block"></div>
+            <div>
+              <small class="text-muted d-block">Reviewer</small>
+              <span>{% if review_assignment and review_assignment.assigned_to %}{{ review_assignment.assigned_to.get_full_name|default:review_assignment.assigned_to.email }}{% else %}<span class="text-muted">Unassigned</span>{% endif %}</span>
+            </div>
+          </div>
+        </div>
+        {# Right: Action buttons #}
+        <div class="col-lg-5 text-lg-end">
+          <div class="d-flex flex-wrap gap-1 justify-content-lg-end">
+            <button class="btn btn-sm btn-success cc-action-btn" data-action="approve" title="Approve"><i class="bi bi-check-lg me-1"></i>Approve</button>
+            <button class="btn btn-sm btn-danger cc-action-btn" data-action="reject" title="Reject"><i class="bi bi-x-lg me-1"></i>Reject</button>
+            <button class="btn btn-sm btn-warning cc-action-btn" data-action="escalate" title="Escalate"><i class="bi bi-arrow-up-circle me-1"></i>Escalate</button>
+            <a href="{% url 'reconciliation:start_reconciliation' %}" class="btn btn-sm btn-outline-primary" title="Re-run"><i class="bi bi-arrow-clockwise me-1"></i>Re-run</a>
+            <a href="{% url 'reconciliation:case_export_csv' result.pk %}" class="btn btn-sm btn-outline-secondary" title="Download Report"><i class="bi bi-download me-1"></i>Report</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ================================================================== #}
+{#  SECTION 2 — AI CASE SUMMARY BANNER                               #}
+{# ================================================================== #}
+{% if case_summary_text or exceptions %}
+<div id="sec-ai-summary" class="mb-3">
+  <div class="card border-start border-4 {% if result.match_status == 'MATCHED' %}border-success{% elif result.match_status == 'PARTIAL_MATCH' %}border-warning{% else %}border-danger{% endif %} cc-ai-banner">
+    <div class="card-body">
+      <div class="row align-items-center">
+        <div class="col-auto">
+          <div class="cc-ai-icon">
+            <i class="bi bi-stars fs-3 {% if result.match_status == 'MATCHED' %}text-success{% elif result.match_status == 'PARTIAL_MATCH' %}text-warning{% else %}text-danger{% endif %}"></i>
+          </div>
+        </div>
+        <div class="col">
+          <h6 class="mb-1 fw-semibold">
+            <i class="bi bi-cpu me-1"></i>AI Case Summary
+            {% if case_summary_agent and case_summary_agent.confidence %}
+            <span class="badge bg-secondary ms-2">{% widthratio case_summary_agent.confidence 1 100 %}% confidence</span>
+            {% endif %}
+          </h6>
+          <p class="mb-1">{{ case_summary_text|default:"No AI summary available for this case." }}</p>
+          <div class="d-flex flex-wrap gap-3 mt-2">
+            {% if primary_recommendation %}
+            <div><small class="text-muted">Recommendation:</small> <span class="badge bg-info">{{ primary_recommendation.get_recommendation_type_display }}</span></div>
+            {% endif %}
+            <div><small class="text-muted">Exceptions:</small> <span class="badge {% if exceptions|length > 0 %}bg-danger{% else %}bg-success{% endif %}">{{ exceptions|length }}</span></div>
+            {% if result.deterministic_confidence %}
+            <div><small class="text-muted">Confidence:</small> <strong>{% widthratio result.deterministic_confidence 1 100 %}%</strong></div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ================================================================== #}
+{#  SECTION 3 — DOCUMENT SNAPSHOT (Invoice / PO / GRN)               #}
+{# ================================================================== #}
+<div id="sec-documents" class="mb-3">
+  <h5 class="cc-section-title"><i class="bi bi-file-earmark-text me-2"></i>Document Snapshot</h5>
+  <div class="row g-3">
+    {# Invoice Card #}
+    <div class="col-lg-4">
+      <div class="card h-100 cc-doc-card">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-receipt me-1 text-primary"></i><strong>Invoice</strong></span>
+          <span class="badge bg-primary-subtle text-primary">{{ invoice.get_status_display }}</span>
+        </div>
+        <div class="card-body">
+          <table class="table table-sm table-borderless mb-0 cc-doc-table">
+            <tr><td class="text-muted">Number</td><td class="fw-semibold">{{ invoice.invoice_number|default:"—" }}</td></tr>
+            <tr><td class="text-muted">Vendor</td><td>{% if invoice.vendor %}{{ invoice.vendor.name }}{% else %}{{ invoice.raw_vendor_name|default:"—" }}{% endif %}</td></tr>
+            <tr><td class="text-muted">Amount</td><td class="fw-semibold">{{ invoice.currency }} {{ invoice.total_amount|default:"0.00" }}</td></tr>
+            <tr><td class="text-muted">Tax</td><td>{{ invoice.currency }} {{ invoice.tax_amount|default:"0.00" }}</td></tr>
+            <tr><td class="text-muted">Date</td><td>{{ invoice.invoice_date|date:"M d, Y"|default:"—" }}</td></tr>
+            <tr><td class="text-muted">Lines</td><td>{{ invoice.line_items.count }}</td></tr>
+            <tr><td class="text-muted">Confidence</td><td>
+              {% if invoice.extraction_confidence %}
+              <div class="d-flex align-items-center">
+                <div class="progress flex-grow-1 me-2" style="height:6px">
+                  <div class="progress-bar {% if invoice.extraction_confidence >= 0.8 %}bg-success{% elif invoice.extraction_confidence >= 0.6 %}bg-warning{% else %}bg-danger{% endif %}" style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></div>
+                </div>
+                <small>{% widthratio invoice.extraction_confidence 1 100 %}%</small>
+              </div>
+              {% else %}—{% endif %}
+            </td></tr>
+          </table>
+        </div>
+        <div class="card-footer bg-white border-top-0">
+          <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="btn btn-sm btn-outline-primary w-100">
+            <i class="bi bi-eye me-1"></i>View Invoice
+          </a>
+        </div>
+      </div>
+    </div>
+
+    {# PO Card #}
+    <div class="col-lg-4">
+      <div class="card h-100 cc-doc-card">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-cart-check me-1 text-success"></i><strong>Purchase Order</strong></span>
+          {% if po %}<span class="badge bg-success-subtle text-success">{{ po.status }}</span>{% else %}<span class="badge bg-danger-subtle text-danger">Not Found</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% if po %}
+          <table class="table table-sm table-borderless mb-0 cc-doc-table">
+            <tr><td class="text-muted">PO Number</td><td class="fw-semibold">{{ po.po_number }}</td></tr>
+            <tr><td class="text-muted">Vendor</td><td>{% if po.vendor %}{{ po.vendor.name }}{% else %}—{% endif %}</td></tr>
+            <tr><td class="text-muted">Amount</td><td class="fw-semibold">{{ po.currency }} {{ po.total_amount|default:"0.00" }}</td></tr>
+            <tr><td class="text-muted">Tax</td><td>{{ po.currency }} {{ po.tax_amount|default:"0.00" }}</td></tr>
+            <tr><td class="text-muted">Date</td><td>{{ po.po_date|date:"M d, Y"|default:"—" }}</td></tr>
+            <tr><td class="text-muted">Lines</td><td>{{ po.line_items.count }}</td></tr>
+            <tr><td class="text-muted">Buyer</td><td>{{ po.buyer_name|default:"—" }}</td></tr>
+          </table>
+          {% else %}
+          <div class="text-center text-muted py-4">
+            <i class="bi bi-cart-x fs-1 d-block mb-2"></i>
+            <p>No purchase order linked to this invoice.</p>
+          </div>
+          {% endif %}
+        </div>
+        {% if po %}
+        <div class="card-footer bg-white border-top-0">
+          <button class="btn btn-sm btn-outline-success w-100" data-bs-toggle="offcanvas" data-bs-target="#poOffcanvas">
+            <i class="bi bi-eye me-1"></i>View PO Details
+          </button>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# GRN Card #}
+    <div class="col-lg-4">
+      <div class="card h-100 cc-doc-card">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-box-seam me-1 text-info"></i><strong>Goods Receipt</strong></span>
+          {% if grns %}<span class="badge bg-success-subtle text-success">{{ grns|length }} GRN{{ grns|length|pluralize }}</span>{% else %}<span class="badge bg-warning-subtle text-warning">None</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% if grns %}
+          {% for grn in grns %}
+          <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
+            <table class="table table-sm table-borderless mb-0 cc-doc-table">
+              <tr><td class="text-muted">GRN #</td><td class="fw-semibold">{{ grn.grn_number }}</td></tr>
+              <tr><td class="text-muted">Date</td><td>{{ grn.receipt_date|date:"M d, Y"|default:"—" }}</td></tr>
+              <tr><td class="text-muted">Status</td><td><span class="badge bg-info-subtle text-info">{{ grn.status }}</span></td></tr>
+              <tr><td class="text-muted">Lines</td><td>{{ grn.line_items.count }}</td></tr>
+              <tr><td class="text-muted">Warehouse</td><td>{{ grn.warehouse|default:"—" }}</td></tr>
+            </table>
+          </div>
+          {% endfor %}
+          {% else %}
+          <div class="text-center text-muted py-4">
+            <i class="bi bi-box fs-1 d-block mb-2"></i>
+            <p>No goods receipt notes available.</p>
+          </div>
+          {% endif %}
+        </div>
+        {% if grns %}
+        <div class="card-footer bg-white border-top-0">
+          <button class="btn btn-sm btn-outline-info w-100" data-bs-toggle="offcanvas" data-bs-target="#grnOffcanvas">
+            <i class="bi bi-eye me-1"></i>View GRN Details
+          </button>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ================================================================== #}
+{#  SECTION 4 — RECONCILIATION COMPARISON                            #}
+{# ================================================================== #}
+<div id="sec-reconciliation" class="mb-3">
+  <div class="card">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <i class="bi bi-table me-2 text-primary"></i><strong>Reconciliation Comparison</strong>
+        <small class="text-muted ms-2">{{ line_results|length }} line{{ line_results|length|pluralize }} · {{ mismatch_line_count }} mismatch{{ mismatch_line_count|pluralize:"es" }}</small>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" id="toggleMismatchOnly">
+          <label class="form-check-label small" for="toggleMismatchOnly">Mismatches only</label>
+        </div>
+      </div>
+    </div>
+    <div class="card-body p-0">
+      {# Header-level checks #}
+      <div class="px-3 py-2 bg-light border-bottom">
+        <div class="d-flex flex-wrap gap-3">
+          <span><small class="text-muted">Vendor Match</small>
+            {% if result.vendor_match %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% elif result.vendor_match == False %}<i class="bi bi-x-circle-fill text-danger ms-1"></i>{% else %}<i class="bi bi-dash-circle text-muted ms-1"></i>{% endif %}
+          </span>
+          <span><small class="text-muted">Currency Match</small>
+            {% if result.currency_match %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% elif result.currency_match == False %}<i class="bi bi-x-circle-fill text-danger ms-1"></i>{% else %}<i class="bi bi-dash-circle text-muted ms-1"></i>{% endif %}
+          </span>
+          <span><small class="text-muted">PO Total Match</small>
+            {% if result.po_total_match %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% elif result.po_total_match == False %}<i class="bi bi-x-circle-fill text-danger ms-1"></i>{% else %}<i class="bi bi-dash-circle text-muted ms-1"></i>{% endif %}
+          </span>
+          <span><small class="text-muted">GRN Available</small>
+            {% if result.grn_available %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% else %}<i class="bi bi-x-circle-fill text-secondary ms-1"></i>{% endif %}
+          </span>
+          <span><small class="text-muted">GRN Fully Received</small>
+            {% if result.grn_fully_received %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% elif result.grn_fully_received == False %}<i class="bi bi-x-circle-fill text-danger ms-1"></i>{% else %}<i class="bi bi-dash-circle text-muted ms-1"></i>{% endif %}
+          </span>
+          <span><small class="text-muted">Amount Diff</small>
+            <strong class="ms-1 {% if result.total_amount_difference and result.total_amount_difference != 0 %}text-danger{% else %}text-success{% endif %}">
+              {{ result.total_amount_difference|default:"0.00" }} ({{ result.total_amount_difference_pct|default:"0" }}%)
+            </strong>
+          </span>
+        </div>
+      </div>
+      {# Line-level DataTable #}
+      <div class="table-responsive">
+        <table id="reconTable" class="table table-sm table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Item</th>
+              <th>Inv Qty</th>
+              <th>PO Qty</th>
+              <th>GRN Qty</th>
+              <th>Inv Price</th>
+              <th>PO Price</th>
+              <th>Inv Amt</th>
+              <th>PO Amt</th>
+              <th>Variance</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ln in line_results %}
+            <tr class="{% if ln.match_status != 'MATCHED' %}cc-row-mismatch{% endif %}" data-match-status="{{ ln.match_status }}">
+              <td>{{ forloop.counter }}</td>
+              <td class="text-truncate" style="max-width:180px" title="{% if ln.invoice_line %}{{ ln.invoice_line.description }}{% elif ln.po_line %}{{ ln.po_line.description }}{% endif %}">
+                {% if ln.invoice_line %}{{ ln.invoice_line.description|truncatechars:50 }}{% elif ln.po_line %}{{ ln.po_line.description|truncatechars:50 }}{% else %}—{% endif %}
+              </td>
+              <td>{{ ln.qty_invoice|default:"—" }}</td>
+              <td {% if ln.qty_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.qty_po|default:"—" }}</td>
+              <td>{{ ln.qty_received|default:"—" }}</td>
+              <td>{{ ln.price_invoice|default:"—" }}</td>
+              <td {% if ln.price_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.price_po|default:"—" }}</td>
+              <td>{{ ln.amount_invoice|default:"—" }}</td>
+              <td {% if ln.amount_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.amount_po|default:"—" }}</td>
+              <td class="{% if ln.amount_difference and ln.amount_difference != 0 %}fw-semibold text-danger{% endif %}">
+                {{ ln.amount_difference|default:"0.00" }}
+              </td>
+              <td><span class="badge status-badge status-{{ ln.match_status }}">{{ ln.get_match_status_display }}</span></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="11" class="text-muted text-center py-3">No line-level results available</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ================================================================== #}
+{#  SECTION 5+6 — EXCEPTIONS & AGENT DECISION FLOW (2-column)        #}
+{# ================================================================== #}
+<div class="row g-3 mb-3">
+<div class="col-lg-6">
+<div id="sec-exceptions" class="h-100">
+  <div class="card h-100">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <i class="bi bi-exclamation-triangle me-2 text-warning"></i><strong>Exceptions</strong>
+        <span class="badge bg-danger ms-2">{{ exceptions|length }}</span>
+      </div>
+    </div>
+    <div class="card-body p-0">
+      {% if exceptions %}
+      <div class="accordion accordion-flush" id="exceptionsAccordion">
+        {% for exc in exceptions %}
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button {% if not forloop.first %}collapsed{% endif %} py-2" type="button" data-bs-toggle="collapse" data-bs-target="#exc{{ exc.pk }}">
+              <div class="d-flex align-items-center gap-2 w-100">
+                <span class="badge cc-severity-{{ exc.severity }}">{{ exc.severity }}</span>
+                <span class="badge bg-dark">{{ exc.get_exception_type_display }}</span>
+                <span class="flex-grow-1 text-truncate">{{ exc.message|truncatechars:80 }}</span>
+                {% if exc.resolved %}
+                <span class="badge bg-success me-3"><i class="bi bi-check-lg me-1"></i>Resolved</span>
+                {% else %}
+                <span class="badge bg-warning text-dark me-3">Open</span>
+                {% endif %}
+              </div>
+            </button>
+          </h2>
+          <div id="exc{{ exc.pk }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}" data-bs-parent="#exceptionsAccordion">
+            <div class="accordion-body">
+              <div class="row g-3">
+                <div class="col-md-8">
+                  <h6 class="text-muted">Description</h6>
+                  <p>{{ exc.message }}</p>
+                  {% if exc.details %}
+                  <h6 class="text-muted">Details</h6>
+                  <div class="cc-json-details">
+                    {% for key, value in exc.details.items %}
+                    <div class="d-flex mb-1">
+                      <span class="text-muted me-2" style="min-width:140px">{{ key }}:</span>
+                      <span class="fw-semibold">{{ value }}</span>
+                    </div>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                </div>
+                <div class="col-md-4">
+                  <div class="card bg-light border-0">
+                    <div class="card-body py-2">
+                      <small class="text-muted d-block">Exception Type</small>
+                      <span class="fw-semibold">{{ exc.get_exception_type_display }}</span>
+                      <small class="text-muted d-block mt-2">Severity</small>
+                      <span class="cc-severity-badge cc-severity-{{ exc.severity }}">{{ exc.severity }}</span>
+                      <small class="text-muted d-block mt-2">Status</small>
+                      {% if exc.resolved %}
+                      <span class="text-success"><i class="bi bi-check-circle me-1"></i>Resolved{% if exc.resolved_at %} on {{ exc.resolved_at|date:"M d, Y" }}{% endif %}</span>
+                      {% else %}
+                      <span class="text-warning"><i class="bi bi-exclamation-circle me-1"></i>Open</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4">
+        <i class="bi bi-check-circle fs-1 text-success d-block mb-2"></i>
+        <p>No exceptions detected for this case.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+</div>{# /col-lg-6 exceptions #}
+
+<div class="col-lg-6">
+<div id="sec-agents" class="h-100">
+  <div class="card h-100">
+    <div class="card-header bg-white">
+      <i class="bi bi-diagram-3 me-2 text-primary"></i><strong>Agent Decision Flow</strong>
+      <small class="text-muted ms-2">{{ agent_runs|length }} agent{{ agent_runs|length|pluralize }} executed</small>
+    </div>
+    <div class="card-body">
+      {% if agent_runs %}
+      <div class="cc-agent-timeline">
+        {% for run in agent_runs %}
+        <div class="cc-agent-step {% if run.status == 'COMPLETED' %}cc-step-completed{% elif run.status == 'FAILED' %}cc-step-failed{% elif run.status == 'RUNNING' %}cc-step-running{% else %}cc-step-pending{% endif %}">
+          {# Step connector line #}
+          <div class="cc-step-connector">
+            <div class="cc-step-dot">
+              {% if run.status == "COMPLETED" %}<i class="bi bi-check-lg"></i>
+              {% elif run.status == "FAILED" %}<i class="bi bi-x-lg"></i>
+              {% elif run.status == "RUNNING" %}<i class="bi bi-arrow-repeat"></i>
+              {% else %}<i class="bi bi-hourglass-split"></i>{% endif %}
+            </div>
+            {% if not forloop.last %}<div class="cc-step-line"></div>{% endif %}
+          </div>
+          {# Step content #}
+          <div class="cc-step-content">
+            <div class="card border-0 shadow-sm mb-2">
+              <div class="card-header bg-transparent d-flex justify-content-between align-items-center py-2" role="button" data-bs-toggle="collapse" data-bs-target="#agentDetail{{ run.pk }}">
+                <div class="d-flex align-items-center gap-2">
+                  <strong>{{ run.agent_definition.name|default:run.get_agent_type_display }}</strong>
+                  <span class="badge status-badge status-{{ run.status }}">{{ run.status }}</span>
+                  {% if run.confidence %}<span class="badge bg-secondary">{% widthratio run.confidence 1 100 %}%</span>{% endif %}
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                  {% if run.duration_ms %}<small class="text-muted">{{ run.duration_ms }}ms</small>{% endif %}
+                  {% if run.total_tokens %}<small class="text-muted"><i class="bi bi-coin me-1"></i>{{ run.total_tokens }} tokens</small>{% endif %}
+                  <i class="bi bi-chevron-down cc-collapse-icon"></i>
+                </div>
+              </div>
+              <div id="agentDetail{{ run.pk }}" class="collapse {% if forloop.first %}show{% endif %}">
+                <div class="card-body pt-0">
+                  {# Reasoning #}
+                  {% if run.summarized_reasoning %}
+                  <div class="mb-3">
+                    <h6 class="text-muted mb-1"><i class="bi bi-chat-text me-1"></i>Reasoning</h6>
+                    <div class="cc-reasoning-box">{{ run.summarized_reasoning }}</div>
+                  </div>
+                  {% endif %}
+
+                  {# Decisions #}
+                  {% with decisions=run.decisions.all %}
+                  {% if decisions %}
+                  <div class="mb-3">
+                    <h6 class="text-muted mb-1"><i class="bi bi-signpost-split me-1"></i>Decisions</h6>
+                    {% for d in decisions %}
+                    <div class="cc-decision-item">
+                      <div class="d-flex align-items-start gap-2">
+                        <i class="bi bi-arrow-right-circle text-primary mt-1"></i>
+                        <div>
+                          <strong>{{ d.decision }}</strong>
+                          {% if d.confidence %}<span class="badge bg-secondary ms-1">{% widthratio d.confidence 1 100 %}%</span>{% endif %}
+                          {% if d.rationale %}<br><small class="text-muted">{{ d.rationale }}</small>{% endif %}
+                        </div>
+                      </div>
+                    </div>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                  {% endwith %}
+
+                  {# Tool calls #}
+                  {% if show_full_trace %}
+                  {% with tool_calls=run.tool_calls.all %}
+                  {% if tool_calls %}
+                  <div class="mb-3">
+                    <h6 class="text-muted mb-1"><i class="bi bi-tools me-1"></i>Tools Used</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                      {% for tc in tool_calls %}
+                      <span class="badge {% if tc.status == 'SUCCESS' %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %} cc-tool-badge">
+                        <i class="bi bi-gear me-1"></i>{{ tc.tool_name }}
+                        <small class="ms-1">{% if tc.duration_ms %}{{ tc.duration_ms }}ms{% endif %}</small>
+                      </span>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {% endif %}
+                  {% endwith %}
+
+                  {# Steps #}
+                  {% with steps=run.steps.all %}
+                  {% if steps %}
+                  <div class="mb-0">
+                    <h6 class="text-muted mb-1"><i class="bi bi-list-ol me-1"></i>Execution Steps</h6>
+                    <ol class="cc-steps-list">
+                      {% for s in steps %}
+                      <li class="{% if not s.success %}text-danger{% endif %}">
+                        {{ s.action }}
+                        {% if not s.success %}<span class="badge bg-danger ms-1">Failed</span>{% endif %}
+                        {% if s.duration_ms %}<small class="text-muted ms-1">({{ s.duration_ms }}ms)</small>{% endif %}
+                      </li>
+                      {% endfor %}
+                    </ol>
+                  </div>
+                  {% endif %}
+                  {% endwith %}
+                  {% endif %}
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4">
+        <i class="bi bi-robot fs-1 d-block mb-2"></i>
+        <p>No agent analysis has been performed for this case.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+</div>{# /col-lg-6 agents #}
+</div>{# /row #}
+
+{# ================================================================== #}
+{#  SECTION 7 — AGENT RECOMMENDATION                                 #}
+{# ================================================================== #}
+{% if primary_recommendation %}
+<div id="sec-recommendation" class="mb-3">
+  <div class="card border-start border-4 border-info cc-recommendation-card">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <i class="bi bi-lightbulb me-2 text-warning"></i><strong>Agent Recommendation</strong>
+      </div>
+      {% if primary_recommendation.accepted is None %}
+      <span class="badge bg-warning text-dark">Pending Review</span>
+      {% elif primary_recommendation.accepted %}
+      <span class="badge bg-success">Accepted</span>
+      {% else %}
+      <span class="badge bg-danger">Rejected</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-8">
+          <div class="mb-3">
+            <h6 class="text-muted">Recommendation</h6>
+            <h5><span class="badge bg-info fs-6">{{ primary_recommendation.get_recommendation_type_display }}</span></h5>
+          </div>
+          {% if primary_recommendation.reasoning %}
+          <div class="mb-3">
+            <h6 class="text-muted">Reasoning</h6>
+            <p>{{ primary_recommendation.reasoning }}</p>
+          </div>
+          {% endif %}
+          {% if primary_recommendation.recommended_action %}
+          <div class="mb-3">
+            <h6 class="text-muted">Recommended Action</h6>
+            <p class="fw-semibold">{{ primary_recommendation.recommended_action }}</p>
+          </div>
+          {% endif %}
+          {% if primary_recommendation.evidence %}
+          <div class="mb-0">
+            <h6 class="text-muted">Evidence</h6>
+            <div class="cc-json-details">
+              {% for key, value in primary_recommendation.evidence.items %}
+              <div class="d-flex mb-1">
+                <span class="text-muted me-2" style="min-width:140px">{{ key }}:</span>
+                <span>{{ value }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+        </div>
+        <div class="col-md-4">
+          <div class="card bg-light border-0">
+            <div class="card-body">
+              <small class="text-muted d-block">Confidence</small>
+              {% if primary_recommendation.confidence %}
+              <div class="d-flex align-items-center mb-3">
+                <div class="progress flex-grow-1 me-2" style="height:8px">
+                  <div class="progress-bar {% if primary_recommendation.confidence >= 0.8 %}bg-success{% elif primary_recommendation.confidence >= 0.6 %}bg-warning{% else %}bg-danger{% endif %}" style="width:{% widthratio primary_recommendation.confidence 1 100 %}%"></div>
+                </div>
+                <strong>{% widthratio primary_recommendation.confidence 1 100 %}%</strong>
+              </div>
+              {% else %}—{% endif %}
+
+              <small class="text-muted d-block">Source Agent</small>
+              <span class="mb-3 d-block">{{ primary_recommendation.agent_run.agent_type|default:"—" }}</span>
+
+              {% if primary_recommendation.accepted is None %}
+              <div class="d-grid gap-2 mt-3">
+                <button class="btn btn-success cc-action-btn" data-action="accept-recommendation"><i class="bi bi-check-lg me-1"></i>Accept Recommendation</button>
+                <button class="btn btn-outline-danger cc-action-btn" data-action="override-recommendation"><i class="bi bi-pencil me-1"></i>Override Decision</button>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# Additional recommendations (if any) #}
+      {% if recommendations|length > 1 %}
+      <hr>
+      <h6 class="text-muted mb-2">Other Recommendations</h6>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Type</th><th>Agent</th><th>Confidence</th><th>Action</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for rec in recommendations %}
+            {% if not forloop.first %}
+            <tr>
+              <td><span class="badge bg-info">{{ rec.get_recommendation_type_display }}</span></td>
+              <td><small>{{ rec.agent_run.agent_type|default:"—" }}</small></td>
+              <td>{% if rec.confidence %}{% widthratio rec.confidence 1 100 %}%{% else %}—{% endif %}</td>
+              <td>{{ rec.recommended_action|default:"—" }}</td>
+              <td>
+                {% if rec.accepted is None %}<span class="badge bg-warning text-dark">Pending</span>
+                {% elif rec.accepted %}<span class="badge bg-success">Accepted</span>
+                {% else %}<span class="badge bg-danger">Rejected</span>{% endif %}
+              </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% else %}
+<div id="sec-recommendation" class="mb-3">
+  <div class="card">
+    <div class="card-header bg-white">
+      <i class="bi bi-lightbulb me-2 text-warning"></i><strong>Agent Recommendation</strong>
+    </div>
+    <div class="card-body text-center text-muted py-4">
+      <i class="bi bi-lightbulb fs-1 d-block mb-2"></i>
+      <p>No agent recommendation available for this case.</p>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ================================================================== #}
+{#  SECTION 8 — CASE TIMELINE                                        #}
+{# ================================================================== #}
+<div id="sec-timeline" class="mb-3">
+  <div class="card">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <i class="bi bi-clock-history me-2 text-info"></i><strong>Case Timeline</strong>
+        <small class="text-muted ms-2">{{ timeline|length }} event{{ timeline|length|pluralize }}</small>
+      </div>
+      <div class="d-flex gap-1">
+        <button class="btn btn-sm btn-outline-secondary cc-timeline-filter active" data-filter="all">All</button>
+        <button class="btn btn-sm btn-outline-primary cc-timeline-filter" data-filter="audit">Audit</button>
+        <button class="btn btn-sm btn-outline-success cc-timeline-filter" data-filter="agent_run">Agents</button>
+        <button class="btn btn-sm btn-outline-secondary cc-timeline-filter" data-filter="tool_call">Tools</button>
+        <button class="btn btn-sm btn-outline-warning cc-timeline-filter" data-filter="recommendation">Recommendations</button>
+        <button class="btn btn-sm btn-outline-info cc-timeline-filter" data-filter="review">Reviews</button>
+      </div>
+    </div>
+    <div class="card-body">
+      {% if timeline %}
+      <div class="cc-timeline" id="caseTimeline">
+        {% for event in timeline %}
+        <div class="cc-timeline-item" data-category="{{ event.event_category }}">
+          <div class="cc-timeline-marker">
+            {% if event.event_category == "audit" %}
+              <i class="bi bi-file-earmark-text text-primary"></i>
+            {% elif event.event_category == "agent_run" %}
+              <i class="bi bi-robot text-success"></i>
+            {% elif event.event_category == "tool_call" %}
+              <i class="bi bi-tools text-secondary"></i>
+            {% elif event.event_category == "recommendation" %}
+              <i class="bi bi-lightbulb text-warning"></i>
+            {% elif event.event_category == "review" or event.event_category == "review_action" %}
+              <i class="bi bi-person-check text-info"></i>
+            {% elif event.event_category == "review_decision" %}
+              <i class="bi bi-shield-check text-danger"></i>
+            {% else %}
+              <i class="bi bi-circle text-muted"></i>
+            {% endif %}
+          </div>
+          <div class="cc-timeline-content">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <strong>{{ event.description }}</strong>
+                <div class="mt-1">
+                  <span class="badge bg-light text-dark border me-1">{{ event.event_category }}</span>
+                  <small class="text-muted">by {{ event.actor }}</small>
+                </div>
+              </div>
+              <small class="text-muted text-nowrap ms-3">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4">
+        <i class="bi bi-clock fs-1 d-block mb-2"></i>
+        <p>No timeline events recorded yet.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ================================================================== #}
+{#  SECTION 9 — REVIEW PANEL                                         #}
+{# ================================================================== #}
+<div id="sec-review" class="mb-3">
+  <div class="card">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <i class="bi bi-clipboard-check me-2 text-primary"></i><strong>Review Decision Panel</strong>
+      </div>
+      {% if review_assignment %}
+      <span class="badge status-badge status-{{ review_assignment.status }}">{{ review_assignment.get_status_display }}</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if review_assignment %}
+      <div class="row g-3">
+        {# Review info #}
+        <div class="col-md-4">
+          <div class="card bg-light border-0 h-100">
+            <div class="card-body">
+              <h6 class="text-muted mb-3">Assignment Details</h6>
+              <table class="table table-sm table-borderless mb-0">
+                <tr><td class="text-muted">Assigned To</td><td class="fw-semibold">{% if review_assignment.assigned_to %}{{ review_assignment.assigned_to.get_full_name|default:review_assignment.assigned_to.email }}{% else %}<span class="text-muted">Unassigned</span>{% endif %}</td></tr>
+                <tr><td class="text-muted">Priority</td><td>
+                  {% if review_assignment.priority <= 3 %}<span class="badge bg-danger">P{{ review_assignment.priority }} — High</span>
+                  {% elif review_assignment.priority <= 6 %}<span class="badge bg-warning text-dark">P{{ review_assignment.priority }} — Medium</span>
+                  {% else %}<span class="badge bg-secondary">P{{ review_assignment.priority }} — Low</span>{% endif %}
+                </td></tr>
+                <tr><td class="text-muted">Status</td><td><span class="badge status-badge status-{{ review_assignment.status }}">{{ review_assignment.get_status_display }}</span></td></tr>
+                <tr><td class="text-muted">Created</td><td>{{ review_assignment.created_at|date:"M d, Y H:i" }}</td></tr>
+                {% if review_assignment.due_date %}<tr><td class="text-muted">Due</td><td>{{ review_assignment.due_date|date:"M d, Y H:i" }}</td></tr>{% endif %}
+              </table>
+
+              {% if review_decision %}
+              <hr>
+              <h6 class="text-muted mb-2">Decision</h6>
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="badge status-badge status-{{ review_decision.decision }} fs-6">{{ review_decision.get_decision_display }}</span>
+              </div>
+              {% if review_decision.reason %}<p class="small mt-1 mb-0">{{ review_decision.reason }}</p>{% endif %}
+              <small class="text-muted">by {{ review_decision.decided_by.get_full_name|default:review_decision.decided_by.email|default:"—" }} on {{ review_decision.decided_at|date:"M d, Y H:i" }}</small>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        {# Review actions & comments #}
+        <div class="col-md-4">
+          <h6 class="text-muted mb-2">Review History</h6>
+          {% if review_actions %}
+          <div class="cc-review-history">
+            {% for action in review_actions %}
+            <div class="d-flex gap-2 mb-2">
+              <div class="cc-review-dot">
+                {% if action.action_type == "APPROVE" %}<i class="bi bi-check-circle-fill text-success"></i>
+                {% elif action.action_type == "REJECT" %}<i class="bi bi-x-circle-fill text-danger"></i>
+                {% else %}<i class="bi bi-pencil-fill text-primary"></i>{% endif %}
+              </div>
+              <div>
+                <strong class="small">{{ action.get_action_type_display }}</strong>
+                {% if action.field_name %}<span class="badge bg-light text-dark border ms-1">{{ action.field_name }}</span>{% endif %}
+                {% if action.reason %}<br><small class="text-muted">{{ action.reason|truncatechars:100 }}</small>{% endif %}
+                <br><small class="text-muted">{{ action.performed_by.get_full_name|default:action.performed_by.email|default:"—" }} · {{ action.created_at|date:"M d H:i" }}</small>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="text-muted small">No review actions taken yet.</p>
+          {% endif %}
+
+          <hr>
+          <h6 class="text-muted mb-2">Comments</h6>
+          {% if review_comments %}
+          <div class="cc-comments">
+            {% for comment in review_comments %}
+            <div class="cc-comment-item mb-2">
+              <div class="d-flex justify-content-between">
+                <strong class="small">{{ comment.author.get_full_name|default:comment.author.email|default:"System" }}</strong>
+                <small class="text-muted">{{ comment.created_at|date:"M d H:i" }}</small>
+              </div>
+              <p class="small mb-0">{{ comment.body }}</p>
+              {% if not comment.is_internal %}<span class="badge bg-warning-subtle text-warning">Vendor-visible</span>{% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="text-muted small">No comments yet.</p>
+          {% endif %}
+        </div>
+
+        {# Review workbench form #}
+        <div class="col-md-4">
+          <h6 class="text-muted mb-2">Review Workbench</h6>
+          <form id="reviewForm" method="post" action="#">
+            {% csrf_token %}
+            <div class="mb-2">
+              <label for="reviewNotes" class="form-label small text-muted">Reviewer Notes</label>
+              <textarea class="form-control form-control-sm" id="reviewNotes" rows="3" placeholder="Add your review notes..."></textarea>
+            </div>
+            <div class="mb-3">
+              <label for="reviewReason" class="form-label small text-muted">Decision Reason</label>
+              <textarea class="form-control form-control-sm" id="reviewReason" rows="2" placeholder="Reason for decision..."></textarea>
+            </div>
+            <div class="d-grid gap-2">
+              <button type="button" class="btn btn-success btn-sm cc-action-btn" data-action="approve"><i class="bi bi-check-lg me-1"></i>Approve</button>
+              <button type="button" class="btn btn-danger btn-sm cc-action-btn" data-action="reject"><i class="bi bi-x-lg me-1"></i>Reject</button>
+              <button type="button" class="btn btn-warning btn-sm cc-action-btn" data-action="escalate"><i class="bi bi-arrow-up-circle me-1"></i>Escalate</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm cc-action-btn" data-action="request-info"><i class="bi bi-envelope me-1"></i>Request Vendor Clarification</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4">
+        <i class="bi bi-clipboard fs-1 d-block mb-2"></i>
+        <p>No review assignment exists for this case.</p>
+        {% if result.requires_review %}
+        <p class="small">This case requires review but no reviewer has been assigned yet.</p>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ================================================================== #}
+{#  OFFCANVAS — PO Details                                           #}
+{# ================================================================== #}
+{% if po %}
+<div class="offcanvas offcanvas-end" tabindex="-1" id="poOffcanvas" style="width:500px">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title"><i class="bi bi-cart-check me-2 text-success"></i>PO {{ po.po_number }}</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body">
+    <table class="table table-sm">
+      <tr><th>PO Number</th><td>{{ po.po_number }}</td></tr>
+      <tr><th>Vendor</th><td>{% if po.vendor %}{{ po.vendor.name }}{% else %}—{% endif %}</td></tr>
+      <tr><th>Date</th><td>{{ po.po_date|date:"M d, Y"|default:"—" }}</td></tr>
+      <tr><th>Currency</th><td>{{ po.currency }}</td></tr>
+      <tr><th>Total</th><td>{{ po.currency }} {{ po.total_amount|default:"0.00" }}</td></tr>
+      <tr><th>Tax</th><td>{{ po.currency }} {{ po.tax_amount|default:"0.00" }}</td></tr>
+      <tr><th>Status</th><td><span class="badge bg-success">{{ po.status }}</span></td></tr>
+      <tr><th>Buyer</th><td>{{ po.buyer_name|default:"—" }}</td></tr>
+      <tr><th>Department</th><td>{{ po.department|default:"—" }}</td></tr>
+    </table>
+    <h6 class="mt-3">Line Items</h6>
+    <div class="table-responsive">
+      <table class="table table-sm table-bordered">
+        <thead class="table-light"><tr><th>#</th><th>Description</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead>
+        <tbody>
+          {% for line in po.line_items.all %}
+          <tr>
+            <td>{{ line.line_number }}</td>
+            <td>{{ line.description|truncatechars:40 }}</td>
+            <td>{{ line.quantity }}</td>
+            <td>{{ line.unit_price }}</td>
+            <td>{{ line.line_amount }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="text-muted text-center">No line items</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ================================================================== #}
+{#  OFFCANVAS — GRN Details                                          #}
+{# ================================================================== #}
+{% if grns %}
+<div class="offcanvas offcanvas-end" tabindex="-1" id="grnOffcanvas" style="width:500px">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title"><i class="bi bi-box-seam me-2 text-info"></i>Goods Receipt Notes</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body">
+    {% for grn in grns %}
+    <div class="{% if not forloop.last %}border-bottom pb-3 mb-3{% endif %}">
+      <h6>GRN {{ grn.grn_number }}</h6>
+      <table class="table table-sm">
+        <tr><th>Date</th><td>{{ grn.receipt_date|date:"M d, Y"|default:"—" }}</td></tr>
+        <tr><th>Status</th><td><span class="badge bg-info">{{ grn.status }}</span></td></tr>
+        <tr><th>Warehouse</th><td>{{ grn.warehouse|default:"—" }}</td></tr>
+        <tr><th>Receiver</th><td>{{ grn.receiver_name|default:"—" }}</td></tr>
+      </table>
+      <h6 class="small">Line Items</h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered">
+          <thead class="table-light"><tr><th>#</th><th>Description</th><th>Received</th><th>Accepted</th></tr></thead>
+          <tbody>
+            {% for line in grn.line_items.all %}
+            <tr>
+              <td>{{ line.line_number }}</td>
+              <td>{{ line.description|truncatechars:40 }}</td>
+              <td>{{ line.quantity_received }}</td>
+              <td>{{ line.quantity_accepted|default:"—" }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4" class="text-muted text-center">No line items</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="{% static 'js/case_console.js' %}"></script>
+{% endblock %}

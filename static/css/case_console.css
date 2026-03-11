@@ -1,0 +1,294 @@
+/* ============================================================
+   Case Console — Investigation Dashboard Styles
+   ============================================================ */
+
+/* --- Sticky header --- */
+.cc-sticky-header {
+  z-index: 1020;
+  top: 56px; /* below main navbar */
+}
+.cc-sticky-header .card {
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(8px);
+}
+
+/* --- Section navigation --- */
+.case-section-nav {
+  position: sticky;
+  top: 120px;
+  z-index: 1019;
+  background: rgba(245, 246, 250, 0.95);
+  backdrop-filter: blur(4px);
+  padding: 8px 0;
+  border-bottom: 1px solid #e9ecef;
+}
+.case-section-nav .btn.active {
+  background: #0d6efd;
+  color: #fff;
+  border-color: #0d6efd;
+}
+
+/* --- Section titles --- */
+.cc-section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: #344767;
+}
+
+/* --- AI Summary Banner --- */
+.cc-ai-banner {
+  background: linear-gradient(135deg, #f8f9ff 0%, #fff 100%);
+}
+.cc-ai-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: rgba(13, 110, 253, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Document cards --- */
+.cc-doc-card {
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.cc-doc-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.cc-doc-table td:first-child {
+  width: 100px;
+  font-size: 0.82rem;
+}
+.cc-doc-table td {
+  padding: 0.2rem 0.4rem;
+}
+
+/* --- Reconciliation table --- */
+.cc-row-mismatch {
+  background-color: rgba(220, 53, 69, 0.04) !important;
+}
+.cc-row-mismatch:hover {
+  background-color: rgba(220, 53, 69, 0.08) !important;
+}
+.cc-cell-mismatch {
+  background-color: rgba(220, 53, 69, 0.12) !important;
+  font-weight: 600;
+  color: #dc3545;
+}
+
+/* --- Exception severity badges --- */
+.cc-severity-LOW      { background: #d1e7dd; color: #0f5132; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.cc-severity-MEDIUM   { background: #fff3cd; color: #664d03; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.cc-severity-HIGH     { background: #ffe5d0; color: #984c0c; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.cc-severity-CRITICAL { background: #f8d7da; color: #842029; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+
+/* --- Agent Decision Flow (vertical stepper) --- */
+.cc-agent-timeline {
+  position: relative;
+  padding-left: 0;
+}
+.cc-agent-step {
+  display: flex;
+  gap: 16px;
+  position: relative;
+}
+.cc-step-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 36px;
+}
+.cc-step-dot {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  color: #fff;
+  flex-shrink: 0;
+  z-index: 1;
+}
+.cc-step-completed .cc-step-dot { background: #198754; }
+.cc-step-failed .cc-step-dot    { background: #dc3545; }
+.cc-step-running .cc-step-dot   { background: #0d6efd; animation: pulse 1.5s infinite; }
+.cc-step-pending .cc-step-dot   { background: #6c757d; }
+
+.cc-step-line {
+  width: 2px;
+  flex-grow: 1;
+  min-height: 20px;
+  background: #dee2e6;
+}
+.cc-step-content {
+  flex-grow: 1;
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
+.cc-collapse-icon {
+  transition: transform 0.2s;
+}
+[aria-expanded="true"] .cc-collapse-icon,
+:not(.collapsed) .cc-collapse-icon {
+  transform: rotate(180deg);
+}
+
+.cc-reasoning-box {
+  background: #f8f9fa;
+  border-left: 3px solid #0d6efd;
+  padding: 10px 14px;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.cc-decision-item {
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+.cc-decision-item:last-child {
+  border-bottom: none;
+}
+
+.cc-steps-list {
+  padding-left: 1.2rem;
+  margin-bottom: 0;
+}
+.cc-steps-list li {
+  padding: 3px 0;
+  font-size: 0.88rem;
+}
+
+.cc-tool-badge {
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+/* --- Recommendation card --- */
+.cc-recommendation-card {
+  background: linear-gradient(135deg, #fffdf7 0%, #fff 100%);
+}
+
+/* --- Timeline --- */
+.cc-timeline {
+  position: relative;
+  padding-left: 24px;
+}
+.cc-timeline::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #dee2e6;
+}
+.cc-timeline-item {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  position: relative;
+  border-bottom: 1px solid #f5f6fa;
+}
+.cc-timeline-item:last-child {
+  border-bottom: none;
+}
+.cc-timeline-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #dee2e6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  z-index: 1;
+  margin-left: -36px;
+  font-size: 0.8rem;
+}
+.cc-timeline-content {
+  flex-grow: 1;
+  min-width: 0;
+}
+.cc-timeline-item.cc-hidden {
+  display: none;
+}
+
+/* --- Review panel --- */
+.cc-review-history {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.cc-review-dot {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.cc-comments {
+  max-height: 250px;
+  overflow-y: auto;
+}
+.cc-comment-item {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+/* --- JSON details display --- */
+.cc-json-details {
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+}
+
+/* --- Pulse animation for running agents --- */
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.4); }
+  70%  { box-shadow: 0 0 0 10px rgba(13, 110, 253, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(13, 110, 253, 0); }
+}
+
+/* --- DataTables overrides --- */
+#reconTable_wrapper .dataTables_filter input {
+  border-radius: 6px;
+  border: 1px solid #dee2e6;
+  padding: 4px 10px;
+}
+#reconTable_wrapper .dataTables_length select {
+  border-radius: 6px;
+}
+
+/* --- Responsive tweaks --- */
+@media (max-width: 991.98px) {
+  .cc-sticky-header {
+    top: 56px;
+  }
+  .case-section-nav {
+    top: auto;
+    position: relative;
+  }
+  .cc-sticky-header .vr {
+    display: none !important;
+  }
+}
+@media (max-width: 767.98px) {
+  .cc-agent-step {
+    gap: 10px;
+  }
+  .cc-step-connector {
+    width: 28px;
+  }
+  .cc-step-dot {
+    width: 28px;
+    height: 28px;
+    font-size: 0.75rem;
+  }
+}
