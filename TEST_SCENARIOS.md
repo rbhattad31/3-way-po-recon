@@ -1,8 +1,8 @@
 # 3-Way PO Reconciliation — Test Scenarios & Expected Results
 
-**Document Version:** 1.0  
+**Document Version:** 1.2  
 **Date:** 2026-03-11  
-**Dataset:** `seed_saudi_mcd_data` (master) + `seed_invoice_test_data` (18 scenarios)  
+**Dataset:** `seed_saudi_mcd_data` (master) + `seed_invoice_test_data` (18 scenarios) + `seed_po_agent_test_data` (10 PO Agent scenarios) + `seed_grn_agent_test_data` (12 GRN Agent scenarios)  
 **Active Config:** Default Production  
 
 ---
@@ -23,7 +23,7 @@
 
 ---
 
-## Quick Reference — All 18 Scenarios
+## Quick Reference — All 40 Scenarios
 
 | # | Invoice | PO | Vendor | Category | Expected Match Status | Expected Behavior |
 |---|---------|-----|--------|----------|----------------------|-------------------|
@@ -46,6 +46,31 @@
 | 016 | INV-GFF-2026-016 | PO-KSA-1016 | VND-GFF-002 | AI Resolvable (Fuzzy) | **PARTIAL_MATCH** | AI resolves misspellings + qty |
 | 017 | INV-AKD-2026-017 | PO-KSA-1022 | VND-AKD-009 | AI Resolvable (Price) | **PARTIAL_MATCH** | AI identifies price pattern |
 | 018 | INV-RSRC-2026-018 | PO-KSA-1020 | VND-RSRC-007 | AI Resolvable (Extra) | **PARTIAL_MATCH** | AI handles reordered + surcharge |
+| **PO Agent** | | | | | | |
+| **GRN Agent** | | | | | | |
+| GRNAG-001 | INV-GRNAG-2026-001 | PO-KSA-1001 | VND-AFS-001 | Full Receipt Match | **MATCHED** | GRN confirms full receipt |
+| GRNAG-002 | INV-GRNAG-2026-002 | PO-KSA-3001 | VND-RBC-005 | Missing GRN | **UNMATCHED** | No GRN found → procurement |
+| GRNAG-003 | INV-GRNAG-2026-003 | PO-KSA-3002 | VND-GFF-002 | Partial Receipt | **PARTIAL_MATCH** | GRN 60/100, gap=40 |
+| GRNAG-004 | INV-GRNAG-2026-004 | PO-KSA-3003 | VND-AKD-009 | Invoice > Received | **PARTIAL_MATCH** | Cheese 90 inv vs 80 rcvd |
+| GRNAG-005 | INV-GRNAG-2026-005 | PO-KSA-3004 | VND-GFF-002 | Multi-GRN Full | **MATCHED** | 3 GRNs aggregate to 100 |
+| GRNAG-006 | INV-GRNAG-2026-006 | PO-KSA-3005 | VND-GFF-002 | Multi-GRN Partial | **PARTIAL_MATCH** | 2 GRNs, chicken 130/200 |
+| GRNAG-007 | INV-GRNAG-2026-007 | PO-KSA-3006 | VND-AWP-003 | Over-Delivery | **PARTIAL_MATCH** | GRN 230 > PO 200 |
+| GRNAG-008 | INV-GRNAG-2026-008 | PO-KSA-3007 | VND-NEO-008 | Delayed Receipt | **PARTIAL_MATCH** | GRN date 5d after invoice |
+| GRNAG-009 | INV-GRNAG-2026-009 | PO-KSA-3008 | VND-RSRC-007 | Location Mismatch | **PARTIAL_MATCH** | GRN at WH-RUH-01, inv BR-JED-220 |
+| GRNAG-010 | INV-GRNAG-2026-010 | PO-KSA-3009 | VND-SPS-004 | Wrong Item Mix | **PARTIAL_MATCH** | Clamshell short, fries substituted |
+| GRNAG-011 | INV-GRNAG-2026-011 | PO-KSA-3010 | VND-RSRC-007 | Service Invoice | **PARTIAL_MATCH** | No GRN expected (services) |
+| GRNAG-012 | INV-GRNAG-2026-012 | PO-KSA-3011 | VND-DCCL-006 | Cold-Chain Shortage | **PARTIAL_MATCH** | Fries -80, nuggets -50 |
+| **PO Agent** | | | | | | |
+| POAG-001 | INV-POAG-2026-001 | PO-KSA-1001 (malformed) | VND-AFS-001 | Normalized PO Recovery | **UNMATCHED** → Agent finds PO | Normalized lookup succeeds |
+| POAG-002 | INV-POAG-2026-002 | *(blank)* | VND-GFF-002 | Vendor-Based Discovery | **UNMATCHED** → Agent finds PO | Vendor search + amount match |
+| POAG-003 | INV-POAG-2026-003 | *(blank)* | VND-SPS-004 | Multiple Open POs | **UNMATCHED** → Ambiguous | 3 candidate POs, can't commit |
+| POAG-004 | INV-POAG-2026-004 | PO/KSA/XXXX (garbled) | VND-SPS-004 (alias) | Amount-Based Fallback | **UNMATCHED** → Agent finds PO | Alias + amount match |
+| POAG-005 | INV-POAG-2026-005 | PO-KSA-9999 | VND-NEO-008 | No PO Found | **UNMATCHED** | All strategies fail |
+| POAG-006 | INV-POAG-2026-006 | PO-KSA-1001 (wrong vendor) | VND-RBC-005 | Wrong Vendor PO | **UNMATCHED** → Vendor mismatch | PO found but vendor doesn't match |
+| POAG-007 | INV-POAG-2026-007 | po_ksa_1002 (malformed) | VND-AFS-001 (Arabic alias) | Arabic Alias Resolution | **UNMATCHED** → Agent finds PO | Arabic alias + normalized PO |
+| POAG-008 | INV-POAG-2026-008 | PO-KSA-1017 | VND-AFS-001 | Closed PO Referenced | **UNMATCHED** → PO not usable | PO found but status CLOSED |
+| POAG-009 | INV-POAG-2026-009 | *(blank)* | VND-RSRC-007 | Branch vs Warehouse | **UNMATCHED** → Ambiguous | Location context narrows candidates |
+| POAG-010 | INV-POAG-2026-010 | PO/KSA/1003 (malformed) | VND-GFF-002 | High-Confidence Recovery | **UNMATCHED** → Agent finds PO | All signals converge on correct PO |
 
 ---
 
@@ -511,11 +536,656 @@
 
 ---
 
+## PO Retrieval Agent Test Scenarios (POAG-001–010)
+
+**Dataset:** `seed_po_agent_test_data` (10 scenarios)  
+**Prerequisite:** `seed_saudi_mcd_data` must be seeded first  
+**Seed Command:** `python manage.py seed_po_agent_test_data`  
+**Flush & Reseed:** `python manage.py seed_po_agent_test_data --flush`
+
+**Agent Purpose:** The PO Retrieval Agent runs only when deterministic PO lookup has failed. It tries three strategies in order:
+1. Normalized PO number lookup
+2. Vendor-based PO search
+3. Amount-based PO matching
+
+**Agent Output Schema:**
+```json
+{
+  "reasoning": "<concise explanation>",
+  "recommendation_type": "<AUTO_CLOSE|SEND_TO_AP_REVIEW|SEND_TO_PROCUREMENT|...>",
+  "confidence": 0.0-1.0,
+  "decisions": [{"decision": "...", "rationale": "...", "confidence": 0-1}],
+  "evidence": {"<key>": "<value>"}
+}
+```
+
+### Data Created Per Scenario
+
+Each scenario creates **only** Invoice + InvoiceLineItem records.  
+No ReconciliationResult, AgentRun, ReviewAssignment, or AuditEvent records are created.  
+Additional POs are created only where needed for scenario isolation (7 total: PO-KSA-2001..2007).  
+Two Arabic VendorAlias records are added for alias-resolution scenarios.
+
+---
+
+### SCN-POAG-001 — Exact Normalized PO Recovery
+
+**Invoice:** INV-POAG-2026-001  
+**Raw PO:** `"PO-KSA 1001"` (space instead of dash)  
+**Target PO:** PO-KSA-1001 (Arabian Food Supplies, from master seed)  
+**Vendor:** Arabian Food Supplies Co. (VND-AFS-001)  
+**Confidence:** 0.91  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | Sesame Burger Bun 4 inch / خبز برجر بالسمسم ٤ انش | 500 | 45.00 | 22,500.00 |
+| 2 | Shredded Lettuce FSP / خس مقطع | 200 | 28.00 | 5,600.00 |
+| 3 | Pickle Slice Jar Bulk / مخلل شرائح | 100 | 35.00 | 3,500.00 |
+
+**Totals:** Subtotal 31,600.00 | Tax 4,740.00 | Total 36,340.00
+
+**Why Deterministic Lookup Fails:** PO number has a space (`PO-KSA 1001`) instead of a dash, so exact string match fails.
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Yes**
+- Primary strategy: **Normalized PO lookup** (strip/normalize → `POKSA1001` matches)
+- Expected `recommendation_type`: **null** (PO successfully found)
+- Expected `confidence`: **high (0.90+)**
+- Expected `evidence` keys: `po_number`, `normalized_match`, `vendor_confirmed`
+
+---
+
+### SCN-POAG-002 — Vendor-Based PO Discovery
+
+**Invoice:** INV-POAG-2026-002  
+**Raw PO:** `"[unreadable]"` (blank/smudged)  
+**Target PO:** PO-KSA-2001 (created by this seed — Gulf Frozen Foods)  
+**Vendor:** Gulf Frozen Foods Trading (VND-GFF-002)  
+**Confidence:** 0.72  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | McD Beef Patty 4:1 Frozen / لحم برجر مجمد ٤:١ | 350 | 185.00 | 64,750.00 |
+| 2 | Chicken Patty Breaded Frozen / فيليه دجاج مجمد | 150 | 158.00 | 23,700.00 |
+
+**Totals:** Subtotal 88,450.00 | Tax 13,267.50 | Total 101,717.50
+
+**Why Deterministic Lookup Fails:** PO number is completely unreadable from the scanned invoice.
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Yes**
+- Primary strategy: **Vendor search** identifies VND-GFF-002 → **amount match** finds PO-KSA-2001
+- Expected `recommendation_type`: **null** (PO found)
+- Expected `confidence`: **medium-high (0.75–0.90)**
+- Expected `evidence` keys: `po_number`, `matched_vendor`, `amount_match`
+
+---
+
+### SCN-POAG-003 — Vendor Has Multiple Open POs (Ambiguity)
+
+**Invoice:** INV-POAG-2026-003  
+**Raw PO:** *(empty)*  
+**Candidate POs:** PO-KSA-2002, PO-KSA-2003, PO-KSA-2004 (all Saudi Packaging Solutions)  
+**Vendor:** Saudi Packaging Solutions (VND-SPS-004)  
+**Confidence:** 0.88  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | Paper Cup 16oz / كوب ورقي ١٦ أونصة | 5,700 | 0.85 | 4,845.00 |
+| 2 | Plastic Lid 16oz / غطاء بلاستيك ١٦ أونصة | 5,700 | 0.45 | 2,565.00 |
+
+**Totals:** Subtotal 7,410.00 | Tax 1,111.50 | Total 8,521.50
+
+**Candidate PO Comparison:**
+
+| PO | Items | Cup Qty | Lid Qty | Subtotal (approx) |
+|----|-------|---------|---------|--------------------|
+| PO-KSA-2002 | Cups + Lids | 6,000 | 6,000 | 7,800.00 |
+| PO-KSA-2003 | Cups + Lids + Napkins | 5,500 | 5,500 | 7,450.00 |
+| PO-KSA-2004 | Cups + Lids | 5,800 | 5,800 | 7,540.00 |
+
+**Why Deterministic Lookup Fails:** PO number is completely missing.
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Ambiguous** — all 3 are plausible
+- Primary strategy: **Vendor search** finds 3 open POs with similar items/amounts
+- Expected `recommendation_type`: **SEND_TO_AP_REVIEW** (cannot confidently choose one)
+- Expected `confidence`: **low-medium (0.30–0.55)**
+- Expected `evidence` keys: `candidate_pos`, `matched_vendor`, `search_attempts`
+
+---
+
+### SCN-POAG-004 — Amount-Based PO Fallback (Arabic Alias)
+
+**Invoice:** INV-POAG-2026-004  
+**Raw PO:** `"PO/KSA/XXXX"` (garbled/illegible)  
+**Target PO:** PO-KSA-2005 (created by this seed — Saudi Packaging Solutions)  
+**Invoice Vendor Name:** `"الشركة السعودية لحلول التغليف"` (Arabic alias for Saudi Packaging Solutions)  
+**Vendor FK:** None (not linked — alias only)  
+**Confidence:** 0.68  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | علب بيج ماك / Big Mac Clamshell Box | 4,000 | 1.20 | 4,800.00 |
+| 2 | كرتون بطاطس وسط / Fries Carton Medium | 7,000 | 0.65 | 4,550.00 |
+
+**Totals:** Subtotal 9,350.00 | Tax 1,402.50 | Total 10,752.50
+
+**Why Deterministic Lookup Fails:** PO number is garbled (`PO/KSA/XXXX`), vendor not linked.
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Yes**
+- Primary strategy: Normalized PO fails → **vendor alias** resolves Arabic name → **amount match** finds PO-KSA-2005
+- Expected `recommendation_type`: **null** (PO found via amount)
+- Expected `confidence`: **medium (0.60–0.80)**
+- Expected `evidence` keys: `po_number`, `matched_vendor`, `amount_match`, `alias_resolved`
+
+---
+
+### SCN-POAG-005 — No PO Found
+
+**Invoice:** INV-POAG-2026-005  
+**Raw PO:** `"PO-KSA-9999"` (nonexistent)  
+**Vendor:** Najd Edible Oils Trading (VND-NEO-008)  
+**Confidence:** 0.89  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | زيت طبخ ممتاز ٢٠ لتر / Premium Cooking Oil 20L | 250 | 38.00 | 9,500.00 |
+| 2 | زيت قلي خاص ١٠ لتر / Special Frying Oil 10L | 180 | 22.50 | 4,050.00 |
+
+**Totals:** Subtotal 13,550.00 | Tax 2,032.50 | Total 15,582.50
+
+**Why All Strategies Fail:**
+- PO-KSA-9999 does not exist → normalized lookup fails
+- VND-NEO-008 exists but has no open PO matching SAR 13,550 → vendor + amount search fails
+- Items are "Premium Cooking Oil" / "Special Frying Oil" — not matching any existing PO line items
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **No**
+- Primary strategy: **All strategies fail**
+- Expected `recommendation_type`: **SEND_TO_AP_REVIEW**
+- Expected `confidence`: **low-medium (0.40–0.60)**
+- Expected `evidence` keys: `search_attempts`, `no_match_reason`
+
+---
+
+### SCN-POAG-006 — Wrong Vendor with Valid-Like PO
+
+**Invoice:** INV-POAG-2026-006  
+**Raw PO:** `"PO-KSA-1001"` (valid PO — but belongs to a different vendor)  
+**Invoice Vendor:** Riyadh Beverage Concentrates Co. (VND-RBC-005)  
+**PO-KSA-1001 Vendor:** Arabian Food Supplies Co. (VND-AFS-001)  
+**Confidence:** 0.93  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | Soft Drink Syrup Cola BiB / مركز مشروب غازي كولا | 120 | 220.00 | 26,400.00 |
+| 2 | Soft Drink Syrup Fanta BiB / مركز مشروب فانتا | 90 | 215.00 | 19,350.00 |
+
+**Totals:** Subtotal 45,750.00 | Tax 6,862.50 | Total 52,612.50
+
+**Why Deterministic Lookup Fails:** PO-KSA-1001 exists but belongs to VND-AFS-001 (Arabian Food Supplies), not VND-RBC-005 (Riyadh Beverage).
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Yes, but vendor mismatch prevents acceptance**
+- Primary strategy: Normalized lookup finds PO-KSA-1001 → **vendor check fails** (AFS ≠ RBC)
+- Expected `recommendation_type`: **SEND_TO_AP_REVIEW** or **SEND_TO_PROCUREMENT**
+- Expected `confidence`: **medium (0.50–0.70)**
+- Expected `evidence` keys: `candidate_po`, `vendor_mismatch`, `invoice_vendor`, `po_vendor`
+
+---
+
+### SCN-POAG-007 — Arabic-English Vendor Alias Case
+
+**Invoice:** INV-POAG-2026-007  
+**Raw PO:** `"po_ksa_1002"` (lowercase + underscores)  
+**Target PO:** PO-KSA-1002 (Arabian Food Supplies, from master seed)  
+**Invoice Vendor Name:** `"شركة الأغذية العربية"` (Arabic alias, vendor FK not linked)  
+**Actual Vendor:** Arabian Food Supplies Co. (VND-AFS-001)  
+**Confidence:** 0.74  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | خبز برجر بالسمسم ٤ انش / Sesame Burger Bun 4in | 600 | 45.00 | 27,000.00 |
+| 2 | خبز برجر عادي ٤ انش / Regular Burger Bun 4in | 300 | 40.00 | 12,000.00 |
+
+**Totals:** Subtotal 39,000.00 | Tax 5,850.00 | Total 44,850.00
+
+**Why Deterministic Lookup Fails:** PO number is lowercase with underscores (`po_ksa_1002`), and vendor is not linked (Arabic name only).
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Yes**
+- Primary strategy: **Vendor alias** resolves Arabic name → normalized PO matches `PO-KSA-1002`
+- Expected `recommendation_type`: **null** (PO found)
+- Expected `confidence`: **medium-high (0.70–0.85)**
+- Expected `evidence` keys: `resolved_vendor`, `alias_used`, `po_number`
+
+---
+
+### SCN-POAG-008 — Closed PO Referenced
+
+**Invoice:** INV-POAG-2026-008  
+**Raw PO:** `"PO-KSA-1017"` (valid PO — but status is CLOSED)  
+**Vendor:** Arabian Food Supplies Co. (VND-AFS-001)  
+**Confidence:** 0.92  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | Sesame Burger Bun 4 inch / خبز برجر بالسمسم ٤ انش | 200 | 44.00 | 8,800.00 |
+| 2 | Pickle Slice Jar Bulk / مخلل شرائح | 80 | 35.00 | 2,800.00 |
+| 3 | Shredded Lettuce FSP / خس مقطع | 100 | 28.00 | 2,800.00 |
+
+**Totals:** Subtotal 14,400.00 | Tax 2,160.00 | Total 16,560.00
+
+**PO-KSA-1017 Details:**
+- Vendor: VND-AFS-001 (matches invoice) ✓
+- Status: **CLOSED** — fully delivered and closed 60 days ago ✗
+- Items: Buns 200 @ 44.00, Pickles 80 @ 35.00, Lettuce 100 @ 28.00 (match invoice exactly)
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Yes, but PO is CLOSED (not usable)**
+- Primary strategy: Normalized PO lookup finds PO → **status check fails**
+- Expected `recommendation_type`: **SEND_TO_AP_REVIEW** or **SEND_TO_PROCUREMENT**
+- Expected `confidence`: **medium (0.55–0.70)**
+- Expected `evidence` keys: `po_number`, `po_status`, `po_closed_reason`
+
+---
+
+### SCN-POAG-009 — Branch vs Warehouse PO Ambiguity
+
+**Invoice:** INV-POAG-2026-009  
+**Raw PO:** *(empty)*  
+**Delivery Destination:** BR-JED-220 (Jeddah Branch 220)  
+**Candidate POs:** PO-KSA-2006 (warehouse), PO-KSA-2007 (branch)  
+**Vendor:** Red Sea Restaurant Consumables (VND-RSRC-007)  
+**Confidence:** 0.86  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | معقم أسطح / Sanitizer Surface Use | 350 | 28.00 | 9,800.00 |
+| 2 | مزيل دهون صناعي / Degreaser Kitchen Heavy Duty | 200 | 45.00 | 9,000.00 |
+| 3 | قفازات طعام وسط / Food Safe Gloves Medium | 500 | 12.50 | 6,250.00 |
+
+**Totals:** Subtotal 25,050.00 | Tax 3,757.50 | Total 28,807.50
+
+**Candidate PO Comparison:**
+
+| PO | Department | Items | Sanitizer Qty | Degreaser Qty | Gloves Qty | Subtotal |
+|----|-----------|-------|---------------|---------------|------------|----------|
+| PO-KSA-2006 | Warehouse Ops Jeddah | Sanitizer + Degreaser | 400 | 250 | — | 22,450.00 |
+| PO-KSA-2007 | Ops Branch Jeddah | Sanitizer + Degreaser + Gloves | 350 | 200 | 500 | 25,050.00 |
+
+**Why Deterministic Lookup Fails:** PO number is blank on scanned invoice.  
+**Location Clue:** Invoice delivery note references BR-JED-220 (branch), aligning with PO-KSA-2007.
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Possibly** — destination context should narrow to PO-KSA-2007
+- Primary strategy: **Vendor search** → 2 candidates → **location filter** (branch code matches PO-KSA-2007)
+- Expected `recommendation_type`: **null** if location narrows to 1, else **SEND_TO_AP_REVIEW**
+- Expected `confidence`: **medium (0.50–0.75)**
+- Expected `evidence` keys: `candidate_pos`, `destination_code`, `location_match`
+
+---
+
+### SCN-POAG-010 — High-Confidence Exact Recovery with Item Clues
+
+**Invoice:** INV-POAG-2026-010  
+**Raw PO:** `"PO/KSA/1003"` (slashes instead of dashes)  
+**Target PO:** PO-KSA-1003 (Gulf Frozen Foods, from master seed)  
+**Invoice Vendor Name:** `"Gulf Frozen Foods Trdg."` (abbreviated)  
+**Vendor:** Gulf Frozen Foods Trading (VND-GFF-002)  
+**Confidence:** 0.90  
+
+| Line | Description | Qty | Unit Price | Line Amount |
+|------|-------------|-----|------------|-------------|
+| 1 | McD Beef Patty 4:1 Frozen / لحم برجر ماكدونالدز ٤:١ مجمد | 300 | 185.00 | 55,500.00 |
+| 2 | McD Beef Patty 10:1 Frozen / لحم برجر ماكدونالدز ١٠:١ مجمد | 200 | 120.00 | 24,000.00 |
+
+**Totals:** Subtotal 79,500.00 | Tax 11,925.00 | Total 91,425.00
+
+**PO-KSA-1003 Details:**
+- Vendor: VND-GFF-002 (matches) ✓
+- Status: OPEN ✓
+- Lines: Beef Patty 4:1 300 @ 185, Beef Patty 10:1 200 @ 120 (exact match) ✓
+- Total: matches invoice ✓
+
+**Why Deterministic Lookup Fails:** PO number has slashes (`PO/KSA/1003`) instead of dashes.
+
+**Expected PO Retrieval Agent Outcome:**
+- Should find PO? **Yes**
+- Primary strategy: **All signals converge** — normalized PO, vendor match, amount match, item descriptions all point to PO-KSA-1003
+- Expected `recommendation_type`: **null** (PO found with high confidence)
+- Expected `confidence`: **high (0.85+)**
+- Expected `evidence` keys: `po_number`, `normalized_match`, `vendor_confirmed`, `amount_match`, `item_descriptions_aligned`
+
+---
+
+## GRN Specialist Agent Test Scenarios (GRNAG-001–012)
+
+**Dataset:** `seed_grn_agent_test_data` (12 scenarios)  
+**Prerequisite:** `seed_saudi_mcd_data` must be seeded first  
+**Seed Command:** `python manage.py seed_grn_agent_test_data`  
+**Flush & Reseed:** `python manage.py seed_grn_agent_test_data --flush`
+
+**Agent Purpose:** The GRN Specialist Agent runs when the deterministic engine finds GRN-related issues (missing GRN, partial receipt, over-delivery, invoice qty > received qty, delayed receipt, multiple GRNs). It investigates goods receipt data using `grn_lookup`, compares received quantities vs PO and invoice quantities, and produces structured recommendations.
+
+**Agent Output Schema:**
+```json
+{
+  "reasoning": "<concise explanation>",
+  "recommendation_type": "<null|SEND_TO_PROCUREMENT|SEND_TO_AP_REVIEW|SEND_TO_VENDOR_CLARIFICATION>",
+  "confidence": 0.0-1.0,
+  "decisions": [{"decision": "...", "rationale": "...", "confidence": 0-1}],
+  "evidence": {"po_number": "...", "invoice_qty": ..., "grn_qty": ..., "receipt_status": "..."}
+}
+```
+
+### Data Created Per Scenario
+
+Each scenario creates Invoice + InvoiceLineItem records.  
+Minimal POs (11 total: PO-KSA-3001..3011) and GRNs (13 total) are created where needed for scenario isolation.  
+SCN-GRNAG-001 reuses existing PO-KSA-1001 and GRN-RUH-1001-A from master seed.  
+No ReconciliationResult, AgentRun, ReviewAssignment, or AuditEvent records are created.
+
+---
+
+### SCN-GRNAG-001 — Full Receipt Exact Match
+
+**Invoice:** INV-GRNAG-2026-001  
+**PO:** PO-KSA-1001 → **GRN:** GRN-RUH-1001-A (reused from master seed)  
+**Vendor:** Arabian Food Supplies Co. (VND-AFS-001)  
+**Confidence:** 0.93  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|---------|-----------|----------|----------|
+| 1 | Sesame Burger Bun 4 inch | 500 | 500 | 500 | 45.00 | 45.00 | **None** |
+| 2 | Shredded Lettuce Food Service Pack | 200 | 200 | 200 | 28.00 | 28.00 | **None** |
+| 3 | Pickle Slice Jar Bulk | 100 | 100 | 100 | 35.00 | 35.00 | **None** |
+
+**Totals:** Subtotal 31,600.00 | Tax 4,740.00 | Total 36,340.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **full**
+- Expected `recommendation_type`: **null**
+- Expected `confidence`: **high**
+- Expected `evidence` keys: `po_number`, `invoice_qty`, `grn_qty`, `grn_numbers`, `receipt_status`
+
+---
+
+### SCN-GRNAG-002 — Missing GRN
+
+**Invoice:** INV-GRNAG-2026-002  
+**PO:** PO-KSA-3001 (created by this seed) → **No GRN records**  
+**Vendor:** Riyadh Beverage Concentrates Co. (VND-RBC-005)  
+**Confidence:** 0.91  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|---------|-----------|----------|----------|
+| 1 | Soft Drink Syrup Cola Bag-in-Box | 120 | 120 | **N/A** | 220.00 | 220.00 | **No GRN** |
+| 2 | Soft Drink Syrup Fanta Bag-in-Box | 80 | 80 | **N/A** | 215.00 | 215.00 | **No GRN** |
+
+**Totals:** Subtotal 43,600.00 | Tax 6,540.00 | Total 50,140.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **No**
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **missing**
+- Expected `recommendation_type`: **SEND_TO_PROCUREMENT**
+- Expected `confidence`: **medium-high**
+- Expected `evidence` keys: `po_number`, `invoice_qty`, `grn_qty=0`, `receipt_status=missing`
+
+---
+
+### SCN-GRNAG-003 — Partial Receipt
+
+**Invoice:** INV-GRNAG-2026-003  
+**PO:** PO-KSA-3002 → **GRN:** GRN-RUH-3002-A (PARTIAL)  
+**Vendor:** Gulf Frozen Foods Trading (VND-GFF-002)  
+**Confidence:** 0.92  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Gap | Variance |
+|------|-------------|---------|--------|---------|-----|----------|
+| 1 | French Fries 2.5kg Frozen | 100 | 100 | 60 | 40 | **Partial receipt** |
+| 2 | Nuggets Premium Frozen | 100 | 100 | 60 | 40 | **Partial receipt** |
+
+**Totals:** Subtotal 22,300.00 | Tax 3,345.00 | Total 25,645.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **partial**
+- Expected `recommendation_type`: **SEND_TO_PROCUREMENT**
+- Expected `confidence`: **high**
+- Expected `evidence` keys: `po_number`, `invoice_qty=100`, `grn_qty=60`, `qty_gap=40`, `receipt_status=partial`
+
+---
+
+### SCN-GRNAG-004 — Invoice Exceeds Received Quantity
+
+**Invoice:** INV-GRNAG-2026-004  
+**PO:** PO-KSA-3003 → **GRN:** GRN-RUH-3003-A  
+**Vendor:** Al Khobar Dairy Ingredients (VND-AKD-009)  
+**Confidence:** 0.90  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Excess | Variance |
+|------|-------------|---------|--------|---------|--------|----------|
+| 1 | Cheese Slice Processed | **90** | 100 | 80 | **+10** | **Invoice > GRN** |
+| 2 | Butter Portion Pack | **50** | 50 | 40 | **+10** | **Invoice > GRN** |
+
+**Totals:** Subtotal 6,505.00 | Tax 975.75 | Total 7,480.75
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **partial** (invoice qty > received qty)
+- Expected `recommendation_type`: **SEND_TO_PROCUREMENT**
+- Expected `confidence`: **high**
+- Expected `evidence` keys: `po_number`, `invoice_qty`, `grn_qty`, `qty_gap`, `receipt_status`
+
+---
+
+### SCN-GRNAG-005 — Multiple GRNs Cumulative Full Receipt
+
+**Invoice:** INV-GRNAG-2026-005  
+**PO:** PO-KSA-3004 → **GRNs:** GRN-DMM-3004-A, GRN-DMM-3004-B, GRN-DMM-3004-C  
+**Vendor:** Gulf Frozen Foods Trading (VND-GFF-002)  
+**Confidence:** 0.94  
+
+| Line | Description | Inv Qty | PO Qty | GRN-A | GRN-B | GRN-C | GRN Total | Variance |
+|------|-------------|---------|--------|-------|-------|-------|-----------|----------|
+| 1 | McD Beef Patty 4:1 Frozen | 100 | 100 | 30 | 40 | 30 | 100 | **None** |
+
+**Totals:** Subtotal 18,500.00 | Tax 2,775.00 | Total 21,275.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **Yes** (3 GRNs)
+- Receipt status: **full**
+- Expected `recommendation_type`: **null**
+- Expected `confidence`: **high**
+- Expected `evidence` keys: `po_number`, `invoice_qty=100`, `cumulative_grn_qty=100`, `grn_numbers=[GRN-DMM-3004-A/B/C]`, `receipt_status=full`
+
+---
+
+### SCN-GRNAG-006 — Multiple GRNs Cumulative Partial Receipt
+
+**Invoice:** INV-GRNAG-2026-006  
+**PO:** PO-KSA-3005 → **GRNs:** GRN-JED-3005-A, GRN-JED-3005-B  
+**Vendor:** Gulf Frozen Foods Trading (VND-GFF-002)  
+**Confidence:** 0.91  
+
+| Line | Description | Inv Qty | PO Qty | GRN-A | GRN-B | GRN Total | Gap | Variance |
+|------|-------------|---------|--------|-------|-------|-----------|-----|----------|
+| 1 | Chicken Patty Breaded Frozen | 200 | 200 | 80 | 50 | 130 | 70 | **Partial** |
+| 2 | Hash Brown Triangle Frozen | 150 | 150 | 60 | 40 | 100 | 50 | **Partial** |
+
+**Totals:** Subtotal 45,850.00 | Tax 6,877.50 | Total 52,727.50
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **Yes** (2 GRNs)
+- Receipt status: **partial**
+- Expected `recommendation_type`: **SEND_TO_PROCUREMENT**
+- Expected `confidence`: **high**
+- Expected `evidence` keys: `po_number`, `invoice_qty`, `cumulative_grn_qty`, `qty_gap` (chicken=70, hash=50), `grn_numbers`, `receipt_status=partial`
+
+---
+
+### SCN-GRNAG-007 — Over-Delivery Case
+
+**Invoice:** INV-GRNAG-2026-007  
+**PO:** PO-KSA-3006 → **GRN:** GRN-RUH-3006-A  
+**Vendor:** Al Watania Poultry Supply (VND-AWP-003)  
+**Confidence:** 0.93  
+
+| Line | Description | Inv Qty | PO Qty | GRN Rcvd | GRN Accepted | GRN Rejected | Variance |
+|------|-------------|---------|--------|----------|-------------|-------------|----------|
+| 1 | Chicken Patty Breaded Frozen | **230** | 200 | **230** | 200 | 30 | **Over-delivery +30** |
+
+**Totals:** Subtotal 36,340.00 | Tax 5,451.00 | Total 41,791.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **over-delivery**
+- Expected `recommendation_type`: **SEND_TO_PROCUREMENT** or **SEND_TO_AP_REVIEW**
+- Expected `confidence`: **medium-high**
+- Expected `evidence` keys: `po_number`, `po_qty=200`, `grn_qty=230`, `invoice_qty=230`, `over_delivery_qty=30`, `receipt_status=over-delivery`
+
+---
+
+### SCN-GRNAG-008 — Delayed Receipt After Invoice Date
+
+**Invoice:** INV-GRNAG-2026-008  
+**PO:** PO-KSA-3007 → **GRN:** GRN-RUH-3007-A  
+**Vendor:** Najd Edible Oils Trading (VND-NEO-008)  
+**Confidence:** 0.89  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Inv Date | GRN Date | Timing |
+|------|-------------|---------|--------|---------|----------|----------|--------|
+| 1 | Cooking Oil Fryer Grade 20L | 200 | 200 | 200 | 2026-02-28 | 2026-03-05 | **GRN 5 days late** |
+
+**Totals:** Subtotal 6,400.00 | Tax 960.00 | Total 7,360.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **delayed** (GRN date > invoice date)
+- Expected `recommendation_type`: **null** or **SEND_TO_AP_REVIEW** (timing mismatch)
+- Expected `confidence`: **medium-high**
+- Expected `evidence` keys: `po_number`, `invoice_date`, `grn_receipt_date`, `timing_mismatch=True`, `invoice_qty`, `grn_qty`, `receipt_status=delayed`
+
+---
+
+### SCN-GRNAG-009 — Branch vs Warehouse Receipt Mismatch
+
+**Invoice:** INV-GRNAG-2026-009  
+**PO:** PO-KSA-3008 → **GRN:** GRN-RUH-3008-A (Warehouse: **WH-RUH-01**)  
+**Invoice Destination:** **BR-JED-220** (Jeddah Branch 220)  
+**Vendor:** Red Sea Restaurant Consumables (VND-RSRC-007)  
+**Confidence:** 0.88  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Invoice Dest | GRN Warehouse | Variance |
+|------|-------------|---------|--------|---------|-------------|---------------|----------|
+| 1 | Sanitizer Surface Use | 150 | 150 | 150 | BR-JED-220 | WH-RUH-01 | **Location mismatch** |
+| 2 | Degreaser Kitchen Heavy Duty | 100 | 100 | 100 | BR-JED-220 | WH-RUH-01 | **Location mismatch** |
+
+**Totals:** Subtotal 8,700.00 | Tax 1,305.00 | Total 10,005.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes** (but wrong location)
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **full** (quantities match, location mismatch)
+- Expected `recommendation_type`: **SEND_TO_PROCUREMENT** or **SEND_TO_AP_REVIEW**
+- Expected `confidence`: **medium**
+- Expected `evidence` keys: `po_number`, `invoice_destination=BR-JED-220`, `grn_warehouse=WH-RUH-01`, `location_mismatch=True`, `receipt_status`
+
+---
+
+### SCN-GRNAG-010 — Receipt Exists for Wrong Item Mix
+
+**Invoice:** INV-GRNAG-2026-010  
+**PO:** PO-KSA-3009 → **GRN:** GRN-JED-3009-A  
+**Vendor:** Saudi Packaging Solutions (VND-SPS-004)  
+**Confidence:** 0.90  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | GRN Notes | Variance |
+|------|-------------|---------|--------|---------|-----------|----------|
+| 1 | Paper Cup 16oz | 5,000 | 5,000 | 5,000 | ✓ Full | None |
+| 2 | Big Mac Clamshell Box | **3,000** | 3,000 | **1,000** | ✗ Short | **Gap = 2,000** |
+| — | *(Fries Carton Medium — not on PO/inv)* | — | — | 2,000 | Substitution | **Unexpected item** |
+
+**Totals:** Subtotal 7,850.00 | Tax 1,177.50 | Total 9,027.50
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **partial / item mismatch**
+- Expected `recommendation_type`: **SEND_TO_PROCUREMENT** or **SEND_TO_VENDOR_CLARIFICATION**
+- Expected `confidence`: **medium**
+- Expected `evidence` keys: `po_number`, `item_level_mismatch=True`, `cups_match=True`, `clamshell_gap=2000`, `unexpected_item=Fries Carton`, `receipt_status`
+
+---
+
+### SCN-GRNAG-011 — Service / Non-GRN Invoice
+
+**Invoice:** INV-GRNAG-2026-011  
+**PO:** PO-KSA-3010 (Service PO) → **No GRN expected**  
+**Vendor:** Red Sea Restaurant Consumables (VND-RSRC-007)  
+**Confidence:** 0.87  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | UOM | Variance |
+|------|-------------|---------|--------|---------|-----|----------|
+| 1 | Monthly Kitchen Deep Cleaning Service | 1 | 1 | **N/A** | SVC | **Service item** |
+| 2 | Pest Control Service — Quarterly | 1 | 1 | **N/A** | SVC | **Service item** |
+| 3 | Grease Trap Maintenance Service | 1 | 1 | **N/A** | SVC | **Service item** |
+
+**Totals:** Subtotal 8,500.00 | Tax 1,275.00 | Total 9,775.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **No** (and should NOT aggressively flag missing GRN)
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **non-GRN-applicable**
+- Expected `recommendation_type`: **SEND_TO_AP_REVIEW**
+- Expected `confidence`: **medium**
+- Expected `evidence` keys: `po_number`, `service_po=True`, `receipt_status=non-GRN-applicable`, `invoice_items_are_services=True`
+
+---
+
+### SCN-GRNAG-012 — Cold-Chain Shortage Scenario
+
+**Invoice:** INV-GRNAG-2026-012  
+**PO:** PO-KSA-3011 → **GRN:** GRN-DMM-3011-A (PARTIAL)  
+**Vendor:** Desert Cold Chain Logistics (VND-DCCL-006)  
+**Confidence:** 0.91  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Gap | Variance |
+|------|-------------|---------|--------|---------|-----|----------|
+| 1 | French Fries 2.5kg Frozen | 500 | 500 | 420 | 80 | **Cold-chain loss** |
+| 2 | Nuggets Premium Frozen | 300 | 300 | 250 | 50 | **Partial unloading** |
+
+**Totals:** Subtotal 82,500.00 | Tax 12,375.00 | Total 94,875.00
+
+**Expected GRN Specialist Agent Outcome:**
+- Should find GRN? **Yes**
+- Should aggregate multiple GRNs? **No**
+- Receipt status: **partial** (cold-chain shortage)
+- Expected `recommendation_type`: **SEND_TO_PROCUREMENT**
+- Expected `confidence`: **high**
+- Expected `evidence` keys: `po_number`, `invoice_qty`, `grn_qty`, `fries_gap=80`, `nuggets_gap=50`, `receipt_status=partial`, `cold_chain_related=True`
+
+---
+
 ## Test Execution Checklist
 
 ### Pre-Conditions
 - [ ] Master data seeded: `python manage.py seed_saudi_mcd_data`
 - [ ] Invoice data seeded: `python manage.py seed_invoice_test_data`
+- [ ] PO Agent test data seeded: `python manage.py seed_po_agent_test_data`
+- [ ] GRN Agent test data seeded: `python manage.py seed_grn_agent_test_data`
 - [ ] Active config is "Default Production" (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
 - [ ] All invoices show status `READY_FOR_RECON`
 - [ ] No stale ReconciliationRun/Result/Exception records exist
@@ -549,6 +1219,38 @@
 | 016 | PARTIAL_MATCH | QTY+DESC mismatch | 4 agents ran | Created | ☐ |
 | 017 | PARTIAL_MATCH | PRICE_MISMATCH ×2 | 4 agents ran | Created | ☐ |
 | 018 | PARTIAL_MATCH | ITEM_MISMATCH | 4 agents ran | Created | ☐ |
+
+### PO Retrieval Agent Scenario Verification
+
+| # | Invoice | Raw PO | Strategy | Expected Agent Result | Evidence | Pass? |
+|---|---------|--------|----------|-----------------------|----------|-------|
+| POAG-001 | INV-POAG-2026-001 | `PO-KSA 1001` | Normalized PO | Finds PO-KSA-1001, rec=null, conf=high | po_number, normalized_match | ☐ |
+| POAG-002 | INV-POAG-2026-002 | `[unreadable]` | Vendor + Amount | Finds PO-KSA-2001, rec=null, conf=med-high | po_number, amount_match | ☐ |
+| POAG-003 | INV-POAG-2026-003 | *(empty)* | Vendor (3 POs) | Ambiguous, rec=SEND_TO_AP_REVIEW, conf=low-med | candidate_pos | ☐ |
+| POAG-004 | INV-POAG-2026-004 | `PO/KSA/XXXX` | Alias + Amount | Finds PO-KSA-2005, rec=null, conf=medium | alias_resolved, amount_match | ☐ |
+| POAG-005 | INV-POAG-2026-005 | `PO-KSA-9999` | All fail | No PO found, rec=SEND_TO_AP_REVIEW, conf=low-med | search_attempts | ☐ |
+| POAG-006 | INV-POAG-2026-006 | `PO-KSA-1001` | PO found, vendor ≠ | Vendor mismatch, rec=SEND_TO_AP_REVIEW, conf=med | vendor_mismatch | ☐ |
+| POAG-007 | INV-POAG-2026-007 | `po_ksa_1002` | Arabic alias + norm | Finds PO-KSA-1002, rec=null, conf=med-high | alias_used, po_number | ☐ |
+| POAG-008 | INV-POAG-2026-008 | `PO-KSA-1017` | PO found, CLOSED | PO unusable, rec=SEND_TO_AP_REVIEW, conf=medium | po_status | ☐ |
+| POAG-009 | INV-POAG-2026-009 | *(empty)* | Vendor + Location | 2 candidates, location may narrow, conf=medium | candidate_pos, destination | ☐ |
+| POAG-010 | INV-POAG-2026-010 | `PO/KSA/1003` | All converge | Finds PO-KSA-1003, rec=null, conf=high | po_number, vendor, amount | ☐ |
+
+### GRN Specialist Agent Scenario Verification
+
+| # | Invoice | PO → GRN | Receipt Status | Expected Recommendation | Confidence | Pass? |
+|---|---------|----------|----------------|------------------------|------------|-------|
+| GRNAG-001 | INV-GRNAG-2026-001 | PO-KSA-1001 → GRN-RUH-1001-A | Full | null | high | ☐ |
+| GRNAG-002 | INV-GRNAG-2026-002 | PO-KSA-3001 → *(none)* | Missing | SEND_TO_PROCUREMENT | medium-high | ☐ |
+| GRNAG-003 | INV-GRNAG-2026-003 | PO-KSA-3002 → GRN-RUH-3002-A | Partial (60/100) | SEND_TO_PROCUREMENT | high | ☐ |
+| GRNAG-004 | INV-GRNAG-2026-004 | PO-KSA-3003 → GRN-RUH-3003-A | Inv > Rcvd | SEND_TO_PROCUREMENT | high | ☐ |
+| GRNAG-005 | INV-GRNAG-2026-005 | PO-KSA-3004 → 3 GRNs | Full (aggregated) | null | high | ☐ |
+| GRNAG-006 | INV-GRNAG-2026-006 | PO-KSA-3005 → 2 GRNs | Partial (130/200) | SEND_TO_PROCUREMENT | high | ☐ |
+| GRNAG-007 | INV-GRNAG-2026-007 | PO-KSA-3006 → GRN-RUH-3006-A | Over-delivery (230>200) | SEND_TO_PROCUREMENT | medium-high | ☐ |
+| GRNAG-008 | INV-GRNAG-2026-008 | PO-KSA-3007 → GRN-RUH-3007-A | Delayed (GRN 5d late) | null / SEND_TO_AP_REVIEW | medium-high | ☐ |
+| GRNAG-009 | INV-GRNAG-2026-009 | PO-KSA-3008 → GRN-RUH-3008-A | Location mismatch | SEND_TO_PROCUREMENT | medium | ☐ |
+| GRNAG-010 | INV-GRNAG-2026-010 | PO-KSA-3009 → GRN-JED-3009-A | Wrong item mix | SEND_TO_VENDOR_CLARIFICATION | medium | ☐ |
+| GRNAG-011 | INV-GRNAG-2026-011 | PO-KSA-3010 → *(none)* | Non-GRN (service) | SEND_TO_AP_REVIEW | medium | ☐ |
+| GRNAG-012 | INV-GRNAG-2026-012 | PO-KSA-3011 → GRN-DMM-3011-A | Cold-chain shortage | SEND_TO_PROCUREMENT | high | ☐ |
 
 ### Post-Reconciliation Checks
 - [ ] Dashboard analytics reflect correct counts (matched, partial, unmatched, review)
