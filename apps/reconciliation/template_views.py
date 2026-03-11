@@ -96,71 +96,20 @@ def result_detail(request, pk):
 
 @login_required
 def start_reconciliation(request):
-    """Trigger reconciliation for selected invoices."""
-    if request.method != "POST":
-        return redirect("reconciliation:result_list")
+    """
+    Legacy reconciliation entry point — DISABLED.
 
-    invoice_ids = request.POST.getlist("invoice_ids")
-    if not invoice_ids:
-        messages.warning(request, "No invoices selected for reconciliation.")
-        return redirect("reconciliation:result_list")
+    All new invoices are now processed via the AP Cases pipeline.
+    Invoice upload → extraction → APCase creation → CaseOrchestrator.
 
-    invoice_ids = [int(i) for i in invoice_ids]
-
-    from django.conf import settings as django_settings
-
-    if getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False):
-        # Run synchronously — no broker needed
-        from apps.reconciliation.services.runner_service import ReconciliationRunnerService
-        from apps.documents.models import Invoice as InvoiceModel
-
-        invoices = list(
-            InvoiceModel.objects.filter(pk__in=invoice_ids)
-            .select_related("vendor", "document_upload")
-        )
-        runner = ReconciliationRunnerService()
-        run = runner.run(invoices=invoices, triggered_by=request.user)
-
-        # Run agent pipeline for non-matched results
-        from apps.agents.services.orchestrator import AgentOrchestrator
-        from apps.reconciliation.models import ReconciliationResult as ReconResult
-
-        agent_count = 0
-        results_needing_agents = ReconResult.objects.filter(
-            run=run,
-        ).exclude(match_status=MatchStatus.MATCHED).select_related(
-            "invoice", "invoice__vendor", "purchase_order",
-        )
-        orchestrator = AgentOrchestrator()
-        for recon_result in results_needing_agents:
-            try:
-                orchestrator.execute(recon_result)
-                agent_count += 1
-            except Exception:
-                import logging as _logging
-                _logging.getLogger(__name__).exception(
-                    "Agent pipeline failed for result %s", recon_result.pk
-                )
-
-        agent_msg = f" Agent analysis ran on {agent_count} result(s)." if agent_count else ""
-        messages.success(
-            request,
-            f"Reconciliation complete for {run.total_invoices} invoice(s): "
-            f"{run.matched_count} matched, {run.partial_count} partial, "
-            f"{run.unmatched_count} unmatched.{agent_msg}",
-        )
-    else:
-        from apps.reconciliation.tasks import run_reconciliation_task
-        run_reconciliation_task.delay(
-            invoice_ids=invoice_ids,
-            triggered_by_id=request.user.pk,
-        )
-        messages.success(
-            request,
-            f"Reconciliation started for {len(invoice_ids)} invoice(s). Results will appear shortly.",
-        )
-
-    return redirect("reconciliation:result_list")
+    This view redirects to the AP Cases inbox.
+    """
+    messages.info(
+        request,
+        "Manual reconciliation has been replaced by the AP Cases pipeline. "
+        "Invoices are now automatically processed after upload."
+    )
+    return redirect("cases:case_inbox")
 
 
 @login_required

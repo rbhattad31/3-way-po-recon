@@ -11,6 +11,8 @@ urlpatterns = [
     path("accounts/", include("apps.accounts.urls")),
     path("api/", include("apps.core.api_urls")),
     path("api/v1/governance/", include("apps.auditlog.api_urls")),
+    path("api/v1/cases/", include("apps.cases.api_urls")),
+    path("cases/", include("apps.cases.urls")),
     path("dashboard/", include("apps.dashboard.urls")),
     path("invoices/", include("apps.documents.urls")),
     path("extraction/", include("apps.extraction.urls")),
@@ -20,6 +22,7 @@ urlpatterns = [
     path("agents/", include("apps.agents.urls")),
     path("governance/", include("apps.auditlog.urls")),
 ]
+
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

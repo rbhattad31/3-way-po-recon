@@ -28,47 +28,23 @@
 </div>
 
 {% if ready_invoices %}
-<div class="card mb-3 border-success">
-  <div class="card-header bg-success bg-opacity-10 d-flex justify-content-between align-items-center">
+<div class="card mb-3 border-info">
+  <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
     <div>
-      <i class="bi bi-arrow-repeat me-2 text-success"></i>
-      <strong>Invoices Ready for Reconciliation</strong>
-      <span class="badge bg-success ms-2">{{ ready_invoices|length }}</span>
+      <i class="bi bi-briefcase me-2 text-info"></i>
+      <strong>Invoices Awaiting Case Processing</strong>
+      <span class="badge bg-info ms-2">{{ ready_invoices|length }}</span>
     </div>
+    <a href="{% url 'cases:case_inbox' %}" class="btn btn-info btn-sm">
+      <i class="bi bi-arrow-right me-1"></i>View in AP Cases
+    </a>
   </div>
-  <div class="card-body p-0">
-    <form method="post" action="{% url 'reconciliation:start_reconciliation' %}" id="reconForm">
-      {% csrf_token %}
-      <table class="table table-sm mb-0">
-        <thead class="table-light">
-          <tr>
-            <th style="width:40px"><input type="checkbox" id="selectAll" class="form-check-input"></th>
-            <th>Invoice #</th><th>Vendor</th><th>PO #</th><th>Amount</th><th>Uploaded</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for inv in ready_invoices %}
-          <tr>
-            <td><input type="checkbox" name="invoice_ids" value="{{ inv.pk }}" class="form-check-input inv-check"></td>
-            <td><a href="{% url 'documents:invoice_detail' inv.pk %}">{{ inv.invoice_number|default:"—" }}</a></td>
-            <td>{{ inv.vendor.name|default:inv.raw_vendor_name }}</td>
-            <td>{{ inv.po_number|default:"—" }}</td>
-            <td>{{ inv.currency }} {{ inv.total_amount|default:"—" }}</td>
-            <td class="text-muted">{{ inv.created_at|timesince }} ago</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <div class="card-footer d-flex justify-content-between align-items-center">
-        <small class="text-muted"><span id="selectedCount">0</span> invoice(s) selected</small>
-        <div class="d-flex gap-2">
-          <button type="button" class="btn btn-outline-success btn-sm" id="selectAllBtn">Select All</button>
-          <button type="submit" class="btn btn-success btn-sm" id="startReconBtn" disabled>
-            <i class="bi bi-play-fill me-1"></i>Start Reconciliation
-          </button>
-        </div>
-      </div>
-    </form>
+  <div class="card-body">
+    <p class="text-muted mb-0">
+      <i class="bi bi-info-circle me-1"></i>
+      Invoices are now automatically processed through the <strong>AP Cases</strong> pipeline after upload.
+      Manual reconciliation has been replaced by automated case-based processing.
+    </p>
   </div>
 </div>
 {% endif %}
@@ -105,33 +81,4 @@
 </div>
 {% include "partials/pagination.html" %}
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  const checkboxes = document.querySelectorAll('.inv-check');
-  const selectAll = document.getElementById('selectAll');
-  const selectAllBtn = document.getElementById('selectAllBtn');
-  const startBtn = document.getElementById('startReconBtn');
-  const countSpan = document.getElementById('selectedCount');
-
-  function updateState() {
-    const checked = document.querySelectorAll('.inv-check:checked').length;
-    if (countSpan) countSpan.textContent = checked;
-    if (startBtn) startBtn.disabled = checked === 0;
-    if (selectAll) selectAll.checked = checked === checkboxes.length && checkboxes.length > 0;
-  }
-
-  if (selectAll) selectAll.addEventListener('change', function() {
-    checkboxes.forEach(cb => cb.checked = this.checked);
-    updateState();
-  });
-
-  if (selectAllBtn) selectAllBtn.addEventListener('click', function() {
-    checkboxes.forEach(cb => cb.checked = true);
-    if (selectAll) selectAll.checked = true;
-    updateState();
-  });
-
-  checkboxes.forEach(cb => cb.addEventListener('change', updateState));
-});
-</script>
 {% endblock %}

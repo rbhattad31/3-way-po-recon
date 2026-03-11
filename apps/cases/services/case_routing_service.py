@@ -1,0 +1,140 @@
+"""
+CaseRoutingService — determines the processing path for an APCase.
+
+Called after extraction completes. Uses PO number presence, PO lookup,
+vendor rules, and ReconciliationModeResolver to determine TWO_WAY,
+THREE_WAY, or NON_PO path.
+"""
+
+import logging
+
+from apps.core.enums import (
+    DecisionSource,
+    DecisionType,
+    InvoiceType,
+    ProcessingPath,
+)
+from apps.cases.models import APCase, APCaseDecision
+
+logger = logging.getLogger(__name__)
+
+
+class CaseRoutingService:
+
+    @staticmethod
+    def resolve_path(case: APCase) -> str:
+        """
+        Determine the processing path for a case.
+
+        Returns:
+            ProcessingPath value: TWO_WAY, THREE_WAY, NON_PO, or UNRESOLVED
+        """
+        invoice = case.invoice
+        po_number = (invoice.po_number or "").strip()
+
+        # 1. No PO number → NON_PO
+        if not po_number:
+            return CaseRoutingService._record_decision(
+                case,
+                ProcessingPath.NON_PO,
+                DecisionSource.DETERMINISTIC,
+                "No PO number on invoice",
+            )
+
+        # 2. Try PO lookup
+        from apps.reconciliation.services.po_lookup_service import POLookupService
+
+        po_result = POLookupService.lookup(invoice)
+
+        if not po_result.found:
+            # PO number present but not found
+            if invoice.extraction_confidence and invoice.extraction_confidence < 0.5:
+                return CaseRoutingService._record_decision(
+                    case,
+                    ProcessingPath.NON_PO,
+                    DecisionSource.DETERMINISTIC,
+                    f"PO number '{po_number}' not found; extraction confidence below 0.5",
+                )
+            # Will try PO Retrieval Agent
+            return CaseRoutingService._record_decision(
+                case,
+                ProcessingPath.UNRESOLVED,
+                DecisionSource.DETERMINISTIC,
+                f"PO number '{po_number}' not found; PO Retrieval Agent will attempt recovery",
+            )
+
+        # 3. PO found → use mode resolver
+        from apps.reconciliation.services.mode_resolver import ReconciliationModeResolver
+
+        mode_result = ReconciliationModeResolver.resolve(invoice, po_result.purchase_order)
+
+        # Link PO to case
+        case.purchase_order = po_result.purchase_order
+        case.reconciliation_mode = mode_result.mode
+        case.invoice_type = InvoiceType.PO_BACKED
+        case.save(update_fields=["purchase_order", "reconciliation_mode", "invoice_type", "updated_at"])
+
+        if mode_result.mode == "TWO_WAY":
+            path = ProcessingPath.TWO_WAY
+        else:
+            path = ProcessingPath.THREE_WAY
+
+        return CaseRoutingService._record_decision(
+            case,
+            path,
+            DecisionSource.DETERMINISTIC if mode_result.resolution_method == "default"
+            else DecisionSource.POLICY,
+            f"Mode resolved as {mode_result.mode} via {mode_result.resolution_method}: {mode_result.reason}",
+            confidence=0.9 if mode_result.resolution_method == "policy" else 0.7,
+            evidence={
+                "po_number": po_result.purchase_order.po_number,
+                "resolution_method": mode_result.resolution_method,
+                "policy_code": mode_result.policy_code,
+                "grn_required": mode_result.grn_required,
+            },
+        )
+
+    @staticmethod
+    def reroute_path(case: APCase, new_path: str, reason: str, source: str = DecisionSource.HUMAN) -> str:
+        """
+        Reroute a case to a different processing path.
+
+        Used when PO Retrieval fails (reroute to NON_PO) or when a PO is
+        recovered for a NON_PO case (reroute to TWO_WAY/THREE_WAY).
+        """
+        old_path = case.processing_path
+        case.processing_path = new_path
+        case.save(update_fields=["processing_path", "updated_at"])
+
+        APCaseDecision.objects.create(
+            case=case,
+            decision_type=DecisionType.PATH_REROUTED,
+            decision_source=source,
+            decision_value=new_path,
+            rationale=f"Rerouted from {old_path} to {new_path}: {reason}",
+            evidence={"old_path": old_path, "new_path": new_path},
+        )
+
+        logger.info("Case %s rerouted: %s → %s (%s)", case.case_number, old_path, new_path, reason)
+        return new_path
+
+    @staticmethod
+    def _record_decision(case, path, source, rationale, confidence=None, evidence=None) -> str:
+        """Record path decision and update case."""
+        case.processing_path = path
+        if path == ProcessingPath.NON_PO:
+            case.invoice_type = InvoiceType.NON_PO
+        case.save(update_fields=["processing_path", "invoice_type", "updated_at"])
+
+        APCaseDecision.objects.create(
+            case=case,
+            decision_type=DecisionType.PATH_SELECTED,
+            decision_source=source,
+            decision_value=path,
+            confidence=confidence,
+            rationale=rationale,
+            evidence=evidence or {},
+        )
+
+        logger.info("Case %s path resolved: %s", case.case_number, path)
+        return path

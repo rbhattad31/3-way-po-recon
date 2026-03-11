@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}AP Cases – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item active">AP Cases</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+{# --- Stats cards --- #}
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center">
+        <div class="fs-3 fw-bold text-primary">{{ stats.total }}</div>
+        <small class="text-muted">Total Cases</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center">
+        <div class="fs-3 fw-bold text-warning">{{ stats.by_status.READY_FOR_REVIEW|default:"0" }}</div>
+        <small class="text-muted">Awaiting Review</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center">
+        <div class="fs-3 fw-bold text-success">{{ stats.by_status.CLOSED|default:"0" }}</div>
+        <small class="text-muted">Closed</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center">
+        <div class="fs-3 fw-bold text-danger">{{ stats.overdue }}</div>
+        <small class="text-muted">Overdue (&gt;48h)</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# --- Filters --- #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0"><i class="bi bi-briefcase me-2"></i>AP Cases</h5>
+  <form class="d-inline-flex gap-2" method="get">
+    <input type="text" name="q" class="form-control form-control-sm" placeholder="Search cases..."
+           value="{{ request.GET.q|default:'' }}" style="width:200px">
+    <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+      <option value="">All Statuses</option>
+      {% for val, label in status_choices %}
+        <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <select name="processing_path" class="form-select form-select-sm" onchange="this.form.submit()">
+      <option value="">All Paths</option>
+      {% for val, label in path_choices %}
+        <option value="{{ val }}" {% if request.GET.processing_path == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <select name="priority" class="form-select form-select-sm" onchange="this.form.submit()">
+      <option value="">All Priorities</option>
+      {% for val, label in priority_choices %}
+        <option value="{{ val }}" {% if request.GET.priority == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-search"></i></button>
+  </form>
+</div>
+
+{# --- Case table --- #}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Case #</th>
+          <th>Invoice</th>
+          <th>Vendor</th>
+          <th>Path</th>
+          <th>Status</th>
+          <th>Stage</th>
+          <th>Priority</th>
+          <th>Amount</th>
+          <th>Assigned</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for case in cases %}
+        <tr>
+          <td>
+            <a href="{% url 'cases:case_console' case.pk %}" class="fw-semibold text-decoration-none">
+              {{ case.case_number }}
+            </a>
+          </td>
+          <td>
+            {% if case.invoice %}
+              <a href="{% url 'documents:invoice_detail' case.invoice.pk %}">{{ case.invoice.invoice_number|default:"—" }}</a>
+            {% else %}—{% endif %}
+          </td>
+          <td>{{ case.vendor.name|default:"—"|truncatechars:25 }}</td>
+          <td>
+            {% if case.processing_path == "TWO_WAY" %}
+              <span class="badge bg-info">2-Way</span>
+            {% elif case.processing_path == "THREE_WAY" %}
+              <span class="badge bg-primary">3-Way</span>
+            {% elif case.processing_path == "NON_PO" %}
+              <span class="badge bg-secondary">Non-PO</span>
+            {% else %}
+              <span class="badge bg-light text-dark">Unresolved</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if case.status == "CLOSED" %}
+              <span class="badge bg-success">Closed</span>
+            {% elif case.status == "FAILED" %}
+              <span class="badge bg-danger">Failed</span>
+            {% elif case.status == "REJECTED" %}
+              <span class="badge bg-danger">Rejected</span>
+            {% elif case.status == "ESCALATED" %}
+              <span class="badge bg-warning text-dark">Escalated</span>
+            {% elif case.status == "READY_FOR_REVIEW" %}
+              <span class="badge bg-warning text-dark">Review</span>
+            {% elif case.status == "IN_REVIEW" %}
+              <span class="badge bg-info">In Review</span>
+            {% elif case.status == "NEW" %}
+              <span class="badge bg-light text-dark">New</span>
+            {% else %}
+              <span class="badge bg-primary">{{ case.get_status_display }}</span>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ case.get_current_stage_display|default:"—" }}</small></td>
+          <td>
+            {% if case.priority == "HIGH" %}
+              <span class="badge bg-danger">High</span>
+            {% elif case.priority == "MEDIUM" %}
+              <span class="badge bg-warning text-dark">Med</span>
+            {% else %}
+              <span class="badge bg-light text-dark">Low</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if case.invoice.total_amount %}
+              {{ case.invoice.currency }} {{ case.invoice.total_amount|floatformat:2 }}
+            {% else %}—{% endif %}
+          </td>
+          <td>{{ case.assigned_to.get_full_name|default:"—"|truncatechars:15 }}</td>
+          <td class="text-muted"><small>{{ case.created_at|timesince }} ago</small></td>
+          <td>
+            <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-1" title="Case Console">
+              <i class="bi bi-layout-text-window-reverse"></i>
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="11" class="text-center text-muted py-3">No cases found</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "partials/pagination.html" %}
+{% endblock %}
