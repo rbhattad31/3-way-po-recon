@@ -19,6 +19,7 @@ from apps.agents.models import AgentEscalation, AgentRecommendation, AgentRun
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
 from apps.agents.services.base_agent import AgentContext, BaseAgent
 from apps.agents.services.decision_log_service import DecisionLogService
+from apps.agents.services.deterministic_resolver import DeterministicResolver
 from apps.agents.services.policy_engine import PolicyEngine
 from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
 
@@ -54,6 +55,7 @@ class AgentOrchestrator:
     def __init__(self):
         self.policy = PolicyEngine()
         self.decision_service = DecisionLogService()
+        self.resolver = DeterministicResolver()
 
     def execute(self, result: ReconciliationResult) -> OrchestrationResult:
         """Run the full agentic pipeline for one reconciliation result."""
@@ -91,7 +93,11 @@ class AgentOrchestrator:
             orch_result.skip_reason = "No agents planned"
             return orch_result
 
-        # 2. Prepare shared context
+        # 2. Partition agents: LLM-required vs deterministic-replaceable
+        llm_agents = [a for a in plan.agents if a not in self.resolver.REPLACED_AGENTS]
+        deterministic_tail = [a for a in plan.agents if a in self.resolver.REPLACED_AGENTS]
+
+        # 3. Prepare shared context
         recon_mode = plan.reconciliation_mode or getattr(result, "reconciliation_mode", "") or ""
         exceptions = list(
             result.exceptions.values(
@@ -118,9 +124,9 @@ class AgentOrchestrator:
             },
         )
 
-        # 3. Execute agents in sequence
+        # 4. Execute LLM agents in sequence
         last_output = None
-        for agent_type in plan.agents:
+        for agent_type in llm_agents:
             agent_cls = AGENT_CLASS_REGISTRY.get(agent_type)
             if not agent_cls:
                 logger.warning("No agent class for type %s", agent_type)
@@ -193,10 +199,17 @@ class AgentOrchestrator:
                     ctx.extra["grn_available"] = result.grn_available
                     ctx.extra["grn_fully_received"] = result.grn_fully_received
 
-        # 4. Determine final recommendation (from last agent with a recommendation)
+        # 5. Deterministic resolution for tail agents (replaces LLM for
+        #    EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY)
+        if deterministic_tail:
+            self._apply_deterministic_resolution(
+                result, orch_result, deterministic_tail, last_output,
+            )
+
+        # 6. Determine final recommendation (from last agent with a recommendation)
         self._resolve_final_recommendation(orch_result, result)
 
-        # 5. Auto-close or escalate
+        # 7. Auto-close or escalate
         self._apply_post_policies(orch_result, result)
 
         logger.info(
@@ -247,6 +260,116 @@ class AgentOrchestrator:
                     suggested_assignee_role="FINANCE_MANAGER",
                 )
             logger.info("Escalated result %s", result.pk)
+
+    # ------------------------------------------------------------------
+    # Deterministic resolution (replaces EXCEPTION_ANALYSIS / REVIEW_ROUTING / CASE_SUMMARY)
+    # ------------------------------------------------------------------
+    def _apply_deterministic_resolution(
+        self,
+        result: ReconciliationResult,
+        orch: OrchestrationResult,
+        deterministic_agents: list,
+        last_llm_output: Optional[AgentRun],
+    ) -> None:
+        """Run the deterministic resolver for tail agents and create records."""
+        # Re-fetch exceptions (may have changed from feedback loop)
+        fresh_exceptions = list(
+            result.exceptions.values(
+                "id", "exception_type", "severity", "message", "details", "resolved",
+            )
+        )
+
+        # Extract prior recommendation from last LLM agent (if any)
+        prior_rec = None
+        prior_conf = 0.0
+        if last_llm_output:
+            payload = last_llm_output.output_payload or {}
+            prior_rec = payload.get("recommendation_type")
+            prior_conf = last_llm_output.confidence or 0.0
+
+        resolution = self.resolver.resolve(
+            result, fresh_exceptions,
+            prior_recommendation=prior_rec,
+            prior_confidence=prior_conf,
+        )
+
+        now = timezone.now()
+        for det_agent_type in deterministic_agents:
+            det_run = AgentRun.objects.create(
+                agent_type=det_agent_type,
+                reconciliation_result=result,
+                status=AgentRunStatus.COMPLETED,
+                input_payload={
+                    "exceptions": [
+                        {k: str(v) for k, v in e.items()} for e in fresh_exceptions
+                    ],
+                    "resolver": "deterministic",
+                },
+                output_payload={
+                    "recommendation_type": resolution.recommendation_type,
+                    "reasoning": resolution.reasoning,
+                    "evidence": resolution.evidence,
+                    "resolver": "deterministic",
+                },
+                summarized_reasoning=(
+                    resolution.case_summary
+                    if det_agent_type == AgentType.CASE_SUMMARY
+                    else resolution.reasoning
+                ),
+                confidence=resolution.confidence,
+                started_at=now,
+                completed_at=now,
+                duration_ms=0,
+                llm_model_used="deterministic",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+            )
+            orch.agents_executed.append(det_agent_type)
+            orch.agent_runs.append(det_run)
+
+            # Create recommendation for RECOMMENDING agents (same as LLM path)
+            if det_agent_type in _RECOMMENDING_AGENTS:
+                rec = self.decision_service.log_recommendation(
+                    agent_run=det_run,
+                    reconciliation_result=result,
+                    recommendation_type=resolution.recommendation_type,
+                    confidence=resolution.confidence,
+                    reasoning=resolution.reasoning,
+                    evidence=resolution.evidence,
+                )
+                rec.invoice_id = result.invoice_id
+                rec.save(update_fields=["invoice_id"])
+
+                from apps.auditlog.services import AuditService
+                from apps.core.enums import AuditEventType
+                AuditService.log_event(
+                    entity_type="Invoice",
+                    entity_id=result.invoice_id,
+                    event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
+                    description=(
+                        f"Deterministic resolver ('{det_agent_type}') recommended "
+                        f"{resolution.recommendation_type} "
+                        f"(confidence: {resolution.confidence:.0%})"
+                    ),
+                    agent=det_agent_type,
+                    metadata={
+                        "recommendation_type": resolution.recommendation_type,
+                        "confidence": resolution.confidence,
+                        "resolver": "deterministic",
+                    },
+                )
+
+        # Persist the case summary on the result
+        result.summary = resolution.case_summary
+        result.save(update_fields=["summary", "updated_at"])
+
+        logger.info(
+            "Deterministic resolution applied for result %s: %s (confidence=%.2f, "
+            "agents=%s)",
+            result.pk, resolution.recommendation_type, resolution.confidence,
+            deterministic_agents,
+        )
 
     # ------------------------------------------------------------------
     # Agent findings → re-reconciliation feedback loop
