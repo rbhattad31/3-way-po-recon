@@ -4,6 +4,7 @@ The policy engine is the "brain" that decides the agentic workflow based on
 the deterministic reconciliation outcome.  It enforces:
   - Which agents fire for each match status / exception combination
   - Agent ordering (pipeline)
+  - Mode awareness: skips GRN-related agents in 2-way mode
   - Confidence thresholds for auto-close vs. escalation
   - Token budget guardrails
   - Auto-close tolerance band for PARTIAL_MATCH (skip AI when discrepancies
@@ -17,7 +18,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 
 from apps.core.constants import AGENT_CONFIDENCE_THRESHOLD, REVIEW_AUTO_CLOSE_THRESHOLD
-from apps.core.enums import AgentType, ExceptionType, MatchStatus, RecommendationType
+from apps.core.enums import AgentType, ExceptionType, MatchStatus, ReconciliationMode, RecommendationType
 from apps.core.utils import within_tolerance
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationResult
 
@@ -31,6 +32,7 @@ class AgentPlan:
     reason: str = ""
     skip_agents: bool = False
     auto_close: bool = False  # True when auto-closed by tolerance band
+    reconciliation_mode: str = ""  # Propagated to orchestrator/agents
 
 
 class PolicyEngine:
@@ -40,16 +42,22 @@ class PolicyEngine:
       1. MATCHED + high confidence → no agents needed (auto-close)
       1b. PARTIAL_MATCH + all line discrepancies within auto-close tolerance → auto-close, skip agents
       2. UNMATCHED with PO_NOT_FOUND → PO_RETRIEVAL → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
-      3. UNMATCHED with GRN_NOT_FOUND → GRN_RETRIEVAL → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
+      3. UNMATCHED with GRN_NOT_FOUND (3-way only) → GRN_RETRIEVAL → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
       4. PARTIAL_MATCH (outside auto-close band) → RECONCILIATION_ASSIST → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
       5. REQUIRES_REVIEW with low extraction confidence → INVOICE_UNDERSTANDING → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
       6. REQUIRES_REVIEW (general) → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
+
+    Mode awareness: In TWO_WAY mode, GRN_RETRIEVAL is never included and
+    GRN_NOT_FOUND exceptions are ignored because receipt verification is
+    irrelevant for service/non-stock invoices.
     """
 
     def plan(self, result: ReconciliationResult) -> AgentPlan:
         status = result.match_status
         confidence = result.deterministic_confidence or 0.0
         extraction_conf = result.extraction_confidence or 0.0
+        recon_mode = getattr(result, "reconciliation_mode", "") or ""
+        is_two_way = recon_mode == ReconciliationMode.TWO_WAY
 
         # Gather exception types
         exc_types = set(
@@ -61,6 +69,7 @@ class PolicyEngine:
             return AgentPlan(
                 skip_agents=True,
                 reason=f"Full match with confidence {confidence:.2f} >= {REVIEW_AUTO_CLOSE_THRESHOLD}",
+                reconciliation_mode=recon_mode,
             )
 
         # Rule 1b: PARTIAL_MATCH within auto-close tolerance band → auto-close, skip agents
@@ -72,6 +81,7 @@ class PolicyEngine:
                     f"PARTIAL_MATCH but all line discrepancies within auto-close tolerance band — "
                     f"auto-closing without AI agents"
                 ),
+                reconciliation_mode=recon_mode,
             )
 
         agents: List[str] = []
@@ -80,8 +90,8 @@ class PolicyEngine:
         if ExceptionType.PO_NOT_FOUND in exc_types:
             agents.append(AgentType.PO_RETRIEVAL)
 
-        # Rule 3: GRN not found
-        if ExceptionType.GRN_NOT_FOUND in exc_types:
+        # Rule 3: GRN not found (3-way only — irrelevant in 2-way mode)
+        if not is_two_way and ExceptionType.GRN_NOT_FOUND in exc_types:
             agents.append(AgentType.GRN_RETRIEVAL)
 
         # Rule 4: Low extraction confidence
@@ -110,14 +120,15 @@ class PolicyEngine:
                 AgentType.CASE_SUMMARY,
             ]
 
+        mode_label = "2-way" if is_two_way else "3-way"
         reason = (
-            f"Status={status}, confidence={confidence:.2f}, "
+            f"Mode={mode_label}, status={status}, confidence={confidence:.2f}, "
             f"extraction_conf={extraction_conf:.2f}, "
             f"exceptions={sorted(exc_types)}"
         )
 
         logger.info("Policy plan for result %s: %s (%s)", result.pk, agents, reason)
-        return AgentPlan(agents=agents, reason=reason)
+        return AgentPlan(agents=agents, reason=reason, reconciliation_mode=recon_mode)
 
     # ------------------------------------------------------------------
     # Auto-close tolerance check

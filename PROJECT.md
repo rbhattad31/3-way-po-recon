@@ -2,7 +2,7 @@
 
 ## Overview
 
-An enterprise Django application that automates **3-way Purchase Order (PO) reconciliation** — matching Invoices against Purchase Orders (POs) and Goods Receipt Notes (GRNs). The system extracts invoice data from uploaded PDFs, normalizes and validates the data, performs deterministic matching with tolerance-based comparison, flags exceptions, routes complex cases to AI agents for analysis, and sends unresolvable items to human reviewers.
+An enterprise Django application that automates **configurable 2-way and 3-way Purchase Order (PO) reconciliation** — matching Invoices against Purchase Orders (POs) and, when applicable, Goods Receipt Notes (GRNs). The system extracts invoice data from uploaded PDFs, normalizes and validates the data, **resolves the reconciliation mode** (2-way for services, 3-way for stock) via a policy engine / heuristic / config-default cascade, performs deterministic matching with tolerance-based comparison, flags exceptions, routes complex cases to AI agents for analysis, and sends unresolvable items to human reviewers.
 
 ---
 
@@ -46,9 +46,10 @@ process_invoice_upload_task (Celery)
     ▼
 run_reconciliation_task (Celery) — or synchronous call via start_reconciliation view
     ├── PO Lookup (normalized PO number + fuzzy vendor match)
+    ├── Mode Resolution (policy → heuristic → config default → TWO_WAY or THREE_WAY)
     ├── Header Match (vendor, currency, total amount within tolerance)
     ├── Line Match (qty / price / amount per line, fuzzy item description)
-    ├── GRN Lookup + Match (receipt quantities)
+    ├── [3-WAY only] GRN Lookup + Match (receipt quantities)
     ├── Classification → MATCHED | PARTIAL_MATCH | UNMATCHED | REQUIRES_REVIEW
     ├── Exception Building (structured, typed exceptions)
     ├── Auto-create ReviewAssignment (if REQUIRES_REVIEW)
@@ -130,12 +131,13 @@ c:\3-way-po-recon\
 | Component | Description |
 |---|---|
 | **Models** | `TimestampMixin` (created_at/updated_at), `AuditMixin` (created_by/updated_by), `BaseModel` (combines both), `SoftDeleteMixin`, `NotesMixin` |
-| **Enums** | `InvoiceStatus`, `MatchStatus`, `ReviewStatus`, `UserRole`, `AgentType`, `ExceptionType` (11 types), `ExceptionSeverity`, `ReviewActionType`, `AgentRunStatus`, `ToolCallStatus`, `ReconciliationRunStatus`, `RecommendationType` (6 types incl. AUTO_CLOSE), `DocumentType`, `FileProcessingState`, `AuditEventType` (14 event types) |
+| **Enums** | `InvoiceStatus`, `MatchStatus`, `ReviewStatus`, `UserRole`, `AgentType`, `ExceptionType` (18 types), `ExceptionSeverity`, `ReviewActionType`, `AgentRunStatus`, `ToolCallStatus`, `ReconciliationRunStatus`, `RecommendationType` (6 types incl. AUTO_CLOSE), `DocumentType`, `FileProcessingState`, `AuditEventType` (17 event types incl. MODE_RESOLUTION, MODE_OVERRIDE, MODE_POLICY_APPLIED), `ReconciliationMode` (TWO_WAY, THREE_WAY), `ReconciliationModeApplicability` (TWO_WAY, THREE_WAY, BOTH) |
 | **Management Commands** | `seed_data` — populates initial test data: users (5 roles), vendors (5+aliases), 13 invoices (matching edge cases), POs, GRNs, 7 agent definitions with `config_json`, 6 tool definitions. Supports `--only` flag for selective seeding. |
 |  | `seed_saudi_mcd_data` — seeds Saudi Arabia McDonald's master distributor data: 6 users, 10 vendors + aliases, 25 POs (~62 line items), 30 GRNs (~70 line items) across 25 scenario-driven PO/GRN shapes. Supports `--flush`. |
 |  | `seed_invoice_test_data` — seeds 18 invoice test scenarios (SCN-KSA-001..018, including auto-close and AI-resolvable scenarios) for reconciliation testing against the Saudi McD master data. Creates only invoice-side data. Supports `--flush`. |
 |  | `seed_po_agent_test_data` — seeds 10 PO Retrieval Agent test scenarios (SCN-POAG-001..010) testing reordered PO numbers, vendor-based discovery, Arabic aliases, closed POs, wrong vendor, and ambiguous matches. Supports `--flush`. |
 |  | `seed_grn_agent_test_data` — seeds 12 GRN Specialist Agent test scenarios (SCN-GRNAG-001..012) testing full receipt, missing GRN, partial receipt, over-delivery, multi-GRN aggregation, delayed receipt, location mismatch, wrong item mix, service invoices, and cold-chain shortage. Supports `--flush`. |
+|  | `seed_mixed_mode_data` — seeds 12 mixed-mode reconciliation test scenarios (SCN-MODE-001..012): 7 reconciliation policies (vendor, category, location, business-unit), 1 service vendor (Gulf Professional Services), 12 POs with item classification, 8 GRNs (stock POs only), 12 invoices spanning all mode resolution paths (policy, heuristic, default fallback). Back-fills item_category on ~55 existing PO lines. Requires `seed_saudi_mcd_data`. Supports `--flush`. |
 | **Permissions** | `IsAdmin`, `IsAPProcessor`, `IsReviewer`, `IsFinanceManager`, `IsAuditor`, `IsAdminOrReadOnly`, `IsReviewAssignee`, `HasAnyRole` |
 | **Middleware** | `LoginRequiredMiddleware` — redirects anonymous users (exempts /admin/, /accounts/, /api/) |
 | **Utils** | `normalize_string()`, `normalize_po_number()`, `normalize_invoice_number()`, `parse_date()`, `to_decimal()`, `pct_difference()`, `within_tolerance()` |
@@ -162,9 +164,9 @@ c:\3-way-po-recon\
 |---|---|
 | `DocumentUpload` | file, file_hash (SHA-256), document_type, processing_state |
 | `Invoice` | Raw + normalized fields: vendor_name, invoice_number, po_number, dates, amounts; status (InvoiceStatus); extraction_confidence; is_duplicate |
-| `InvoiceLineItem` | Raw + normalized: quantity, unit_price, tax_amount, line_amount, description; extraction_confidence |
+| `InvoiceLineItem` | Raw + normalized: quantity, unit_price, tax_amount, line_amount, description; extraction_confidence; item_category, is_service_item, is_stock_item |
 | `PurchaseOrder` | po_number (unique), vendor, po_date, currency, total_amount, status |
-| `PurchaseOrderLineItem` | item_code, description, quantity, unit_price, line_amount, unit_of_measure |
+| `PurchaseOrderLineItem` | item_code, description, quantity, unit_price, line_amount, unit_of_measure, item_category, is_service_item, is_stock_item |
 | `GoodsReceiptNote` | grn_number (unique), purchase_order, vendor, receipt_date, status |
 | `GRNLineItem` | po_line (FK), quantity_received, quantity_accepted, quantity_rejected |
 
@@ -183,23 +185,27 @@ c:\3-way-po-recon\
 
 **Celery Task:** `process_invoice_upload_task` — full pipeline: upload → OCR (Azure DI) → LLM extract (Azure OpenAI) → parse → normalize → validate → duplicate check → persist. Retries=2.
 
-### reconciliation — 3-Way Matching Engine
+### reconciliation — Configurable 2-Way / 3-Way Matching Engine
 
 | Service | File | Purpose |
 |---|---|---|
-| `ReconciliationRunnerService` | `runner_service.py` | Orchestrates full 3-way match pipeline per batch of invoices; auto-creates `ReviewAssignment` for REQUIRES_REVIEW results |
+| `ReconciliationRunnerService` | `runner_service.py` | Orchestrates mode-aware match pipeline (2-way or 3-way) per batch of invoices; resolves mode, routes to appropriate match service; auto-creates `ReviewAssignment` for REQUIRES_REVIEW results |
 | `POLookupService` | `po_lookup_service.py` | Finds PO by normalized po_number |
 | `HeaderMatchService` | `header_match_service.py` | Matches vendor, currency, total amount with tolerance |
 | `LineMatchService` | `line_match_service.py` | Matches line-level qty/price/amount + fuzzy item description |
 | `GRNLookupService` | `grn_lookup_service.py` | Finds GRNs for matched PO |
 | `GRNMatchService` | `grn_match_service.py` | Checks receipt quantities (received vs accepted vs rejected) |
-| `ClassificationService` | `classification_service.py` | Deterministic 7-gate decision tree: PO not found → UNMATCHED, low confidence → REQUIRES_REVIEW, full match → MATCHED, tolerance breaches → PARTIAL_MATCH, GRN issues → REQUIRES_REVIEW. Auto-close band compatible. |
-| `ExceptionBuilderService` | `exception_builder_service.py` | Builds structured exceptions (typed, severity-rated) |
-| `ReconciliationResultService` | `result_service.py` | Persists reconciliation results, result lines, and links to invoices/POs |
+| `ClassificationService` | `classification_service.py` | Deterministic 7-gate decision tree: PO not found → UNMATCHED, low confidence → REQUIRES_REVIEW, full match → MATCHED, tolerance breaches → PARTIAL_MATCH, GRN issues → REQUIRES_REVIEW. Mode-aware: skips GRN gates in 2-way mode. Auto-close band compatible. |
+| `ExceptionBuilderService` | `exception_builder_service.py` | Builds structured exceptions (typed, severity-rated); tags each exception with `applies_to_mode` (TWO_WAY / THREE_WAY / BOTH) |
+| `ReconciliationResultService` | `result_service.py` | Persists reconciliation results, result lines, and links to invoices/POs; stores mode metadata + mode-specific confidence weights |
 | `ToleranceEngine` | `tolerance_engine.py` | Tiered tolerance comparison with `ToleranceThresholds` and `FieldComparison` dataclasses; methods: `compare_quantity()`, `compare_price()`, `compare_amount()` |
-| `AgentFeedbackService` | `agent_feedback_service.py` | Applies agent-recovered PO/GRN findings back to reconciliation: links PO → re-runs header/line/GRN matching → re-classifies → rebuilds exceptions (all within `@transaction.atomic`) |
+| `ReconciliationModeResolver` | `mode_resolver.py` | 3-tier mode resolution cascade: (1) `ReconciliationPolicy` lookup by vendor/category/location/flags, (2) heuristic analysis of PO line item classifications + service keywords, (3) config default. Returns `ModeResolutionResult` with mode + reason. |
+| `TwoWayMatchService` | `two_way_match_service.py` | Invoice-vs-PO only matching: header match + line match (no GRN). Returns `TwoWayMatchOutput`. |
+| `ThreeWayMatchService` | `three_way_match_service.py` | Full Invoice-vs-PO-vs-GRN matching: header + line + GRN lookup/match. Returns `ThreeWayMatchOutput`. |
+| `ReconciliationExecutionRouter` | `execution_router.py` | Dispatches to `TwoWayMatchService` or `ThreeWayMatchService` based on resolved mode. Returns unified `RoutedMatchOutput`. |
+| `AgentFeedbackService` | `agent_feedback_service.py` | Applies agent-recovered PO/GRN findings back to reconciliation: links PO → re-runs header/line/GRN matching → re-classifies → rebuilds exceptions (all within `@transaction.atomic`). Propagates reconciliation mode. |
 
-**Models:** `ReconciliationConfig` (tiered thresholds: strict + auto-close bands, feature flags), `ReconciliationRun`, `ReconciliationResult`, `ReconciliationResultLine`, `ReconciliationException`
+**Models:** `ReconciliationConfig` (tiered thresholds: strict + auto-close bands, feature flags, `default_reconciliation_mode`, `enable_mode_resolver`, `enable_two_way_for_services`, `enable_grn_for_stock_items`), `ReconciliationPolicy` (policy_code, vendor, item_category, location_code, business_unit, is_service_invoice, is_stock_invoice, reconciliation_mode, priority), `ReconciliationRun` (+`reconciliation_mode`), `ReconciliationResult` (+`reconciliation_mode`, `mode_resolved_by`), `ReconciliationResultLine`, `ReconciliationException` (+`reconciliation_mode`, `applies_to_mode`)
 
 **Celery Tasks:** `run_reconciliation_task` (batch — also dispatches `run_agent_pipeline_task` for non-MATCHED results), `reconcile_single_invoice_task` (single)
 
@@ -210,8 +216,8 @@ c:\3-way-po-recon\
 | Component | Purpose |
 |---|---|
 | `AgentOrchestrator` | Main entry point; loads result + exceptions, calls PolicyEngine, executes agents in sequence. Called automatically after reconciliation (sync path via `start_reconciliation` view, async path via `run_agent_pipeline_task`). |
-| `PolicyEngine` | Analyzes result + exceptions, decides which agents to run based on match status and exception types; includes `should_auto_close()` and `_within_auto_close_band()` for tiered auto-close logic (wider thresholds for PARTIAL_MATCH auto-close without AI). Generates `AgentPlan`. |
-| `BaseAgent` | Abstract base; ReAct loop (LLM → tool calls → feedback, up to 6 iterations). Uses OpenAI-compliant tool-calling format (tool_calls on assistant messages, tool_call_id on tool responses). |
+| `PolicyEngine` | Analyzes result + exceptions, decides which agents to run based on match status and exception types; mode-aware: suppresses GRN_RETRIEVAL agent in 2-way mode. Includes `should_auto_close()` and `_within_auto_close_band()` for tiered auto-close logic (wider thresholds for PARTIAL_MATCH auto-close without AI). Generates `AgentPlan`. |
+| `BaseAgent` | Abstract base; ReAct loop (LLM → tool calls → feedback, up to 6 iterations). Uses OpenAI-compliant tool-calling format (tool_calls on assistant messages, tool_call_id on tool responses). Mode-aware: `AgentContext` includes `reconciliation_mode`; all 7 agent types include mode context in system prompts via `_mode_context()` helper. |
 | `LLMClient` | Abstracts OpenAI / Azure OpenAI, supports function calling with tool_calls serialization |
 | `RecommendationService` | Creates, queries, and manages agent recommendations (`AgentRecommendation` model). Tracks acceptance: `accepted` (null/True/False), `accepted_by`, `accepted_at`. |
 | `AgentTraceService` | Unified tracing interface for all agent operations: `start_agent_run()`, `log_agent_step()`, `log_tool_call()`, `log_decision()`, `get_trace_for_invoice()`. Ensures consistent audit trail. |
@@ -249,7 +255,7 @@ c:\3-way-po-recon\
 | Component | Purpose |
 |---|---|
 | `DashboardService` | Aggregates stats from ReconciliationRun, Result, AgentRun, Exception |
-| **API Views** | Summary, MatchStatusBreakdown, ExceptionBreakdown, AgentPerformance, DailyVolume, RecentActivity |
+| **API Views** | Summary, MatchStatusBreakdown, ExceptionBreakdown, AgentPerformance, DailyVolume, RecentActivity, ModeBreakdown |
 
 ### reports — Report Generation
 
@@ -267,7 +273,7 @@ c:\3-way-po-recon\
 
 | Service | Purpose |
 |---|---|
-| `CaseTimelineService` | Builds a unified, chronologically-ordered timeline for an invoice case — merges audit events, agent runs, tool calls (with duration), agent recommendations, review assignments/actions/decisions. Single entry point: `get_case_timeline(invoice_id)`. |
+| `CaseTimelineService` | Builds a unified, chronologically-ordered timeline for an invoice case — merges audit events, agent runs, tool calls (with duration), agent recommendations, review assignments/actions/decisions, and mode resolution events (`MODE_RESOLUTION`, `MODE_OVERRIDE`, `MODE_POLICY_APPLIED`). Single entry point: `get_case_timeline(invoice_id)`. |
 
 **Template Views:**
 - `audit_event_list` — Browsable audit event log with filtering by entity_type, event_type, entity_id
@@ -317,10 +323,10 @@ c:\3-way-po-recon\
 | Prefix | Resources |
 |---|---|
 | `/api/v1/documents/` | uploads, invoices, purchase-orders, grns |
-| `/api/v1/reconciliation/` | configs, runs (+ `trigger_run` action), results |
+| `/api/v1/reconciliation/` | configs, runs (+ `trigger_run` action), results, policies |
 | `/api/v1/reviews/` | assignments (+ `assign_reviewer`, `start_review`, `decide`, `add_comment` actions) |
 | `/api/v1/agents/` | agent-definitions, agent-runs (+ `trigger_pipeline` action) |
-| `/api/v1/dashboard/` | summary, match-breakdown, exception-breakdown, agent-performance, daily-volume, recent-activity |
+| `/api/v1/dashboard/` | summary, match-breakdown, exception-breakdown, agent-performance, daily-volume, recent-activity, mode-breakdown |
 | `/api/v1/reports/` | generated-reports |
 | `/api/v1/vendors/` | vendors, vendor-aliases |
 | `/api/v1/governance/` | audit events (filterable by entity_type, event_type) |
@@ -381,10 +387,10 @@ c:\3-way-po-recon\
 |---|---|---|
 | Project structure & config | ✅ Complete | Django project, settings, URLs, Celery |
 | Models & migrations | ✅ Complete | All 13 apps, all models defined |
-| Core utilities & enums | ✅ Complete | Normalization, permissions, middleware, 14 enum classes |
+| Core utilities & enums | ✅ Complete | Normalization, permissions, middleware, 17 enum classes (incl. ReconciliationMode, ReconciliationModeApplicability) |
 | Extraction services | ✅ Complete | 8 service classes in 7 files; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction |
 | Extraction Celery task | ✅ Complete | Full pipeline task with retries |
-| Reconciliation services | ✅ Complete | Full 3-way matching pipeline (10 services) |
+| Reconciliation services | ✅ Complete | Full configurable 2-way/3-way matching pipeline (14 services incl. ModeResolver, TwoWayMatchService, ThreeWayMatchService, ExecutionRouter) |
 | Reconciliation Celery tasks | ✅ Complete | Batch + single invoice tasks |
 | Agent orchestration | ✅ Complete | Orchestrator, PolicyEngine, BaseAgent, LLMClient, DecisionLogService |
 | Agent classes (7 types) | ✅ Complete | All 7 agent types implemented in `agent_classes.py` |
@@ -410,6 +416,8 @@ c:\3-way-po-recon\
 | Case console + CSV export | ✅ Complete | Deep-dive investigation view + CSV export per reconciliation result |
 | PO Agent test scenarios | ✅ Complete | `python manage.py seed_po_agent_test_data` — 10 scenarios (SCN-POAG-001..010) |
 | GRN Agent test scenarios | ✅ Complete | `python manage.py seed_grn_agent_test_data` — 12 scenarios (SCN-GRNAG-001..012) |
+| Configurable 2-way/3-way mode | ✅ Complete | ReconciliationPolicy model, ModeResolver (3-tier: policy → heuristic → default), TwoWayMatchService, ThreeWayMatchService, ExecutionRouter, mode-aware agents/classification/exceptions, mode dashboard endpoint, UI mode filters & badges |
+| Mixed-mode seed data | ✅ Complete | `python manage.py seed_mixed_mode_data` — 12 scenarios (SCN-MODE-001..012), 7 policies, service vendor, mode resolution path coverage |
 | Tests | ⬜ Not started | pytest + factory-boy configured but no tests written |
 | ERP integrations | ⬜ Stub | IntegrationConfig models exist, no connectors |
 | Report export logic | ⬜ Partial | Model exists, export services not implemented |
@@ -441,6 +449,7 @@ python manage.py seed_saudi_mcd_data
 python manage.py seed_invoice_test_data
 python manage.py seed_po_agent_test_data
 python manage.py seed_grn_agent_test_data
+python manage.py seed_mixed_mode_data
 
 # Option A: Windows dev mode (no Redis needed — Celery runs synchronously)
 # CELERY_TASK_ALWAYS_EAGER=True is the default in settings.py
@@ -463,6 +472,9 @@ python manage.py runserver
 | Term | Definition |
 |---|---|
 | **3-Way Match** | Comparing Invoice vs Purchase Order vs Goods Receipt Note |
+| **2-Way Match** | Comparing Invoice vs Purchase Order only (no GRN); used for service invoices and policy-driven exceptions |
+| **Mode Resolver** | 3-tier cascade that determines whether an invoice uses 2-way or 3-way matching: (1) ReconciliationPolicy lookup, (2) heuristic analysis (item flags + service keywords), (3) config default |
+| **Reconciliation Policy** | Rule-based configuration (`ReconciliationPolicy` model) that maps vendor, item category, location, or business unit to a specific reconciliation mode |
 | **PO** | Purchase Order — authorization to buy goods/services |
 | **GRN** | Goods Receipt Note — confirmation of goods received |
 | **AP** | Accounts Payable — department responsible for paying invoices |

@@ -75,17 +75,17 @@ SCENARIO_INVOICE_NUMBERS = [
 
 # Additional POs created by this command (for scenario isolation)
 ADDITIONAL_PO_NUMBERS = [
-    "PO-KSA-3001",  # SCN-GRNAG-002 — missing GRN scenario
-    "PO-KSA-3002",  # SCN-GRNAG-003 — partial receipt
-    "PO-KSA-3003",  # SCN-GRNAG-004 — invoice exceeds received
-    "PO-KSA-3004",  # SCN-GRNAG-005 — multiple GRNs full receipt
-    "PO-KSA-3005",  # SCN-GRNAG-006 — multiple GRNs partial receipt
-    "PO-KSA-3006",  # SCN-GRNAG-007 — over-delivery
-    "PO-KSA-3007",  # SCN-GRNAG-008 — delayed receipt
-    "PO-KSA-3008",  # SCN-GRNAG-009 — branch vs warehouse mismatch
-    "PO-KSA-3009",  # SCN-GRNAG-010 — wrong item mix
-    "PO-KSA-3010",  # SCN-GRNAG-011 — service / non-GRN invoice
-    "PO-KSA-3011",  # SCN-GRNAG-012 — cold-chain shortage
+    "PO-KSA-3001",  # SCN-GRNAG-002 - missing GRN scenario
+    "PO-KSA-3002",  # SCN-GRNAG-003 - partial receipt
+    "PO-KSA-3003",  # SCN-GRNAG-004 - invoice exceeds received
+    "PO-KSA-3004",  # SCN-GRNAG-005 - multiple GRNs full receipt
+    "PO-KSA-3005",  # SCN-GRNAG-006 - multiple GRNs partial receipt
+    "PO-KSA-3006",  # SCN-GRNAG-007 - over-delivery
+    "PO-KSA-3007",  # SCN-GRNAG-008 - delayed receipt
+    "PO-KSA-3008",  # SCN-GRNAG-009 - branch vs warehouse mismatch
+    "PO-KSA-3009",  # SCN-GRNAG-010 - wrong item mix
+    "PO-KSA-3010",  # SCN-GRNAG-011 - service / non-GRN invoice
+    "PO-KSA-3011",  # SCN-GRNAG-012 - cold-chain shortage
 ]
 
 # Additional GRNs created by this command
@@ -122,7 +122,7 @@ def _tax(amount) -> Decimal:
 
 
 # ---------------------------------------------------------------------------
-# Lookup helpers — reuse existing master data
+# Lookup helpers - reuse existing master data
 # ---------------------------------------------------------------------------
 def find_vendor(code: str) -> Vendor:
     return Vendor.objects.get(code=code)
@@ -314,8 +314,8 @@ def _inv_totals(lines: list) -> tuple:
 
 def create_scn_grnag_001_full_receipt_exact_match() -> Invoice:
     """
-    SCN-GRNAG-001 — FULL RECEIPT EXACT MATCH
-    ─────────────────────────────────────────
+    SCN-GRNAG-001 - FULL RECEIPT EXACT MATCH
+    -----------------------------------------
     Reuses existing PO-KSA-1001 (Arabian Food Supplies, buns/lettuce/pickles)
     and existing GRN-RUH-1001-A (full receipt 500/200/100).
     Invoice quantities exactly match GRN received quantities.
@@ -347,7 +347,7 @@ def create_scn_grnag_001_full_receipt_exact_match() -> Invoice:
         invoice_date=INVOICE_DATE,
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.93,
-        notes="Full receipt exact match — reuses PO-KSA-1001 & GRN-RUH-1001-A",
+        notes="Full receipt exact match - reuses PO-KSA-1001 & GRN-RUH-1001-A",
         delivery_note_ref="DN-AFS-RUH-0201",
     )
     create_invoice_lines(inv, lines, confidence=0.93)
@@ -356,8 +356,8 @@ def create_scn_grnag_001_full_receipt_exact_match() -> Invoice:
 
 def create_scn_grnag_002_missing_grn() -> Invoice:
     """
-    SCN-GRNAG-002 — MISSING GRN
-    ────────────────────────────
+    SCN-GRNAG-002 - MISSING GRN
+    ----------------------------
     New PO-KSA-3001 exists (beverage syrups, Riyadh Beverage Concentrates)
     but NO GRN has been posted. Invoice arrives before goods receipt.
 
@@ -377,7 +377,7 @@ def create_scn_grnag_002_missing_grn() -> Invoice:
          "qty": 80, "price": "215.00", "uom": "BAG"},
     ]
     ensure_po("PO-KSA-3001", vendor, BASE_DATE - timedelta(days=10), po_lines,
-              notes="SCN-GRNAG-002: PO for beverage syrups — no GRN posted")
+              notes="SCN-GRNAG-002: PO for beverage syrups - no GRN posted")
 
     inv_lines = [
         {"raw": "Soft Drink Syrup Cola BiB / مركز مشروب غازي كولا",
@@ -395,7 +395,7 @@ def create_scn_grnag_002_missing_grn() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=1),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.91,
-        notes="Missing GRN — PO exists but no goods receipt posted",
+        notes="Missing GRN - PO exists but no goods receipt posted",
         delivery_note_ref="DN-RBC-RUH-0089",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.91)
@@ -404,8 +404,8 @@ def create_scn_grnag_002_missing_grn() -> Invoice:
 
 def create_scn_grnag_003_partial_receipt() -> Invoice:
     """
-    SCN-GRNAG-003 — PARTIAL RECEIPT
-    ────────────────────────────────
+    SCN-GRNAG-003 - PARTIAL RECEIPT
+    --------------------------------
     PO-KSA-3002: French Fries 2.5kg qty=100, Chicken Nuggets qty=100
     GRN-RUH-3002-A: Fries received=60, Nuggets received=60
     Invoice: Fries qty=100, Nuggets qty=100
@@ -426,7 +426,7 @@ def create_scn_grnag_003_partial_receipt() -> Invoice:
          "qty": 100, "price": "145.00", "uom": "CTN"},
     ]
     po = ensure_po("PO-KSA-3002", vendor, BASE_DATE - timedelta(days=14), po_lines_data,
-                    notes="SCN-GRNAG-003: partial receipt scenario — ordered 100, received 60")
+                    notes="SCN-GRNAG-003: partial receipt scenario - ordered 100, received 60")
 
     po_line1 = find_po_line(po, 1)
     po_line2 = find_po_line(po, 2)
@@ -443,7 +443,7 @@ def create_scn_grnag_003_partial_receipt() -> Invoice:
              "description": "Nuggets Premium Frozen",
              "qty_received": 60, "qty_accepted": 60, "uom": "CTN"},
         ],
-        notes="SCN-GRNAG-003: partial receipt — 60/100 each line",
+        notes="SCN-GRNAG-003: partial receipt - 60/100 each line",
     )
 
     inv_lines = [
@@ -462,7 +462,7 @@ def create_scn_grnag_003_partial_receipt() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=2),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.92,
-        notes="Partial receipt — invoice 100 vs GRN 60 per line, gap=40",
+        notes="Partial receipt - invoice 100 vs GRN 60 per line, gap=40",
         delivery_note_ref="DN-GFF-RUH-0145",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.92)
@@ -471,8 +471,8 @@ def create_scn_grnag_003_partial_receipt() -> Invoice:
 
 def create_scn_grnag_004_invoice_exceeds_received() -> Invoice:
     """
-    SCN-GRNAG-004 — INVOICE EXCEEDS RECEIVED QUANTITY
-    ──────────────────────────────────────────────────
+    SCN-GRNAG-004 - INVOICE EXCEEDS RECEIVED QUANTITY
+    --------------------------------------------------
     PO-KSA-3003: Cheese Slice qty=100, Butter Portion qty=50
     GRN: Cheese received=80, Butter received=40
     Invoice: Cheese qty=90, Butter qty=50
@@ -528,7 +528,7 @@ def create_scn_grnag_004_invoice_exceeds_received() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=3),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.90,
-        notes="Invoice qty > received — cheese 90 inv vs 80 rcvd, butter 50 inv vs 40 rcvd",
+        notes="Invoice qty > received - cheese 90 inv vs 80 rcvd, butter 50 inv vs 40 rcvd",
         delivery_note_ref="DN-AKD-RUH-0067",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.90)
@@ -537,8 +537,8 @@ def create_scn_grnag_004_invoice_exceeds_received() -> Invoice:
 
 def create_scn_grnag_005_multiple_grns_full_receipt() -> Invoice:
     """
-    SCN-GRNAG-005 — MULTIPLE GRNs CUMULATIVE FULL RECEIPT
-    ─────────────────────────────────────────────────────
+    SCN-GRNAG-005 - MULTIPLE GRNs CUMULATIVE FULL RECEIPT
+    -----------------------------------------------------
     PO-KSA-3004: McD Beef Patty 4:1 qty=100
     GRN-A received=30, GRN-B received=40, GRN-C received=30  (total=100)
     Invoice qty=100
@@ -571,7 +571,7 @@ def create_scn_grnag_005_multiple_grns_full_receipt() -> Invoice:
                  "description": "McD Beef Patty 4:1 Frozen",
                  "qty_received": qty, "qty_accepted": qty, "uom": "CTN"},
             ],
-            notes=f"SCN-GRNAG-005: staggered delivery {suffix} — {qty} CTN",
+            notes=f"SCN-GRNAG-005: staggered delivery {suffix} - {qty} CTN",
         )
 
     inv_lines = [
@@ -588,7 +588,7 @@ def create_scn_grnag_005_multiple_grns_full_receipt() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=4),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.94,
-        notes="Multi-GRN cumulative full receipt — 30+40+30=100",
+        notes="Multi-GRN cumulative full receipt - 30+40+30=100",
         delivery_note_ref="DN-GFF-DMM-0098",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.94)
@@ -597,8 +597,8 @@ def create_scn_grnag_005_multiple_grns_full_receipt() -> Invoice:
 
 def create_scn_grnag_006_multiple_grns_partial_receipt() -> Invoice:
     """
-    SCN-GRNAG-006 — MULTIPLE GRNs CUMULATIVE PARTIAL RECEIPT
-    ────────────────────────────────────────────────────────
+    SCN-GRNAG-006 - MULTIPLE GRNs CUMULATIVE PARTIAL RECEIPT
+    --------------------------------------------------------
     PO-KSA-3005: Chicken Patty Breaded qty=200, Hash Brown qty=150
     GRN-A: Chicken=80, Hash=60
     GRN-B: Chicken=50, Hash=40
@@ -640,7 +640,7 @@ def create_scn_grnag_006_multiple_grns_partial_receipt() -> Invoice:
              "description": "Hash Brown Triangle Frozen",
              "qty_received": 60, "qty_accepted": 60, "uom": "CTN"},
         ],
-        notes="SCN-GRNAG-006: first delivery — chicken 80, hash 60",
+        notes="SCN-GRNAG-006: first delivery - chicken 80, hash 60",
     )
     ensure_grn(
         "GRN-JED-3005-B", po, vendor,
@@ -655,7 +655,7 @@ def create_scn_grnag_006_multiple_grns_partial_receipt() -> Invoice:
              "description": "Hash Brown Triangle Frozen",
              "qty_received": 40, "qty_accepted": 40, "uom": "CTN"},
         ],
-        notes="SCN-GRNAG-006: second delivery — chicken 50, hash 40",
+        notes="SCN-GRNAG-006: second delivery - chicken 50, hash 40",
     )
 
     inv_lines = [
@@ -674,7 +674,7 @@ def create_scn_grnag_006_multiple_grns_partial_receipt() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=5),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.91,
-        notes="Multi-GRN partial — chicken 130/200 (gap=70), hash 100/150 (gap=50)",
+        notes="Multi-GRN partial - chicken 130/200 (gap=70), hash 100/150 (gap=50)",
         delivery_note_ref="DN-GFF-JED-0202",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.91)
@@ -683,9 +683,9 @@ def create_scn_grnag_006_multiple_grns_partial_receipt() -> Invoice:
 
 def create_scn_grnag_007_over_delivery() -> Invoice:
     """
-    SCN-GRNAG-007 — OVER-DELIVERY CASE
-    ────────────────────────────────────
-    PO-KSA-3006: Al Watania Poultry — Chicken Patty qty=200
+    SCN-GRNAG-007 - OVER-DELIVERY CASE
+    ------------------------------------
+    PO-KSA-3006: Al Watania Poultry - Chicken Patty qty=200
     GRN: received=230 (over by 30), accepted=200, rejected=30
     Invoice qty=230 (aligns with GRN received, not PO)
 
@@ -704,7 +704,7 @@ def create_scn_grnag_007_over_delivery() -> Invoice:
          "qty": 200, "price": "158.00", "uom": "CTN"},
     ]
     po = ensure_po("PO-KSA-3006", vendor, BASE_DATE - timedelta(days=15), po_lines_data,
-                    notes="SCN-GRNAG-007: over-delivery — PO 200, GRN 230")
+                    notes="SCN-GRNAG-007: over-delivery - PO 200, GRN 230")
 
     po_l = find_po_line(po, 1)
     ensure_grn(
@@ -733,7 +733,7 @@ def create_scn_grnag_007_over_delivery() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=6),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.93,
-        notes="Over-delivery — invoice qty=230 matches GRN received, PO only 200",
+        notes="Over-delivery - invoice qty=230 matches GRN received, PO only 200",
         delivery_note_ref="DN-AWP-RUH-0312",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.93)
@@ -742,8 +742,8 @@ def create_scn_grnag_007_over_delivery() -> Invoice:
 
 def create_scn_grnag_008_delayed_receipt() -> Invoice:
     """
-    SCN-GRNAG-008 — DELAYED RECEIPT AFTER INVOICE DATE
-    ───────────────────────────────────────────────────
+    SCN-GRNAG-008 - DELAYED RECEIPT AFTER INVOICE DATE
+    ---------------------------------------------------
     PO-KSA-3007: Cooking Oil Fryer Grade 20L qty=200
     Invoice date: INVOICE_DATE + 7 (= BASE_DATE + 15)
     GRN receipt date: INVOICE_DATE + 12 (= BASE_DATE + 20, 5 days AFTER invoice)
@@ -764,7 +764,7 @@ def create_scn_grnag_008_delayed_receipt() -> Invoice:
          "qty": 200, "price": "32.00", "uom": "LTR"},
     ]
     po = ensure_po("PO-KSA-3007", vendor, BASE_DATE - timedelta(days=10), po_lines_data,
-                    notes="SCN-GRNAG-008: delayed receipt — GRN posted after invoice date")
+                    notes="SCN-GRNAG-008: delayed receipt - GRN posted after invoice date")
 
     inv_date = INVOICE_DATE + timedelta(days=7)  # Invoice arrives
     grn_date = INVOICE_DATE + timedelta(days=12)  # GRN posted 5 days later
@@ -779,7 +779,7 @@ def create_scn_grnag_008_delayed_receipt() -> Invoice:
              "description": "Cooking Oil Fryer Grade 20L",
              "qty_received": 200, "qty_accepted": 200, "uom": "LTR"},
         ],
-        notes="SCN-GRNAG-008: delayed receipt — posted 5 days after invoice",
+        notes="SCN-GRNAG-008: delayed receipt - posted 5 days after invoice",
     )
 
     inv_lines = [
@@ -796,7 +796,7 @@ def create_scn_grnag_008_delayed_receipt() -> Invoice:
         invoice_date=inv_date,
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.89,
-        notes=f"Delayed receipt — invoice {inv_date}, GRN posted {grn_date}",
+        notes=f"Delayed receipt - invoice {inv_date}, GRN posted {grn_date}",
         delivery_note_ref="DN-NEO-RUH-0054",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.89)
@@ -805,10 +805,10 @@ def create_scn_grnag_008_delayed_receipt() -> Invoice:
 
 def create_scn_grnag_009_branch_vs_warehouse_mismatch() -> Invoice:
     """
-    SCN-GRNAG-009 — BRANCH VS WAREHOUSE RECEIPT MISMATCH
-    ─────────────────────────────────────────────────────
+    SCN-GRNAG-009 - BRANCH VS WAREHOUSE RECEIPT MISMATCH
+    -----------------------------------------------------
     PO-KSA-3008: Sanitizer + Degreaser for BR-JED-220 (Jeddah Branch 220)
-    GRN posted at WH-RUH-01 (Riyadh Central Warehouse) — wrong location
+    GRN posted at WH-RUH-01 (Riyadh Central Warehouse) - wrong location
     Invoice references destination BR-JED-220
 
     Expected GRN specialist outcome:
@@ -829,7 +829,7 @@ def create_scn_grnag_009_branch_vs_warehouse_mismatch() -> Invoice:
          "qty": 100, "price": "45.00", "uom": "LTR"},
     ]
     po = ensure_po("PO-KSA-3008", vendor, BASE_DATE - timedelta(days=11), po_lines_data,
-                    notes="SCN-GRNAG-009: branch vs warehouse — PO for BR-JED-220",
+                    notes="SCN-GRNAG-009: branch vs warehouse - PO for BR-JED-220",
                     department="Ops Branch Jeddah")
 
     po_l1 = find_po_line(po, 1)
@@ -866,7 +866,7 @@ def create_scn_grnag_009_branch_vs_warehouse_mismatch() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=8),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.88,
-        notes="Location mismatch — invoice dest BR-JED-220, GRN at WH-RUH-01",
+        notes="Location mismatch - invoice dest BR-JED-220, GRN at WH-RUH-01",
         extraction_remarks="Delivery dest: BR-JED-220 (Jeddah Branch 220)",
         delivery_note_ref="DN-RSRC-JED-0115",
     )
@@ -876,8 +876,8 @@ def create_scn_grnag_009_branch_vs_warehouse_mismatch() -> Invoice:
 
 def create_scn_grnag_010_wrong_item_mix() -> Invoice:
     """
-    SCN-GRNAG-010 — RECEIPT EXISTS FOR WRONG ITEM MIX
-    ──────────────────────────────────────────────────
+    SCN-GRNAG-010 - RECEIPT EXISTS FOR WRONG ITEM MIX
+    --------------------------------------------------
     PO-KSA-3009: Paper Cup 16oz qty=5000, Big Mac Clamshell qty=3000
     GRN: Paper Cup received=5000 (correct), Big Mac Clamshell received=1000 (short),
          plus unexpected Fries Carton received=2000 (not in PO, substitution?)
@@ -901,7 +901,7 @@ def create_scn_grnag_010_wrong_item_mix() -> Invoice:
          "qty": 3000, "price": "1.20", "uom": "PCS"},
     ]
     po = ensure_po("PO-KSA-3009", vendor, BASE_DATE - timedelta(days=13), po_lines_data,
-                    notes="SCN-GRNAG-010: wrong item mix — substitution in receipt")
+                    notes="SCN-GRNAG-010: wrong item mix - substitution in receipt")
 
     po_l1 = find_po_line(po, 1)
     po_l2 = find_po_line(po, 2)
@@ -939,7 +939,7 @@ def create_scn_grnag_010_wrong_item_mix() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=9),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.90,
-        notes="Item mix mismatch — clamshell short 2000, fries carton substituted in GRN",
+        notes="Item mix mismatch - clamshell short 2000, fries carton substituted in GRN",
         delivery_note_ref="DN-SPS-JED-0178",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.90)
@@ -948,9 +948,9 @@ def create_scn_grnag_010_wrong_item_mix() -> Invoice:
 
 def create_scn_grnag_011_service_non_grn_invoice() -> Invoice:
     """
-    SCN-GRNAG-011 — SERVICE / NON-GRN INVOICE
-    ──────────────────────────────────────────
-    PO-KSA-3010: Service PO — monthly kitchen cleaning, pest control
+    SCN-GRNAG-011 - SERVICE / NON-GRN INVOICE
+    ------------------------------------------
+    PO-KSA-3010: Service PO - monthly kitchen cleaning, pest control
     No GRN expected (service items, not stock).
     Invoice is for a legitimate service with no goods receipt expected.
 
@@ -967,20 +967,20 @@ def create_scn_grnag_011_service_non_grn_invoice() -> Invoice:
     po_lines_data = [
         {"item_code": "RSRC-SVC-001", "description": "Monthly Kitchen Deep Cleaning Service",
          "qty": 1, "price": "4500.00", "uom": "SVC"},
-        {"item_code": "RSRC-SVC-002", "description": "Pest Control Service — Quarterly",
+        {"item_code": "RSRC-SVC-002", "description": "Pest Control Service - Quarterly",
          "qty": 1, "price": "2800.00", "uom": "SVC"},
         {"item_code": "RSRC-SVC-003", "description": "Grease Trap Maintenance Service",
          "qty": 1, "price": "1200.00", "uom": "SVC"},
     ]
     ensure_po("PO-KSA-3010", vendor, BASE_DATE - timedelta(days=5), po_lines_data,
-              notes="SCN-GRNAG-011: service PO — no GRN expected",
+              notes="SCN-GRNAG-011: service PO - no GRN expected",
               department="Facilities Maintenance")
 
     inv_lines = [
         {"raw": "خدمة تنظيف مطبخ شاملة شهرية / Monthly Kitchen Deep Cleaning",
          "desc": "Monthly Kitchen Deep Cleaning Service", "qty": 1, "price": "4500.00"},
         {"raw": "خدمة مكافحة حشرات ربع سنوية / Pest Control Service Quarterly",
-         "desc": "Pest Control Service — Quarterly", "qty": 1, "price": "2800.00"},
+         "desc": "Pest Control Service - Quarterly", "qty": 1, "price": "2800.00"},
         {"raw": "صيانة مصيدة الشحوم / Grease Trap Maintenance",
          "desc": "Grease Trap Maintenance Service", "qty": 1, "price": "1200.00"},
     ]
@@ -994,7 +994,7 @@ def create_scn_grnag_011_service_non_grn_invoice() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=10),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.87,
-        notes="Service invoice — no GRN expected; cleaning + pest control + grease trap",
+        notes="Service invoice - no GRN expected; cleaning + pest control + grease trap",
         extraction_remarks="Invoice for services, not physical goods delivery",
         delivery_note_ref="",
     )
@@ -1004,11 +1004,11 @@ def create_scn_grnag_011_service_non_grn_invoice() -> Invoice:
 
 def create_scn_grnag_012_cold_chain_shortage() -> Invoice:
     """
-    SCN-GRNAG-012 — COLD-CHAIN SHORTAGE SCENARIO
-    ──────────────────────────────────────────────
+    SCN-GRNAG-012 - COLD-CHAIN SHORTAGE SCENARIO
+    ----------------------------------------------
     PO-KSA-3011: French Fries 2.5kg qty=500, Chicken Nuggets qty=300
-    GRN: Fries received=420 (80 short — cold-chain loss),
-         Nuggets received=250 (50 short — partial unloading)
+    GRN: Fries received=420 (80 short - cold-chain loss),
+         Nuggets received=250 (50 short - partial unloading)
     Invoice: Fries qty=500, Nuggets qty=300
 
     Expected GRN specialist outcome:
@@ -1029,7 +1029,7 @@ def create_scn_grnag_012_cold_chain_shortage() -> Invoice:
          "qty": 300, "price": "145.00", "uom": "CTN"},
     ]
     po = ensure_po("PO-KSA-3011", vendor, BASE_DATE - timedelta(days=16), po_lines_data,
-                    notes="SCN-GRNAG-012: cold-chain shortage — frozen goods transport loss")
+                    notes="SCN-GRNAG-012: cold-chain shortage - frozen goods transport loss")
 
     po_l1 = find_po_line(po, 1)
     po_l2 = find_po_line(po, 2)
@@ -1046,7 +1046,7 @@ def create_scn_grnag_012_cold_chain_shortage() -> Invoice:
              "description": "Nuggets Premium Frozen",
              "qty_received": 250, "qty_accepted": 250, "qty_rejected": 0, "uom": "CTN"},
         ],
-        notes="SCN-GRNAG-012: cold-chain shortage — fries 420/500, nuggets 250/300",
+        notes="SCN-GRNAG-012: cold-chain shortage - fries 420/500, nuggets 250/300",
     )
 
     inv_lines = [
@@ -1065,8 +1065,8 @@ def create_scn_grnag_012_cold_chain_shortage() -> Invoice:
         invoice_date=INVOICE_DATE + timedelta(days=11),
         subtotal=sub, tax_amount=tax, total_amount=total,
         extraction_confidence=0.91,
-        notes="Cold-chain shortage — fries gap=80, nuggets gap=50",
-        extraction_remarks="Frozen goods transport — Dammam Cold Store delivery note",
+        notes="Cold-chain shortage - fries gap=80, nuggets gap=50",
+        extraction_remarks="Frozen goods transport - Dammam Cold Store delivery note",
         delivery_note_ref="DN-DCCL-DMM-0303",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.91)
@@ -1123,13 +1123,13 @@ class Command(BaseCommand):
         for code, label, fn in ALL_SCENARIO_FNS:
             inv_number = f"INV-GRNAG-2026-{code[-3:]}"
             if Invoice.objects.filter(invoice_number=inv_number).exists():
-                self.stdout.write(f"  [{code}] {label} — already exists, skipping")
+                self.stdout.write(f"  [{code}] {label} - already exists, skipping")
                 results.append((code, label, "SKIPPED"))
                 continue
             inv = fn()
             line_count = inv.line_items.count()
             self.stdout.write(self.style.SUCCESS(
-                f"  [{code}] {label} — Invoice {inv.invoice_number} ({line_count} lines)"
+                f"  [{code}] {label} - Invoice {inv.invoice_number} ({line_count} lines)"
             ))
             results.append((code, label, "CREATED"))
 
@@ -1180,7 +1180,7 @@ class Command(BaseCommand):
             ("SCN-GRNAG-008", "delayed",  "GRN date > invoice date", "null / SEND_TO_AP_REVIEW",    "medium-high"),
             ("SCN-GRNAG-009", "full*",    "location mismatch",       "SEND_TO_PROCUREMENT",         "medium"),
             ("SCN-GRNAG-010", "partial",  "item mix wrong",          "SEND_TO_VENDOR_CLARIFICATION","medium"),
-            ("SCN-GRNAG-011", "n/a",      "service — no GRN needed", "SEND_TO_AP_REVIEW",           "medium"),
+            ("SCN-GRNAG-011", "n/a",      "service - no GRN needed", "SEND_TO_AP_REVIEW",           "medium"),
             ("SCN-GRNAG-012", "partial",  "cold-chain shortage",     "SEND_TO_PROCUREMENT",         "high"),
         ]
         self.stdout.write(

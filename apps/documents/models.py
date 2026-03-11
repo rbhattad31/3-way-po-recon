@@ -134,6 +134,11 @@ class InvoiceLineItem(TimestampMixin):
 
     extraction_confidence = models.FloatField(null=True, blank=True)
 
+    # Item classification (for reconciliation mode resolution)
+    item_category = models.CharField(max_length=100, blank=True, default="")
+    is_service_item = models.BooleanField(null=True, blank=True)
+    is_stock_item = models.BooleanField(null=True, blank=True)
+
     class Meta:
         db_table = "documents_invoice_line"
         ordering = ["invoice", "line_number"]
@@ -192,6 +197,11 @@ class PurchaseOrderLineItem(TimestampMixin):
     tax_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
     line_amount = models.DecimalField(max_digits=18, decimal_places=2)
     unit_of_measure = models.CharField(max_length=30, blank=True, default="EA")
+
+    # Item classification (for reconciliation mode resolution)
+    item_category = models.CharField(max_length=100, blank=True, default="")
+    is_service_item = models.BooleanField(null=True, blank=True)
+    is_stock_item = models.BooleanField(null=True, blank=True)
 
     class Meta:
         db_table = "documents_po_line"

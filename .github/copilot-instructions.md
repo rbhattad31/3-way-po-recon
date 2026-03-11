@@ -106,15 +106,16 @@ DocumentUpload (documents)
        ├── references: PurchaseOrder.po_number
        └── has: extraction_confidence, status (InvoiceStatus)
 
-PurchaseOrder (documents) ──< PurchaseOrderLineItem
+PurchaseOrder (documents) ──< PurchaseOrderLineItem (item_category, is_service_item, is_stock_item)
   └── GoodsReceiptNote (documents) ──< GRNLineItem
 
 ExtractionResult (extraction) ── linked to DocumentUpload + Invoice
 
-ReconciliationConfig (reconciliation) — tiered tolerance: strict + auto-close bands
+ReconciliationConfig (reconciliation) — tiered tolerance: strict + auto-close bands; mode resolver settings
+ReconciliationPolicy (reconciliation) — vendor/category/location/business-unit → mode mapping
 ReconciliationRun ──< ReconciliationResult ──< ReconciliationResultLine
                                             ──< ReconciliationException
-ReconciliationResult ── linked to Invoice + PurchaseOrder
+ReconciliationResult ── linked to Invoice + PurchaseOrder (reconciliation_mode, mode_resolved_by)
 
 AgentDefinition (agents)
 AgentRun ──< AgentStep, AgentMessage, DecisionLog
@@ -200,10 +201,15 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 ## What's Implemented vs. What's Next
 
 ### ✅ Fully implemented
-- All models, migrations, enums (15 enum classes), permissions, middleware
+- All models, migrations, enums (17 enum classes incl. `ReconciliationMode`, `ReconciliationModeApplicability`), permissions, middleware
 - Extraction pipeline (8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction)
-- Reconciliation engine (12 services + Celery tasks); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
-- Agent orchestration (7 agents, policy engine with auto-close logic, tool registry, LLM client, decision log service)
+- Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
+- `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
+- `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
+- `ReconciliationPolicy` model: vendor, item_category, location_code, business_unit, is_service_invoice, is_stock_invoice, priority-ordered matching
+- Mode-aware classification, exception building (applies_to_mode tagging), result persistence (mode metadata + confidence weights)
+- Agent orchestration (7 agents, policy engine with auto-close logic + mode-aware GRN suppression, tool registry, LLM client, decision log service)
+- Mode-aware agents: `AgentContext.reconciliation_mode`, `_mode_context()` helper on all agent types, PolicyEngine suppresses GRN_RETRIEVAL in 2-way
 - Agent feedback loop: `AgentFeedbackService` re-reconciles when PO/GRN agent recovers missing document (atomic)
 - Agent recommendation service: `AgentRecommendation` model with acceptance tracking + `AgentEscalation` model
 - Agent trace service: unified governance tracing (`AgentTraceService`)
@@ -216,16 +222,17 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Reconciliation UI: "Start Reconciliation" panel with checkbox invoice selection (triggers matching + agent pipeline)
 - Case console: deep-dive investigation view per reconciliation result + CSV export
 - Reconciliation settings viewer (tolerance configuration)
-- Dashboard analytics (service + 6 API endpoints)
-- DRF APIs (all ViewSets, serializers, routing) + Governance API (`/api/v1/governance/`)
+- Dashboard analytics (service + 7 API endpoints incl. mode-breakdown)
+- DRF APIs (all ViewSets, serializers, routing) + Governance API (`/api/v1/governance/`) + Reconciliation Policies API (`/api/v1/reconciliation/policies/`)
 - Bootstrap 5 templates (23 templates incl. partials, governance views)
 - Admin panel registration
-- Audit logging & governance: ProcessingLog, AuditEvent (14 event types), FileProcessingStatus, CaseTimelineService (unified case timeline), governance views (audit event list + invoice governance dashboard with role-based access)
+- Audit logging & governance: ProcessingLog, AuditEvent (17 event types incl. MODE_RESOLUTION, MODE_OVERRIDE, MODE_POLICY_APPLIED), FileProcessingStatus, CaseTimelineService (unified case timeline with mode resolution events), governance views (audit event list + invoice governance dashboard with role-based access)
 - Seed data management command (`python manage.py seed_data`) — 5 users, 5 vendors, 13 invoices (with edge-case scenarios), POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions
 - Saudi McD master data (`python manage.py seed_saudi_mcd_data`) — 6 users, 10 vendors + aliases, 25 POs (~62 line items), 30 GRNs (~70 line items) across Riyadh/Jeddah/Dammam warehouses
 - Invoice test scenarios (`python manage.py seed_invoice_test_data`) — 18 scenarios (SCN-KSA-001..018): perfect match, qty/price/VAT mismatch, missing PO, missing GRN, multi-GRN aggregation, duplicate invoice, low-confidence Arabic-English, location mismatch, GRN shortage, review case, auto-close band (013–015), AI-resolvable (016–018)
 - PO Agent test scenarios (`python manage.py seed_po_agent_test_data`) — 10 scenarios (SCN-POAG-001..010): reordered PO, vendor-based discovery, Arabic aliases, closed POs, wrong vendor, ambiguous matches
 - GRN Agent test scenarios (`python manage.py seed_grn_agent_test_data`) — 12 scenarios (SCN-GRNAG-001..012): full receipt, missing GRN, partial receipt, over-delivery, multi-GRN, delayed receipt, location mismatch, wrong item mix, service invoices, cold-chain shortage
+- Mixed-mode reconciliation test data (`python manage.py seed_mixed_mode_data`) — 12 scenarios (SCN-MODE-001..012), 7 reconciliation policies, 1 service vendor, covering all mode resolution paths (policy, heuristic, default fallback). Requires `seed_saudi_mcd_data`.
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 

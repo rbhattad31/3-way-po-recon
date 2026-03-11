@@ -2,7 +2,7 @@
 Management command: seed_saudi_mcd_data
 
 Seeds realistic master data for a Saudi Arabia McDonald's master distributor
-3-way PO reconciliation system. This is Phase 1 — master data only:
+3-way PO reconciliation system. This is Phase 1 - master data only:
 
   - Users (system accounts)
   - Vendors + VendorAliases
@@ -27,6 +27,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.agents.models import (
+    AgentDefinition,
     AgentMessage,
     AgentRecommendation,
     AgentRun,
@@ -34,7 +35,7 @@ from apps.agents.models import (
     DecisionLog,
 )
 from apps.auditlog.models import AuditEvent, ProcessingLog
-from apps.core.enums import UserRole
+from apps.core.enums import AgentType, UserRole
 from apps.core.utils import normalize_po_number, normalize_string
 from apps.documents.models import (
     DocumentUpload,
@@ -57,7 +58,7 @@ from apps.reviews.models import (
     ReviewComment,
     ReviewDecision,
 )
-from apps.tools.models import ToolCall
+from apps.tools.models import ToolCall, ToolDefinition
 from apps.vendors.models import Vendor, VendorAlias
 
 # ---------------------------------------------------------------------------
@@ -79,7 +80,7 @@ LOCATIONS = {
 # VAT rate in Saudi Arabia (15%)
 VAT_RATE = Decimal("0.15")
 
-# Base date for seeding — approximately "today minus some days"
+# Base date for seeding - approximately "today minus some days"
 BASE_DATE = date(2026, 2, 15)
 
 
@@ -427,7 +428,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
     """Return list of PO definition dicts with nested line items."""
     return [
         # ---------------------------------------------------------------
-        # SCENARIO 1 — Perfect 3-way match (food supply)
+        # SCENARIO 1 - Perfect 3-way match (food supply)
         # Vendor: Arabian Food Supplies Co.
         # Warehouse: WH-RUH-01
         # ---------------------------------------------------------------
@@ -435,7 +436,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             "po_number": "PO-KSA-1001",
             "vendor": afs,
             "po_date": BASE_DATE - timedelta(days=20),
-            "notes": "Scenario 1: Perfect match — buns, lettuce, pickles for Riyadh Central",
+            "notes": "Scenario 1: Perfect match - buns, lettuce, pickles for Riyadh Central",
             "lines": [
                 {
                     "item_code": "AFS-BUN-001",
@@ -461,14 +462,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 2 — Quantity mismatch on buns
+        # SCENARIO 2 - Quantity mismatch on buns
         # Invoice will claim 650 CTN but PO says 600
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1002",
             "vendor": afs,
             "po_date": BASE_DATE - timedelta(days=18),
-            "notes": "Scenario 2: Qty mismatch — invoice 650 vs PO 600 sesame buns",
+            "notes": "Scenario 2: Qty mismatch - invoice 650 vs PO 600 sesame buns",
             "lines": [
                 {
                     "item_code": "AFS-BUN-001",
@@ -487,14 +488,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 3 — Price mismatch on frozen patties
+        # SCENARIO 3 - Price mismatch on frozen patties
         # PO says 185 SAR; invoice will say 192 SAR
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1003",
             "vendor": gff,
             "po_date": BASE_DATE - timedelta(days=22),
-            "notes": "Scenario 3: Price mismatch — PO 185 vs invoice 192 for beef patties",
+            "notes": "Scenario 3: Price mismatch - PO 185 vs invoice 192 for beef patties",
             "lines": [
                 {
                     "item_code": "GFF-BPT-001",
@@ -513,14 +514,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 4 — VAT mismatch
+        # SCENARIO 4 - VAT mismatch
         # PO tax and invoice tax differ on cheese slices
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1004",
             "vendor": akd,
             "po_date": BASE_DATE - timedelta(days=15),
-            "notes": "Scenario 4: VAT mismatch — cheese slices, dairy butter",
+            "notes": "Scenario 4: VAT mismatch - cheese slices, dairy butter",
             "lines": [
                 {
                     "item_code": "AKD-CHS-001",
@@ -541,14 +542,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 5 — Duplicate invoice
+        # SCENARIO 5 - Duplicate invoice
         # Same PO used by two invoices
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1005",
             "vendor": dccl,
             "po_date": BASE_DATE - timedelta(days=25),
-            "notes": "Scenario 5: Duplicate invoice — French Fries cold chain",
+            "notes": "Scenario 5: Duplicate invoice - French Fries cold chain",
             "lines": [
                 {
                     "item_code": "DCCL-FRY-001",
@@ -567,19 +568,19 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 6 — Missing PO
+        # SCENARIO 6 - Missing PO
         # No PO created; invoice will reference PO-KSA-9999
         # (this scenario has no PO record)
         # ---------------------------------------------------------------
         # ---------------------------------------------------------------
-        # SCENARIO 7 — Missing GRN
+        # SCENARIO 7 - Missing GRN
         # PO exists but no GRN will be created
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1007",
             "vendor": neo,
             "po_date": BASE_DATE - timedelta(days=12),
-            "notes": "Scenario 7: Missing GRN — cooking oil ordered but not yet received",
+            "notes": "Scenario 7: Missing GRN - cooking oil ordered but not yet received",
             "lines": [
                 {
                     "item_code": "NEO-OIL-001",
@@ -591,14 +592,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 8 — Multiple GRNs for one PO (staggered delivery)
+        # SCENARIO 8 - Multiple GRNs for one PO (staggered delivery)
         # 3 GRNs across warehouse deliveries
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1008",
             "vendor": gff,
             "po_date": BASE_DATE - timedelta(days=30),
-            "notes": "Scenario 8: Multi-GRN staggered delivery — beef, chicken, nuggets, hash browns",
+            "notes": "Scenario 8: Multi-GRN staggered delivery - beef, chicken, nuggets, hash browns",
             "lines": [
                 {
                     "item_code": "GFF-BPT-001",
@@ -631,14 +632,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 9 — Invoice exceeds received frozen stock
+        # SCENARIO 9 - Invoice exceeds received frozen stock
         # PO 400 CTN, GRN received only 350
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1009",
             "vendor": dccl,
             "po_date": BASE_DATE - timedelta(days=16),
-            "notes": "Scenario 9: Invoice > GRN qty — hash browns partial receipt",
+            "notes": "Scenario 9: Invoice > GRN qty - hash browns partial receipt",
             "lines": [
                 {
                     "item_code": "DCCL-HSB-001",
@@ -657,14 +658,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 10 — Low-confidence scanned invoice
+        # SCENARIO 10 - Low-confidence scanned invoice
         # PO is normal; invoice extraction will have low confidence
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1010",
             "vendor": jqss,
             "po_date": BASE_DATE - timedelta(days=14),
-            "notes": "Scenario 10: Low-confidence extraction — ketchup & mustard",
+            "notes": "Scenario 10: Low-confidence extraction - ketchup & mustard",
             "lines": [
                 {
                     "item_code": "JQSS-KET-001",
@@ -683,14 +684,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 11A — Ambiguous PO candidate (first PO)
-        # Same vendor, very similar items — agent must disambiguate
+        # SCENARIO 11A - Ambiguous PO candidate (first PO)
+        # Same vendor, very similar items - agent must disambiguate
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1011",
             "vendor": afs,
             "po_date": BASE_DATE - timedelta(days=10),
-            "notes": "Scenario 11A: Ambiguous PO — sesame buns order A (300 CTN @ 45)",
+            "notes": "Scenario 11A: Ambiguous PO - sesame buns order A (300 CTN @ 45)",
             "lines": [
                 {
                     "item_code": "AFS-BUN-001",
@@ -702,13 +703,13 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 11B — Ambiguous PO candidate (second PO)
+        # SCENARIO 11B - Ambiguous PO candidate (second PO)
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1012",
             "vendor": afs,
             "po_date": BASE_DATE - timedelta(days=8),
-            "notes": "Scenario 11B: Ambiguous PO — sesame buns order B (350 CTN @ 46)",
+            "notes": "Scenario 11B: Ambiguous PO - sesame buns order B (350 CTN @ 46)",
             "lines": [
                 {
                     "item_code": "AFS-BUN-001",
@@ -720,14 +721,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 12 — Mixed Arabic-English invoice
+        # SCENARIO 12 - Mixed Arabic-English invoice
         # Normal PO; invoice will contain Arabic descriptions
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1013",
             "vendor": awp,
             "po_date": BASE_DATE - timedelta(days=19),
-            "notes": "Scenario 12: Arabic-English mix — chicken patties, nuggets, hash browns",
+            "notes": "Scenario 12: Arabic-English mix - chicken patties, nuggets, hash browns",
             "lines": [
                 {
                     "item_code": "AWP-CPT-001",
@@ -753,14 +754,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 13 — Packaging mismatch (item mismatch)
+        # SCENARIO 13 - Packaging mismatch (item mismatch)
         # PO says Paper Cup 16oz + Plastic Lid 16oz; invoice will swap
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1014",
             "vendor": sps,
             "po_date": BASE_DATE - timedelta(days=17),
-            "notes": "Scenario 13: Item mismatch — cups vs lids ordering confusion",
+            "notes": "Scenario 13: Item mismatch - cups vs lids ordering confusion",
             "lines": [
                 {
                     "item_code": "SPS-CUP-001",
@@ -779,7 +780,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 14 — Warehouse vs branch destination mismatch
+        # SCENARIO 14 - Warehouse vs branch destination mismatch
         # PO for WH-RUH-01; invoice references BR-JED-220
         # ---------------------------------------------------------------
         {
@@ -787,7 +788,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             "vendor": rbc,
             "po_date": BASE_DATE - timedelta(days=13),
             "department": "Beverage Supply",
-            "notes": "Scenario 14: Location mismatch — PO WH-RUH-01 vs invoice BR-JED-220",
+            "notes": "Scenario 14: Location mismatch - PO WH-RUH-01 vs invoice BR-JED-220",
             "lines": [
                 {
                     "item_code": "RBC-SYR-001",
@@ -813,14 +814,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # SCENARIO 15 — Reviewed and corrected case
-        # Qty mismatch → review → AP corrects qty → reconciled
+        # SCENARIO 15 - Reviewed and corrected case
+        # Qty mismatch -> review -> AP corrects qty -> reconciled
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1016",
             "vendor": gff,
             "po_date": BASE_DATE - timedelta(days=21),
-            "notes": "Scenario 15: Review+correct — nuggets qty mismatch then corrected",
+            "notes": "Scenario 15: Review+correct - nuggets qty mismatch then corrected",
             "lines": [
                 {
                     "item_code": "GFF-NUG-001",
@@ -847,7 +848,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             "vendor": afs,
             "po_date": BASE_DATE - timedelta(days=60),
             "status": "CLOSED",
-            "notes": "Closed PO — old buns order fully delivered & closed",
+            "notes": "Closed PO - old buns order fully delivered & closed",
             "lines": [
                 {
                     "item_code": "AFS-BUN-001",
@@ -880,7 +881,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             "po_number": "PO-KSA-1018",
             "vendor": awp,
             "po_date": BASE_DATE - timedelta(days=14),
-            "notes": "Over-receipt — GRN 520 vs PO 500 chicken patties",
+            "notes": "Over-receipt - GRN 520 vs PO 500 chicken patties",
             "lines": [
                 {
                     "item_code": "AWP-CPT-001",
@@ -913,7 +914,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             "po_number": "PO-KSA-1019",
             "vendor": sps,
             "po_date": BASE_DATE - timedelta(days=11),
-            "notes": "Amount mismatch — packaging supplies total discrepancy",
+            "notes": "Amount mismatch - packaging supplies total discrepancy",
             "lines": [
                 {
                     "item_code": "SPS-BMC-001",
@@ -953,7 +954,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             "po_number": "PO-KSA-1020",
             "vendor": rsrc,
             "po_date": BASE_DATE - timedelta(days=9),
-            "notes": "Within tolerance — cleaning supplies minor variance",
+            "notes": "Within tolerance - cleaning supplies minor variance",
             "lines": [
                 {
                     "item_code": "RSRC-GLV-001",
@@ -986,7 +987,7 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             "po_number": "PO-KSA-1021",
             "vendor": jqss,
             "po_date": BASE_DATE - timedelta(days=7),
-            "notes": "Multiple exceptions — sauces & condiments with compound issues",
+            "notes": "Multiple exceptions - sauces & condiments with compound issues",
             "lines": [
                 {
                     "item_code": "JQSS-MUS-001",
@@ -1026,14 +1027,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # ADDITIONAL PO — Dairy milkshake + soft serve
+        # ADDITIONAL PO - Dairy milkshake + soft serve
         # Full delivery; used for dashboard / reporting demos
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1022",
             "vendor": akd,
             "po_date": BASE_DATE - timedelta(days=6),
-            "notes": "Dairy order — milkshake and soft serve for Dammam Cold Store",
+            "notes": "Dairy order - milkshake and soft serve for Dammam Cold Store",
             "lines": [
                 {
                     "item_code": "AKD-MSV-001",
@@ -1059,14 +1060,14 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # ADDITIONAL PO — Bulk frozen (fries + hash browns + nuggets)
+        # ADDITIONAL PO - Bulk frozen (fries + hash browns + nuggets)
         # Two staggered GRNs
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1023",
             "vendor": dccl,
             "po_date": BASE_DATE - timedelta(days=5),
-            "notes": "Bulk frozen order — Ramadan stock-up for Riyadh warehouse",
+            "notes": "Bulk frozen order - Ramadan stock-up for Riyadh warehouse",
             "lines": [
                 {
                     "item_code": "DCCL-FRY-001",
@@ -1092,13 +1093,13 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # ADDITIONAL PO — Cooking oil bulk
+        # ADDITIONAL PO - Cooking oil bulk
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1024",
             "vendor": neo,
             "po_date": BASE_DATE - timedelta(days=4),
-            "notes": "Cooking oil bulk — fryer grade for all branches",
+            "notes": "Cooking oil bulk - fryer grade for all branches",
             "lines": [
                 {
                     "item_code": "NEO-OIL-001",
@@ -1117,13 +1118,13 @@ def _build_po_definitions(afs, gff, awp, sps, rbc, dccl, rsrc, neo, akd, jqss):
             ],
         },
         # ---------------------------------------------------------------
-        # ADDITIONAL PO — Packaging consumables
+        # ADDITIONAL PO - Packaging consumables
         # ---------------------------------------------------------------
         {
             "po_number": "PO-KSA-1025",
             "vendor": sps,
             "po_date": BASE_DATE - timedelta(days=3),
-            "notes": "Packaging consumables — napkins, straws, bags, cup carriers",
+            "notes": "Packaging consumables - napkins, straws, bags, cup carriers",
             "lines": [
                 {
                     "item_code": "SPS-NAP-001",
@@ -1245,7 +1246,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
 
     return [
         # ---------------------------------------------------------------
-        # GRN 1 — Scenario 1: Perfect match — full receipt
+        # GRN 1 - Scenario 1: Perfect match - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1001-A",
@@ -1253,7 +1254,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": afs,
             "receipt_date": BASE_DATE - timedelta(days=17),
             "warehouse": "WH-RUH-01",
-            "notes": "Scenario 1: Full receipt — buns, lettuce, pickles",
+            "notes": "Scenario 1: Full receipt - buns, lettuce, pickles",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1001", 0),
@@ -1279,7 +1280,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 2 — Scenario 2: Qty mismatch — GRN matches PO (600), not invoice
+        # GRN 2 - Scenario 2: Qty mismatch - GRN matches PO (600), not invoice
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1002-A",
@@ -1306,7 +1307,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 3 — Scenario 3: Price mismatch — full receipt (price lives on PO)
+        # GRN 3 - Scenario 3: Price mismatch - full receipt (price lives on PO)
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1003-A",
@@ -1314,7 +1315,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": gff,
             "receipt_date": BASE_DATE - timedelta(days=19),
             "warehouse": "WH-RUH-01",
-            "notes": "Scenario 3: Full receipt — beef patties 4:1 and 10:1",
+            "notes": "Scenario 3: Full receipt - beef patties 4:1 and 10:1",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1003", 0),
@@ -1333,7 +1334,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 4 — Scenario 4: VAT mismatch — full receipt
+        # GRN 4 - Scenario 4: VAT mismatch - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-JED-1004-A",
@@ -1341,7 +1342,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": akd,
             "receipt_date": BASE_DATE - timedelta(days=12),
             "warehouse": "WH-JED-01",
-            "notes": "Scenario 4: Full receipt — cheese slices and butter",
+            "notes": "Scenario 4: Full receipt - cheese slices and butter",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1004", 0),
@@ -1360,7 +1361,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 5 — Scenario 5: Duplicate invoice — full receipt
+        # GRN 5 - Scenario 5: Duplicate invoice - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1005-A",
@@ -1368,7 +1369,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": dccl,
             "receipt_date": BASE_DATE - timedelta(days=22),
             "warehouse": "WH-RUH-01",
-            "notes": "Scenario 5: Full receipt — French fries 2.5kg and 1kg",
+            "notes": "Scenario 5: Full receipt - French fries 2.5kg and 1kg",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1005", 0),
@@ -1387,10 +1388,10 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # (No GRN for PO-KSA-1007 — Scenario 7: Missing GRN)
+        # (No GRN for PO-KSA-1007 - Scenario 7: Missing GRN)
         # ---------------------------------------------------------------
         # ---------------------------------------------------------------
-        # GRN 6A — Scenario 8: Multi-GRN — first delivery (Dammam)
+        # GRN 6A - Scenario 8: Multi-GRN - first delivery (Dammam)
         # Received: 300/500 beef, 400/400 chicken, 0/300 nuggets, 0/250 hash
         # ---------------------------------------------------------------
         {
@@ -1399,7 +1400,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": gff,
             "receipt_date": BASE_DATE - timedelta(days=27),
             "warehouse": "WH-DMM-01",
-            "notes": "Scenario 8: First staggered delivery — partial beef + full chicken",
+            "notes": "Scenario 8: First staggered delivery - partial beef + full chicken",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1008", 0),
@@ -1418,7 +1419,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 6B — Scenario 8: Multi-GRN — second delivery
+        # GRN 6B - Scenario 8: Multi-GRN - second delivery
         # Remaining beef + full nuggets
         # ---------------------------------------------------------------
         {
@@ -1427,7 +1428,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": gff,
             "receipt_date": BASE_DATE - timedelta(days=24),
             "warehouse": "WH-DMM-01",
-            "notes": "Scenario 8: Second delivery — remaining beef + nuggets",
+            "notes": "Scenario 8: Second delivery - remaining beef + nuggets",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1008", 0),
@@ -1446,7 +1447,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 6C — Scenario 8: Multi-GRN — third delivery
+        # GRN 6C - Scenario 8: Multi-GRN - third delivery
         # Hash browns delivered last
         # ---------------------------------------------------------------
         {
@@ -1455,7 +1456,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": gff,
             "receipt_date": BASE_DATE - timedelta(days=21),
             "warehouse": "WH-DMM-01",
-            "notes": "Scenario 8: Third delivery — hash browns",
+            "notes": "Scenario 8: Third delivery - hash browns",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1008", 3),
@@ -1467,7 +1468,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 7A — Scenario 9: Invoice > GRN — partial receipt
+        # GRN 7A - Scenario 9: Invoice > GRN - partial receipt
         # 350/400 hash browns, 80/100 onion rings
         # ---------------------------------------------------------------
         {
@@ -1477,7 +1478,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "receipt_date": BASE_DATE - timedelta(days=13),
             "warehouse": "WH-RUH-01",
             "status": "PARTIAL",
-            "notes": "Scenario 9: Partial receipt — cold-chain transport shortage",
+            "notes": "Scenario 9: Partial receipt - cold-chain transport shortage",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1009", 0),
@@ -1498,7 +1499,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 7B — Scenario 9: Late follow-up delivery
+        # GRN 7B - Scenario 9: Late follow-up delivery
         # Additional 50 hash browns + 20 onion rings
         # ---------------------------------------------------------------
         {
@@ -1507,7 +1508,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": dccl,
             "receipt_date": BASE_DATE - timedelta(days=8),
             "warehouse": "WH-RUH-01",
-            "notes": "Scenario 9: Follow-up delivery — late arrival partial restock",
+            "notes": "Scenario 9: Follow-up delivery - late arrival partial restock",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1009", 0),
@@ -1520,7 +1521,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 8 — Scenario 10: Low-confidence invoice — full receipt
+        # GRN 8 - Scenario 10: Low-confidence invoice - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-JED-1010-A",
@@ -1528,7 +1529,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": jqss,
             "receipt_date": BASE_DATE - timedelta(days=11),
             "warehouse": "WH-JED-01",
-            "notes": "Scenario 10: Full receipt — ketchup and mustard",
+            "notes": "Scenario 10: Full receipt - ketchup and mustard",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1010", 0),
@@ -1547,7 +1548,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 9 — Scenario 11A: Ambiguous PO (first candidate) — full receipt
+        # GRN 9 - Scenario 11A: Ambiguous PO (first candidate) - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1011-A",
@@ -1567,7 +1568,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 10 — Scenario 11B: Ambiguous PO (second candidate) — full receipt
+        # GRN 10 - Scenario 11B: Ambiguous PO (second candidate) - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1012-A",
@@ -1587,7 +1588,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 11 — Scenario 12: Arabic-English invoice — full receipt
+        # GRN 11 - Scenario 12: Arabic-English invoice - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1013-A",
@@ -1595,7 +1596,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": awp,
             "receipt_date": BASE_DATE - timedelta(days=16),
             "warehouse": "WH-RUH-01",
-            "notes": "Scenario 12: Full receipt — poultry items",
+            "notes": "Scenario 12: Full receipt - poultry items",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1013", 0),
@@ -1621,7 +1622,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 12 — Scenario 13: Packaging mismatch — full receipt
+        # GRN 12 - Scenario 13: Packaging mismatch - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1014-A",
@@ -1629,7 +1630,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": sps,
             "receipt_date": BASE_DATE - timedelta(days=14),
             "warehouse": "WH-RUH-01",
-            "notes": "Scenario 13: Full receipt — cups and lids as per PO",
+            "notes": "Scenario 13: Full receipt - cups and lids as per PO",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1014", 0),
@@ -1648,7 +1649,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 13 — Scenario 14: Location mismatch — received at WH-RUH-01
+        # GRN 13 - Scenario 14: Location mismatch - received at WH-RUH-01
         # (Invoice will reference BR-JED-220 instead)
         # ---------------------------------------------------------------
         {
@@ -1657,7 +1658,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": rbc,
             "receipt_date": BASE_DATE - timedelta(days=10),
             "warehouse": "WH-RUH-01",
-            "notes": "Scenario 14: Received at Riyadh warehouse — invoice says Jeddah branch",
+            "notes": "Scenario 14: Received at Riyadh warehouse - invoice says Jeddah branch",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1015", 0),
@@ -1683,7 +1684,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 14 — Scenario 15: Reviewed + corrected — full receipt
+        # GRN 14 - Scenario 15: Reviewed + corrected - full receipt
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-JED-1016-A",
@@ -1691,7 +1692,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": gff,
             "receipt_date": BASE_DATE - timedelta(days=18),
             "warehouse": "WH-JED-01",
-            "notes": "Scenario 15: Full receipt — nuggets and chicken strips",
+            "notes": "Scenario 15: Full receipt - nuggets and chicken strips",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1016", 0),
@@ -1710,7 +1711,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 15 — Closed PO: old full receipt (PO-KSA-1017)
+        # GRN 15 - Closed PO: old full receipt (PO-KSA-1017)
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1017-A",
@@ -1744,7 +1745,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 16 — Over-receipt: PO 500 chicken → GRN 520 (PO-KSA-1018)
+        # GRN 16 - Over-receipt: PO 500 chicken -> GRN 520 (PO-KSA-1018)
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-DMM-1018-A",
@@ -1783,7 +1784,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 17 — Amount mismatch packaging: full receipt (PO-KSA-1019)
+        # GRN 17 - Amount mismatch packaging: full receipt (PO-KSA-1019)
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1019-A",
@@ -1791,7 +1792,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": sps,
             "receipt_date": BASE_DATE - timedelta(days=8),
             "warehouse": "WH-RUH-01",
-            "notes": "Amount mismatch: Full receipt — packaging supplies",
+            "notes": "Amount mismatch: Full receipt - packaging supplies",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1019", 0),
@@ -1824,7 +1825,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 18 — Within tolerance: full receipt (PO-KSA-1020)
+        # GRN 18 - Within tolerance: full receipt (PO-KSA-1020)
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1020-A",
@@ -1832,7 +1833,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": rsrc,
             "receipt_date": BASE_DATE - timedelta(days=6),
             "warehouse": "WH-RUH-01",
-            "notes": "Within tolerance: Full receipt — cleaning supplies",
+            "notes": "Within tolerance: Full receipt - cleaning supplies",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1020", 0),
@@ -1858,7 +1859,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 19A — Multiple exceptions: partial receipt (PO-KSA-1021)
+        # GRN 19A - Multiple exceptions: partial receipt (PO-KSA-1021)
         # Mustard full, Mayo partial, Salt full, Pepper missing, Ketchup missing
         # ---------------------------------------------------------------
         {
@@ -1868,7 +1869,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "receipt_date": BASE_DATE - timedelta(days=5),
             "warehouse": "WH-JED-01",
             "status": "PARTIAL",
-            "notes": "Multiple exceptions: First delivery — mustard, partial mayo, salt",
+            "notes": "Multiple exceptions: First delivery - mustard, partial mayo, salt",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1021", 0),
@@ -1895,8 +1896,8 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 19B — Multiple exceptions: second partial delivery
-        # Remaining mayo + pepper — ketchup sachet still missing
+        # GRN 19B - Multiple exceptions: second partial delivery
+        # Remaining mayo + pepper - ketchup sachet still missing
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-JED-1021-B",
@@ -1905,7 +1906,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "receipt_date": BASE_DATE - timedelta(days=3),
             "warehouse": "WH-JED-01",
             "status": "PARTIAL",
-            "notes": "Multiple exceptions: Second delivery — remaining mayo + pepper",
+            "notes": "Multiple exceptions: Second delivery - remaining mayo + pepper",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1021", 1),
@@ -1925,7 +1926,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 20 — Dairy order: full receipt (PO-KSA-1022)
+        # GRN 20 - Dairy order: full receipt (PO-KSA-1022)
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-DMM-1022-A",
@@ -1933,7 +1934,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": akd,
             "receipt_date": BASE_DATE - timedelta(days=4),
             "warehouse": "WH-DMM-01",
-            "notes": "Dairy order: Full receipt — milkshake and soft serve mixes",
+            "notes": "Dairy order: Full receipt - milkshake and soft serve mixes",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1022", 0),
@@ -1959,7 +1960,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 21A — Bulk frozen Ramadan stock: first delivery (PO-KSA-1023)
+        # GRN 21A - Bulk frozen Ramadan stock: first delivery (PO-KSA-1023)
         # 800/1200 fries, 400/600 hash brown, 0/500 nuggets
         # ---------------------------------------------------------------
         {
@@ -1969,7 +1970,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "receipt_date": BASE_DATE - timedelta(days=3),
             "warehouse": "WH-RUH-01",
             "status": "PARTIAL",
-            "notes": "Ramadan bulk: First delivery — partial fries + hash browns",
+            "notes": "Ramadan bulk: First delivery - partial fries + hash browns",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1023", 0),
@@ -1988,7 +1989,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 21B — Bulk frozen Ramadan stock: second delivery
+        # GRN 21B - Bulk frozen Ramadan stock: second delivery
         # Remaining fries + hash brown + nuggets
         # ---------------------------------------------------------------
         {
@@ -1997,7 +1998,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": dccl,
             "receipt_date": BASE_DATE - timedelta(days=1),
             "warehouse": "WH-RUH-01",
-            "notes": "Ramadan bulk: Second delivery — remaining items",
+            "notes": "Ramadan bulk: Second delivery - remaining items",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1023", 0),
@@ -2023,7 +2024,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 22 — Cooking oil bulk: full receipt (PO-KSA-1024)
+        # GRN 22 - Cooking oil bulk: full receipt (PO-KSA-1024)
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-RUH-1024-A",
@@ -2031,7 +2032,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": neo,
             "receipt_date": BASE_DATE - timedelta(days=2),
             "warehouse": "WH-RUH-01",
-            "notes": "Oil bulk: Full receipt — 20L and 5L cooking oil",
+            "notes": "Oil bulk: Full receipt - 20L and 5L cooking oil",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1024", 0),
@@ -2050,7 +2051,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 23 — Packaging consumables: full receipt (PO-KSA-1025)
+        # GRN 23 - Packaging consumables: full receipt (PO-KSA-1025)
         # ---------------------------------------------------------------
         {
             "grn_number": "GRN-JED-1025-A",
@@ -2058,7 +2059,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             "vendor": sps,
             "receipt_date": BASE_DATE - timedelta(days=1),
             "warehouse": "WH-JED-01",
-            "notes": "Packaging consumables: Full receipt — napkins, straws, bags, carriers",
+            "notes": "Packaging consumables: Full receipt - napkins, straws, bags, carriers",
             "lines": [
                 {
                     "po_line": _pl(po_lines, "PO-KSA-1025", 0),
@@ -2091,7 +2092,7 @@ def _build_grn_definitions(pos, po_lines, vendors):
             ],
         },
         # ---------------------------------------------------------------
-        # GRN 24 — Extra small delivery for PO-1004 (VAT mismatch scenario)
+        # GRN 24 - Extra small delivery for PO-1004 (VAT mismatch scenario)
         # A second receipt to bring total GRN count to 30
         # ---------------------------------------------------------------
         {
@@ -2116,13 +2117,155 @@ def _build_grn_definitions(pos, po_lines, vendors):
 
 
 # ===================================================================
+#  AGENT & TOOL DEFINITIONS
+# ===================================================================
+
+def create_agent_definitions(admin):
+    """Create 7 agent definitions with config_json and allowed_tools."""
+    agents = [
+        {
+            "agent_type": AgentType.INVOICE_UNDERSTANDING,
+            "name": "Invoice Understanding Agent",
+            "description": "Analyzes invoice structure, fields, and extraction quality. Identifies low-confidence fields and suggests corrections.",
+            "config_json": {
+                "allowed_tools": ["invoice_details", "vendor_search"],
+                "confidence_threshold": 0.70,
+            },
+        },
+        {
+            "agent_type": AgentType.PO_RETRIEVAL,
+            "name": "PO Retrieval Agent",
+            "description": "Recovers missing or mismatched POs using fuzzy PO number normalization, vendor search, and amount matching.",
+            "config_json": {
+                "allowed_tools": ["po_lookup", "vendor_search", "invoice_details"],
+                "max_candidates": 5,
+            },
+        },
+        {
+            "agent_type": AgentType.GRN_RETRIEVAL,
+            "name": "GRN Specialist Agent",
+            "description": "Retrieves and analyzes GRN data for a PO. Handles multi-GRN aggregation, partial receipts, and missing GRN scenarios.",
+            "config_json": {
+                "allowed_tools": ["grn_lookup", "po_lookup", "invoice_details"],
+            },
+        },
+        {
+            "agent_type": AgentType.RECONCILIATION_ASSIST,
+            "name": "Reconciliation Assist Agent",
+            "description": "Provides detailed reconciliation analysis with line-by-line comparison and variance explanation.",
+            "config_json": {
+                "allowed_tools": ["reconciliation_summary", "invoice_details", "po_lookup", "grn_lookup", "exception_list"],
+            },
+        },
+        {
+            "agent_type": AgentType.EXCEPTION_ANALYSIS,
+            "name": "Exception Analysis Agent",
+            "description": "Analyzes reconciliation exceptions, determines root causes, and recommends resolution actions.",
+            "config_json": {
+                "allowed_tools": ["exception_list", "invoice_details", "po_lookup", "grn_lookup", "reconciliation_summary"],
+            },
+        },
+        {
+            "agent_type": AgentType.REVIEW_ROUTING,
+            "name": "Review Routing Agent",
+            "description": "Determines the optimal reviewer or team for a reconciliation case based on exception types, amounts, and complexity.",
+            "config_json": {
+                "allowed_tools": ["exception_list", "reconciliation_summary"],
+            },
+        },
+        {
+            "agent_type": AgentType.CASE_SUMMARY,
+            "name": "Case Summary Agent",
+            "description": "Generates a comprehensive summary of a reconciliation case including all findings, agent decisions, and recommendations.",
+            "config_json": {
+                "allowed_tools": ["reconciliation_summary", "exception_list", "invoice_details", "po_lookup", "grn_lookup"],
+            },
+        },
+    ]
+
+    created = 0
+    for agent_data in agents:
+        _, was_created = AgentDefinition.objects.get_or_create(
+            agent_type=agent_data["agent_type"],
+            defaults={
+                "name": agent_data["name"],
+                "description": agent_data["description"],
+                "enabled": True,
+                "config_json": agent_data["config_json"],
+                "created_by": admin,
+            },
+        )
+        if was_created:
+            created += 1
+    return created
+
+
+def create_tool_definitions(admin):
+    """Create 6 tool definitions for the agent tool registry."""
+    tools = [
+        {
+            "name": "po_lookup",
+            "description": "Look up a Purchase Order by PO number. Returns header details and line items.",
+            "module_path": "apps.tools.registry.tools.POLookupTool",
+            "input_schema": {"type": "object", "properties": {"po_number": {"type": "string"}}, "required": ["po_number"]},
+        },
+        {
+            "name": "grn_lookup",
+            "description": "Retrieve Goods Receipt Notes for a Purchase Order. Returns GRN details and line items.",
+            "module_path": "apps.tools.registry.tools.GRNLookupTool",
+            "input_schema": {"type": "object", "properties": {"po_number": {"type": "string"}}, "required": ["po_number"]},
+        },
+        {
+            "name": "vendor_search",
+            "description": "Search for vendors by name, code, or alias. Returns matching vendors with similarity scores.",
+            "module_path": "apps.tools.registry.tools.VendorSearchTool",
+            "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+        },
+        {
+            "name": "invoice_details",
+            "description": "Get full invoice details including line items, extraction data, and status.",
+            "module_path": "apps.tools.registry.tools.InvoiceDetailsTool",
+            "input_schema": {"type": "object", "properties": {"invoice_id": {"type": "integer"}}, "required": ["invoice_id"]},
+        },
+        {
+            "name": "exception_list",
+            "description": "List all exceptions for a reconciliation result with type, severity, and details.",
+            "module_path": "apps.tools.registry.tools.ExceptionListTool",
+            "input_schema": {"type": "object", "properties": {"result_id": {"type": "integer"}}, "required": ["result_id"]},
+        },
+        {
+            "name": "reconciliation_summary",
+            "description": "Get reconciliation summary for a result including match status, scores, and line comparisons.",
+            "module_path": "apps.tools.registry.tools.ReconciliationSummaryTool",
+            "input_schema": {"type": "object", "properties": {"result_id": {"type": "integer"}}, "required": ["result_id"]},
+        },
+    ]
+
+    created = 0
+    for tool_data in tools:
+        _, was_created = ToolDefinition.objects.get_or_create(
+            name=tool_data["name"],
+            defaults={
+                "description": tool_data["description"],
+                "module_path": tool_data["module_path"],
+                "input_schema": tool_data["input_schema"],
+                "enabled": True,
+                "created_by": admin,
+            },
+        )
+        if was_created:
+            created += 1
+    return created
+
+
+# ===================================================================
 #  COMMAND CLASS
 # ===================================================================
 
 class Command(BaseCommand):
     help = (
         "Seed Saudi McDonald's master distributor data: "
-        "vendors, POs, GRNs — Phase 1 (master data)"
+        "vendors, POs, GRNs - Phase 1 (master data)"
     )
 
     def add_arguments(self, parser):
@@ -2137,19 +2280,19 @@ class Command(BaseCommand):
         if options["flush"]:
             self._flush()
 
-        self.stdout.write(self.style.MIGRATE_HEADING("\n=== Saudi McD Seed Data — Phase 1: Master Data ===\n"))
+        self.stdout.write(self.style.MIGRATE_HEADING("\n=== Saudi McD Seed Data - Phase 1: Master Data ===\n"))
 
         # 1. Users
         self.stdout.write("  Creating users...")
         users = create_users()
         admin = users["admin"]
-        self.stdout.write(self.style.SUCCESS(f"    ✓ {len(users)} users ready"))
+        self.stdout.write(self.style.SUCCESS(f"    [OK] {len(users)} users ready"))
 
         # 2. Vendors + aliases
         self.stdout.write("  Creating vendors and aliases...")
         vendors, alias_count = create_vendors_and_aliases(admin)
         self.stdout.write(self.style.SUCCESS(
-            f"    ✓ {len(vendors)} vendors, {alias_count} new aliases"
+            f"    [OK] {len(vendors)} vendors, {alias_count} new aliases"
         ))
 
         # 3. Purchase Orders
@@ -2157,7 +2300,7 @@ class Command(BaseCommand):
         pos, po_lines = create_purchase_orders(vendors, admin)
         total_po_lines = sum(len(lines) for lines in po_lines.values())
         self.stdout.write(self.style.SUCCESS(
-            f"    ✓ {len(pos)} POs, {total_po_lines} PO line items"
+            f"    [OK] {len(pos)} POs, {total_po_lines} PO line items"
         ))
 
         # 4. GRNs
@@ -2165,7 +2308,21 @@ class Command(BaseCommand):
         grns, grn_lines = create_grns(pos, po_lines, vendors, admin)
         total_grn_lines = sum(len(lines) for lines in grn_lines.values())
         self.stdout.write(self.style.SUCCESS(
-            f"    ✓ {len(grns)} GRNs, {total_grn_lines} GRN line items"
+            f"    [OK] {len(grns)} GRNs, {total_grn_lines} GRN line items"
+        ))
+
+        # 5. Agent definitions
+        self.stdout.write("  Creating agent definitions...")
+        agent_count = create_agent_definitions(admin)
+        self.stdout.write(self.style.SUCCESS(
+            f"    [OK] {agent_count} agent definitions"
+        ))
+
+        # 6. Tool definitions
+        self.stdout.write("  Creating tool definitions...")
+        tool_count = create_tool_definitions(admin)
+        self.stdout.write(self.style.SUCCESS(
+            f"    [OK] {tool_count} tool definitions"
         ))
 
         # Summary
@@ -2177,11 +2334,13 @@ class Command(BaseCommand):
         self.stdout.write(f"  PO Line Items:      {total_po_lines}")
         self.stdout.write(f"  GRNs:               {len(grns)}")
         self.stdout.write(f"  GRN Line Items:     {total_grn_lines}")
+        self.stdout.write(f"  Agent Definitions:  {AgentDefinition.objects.count()}")
+        self.stdout.write(f"  Tool Definitions:   {ToolDefinition.objects.count()}")
         self.stdout.write("")
 
         self.stdout.write(self.style.MIGRATE_HEADING("=== Locations Referenced ==="))
         for code, desc in LOCATIONS.items():
-            self.stdout.write(f"  {code:14s} — {desc}")
+            self.stdout.write(f"  {code:14s} - {desc}")
         self.stdout.write("")
 
         self.stdout.write(self.style.MIGRATE_HEADING("=== Scenario Map ==="))
@@ -2191,9 +2350,9 @@ class Command(BaseCommand):
             ("PO-KSA-1003", "Scenario 3:  Price mismatch on frozen patties"),
             ("PO-KSA-1004", "Scenario 4:  VAT mismatch on dairy"),
             ("PO-KSA-1005", "Scenario 5:  Duplicate invoice"),
-            ("(no PO)",      "Scenario 6:  Missing PO — invoice refs PO-KSA-9999"),
-            ("PO-KSA-1007", "Scenario 7:  Missing GRN — oil not yet received"),
-            ("PO-KSA-1008", "Scenario 8:  Multiple GRNs — staggered frozen delivery"),
+            ("(no PO)",      "Scenario 6:  Missing PO - invoice refs PO-KSA-9999"),
+            ("PO-KSA-1007", "Scenario 7:  Missing GRN - oil not yet received"),
+            ("PO-KSA-1008", "Scenario 8:  Multiple GRNs - staggered frozen delivery"),
             ("PO-KSA-1009", "Scenario 9:  Invoice exceeds received stock"),
             ("PO-KSA-1010", "Scenario 10: Low-confidence scanned invoice"),
             ("PO-KSA-1011/12", "Scenario 11: Ambiguous PO candidates"),
@@ -2212,9 +2371,9 @@ class Command(BaseCommand):
             ("PO-KSA-1025", "Extra:       Packaging consumables"),
         ]
         for po, desc in scenario_map:
-            self.stdout.write(f"  {po:16s} → {desc}")
+            self.stdout.write(f"  {po:16s} -> {desc}")
 
-        self.stdout.write(self.style.SUCCESS("\n✓ Phase 1 master data seeding complete.\n"))
+        self.stdout.write(self.style.SUCCESS("\n[OK] Phase 1 master data seeding complete.\n"))
 
     def _flush(self):
         """Remove previously seeded KSA data and ALL dependent records."""
@@ -2246,7 +2405,7 @@ class Command(BaseCommand):
         agent_runs = AgentRun.objects.filter(reconciliation_result_id__in=result_ids)
         agent_run_ids = list(agent_runs.values_list("id", flat=True))
 
-        # Delete deepest children first → up
+        # Delete deepest children first -> up
         counts["tool_calls"] = ToolCall.objects.filter(agent_run_id__in=agent_run_ids).delete()[0]
         counts["decision_logs"] = DecisionLog.objects.filter(agent_run_id__in=agent_run_ids).delete()[0]
         counts["agent_messages"] = AgentMessage.objects.filter(agent_run_id__in=agent_run_ids).delete()[0]
@@ -2315,13 +2474,17 @@ class Command(BaseCommand):
         counts["vendors"] = vendor_qs.count()
         vendor_qs.delete()
 
+        # Agent and tool definitions
+        counts["agent_defs"] = AgentDefinition.objects.all().delete()[0]
+        counts["tool_defs"] = ToolDefinition.objects.all().delete()[0]
+
         # Seed users
         seed_emails = [u["email"] for u in USERS_DATA]
         User.objects.filter(email__in=seed_emails).delete()
 
         # Print summary
         self.stdout.write(self.style.SUCCESS(
-            f"    ✓ Flushed: {counts['vendors']} vendors, {counts['pos']} POs, "
+            f"    [OK] Flushed: {counts['vendors']} vendors, {counts['pos']} POs, "
             f"{counts['grns']} GRNs, {counts['invoices']} invoices"
         ))
         related = {
@@ -2330,4 +2493,4 @@ class Command(BaseCommand):
         }
         if related:
             parts = [f"{v} {k.replace('_', ' ')}" for k, v in related.items()]
-            self.stdout.write(self.style.SUCCESS(f"    ✓ Related: {', '.join(parts)}"))
+            self.stdout.write(self.style.SUCCESS(f"    [OK] Related: {', '.join(parts)}"))

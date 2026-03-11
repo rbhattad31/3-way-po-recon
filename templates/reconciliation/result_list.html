@@ -18,6 +18,12 @@
         <option value="{{ val }}" {% if request.GET.match_status == val %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
+    <select name="reconciliation_mode" class="form-select form-select-sm" onchange="this.form.submit()">
+      <option value="">All Modes</option>
+      {% for val, label in reconciliation_mode_choices %}
+        <option value="{{ val }}" {% if request.GET.reconciliation_mode == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
   </form>
 </div>
 
@@ -72,7 +78,7 @@
       <thead class="table-light">
         <tr>
           <th>ID</th><th>Invoice #</th><th>PO #</th><th>Vendor</th>
-          <th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th><th></th>
+          <th>Mode</th><th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -82,6 +88,7 @@
           <td>{{ r.invoice.invoice_number|default:"—" }}</td>
           <td>{{ r.purchase_order.po_number|default:"—" }}</td>
           <td>{% if r.invoice.vendor %}{{ r.invoice.vendor.name }}{% else %}{{ r.invoice.raw_vendor_name }}{% endif %}</td>
+          <td>{% if r.is_two_way_result %}<span class="badge bg-info">2-Way</span>{% elif r.is_three_way_result %}<span class="badge bg-primary">3-Way</span>{% else %}<span class="badge bg-secondary">—</span>{% endif %}</td>
           <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
           <td>{% if r.deterministic_confidence %}{% widthratio r.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td>
           <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
@@ -90,7 +97,7 @@
           <td><a href="{% url 'reconciliation:case_console' r.pk %}" class="btn btn-sm btn-outline-primary py-0 px-1" title="Case Console"><i class="bi bi-layout-text-window-reverse"></i></a></td>
         </tr>
         {% empty %}
-        <tr><td colspan="10" class="text-center text-muted py-3">No results found</td></tr>
+        <tr><td colspan="11" class="text-center text-muted py-3">No results found</td></tr>
         {% endfor %}
       </tbody>
     </table>

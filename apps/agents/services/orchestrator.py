@@ -92,6 +92,7 @@ class AgentOrchestrator:
             return orch_result
 
         # 2. Prepare shared context
+        recon_mode = plan.reconciliation_mode or getattr(result, "reconciliation_mode", "") or ""
         exceptions = list(
             result.exceptions.values(
                 "id", "exception_type", "severity", "message", "details", "resolved",
@@ -103,6 +104,7 @@ class AgentOrchestrator:
             invoice_id=result.invoice_id,
             po_number=result.purchase_order.po_number if result.purchase_order else None,
             exceptions=exceptions,
+            reconciliation_mode=recon_mode,
             extra={
                 "vendor_name": (
                     result.invoice.vendor.name if result.invoice.vendor
@@ -111,6 +113,8 @@ class AgentOrchestrator:
                 "total_amount": str(result.invoice.total_amount),
                 "grn_available": result.grn_available,
                 "grn_fully_received": result.grn_fully_received,
+                "reconciliation_mode": recon_mode,
+                "is_two_way": recon_mode == "TWO_WAY",
             },
         )
 

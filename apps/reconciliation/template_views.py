@@ -9,9 +9,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.agents.models import AgentRecommendation, AgentRun
 from apps.auditlog.timeline_service import CaseTimelineService
-from apps.core.enums import InvoiceStatus, MatchStatus, UserRole
+from apps.core.enums import InvoiceStatus, MatchStatus, ReconciliationMode, UserRole
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
-from apps.reconciliation.models import ReconciliationConfig, ReconciliationResult
+from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy, ReconciliationResult
 from apps.reviews.models import ReviewAssignment
 from apps.tools.models import ToolCall
 
@@ -27,6 +27,9 @@ def result_list(request):
     match_status = request.GET.get("match_status")
     if match_status:
         qs = qs.filter(match_status=match_status)
+    recon_mode = request.GET.get("reconciliation_mode")
+    if recon_mode:
+        qs = qs.filter(reconciliation_mode=recon_mode)
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -41,6 +44,7 @@ def result_list(request):
         "results": page_obj,
         "page_obj": page_obj,
         "match_status_choices": MatchStatus.choices,
+        "reconciliation_mode_choices": ReconciliationMode.choices,
         "ready_invoices": ready_invoices,
     })
 
@@ -85,6 +89,8 @@ def result_detail(request, pk):
         "agent_runs": agent_runs,
         "timeline": timeline,
         "show_full_trace": show_full_trace,
+        "is_two_way": result.is_two_way_result,
+        "mode_label": "2-Way" if result.is_two_way_result else "3-Way",
     })
 
 
@@ -263,6 +269,8 @@ def case_console(request, pk):
         "case_summary_text": case_summary_text,
         "case_summary_agent": case_summary_agent,
         "match_status_choices": MatchStatus.choices,
+        "is_two_way": result.is_two_way_result,
+        "mode_label": "2-Way" if result.is_two_way_result else "3-Way",
     }
     return render(request, "reconciliation/case_console.html", context)
 
@@ -293,6 +301,10 @@ def case_export_csv(request, pk):
     writer.writerow([])
     writer.writerow(["Case ID", result.pk])
     writer.writerow(["Match Status", result.get_match_status_display()])
+    writer.writerow(["Reconciliation Mode", "2-Way" if result.is_two_way_result else "3-Way"])
+    writer.writerow(["Mode Resolution", result.mode_resolution_reason or ""])
+    writer.writerow(["Policy Applied", result.policy_applied or ""])
+    writer.writerow(["GRN Required", "Yes" if result.grn_required_flag else "No"])
     writer.writerow(["Confidence", f"{result.deterministic_confidence * 100:.0f}%" if result.deterministic_confidence else "N/A"])
     writer.writerow(["Summary", result.summary or ""])
     writer.writerow([])
@@ -445,12 +457,24 @@ def recon_settings(request):
         config.auto_close_on_match = request.POST.get("auto_close_on_match") == "on"
         config.enable_agents = request.POST.get("enable_agents") == "on"
 
+        # Mode configuration
+        config.default_reconciliation_mode = request.POST.get(
+            "default_reconciliation_mode", ReconciliationMode.THREE_WAY
+        )
+        config.enable_mode_resolver = request.POST.get("enable_mode_resolver") == "on"
+        config.enable_grn_for_stock_items = request.POST.get("enable_grn_for_stock_items") == "on"
+        config.enable_two_way_for_services = request.POST.get("enable_two_way_for_services") == "on"
+
         config.save()
         verb = "updated" if config_id else "created"
         messages.success(request, f"Config '{config.name}' {verb}.")
         return redirect("reconciliation:recon_settings")
 
+    policies = ReconciliationPolicy.objects.filter(is_active=True).order_by("priority")
+
     return render(request, "reconciliation/settings.html", {
         "configs": configs,
         "is_admin": is_admin,
+        "policies": policies,
+        "reconciliation_mode_choices": ReconciliationMode.choices,
     })

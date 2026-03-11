@@ -13,6 +13,17 @@ class InvoiceStatus(models.TextChoices):
     FAILED = "FAILED", "Failed"
 
 
+class ReconciliationMode(models.TextChoices):
+    TWO_WAY = "TWO_WAY", "2-Way (Invoice vs PO)"
+    THREE_WAY = "THREE_WAY", "3-Way (Invoice vs PO vs GRN)"
+
+
+class ReconciliationModeApplicability(models.TextChoices):
+    TWO_WAY = "TWO_WAY", "2-Way Only"
+    THREE_WAY = "THREE_WAY", "3-Way Only"
+    BOTH = "BOTH", "Both Modes"
+
+
 class ReconciliationRunStatus(models.TextChoices):
     PENDING = "PENDING", "Pending"
     RUNNING = "RUNNING", "Running"
@@ -79,8 +90,8 @@ class RecommendationType(models.TextChoices):
 
 
 class ExceptionType(models.TextChoices):
+    # Common (TWO_WAY + THREE_WAY)
     PO_NOT_FOUND = "PO_NOT_FOUND", "PO Not Found"
-    GRN_NOT_FOUND = "GRN_NOT_FOUND", "GRN Not Found"
     VENDOR_MISMATCH = "VENDOR_MISMATCH", "Vendor Mismatch"
     ITEM_MISMATCH = "ITEM_MISMATCH", "Item Mismatch"
     QTY_MISMATCH = "QTY_MISMATCH", "Quantity Mismatch"
@@ -90,6 +101,15 @@ class ExceptionType(models.TextChoices):
     DUPLICATE_INVOICE = "DUPLICATE_INVOICE", "Duplicate Invoice"
     EXTRACTION_LOW_CONFIDENCE = "EXTRACTION_LOW_CONFIDENCE", "Extraction Low Confidence"
     CURRENCY_MISMATCH = "CURRENCY_MISMATCH", "Currency Mismatch"
+    LOCATION_MISMATCH = "LOCATION_MISMATCH", "Location Mismatch"
+    # THREE_WAY-specific (receipt/GRN related)
+    GRN_NOT_FOUND = "GRN_NOT_FOUND", "GRN Not Found"
+    RECEIPT_SHORTAGE = "RECEIPT_SHORTAGE", "Receipt Shortage"
+    INVOICE_QTY_EXCEEDS_RECEIVED = "INVOICE_QTY_EXCEEDS_RECEIVED", "Invoice Qty Exceeds Received Qty"
+    OVER_RECEIPT = "OVER_RECEIPT", "Over Receipt"
+    MULTI_GRN_PARTIAL_RECEIPT = "MULTI_GRN_PARTIAL_RECEIPT", "Multi-GRN Partial Receipt"
+    RECEIPT_LOCATION_MISMATCH = "RECEIPT_LOCATION_MISMATCH", "Receipt Location Mismatch"
+    DELAYED_RECEIPT = "DELAYED_RECEIPT", "Delayed Receipt"
 
 
 class UserRole(models.TextChoices):
@@ -139,3 +159,6 @@ class AuditEventType(models.TextChoices):
     AGENT_RUN_STARTED = "AGENT_RUN_STARTED", "Agent Run Started"
     AGENT_RUN_COMPLETED = "AGENT_RUN_COMPLETED", "Agent Run Completed"
     AGENT_RUN_FAILED = "AGENT_RUN_FAILED", "Agent Run Failed"
+    RECONCILIATION_MODE_RESOLVED = "RECONCILIATION_MODE_RESOLVED", "Reconciliation Mode Resolved"
+    POLICY_APPLIED = "POLICY_APPLIED", "Policy Applied"
+    MANUAL_MODE_OVERRIDE = "MANUAL_MODE_OVERRIDE", "Manual Mode Override"

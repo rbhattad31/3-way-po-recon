@@ -43,6 +43,8 @@
           <div class="flex-shrink-0 me-3 text-center" style="width:36px;">
             {% if event.event_category == "audit" %}
               <i class="bi bi-file-earmark-text fs-5 text-primary"></i>
+            {% elif event.event_category == "mode_resolution" %}
+              <i class="bi bi-arrow-left-right fs-5 text-info"></i>
             {% elif event.event_category == "agent_run" %}
               <i class="bi bi-robot fs-5 text-success"></i>
             {% elif event.event_category == "tool_call" %}

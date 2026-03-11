@@ -1,8 +1,8 @@
 # 3-Way PO Reconciliation — Test Scenarios & Expected Results
 
-**Document Version:** 1.2  
-**Date:** 2026-03-11  
-**Dataset:** `seed_saudi_mcd_data` (master) + `seed_invoice_test_data` (18 scenarios) + `seed_po_agent_test_data` (10 PO Agent scenarios) + `seed_grn_agent_test_data` (12 GRN Agent scenarios)  
+**Document Version:** 1.3  
+**Date:** 2026-03-15  
+**Dataset:** `seed_saudi_mcd_data` (master) + `seed_invoice_test_data` (18 scenarios) + `seed_po_agent_test_data` (10 PO Agent scenarios) + `seed_grn_agent_test_data` (12 GRN Agent scenarios) + `seed_mixed_mode_data` (12 mode scenarios)  
 **Active Config:** Default Production  
 
 ---
@@ -23,7 +23,7 @@
 
 ---
 
-## Quick Reference — All 40 Scenarios
+## Quick Reference — All 52 Scenarios
 
 | # | Invoice | PO | Vendor | Category | Expected Match Status | Expected Behavior |
 |---|---------|-----|--------|----------|----------------------|-------------------|
@@ -71,6 +71,19 @@
 | POAG-008 | INV-POAG-2026-008 | PO-KSA-1017 | VND-AFS-001 | Closed PO Referenced | **UNMATCHED** (stays) | PO found but CLOSED → agent doesn't apply |
 | POAG-009 | INV-POAG-2026-009 | *(blank)* | VND-RSRC-007 | Branch vs Warehouse | **UNMATCHED** (stays) | 2 candidates, location ambiguity → no re-recon |
 | POAG-010 | INV-POAG-2026-010 | PO/KSA/1003 (malformed) | VND-GFF-002 | High-Confidence Recovery | **UNMATCHED** → Agent → **MATCHED** | All signals converge → re-reconciles to full match |
+| **Mixed-Mode** | | | | | | |
+| MODE-001 | INV-MODE-001 | PO-KSA-3001 | VND-GPS-011 | Service: Cleaning (2-Way Policy) | **MATCHED** | 2-way (POL-SVC-VENDOR); no GRN |
+| MODE-002 | INV-MODE-002 | PO-KSA-3002 | VND-GPS-011 | Service: Pest Control (2-Way Heuristic) | **MATCHED** | 2-way via keyword heuristic |
+| MODE-003 | INV-MODE-003 | PO-KSA-3003 | VND-AFS-001 | Stock: Food Perfect (3-Way Policy) | **MATCHED** | 3-way (POL-STOCK-GLOBAL); full GRN |
+| MODE-004 | INV-MODE-004 | PO-KSA-3004 | VND-GFF-002 | Stock: Frozen GRN Shortage (3-Way) | **PARTIAL_MATCH** | 3-way (POL-FOOD-3WAY); GRN shortage |
+| MODE-005 | INV-MODE-005 | PO-KSA-3005 | VND-GPS-011 | Service: Security Price Mismatch (2-Way) | **PARTIAL_MATCH** | 2-way; price 12000 vs PO 11500 |
+| MODE-006 | INV-MODE-006 | PO-KSA-3006 | VND-SPS-004 | Stock: Packaging Missing GRN (3-Way) | **UNMATCHED** | 3-way; GRN missing lids line |
+| MODE-007 | INV-MODE-007 | PO-KSA-3007 | VND-DCCL-006 | Mixed: Service+Stock Lines (Default) | **PARTIAL_MATCH** | Ambiguous → 3-way default fallback |
+| MODE-008 | INV-MODE-008 | PO-KSA-3008 | VND-RBC-005 | Stock: Beverage Qty Mismatch (3-Way) | **PARTIAL_MATCH** | 3-way; qty 110 vs PO 100 |
+| MODE-009 | INV-MODE-009 | PO-KSA-3009 | VND-JQSS-010 | Service: Maintenance (2-Way Heuristic) | **MATCHED** | 2-way via 'maintenance' keyword |
+| MODE-010 | INV-MODE-010 | PO-KSA-3010 | VND-AKD-009 | Stock: Dairy Location Policy (3-Way) | **MATCHED** | 3-way (POL-WH-RUH-3WAY); full GRN |
+| MODE-011 | INV-MODE-011 | PO-KSA-3011 | VND-RSRC-007 | Branch: Direct Purchase (2-Way Policy) | **MATCHED** | 2-way (POL-BRANCH-2WAY); GRN ignored |
+| MODE-012 | INV-MODE-012 | PO-KSA-3012 | VND-NEO-008 | Default Fallback: No Policy (3-Way) | **MATCHED** | No policy/heuristic → 3-way default |
 
 ---
 
@@ -1187,6 +1200,276 @@ No ReconciliationResult, AgentRun, ReviewAssignment, or AuditEvent records are c
 
 ---
 
+## Mixed-Mode Reconciliation Scenarios (SCN-MODE-001..012)
+
+**Seed Command:** `python manage.py seed_mixed_mode_data` (requires `seed_saudi_mcd_data` first)
+
+These scenarios test the **configurable 2-way/3-way reconciliation mode** feature, covering all three resolution tiers (policy, heuristic, config default) and both matching modes.
+
+### Reconciliation Policies Created
+
+| Code | Name | Mode | Match Criteria | Priority |
+|------|------|------|----------------|----------|
+| POL-SVC-VENDOR | Gulf Professional Services - 2-Way | TWO_WAY | vendor=VND-GPS-011, is_service=True | 10 |
+| POL-SVC-GLOBAL | Service Invoices - 2-Way | TWO_WAY | is_service_invoice=True | 20 |
+| POL-STOCK-GLOBAL | Stock/Inventory Invoices - 3-Way | THREE_WAY | is_stock_invoice=True | 30 |
+| POL-FOOD-3WAY | Food Category - 3-Way | THREE_WAY | item_category=Food | 40 |
+| POL-LOGISTICS-2WAY | Logistics & Transport - 2-Way | TWO_WAY | item_category=Logistics | 50 |
+| POL-WH-RUH-3WAY | Riyadh Warehouse - 3-Way | THREE_WAY | location_code=WH-RUH-01 | 60 |
+| POL-BRANCH-2WAY | Direct Branch Purchases - 2-Way | TWO_WAY | business_unit=Branch Operations | 70 |
+
+---
+
+### SCN-MODE-001 — Service: Cleaning Contract (2-Way, Vendor Policy)
+
+**Invoice:** INV-MODE-001  
+**PO:** PO-KSA-3001 (no GRN)  
+**Vendor:** Gulf Professional Services Co. (VND-GPS-011)  
+**Mode Resolution:** Policy (POL-SVC-VENDOR, priority 10) -> **TWO_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|-----------|----------|----------|
+| 1 | Monthly Cleaning Service - Riyadh HQ | 1 | 1 | 8,500.00 | 8,500.00 | **None** |
+| 2 | Deep Cleaning - Kitchen Area | 2 | 2 | 3,200.00 | 3,200.00 | **None** |
+
+**Expected Result:**
+- Match Status: **MATCHED**
+- Reconciliation Mode: **TWO_WAY**
+- Mode Resolved By: **policy** (POL-SVC-VENDOR)
+- GRN Check: **Skipped** (2-way mode)
+- Agents: **Skipped**
+
+---
+
+### SCN-MODE-002 — Service: Pest Control (2-Way, Keyword Heuristic)
+
+**Invoice:** INV-MODE-002  
+**PO:** PO-KSA-3002 (no GRN)  
+**Vendor:** Gulf Professional Services Co. (VND-GPS-011) — alias "Gulf Pro Services"  
+**Mode Resolution:** Heuristic (service keywords: "Pest Control Service") -> **TWO_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|-----------|----------|----------|
+| 1 | Pest Control Service - Quarterly Treatment | 1 | 1 | 4,500.00 | 4,500.00 | **None** |
+
+**Expected Result:**
+- Match Status: **MATCHED**
+- Reconciliation Mode: **TWO_WAY**
+- Mode Resolved By: **heuristic** (keyword match)
+- GRN Check: **Skipped**
+- Agents: **Skipped**
+
+---
+
+### SCN-MODE-003 — Stock: Food Supply Perfect 3-Way Match
+
+**Invoice:** INV-MODE-003  
+**PO:** PO-KSA-3003 -> **GRN:** GRN-MODE-3003  
+**Vendor:** Arabian Food Supplies Co. (VND-AFS-001)  
+**Mode Resolution:** Policy (POL-STOCK-GLOBAL, priority 30) -> **THREE_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|---------|-----------|----------|----------|
+| 1 | Sesame Burger Bun 4 inch | 400 | 400 | 400 | 45.00 | 45.00 | **None** |
+| 2 | Shredded Lettuce Food Service Pack | 150 | 150 | 150 | 28.00 | 28.00 | **None** |
+
+**Expected Result:**
+- Match Status: **MATCHED**
+- Reconciliation Mode: **THREE_WAY**
+- Mode Resolved By: **policy** (POL-STOCK-GLOBAL)
+- GRN Check: **Full receipt**
+- Agents: **Skipped**
+
+---
+
+### SCN-MODE-004 — Stock: Frozen Food, GRN Shortage (3-Way)
+
+**Invoice:** INV-MODE-004  
+**PO:** PO-KSA-3004 -> **GRN:** GRN-MODE-3004 (partial)  
+**Vendor:** Gulf Frozen Foods Trading (VND-GFF-002)  
+**Mode Resolution:** Policy (POL-FOOD-3WAY, priority 40) -> **THREE_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Variance |
+|------|-------------|---------|--------|---------|----------|
+| 1 | Beef Patty 150g Premium Frozen | 300 | 300 | 280 | GRN shortage: -6.7% |
+| 2 | Chicken Nuggets 6pc Frozen Pack | 200 | 200 | 190 | GRN shortage: -5.0% |
+
+**Expected Result:**
+- Match Status: **PARTIAL_MATCH**
+- Reconciliation Mode: **THREE_WAY**
+- Mode Resolved By: **policy** (POL-FOOD-3WAY)
+- Exceptions: RECEIPT_SHORTAGE
+- Agents: **Triggered** (GRN discrepancies)
+
+---
+
+### SCN-MODE-005 — Service: Security, Price Mismatch (2-Way)
+
+**Invoice:** INV-MODE-005  
+**PO:** PO-KSA-3005 (no GRN)  
+**Vendor:** Gulf Professional Services Co. (VND-GPS-011)  
+**Mode Resolution:** Policy (POL-SVC-VENDOR, priority 10) -> **TWO_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|-----------|----------|----------|
+| 1 | Security Guard Service - Monthly | 1 | 1 | 12,000.00 | 11,500.00 | Price +4.3% |
+
+**Expected Result:**
+- Match Status: **PARTIAL_MATCH**
+- Reconciliation Mode: **TWO_WAY**
+- Mode Resolved By: **policy** (POL-SVC-VENDOR)
+- Exceptions: PRICE_MISMATCH
+- GRN Check: **Skipped**
+- Agents: **Triggered** (price mismatch beyond auto-close)
+
+---
+
+### SCN-MODE-006 — Stock: Packaging, Missing GRN Lines (3-Way)
+
+**Invoice:** INV-MODE-006  
+**PO:** PO-KSA-3006 -> **GRN:** GRN-MODE-3006 (cups only, lids missing)  
+**Vendor:** Saudi Packaging Solutions (VND-SPS-004)  
+**Mode Resolution:** Policy (POL-STOCK-GLOBAL, priority 30) -> **THREE_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Variance |
+|------|-------------|---------|--------|---------|----------|
+| 1 | Paper Cup 12oz - McD Branded | 5,000 | 5,000 | 5,000 | **None** |
+| 2 | Cup Lid 12oz Dome | 5,000 | 5,000 | **N/A** | **No GRN line** |
+
+**Expected Result:**
+- Match Status: **UNMATCHED** or **PARTIAL_MATCH**
+- Reconciliation Mode: **THREE_WAY**
+- Mode Resolved By: **policy** (POL-STOCK-GLOBAL)
+- Exceptions: RECEIPT_SHORTAGE / GRN_NOT_FOUND
+- Agents: **Triggered**
+
+---
+
+### SCN-MODE-007 — Mixed: Service + Stock Lines (Default Fallback)
+
+**Invoice:** INV-MODE-007  
+**PO:** PO-KSA-3007 -> **GRN:** GRN-MODE-3007 (stock line only)  
+**Vendor:** Desert Cold Chain Logistics (VND-DCCL-006)  
+**Mode Resolution:** Default fallback (mixed classifications, no majority) -> **THREE_WAY**  
+
+| Line | Description | Type | Inv Qty | PO Qty | GRN Qty | Variance |
+|------|-------------|------|---------|--------|---------|----------|
+| 1 | Refrigerated Transport - Riyadh to Jeddah | Service | 4 | 4 | N/A | Service line (no GRN) |
+| 2 | Dry Ice Packs for Cold Storage | Stock | 100 | 100 | 100 | **None** |
+
+**Expected Result:**
+- Match Status: **PARTIAL_MATCH**
+- Reconciliation Mode: **THREE_WAY**
+- Mode Resolved By: **default** (config fallback)
+- Note: Mixed service+stock lines; ambiguous for heuristic, falls to config default
+
+---
+
+### SCN-MODE-008 — Stock: Beverage, Qty Mismatch (3-Way)
+
+**Invoice:** INV-MODE-008  
+**PO:** PO-KSA-3008 -> **GRN:** GRN-MODE-3008  
+**Vendor:** Riyadh Beverage Concentrates Co. (VND-RBC-005)  
+**Mode Resolution:** Policy (POL-STOCK-GLOBAL) or heuristic -> **THREE_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Variance |
+|------|-------------|---------|--------|---------|----------|
+| 1 | Cola Syrup Concentrate 20L | 110 | 100 | 100 | Qty +10% (invoice over-claims) |
+
+**Expected Result:**
+- Match Status: **PARTIAL_MATCH**
+- Reconciliation Mode: **THREE_WAY**
+- Exceptions: QTY_MISMATCH
+- Agents: **Triggered** (qty mismatch beyond auto-close)
+
+---
+
+### SCN-MODE-009 — Service: Maintenance (2-Way, Keyword Heuristic)
+
+**Invoice:** INV-MODE-009  
+**PO:** PO-KSA-3009 (no GRN)  
+**Vendor:** Jeddah Quick Service Supplies (VND-JQSS-010)  
+**Mode Resolution:** Heuristic (keyword: "Maintenance Service") -> **TWO_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|-----------|----------|----------|
+| 1 | Kitchen Equipment Maintenance Service Q1 | 1 | 1 | 6,500.00 | 6,500.00 | **None** |
+| 2 | Walk-in Freezer Maintenance Service | 1 | 1 | 4,200.00 | 4,200.00 | **None** |
+
+**Expected Result:**
+- Match Status: **MATCHED**
+- Reconciliation Mode: **TWO_WAY**
+- Mode Resolved By: **heuristic** (keyword match)
+- GRN Check: **Skipped**
+- Agents: **Skipped**
+- Note: Vendor (VND-JQSS-010) has no explicit policy; resolved purely by keyword heuristic
+
+---
+
+### SCN-MODE-010 — Stock: Dairy, Location-Based Policy (3-Way)
+
+**Invoice:** INV-MODE-010  
+**PO:** PO-KSA-3010 -> **GRN:** GRN-MODE-3010  
+**Vendor:** Al Khobar Dairy Ingredients (VND-AKD-009)  
+**Mode Resolution:** Policy (POL-WH-RUH-3WAY, priority 60) -> **THREE_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|---------|-----------|----------|----------|
+| 1 | Processed Cheese Slices 200pc | 350 | 350 | 350 | 62.00 | 62.00 | **None** |
+
+**Expected Result:**
+- Match Status: **MATCHED**
+- Reconciliation Mode: **THREE_WAY**
+- Mode Resolved By: **policy** (POL-WH-RUH-3WAY, location_code match)
+- GRN Check: **Full receipt**
+- Agents: **Skipped**
+
+---
+
+### SCN-MODE-011 — Branch: Direct Purchase (2-Way, Business Unit Policy)
+
+**Invoice:** INV-MODE-011  
+**PO:** PO-KSA-3011 -> **GRN:** GRN-MODE-3011 (exists but ignored)  
+**Vendor:** Red Sea Restaurant Consumables (VND-RSRC-007)  
+**Mode Resolution:** Policy (POL-BRANCH-2WAY, priority 70) -> **TWO_WAY**  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|---------|-----------|----------|----------|
+| 1 | Paper Napkins Branded 500ct | 200 | 200 | 200 | 18.00 | 18.00 | **None** |
+| 2 | Drinking Straw Biodegradable 1000ct | 100 | 100 | 100 | 25.00 | 25.00 | **None** |
+
+**Expected Result:**
+- Match Status: **MATCHED**
+- Reconciliation Mode: **TWO_WAY**
+- Mode Resolved By: **policy** (POL-BRANCH-2WAY, business_unit match)
+- GRN Check: **Skipped** (GRN exists but irrelevant in 2-way mode)
+- Agents: **Skipped**
+- Note: Tests that GRN is correctly ignored when business-unit policy dictates 2-way mode
+
+---
+
+### SCN-MODE-012 — Default Fallback: No Policy, No Heuristic (3-Way)
+
+**Invoice:** INV-MODE-012  
+**PO:** PO-KSA-3012 -> **GRN:** GRN-MODE-3012  
+**Vendor:** Najd Edible Oils Trading (VND-NEO-008)  
+**Mode Resolution:** Default fallback -> **THREE_WAY** (config default)  
+
+| Line | Description | Inv Qty | PO Qty | GRN Qty | Inv Price | PO Price | Variance |
+|------|-------------|---------|--------|---------|-----------|----------|----------|
+| 1 | Blend Premium Grade A 20L | 80 | 80 | 80 | 145.00 | 145.00 | **None** |
+| 2 | Blend Standard Grade B 20L | 50 | 50 | 50 | 120.00 | 120.00 | **None** |
+
+**Expected Result:**
+- Match Status: **MATCHED**
+- Reconciliation Mode: **THREE_WAY**
+- Mode Resolved By: **default** (no policy or heuristic matched)
+- GRN Check: **Full receipt**
+- Agents: **Skipped**
+- Note: Lines have no item_category, no is_service/is_stock flags — tests pure fallback path
+
+---
+
 ## Test Execution Checklist
 
 ### Pre-Conditions
@@ -1194,7 +1477,8 @@ No ReconciliationResult, AgentRun, ReviewAssignment, or AuditEvent records are c
 - [ ] Invoice data seeded: `python manage.py seed_invoice_test_data`
 - [ ] PO Agent test data seeded: `python manage.py seed_po_agent_test_data`
 - [ ] GRN Agent test data seeded: `python manage.py seed_grn_agent_test_data`
-- [ ] Active config is "Default Production" (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
+- [ ] Mixed-mode data seeded: `python manage.py seed_mixed_mode_data`
+- [ ] Active config is "Default Production" (strict: 2%/1%/1%, auto-close: 5%/3%/3%, mode resolver enabled)
 - [ ] All invoices show status `READY_FOR_RECON`
 - [ ] No stale ReconciliationRun/Result/Exception records exist
 
@@ -1260,6 +1544,23 @@ No ReconciliationResult, AgentRun, ReviewAssignment, or AuditEvent records are c
 | GRNAG-011 | INV-GRNAG-2026-011 | PO-KSA-3010 → *(none)* | Non-GRN (service) | SEND_TO_AP_REVIEW | medium | ☐ |
 | GRNAG-012 | INV-GRNAG-2026-012 | PO-KSA-3011 → GRN-DMM-3011-A | Cold-chain shortage | SEND_TO_PROCUREMENT | high | ☐ |
 
+### Mixed-Mode Scenario Verification
+
+| # | Invoice | PO → GRN | Mode | Mode Resolved By | Expected Match | Pass? |
+|---|---------|----------|------|------------------|----------------|-------|
+| MODE-001 | INV-MODE-001 | PO-KSA-3001 → *(none)* | TWO_WAY | policy (POL-SVC-VENDOR) | MATCHED | ☐ |
+| MODE-002 | INV-MODE-002 | PO-KSA-3002 → *(none)* | TWO_WAY | heuristic (keyword) | MATCHED | ☐ |
+| MODE-003 | INV-MODE-003 | PO-KSA-3003 → GRN-MODE-3003 | THREE_WAY | policy (POL-STOCK-GLOBAL) | MATCHED | ☐ |
+| MODE-004 | INV-MODE-004 | PO-KSA-3004 → GRN-MODE-3004 | THREE_WAY | policy (POL-FOOD-3WAY) | PARTIAL_MATCH | ☐ |
+| MODE-005 | INV-MODE-005 | PO-KSA-3005 → *(none)* | TWO_WAY | policy (POL-SVC-VENDOR) | PARTIAL_MATCH | ☐ |
+| MODE-006 | INV-MODE-006 | PO-KSA-3006 → GRN-MODE-3006 | THREE_WAY | policy (POL-STOCK-GLOBAL) | UNMATCHED | ☐ |
+| MODE-007 | INV-MODE-007 | PO-KSA-3007 → GRN-MODE-3007 | THREE_WAY | default (config fallback) | PARTIAL_MATCH | ☐ |
+| MODE-008 | INV-MODE-008 | PO-KSA-3008 → GRN-MODE-3008 | THREE_WAY | policy/heuristic | PARTIAL_MATCH | ☐ |
+| MODE-009 | INV-MODE-009 | PO-KSA-3009 → *(none)* | TWO_WAY | heuristic (keyword) | MATCHED | ☐ |
+| MODE-010 | INV-MODE-010 | PO-KSA-3010 → GRN-MODE-3010 | THREE_WAY | policy (POL-WH-RUH-3WAY) | MATCHED | ☐ |
+| MODE-011 | INV-MODE-011 | PO-KSA-3011 → GRN-MODE-3011 | TWO_WAY | policy (POL-BRANCH-2WAY) | MATCHED | ☐ |
+| MODE-012 | INV-MODE-012 | PO-KSA-3012 → GRN-MODE-3012 | THREE_WAY | default (config fallback) | MATCHED | ☐ |
+
 ### Post-Reconciliation Checks
 - [ ] Dashboard analytics reflect correct counts (matched, partial, unmatched, review)
 - [ ] Agent Monitor shows agent runs for non-matched scenarios
@@ -1267,3 +1568,7 @@ No ReconciliationResult, AgentRun, ReviewAssignment, or AuditEvent records are c
 - [ ] Auto-closed cases (013, 014) show no agent runs and MATCHED status
 - [ ] CSV export downloads correctly for any case
 - [ ] Settings page shows active tolerance config used during reconciliation
+- [ ] Mode filter on reconciliation results page works correctly (TWO_WAY / THREE_WAY)
+- [ ] Mode badges display correctly on result list and detail pages
+- [ ] 2-way results hide GRN sections in detail/console views
+- [ ] Mode breakdown dashboard endpoint returns correct counts

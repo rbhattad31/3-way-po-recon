@@ -67,13 +67,13 @@ SCENARIO_INVOICE_NUMBERS = [
 
 # Additional PO numbers created by this command (for scenario isolation)
 ADDITIONAL_PO_NUMBERS = [
-    "PO-KSA-2001",  # SCN-POAG-002 — single open PO for vendor-based discovery
-    "PO-KSA-2002",  # SCN-POAG-003 — open PO candidate A (multiple POs scenario)
-    "PO-KSA-2003",  # SCN-POAG-003 — open PO candidate B
-    "PO-KSA-2004",  # SCN-POAG-003 — open PO candidate C
-    "PO-KSA-2005",  # SCN-POAG-004 — amount-based fallback PO
-    "PO-KSA-2006",  # SCN-POAG-009 — warehouse PO
-    "PO-KSA-2007",  # SCN-POAG-009 — branch PO
+    "PO-KSA-2001",  # SCN-POAG-002 - single open PO for vendor-based discovery
+    "PO-KSA-2002",  # SCN-POAG-003 - open PO candidate A (multiple POs scenario)
+    "PO-KSA-2003",  # SCN-POAG-003 - open PO candidate B
+    "PO-KSA-2004",  # SCN-POAG-003 - open PO candidate C
+    "PO-KSA-2005",  # SCN-POAG-004 - amount-based fallback PO
+    "PO-KSA-2006",  # SCN-POAG-009 - warehouse PO
+    "PO-KSA-2007",  # SCN-POAG-009 - branch PO
 ]
 
 
@@ -93,7 +93,7 @@ def _tax(amount) -> Decimal:
 
 
 # ---------------------------------------------------------------------------
-# Lookup helpers — reuse existing master data
+# Lookup helpers - reuse existing master data
 # ---------------------------------------------------------------------------
 def find_existing_vendor(code: str) -> Vendor:
     """Retrieve a vendor by code from master data."""
@@ -264,8 +264,8 @@ def ensure_vendor_alias(vendor: Vendor, alias_name: str, source: str = "seed") -
 
 def create_scn_poag_001_reordered_po_recovery() -> Invoice:
     """
-    SCN-POAG-001 — REORDERED PO SEGMENT RECOVERY
-    ──────────────────────────────────────────────
+    SCN-POAG-001 - REORDERED PO SEGMENT RECOVERY
+    ----------------------------------------------
     Invoice contains PO number with reordered segments:
       raw_po_number = "PO-1001-KSA" (segments reversed vs canonical "PO-KSA-1001")
     The valid PO "PO-KSA-1001" exists (from master seed, Arabian Food Supplies).
@@ -313,7 +313,7 @@ def create_scn_poag_001_reordered_po_recovery() -> Invoice:
         invoice_number="INV-POAG-2026-001",
         vendor=vendor,
         raw_vendor_name="Arabian Food Supplies Co.",
-        po_number="PO-1001-KSA",           # segments reordered — malformed
+        po_number="PO-1001-KSA",           # segments reordered - malformed
         raw_po_number="PO-1001-KSA",
         invoice_date=INVOICE_DATE,
         subtotal=subtotal,
@@ -328,8 +328,8 @@ def create_scn_poag_001_reordered_po_recovery() -> Invoice:
 
 def create_scn_poag_002_vendor_based_discovery() -> Invoice:
     """
-    SCN-POAG-002 — VENDOR-BASED PO DISCOVERY
-    ──────────────────────────────────────────
+    SCN-POAG-002 - VENDOR-BASED PO DISCOVERY
+    ------------------------------------------
     Invoice PO number is blank / unreadable.
     Vendor is Gulf Frozen Foods Trading (VND-GFF-002).
     Invoice amount (SAR 88,550 excl. VAT) matches a dedicated open PO.
@@ -339,7 +339,7 @@ def create_scn_poag_002_vendor_based_discovery() -> Invoice:
 
     Expected PO Retrieval Agent outcome:
     - Should find PO? Yes
-    - Primary strategy: vendor search → amount match
+    - Primary strategy: vendor search -> amount match
     - Expected recommendation_type: null (PO found)
     - Expected confidence: medium-high (0.75–0.90)
     - Expected evidence keys: po_number, matched_vendor, amount_match
@@ -388,7 +388,7 @@ def create_scn_poag_002_vendor_based_discovery() -> Invoice:
         invoice_number="INV-POAG-2026-002",
         vendor=vendor,
         raw_vendor_name="Gulf Frozen Foods Trading",
-        po_number="",                      # blank — unreadable
+        po_number="",                      # blank - unreadable
         raw_po_number="[unreadable]",
         invoice_date=INVOICE_DATE + timedelta(days=1),
         subtotal=subtotal,
@@ -396,7 +396,7 @@ def create_scn_poag_002_vendor_based_discovery() -> Invoice:
         total_amount=subtotal + tax,
         extraction_confidence=0.72,
         notes="PO number blank; vendor clear; amount matches PO-KSA-2001",
-        extraction_remarks="PO field could not be extracted — smudged scan area",
+        extraction_remarks="PO field could not be extracted - smudged scan area",
     )
     create_invoice_lines(inv, inv_lines, confidence=0.85)
     return inv
@@ -404,15 +404,15 @@ def create_scn_poag_002_vendor_based_discovery() -> Invoice:
 
 def create_scn_poag_003_multiple_open_pos() -> Invoice:
     """
-    SCN-POAG-003 — VENDOR HAS MULTIPLE OPEN POs
-    ─────────────────────────────────────────────
+    SCN-POAG-003 - VENDOR HAS MULTIPLE OPEN POs
+    ---------------------------------------------
     Invoice PO number is missing.
     Vendor is Saudi Packaging Solutions (VND-SPS-004).
     Three open POs exist with similar values/items.
 
     Expected PO Retrieval Agent outcome:
-    - Should find PO? Ambiguous — multiple candidates
-    - Primary strategy: vendor search → finds 3 candidate POs
+    - Should find PO? Ambiguous - multiple candidates
+    - Primary strategy: vendor search -> finds 3 candidate POs
     - Expected recommendation_type: SEND_TO_AP_REVIEW (ambiguity)
     - Expected confidence: low-medium (0.30–0.55)
     - Expected evidence keys: candidate_pos, matched_vendor, search_attempts
@@ -430,7 +430,7 @@ def create_scn_poag_003_multiple_open_pos() -> Invoice:
             {"item_code": "SPS-LID-001", "description": "Plastic Lid 16oz",
              "qty": 6000, "price": "0.45", "uom": "PCS"},
         ],
-        notes="SCN-POAG-003: candidate A — cups + lids order",
+        notes="SCN-POAG-003: candidate A - cups + lids order",
     )
     ensure_po(
         po_number="PO-KSA-2003",
@@ -444,7 +444,7 @@ def create_scn_poag_003_multiple_open_pos() -> Invoice:
             {"item_code": "SPS-NAP-001", "description": "Napkin Dispenser Pack",
              "qty": 1000, "price": "0.30", "uom": "PKT"},
         ],
-        notes="SCN-POAG-003: candidate B — cups + lids + napkins order",
+        notes="SCN-POAG-003: candidate B - cups + lids + napkins order",
     )
     ensure_po(
         po_number="PO-KSA-2004",
@@ -456,7 +456,7 @@ def create_scn_poag_003_multiple_open_pos() -> Invoice:
             {"item_code": "SPS-LID-001", "description": "Plastic Lid 16oz",
              "qty": 5800, "price": "0.45", "uom": "PCS"},
         ],
-        notes="SCN-POAG-003: candidate C — cups + lids replenishment",
+        notes="SCN-POAG-003: candidate C - cups + lids replenishment",
     )
 
     # Invoice is for cups + lids, qty close to all three POs
@@ -496,8 +496,8 @@ def create_scn_poag_003_multiple_open_pos() -> Invoice:
 
 def create_scn_poag_004_amount_based_fallback() -> Invoice:
     """
-    SCN-POAG-004 — AMOUNT-BASED PO FALLBACK
-    ────────────────────────────────────────
+    SCN-POAG-004 - AMOUNT-BASED PO FALLBACK
+    ----------------------------------------
     Invoice has a bad PO number ("PO/KSA/XXXX") and the vendor name
     is written as an alias variation ("الشركة السعودية لحلول التغليف")
     which can still be resolved via VendorAlias.
@@ -505,7 +505,7 @@ def create_scn_poag_004_amount_based_fallback() -> Invoice:
 
     Expected PO Retrieval Agent outcome:
     - Should find PO? Yes
-    - Primary strategy: normalized PO fails → vendor alias resolves → amount match
+    - Primary strategy: normalized PO fails -> vendor alias resolves -> amount match
     - Expected recommendation_type: null (PO found via amount)
     - Expected confidence: medium (0.60–0.80)
     - Expected evidence keys: po_number, matched_vendor, amount_match, alias_resolved
@@ -552,7 +552,7 @@ def create_scn_poag_004_amount_based_fallback() -> Invoice:
     inv = create_invoice(
         scenario_code="SCN-POAG-004",
         invoice_number="INV-POAG-2026-004",
-        vendor=None,                       # vendor not linked — alias variation
+        vendor=None,                       # vendor not linked - alias variation
         raw_vendor_name="الشركة السعودية لحلول التغليف",
         po_number="PO/KSA/XXXX",          # garbled PO
         raw_po_number="PO/KSA/XXXX",
@@ -570,8 +570,8 @@ def create_scn_poag_004_amount_based_fallback() -> Invoice:
 
 def create_scn_poag_005_no_po_found() -> Invoice:
     """
-    SCN-POAG-005 — NO PO FOUND
-    ───────────────────────────
+    SCN-POAG-005 - NO PO FOUND
+    ---------------------------
     Invoice has invalid PO number "PO-KSA-9999".
     Vendor exists (Najd Edible Oils, VND-NEO-008) but has no open POs
     matching this invoice amount (invoice total is deliberately unique).
@@ -620,11 +620,11 @@ def create_scn_poag_005_no_po_found() -> Invoice:
 
 def create_scn_poag_006_wrong_vendor_valid_like_po() -> Invoice:
     """
-    SCN-POAG-006 — WRONG VENDOR WITH VALID-LIKE PO
-    ────────────────────────────────────────────────
+    SCN-POAG-006 - WRONG VENDOR WITH VALID-LIKE PO
+    ------------------------------------------------
     Invoice comes from Riyadh Beverage Concentrates (VND-RBC-005)
     but references PO-KSA-1001 which belongs to Arabian Food Supplies
-    (VND-AFS-001). The PO exists — but the vendor doesn't match.
+    (VND-AFS-001). The PO exists - but the vendor doesn't match.
 
     Expected PO Retrieval Agent outcome:
     - Should find PO? Yes, but vendor mismatch prevents acceptance
@@ -670,10 +670,10 @@ def create_scn_poag_006_wrong_vendor_valid_like_po() -> Invoice:
 
 def create_scn_poag_007_arabic_english_vendor_alias() -> Invoice:
     """
-    SCN-POAG-007 — ARABIC-ENGLISH VENDOR ALIAS CASE
-    ─────────────────────────────────────────────────
+    SCN-POAG-007 - ARABIC-ENGLISH VENDOR ALIAS CASE
+    -------------------------------------------------
     Invoice vendor name is "شركة الأغذية العربية" (Arabic for
-    "Arabian Food Company") — an abbreviated Arabic alias.
+    "Arabian Food Company") - an abbreviated Arabic alias.
     PO exists under the standard English name "Arabian Food Supplies Co."
     Alias should resolve through VendorAlias.
 
@@ -681,7 +681,7 @@ def create_scn_poag_007_arabic_english_vendor_alias() -> Invoice:
 
     Expected PO Retrieval Agent outcome:
     - Should find PO? Yes
-    - Primary strategy: vendor alias → vendor search → PO found
+    - Primary strategy: vendor alias -> vendor search -> PO found
     - Expected recommendation_type: null (PO found)
     - Expected confidence: medium-high (0.70–0.85)
     - Expected evidence keys: resolved_vendor, alias_used, po_number
@@ -713,9 +713,9 @@ def create_scn_poag_007_arabic_english_vendor_alias() -> Invoice:
     inv = create_invoice(
         scenario_code="SCN-POAG-007",
         invoice_number="INV-POAG-2026-007",
-        vendor=None,                       # vendor not linked — Arabic alias only
+        vendor=None,                       # vendor not linked - Arabic alias only
         raw_vendor_name="شركة الأغذية العربية",
-        po_number="po_ksa_1002",           # underscore format — malformed
+        po_number="po_ksa_1002",           # underscore format - malformed
         raw_po_number="po_ksa_1002",
         invoice_date=INVOICE_DATE + timedelta(days=6),
         subtotal=subtotal,
@@ -731,8 +731,8 @@ def create_scn_poag_007_arabic_english_vendor_alias() -> Invoice:
 
 def create_scn_poag_008_closed_po_referenced() -> Invoice:
     """
-    SCN-POAG-008 — CLOSED PO REFERENCED
-    ─────────────────────────────────────
+    SCN-POAG-008 - CLOSED PO REFERENCED
+    -------------------------------------
     Invoice references PO-KSA-1017 which exists but has status "CLOSED"
     (fully delivered old buns order from master seed).
 
@@ -785,8 +785,8 @@ def create_scn_poag_008_closed_po_referenced() -> Invoice:
 
 def create_scn_poag_009_branch_vs_warehouse_ambiguity() -> Invoice:
     """
-    SCN-POAG-009 — BRANCH VS WAREHOUSE PO AMBIGUITY
-    ─────────────────────────────────────────────────
+    SCN-POAG-009 - BRANCH VS WAREHOUSE PO AMBIGUITY
+    -------------------------------------------------
     Invoice references destination branch "BR-JED-220" but two POs
     exist for the same vendor (Red Sea Restaurant Consumables):
       - PO-KSA-2006: warehouse WH-JED-01 order
@@ -794,8 +794,8 @@ def create_scn_poag_009_branch_vs_warehouse_ambiguity() -> Invoice:
     Both have similar cleaning items and comparable totals.
 
     Expected PO Retrieval Agent outcome:
-    - Should find PO? Possibly — destination context should help
-    - Primary strategy: vendor search → multiple candidates → location filter
+    - Should find PO? Possibly - destination context should help
+    - Primary strategy: vendor search -> multiple candidates -> location filter
     - Expected recommendation_type: null if location narrows to 1, else SEND_TO_AP_REVIEW
     - Expected confidence: medium (0.50–0.75)
     - Expected evidence keys: candidate_pos, destination_code, location_match
@@ -876,8 +876,8 @@ def create_scn_poag_009_branch_vs_warehouse_ambiguity() -> Invoice:
 
 def create_scn_poag_010_high_confidence_exact_recovery() -> Invoice:
     """
-    SCN-POAG-010 — HIGH-CONFIDENCE EXACT RECOVERY WITH ITEM CLUES
-    ──────────────────────────────────────────────────────────────
+    SCN-POAG-010 - HIGH-CONFIDENCE EXACT RECOVERY WITH ITEM CLUES
+    --------------------------------------------------------------
     Invoice PO number is partially malformed: "PO/KSA/1003" (slashes).
     But item descriptions and total amount strongly align with
     PO-KSA-1003 (Gulf Frozen Foods, beef patties).
@@ -915,7 +915,7 @@ def create_scn_poag_010_high_confidence_exact_recovery() -> Invoice:
         invoice_number="INV-POAG-2026-010",
         vendor=vendor,
         raw_vendor_name="Gulf Frozen Foods Trdg.",
-        po_number="PO/KSA/1003",          # slashes — malformed
+        po_number="PO/KSA/1003",          # slashes - malformed
         raw_po_number="PO/KSA/1003",
         invoice_date=INVOICE_DATE + timedelta(days=9),
         subtotal=subtotal,
@@ -935,7 +935,7 @@ def create_scn_poag_010_high_confidence_exact_recovery() -> Invoice:
 ALL_SCENARIO_FNS = [
     ("SCN-POAG-001", "Reordered PO segment recovery", create_scn_poag_001_reordered_po_recovery),
     ("SCN-POAG-002", "Vendor-based PO discovery", create_scn_poag_002_vendor_based_discovery),
-    ("SCN-POAG-003", "Multiple open POs — ambiguity", create_scn_poag_003_multiple_open_pos),
+    ("SCN-POAG-003", "Multiple open POs - ambiguity", create_scn_poag_003_multiple_open_pos),
     ("SCN-POAG-004", "Amount-based PO fallback", create_scn_poag_004_amount_based_fallback),
     ("SCN-POAG-005", "No PO found", create_scn_poag_005_no_po_found),
     ("SCN-POAG-006", "Wrong vendor with valid-like PO", create_scn_poag_006_wrong_vendor_valid_like_po),
@@ -977,13 +977,13 @@ class Command(BaseCommand):
             # Skip if invoice already exists
             inv_number = f"INV-POAG-2026-{code[-3:]}"
             if Invoice.objects.filter(invoice_number=inv_number).exists():
-                self.stdout.write(f"  [{code}] {label} — already exists, skipping")
+                self.stdout.write(f"  [{code}] {label} - already exists, skipping")
                 results.append((code, label, "SKIPPED"))
                 continue
             inv = fn()
             line_count = inv.line_items.count()
             self.stdout.write(self.style.SUCCESS(
-                f"  [{code}] {label} — Invoice {inv.invoice_number} ({line_count} lines)"
+                f"  [{code}] {label} - Invoice {inv.invoice_number} ({line_count} lines)"
             ))
             results.append((code, label, "CREATED"))
 
@@ -1003,7 +1003,7 @@ class Command(BaseCommand):
 
     def _print_summary(self, results):
         self.stdout.write(self.style.MIGRATE_HEADING(
-            "\n─── Summary ───────────────────────────────────────────────"
+            "\n--- Summary -----------------------------------------------"
         ))
         created = sum(1 for _, _, s in results if s == "CREATED")
         skipped = sum(1 for _, _, s in results if s == "SKIPPED")
@@ -1014,7 +1014,7 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.MIGRATE_HEADING("  Scenario Map:"))
         for code, label, status in results:
-            icon = "✓" if status == "CREATED" else "–"
+            icon = "[OK]" if status == "CREATED" else "–"
             self.stdout.write(f"    {icon} {code}  {label}")
 
         self.stdout.write(self.style.MIGRATE_HEADING(
