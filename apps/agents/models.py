@@ -171,14 +171,19 @@ class AgentRecommendation(TimestampMixin):
     reconciliation_result = models.ForeignKey(
         "reconciliation.ReconciliationResult", on_delete=models.CASCADE, related_name="agent_recommendations"
     )
+    invoice = models.ForeignKey(
+        "documents.Invoice", on_delete=models.CASCADE, null=True, blank=True, related_name="agent_recommendations"
+    )
     recommendation_type = models.CharField(max_length=40, choices=RecommendationType.choices, db_index=True)
     confidence = models.FloatField(null=True, blank=True)
     reasoning = models.TextField(blank=True, default="")
     evidence = models.JSONField(null=True, blank=True)
+    recommended_action = models.CharField(max_length=200, blank=True, default="", help_text="Specific action description")
     accepted = models.BooleanField(null=True, help_text="null=pending, True=accepted, False=rejected")
     accepted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
     )
+    accepted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "agents_recommendation"
@@ -188,6 +193,7 @@ class AgentRecommendation(TimestampMixin):
         indexes = [
             models.Index(fields=["recommendation_type"], name="idx_agentrec_type"),
             models.Index(fields=["reconciliation_result"], name="idx_agentrec_result"),
+            models.Index(fields=["invoice"], name="idx_agentrec_invoice"),
         ]
 
     def __str__(self) -> str:

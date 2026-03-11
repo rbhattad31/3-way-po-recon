@@ -20,7 +20,11 @@ from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
 from apps.agents.services.base_agent import AgentContext, BaseAgent
 from apps.agents.services.decision_log_service import DecisionLogService
 from apps.agents.services.policy_engine import PolicyEngine
-from apps.core.enums import AgentRunStatus, ExceptionSeverity, MatchStatus, RecommendationType
+from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
+
+# Only these agents should emit formal recommendations to avoid duplicates.
+# Other agents contribute analysis/reasoning via summarized_reasoning on the run.
+_RECOMMENDING_AGENTS = {AgentType.REVIEW_ROUTING, AgentType.CASE_SUMMARY}
 from apps.reconciliation.models import ReconciliationResult
 
 logger = logging.getLogger(__name__)
@@ -110,17 +114,32 @@ class AgentOrchestrator:
                 orch_result.agent_runs.append(agent_run)
                 last_output = agent_run
 
-                # Record recommendation if present
+                # Record recommendation only for designated routing agents
                 output_payload = agent_run.output_payload or {}
                 rec_type = output_payload.get("recommendation_type")
-                if rec_type:
-                    self.decision_service.log_recommendation(
+                if rec_type and agent_type in _RECOMMENDING_AGENTS:
+                    rec = self.decision_service.log_recommendation(
                         agent_run=agent_run,
                         reconciliation_result=result,
                         recommendation_type=rec_type,
                         confidence=agent_run.confidence or 0.0,
                         reasoning=agent_run.summarized_reasoning or "",
                         evidence=output_payload.get("evidence"),
+                    )
+                    # Backfill invoice FK on recommendation
+                    rec.invoice_id = result.invoice_id
+                    rec.save(update_fields=["invoice_id"])
+
+                    # Audit: agent recommendation created
+                    from apps.auditlog.services import AuditService
+                    from apps.core.enums import AuditEventType
+                    AuditService.log_event(
+                        entity_type="Invoice",
+                        entity_id=result.invoice_id,
+                        event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
+                        description=f"Agent '{agent_type}' recommended {rec_type} (confidence: {agent_run.confidence or 0:.0%})",
+                        agent=agent_type,
+                        metadata={"recommendation_id": rec.pk, "recommendation_type": rec_type, "confidence": agent_run.confidence},
                     )
 
             except Exception as exc:
