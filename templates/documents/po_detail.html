@@ -10,49 +10,52 @@
 {% endblock %}
 
 {% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-cart-check me-2 text-success"></i>{{ po.po_number }}</h4>
+  {% if po.status == "OPEN" %}
+    <span class="ap-badge ap-badge-matched">{{ po.status }}</span>
+  {% elif po.status == "CLOSED" %}
+    <span class="ap-badge" style="background:var(--ap-bg-muted);color:var(--ap-text-secondary)">{{ po.status }}</span>
+  {% else %}
+    <span class="ap-badge ap-badge-info">{{ po.status }}</span>
+  {% endif %}
+</div>
+
 <div class="row g-3">
-  <!-- PO Header -->
+  {# ── PO Header ── #}
   <div class="col-md-6">
-    <div class="card">
-      <div class="card-header bg-white"><strong>Purchase Order Details</strong></div>
-      <table class="table table-sm mb-0">
-        <tr><th style="width:35%">PO #</th><td>{{ po.po_number }}</td></tr>
-        <tr><th>Vendor</th><td>{{ po.vendor.name|default:"—" }}{% if po.vendor.code %} <span class="text-muted">({{ po.vendor.code }})</span>{% endif %}</td></tr>
-        <tr><th>Date</th><td>{{ po.po_date|date:"d M Y"|default:"—" }}</td></tr>
-        <tr><th>Currency</th><td>{{ po.currency }}</td></tr>
-        <tr><th>Tax</th><td>{{ po.tax_amount|default:"—" }}</td></tr>
-        <tr><th>Total Amount</th><td><strong>{{ po.currency }} {{ po.total_amount|default:"—" }}</strong></td></tr>
-        <tr>
-          <th>Status</th>
-          <td>
-            {% if po.status == "OPEN" %}
-              <span class="badge bg-success">{{ po.status }}</span>
-            {% elif po.status == "CLOSED" %}
-              <span class="badge bg-secondary">{{ po.status }}</span>
-            {% else %}
-              <span class="badge bg-info text-dark">{{ po.status }}</span>
-            {% endif %}
-          </td>
-        </tr>
-        <tr><th>Buyer</th><td>{{ po.buyer_name|default:"—" }}</td></tr>
-        <tr><th>Department</th><td>{{ po.department|default:"—" }}</td></tr>
-        {% if po.notes %}<tr><th>Notes</th><td>{{ po.notes }}</td></tr>{% endif %}
-        <tr><th>Created</th><td class="text-muted">{{ po.created_at|date:"d M Y H:i" }}</td></tr>
-      </table>
+    <div class="ap-card">
+      <div class="ap-card-header">
+        <i class="bi bi-info-circle me-2"></i>Purchase Order Details
+      </div>
+      <div class="ap-card-body p-0">
+        <table class="ap-table mb-0">
+          <tr><th style="width:35%">PO #</th><td class="fw-semibold">{{ po.po_number }}</td></tr>
+          <tr><th>Vendor</th><td>{{ po.vendor.name|default:"—" }}{% if po.vendor.code %} <span class="text-muted">({{ po.vendor.code }})</span>{% endif %}</td></tr>
+          <tr><th>Date</th><td>{{ po.po_date|date:"d M Y"|default:"—" }}</td></tr>
+          <tr><th>Currency</th><td>{{ po.currency }}</td></tr>
+          <tr><th>Tax</th><td>{{ po.tax_amount|default:"—" }}</td></tr>
+          <tr><th>Total Amount</th><td class="fw-semibold">{{ po.currency }} {{ po.total_amount|default:"—" }}</td></tr>
+          <tr><th>Buyer</th><td>{{ po.buyer_name|default:"—" }}</td></tr>
+          <tr><th>Department</th><td>{{ po.department|default:"—" }}</td></tr>
+          {% if po.notes %}<tr><th>Notes</th><td>{{ po.notes }}</td></tr>{% endif %}
+          <tr><th>Created</th><td class="text-muted">{{ po.created_at|date:"d M Y H:i" }}</td></tr>
+        </table>
+      </div>
     </div>
   </div>
 
-  <!-- Line Items -->
+  {# ── Line Items ── #}
   <div class="col-md-6">
-    <div class="card">
-      <div class="card-header bg-white d-flex justify-content-between">
-        <strong>Line Items</strong>
-        <span class="badge bg-primary">{{ po.line_items.count }} items</span>
+    <div class="ap-card">
+      <div class="ap-card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-list-ul me-2"></i>Line Items</span>
+        <span class="ap-badge ap-badge-info">{{ po.line_items.count }} items</span>
       </div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <thead class="table-light">
-            <tr><th>#</th><th>Item Code</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr>
+      <div class="ap-card-body p-0">
+        <table class="ap-table mb-0">
+          <thead>
+            <tr><th>#</th><th>Item Code</th><th>Description</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Amount</th></tr>
           </thead>
           <tbody>
             {% for line in po.line_items.all %}
@@ -60,9 +63,9 @@
               <td>{{ line.line_number }}</td>
               <td><code>{{ line.item_code|default:"—" }}</code></td>
               <td>{{ line.description|truncatechars:40 }}</td>
-              <td>{{ line.quantity }} <small class="text-muted">{{ line.unit_of_measure }}</small></td>
-              <td>{{ line.unit_price }}</td>
-              <td>{{ line.line_amount }}</td>
+              <td class="text-end">{{ line.quantity }} <small class="text-muted">{{ line.unit_of_measure }}</small></td>
+              <td class="text-end">{{ line.unit_price }}</td>
+              <td class="text-end">{{ line.line_amount }}</td>
             </tr>
             {% empty %}
             <tr><td colspan="6" class="text-center text-muted py-3">No line items</td></tr>
@@ -74,15 +77,15 @@
   </div>
 </div>
 
-<!-- GRNs -->
+{# ── GRNs ── #}
 {% with grns=po.grns.all %}
 {% if grns %}
-<div class="card mt-3">
-  <div class="card-header bg-white d-flex justify-content-between">
-    <strong>Goods Receipt Notes</strong>
-    <span class="badge bg-primary">{{ grns|length }} GRN{{ grns|length|pluralize }}</span>
+<div class="ap-card mt-3">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-box-seam me-2"></i>Goods Receipt Notes</span>
+    <span class="ap-badge ap-badge-info">{{ grns|length }} GRN{{ grns|length|pluralize }}</span>
   </div>
-  <div class="card-body p-0">
+  <div class="ap-card-body p-0">
     {% for grn in grns %}
     <div class="{% if not forloop.first %}border-top{% endif %} p-3">
       <div class="d-flex justify-content-between align-items-center mb-2">
@@ -91,20 +94,20 @@
           <span class="text-muted ms-2">{{ grn.receipt_date|date:"d M Y"|default:"—" }}</span>
           {% if grn.warehouse %}<span class="text-muted ms-2"><i class="bi bi-geo-alt"></i> {{ grn.warehouse }}</span>{% endif %}
         </div>
-        <span class="badge {% if grn.status == 'RECEIVED' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ grn.status }}</span>
+        <span class="ap-badge {% if grn.status == 'RECEIVED' %}ap-badge-matched{% else %}ap-badge-partial{% endif %}">{{ grn.status }}</span>
       </div>
-      <table class="table table-sm table-bordered mb-0">
-        <thead class="table-light">
-          <tr><th>#</th><th>Description</th><th>Received</th><th>Accepted</th><th>Rejected</th></tr>
+      <table class="ap-table mb-0">
+        <thead>
+          <tr><th>#</th><th>Description</th><th class="text-end">Received</th><th class="text-end">Accepted</th><th class="text-end">Rejected</th></tr>
         </thead>
         <tbody>
           {% for gl in grn.line_items.all %}
           <tr>
             <td>{{ gl.line_number }}</td>
             <td>{{ gl.description|truncatechars:40 }}</td>
-            <td>{{ gl.quantity_received }}</td>
-            <td>{{ gl.quantity_accepted|default:"—" }}</td>
-            <td>{% if gl.quantity_rejected %}<span class="text-danger">{{ gl.quantity_rejected }}</span>{% else %}—{% endif %}</td>
+            <td class="text-end">{{ gl.quantity_received }}</td>
+            <td class="text-end">{{ gl.quantity_accepted|default:"—" }}</td>
+            <td class="text-end">{% if gl.quantity_rejected %}<span class="text-danger fw-semibold">{{ gl.quantity_rejected }}</span>{% else %}—{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -116,13 +119,15 @@
 {% endif %}
 {% endwith %}
 
-<!-- Reconciliation Results -->
+{# ── Reconciliation Results ── #}
 {% if recon_results %}
-<div class="card mt-3">
-  <div class="card-header bg-white"><strong>Reconciliation Results</strong></div>
-  <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0">
-      <thead class="table-light">
+<div class="ap-card mt-3">
+  <div class="ap-card-header">
+    <i class="bi bi-arrow-left-right me-2"></i>Reconciliation Results
+  </div>
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead>
         <tr><th>ID</th><th>Invoice</th><th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th></tr>
       </thead>
       <tbody>
@@ -130,7 +135,12 @@
         <tr>
           <td><a href="{% url 'reconciliation:result_detail' r.pk %}">{{ r.pk }}</a></td>
           <td><a href="{% url 'documents:invoice_detail' r.invoice.pk %}">{{ r.invoice.invoice_number|default:"—" }}</a></td>
-          <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
+          <td>
+            {% if r.match_status == "MATCHED" %}<span class="ap-badge ap-badge-matched">{{ r.match_status }}</span>
+            {% elif r.match_status == "PARTIAL_MATCH" %}<span class="ap-badge ap-badge-partial">{{ r.match_status }}</span>
+            {% elif r.match_status == "UNMATCHED" %}<span class="ap-badge ap-badge-unmatched">{{ r.match_status }}</span>
+            {% else %}<span class="ap-badge ap-badge-review">{{ r.match_status }}</span>{% endif %}
+          </td>
           <td>{% if r.deterministic_confidence %}{% widthratio r.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td>
           <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
           <td>{{ r.exceptions.count }}</td>

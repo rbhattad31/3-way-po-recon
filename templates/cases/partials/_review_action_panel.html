@@ -1,0 +1,73 @@
+{# ── Review Action Panel ── #}
+{# Context: case, summary, show for cases needing human action #}
+
+<div class="ap-card mb-3">
+  <div class="ap-card-header" style="color:var(--ap-primary)">
+    <i class="bi bi-hand-index-thumb"></i> Review Actions
+  </div>
+  <div class="ap-card-body">
+    {# Case summary recommendation #}
+    {% if summary and summary.recommendation %}
+    <div class="ap-recommendation mb-3">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <i class="bi bi-lightbulb-fill text-warning"></i>
+        <strong style="font-size:var(--ap-font-size-sm)">Recommended Action</strong>
+      </div>
+      <div style="font-size:var(--ap-font-size-sm)">{{ summary.recommendation }}</div>
+    </div>
+    {% endif %}
+
+    {# Action buttons #}
+    <div class="d-grid gap-2">
+      {% if case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
+      <button class="btn btn-success btn-sm d-flex align-items-center justify-content-center gap-2"
+              onclick="caseAction('approve')" type="button">
+        <i class="bi bi-check-circle"></i> Approve
+      </button>
+      <button class="btn btn-danger btn-sm d-flex align-items-center justify-content-center gap-2"
+              onclick="caseAction('reject')" type="button">
+        <i class="bi bi-x-circle"></i> Reject
+      </button>
+      <button class="btn btn-outline-warning btn-sm d-flex align-items-center justify-content-center gap-2"
+              onclick="caseAction('escalate')" type="button">
+        <i class="bi bi-arrow-up-right-circle"></i> Escalate
+      </button>
+      <button class="btn btn-outline-secondary btn-sm d-flex align-items-center justify-content-center gap-2"
+              onclick="caseAction('request_info')" type="button">
+        <i class="bi bi-chat-left-dots"></i> Request Info
+      </button>
+      {% elif case.status == "CLOSED" %}
+      <div class="text-center py-2">
+        <i class="bi bi-check-circle-fill text-success" style="font-size:1.5rem"></i>
+        <div class="mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">Case closed</div>
+      </div>
+      {% elif case.status == "FAILED" %}
+      <form method="post" action="{% url 'cases:reprocess_case' case.pk %}">
+        {% csrf_token %}
+        <input type="hidden" name="stage" value="INTAKE">
+        <button type="submit" class="btn btn-warning btn-sm w-100">
+          <i class="bi bi-arrow-clockwise me-1"></i> Retry Processing
+        </button>
+      </form>
+      {% else %}
+      <div class="text-center py-2">
+        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+        <div class="mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">Processing in progress</div>
+      </div>
+      {% endif %}
+    </div>
+
+    {# Add comment #}
+    {% if case.status != "CLOSED" %}
+    <hr class="my-2" style="border-color:var(--ap-border-light)">
+    <div>
+      <label class="form-label" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Add Note</label>
+      <textarea class="form-control form-control-sm" rows="2" id="caseComment" placeholder="Add a comment…"
+                style="font-size:var(--ap-font-size-sm)"></textarea>
+      <button class="btn btn-sm btn-outline-secondary mt-2 w-100" onclick="addComment()" type="button">
+        <i class="bi bi-plus-circle me-1"></i> Add Comment
+      </button>
+    </div>
+    {% endif %}
+  </div>
+</div>

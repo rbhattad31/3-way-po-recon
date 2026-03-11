@@ -1,335 +1,134 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ case.case_number }} – Case Console{% endblock %}
 
+{% block extra_css %}
+<link href="{% static 'css/case-console-v2.css' %}" rel="stylesheet">
+{% endblock %}
+
 {% block breadcrumb %}
-<nav aria-label="breadcrumb"><ol class="breadcrumb">
-  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
-  <li class="breadcrumb-item"><a href="{% url 'cases:case_inbox' %}">AP Cases</a></li>
-  <li class="breadcrumb-item active">{{ case.case_number }}</li>
-</ol></nav>
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'cases:case_inbox' %}" class="text-decoration-none">Case Inbox</a></li>
+    <li class="breadcrumb-item active">{{ case.case_number }}</li>
+  </ol>
+</nav>
 {% endblock %}
 
 {% block content %}
-{# --- Header --- #}
-<div class="d-flex justify-content-between align-items-start mb-4">
-  <div>
-    <h4 class="mb-1">
-      <i class="bi bi-briefcase me-2"></i>{{ case.case_number }}
-      {% if case.status == "CLOSED" %}
-        <span class="badge bg-success ms-2">Closed</span>
-      {% elif case.status == "FAILED" %}
-        <span class="badge bg-danger ms-2">Failed</span>
-      {% elif case.status == "REJECTED" %}
-        <span class="badge bg-danger ms-2">Rejected</span>
-      {% elif case.status == "ESCALATED" %}
-        <span class="badge bg-warning text-dark ms-2">Escalated</span>
-      {% elif case.status == "READY_FOR_REVIEW" %}
-        <span class="badge bg-warning text-dark ms-2">Awaiting Review</span>
-      {% elif case.status == "IN_REVIEW" %}
-        <span class="badge bg-info ms-2">In Review</span>
-      {% elif case.status == "NEW" %}
-        <span class="badge bg-light text-dark ms-2">New</span>
-      {% else %}
-        <span class="badge bg-primary ms-2">{{ case.get_status_display }}</span>
-      {% endif %}
-    </h4>
-    <p class="text-muted mb-0">
-      {% if case.processing_path == "TWO_WAY" %}
-        <span class="badge bg-info me-1">2-Way</span>
-      {% elif case.processing_path == "THREE_WAY" %}
-        <span class="badge bg-primary me-1">3-Way</span>
-      {% elif case.processing_path == "NON_PO" %}
-        <span class="badge bg-secondary me-1">Non-PO</span>
-      {% else %}
-        <span class="badge bg-light text-dark me-1">Unresolved</span>
-      {% endif %}
-      {% if case.priority == "HIGH" %}
-        <span class="badge bg-danger me-1">High Priority</span>
-      {% elif case.priority == "MEDIUM" %}
-        <span class="badge bg-warning text-dark me-1">Medium Priority</span>
-      {% endif %}
-      {% if case.assigned_to %}
-        <i class="bi bi-person me-1"></i>{{ case.assigned_to.get_full_name }}
-      {% endif %}
-      <span class="ms-2 text-muted">Created {{ case.created_at|timesince }} ago</span>
-    </p>
-  </div>
-  {% if case.status == "FAILED" %}
-  <form method="post" action="{% url 'cases:reprocess_case' case.pk %}">
-    {% csrf_token %}
-    <input type="hidden" name="stage" value="INTAKE">
-    <button type="submit" class="btn btn-warning btn-sm">
-      <i class="bi bi-arrow-clockwise me-1"></i>Retry from Start
-    </button>
-  </form>
-  {% endif %}
-</div>
+{# CASE HEADER #}
+{% include "cases/partials/_case_header.html" %}
 
-<div class="row g-4">
-  {# --- Left column: Invoice & PO details --- #}
-  <div class="col-lg-4">
-    {# Invoice card #}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-file-earmark-text me-2"></i>Invoice</div>
-      <div class="card-body">
-        {% if invoice %}
-        <table class="table table-sm table-borderless mb-0">
-          <tr><th>Number</th><td><a href="{% url 'documents:invoice_detail' invoice.pk %}">{{ invoice.invoice_number|default:"—" }}</a></td></tr>
-          <tr><th>Vendor</th><td>{{ invoice.vendor.name|default:invoice.raw_vendor_name }}</td></tr>
-          <tr><th>Date</th><td>{{ invoice.invoice_date|default:"—" }}</td></tr>
-          <tr><th>PO Ref</th><td>{{ invoice.po_number|default:"—" }}</td></tr>
-          <tr><th>Amount</th><td><strong>{{ invoice.currency }} {{ invoice.total_amount|floatformat:2|default:"—" }}</strong></td></tr>
-          <tr><th>Tax</th><td>{{ invoice.currency }} {{ invoice.tax_amount|floatformat:2|default:"—" }}</td></tr>
-          <tr>
-            <th>Confidence</th>
-            <td>
-              {% if invoice.extraction_confidence %}
-                {% widthratio invoice.extraction_confidence 1 100 %}%
-              {% else %}—{% endif %}
-            </td>
-          </tr>
-        </table>
-        {% else %}<p class="text-muted">No invoice linked</p>{% endif %}
-      </div>
-    </div>
+{# STAGE PROGRESS STEPPER #}
+{% include "cases/partials/_stage_stepper.html" %}
 
-    {# PO card #}
-    {% if po %}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-cart-check me-2"></i>Purchase Order</div>
-      <div class="card-body">
-        <table class="table table-sm table-borderless mb-0">
-          <tr><th>PO #</th><td>{{ po.po_number }}</td></tr>
-          <tr><th>Vendor</th><td>{{ po.vendor.name|default:"—" }}</td></tr>
-          <tr><th>Status</th><td>{{ po.get_status_display }}</td></tr>
-          <tr><th>Total</th><td>{{ po.currency }} {{ po.total_amount|floatformat:2|default:"—" }}</td></tr>
-          <tr><th>Lines</th><td>{{ po.line_items.count }}</td></tr>
-        </table>
-      </div>
-    </div>
-    {% endif %}
+{# AGENT STATUS STRIP #}
+{% include "cases/partials/_agent_status_strip.html" %}
 
-    {# GRNs card #}
-    {% if grns %}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-box-seam me-2"></i>GRNs ({{ grns|length }})</div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <thead><tr><th>GRN #</th><th>Date</th><th>Location</th><th>Lines</th></tr></thead>
-          <tbody>
-          {% for grn in grns %}
-            <tr>
-              <td>{{ grn.grn_number }}</td>
-              <td>{{ grn.receipt_date|date:"d M Y" }}</td>
-              <td>{{ grn.delivery_location|default:"—" }}</td>
-              <td>{{ grn.line_items.count }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    {% endif %}
-  </div>
+{# MAIN CONTENT — 2-column layout #}
+<div class="row g-3">
+  {# ── LEFT COLUMN: Investigation panels ── #}
+  <div class="col-lg-8">
 
-  {# --- Middle column: Pipeline stages & decisions --- #}
-  <div class="col-lg-4">
-    {# Pipeline stages #}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-diagram-3 me-2"></i>Processing Pipeline</div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <thead><tr><th>Stage</th><th>Status</th><th>Duration</th></tr></thead>
-          <tbody>
-          {% for stage in stages %}
-            <tr>
-              <td>{{ stage.get_stage_name_display }}</td>
-              <td>
-                {% if stage.stage_status == "COMPLETED" %}
-                  <span class="badge bg-success">Done</span>
-                {% elif stage.stage_status == "IN_PROGRESS" %}
-                  <span class="badge bg-primary">Running</span>
-                {% elif stage.stage_status == "FAILED" %}
-                  <span class="badge bg-danger">Failed</span>
-                {% elif stage.stage_status == "SKIPPED" %}
-                  <span class="badge bg-light text-dark">Skipped</span>
-                {% else %}
-                  <span class="badge bg-light text-dark">Pending</span>
-                {% endif %}
-              </td>
-              <td>
-                {% if stage.started_at and stage.completed_at %}
-                  {{ stage.started_at|timesince:stage.completed_at }}
-                {% elif stage.started_at %}
-                  <small class="text-muted">running...</small>
-                {% else %}—{% endif %}
-              </td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="3" class="text-center text-muted">No stages recorded</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    {# Tab navigation for investigation sections #}
+    <ul class="nav nav-pills mb-3 ap-section-nav" id="caseTabNav" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#tabOverview" type="button" role="tab">
+          <i class="bi bi-eye me-1"></i>Overview
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabDocuments" type="button" role="tab">
+          <i class="bi bi-file-earmark me-1"></i>Documents
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabAgents" type="button" role="tab">
+          <i class="bi bi-robot me-1"></i>Agents{% if agent_runs %} <span class="ap-badge ap-badge-primary">{{ agent_runs|length }}</span>{% endif %}
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabTimeline" type="button" role="tab">
+          <i class="bi bi-clock-history me-1"></i>Timeline
+        </button>
+      </li>
+    </ul>
 
-    {# Decisions #}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-signpost-2 me-2"></i>Decisions ({{ decisions|length }})</div>
-      <div class="card-body p-0">
-        <div class="list-group list-group-flush">
-          {% for d in decisions %}
-          <div class="list-group-item px-3 py-2">
-            <div class="d-flex justify-content-between">
-              <strong>{{ d.get_decision_type_display }}</strong>
-              <span class="badge bg-light text-dark">{{ d.get_decision_source_display }}</span>
-            </div>
-            <div><code>{{ d.decision_value }}</code></div>
-            {% if d.rationale %}
-            <small class="text-muted">{{ d.rationale|truncatechars:200 }}</small>
-            {% endif %}
-            {% if d.confidence %}
-            <small class="text-success ms-1">({{ d.confidence|floatformat:0 }}% conf.)</small>
-            {% endif %}
-          </div>
-          {% empty %}
-          <div class="list-group-item text-muted text-center">No decisions recorded</div>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
+    {# Tab content #}
+    <div class="tab-content" id="caseTabContent">
 
-    {# Exceptions #}
-    {% if exceptions %}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-exclamation-triangle me-2"></i>Exceptions ({{ exceptions|length }})</div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <thead><tr><th>Type</th><th>Severity</th><th>Detail</th></tr></thead>
-          <tbody>
-          {% for exc in exceptions %}
-            <tr>
-              <td><small>{{ exc.get_exception_type_display }}</small></td>
-              <td>
-                {% if exc.severity == "HIGH" %}
-                  <span class="badge bg-danger">High</span>
-                {% elif exc.severity == "MEDIUM" %}
-                  <span class="badge bg-warning text-dark">Med</span>
-                {% else %}
-                  <span class="badge bg-light text-dark">Low</span>
-                {% endif %}
-              </td>
-              <td><small class="text-muted">{{ exc.description|truncatechars:80 }}</small></td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    {% endif %}
-  </div>
+      {# ── OVERVIEW TAB ── #}
+      <div class="tab-pane fade show active" id="tabOverview" role="tabpanel">
+        {# Case summary at top #}
+        {% include "cases/partials/_case_summary.html" %}
 
-  {# --- Right column: Summary, Agents, Timeline --- #}
-  <div class="col-lg-4">
-    {# Case Summary #}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-card-text me-2"></i>Case Summary</div>
-      <div class="card-body">
-        {% if summary %}
-          <p>{{ summary.latest_summary }}</p>
-          {% if summary.recommendation %}
-          <div class="alert alert-info py-2 mb-0">
-            <strong>Recommendation:</strong> {{ summary.recommendation }}
-          </div>
-          {% endif %}
-        {% else %}
-          <p class="text-muted mb-0">No summary available yet.</p>
+        {# Exceptions if any #}
+        {% include "cases/partials/_exceptions_panel.html" %}
+
+        {# Decisions #}
+        {% include "cases/partials/_decisions_panel.html" %}
+
+        {# Path-specific panels #}
+        {% if case.processing_path == "NON_PO" %}
+          {% include "cases/partials/_non_po_panel.html" %}
         {% endif %}
       </div>
-    </div>
 
-    {# Agent Runs #}
-    {% if agent_runs %}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-robot me-2"></i>Agent Activity ({{ agent_runs|length }})</div>
-      <div class="card-body p-0">
-        <div class="list-group list-group-flush">
-          {% for run in agent_runs %}
-          <div class="list-group-item px-3 py-2">
-            <div class="d-flex justify-content-between">
-              <strong>{{ run.agent_definition.name|default:run.agent_type }}</strong>
-              {% if run.status == "COMPLETED" %}
-                <span class="badge bg-success">Done</span>
-              {% elif run.status == "RUNNING" %}
-                <span class="badge bg-primary">Running</span>
-              {% elif run.status == "FAILED" %}
-                <span class="badge bg-danger">Failed</span>
-              {% else %}
-                <span class="badge bg-light text-dark">{{ run.status }}</span>
-              {% endif %}
-            </div>
-            {% if run.summarized_reasoning %}
-            <small class="text-muted">{{ run.summarized_reasoning|truncatechars:150 }}</small>
-            {% endif %}
-            {% if show_full_trace %}
-            <div class="mt-1">
-              <small class="text-muted">
-                Steps: {{ run.steps.count }} | Tools: {{ run.tool_calls.count }}
-                {% if run.recommendations.count %} | Recs: {{ run.recommendations.count }}{% endif %}
-              </small>
-            </div>
-            {% endif %}
+      {# ── DOCUMENTS TAB ── #}
+      <div class="tab-pane fade" id="tabDocuments" role="tabpanel">
+        <div class="row g-3">
+          <div class="{% if case.processing_path == 'THREE_WAY' %}col-md-4{% elif po %}col-md-6{% else %}col-md-12{% endif %}">
+            {% include "cases/partials/_invoice_snapshot.html" %}
           </div>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    {% endif %}
-
-    {# Timeline #}
-    {% if timeline %}
-    <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-clock-history me-2"></i>Timeline</div>
-      <div class="card-body p-0" style="max-height:400px;overflow-y:auto">
-        <div class="list-group list-group-flush">
-          {% for event in timeline %}
-          <div class="list-group-item px-3 py-2">
-            <div class="d-flex justify-content-between">
-              <small class="fw-semibold">{{ event.event_type|default:event.type }}</small>
-              <small class="text-muted">{{ event.timestamp|timesince }} ago</small>
-            </div>
-            <small class="text-muted">{{ event.description|default:event.detail|truncatechars:120 }}</small>
+          {% if po %}
+          <div class="{% if case.processing_path == 'THREE_WAY' %}col-md-4{% else %}col-md-6{% endif %}">
+            {% include "cases/partials/_po_snapshot.html" %}
           </div>
-          {% endfor %}
+          {% endif %}
+          {% if case.processing_path == "THREE_WAY" %}
+          <div class="col-md-4">
+            {% include "cases/partials/_grn_snapshot.html" %}
+          </div>
+          {% endif %}
         </div>
-      </div>
-    </div>
-    {% endif %}
 
-    {# Comments #}
-    <div class="card">
-      <div class="card-header"><i class="bi bi-chat-dots me-2"></i>Comments ({{ comments|length }})</div>
-      <div class="card-body">
-        {% for comment in comments %}
-        <div class="mb-2 pb-2 {% if not forloop.last %}border-bottom{% endif %}">
-          <strong>{{ comment.author.get_full_name|default:"System" }}</strong>
-          <small class="text-muted ms-1">{{ comment.created_at|timesince }} ago</small>
-          <p class="mb-0">{{ comment.content }}</p>
+        {# Reconciliation result link #}
+        {% if case.reconciliation_result %}
+        <div class="mt-3">
+          <a href="{% url 'reconciliation:case_console' case.reconciliation_result.pk %}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-table me-1"></i>View Line-Level Comparison
+          </a>
         </div>
-        {% empty %}
-        <p class="text-muted mb-0">No comments yet.</p>
-        {% endfor %}
+        {% endif %}
+      </div>
+
+      {# ── AGENTS TAB ── #}
+      <div class="tab-pane fade" id="tabAgents" role="tabpanel">
+        {% include "cases/partials/_agent_runs_panel.html" %}
+      </div>
+
+      {# ── TIMELINE TAB ── #}
+      <div class="tab-pane fade" id="tabTimeline" role="tabpanel">
+        {% include "cases/partials/_timeline_panel.html" %}
       </div>
     </div>
   </div>
-</div>
 
-{# --- Reconciliation result link --- #}
-{% if case.reconciliation_result %}
-<div class="mt-4">
-  <a href="{% url 'reconciliation:case_console' case.reconciliation_result.pk %}" class="btn btn-outline-secondary btn-sm">
-    <i class="bi bi-arrow-up-right me-1"></i>View Legacy Reconciliation Detail
-  </a>
+  {# ── RIGHT COLUMN: Sticky action + copilot ── #}
+  <div class="col-lg-4">
+    <div class="ap-right-panel">
+      {# Review Action Panel #}
+      {% include "cases/partials/_review_action_panel.html" %}
+
+      {# Copilot Chat Panel #}
+      {% include "cases/partials/_copilot_panel.html" %}
+    </div>
+  </div>
 </div>
-{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/case-console.js' %}"></script>
+<script src="{% static 'js/copilot-panel.js' %}"></script>
 {% endblock %}

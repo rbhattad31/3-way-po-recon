@@ -10,36 +10,38 @@
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h5 class="mb-0">Reconciliation Results</h5>
-  <form class="d-inline-flex gap-2" method="get">
-    <select name="match_status" class="form-select form-select-sm" onchange="this.form.submit()">
-      <option value="">All Statuses</option>
-      {% for val, label in match_status_choices %}
-        <option value="{{ val }}" {% if request.GET.match_status == val %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-    <select name="reconciliation_mode" class="form-select form-select-sm" onchange="this.form.submit()">
-      <option value="">All Modes</option>
-      {% for val, label in reconciliation_mode_choices %}
-        <option value="{{ val }}" {% if request.GET.reconciliation_mode == val %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </form>
+  <h4 class="mb-0"><i class="bi bi-arrow-left-right me-2"></i>Reconciliation Results</h4>
+  <div class="ap-filter-bar d-inline-flex gap-2 p-0 border-0 bg-transparent">
+    <form class="d-inline-flex gap-2" method="get">
+      <select name="match_status" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Statuses</option>
+        {% for val, label in match_status_choices %}
+          <option value="{{ val }}" {% if request.GET.match_status == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select name="reconciliation_mode" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Modes</option>
+        {% for val, label in reconciliation_mode_choices %}
+          <option value="{{ val }}" {% if request.GET.reconciliation_mode == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
 </div>
 
 {% if ready_invoices %}
-<div class="card mb-3 border-info">
-  <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
+<div class="ap-card mb-3" style="border-left:3px solid var(--ap-info)">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
     <div>
       <i class="bi bi-briefcase me-2 text-info"></i>
       <strong>Invoices Awaiting Case Processing</strong>
-      <span class="badge bg-info ms-2">{{ ready_invoices|length }}</span>
+      <span class="ap-badge ap-badge-info ms-2">{{ ready_invoices|length }}</span>
     </div>
     <a href="{% url 'cases:case_inbox' %}" class="btn btn-info btn-sm">
       <i class="bi bi-arrow-right me-1"></i>View in AP Cases
     </a>
   </div>
-  <div class="card-body">
+  <div class="ap-card-body">
     <p class="text-muted mb-0">
       <i class="bi bi-info-circle me-1"></i>
       Invoices are now automatically processed through the <strong>AP Cases</strong> pipeline after upload.
@@ -48,10 +50,11 @@
   </div>
 </div>
 {% endif %}
-<div class="card">
-  <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0 table-fixed-header">
-      <thead class="table-light">
+
+<div class="ap-card">
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead>
         <tr>
           <th>ID</th><th>Invoice #</th><th>PO #</th><th>Vendor</th>
           <th>Mode</th><th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th><th></th>
@@ -64,8 +67,13 @@
           <td>{{ r.invoice.invoice_number|default:"—" }}</td>
           <td>{{ r.purchase_order.po_number|default:"—" }}</td>
           <td>{% if r.invoice.vendor %}{{ r.invoice.vendor.name }}{% else %}{{ r.invoice.raw_vendor_name }}{% endif %}</td>
-          <td>{% if r.is_two_way_result %}<span class="badge bg-info">2-Way</span>{% elif r.is_three_way_result %}<span class="badge bg-primary">3-Way</span>{% else %}<span class="badge bg-secondary">—</span>{% endif %}</td>
-          <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
+          <td>{% if r.is_two_way_result %}<span class="ap-badge ap-badge-path-2way">2-Way</span>{% elif r.is_three_way_result %}<span class="ap-badge ap-badge-path-3way">3-Way</span>{% else %}<span class="ap-badge ap-badge-status-new">—</span>{% endif %}</td>
+          <td>
+            {% if r.match_status == "MATCHED" %}<span class="ap-badge ap-badge-matched">{{ r.match_status }}</span>
+            {% elif r.match_status == "PARTIAL_MATCH" %}<span class="ap-badge ap-badge-partial">{{ r.match_status }}</span>
+            {% elif r.match_status == "UNMATCHED" %}<span class="ap-badge ap-badge-unmatched">{{ r.match_status }}</span>
+            {% else %}<span class="ap-badge ap-badge-review">{{ r.match_status }}</span>{% endif %}
+          </td>
           <td>{% if r.deterministic_confidence %}{% widthratio r.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td>
           <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
           <td>{{ r.exceptions.count }}</td>

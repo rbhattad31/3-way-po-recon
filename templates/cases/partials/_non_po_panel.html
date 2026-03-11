@@ -1,0 +1,49 @@
+{# ── Non-PO Validation Panel ── #}
+{# Context: case (APCase), decisions (list), shown for NON_PO path #}
+
+{% if case.processing_path == "NON_PO" %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-file-earmark-x"></i> Non-PO Validation
+    <span class="ap-badge ap-badge-nonpo ms-auto">Non-PO Path</span>
+  </div>
+  <div class="ap-card-body">
+    {# Validation checklist #}
+    <div class="list-group list-group-flush">
+      <div class="list-group-item border-0 px-0 py-2 d-flex align-items-center gap-2">
+        <i class="bi bi-check-circle-fill text-success"></i>
+        <span style="font-size:var(--ap-font-size-sm)">Vendor validated</span>
+      </div>
+      <div class="list-group-item border-0 px-0 py-2 d-flex align-items-center gap-2">
+        {% with dup_found=case.duplicate_risk_flag %}
+        {% if dup_found %}
+          <i class="bi bi-exclamation-circle-fill text-warning"></i>
+          <span style="font-size:var(--ap-font-size-sm)">Potential duplicate detected</span>
+        {% else %}
+          <i class="bi bi-check-circle-fill text-success"></i>
+          <span style="font-size:var(--ap-font-size-sm)">No duplicates found</span>
+        {% endif %}
+        {% endwith %}
+      </div>
+      <div class="list-group-item border-0 px-0 py-2 d-flex align-items-center gap-2">
+        {% if case.budget_check_status == "PASSED" %}
+          <i class="bi bi-check-circle-fill text-success"></i>
+        {% elif case.budget_check_status == "FAILED" %}
+          <i class="bi bi-x-circle-fill text-danger"></i>
+        {% else %}
+          <i class="bi bi-dash-circle text-muted"></i>
+        {% endif %}
+        <span style="font-size:var(--ap-font-size-sm)">Budget check: {{ case.budget_check_status|default:"Pending" }}</span>
+      </div>
+      <div class="list-group-item border-0 px-0 py-2 d-flex align-items-center gap-2">
+        {% if case.coding_status == "CODED" %}
+          <i class="bi bi-check-circle-fill text-success"></i>
+        {% else %}
+          <i class="bi bi-dash-circle text-muted"></i>
+        {% endif %}
+        <span style="font-size:var(--ap-font-size-sm)">GL Coding: {{ case.coding_status|default:"Pending" }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}

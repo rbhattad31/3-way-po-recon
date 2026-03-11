@@ -19,47 +19,54 @@
   </a>
 </div>
 <div class="row g-3 mb-3">
-  <!-- Header -->
+  {# ── Header ── #}
   <div class="col-md-6">
-    <div class="card">
-      <div class="card-header bg-white"><strong>Reconciliation Summary</strong></div>
-      <table class="table table-sm mb-0">
-        <tr><th>Invoice #</th><td><a href="{% url 'documents:invoice_detail' result.invoice_id %}">{{ result.invoice.invoice_number }}</a></td></tr>
-        <tr><th>PO #</th><td>{{ result.purchase_order.po_number|default:"—" }}</td></tr>
-        <tr><th>Vendor</th><td>{% if result.invoice.vendor %}{{ result.invoice.vendor.name }}{% else %}{{ result.invoice.raw_vendor_name }}{% endif %}</td></tr>
-        <tr><th>Match Status</th><td><span class="badge status-badge status-{{ result.match_status }}">{{ result.match_status }}</span></td></tr>
-        <tr><th>Recon Mode</th><td>{% if is_two_way %}<span class="badge bg-info">2-Way (Invoice ↔ PO)</span>{% else %}<span class="badge bg-primary">3-Way (Invoice ↔ PO ↔ GRN)</span>{% endif %}{% if result.mode_resolution_reason %}<br><small class="text-muted">{{ result.mode_resolution_reason }}</small>{% endif %}</td></tr>
-        <tr><th>Confidence</th><td>{% if result.deterministic_confidence %}{% widthratio result.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td></tr>
-        <tr><th>Amount Diff</th><td>{{ result.total_amount_difference|default:"0" }} ({{ result.total_amount_difference_pct|default:"0" }}%)</td></tr>
-        <tr><th>Vendor Match</th><td>{% if result.vendor_match %}<i class="bi bi-check-circle text-success"></i>{% elif result.vendor_match == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
-        <tr><th>Currency Match</th><td>{% if result.currency_match %}<i class="bi bi-check-circle text-success"></i>{% elif result.currency_match == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
-        {% if not is_two_way %}
-        <tr><th>GRN Available</th><td>{% if result.grn_available %}<i class="bi bi-check-circle text-success"></i>{% else %}<i class="bi bi-x-circle text-secondary"></i>{% endif %}</td></tr>
-        <tr><th>GRN Fully Received</th><td>{% if result.grn_fully_received %}<i class="bi bi-check-circle text-success"></i>{% elif result.grn_fully_received == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
-        {% endif %}
-      </table>
+    <div class="ap-card">
+      <div class="ap-card-header"><i class="bi bi-clipboard-data me-2"></i>Reconciliation Summary</div>
+      <div class="ap-card-body p-0">
+        <table class="ap-table mb-0">
+          <tr><th>Invoice #</th><td><a href="{% url 'documents:invoice_detail' result.invoice_id %}">{{ result.invoice.invoice_number }}</a></td></tr>
+          <tr><th>PO #</th><td>{{ result.purchase_order.po_number|default:"—" }}</td></tr>
+          <tr><th>Vendor</th><td>{% if result.invoice.vendor %}{{ result.invoice.vendor.name }}{% else %}{{ result.invoice.raw_vendor_name }}{% endif %}</td></tr>
+          <tr><th>Match Status</th><td>
+            {% if result.match_status == "MATCHED" %}<span class="ap-badge ap-badge-matched">{{ result.match_status }}</span>
+            {% elif result.match_status == "PARTIAL_MATCH" %}<span class="ap-badge ap-badge-partial">{{ result.match_status }}</span>
+            {% elif result.match_status == "UNMATCHED" %}<span class="ap-badge ap-badge-unmatched">{{ result.match_status }}</span>
+            {% else %}<span class="ap-badge ap-badge-review">{{ result.match_status }}</span>{% endif %}
+          </td></tr>
+          <tr><th>Recon Mode</th><td>{% if is_two_way %}<span class="ap-badge ap-badge-path-2way">2-Way (Invoice ↔ PO)</span>{% else %}<span class="ap-badge ap-badge-path-3way">3-Way (Invoice ↔ PO ↔ GRN)</span>{% endif %}{% if result.mode_resolution_reason %}<br><small class="text-muted">{{ result.mode_resolution_reason }}</small>{% endif %}</td></tr>
+          <tr><th>Confidence</th><td>{% if result.deterministic_confidence %}{% widthratio result.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td></tr>
+          <tr><th>Amount Diff</th><td>{{ result.total_amount_difference|default:"0" }} ({{ result.total_amount_difference_pct|default:"0" }}%)</td></tr>
+          <tr><th>Vendor Match</th><td>{% if result.vendor_match %}<i class="bi bi-check-circle text-success"></i>{% elif result.vendor_match == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
+          <tr><th>Currency Match</th><td>{% if result.currency_match %}<i class="bi bi-check-circle text-success"></i>{% elif result.currency_match == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
+          {% if not is_two_way %}
+          <tr><th>GRN Available</th><td>{% if result.grn_available %}<i class="bi bi-check-circle text-success"></i>{% else %}<i class="bi bi-x-circle text-secondary"></i>{% endif %}</td></tr>
+          <tr><th>GRN Fully Received</th><td>{% if result.grn_fully_received %}<i class="bi bi-check-circle text-success"></i>{% elif result.grn_fully_received == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
+          {% endif %}
+        </table>
+      </div>
     </div>
   </div>
   <div class="col-md-6">
     {% if result.summary %}
-    <div class="card mb-3">
-      <div class="card-header bg-white"><strong>Summary</strong></div>
-      <div class="card-body">{{ result.summary }}</div>
+    <div class="ap-card mb-3">
+      <div class="ap-card-header"><i class="bi bi-journal-text me-2"></i>Summary</div>
+      <div class="ap-card-body">{{ result.summary }}</div>
     </div>
     {% endif %}
-    <!-- Exceptions -->
-    <div class="card">
-      <div class="card-header bg-white"><strong>Exceptions ({{ exceptions|length }})</strong></div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <thead class="table-light"><tr><th>Type</th><th>Severity</th><th>Message</th><th>Resolved</th></tr></thead>
+    {# ── Exceptions ── #}
+    <div class="ap-card">
+      <div class="ap-card-header"><i class="bi bi-exclamation-triangle me-2"></i>Exceptions ({{ exceptions|length }})</div>
+      <div class="ap-card-body p-0">
+        <table class="ap-table mb-0">
+          <thead><tr><th>Type</th><th>Severity</th><th>Message</th><th>Resolved</th></tr></thead>
           <tbody>
             {% for exc in exceptions %}
             <tr>
               <td>{{ exc.exception_type }}</td>
-              <td><span class="severity-{{ exc.severity }}">{{ exc.severity }}</span></td>
+              <td><span class="ap-badge ap-badge-severity-{{ exc.severity|lower }}">{{ exc.severity }}</span></td>
               <td>{{ exc.message }}</td>
-              <td>{% if exc.resolved %}<i class="bi bi-check-circle text-success"></i> Resolved{% else %}<span class="badge bg-warning text-dark">Open</span>{% endif %}</td>
+              <td>{% if exc.resolved %}<i class="bi bi-check-circle text-success"></i> Resolved{% else %}<span class="ap-badge ap-badge-partial">Open</span>{% endif %}</td>
             </tr>
             {% empty %}
             <tr><td colspan="4" class="text-muted text-center">No exceptions</td></tr>
@@ -71,12 +78,12 @@
   </div>
 </div>
 
-<!-- Line Results -->
-<div class="card mb-3">
-  <div class="card-header bg-white"><strong>Line-Level Comparison</strong></div>
-  <div class="card-body p-0" style="overflow-x:auto">
-    <table class="table table-sm mb-0">
-      <thead class="table-light">
+{# ── Line Results ── #}
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-table me-2"></i>Line-Level Comparison</div>
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table mb-0">
+      <thead>
         <tr>
           <th>Status</th>
           <th>Qty (Inv)</th><th>Qty (PO)</th>{% if not is_two_way %}<th>Qty (GRN)</th>{% endif %}<th>Qty Diff</th>
@@ -87,7 +94,11 @@
       <tbody>
         {% for ln in line_results %}
         <tr>
-          <td><span class="badge status-badge status-{{ ln.match_status }}">{{ ln.match_status }}</span></td>
+          <td>
+            {% if ln.match_status == "MATCHED" %}<span class="ap-badge ap-badge-matched">{{ ln.match_status }}</span>
+            {% elif ln.match_status == "PARTIAL_MATCH" %}<span class="ap-badge ap-badge-partial">{{ ln.match_status }}</span>
+            {% else %}<span class="ap-badge ap-badge-unmatched">{{ ln.match_status }}</span>{% endif %}
+          </td>
           <td>{{ ln.qty_invoice|default:"—" }}</td>
           <td>{{ ln.qty_po|default:"—" }}</td>
           {% if not is_two_way %}<td>{{ ln.qty_received|default:"—" }}</td>{% endif %}
@@ -107,24 +118,24 @@
   </div>
 </div>
 
-<!-- Agent Recommendations -->
+{# ── Agent Recommendations ── #}
 {% if recommendations %}
-<div class="card mb-3">
-  <div class="card-header bg-white d-flex align-items-center">
-    <i class="bi bi-lightbulb me-2 text-warning"></i><strong>Agent Recommendations</strong>
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-lightbulb me-2 text-warning"></i>Agent Recommendations
   </div>
-  <div class="card-body p-0">
-    <table class="table table-sm mb-0">
-      <thead class="table-light"><tr><th>Type</th><th>Agent</th><th>Confidence</th><th>Reasoning</th><th>Action</th><th>Accepted</th></tr></thead>
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead><tr><th>Type</th><th>Agent</th><th>Confidence</th><th>Reasoning</th><th>Action</th><th>Accepted</th></tr></thead>
       <tbody>
         {% for rec in recommendations %}
         <tr>
-          <td><span class="badge bg-info">{{ rec.recommendation_type }}</span></td>
+          <td><span class="ap-badge ap-badge-info">{{ rec.recommendation_type }}</span></td>
           <td><small class="text-muted">{{ rec.agent_run.agent_type }}</small></td>
           <td>{% widthratio rec.confidence 1 100 %}%</td>
           <td>{{ rec.reasoning }}</td>
           <td>{{ rec.recommended_action|default:"—" }}</td>
-          <td>{% if rec.accepted == True %}<i class="bi bi-check-circle text-success"></i> Accepted{% elif rec.accepted == False %}<i class="bi bi-x-circle text-danger"></i> Rejected{% else %}<span class="badge bg-warning text-dark">Pending</span>{% endif %}</td>
+          <td>{% if rec.accepted == True %}<i class="bi bi-check-circle text-success"></i> Accepted{% elif rec.accepted == False %}<i class="bi bi-x-circle text-danger"></i> Rejected{% else %}<span class="ap-badge ap-badge-partial">Pending</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -133,17 +144,13 @@
 </div>
 {% endif %}
 
-<!-- ============================================================ -->
-<!-- GOVERNANCE PANELS                                            -->
-<!-- ============================================================ -->
-
-<!-- 1. Agent Decision Flow -->
+{# ── Agent Decision Flow ── #}
 {% if agent_runs %}
-<div class="card mb-3">
-  <div class="card-header bg-white d-flex align-items-center">
-    <i class="bi bi-diagram-3 me-2 text-primary"></i><strong>Agent Decision Flow</strong>
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-diagram-3 me-2 text-primary"></i>Agent Decision Flow
   </div>
-  <div class="card-body p-0">
+  <div class="ap-card-body p-0">
     <div class="accordion" id="agentFlowAccordion">
       {% for run in agent_runs %}
       <div class="accordion-item">
@@ -157,13 +164,12 @@
             </span>
             <strong class="me-2">{{ forloop.counter }}. {{ run.agent_definition.name|default:run.agent_type }}</strong>
             <small class="text-muted me-3">{{ run.status }}</small>
-            {% if run.confidence %}<span class="badge bg-secondary">{% widthratio run.confidence 1 100 %}% conf</span>{% endif %}
+            {% if run.confidence %}<span class="ap-badge ap-badge-info">{% widthratio run.confidence 1 100 %}% conf</span>{% endif %}
             {% if run.duration_ms %}<small class="text-muted ms-2">{{ run.duration_ms }}ms</small>{% endif %}
           </button>
         </h2>
         <div id="agentBody{{ run.pk }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}" data-bs-parent="#agentFlowAccordion">
           <div class="accordion-body">
-            <!-- Reasoning summary -->
             {% if run.summarized_reasoning %}
             <div class="mb-3">
               <h6 class="text-muted">Reasoning</h6>
@@ -171,7 +177,6 @@
             </div>
             {% endif %}
 
-            <!-- Decisions -->
             {% with decisions=run.decisions.all %}
             {% if decisions %}
             <div class="mb-3">
@@ -180,7 +185,7 @@
                 {% for d in decisions %}
                 <li class="list-group-item px-0">
                   <strong>{{ d.decision }}</strong>
-                  {% if d.confidence %}<span class="badge bg-secondary ms-1">{% widthratio d.confidence 1 100 %}%</span>{% endif %}
+                  {% if d.confidence %}<span class="ap-badge ap-badge-info ms-1">{% widthratio d.confidence 1 100 %}%</span>{% endif %}
                   {% if d.rationale %}<br><small class="text-muted">{{ d.rationale }}</small>{% endif %}
                 </li>
                 {% endfor %}
@@ -189,19 +194,18 @@
             {% endif %}
             {% endwith %}
 
-            <!-- Tool calls (full trace for admins/auditors only) -->
             {% if show_full_trace %}
             {% with tool_calls=run.tool_calls.all %}
             {% if tool_calls %}
             <div class="mb-3">
               <h6 class="text-muted">Tool Calls</h6>
-              <table class="table table-sm table-bordered mb-0">
-                <thead class="table-light"><tr><th>Tool</th><th>Status</th><th>Duration</th></tr></thead>
+              <table class="ap-table mb-0">
+                <thead><tr><th>Tool</th><th>Status</th><th>Duration</th></tr></thead>
                 <tbody>
                   {% for tc in tool_calls %}
                   <tr>
                     <td><code>{{ tc.tool_name }}</code></td>
-                    <td>{% if tc.status == "SUCCESS" %}<span class="badge bg-success">{{ tc.status }}</span>{% else %}<span class="badge bg-danger">{{ tc.status }}</span>{% endif %}</td>
+                    <td>{% if tc.status == "SUCCESS" %}<span class="ap-badge ap-badge-matched">{{ tc.status }}</span>{% else %}<span class="ap-badge ap-badge-unmatched">{{ tc.status }}</span>{% endif %}</td>
                     <td>{{ tc.duration_ms|default:"—" }}ms</td>
                   </tr>
                   {% endfor %}
@@ -211,7 +215,6 @@
             {% endif %}
             {% endwith %}
 
-            <!-- Steps -->
             {% with steps=run.steps.all %}
             {% if steps %}
             <div class="mb-3">
@@ -220,7 +223,7 @@
                 {% for s in steps %}
                 <li class="list-group-item px-0">
                   {{ s.action }}
-                  {% if not s.success %}<span class="badge bg-danger ms-1">Failed</span>{% endif %}
+                  {% if not s.success %}<span class="ap-badge ap-badge-unmatched ms-1">Failed</span>{% endif %}
                   {% if s.duration_ms %}<small class="text-muted ms-1">({{ s.duration_ms }}ms)</small>{% endif %}
                 </li>
                 {% endfor %}
@@ -228,7 +231,7 @@
             </div>
             {% endif %}
             {% endwith %}
-            {% endif %}{# show_full_trace #}
+            {% endif %}
 
           </div>
         </div>
@@ -239,50 +242,48 @@
 </div>
 {% endif %}
 
-<!-- 2. Case Timeline -->
+{# ── Case Timeline ── #}
 {% if timeline %}
-<div class="card mb-3">
-  <div class="card-header bg-white d-flex align-items-center">
-    <i class="bi bi-clock-history me-2 text-info"></i><strong>Case Timeline</strong>
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-clock-history me-2 text-info"></i>Case Timeline
   </div>
-  <div class="card-body">
-    <div class="timeline-governance">
-      {% for event in timeline %}
-      <div class="d-flex mb-3">
-        <div class="flex-shrink-0 me-3 text-center" style="width:32px;">
-          {% if event.event_category == "audit" %}
-            <i class="bi bi-file-earmark-text fs-5 text-primary"></i>
-          {% elif event.event_category == "mode_resolution" %}
-            <i class="bi bi-arrow-left-right fs-5 text-info"></i>
-          {% elif event.event_category == "agent_run" %}
-            <i class="bi bi-robot fs-5 text-success"></i>
-          {% elif event.event_category == "tool_call" %}
-            <i class="bi bi-tools fs-5 text-secondary"></i>
-          {% elif event.event_category == "recommendation" %}
-            <i class="bi bi-lightbulb fs-5 text-warning"></i>
-          {% elif event.event_category == "review" or event.event_category == "review_action" %}
-            <i class="bi bi-person-check fs-5 text-info"></i>
-          {% elif event.event_category == "review_decision" %}
-            <i class="bi bi-shield-check fs-5 text-danger"></i>
-          {% else %}
-            <i class="bi bi-circle fs-5 text-muted"></i>
-          {% endif %}
-        </div>
-        <div class="flex-grow-1 border-start ps-3" style="border-color:#dee2e6 !important;">
-          <div class="d-flex justify-content-between align-items-start">
-            <div>
-              <strong>{{ event.description }}</strong>
-              <br><small class="text-muted">
-                <span class="badge bg-light text-dark border">{{ event.event_category }}</span>
-                by {{ event.actor }}
-              </small>
-            </div>
-            <small class="text-muted text-nowrap ms-2">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
+  <div class="ap-card-body">
+    {% for event in timeline %}
+    <div class="d-flex mb-3">
+      <div class="flex-shrink-0 me-3 text-center" style="width:32px;">
+        {% if event.event_category == "audit" %}
+          <i class="bi bi-file-earmark-text fs-5 text-primary"></i>
+        {% elif event.event_category == "mode_resolution" %}
+          <i class="bi bi-arrow-left-right fs-5 text-info"></i>
+        {% elif event.event_category == "agent_run" %}
+          <i class="bi bi-robot fs-5 text-success"></i>
+        {% elif event.event_category == "tool_call" %}
+          <i class="bi bi-tools fs-5 text-secondary"></i>
+        {% elif event.event_category == "recommendation" %}
+          <i class="bi bi-lightbulb fs-5 text-warning"></i>
+        {% elif event.event_category == "review" or event.event_category == "review_action" %}
+          <i class="bi bi-person-check fs-5 text-info"></i>
+        {% elif event.event_category == "review_decision" %}
+          <i class="bi bi-shield-check fs-5 text-danger"></i>
+        {% else %}
+          <i class="bi bi-circle fs-5 text-muted"></i>
+        {% endif %}
+      </div>
+      <div class="flex-grow-1 border-start ps-3" style="border-color:var(--ap-border) !important;">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <strong>{{ event.description }}</strong>
+            <br><small class="text-muted">
+              <span class="ap-badge ap-badge-status-new">{{ event.event_category }}</span>
+              by {{ event.actor }}
+            </small>
           </div>
+          <small class="text-muted text-nowrap ms-2">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
         </div>
       </div>
-      {% endfor %}
     </div>
+    {% endfor %}
   </div>
 </div>
 {% endif %}

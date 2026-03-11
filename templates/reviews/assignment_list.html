@@ -1,18 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Review Queue – PO Reconciliation{% endblock %}
+{% load static %}
+{% block title %}Review Workbench – AP Operations{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/reviews.css' %}" rel="stylesheet">
+{% endblock %}
 
 {% block breadcrumb %}
-<nav aria-label="breadcrumb"><ol class="breadcrumb">
-  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
-  <li class="breadcrumb-item active">Reviews</li>
-</ol></nav>
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item active">Review Workbench</li>
+  </ol>
+</nav>
 {% endblock %}
 
 {% block content %}
+{# PAGE HEADER #}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h5 class="mb-0">Review Queue</h5>
+  <div>
+    <h4 class="mb-0 fw-semibold">Review Workbench</h4>
+    <small style="color:var(--ap-text-muted)">Manage review assignments and decisions</small>
+  </div>
   <form class="d-inline-flex gap-2" method="get">
-    <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+    <select name="status" class="form-select form-select-sm" onchange="this.form.submit()" style="min-width:150px">
       <option value="">All Statuses</option>
       {% for val, label in review_status_choices %}
         <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
@@ -21,20 +32,19 @@
   </form>
 </div>
 
+{# UNASSIGNED RESULTS — Awaiting Assignment #}
 {% if unassigned_results %}
-<div class="card mb-3 border-warning">
-  <div class="card-header bg-warning bg-opacity-10 d-flex justify-content-between align-items-center">
-    <div>
-      <i class="bi bi-exclamation-triangle me-2 text-warning"></i>
-      <strong>Results Awaiting Review Assignment</strong>
-      <span class="badge bg-warning text-dark ms-2">{{ unassigned_results|length }}</span>
-    </div>
+<div class="ap-card mb-3" style="border-left:3px solid var(--ap-warning)">
+  <div class="ap-card-header" style="color:var(--ap-warning)">
+    <i class="bi bi-exclamation-triangle"></i>
+    Results Awaiting Review Assignment
+    <span class="ap-badge ap-badge-warning ms-2">{{ unassigned_results|length }}</span>
   </div>
-  <div class="card-body p-0">
+  <div class="ap-card-body p-0">
     <form method="post" action="{% url 'reviews:create_assignments' %}" id="assignForm">
       {% csrf_token %}
-      <table class="table table-sm mb-0">
-        <thead class="table-light">
+      <table class="ap-table">
+        <thead>
           <tr>
             <th style="width:40px"><input type="checkbox" id="selectAllReview" class="form-check-input"></th>
             <th>Invoice #</th><th>Vendor</th><th>PO #</th><th>Match Status</th><th>Exceptions</th><th>Date</th>
@@ -44,18 +54,22 @@
           {% for r in unassigned_results %}
           <tr>
             <td><input type="checkbox" name="result_ids" value="{{ r.pk }}" class="form-check-input result-check"></td>
-            <td>{{ r.invoice.invoice_number|default:"—" }}</td>
-            <td>{% if r.invoice.vendor %}{{ r.invoice.vendor.name }}{% else %}{{ r.invoice.raw_vendor_name }}{% endif %}</td>
-            <td>{{ r.purchase_order.po_number|default:"—" }}</td>
-            <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
-            <td>{{ r.exceptions.count }}</td>
-            <td class="text-muted">{{ r.created_at|timesince }} ago</td>
+            <td style="font-size:var(--ap-font-size-sm);font-weight:500">{{ r.invoice.invoice_number|default:"—" }}</td>
+            <td style="font-size:var(--ap-font-size-sm)">{% if r.invoice.vendor %}{{ r.invoice.vendor.name }}{% else %}{{ r.invoice.raw_vendor_name }}{% endif %}</td>
+            <td style="font-size:var(--ap-font-size-sm)">{{ r.purchase_order.po_number|default:"—" }}</td>
+            <td>
+              <span class="ap-badge {% if r.match_status == 'MATCHED' %}ap-badge-success{% elif r.match_status == 'PARTIAL_MATCH' %}ap-badge-warning{% elif r.match_status == 'UNMATCHED' %}ap-badge-danger{% else %}ap-badge-muted{% endif %}">
+                {{ r.match_status }}
+              </span>
+            </td>
+            <td class="text-center" style="font-size:var(--ap-font-size-sm)">{{ r.exceptions.count }}</td>
+            <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ r.created_at|timesince }} ago</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
-      <div class="card-footer d-flex justify-content-between align-items-center">
-        <small class="text-muted"><span id="selectedReviewCount">0</span> result(s) selected</small>
+      <div class="d-flex justify-content-between align-items-center px-3 py-2" style="border-top:1px solid var(--ap-border-light)">
+        <small style="color:var(--ap-text-muted)"><span id="selectedReviewCount">0</span> result(s) selected</small>
         <div class="d-flex gap-2">
           <button type="button" class="btn btn-outline-warning btn-sm" id="selectAllReviewBtn">Select All</button>
           <button type="submit" class="btn btn-warning btn-sm" id="createAssignBtn" disabled>
@@ -67,63 +81,85 @@
   </div>
 </div>
 {% endif %}
-<div class="card">
-  <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0 table-fixed-header">
-      <thead class="table-light">
+
+{# REVIEW ASSIGNMENTS TABLE #}
+<div class="ap-card">
+  <div class="ap-card-header">
+    <i class="bi bi-clipboard-check"></i> Review Queue
+    <span class="ms-auto" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+      {{ assignments|length }} assignments
+    </span>
+  </div>
+  <div class="ap-card-body p-0">
+    <table class="ap-table">
+      <thead>
         <tr>
           <th>ID</th><th>Invoice #</th><th>Match Status</th><th>Review Status</th>
-          <th>Priority</th><th>Assigned To</th><th>Created</th><th></th>
+          <th>Priority</th><th>Assigned To</th><th>Created</th><th style="width:80px"></th>
         </tr>
       </thead>
       <tbody>
         {% for a in assignments %}
         <tr>
-          <td>{{ a.pk }}</td>
-          <td>{{ a.reconciliation_result.invoice.invoice_number|default:"—" }}</td>
-          <td><span class="badge status-badge status-{{ a.reconciliation_result.match_status }}">{{ a.reconciliation_result.match_status }}</span></td>
-          <td><span class="badge status-badge status-{{ a.status }}">{{ a.status }}</span></td>
-          <td>{{ a.priority }}</td>
-          <td>{{ a.assigned_to.get_full_name|default:"Unassigned" }}</td>
-          <td class="text-muted">{{ a.created_at|timesince }} ago</td>
-          <td><a href="{% url 'reviews:assignment_detail' a.pk %}" class="btn btn-sm btn-outline-primary">Review</a></td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ a.pk }}</td>
+          <td style="font-size:var(--ap-font-size-sm);font-weight:500">{{ a.reconciliation_result.invoice.invoice_number|default:"—" }}</td>
+          <td>
+            <span class="ap-badge {% if a.reconciliation_result.match_status == 'MATCHED' %}ap-badge-success{% elif a.reconciliation_result.match_status == 'PARTIAL_MATCH' %}ap-badge-warning{% elif a.reconciliation_result.match_status == 'UNMATCHED' %}ap-badge-danger{% else %}ap-badge-muted{% endif %}">
+              {{ a.reconciliation_result.match_status }}
+            </span>
+          </td>
+          <td>
+            <span class="ap-badge {% if a.status == 'APPROVED' %}ap-badge-success{% elif a.status == 'REJECTED' %}ap-badge-danger{% elif a.status == 'IN_REVIEW' %}ap-badge-primary{% elif a.status == 'ASSIGNED' %}ap-badge-warning{% else %}ap-badge-muted{% endif %}">
+              {{ a.status }}
+            </span>
+          </td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ a.priority }}</td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ a.assigned_to.get_full_name|default:"Unassigned" }}</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ a.created_at|timesince }} ago</td>
+          <td><a href="{% url 'reviews:assignment_detail' a.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">Review</a></td>
         </tr>
         {% empty %}
-        <tr><td colspan="8" class="text-center text-muted py-3">No reviews in queue</td></tr>
+        <tr><td colspan="8">
+          <div class="ap-empty-state">
+            <i class="bi bi-clipboard-check"></i>
+            <div class="ap-empty-state-label">No reviews in queue</div>
+          </div>
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
 {% include "partials/pagination.html" %}
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-  const checks = document.querySelectorAll('.result-check');
-  const selectAll = document.getElementById('selectAllReview');
-  const selectAllBtn = document.getElementById('selectAllReviewBtn');
-  const createBtn = document.getElementById('createAssignBtn');
-  const countSpan = document.getElementById('selectedReviewCount');
+  var checks = document.querySelectorAll('.result-check');
+  var selectAll = document.getElementById('selectAllReview');
+  var selectAllBtn = document.getElementById('selectAllReviewBtn');
+  var createBtn = document.getElementById('createAssignBtn');
+  var countSpan = document.getElementById('selectedReviewCount');
 
   function updateState() {
-    const checked = document.querySelectorAll('.result-check:checked').length;
+    var checked = document.querySelectorAll('.result-check:checked').length;
     if (countSpan) countSpan.textContent = checked;
     if (createBtn) createBtn.disabled = checked === 0;
     if (selectAll) selectAll.checked = checked === checks.length && checks.length > 0;
   }
 
   if (selectAll) selectAll.addEventListener('change', function() {
-    checks.forEach(cb => cb.checked = this.checked);
+    checks.forEach(function(cb) { cb.checked = selectAll.checked; });
     updateState();
   });
 
   if (selectAllBtn) selectAllBtn.addEventListener('click', function() {
-    checks.forEach(cb => cb.checked = true);
+    checks.forEach(function(cb) { cb.checked = true; });
     if (selectAll) selectAll.checked = true;
     updateState();
   });
 
-  checks.forEach(cb => cb.addEventListener('change', updateState));
+  checks.forEach(function(cb) { cb.addEventListener('change', updateState); });
 });
 </script>
 {% endblock %}

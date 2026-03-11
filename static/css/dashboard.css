@@ -1,0 +1,4 @@
+/* Dashboard — page-specific styles */
+.ap-page-header {
+  margin-bottom: var(--ap-space-4);
+}

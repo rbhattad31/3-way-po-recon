@@ -1,0 +1,25 @@
+{# ── PO Snapshot Card ── #}
+{# Context: po (PurchaseOrder model or None) #}
+
+{% if po %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-cart-check"></i> Purchase Order</div>
+  <div class="ap-card-body-flush">
+    <table class="ap-table">
+      <tbody>
+        <tr><td class="text-muted" style="width:35%">PO #</td><td class="fw-semibold">{{ po.po_number }}</td></tr>
+        <tr><td class="text-muted">Vendor</td><td>{{ po.vendor.name|default:"—" }}</td></tr>
+        <tr><td class="text-muted">Status</td><td><span class="ap-badge ap-badge-muted">{{ po.get_status_display }}</span></td></tr>
+        <tr>
+          <td class="text-muted">Total</td>
+          <td class="fw-semibold">{% if po.total_amount %}{{ po.currency }} {{ po.total_amount|floatformat:2 }}{% else %}—{% endif %}</td>
+        </tr>
+        <tr><td class="text-muted">Line Items</td><td>{{ po.line_items.count }}</td></tr>
+        {% if po.po_date %}
+        <tr><td class="text-muted">PO Date</td><td>{{ po.po_date|date:"d M Y" }}</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
