@@ -21,6 +21,10 @@ class ReconciliationConfig(BaseModel):
     quantity_tolerance_pct = models.FloatField(default=2.0)
     price_tolerance_pct = models.FloatField(default=1.0)
     amount_tolerance_pct = models.FloatField(default=1.0)
+    # Wider auto-close band: PARTIAL_MATCH within these thresholds → auto-close without AI
+    auto_close_qty_tolerance_pct = models.FloatField(default=5.0)
+    auto_close_price_tolerance_pct = models.FloatField(default=3.0)
+    auto_close_amount_tolerance_pct = models.FloatField(default=3.0)
     auto_close_on_match = models.BooleanField(default=True)
     enable_agents = models.BooleanField(default=True)
     extraction_confidence_threshold = models.FloatField(default=0.75)

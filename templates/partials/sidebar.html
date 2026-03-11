@@ -50,6 +50,12 @@
           <i class="bi bi-shield-lock me-2"></i>Audit Log
         </a>
       </li>
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'recon_settings' %}active fw-bold{% endif %}" href="{% url 'reconciliation:recon_settings' %}">
+          <i class="bi bi-gear me-2"></i>Settings
+        </a>
+      </li>
     </ul>
   </div>
 </nav>
