@@ -37,7 +37,12 @@ class ProcessingLog(TimestampMixin):
 
 
 class AuditEvent(TimestampMixin):
-    """State change audit trail on business objects."""
+    """State change audit trail and governance event log on business objects.
+
+    Supports two usage patterns:
+    - State-change audits: old_values/new_values capture before/after
+    - Governance events: event_type/event_description capture typed lifecycle events
+    """
 
     entity_type = models.CharField(max_length=100, db_index=True, help_text="e.g. Invoice, ReconciliationResult")
     entity_id = models.BigIntegerField(db_index=True)
@@ -50,6 +55,12 @@ class AuditEvent(TimestampMixin):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.CharField(max_length=500, blank=True, default="")
 
+    # Governance extensions
+    event_type = models.CharField(max_length=60, blank=True, default="", db_index=True, help_text="Typed event (AuditEventType enum)")
+    event_description = models.TextField(blank=True, default="")
+    performed_by_agent = models.CharField(max_length=100, blank=True, default="", help_text="Agent name if action performed by an agent")
+    metadata_json = models.JSONField(null=True, blank=True, help_text="Additional structured context")
+
     class Meta:
         db_table = "auditlog_audit_event"
         ordering = ["-created_at"]
@@ -58,6 +69,7 @@ class AuditEvent(TimestampMixin):
         indexes = [
             models.Index(fields=["entity_type", "entity_id"], name="idx_audit_entity"),
             models.Index(fields=["action"], name="idx_audit_action"),
+            models.Index(fields=["event_type"], name="idx_audit_event_type"),
         ]
 
     def __str__(self) -> str:

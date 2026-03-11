@@ -10,6 +10,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("accounts/", include("apps.accounts.urls")),
     path("api/", include("apps.core.api_urls")),
+    path("api/v1/governance/", include("apps.auditlog.api_urls")),
     path("dashboard/", include("apps.dashboard.urls")),
     path("invoices/", include("apps.documents.urls")),
     path("extraction/", include("apps.extraction.urls")),
@@ -17,6 +18,7 @@ urlpatterns = [
     path("reviews/", include("apps.reviews.urls")),
     path("reports/", include("apps.reports.urls")),
     path("agents/", include("apps.agents.urls")),
+    path("governance/", include("apps.auditlog.urls")),
 ]
 
 if settings.DEBUG:

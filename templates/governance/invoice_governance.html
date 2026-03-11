@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Governance – Invoice #{{ invoice.pk }} – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'governance:audit_event_list' %}">Audit Log</a></li>
+  <li class="breadcrumb-item active">Invoice #{{ invoice.pk }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Governance – Invoice {{ invoice.invoice_number|default:invoice.pk }}</h4>
+    <small class="text-muted">{% if invoice.vendor %}{{ invoice.vendor.name }}{% else %}{{ invoice.raw_vendor_name }}{% endif %} &middot; {{ invoice.total_amount|default:"—" }} {{ invoice.currency }}</small>
+  </div>
+  <div>
+    <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-file-earmark-text me-1"></i>Invoice Detail</a>
+    <a href="{% url 'governance:audit_event_list' %}?entity_type=Invoice&entity_id={{ invoice.pk }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-funnel me-1"></i>Filter Audit Log</a>
+  </div>
+</div>
+
+<!-- Nav tabs -->
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-timeline" role="tab"><i class="bi bi-clock-history me-1"></i>Timeline</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-audit" role="tab"><i class="bi bi-list-check me-1"></i>Audit Events</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-agents" role="tab"><i class="bi bi-diagram-3 me-1"></i>Agent Trace</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-recommendations" role="tab"><i class="bi bi-lightbulb me-1"></i>Recommendations</a></li>
+</ul>
+
+<div class="tab-content">
+
+  <!-- ============================================================== -->
+  <!-- TAB: Timeline                                                   -->
+  <!-- ============================================================== -->
+  <div class="tab-pane fade show active" id="tab-timeline" role="tabpanel">
+    {% if timeline %}
+    <div class="card">
+      <div class="card-body">
+        {% for event in timeline %}
+        <div class="d-flex mb-3">
+          <div class="flex-shrink-0 me-3 text-center" style="width:36px;">
+            {% if event.event_category == "audit" %}
+              <i class="bi bi-file-earmark-text fs-5 text-primary"></i>
+            {% elif event.event_category == "agent_run" %}
+              <i class="bi bi-robot fs-5 text-success"></i>
+            {% elif event.event_category == "tool_call" %}
+              <i class="bi bi-tools fs-5 text-secondary"></i>
+            {% elif event.event_category == "recommendation" %}
+              <i class="bi bi-lightbulb fs-5 text-warning"></i>
+            {% elif event.event_category == "review" or event.event_category == "review_action" %}
+              <i class="bi bi-person-check fs-5 text-info"></i>
+            {% elif event.event_category == "review_decision" %}
+              <i class="bi bi-shield-check fs-5 text-danger"></i>
+            {% else %}
+              <i class="bi bi-circle fs-5 text-muted"></i>
+            {% endif %}
+          </div>
+          <div class="flex-grow-1 border-start ps-3" style="border-color:#dee2e6 !important;">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <strong>{{ event.description }}</strong>
+                <br><small class="text-muted">
+                  <span class="badge bg-light text-dark border">{{ event.event_category }}</span>
+                  by {{ event.actor }}
+                </small>
+              </div>
+              <small class="text-muted text-nowrap ms-2">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">No timeline events found for this invoice.</div>
+    {% endif %}
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- TAB: Audit Events                                               -->
+  <!-- ============================================================== -->
+  <div class="tab-pane fade" id="tab-audit" role="tabpanel">
+    {% if audit_events %}
+    <div class="card">
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light"><tr><th>Event Type</th><th>Description</th><th>Actor</th><th>Timestamp</th></tr></thead>
+          <tbody>
+            {% for ev in audit_events %}
+            <tr>
+              <td>
+                <span class="badge
+                  {% if 'COMPLETED' in ev.event_type or 'APPROVED' in ev.event_type %}bg-success
+                  {% elif 'FAILED' in ev.event_type or 'REJECTED' in ev.event_type %}bg-danger
+                  {% elif 'STARTED' in ev.event_type or 'UPLOADED' in ev.event_type %}bg-primary
+                  {% elif 'ASSIGNED' in ev.event_type %}bg-info
+                  {% elif 'RECOMMENDATION' in ev.event_type %}bg-warning text-dark
+                  {% else %}bg-secondary{% endif %}">{{ ev.event_type|default:ev.action }}</span>
+              </td>
+              <td>{{ ev.event_description|default:ev.action }}</td>
+              <td>
+                {% if ev.performed_by %}<small>{{ ev.performed_by.email }}</small>
+                {% elif ev.performed_by_agent %}<small class="text-muted"><i class="bi bi-robot me-1"></i>{{ ev.performed_by_agent }}</small>
+                {% else %}<small class="text-muted">system</small>{% endif %}
+              </td>
+              <td><small class="text-muted">{{ ev.created_at|date:"M d, Y H:i:s" }}</small></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">No audit events found.</div>
+    {% endif %}
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- TAB: Agent Trace                                                -->
+  <!-- ============================================================== -->
+  <div class="tab-pane fade" id="tab-agents" role="tabpanel">
+    {% for recon_trace in trace.reconciliation_traces %}
+      {% if recon_trace.agent_runs %}
+      <div class="card mb-3">
+        <div class="card-header bg-white"><strong>Reconciliation Result #{{ recon_trace.reconciliation_result_id }}</strong></div>
+        <div class="card-body p-0">
+          <div class="accordion" id="traceAccordion{{ recon_trace.reconciliation_result_id }}">
+            {% for run in recon_trace.agent_runs %}
+            <div class="accordion-item">
+              <h2 class="accordion-header">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#traceRun{{ run.agent_run_id }}">
+                  <span class="me-2">
+                    {% if run.status == "COMPLETED" %}<i class="bi bi-check-circle-fill text-success"></i>
+                    {% elif run.status == "FAILED" %}<i class="bi bi-x-circle-fill text-danger"></i>
+                    {% elif run.status == "RUNNING" %}<i class="bi bi-arrow-repeat text-primary"></i>
+                    {% else %}<i class="bi bi-hourglass text-muted"></i>{% endif %}
+                  </span>
+                  <strong class="me-2">{{ run.agent_name }}</strong>
+                  <small class="text-muted me-2">{{ run.status }}</small>
+                  {% if run.confidence %}<span class="badge bg-secondary">{{ run.confidence|floatformat:0 }}% conf</span>{% endif %}
+                  {% if run.duration_ms %}<small class="text-muted ms-2">{{ run.duration_ms }}ms</small>{% endif %}
+                </button>
+              </h2>
+              <div id="traceRun{{ run.agent_run_id }}" class="accordion-collapse collapse" data-bs-parent="#traceAccordion{{ recon_trace.reconciliation_result_id }}">
+                <div class="accordion-body">
+                  {% if run.summarized_reasoning %}
+                  <div class="mb-3">
+                    <h6 class="text-muted">Reasoning Summary</h6>
+                    <p>{{ run.summarized_reasoning }}</p>
+                  </div>
+                  {% endif %}
+
+                  <!-- Decisions -->
+                  {% if run.decisions %}
+                  <div class="mb-3">
+                    <h6 class="text-muted">Decisions</h6>
+                    <ul class="list-group list-group-flush">
+                      {% for d in run.decisions %}
+                      <li class="list-group-item px-0">
+                        <strong>{{ d.decision }}</strong>
+                        {% if d.confidence %}<span class="badge bg-secondary ms-1">{{ d.confidence|floatformat:0 }}%</span>{% endif %}
+                        {% if d.rationale %}<br><small class="text-muted">{{ d.rationale }}</small>{% endif %}
+                      </li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                  {% endif %}
+
+                  {% if show_full_trace %}
+                  <!-- Tool calls (admin/auditor only) -->
+                  {% if run.tool_calls %}
+                  <div class="mb-3">
+                    <h6 class="text-muted">Tool Calls</h6>
+                    <table class="table table-sm table-bordered mb-0">
+                      <thead class="table-light"><tr><th>Tool</th><th>Status</th><th>Duration</th></tr></thead>
+                      <tbody>
+                        {% for tc in run.tool_calls %}
+                        <tr>
+                          <td><code>{{ tc.tool_name }}</code></td>
+                          <td>{% if tc.status == "SUCCESS" %}<span class="badge bg-success">{{ tc.status }}</span>{% else %}<span class="badge bg-danger">{{ tc.status }}</span>{% endif %}</td>
+                          <td>{{ tc.duration_ms|default:"—" }}ms</td>
+                        </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                  {% endif %}
+
+                  <!-- Steps -->
+                  {% if run.steps %}
+                  <div class="mb-3">
+                    <h6 class="text-muted">Steps</h6>
+                    <ol class="list-group list-group-numbered list-group-flush">
+                      {% for s in run.steps %}
+                      <li class="list-group-item px-0">
+                        {{ s.action }}
+                        {% if not s.success %}<span class="badge bg-danger ms-1">Failed</span>{% endif %}
+                        {% if s.duration_ms %}<small class="text-muted ms-1">({{ s.duration_ms }}ms)</small>{% endif %}
+                      </li>
+                      {% endfor %}
+                    </ol>
+                  </div>
+                  {% endif %}
+                  {% else %}
+                  <p class="text-muted"><small><i class="bi bi-lock me-1"></i>Detailed tool calls and steps are only visible to administrators and auditors.</small></p>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    {% empty %}
+    <div class="text-center text-muted py-5">No agent runs found for this invoice.</div>
+    {% endfor %}
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- TAB: Recommendations                                            -->
+  <!-- ============================================================== -->
+  <div class="tab-pane fade" id="tab-recommendations" role="tabpanel">
+    {% if recommendations %}
+    <div class="card">
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light"><tr><th>Type</th><th>Agent</th><th>Confidence</th><th>Reasoning</th><th>Action</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for rec in recommendations %}
+            <tr>
+              <td><span class="badge bg-info">{{ rec.recommendation_type }}</span></td>
+              <td><small class="text-muted">{{ rec.agent_run.agent_type }}</small></td>
+              <td>{% widthratio rec.confidence 1 100 %}%</td>
+              <td>{{ rec.reasoning|truncatewords:30 }}</td>
+              <td>{{ rec.recommended_action|default:"—" }}</td>
+              <td>
+                {% if rec.accepted == True %}
+                  <span class="badge bg-success"><i class="bi bi-check me-1"></i>Accepted</span>
+                  {% if rec.accepted_by %}<br><small class="text-muted">by {{ rec.accepted_by.email }}</small>{% endif %}
+                {% elif rec.accepted == False %}
+                  <span class="badge bg-danger"><i class="bi bi-x me-1"></i>Rejected</span>
+                {% else %}
+                  <span class="badge bg-warning text-dark">Pending</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">No recommendations found for this invoice.</div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
