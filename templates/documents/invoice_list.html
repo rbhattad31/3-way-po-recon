@@ -75,9 +75,16 @@
         {% for inv in invoices %}
         <tr>
           <td><a href="{% url 'documents:invoice_detail' inv.pk %}">{{ inv.invoice_number|default:"—" }}</a></td>
-          <td>{{ inv.vendor.name|default:inv.raw_vendor_name }}</td>
+          <td>
+            {{ inv.vendor.name|default:inv.raw_vendor_name }}
+            {% if inv.vendor %}
+              <span class="badge bg-success ms-1">Existing</span>
+            {% else %}
+              <span class="badge bg-warning text-dark ms-1">New</span>
+            {% endif %}
+          </td>
           <td>{{ inv.po_number|default:"—" }}</td>
-          <td>{{ inv.currency }} {{ inv.total_amount|default:"—" }}</td>
+          <td>{{ inv.raw_total_amount|default:inv.total_amount|default:"—" }}</td>
           <td><span class="badge status-badge status-{{ inv.status }}">{{ inv.status }}</span></td>
           <td>{% if inv.extraction_confidence %}{% widthratio inv.extraction_confidence 1 100 %}%{% else %}—{% endif %}</td>
           <td class="text-muted">{{ inv.created_at|date:"d M Y" }}</td>
@@ -91,4 +98,41 @@
 </div>
 {% include "partials/pagination.html" %}
 {% include "partials/upload_modal.html" %}
+
+{% if duplicate_popup %}
+<div class="modal fade" id="duplicateInvoiceModal" tabindex="-1" aria-labelledby="duplicateInvoiceModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-warning">
+      <div class="modal-header">
+        <h5 class="modal-title" id="duplicateInvoiceModalLabel">
+          <i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>Duplicate Invoice Found
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">This invoice appears to already exist in the system.</p>
+        {% if duplicate_popup.invoice_number %}
+          <p class="mb-0"><strong>Invoice Number:</strong> {{ duplicate_popup.invoice_number }}</p>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        {% if duplicate_popup.invoice_id %}
+          <a href="{% url 'documents:invoice_detail' duplicate_popup.invoice_id %}" class="btn btn-warning">Open Existing Invoice</a>
+        {% endif %}
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const duplicateModalEl = document.getElementById('duplicateInvoiceModal');
+    if (duplicateModalEl) {
+      const duplicateModal = new bootstrap.Modal(duplicateModalEl);
+      duplicateModal.show();
+    }
+  });
+</script>
+{% endif %}
 {% endblock %}

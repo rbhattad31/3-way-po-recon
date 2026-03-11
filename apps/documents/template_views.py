@@ -1,13 +1,18 @@
 """Document template views (server-side rendered)."""
 import hashlib
+from urllib.parse import urlsplit
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
+from django.http import Http404, HttpResponse
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.core.enums import DocumentType, InvoiceStatus
+from apps.documents.blob_storage import AzureBlobStorageService
 from apps.documents.models import DocumentUpload, GoodsReceiptNote, Invoice, PurchaseOrder
 
 
@@ -49,12 +54,29 @@ def upload_invoice(request):
     file_hash = sha256.hexdigest()
     uploaded_file.seek(0)
 
+    blob_service = AzureBlobStorageService()
+    blob_metadata = {
+        "uploaded_by_user_id": str(request.user.pk),
+        "document_type": document_type,
+        "content_type": uploaded_file.content_type or "",
+    }
+    blob_result = blob_service.upload_file(
+        uploaded_file,
+        original_filename=uploaded_file.name,
+        content_type=uploaded_file.content_type or "application/octet-stream",
+        metadata=blob_metadata,
+    )
+
     doc_upload = DocumentUpload.objects.create(
-        file=uploaded_file,
         original_filename=uploaded_file.name,
         file_size=uploaded_file.size,
         file_hash=file_hash,
         content_type=uploaded_file.content_type,
+        blob_name=blob_result["blob_name"],
+        blob_container=blob_result["container_name"],
+        blob_url=blob_result["blob_url"],
+        blob_uploaded_at=timezone.now(),
+        blob_metadata=blob_metadata,
         document_type=document_type,
         uploaded_by=request.user,
     )
@@ -68,21 +90,46 @@ def upload_invoice(request):
         event_type=AuditEventType.INVOICE_UPLOADED,
         description=f"File '{uploaded_file.name}' uploaded ({uploaded_file.size} bytes)",
         user=request.user,
-        metadata={"filename": uploaded_file.name, "file_hash": file_hash, "document_type": document_type},
+        metadata={
+            "filename": uploaded_file.name,
+            "file_hash": file_hash,
+            "document_type": document_type,
+            "blob_name": doc_upload.blob_name,
+            "blob_container": doc_upload.blob_container,
+            "blob_url": doc_upload.blob_url,
+        },
     )
 
-    # Trigger extraction pipeline — try async first, fall back to sync
+    # Trigger extraction pipeline — run synchronously in eager mode, else async with fallback
     try:
         from apps.extraction.tasks import process_invoice_upload_task
-        process_invoice_upload_task.delay(doc_upload.pk)
-        messages.success(request, f"'{uploaded_file.name}' uploaded successfully. Extraction processing has started.")
+        if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+            result = process_invoice_upload_task.run(upload_id=doc_upload.pk)
+            if isinstance(result, dict) and result.get("is_duplicate"):
+                request.session["duplicate_popup"] = {
+                    "invoice_number": result.get("invoice_number") or "",
+                    "invoice_id": result.get("invoice_id") or "",
+                }
+                messages.warning(request, "Duplicate invoice found. Please review the existing invoice record.")
+            else:
+                messages.success(request, f"'{uploaded_file.name}' uploaded and processed successfully.")
+        else:
+            process_invoice_upload_task.delay(doc_upload.pk)
+            messages.success(request, f"'{uploaded_file.name}' uploaded successfully. Extraction processing has started.")
     except Exception:
         # Celery broker unavailable — run extraction synchronously
         try:
             from apps.extraction.tasks import process_invoice_upload_task
             # Call the underlying function directly (bypass Celery bind=True)
-            process_invoice_upload_task.run(upload_id=doc_upload.pk)
-            messages.success(request, f"'{uploaded_file.name}' uploaded and processed successfully.")
+            result = process_invoice_upload_task.run(upload_id=doc_upload.pk)
+            if isinstance(result, dict) and result.get("is_duplicate"):
+                request.session["duplicate_popup"] = {
+                    "invoice_number": result.get("invoice_number") or "",
+                    "invoice_id": result.get("invoice_id") or "",
+                }
+                messages.warning(request, "Duplicate invoice found. Please review the existing invoice record.")
+            else:
+                messages.success(request, f"'{uploaded_file.name}' uploaded and processed successfully.")
         except Exception as exc:
             messages.warning(request, f"'{uploaded_file.name}' uploaded, but extraction failed: {exc}")
 
@@ -107,11 +154,14 @@ def invoice_list(request):
         processing_state__in=[FileProcessingState.QUEUED, FileProcessingState.PROCESSING],
     ).select_related("uploaded_by").order_by("-created_at")[:10]
 
+    duplicate_popup = request.session.pop("duplicate_popup", None)
+
     return render(request, "documents/invoice_list.html", {
         "invoices": page_obj,
         "page_obj": page_obj,
         "status_choices": InvoiceStatus.choices,
         "pending_uploads": pending_uploads,
+        "duplicate_popup": duplicate_popup,
     })
 
 
@@ -122,9 +172,16 @@ def invoice_detail(request, pk):
         pk=pk,
     )
     recon_results = invoice.recon_results.select_related("purchase_order").prefetch_related("exceptions").order_by("-created_at")
+
+    invoice_file_embed_url = None
+    if invoice.document_upload and invoice.document_upload.blob_name:
+        blob_service = AzureBlobStorageService()
+        invoice_file_embed_url = blob_service.generate_blob_sas_url(invoice.document_upload.blob_name)
+
     return render(request, "documents/invoice_detail.html", {
         "invoice": invoice,
         "recon_results": recon_results,
+        "invoice_file_embed_url": invoice_file_embed_url,
     })
 
 
@@ -148,3 +205,22 @@ def grn_list(request):
         "grns": page_obj,
         "page_obj": page_obj,
     })
+
+
+@login_required
+def uploaded_file(request, upload_id: int):
+    upload = get_object_or_404(DocumentUpload, pk=upload_id)
+
+    if upload.blob_name:
+        blob_service = AzureBlobStorageService()
+        try:
+            payload = blob_service.download_blob_bytes(upload.blob_name)
+        except FileNotFoundError as exc:
+            raise Http404(str(exc))
+
+        content_type = upload.content_type or "application/octet-stream"
+        response = HttpResponse(payload, content_type=content_type)
+        response["Content-Disposition"] = f'inline; filename="{upload.original_filename}"'
+        return response
+
+    raise Http404("File not found")

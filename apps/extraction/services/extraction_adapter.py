@@ -52,7 +52,7 @@ Extract ALL relevant fields and return a JSON object with EXACTLY this structure
       "item_description": "<description of the line item>",
       "quantity": "<quantity as a number>",
       "unit_price": "<unit price as a number>",
-      "tax_amount": "<tax for this line as a number or null>",
+      "tax_amount": "<tax for this line as a number or 0 if not available>",
       "line_amount": "<total amount for this line as a number>"
     }
   ]
@@ -60,8 +60,9 @@ Extract ALL relevant fields and return a JSON object with EXACTLY this structure
 
 Rules:
 - Extract EVERY line item visible in the invoice.
-- For amounts, return numeric values only (no currency symbols or commas).
-- If a field is not found, return an empty string for text fields or null for numeric fields.
+- Preserve values exactly as shown on the invoice for display fields.
+- If a currency symbol is present with an amount (e.g., $, €, ₹), keep that symbol in the returned amount string.
+- If a field is not found, return an empty string for text fields or 0 for numeric fields.
 - Parse dates into YYYY-MM-DD format.
 - If the PO number is referenced anywhere (header, footer, reference fields), extract it.
 - Return ONLY valid JSON, no markdown or explanation."""
@@ -70,11 +71,17 @@ Rules:
 class InvoiceExtractionAdapter:
     """Two-step extraction: Azure Document Intelligence OCR -> Azure OpenAI LLM."""
 
+    LOGO = "[EXTRACT]"
+
     def extract(self, file_path: str) -> ExtractionResponse:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
         try:
+            logger.info("%s ======== EXTRACTION PIPELINE START ========", self.LOGO)
+            logger.info("%s Source file: %s", self.LOGO, file_path)
+
             # Step 1: OCR via Azure Document Intelligence
+            logger.info("%s Phase 1/2: Azure Document Intelligence OCR started", self.LOGO)
             ocr_text = self._ocr_document(file_path)
             if not ocr_text.strip():
                 return ExtractionResponse(
@@ -83,11 +90,20 @@ class InvoiceExtractionAdapter:
                     duration_ms=int((time.time() - start) * 1000),
                 )
 
-            logger.info("OCR completed: %d characters extracted from %s", len(ocr_text), file_path)
+            logger.info("%s Phase 1/2 completed: OCR extracted %d characters", self.LOGO, len(ocr_text))
 
             # Step 2: LLM structured extraction
+            logger.info("%s Phase 2/2: Azure OpenAI field mapping started", self.LOGO)
             raw_json = self._llm_extract(ocr_text)
             elapsed = int((time.time() - start) * 1000)
+
+            logger.info(
+                "%s Phase 2/2 completed: mapped %d line item(s), confidence=%s",
+                self.LOGO,
+                len(raw_json.get("line_items", []) or []),
+                raw_json.get("confidence", "n/a"),
+            )
+            logger.info("%s ======== EXTRACTION PIPELINE END (%d ms) ========", self.LOGO, elapsed)
 
             return ExtractionResponse(
                 success=True,
@@ -100,7 +116,7 @@ class InvoiceExtractionAdapter:
             )
         except Exception as exc:
             elapsed = int((time.time() - start) * 1000)
-            logger.exception("Extraction failed for %s", file_path)
+            logger.exception("%s Extraction failed for %s", self.LOGO, file_path)
             return ExtractionResponse(
                 success=False,
                 error_message=str(exc),
@@ -138,6 +154,8 @@ class InvoiceExtractionAdapter:
             for line in page.lines:
                 lines.append(line.content)
 
+        logger.info("[EXTRACT] Azure DI processed %d page(s), %d line(s)", len(result.pages), len(lines))
+
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -155,7 +173,6 @@ class InvoiceExtractionAdapter:
         )
 
         deployment = getattr(settings, "AZURE_OPENAI_DEPLOYMENT", "") or getattr(settings, "LLM_MODEL_NAME", "gpt-4o")
-
         response = client.chat.completions.create(
             model=deployment,
             messages=[
@@ -169,7 +186,7 @@ class InvoiceExtractionAdapter:
 
         content = response.choices[0].message.content
         logger.info(
-            "LLM extraction completed: tokens=%d/%d",
+            "[EXTRACT] Azure OpenAI mapping completed: prompt_tokens=%d, completion_tokens=%d",
             response.usage.prompt_tokens,
             response.usage.completion_tokens,
         )
