@@ -9,24 +9,61 @@
 {% endblock %}
 
 {% block content %}
-<h5 class="mb-3">Goods Receipt Notes</h5>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">Goods Receipt Notes</h5>
+  <form class="d-inline-flex gap-2" method="get">
+    <select name="status" class="form-select form-select-sm" style="min-width:130px" onchange="this.form.submit()">
+      <option value="">All Statuses</option>
+      {% for s in status_choices %}
+        <option value="{{ s }}" {% if request.GET.status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="vendor" class="form-select form-select-sm" style="min-width:180px" onchange="this.form.submit()">
+      <option value="">All Vendors</option>
+      {% for vid, vname in vendor_choices %}
+        <option value="{{ vid }}" {% if request.GET.vendor == vid|stringformat:"d" %}selected{% endif %}>{{ vname|truncatechars:30 }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="q" class="form-control form-control-sm" style="min-width:200px"
+           placeholder="Search GRN #, PO #, warehouse…" value="{{ request.GET.q|default:'' }}">
+    {% if request.GET.status or request.GET.vendor or request.GET.q %}
+      <a href="{% url 'documents:grn_list' %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">
+        <i class="bi bi-x-circle"></i>
+      </a>
+    {% endif %}
+  </form>
+</div>
+
 <div class="card">
   <div class="card-body p-0">
     <table class="table table-hover table-sm mb-0 table-fixed-header">
       <thead class="table-light">
-        <tr><th>GRN #</th><th>PO #</th><th>Vendor</th><th>Receipt Date</th><th>Status</th></tr>
+        <tr>
+          <th>GRN #</th><th>PO #</th><th>Vendor</th>
+          <th>Receipt Date</th><th>Warehouse</th><th>Receiver</th><th>Status</th>
+        </tr>
       </thead>
       <tbody>
         {% for grn in grns %}
         <tr>
-          <td>{{ grn.grn_number }}</td>
-          <td>{{ grn.purchase_order.po_number }}</td>
+          <td><a href="{% url 'documents:grn_detail' grn.pk %}">{{ grn.grn_number }}</a></td>
+          <td><a href="{% url 'documents:po_detail' grn.purchase_order.pk %}">{{ grn.purchase_order.po_number }}</a></td>
           <td>{{ grn.vendor.name|default:"—" }}</td>
           <td>{{ grn.receipt_date|date:"d M Y"|default:"—" }}</td>
-          <td><span class="badge bg-secondary">{{ grn.status }}</span></td>
+          <td class="text-muted">{{ grn.warehouse|default:"—"|truncatechars:25 }}</td>
+          <td class="text-muted">{{ grn.receiver_name|default:"—"|truncatechars:20 }}</td>
+          <td>
+            {% if grn.status == "RECEIVED" %}
+              <span class="badge bg-success">{{ grn.status }}</span>
+            {% elif grn.status == "PARTIAL" %}
+              <span class="badge bg-warning text-dark">{{ grn.status }}</span>
+            {% else %}
+              <span class="badge bg-info text-dark">{{ grn.status }}</span>
+            {% endif %}
+          </td>
         </tr>
         {% empty %}
-        <tr><td colspan="5" class="text-center text-muted py-3">No GRNs found</td></tr>
+        <tr><td colspan="7" class="text-center text-muted py-3">No GRNs found</td></tr>
         {% endfor %}
       </tbody>
     </table>

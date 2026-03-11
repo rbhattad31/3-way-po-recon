@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.documents.template_views import grn_list, invoice_detail, invoice_list, po_detail, po_list, upload_invoice
+from apps.documents.template_views import grn_detail, grn_list, invoice_detail, invoice_list, po_detail, po_list, upload_invoice
 
 app_name = "documents"
 
@@ -11,4 +11,5 @@ urlpatterns = [
     path("purchase-orders/", po_list, name="po_list"),
     path("purchase-orders/<int:pk>/", po_detail, name="po_detail"),
     path("grns/", grn_list, name="grn_list"),
+    path("grns/<int:pk>/", grn_detail, name="grn_detail"),
 ]

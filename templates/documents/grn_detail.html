@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}GRN {{ grn.grn_number }} – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'documents:grn_list' %}">Goods Receipt Notes</a></li>
+  <li class="breadcrumb-item active">{{ grn.grn_number }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+{# ── Header Card ── #}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h5 class="mb-0">{{ grn.grn_number }}</h5>
+    {% if grn.status == "RECEIVED" %}
+      <span class="badge bg-success">{{ grn.status }}</span>
+    {% elif grn.status == "PARTIAL" %}
+      <span class="badge bg-warning text-dark">{{ grn.status }}</span>
+    {% else %}
+      <span class="badge bg-info text-dark">{{ grn.status }}</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-3"><strong>Purchase Order</strong><br>
+        <a href="{% url 'documents:po_detail' grn.purchase_order.pk %}">{{ grn.purchase_order.po_number }}</a>
+      </div>
+      <div class="col-md-3"><strong>Vendor</strong><br>{{ grn.vendor.name|default:"—" }}</div>
+      <div class="col-md-3"><strong>Receipt Date</strong><br>{{ grn.receipt_date|date:"d M Y"|default:"—" }}</div>
+      <div class="col-md-3"><strong>Warehouse</strong><br>{{ grn.warehouse|default:"—" }}</div>
+      <div class="col-md-3"><strong>Receiver</strong><br>{{ grn.receiver_name|default:"—" }}</div>
+      <div class="col-md-3"><strong>Created</strong><br>{{ grn.created_at|date:"d M Y H:i"|default:"—" }}</div>
+    </div>
+  </div>
+</div>
+
+{# ── Line Items ── #}
+<div class="card mb-4">
+  <div class="card-header"><h6 class="mb-0">Line Items ({{ grn.line_items.count }})</h6></div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th><th>Item Code</th><th>Description</th>
+          <th class="text-end">Received</th><th class="text-end">Accepted</th>
+          <th class="text-end">Rejected</th><th>UOM</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for li in grn.line_items.all %}
+        <tr>
+          <td>{{ li.line_number }}</td>
+          <td class="fw-medium">{{ li.item_code|default:"—" }}</td>
+          <td>{{ li.description|default:"—"|truncatechars:50 }}</td>
+          <td class="text-end">{{ li.quantity_received|floatformat:2 }}</td>
+          <td class="text-end">{{ li.quantity_accepted|floatformat:2 }}</td>
+          <td class="text-end {% if li.quantity_rejected > 0 %}text-danger fw-bold{% endif %}">{{ li.quantity_rejected|floatformat:2 }}</td>
+          <td class="text-muted">{{ li.unit_of_measure|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-3">No line items</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Linked PO Summary ── #}
+{% with po=grn.purchase_order %}
+<div class="card mb-4">
+  <div class="card-header"><h6 class="mb-0">Linked Purchase Order</h6></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-3"><strong>PO Number</strong><br>
+        <a href="{% url 'documents:po_detail' po.pk %}">{{ po.po_number }}</a>
+      </div>
+      <div class="col-md-3"><strong>Vendor</strong><br>{{ po.vendor.name|default:"—" }}</div>
+      <div class="col-md-3"><strong>Status</strong><br>
+        {% if po.status == "APPROVED" %}
+          <span class="badge bg-success">{{ po.status }}</span>
+        {% elif po.status == "PENDING" %}
+          <span class="badge bg-warning text-dark">{{ po.status }}</span>
+        {% elif po.status == "CANCELLED" %}
+          <span class="badge bg-danger">{{ po.status }}</span>
+        {% else %}
+          <span class="badge bg-secondary">{{ po.status }}</span>
+        {% endif %}
+      </div>
+      <div class="col-md-3"><strong>Total Amount</strong><br>{{ po.total_amount|floatformat:2|default:"—" }}</div>
+    </div>
+  </div>
+</div>
+{% endwith %}
+{% endblock %}

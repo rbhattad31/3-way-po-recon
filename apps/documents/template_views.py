@@ -193,9 +193,57 @@ def po_detail(request, pk):
 @login_required
 def grn_list(request):
     qs = GoodsReceiptNote.objects.select_related("purchase_order", "vendor").order_by("-receipt_date")
+
+    status_filter = request.GET.get("status")
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+
+    vendor_filter = request.GET.get("vendor")
+    if vendor_filter:
+        qs = qs.filter(vendor_id=vendor_filter)
+
+    q = request.GET.get("q")
+    if q:
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(grn_number__icontains=q)
+            | Q(purchase_order__po_number__icontains=q)
+            | Q(vendor__name__icontains=q)
+            | Q(warehouse__icontains=q)
+            | Q(receiver_name__icontains=q)
+        )
+
+    status_choices = (
+        GoodsReceiptNote.objects.order_by("status")
+        .values_list("status", flat=True)
+        .distinct()
+    )
+    from apps.vendors.models import Vendor
+    vendor_choices = (
+        Vendor.objects.filter(grns__isnull=False)
+        .distinct()
+        .order_by("name")
+        .values_list("pk", "name")
+    )
+
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     return render(request, "documents/grn_list.html", {
         "grns": page_obj,
         "page_obj": page_obj,
+        "status_choices": status_choices,
+        "vendor_choices": vendor_choices,
+    })
+
+
+@login_required
+def grn_detail(request, pk):
+    grn = get_object_or_404(
+        GoodsReceiptNote.objects.select_related(
+            "purchase_order", "purchase_order__vendor", "vendor",
+        ).prefetch_related("line_items"),
+        pk=pk,
+    )
+    return render(request, "documents/grn_detail.html", {
+        "grn": grn,
     })
