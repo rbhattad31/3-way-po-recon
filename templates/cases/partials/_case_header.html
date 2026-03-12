@@ -1,75 +1,103 @@
 {# ── Case Header Card ── #}
-{# Context: case (APCase) #}
-<div class="ap-card mb-3">
-  <div class="d-flex align-items-start justify-content-between p-3">
-    {# Left: case identity #}
-    <div>
-      <div class="d-flex align-items-center gap-2 mb-1">
-        <h5 class="mb-0 fw-bold">{{ case.case_number }}</h5>
-        {# Status badge #}
-        {% if case.status == "CLOSED" %}
-          <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle"></i> Closed</span>
-        {% elif case.status == "FAILED" %}
-          <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle"></i> Failed</span>
-        {% elif case.status == "REJECTED" %}
-          <span class="ap-badge ap-badge-danger"><i class="bi bi-slash-circle"></i> Rejected</span>
-        {% elif case.status == "ESCALATED" %}
-          <span class="ap-badge ap-badge-warning"><i class="bi bi-exclamation-triangle"></i> Escalated</span>
-        {% elif case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
-          <span class="ap-badge ap-badge-warning"><i class="bi bi-eye"></i> {{ case.get_status_display }}</span>
-        {% elif case.status == "NEW" %}
-          <span class="ap-badge ap-badge-muted"><i class="bi bi-plus-circle"></i> New</span>
-        {% else %}
-          <span class="ap-badge ap-badge-info">{{ case.get_status_display }}</span>
-        {% endif %}
-        {# Path badge #}
-        {% include "cases/partials/_path_badge.html" with path=case.processing_path %}
-      </div>
-      <div class="d-flex align-items-center gap-3 mt-2" style="font-size:var(--ap-font-size-sm)">
-        {% if case.vendor %}
-        <span class="text-muted"><i class="bi bi-building me-1"></i>{{ case.vendor.name|truncatechars:30 }}</span>
-        {% endif %}
-        {% if invoice %}
-        <span class="text-muted"><i class="bi bi-hash me-1"></i>{{ invoice.invoice_number|default:"No invoice #" }}</span>
-        {% endif %}
-        {% if invoice.total_amount %}
-        <span class="fw-semibold"><i class="bi bi-currency-exchange me-1"></i>{{ invoice.currency }} {{ invoice.total_amount|floatformat:2 }}</span>
-        {% endif %}
-        <span class="text-muted"><i class="bi bi-clock me-1"></i>{{ case.created_at|timesince }} ago</span>
-      </div>
-    </div>
-    {# Right: priority + assignment + actions #}
-    <div class="d-flex align-items-center gap-2">
-      {# Priority #}
+{# Context: case (APCase), invoice (Invoice) #}
+<div class="ap-case-header mb-3">
+  {# ── Top row: case number + badges + actions ── #}
+  <div class="ap-case-header__top">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <h5 class="mb-0 fw-bold" style="letter-spacing:-0.02em">{{ case.case_number }}</h5>
+      {# Status badge #}
+      {% if case.status == "CLOSED" %}
+        <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle"></i> Closed</span>
+      {% elif case.status == "FAILED" %}
+        <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle"></i> Failed</span>
+      {% elif case.status == "REJECTED" %}
+        <span class="ap-badge ap-badge-danger"><i class="bi bi-slash-circle"></i> Rejected</span>
+      {% elif case.status == "ESCALATED" %}
+        <span class="ap-badge ap-badge-warning"><i class="bi bi-exclamation-triangle"></i> Escalated</span>
+      {% elif case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
+        <span class="ap-badge ap-badge-warning"><i class="bi bi-eye"></i> {{ case.get_status_display }}</span>
+      {% elif case.status == "NEW" %}
+        <span class="ap-badge ap-badge-muted"><i class="bi bi-plus-circle"></i> New</span>
+      {% else %}
+        <span class="ap-badge ap-badge-info">{{ case.get_status_display }}</span>
+      {% endif %}
+      {% include "cases/partials/_path_badge.html" with path=case.processing_path %}
       {% if case.priority == "CRITICAL" %}
         <span class="ap-badge ap-sev-critical"><i class="bi bi-fire"></i> Critical</span>
       {% elif case.priority == "HIGH" %}
         <span class="ap-badge ap-sev-high"><i class="bi bi-arrow-up-circle"></i> High</span>
-      {% elif case.priority == "MEDIUM" %}
-        <span class="ap-badge ap-sev-medium">Medium</span>
       {% endif %}
-      {# Assigned to #}
-      {% if case.assigned_to %}
-        <span class="ap-badge ap-badge-muted"><i class="bi bi-person"></i> {{ case.assigned_to.get_short_name }}</span>
+    </div>
+
+    {# Actions #}
+    <div class="ap-case-header__actions">
+      {% if case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
+        <button class="btn btn-success btn-sm" onclick="caseAction('approve')" type="button" title="Approve">
+          <i class="bi bi-check-circle me-1"></i>Approve
+        </button>
+        <button class="btn btn-danger btn-sm" onclick="caseAction('reject')" type="button" title="Reject">
+          <i class="bi bi-x-circle me-1"></i>Reject
+        </button>
+        <button class="btn btn-outline-warning btn-sm" onclick="caseAction('escalate')" type="button" title="Escalate">
+          <i class="bi bi-arrow-up-right-circle"></i>
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="caseAction('request_info')" type="button" title="Request Info">
+          <i class="bi bi-chat-left-dots"></i>
+        </button>
+      {% elif case.status == "FAILED" %}
+        <form method="post" action="{% url 'cases:reprocess_case' case.pk %}" class="d-inline">
+          {% csrf_token %}
+          <input type="hidden" name="stage" value="INTAKE">
+          <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
+        </form>
       {% endif %}
-      {# Confidence meter if available #}
-      {% if invoice.extraction_confidence %}
-        <div class="ap-confidence" title="Extraction Confidence: {% widthratio invoice.extraction_confidence 1 100 %}%">
-          <div class="ap-confidence-bar">
-            <div class="ap-confidence-fill {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                 style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></div>
-          </div>
-          <span>{% widthratio invoice.extraction_confidence 1 100 %}%</span>
-        </div>
-      {% endif %}
-      {# Retry action for failed cases #}
-      {% if case.status == "FAILED" %}
-      <form method="post" action="{% url 'cases:reprocess_case' case.pk %}" class="d-inline">
-        {% csrf_token %}
-        <input type="hidden" name="stage" value="INTAKE">
-        <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
-      </form>
-      {% endif %}
+    </div>
+  </div>
+
+  {# ── Divider ── #}
+  <hr class="my-0" style="border-color:var(--ap-border-light)">
+
+  {# ── Bottom row: key-value meta chips ── #}
+  <div class="ap-case-header__meta">
+    {% if invoice %}
+    <div class="ap-meta-chip">
+      <span class="ap-meta-chip__label">Invoice</span>
+      <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="ap-meta-chip__value ap-meta-chip__link" title="View invoice detail">
+        {{ invoice.invoice_number|default:"—" }}
+        <i class="bi bi-box-arrow-up-right" style="font-size:.65rem;opacity:.6"></i>
+      </a>
+    </div>
+    {% endif %}
+    {% if case.vendor %}
+    <div class="ap-meta-chip">
+      <span class="ap-meta-chip__label">Vendor</span>
+      <span class="ap-meta-chip__value">{{ case.vendor.name|truncatechars:30 }}</span>
+    </div>
+    {% endif %}
+    {% if invoice.total_amount %}
+    <div class="ap-meta-chip">
+      <span class="ap-meta-chip__label">Amount</span>
+      <span class="ap-meta-chip__value fw-semibold">{{ invoice.currency }}&nbsp;{{ invoice.total_amount|floatformat:2 }}</span>
+    </div>
+    {% endif %}
+    {% if case.assigned_to %}
+    <div class="ap-meta-chip">
+      <span class="ap-meta-chip__label">Assigned</span>
+      <span class="ap-meta-chip__value"><i class="bi bi-person-fill" style="font-size:.7rem;opacity:.5"></i> {{ case.assigned_to.get_short_name }}</span>
+    </div>
+    {% endif %}
+    {% if invoice.extraction_confidence %}
+    <div class="ap-meta-chip">
+      <span class="ap-meta-chip__label">Confidence</span>
+      <span class="ap-meta-chip__value">
+        <span class="ap-confidence-dot {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"></span>
+        {% widthratio invoice.extraction_confidence 1 100 %}%
+      </span>
+    </div>
+    {% endif %}
+    <div class="ap-meta-chip">
+      <span class="ap-meta-chip__label">Age</span>
+      <span class="ap-meta-chip__value">{{ case.created_at|timesince }} ago</span>
     </div>
   </div>
 </div>

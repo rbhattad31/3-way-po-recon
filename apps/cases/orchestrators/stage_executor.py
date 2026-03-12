@@ -164,6 +164,11 @@ class StageExecutor:
 
             if result.match_status == MatchStatus.MATCHED:
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
+            else:
+                # Advance to exception analysis for non-matched results
+                CaseStateMachine.transition(
+                    case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
+                )
 
         return {
             "run_id": run.id,
@@ -192,9 +197,20 @@ class StageExecutor:
         """
         Non-PO validation: deterministic checks + agent reasoning.
         """
+        # Ensure we're in the correct status (handles rerouted UNRESOLVED cases)
+        if case.status != CaseStatus.NON_PO_VALIDATION_IN_PROGRESS:
+            CaseStateMachine.transition(
+                case, CaseStatus.NON_PO_VALIDATION_IN_PROGRESS, PerformedByType.DETERMINISTIC
+            )
+
         from apps.cases.services.non_po_validation_service import NonPOValidationService
 
         result = NonPOValidationService.validate(case)
+
+        # Advance to exception analysis
+        CaseStateMachine.transition(
+            case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
+        )
 
         return {
             "overall_status": result.overall_status,
@@ -227,7 +243,7 @@ class StageExecutor:
                 "confidence": orch_result.confidence,
             }
 
-        # Non-PO cases without reconciliation result
+        # Non-PO cases without reconciliation result — send to review deterministically
         CaseStateMachine.transition(case, CaseStatus.READY_FOR_REVIEW, PerformedByType.DETERMINISTIC)
         return {"non_po": True, "sent_to_review": True}
 

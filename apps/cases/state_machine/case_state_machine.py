@@ -46,8 +46,8 @@ CASE_TRANSITIONS = [
     (CaseStatus.NON_PO_VALIDATION_IN_PROGRESS, CaseStatus.FAILED, {PerformedByType.SYSTEM}),
 
     # --- Exception analysis ---
-    (CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, CaseStatus.READY_FOR_REVIEW, {PerformedByType.AGENT}),
-    (CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, CaseStatus.CLOSED, {PerformedByType.AGENT}),  # auto-close safe
+    (CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, CaseStatus.READY_FOR_REVIEW, {PerformedByType.AGENT, PerformedByType.DETERMINISTIC}),
+    (CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, CaseStatus.CLOSED, {PerformedByType.AGENT, PerformedByType.DETERMINISTIC}),  # auto-close safe
     (CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, CaseStatus.ESCALATED, {PerformedByType.AGENT}),
 
     # --- Review ---

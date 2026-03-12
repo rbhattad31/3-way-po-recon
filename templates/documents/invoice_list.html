@@ -94,7 +94,14 @@
                 {{ inv.ap_case.case_number }}
               </span>
             </a>
-            {% else %}—{% endif %}
+            {% else %}
+            <form method="post" action="{% url 'cases:create_case_for_invoice' inv.pk %}" class="d-inline">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-sm btn-outline-primary" style="font-size:var(--ap-font-size-xs);padding:.15rem .5rem" title="Create case for this invoice">
+                <i class="bi bi-plus-circle me-1"></i>Create
+              </button>
+            </form>
+            {% endif %}
           </td>
           <td>
             {% if inv.extraction_confidence %}
