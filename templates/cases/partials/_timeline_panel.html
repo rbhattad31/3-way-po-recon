@@ -16,8 +16,8 @@
     {% if timeline %}
     <div class="ap-timeline">
       {% for event in timeline %}
-      <div class="ap-timeline-item" data-category="{{ event.category|default:'system' }}">
-        <div class="ap-timeline-dot {{ event.category|default:'system' }}"></div>
+      <div class="ap-timeline-item" data-category="{{ event.event_category|default:'system' }}">
+        <div class="ap-timeline-dot {{ event.event_category|default:'system' }}"></div>
         <div class="d-flex justify-content-between align-items-start">
           <div class="ap-timeline-content">{{ event.description|default:event.event_type }}</div>
           <div class="ap-timeline-time ms-2">{{ event.timestamp|timesince }} ago</div>

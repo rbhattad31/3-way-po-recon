@@ -152,9 +152,18 @@ def invoice_detail(request, pk):
         pk=pk,
     )
     recon_results = invoice.recon_results.select_related("purchase_order").prefetch_related("exceptions").order_by("-created_at")
+
+    # Check if an AP Case already exists for this invoice
+    ap_case = None
+    try:
+        ap_case = invoice.ap_case
+    except Exception:
+        pass
+
     return render(request, "documents/invoice_detail.html", {
         "invoice": invoice,
         "recon_results": recon_results,
+        "ap_case": ap_case,
     })
 
 

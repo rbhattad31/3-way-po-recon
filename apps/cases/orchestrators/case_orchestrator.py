@@ -98,7 +98,8 @@ class CaseOrchestrator:
                 self._execute_stage(CaseStageType.INTAKE)
 
             # Stage 2: Extraction (if not yet done)
-            if self.case.status == CaseStatus.INTAKE_IN_PROGRESS:
+            # Intake advances status to EXTRACTION_IN_PROGRESS, so check that
+            if self.case.status == CaseStatus.EXTRACTION_IN_PROGRESS:
                 self._execute_stage(CaseStageType.EXTRACTION)
 
             # Stage 3: Path resolution (if extraction completed)
