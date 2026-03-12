@@ -44,7 +44,7 @@ class CaseRoutingService:
         # 2. Try PO lookup
         from apps.reconciliation.services.po_lookup_service import POLookupService
 
-        po_result = POLookupService.lookup(invoice)
+        po_result = POLookupService().lookup(invoice)
 
         if not po_result.found:
             # PO number present but not found
@@ -115,7 +115,7 @@ class CaseRoutingService:
             evidence={"old_path": old_path, "new_path": new_path},
         )
 
-        logger.info("Case %s rerouted: %s → %s (%s)", case.case_number, old_path, new_path, reason)
+        logger.info("Case %s rerouted: %s -> %s (%s)", case.case_number, old_path, new_path, reason)
         return new_path
 
     @staticmethod

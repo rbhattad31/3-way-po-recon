@@ -1,5 +1,5 @@
 {# ── Agent Status Strip ── #}
-{# Context: agent_runs (list of AgentRun) #}
+{# Context: agent_runs (list of AgentRun), stages (list of APCaseStage) #}
 
 <div class="ap-card mb-3">
   <div class="ap-card-header"><i class="bi bi-cpu"></i> Agent Activity</div>
@@ -19,6 +19,17 @@
         </div>
       </span>
       {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% elif stages %}
+  <div class="ap-agent-strip">
+    {% for stage in stages %}
+    <div class="ap-agent-chip {% if stage.stage_status == 'COMPLETED' %}completed{% elif stage.stage_status == 'IN_PROGRESS' %}running{% elif stage.stage_status == 'FAILED' %}failed{% elif stage.stage_status == 'SKIPPED' %}skipped{% else %}pending{% endif %}"
+         data-bs-toggle="tooltip"
+         title="{{ stage.get_stage_name_display|default:stage.stage_name }} — {{ stage.stage_status }}">
+      <span class="ap-dot"></span>
+      <span>{{ stage.get_stage_name_display|default:stage.stage_name }}</span>
     </div>
     {% endfor %}
   </div>
