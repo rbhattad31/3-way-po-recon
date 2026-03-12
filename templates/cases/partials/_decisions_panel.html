@@ -27,10 +27,10 @@
         <div class="mt-1">
           <div class="ap-confidence">
             <div class="ap-confidence-bar" style="width:48px">
-              <div class="ap-confidence-fill {% if d.confidence >= 80 %}high{% elif d.confidence >= 50 %}medium{% else %}low{% endif %}"
-                   style="width:{{ d.confidence|floatformat:0 }}%"></div>
+              <div class="ap-confidence-fill {% if d.confidence >= 0.8 %}high{% elif d.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                   style="width:{% widthratio d.confidence 1 100 %}%"></div>
             </div>
-            <span>{{ d.confidence|floatformat:0 }}% confidence</span>
+            <span>{% widthratio d.confidence 1 100 %}% confidence</span>
           </div>
         </div>
         {% endif %}

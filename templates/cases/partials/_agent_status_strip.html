@@ -8,14 +8,14 @@
     {% for run in agent_runs %}
     <div class="ap-agent-chip {% if run.status == 'COMPLETED' %}completed{% elif run.status == 'RUNNING' %}running{% elif run.status == 'FAILED' %}failed{% elif run.status == 'SKIPPED' %}skipped{% else %}pending{% endif %}"
          data-bs-toggle="tooltip"
-         title="{{ run.agent_definition.name|default:run.agent_type }} — {{ run.get_status_display }}{% if run.confidence %} ({{ run.confidence|floatformat:0 }}%){% endif %}">
+         title="{{ run.agent_definition.name|default:run.agent_type }} — {{ run.get_status_display }}{% if run.confidence %} ({% widthratio run.confidence 1 100 %}%){% endif %}">
       <span class="ap-dot"></span>
       <span>{{ run.agent_definition.name|default:run.agent_type }}</span>
       {% if run.confidence %}
       <span class="ap-confidence">
         <div class="ap-confidence-bar">
-          <div class="ap-confidence-fill {% if run.confidence >= 80 %}high{% elif run.confidence >= 50 %}medium{% else %}low{% endif %}"
-               style="width:{{ run.confidence|floatformat:0 }}%"></div>
+          <div class="ap-confidence-fill {% if run.confidence >= 0.8 %}high{% elif run.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+               style="width:{% widthratio run.confidence 1 100 %}%"></div>
         </div>
       </span>
       {% endif %}

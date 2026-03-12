@@ -194,6 +194,12 @@ AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
 AZURE_DI_KEY = os.getenv("AZURE_DI_KEY", "")
 
 # ---------------------------------------------------------------------------
+# Azure Blob Storage (document storage)
+# ---------------------------------------------------------------------------
+AZURE_BLOB_CONNECTION_STRING = os.getenv("AZURE_BLOB_CONNECTION_STRING", "")
+AZURE_BLOB_CONTAINER_NAME = os.getenv("AZURE_BLOB_CONTAINER_NAME", "finance-agents")
+
+# ---------------------------------------------------------------------------
 # Reconciliation defaults
 # ---------------------------------------------------------------------------
 DEFAULT_QTY_TOLERANCE_PCT = float(os.getenv("DEFAULT_QTY_TOLERANCE_PCT", "2.0"))

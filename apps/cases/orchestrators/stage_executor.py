@@ -135,7 +135,7 @@ class StageExecutor:
         from apps.reconciliation.services.po_lookup_service import POLookupService
 
         invoice = case.invoice
-        po_result = POLookupService.lookup(invoice)
+        po_result = POLookupService().lookup(invoice)
 
         if po_result.found:
             case.purchase_order = po_result.purchase_order

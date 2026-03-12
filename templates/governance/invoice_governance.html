@@ -141,7 +141,7 @@
                   </span>
                   <strong class="me-2">{{ run.agent_name }}</strong>
                   <small class="text-muted me-2">{{ run.status }}</small>
-                  {% if run.confidence %}<span class="ap-badge ap-badge-info">{{ run.confidence|floatformat:0 }}% conf</span>{% endif %}
+                  {% if run.confidence %}<span class="ap-badge ap-badge-info">{% widthratio run.confidence 1 100 %}% conf</span>{% endif %}
                   {% if run.duration_ms %}<small class="text-muted ms-2">{{ run.duration_ms }}ms</small>{% endif %}
                 </button>
               </h2>
@@ -161,7 +161,7 @@
                       {% for d in run.decisions %}
                       <li class="list-group-item px-0">
                         <strong>{{ d.decision }}</strong>
-                        {% if d.confidence %}<span class="ap-badge ap-badge-info ms-1">{{ d.confidence|floatformat:0 }}%</span>{% endif %}
+                        {% if d.confidence %}<span class="ap-badge ap-badge-info ms-1">{% widthratio d.confidence 1 100 %}%</span>{% endif %}
                         {% if d.rationale %}<br><small class="text-muted">{{ d.rationale }}</small>{% endif %}
                       </li>
                       {% endfor %}
