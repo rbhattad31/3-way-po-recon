@@ -322,3 +322,33 @@ def reprocess_case(request, pk):
         messages.error(request, f"Reprocessing failed: {exc}")
 
     return redirect("cases:case_console", pk=pk)
+
+
+@login_required
+def create_case_for_invoice(request, invoice_pk):
+    """Create an AP Case for an invoice that doesn't have one yet, then start processing."""
+    if request.method != "POST":
+        return redirect("documents:invoice_detail", pk=invoice_pk)
+
+    from apps.documents.models import Invoice
+    invoice = get_object_or_404(Invoice, pk=invoice_pk)
+
+    # Guard: check if case already exists
+    existing = APCase.objects.filter(invoice=invoice, is_active=True).first()
+    if existing:
+        messages.info(request, f"Case {existing.case_number} already exists for this invoice.")
+        return redirect("cases:case_console", pk=existing.pk)
+
+    from apps.cases.services.case_creation_service import CaseCreationService
+    case = CaseCreationService.create_from_upload(invoice, uploaded_by=request.user)
+
+    # Kick off processing
+    from apps.cases.tasks import process_case_task
+    from apps.core.utils import dispatch_task
+    try:
+        dispatch_task(process_case_task, case_id=case.pk)
+        messages.success(request, f"Case {case.case_number} created and processing started.")
+    except Exception as exc:
+        messages.warning(request, f"Case {case.case_number} created but processing failed to start: {exc}")
+
+    return redirect("cases:case_console", pk=case.pk)

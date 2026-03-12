@@ -44,7 +44,7 @@ class CaseRoutingService:
         # 2. Try PO lookup
         from apps.reconciliation.services.po_lookup_service import POLookupService
 
-        po_result = POLookupService.lookup(invoice)
+        po_result = POLookupService().lookup(invoice)
 
         if not po_result.found:
             # PO number present but not found

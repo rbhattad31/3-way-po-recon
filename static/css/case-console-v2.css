@@ -2,8 +2,7 @@
 
 /* ── Case Header ── */
 .ap-case-header {
-  background: var(--ap-bg-card);
-  border: 1px solid var(--ap-border);
+  border: 1px solid var(--ap-border-light);
   border-radius: var(--ap-radius-lg, .75rem);
   overflow: hidden;
 }
