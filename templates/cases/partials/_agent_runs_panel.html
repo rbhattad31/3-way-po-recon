@@ -30,10 +30,10 @@
                 {% if run.confidence %}
                 <span class="ap-confidence">
                   <div class="ap-confidence-bar">
-                    <div class="ap-confidence-fill {% if run.confidence >= 80 %}high{% elif run.confidence >= 50 %}medium{% else %}low{% endif %}"
-                         style="width:{{ run.confidence|floatformat:0 }}%"></div>
+                    <div class="ap-confidence-fill {% if run.confidence >= 0.8 %}high{% elif run.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                         style="width:{% widthratio run.confidence 1 100 %}%"></div>
                   </div>
-                  <span>{{ run.confidence|floatformat:0 }}%</span>
+                  <span>{% widthratio run.confidence 1 100 %}%</span>
                 </span>
                 {% endif %}
                 {% if run.status == "COMPLETED" %}
@@ -67,10 +67,10 @@
                 {% if rec.confidence %}
                 <span class="ap-confidence ms-auto">
                   <div class="ap-confidence-bar">
-                    <div class="ap-confidence-fill {% if rec.confidence >= 80 %}high{% elif rec.confidence >= 50 %}medium{% else %}low{% endif %}"
-                         style="width:{{ rec.confidence|floatformat:0 }}%"></div>
+                    <div class="ap-confidence-fill {% if rec.confidence >= 0.8 %}high{% elif rec.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                         style="width:{% widthratio rec.confidence 1 100 %}%"></div>
                   </div>
-                  <span>{{ rec.confidence|floatformat:0 }}%</span>
+                  <span>{% widthratio rec.confidence 1 100 %}%</span>
                 </span>
                 {% endif %}
               </div>

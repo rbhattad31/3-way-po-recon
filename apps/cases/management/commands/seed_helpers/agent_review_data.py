@@ -279,10 +279,10 @@ def seed_agent_review_data(
             agent_run, created = AgentRun.objects.get_or_create(
                 agent_type=agent_type,
                 reconciliation_result=recon_result,
-                summarized_reasoning=rationale[:500],
                 defaults={
                     "agent_definition": agent_def,
                     "status": run_status,
+                    "summarized_reasoning": rationale[:500],
                     "input_payload": {"invoice_id": invoice.pk, "case_number": case.case_number},
                     "output_payload": {"result": sc.get("match", "N/A"), "exceptions": sc.get("exceptions", [])},
                     "confidence": conf,
