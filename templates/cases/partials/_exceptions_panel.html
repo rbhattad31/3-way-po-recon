@@ -1,0 +1,50 @@
+{# ── Exceptions Panel ── #}
+{# Context: exceptions (list of ReconciliationException) #}
+
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-exclamation-triangle"></i> Exceptions
+    {% if exceptions %}
+    <span class="ap-badge ap-badge-danger ms-auto">{{ exceptions|length }}</span>
+    {% endif %}
+  </div>
+  {% if exceptions %}
+  <div class="ap-card-body-flush">
+    <table class="ap-table">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Severity</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for exc in exceptions %}
+        <tr>
+          <td>
+            <span class="fw-semibold" style="font-size:var(--ap-font-size-xs)">{{ exc.get_exception_type_display }}</span>
+          </td>
+          <td>
+            {% if exc.severity == "CRITICAL" %}
+              <span class="ap-badge ap-sev-critical"><i class="bi bi-fire"></i> Critical</span>
+            {% elif exc.severity == "HIGH" %}
+              <span class="ap-badge ap-sev-high">High</span>
+            {% elif exc.severity == "MEDIUM" %}
+              <span class="ap-badge ap-sev-medium">Medium</span>
+            {% else %}
+              <span class="ap-badge ap-sev-low">Low</span>
+            {% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-xs)">{{ exc.description|truncatechars:100 }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="ap-empty-state">
+    <i class="bi bi-check-circle"></i>
+    <div class="ap-empty-state-label">No exceptions found</div>
+  </div>
+  {% endif %}
+</div>

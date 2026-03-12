@@ -1,0 +1,106 @@
+{# ── Agent Runs Panel (detailed) ── #}
+{# Context: agent_runs (list of AgentRun), show_full_trace (bool) #}
+
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-robot"></i> Agent Runs
+    {% if agent_runs %}
+    <span class="ap-badge ap-badge-primary ms-auto">{{ agent_runs|length }}</span>
+    {% endif %}
+  </div>
+  {% if agent_runs %}
+  <div class="ap-card-body-flush">
+    <div class="accordion accordion-flush" id="agentRunsAccordion">
+      {% for run in agent_runs %}
+      <div class="accordion-item border-0" style="border-bottom:1px solid var(--ap-border-light)!important">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed py-2 px-3" type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#agentRun{{ run.pk }}"
+                  style="font-size:var(--ap-font-size-sm);background:transparent">
+            <span class="d-flex align-items-center gap-2 w-100">
+              {# Status dot #}
+              <span class="ap-dot" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block;
+                {% if run.status == 'COMPLETED' %}background:var(--ap-agent-completed)
+                {% elif run.status == 'RUNNING' %}background:var(--ap-agent-running)
+                {% elif run.status == 'FAILED' %}background:var(--ap-agent-failed)
+                {% else %}background:var(--ap-agent-pending){% endif %}"></span>
+              <span class="fw-semibold">{{ run.agent_definition.name|default:run.agent_type }}</span>
+              <span class="ms-auto d-flex align-items-center gap-2">
+                {% if run.confidence %}
+                <span class="ap-confidence">
+                  <div class="ap-confidence-bar">
+                    <div class="ap-confidence-fill {% if run.confidence >= 0.8 %}high{% elif run.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                         style="width:{% widthratio run.confidence 1 100 %}%"></div>
+                  </div>
+                  <span>{% widthratio run.confidence 1 100 %}%</span>
+                </span>
+                {% endif %}
+                {% if run.status == "COMPLETED" %}
+                  <span class="ap-badge ap-badge-success">Done</span>
+                {% elif run.status == "RUNNING" %}
+                  <span class="ap-badge ap-badge-info">Running</span>
+                {% elif run.status == "FAILED" %}
+                  <span class="ap-badge ap-badge-danger">Failed</span>
+                {% elif run.status == "SKIPPED" %}
+                  <span class="ap-badge ap-badge-muted">Skipped</span>
+                {% else %}
+                  <span class="ap-badge ap-badge-muted">{{ run.status }}</span>
+                {% endif %}
+              </span>
+            </span>
+          </button>
+        </h2>
+        <div id="agentRun{{ run.pk }}" class="accordion-collapse collapse" data-bs-parent="#agentRunsAccordion">
+          <div class="accordion-body pt-0 px-3 pb-3">
+            {# Reasoning #}
+            {% if run.summarized_reasoning %}
+            <div class="ap-evidence-box mb-2">{{ run.summarized_reasoning }}</div>
+            {% endif %}
+
+            {# Recommendations #}
+            {% for rec in run.recommendations.all %}
+            <div class="ap-recommendation mb-2">
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi bi-lightbulb text-warning"></i>
+                <span class="ap-recommendation-action">{{ rec.get_recommendation_type_display }}</span>
+                {% if rec.confidence %}
+                <span class="ap-confidence ms-auto">
+                  <div class="ap-confidence-bar">
+                    <div class="ap-confidence-fill {% if rec.confidence >= 0.8 %}high{% elif rec.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                         style="width:{% widthratio rec.confidence 1 100 %}%"></div>
+                  </div>
+                  <span>{% widthratio rec.confidence 1 100 %}%</span>
+                </span>
+                {% endif %}
+              </div>
+              {% if rec.rationale %}
+              <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-secondary)">{{ rec.rationale|truncatechars:200 }}</div>
+              {% endif %}
+            </div>
+            {% endfor %}
+
+            {# Trace details (admin/auditor) #}
+            {% if show_full_trace %}
+            <div class="mt-2 p-2 rounded" style="background:var(--ap-bg-subtle);font-size:var(--ap-font-size-xs)">
+              <div class="d-flex gap-3 text-muted">
+                <span><i class="bi bi-layers me-1"></i>Steps: {{ run.steps.count }}</span>
+                <span><i class="bi bi-tools me-1"></i>Tools: {{ run.tool_calls.count }}</span>
+                {% if run.recommendations.count %}<span><i class="bi bi-lightbulb me-1"></i>Recs: {{ run.recommendations.count }}</span>{% endif %}
+                {% if run.duration_seconds %}<span><i class="bi bi-clock me-1"></i>{{ run.duration_seconds|floatformat:1 }}s</span>{% endif %}
+              </div>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="ap-empty-state">
+    <i class="bi bi-robot"></i>
+    <div class="ap-empty-state-label">No agent runs yet</div>
+  </div>
+  {% endif %}
+</div>

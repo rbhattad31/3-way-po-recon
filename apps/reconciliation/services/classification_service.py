@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from apps.core.enums import MatchStatus
+from apps.core.enums import MatchStatus, ReconciliationMode
 from apps.reconciliation.services.header_match_service import HeaderMatchResult
 from apps.reconciliation.services.line_match_service import LineMatchResult
 from apps.reconciliation.services.grn_match_service import GRNMatchResult
@@ -18,10 +18,12 @@ class ClassificationService:
 
     Decision tree (deterministic, no AI):
       1. PO not found → UNMATCHED
-      2. Header all OK + all lines matched + all within tolerance + no GRN issues → MATCHED
-      3. Header all OK + some tolerance breaches but within escalation range → PARTIAL_MATCH
-      4. Significant mismatches or missing lines → REQUIRES_REVIEW
-      5. Any hard error → ERROR
+      2. Low extraction confidence → REQUIRES_REVIEW
+      3. Header all OK + all lines matched + all within tolerance + no GRN issues → MATCHED
+         (In 2-way mode GRN checks are skipped entirely)
+      4. Header all OK + some tolerance breaches but within escalation range → PARTIAL_MATCH
+      5. Significant mismatches or missing lines → REQUIRES_REVIEW
+      6. Any hard error → ERROR
     """
 
     def classify(
@@ -32,7 +34,10 @@ class ClassificationService:
         grn_result: Optional[GRNMatchResult],
         extraction_confidence: Optional[float] = None,
         confidence_threshold: float = 0.75,
+        reconciliation_mode: str = "",
     ) -> MatchStatus:
+        is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
+
         # Gate 1: PO not found
         if not po_result.found:
             logger.info("Classification: UNMATCHED (PO not found)")
@@ -46,6 +51,11 @@ class ClassificationService:
             )
             return MatchStatus.REQUIRES_REVIEW
 
+        # In 2-way mode, GRN issues are irrelevant
+        grn_ok = True
+        if not is_two_way and grn_result is not None:
+            grn_ok = not grn_result.has_receipt_issues
+
         # Gate 3: Full match
         if (
             header_result
@@ -53,9 +63,10 @@ class ClassificationService:
             and line_result
             and line_result.all_lines_matched
             and line_result.all_within_tolerance
-            and (grn_result is None or not grn_result.has_receipt_issues)
+            and grn_ok
         ):
-            logger.info("Classification: MATCHED (full deterministic match)")
+            mode_label = "2-way" if is_two_way else "3-way"
+            logger.info("Classification: MATCHED (full %s deterministic match)", mode_label)
             return MatchStatus.MATCHED
 
         # Gate 4: Partial — header passes, some line issues
@@ -69,8 +80,8 @@ class ClassificationService:
             logger.info("Classification: PARTIAL_MATCH (header mismatch, lines matched)")
             return MatchStatus.PARTIAL_MATCH
 
-        # Gate 6: GRN receipt issues
-        if grn_result and grn_result.has_receipt_issues:
+        # Gate 6: GRN receipt issues (3-way only)
+        if not is_two_way and grn_result and grn_result.has_receipt_issues:
             logger.info("Classification: REQUIRES_REVIEW (GRN receipt issues)")
             return MatchStatus.REQUIRES_REVIEW
 

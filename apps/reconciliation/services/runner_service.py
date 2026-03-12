@@ -1,13 +1,13 @@
-"""Reconciliation runner — orchestrates the full deterministic 3-way match pipeline.
+"""Reconciliation runner — orchestrates the deterministic match pipeline.
 
 Flow for each invoice:
   1. PO Lookup
-  2. Header Match
-  3. Line Match
-  4. GRN Lookup + Match
-  5. Classification
-  6. Exception Building
-  7. Result Persistence
+  2. Mode Resolution (TWO_WAY vs THREE_WAY)
+  3. Execution Router dispatch (header + line ± GRN)
+  4. Mode-aware Classification
+  5. Mode-aware Exception Building
+  6. Result Persistence (with mode metadata)
+  7. Review assignment (if needed)
   8. Invoice status transition
 """
 from __future__ import annotations
@@ -18,15 +18,19 @@ from typing import List, Optional
 from django.db import transaction
 from django.utils import timezone
 
-from apps.core.enums import InvoiceStatus, MatchStatus, ReconciliationRunStatus
+from apps.core.enums import (
+    AuditEventType,
+    InvoiceStatus,
+    MatchStatus,
+    ReconciliationMode,
+    ReconciliationRunStatus,
+)
 from apps.documents.models import Invoice
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationRun
 from apps.reconciliation.services.classification_service import ClassificationService
 from apps.reconciliation.services.exception_builder_service import ExceptionBuilderService
-from apps.reconciliation.services.grn_lookup_service import GRNLookupService
-from apps.reconciliation.services.grn_match_service import GRNMatchService
-from apps.reconciliation.services.header_match_service import HeaderMatchService
-from apps.reconciliation.services.line_match_service import LineMatchService
+from apps.reconciliation.services.execution_router import ReconciliationExecutionRouter
+from apps.reconciliation.services.mode_resolver import ModeResolutionResult, ReconciliationModeResolver
 from apps.reconciliation.services.po_lookup_service import POLookupService
 from apps.reconciliation.services.result_service import ReconciliationResultService
 from apps.reconciliation.services.tolerance_engine import ToleranceEngine
@@ -43,10 +47,8 @@ class ReconciliationRunnerService:
 
         # Sub-services
         self.po_lookup = POLookupService()
-        self.grn_lookup = GRNLookupService()
-        self.header_match = HeaderMatchService(self.tolerance)
-        self.line_match = LineMatchService(self.tolerance)
-        self.grn_match = GRNMatchService()
+        self.mode_resolver = ReconciliationModeResolver(self.config)
+        self.router = ReconciliationExecutionRouter(self.tolerance)
         self.classifier = ClassificationService()
         self.exception_builder = ExceptionBuilderService()
         self.result_service = ReconciliationResultService()
@@ -80,7 +82,6 @@ class ReconciliationRunnerService:
 
         # Audit: reconciliation started
         from apps.auditlog.services import AuditService
-        from apps.core.enums import AuditEventType
         for inv in invoices:
             AuditService.log_event(
                 entity_type="Invoice",
@@ -151,56 +152,82 @@ class ReconciliationRunnerService:
     def _reconcile_single(
         self, run: ReconciliationRun, invoice: Invoice
     ) -> MatchStatus:
-        """Run the deterministic 3-way match for one invoice."""
+        """Run the deterministic match for one invoice (2-way or 3-way)."""
 
-        # 1. PO Lookup
+        # 1. PO Lookup (includes vendor+amount discovery fallback)
         po_result = self.po_lookup.lookup(invoice)
 
-        header_result = None
-        line_result = None
-        grn_result = None
-        grn_summary = None
+        # 1b. If PO was discovered (not by PO number), backfill invoice.po_number
+        if po_result.found and po_result.lookup_method == "vendor_amount":
+            invoice.po_number = po_result.purchase_order.po_number
+            invoice.save(update_fields=["po_number", "updated_at"])
 
-        if po_result.found:
-            po = po_result.purchase_order
+            from apps.auditlog.services import AuditService
+            AuditService.log_event(
+                entity_type="Invoice",
+                entity_id=invoice.pk,
+                event_type=AuditEventType.RECONCILIATION_COMPLETED,
+                description=(
+                    f"PO {po_result.purchase_order.po_number} discovered deterministically "
+                    f"via vendor+amount match (vendor={invoice.vendor_id}, "
+                    f"amount={invoice.total_amount})"
+                ),
+                metadata={
+                    "lookup_method": "vendor_amount",
+                    "discovered_po": po_result.purchase_order.po_number,
+                    "vendor_id": invoice.vendor_id,
+                    "invoice_total": str(invoice.total_amount),
+                    "po_total": str(po_result.purchase_order.total_amount),
+                },
+            )
+        po_for_resolver = po_result.purchase_order if po_result.found else None
+        mode_resolution = self.mode_resolver.resolve(invoice, po_for_resolver)
 
-            # 2. Header Match
-            header_result = self.header_match.match(invoice, po)
-
-            # 3. Line Match
-            line_result = self.line_match.match(invoice, po)
-
-            # 4. GRN Lookup + Match
-            grn_summary = self.grn_lookup.lookup(po)
-            if grn_summary.grn_available and line_result:
-                grn_result = self.grn_match.match(line_result.pairs, grn_summary)
-            else:
-                grn_result = None
-
-        # 5. Classification
-        match_status = self.classifier.classify(
-            po_result=po_result,
-            header_result=header_result,
-            line_result=line_result,
-            grn_result=grn_result,
-            extraction_confidence=invoice.extraction_confidence,
-            confidence_threshold=self.config.extraction_confidence_threshold,
+        # Audit: mode resolved
+        from apps.auditlog.services import AuditService
+        AuditService.log_event(
+            entity_type="Invoice",
+            entity_id=invoice.pk,
+            event_type=AuditEventType.RECONCILIATION_MODE_RESOLVED,
+            description=(
+                f"Mode resolved to {mode_resolution.mode} "
+                f"via {mode_resolution.resolution_method}: {mode_resolution.reason}"
+            ),
+            metadata={
+                "mode": mode_resolution.mode,
+                "policy_code": mode_resolution.policy_code,
+                "resolution_method": mode_resolution.resolution_method,
+                "grn_required": mode_resolution.grn_required,
+            },
         )
 
-        # 6. Exception building (with a placeholder result for FK)
-        # We save the result first, then build exceptions, then bulk-create them
+        # 3. Execute via router (dispatches to 2-way or 3-way pipeline)
+        routed = self.router.execute(invoice, po_result, mode_resolution)
+
+        # 4. Mode-aware Classification
+        reconciliation_mode = mode_resolution.mode
+        match_status = self.classifier.classify(
+            po_result=routed.po_result,
+            header_result=routed.header_result,
+            line_result=routed.line_result,
+            grn_result=routed.grn_result,
+            extraction_confidence=invoice.extraction_confidence,
+            confidence_threshold=self.config.extraction_confidence_threshold,
+            reconciliation_mode=reconciliation_mode,
+        )
+
+        # 5. Save result with mode metadata
         result = self.result_service.save(
             run=run,
             invoice=invoice,
             match_status=match_status,
-            po_result=po_result,
-            header_result=header_result,
-            line_result=line_result,
-            grn_result=grn_result if grn_result else (
-                type("GRNMatchResult", (), {"grn_available": False, "fully_received": None, "has_receipt_issues": False})()
-                if grn_summary and not grn_summary.grn_available else grn_result
-            ),
+            po_result=routed.po_result,
+            header_result=routed.header_result,
+            line_result=routed.line_result,
+            grn_result=routed.grn_result,
             exceptions=[],  # Build separately below to get result_line references
+            reconciliation_mode=reconciliation_mode,
+            mode_resolution=mode_resolution,
         )
 
         # Build result_line map from saved result
@@ -210,15 +237,17 @@ class ReconciliationRunnerService:
             if rl.invoice_line_id
         }
 
+        # 6. Mode-aware Exception building
         exceptions = self.exception_builder.build(
             result=result,
-            po_result=po_result,
-            header_result=header_result,
-            line_result=line_result,
-            grn_result=grn_result,
+            po_result=routed.po_result,
+            header_result=routed.header_result,
+            line_result=routed.line_result,
+            grn_result=routed.grn_result,
             result_line_map=result_line_map,
             extraction_confidence=invoice.extraction_confidence,
             confidence_threshold=self.config.extraction_confidence_threshold,
+            reconciliation_mode=reconciliation_mode,
         )
         if exceptions:
             from apps.reconciliation.models import ReconciliationException

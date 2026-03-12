@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "apps.reports",
     "apps.auditlog",
     "apps.integrations",
+    "apps.cases",
 ]
 
 MIDDLEWARE = [
@@ -191,6 +192,12 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 # Azure Document Intelligence (OCR)
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
 AZURE_DI_KEY = os.getenv("AZURE_DI_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Azure Blob Storage (document storage)
+# ---------------------------------------------------------------------------
+AZURE_BLOB_CONNECTION_STRING = os.getenv("AZURE_BLOB_CONNECTION_STRING", "")
+AZURE_BLOB_CONTAINER_NAME = os.getenv("AZURE_BLOB_CONTAINER_NAME", "finance-agents")
 
 # ---------------------------------------------------------------------------
 # Reconciliation defaults

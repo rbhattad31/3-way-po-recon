@@ -47,7 +47,22 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
     try:
         # 1. Extract
         adapter = InvoiceExtractionAdapter()
-        extraction_resp: ExtractionResponse = adapter.extract(upload.file.path)
+        # Download from Azure Blob Storage
+        if not upload.blob_path:
+            _fail_upload(upload, "No blob_path set — document not in Azure Blob Storage")
+            return {"status": "error", "message": "No blob_path set on upload"}
+
+        from apps.documents.blob_service import download_blob_to_tempfile
+        file_path = download_blob_to_tempfile(upload.blob_path)
+
+        try:
+            extraction_resp: ExtractionResponse = adapter.extract(file_path)
+        finally:
+            import os
+            try:
+                os.unlink(file_path)
+            except OSError:
+                pass
 
         if not extraction_resp.success:
             _fail_upload(upload, extraction_resp.error_message)
@@ -85,6 +100,17 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         upload.processing_state = FileProcessingState.COMPLETED
         upload.save(update_fields=["processing_state", "updated_at"])
 
+        # Move blob from input/ to processed/
+        if upload.blob_path and upload.blob_path.startswith("input/"):
+            try:
+                from apps.documents.blob_service import move_blob
+                new_path = upload.blob_path.replace("input/", "processed/", 1)
+                move_blob(upload.blob_path, new_path)
+                upload.blob_path = new_path
+                upload.save(update_fields=["blob_path", "updated_at"])
+            except Exception as mv_err:
+                logger.warning("Blob move to processed/ failed: %s", mv_err)
+
         # If valid and not duplicate, mark ready for reconciliation
         if validation_result.is_valid and not dup_result.is_duplicate:
             invoice.status = InvoiceStatus.READY_FOR_RECON
@@ -101,6 +127,28 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             metadata={"upload_id": upload_id, "is_duplicate": dup_result.is_duplicate, "is_valid": validation_result.is_valid},
         )
 
+        # --- Auto-create AP Case and trigger case processing ---
+        case_id = None
+        if validation_result.is_valid and not dup_result.is_duplicate:
+            try:
+                from apps.cases.services.case_creation_service import CaseCreationService
+                case = CaseCreationService.create_from_upload(
+                    invoice=invoice,
+                    uploaded_by=upload.uploaded_by,
+                )
+                case_id = case.pk
+                logger.info("Created AP Case %s for invoice %s", case.case_number, invoice.invoice_number)
+
+                # Trigger case orchestration
+                from apps.cases.tasks import process_case_task
+                from apps.core.utils import dispatch_task
+                dispatch_task(process_case_task, case_id=case.pk)
+            except Exception as case_exc:
+                logger.exception(
+                    "AP Case creation/processing failed for invoice %s: %s",
+                    invoice.pk, case_exc,
+                )
+
         logger.info(
             "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",
             upload_id, invoice.pk, invoice.status,
@@ -112,6 +160,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             "invoice_status": invoice.status,
             "is_duplicate": dup_result.is_duplicate,
             "is_valid": validation_result.is_valid,
+            "case_id": case_id,
         }
 
     except Exception as exc:
@@ -141,3 +190,14 @@ def _fail_upload(upload: DocumentUpload, message: str) -> None:
     upload.processing_state = FileProcessingState.FAILED
     upload.processing_message = message[:2000]
     upload.save(update_fields=["processing_state", "processing_message", "updated_at"])
+
+    # Move blob from input/ to exception/
+    if upload.blob_path and upload.blob_path.startswith("input/"):
+        try:
+            from apps.documents.blob_service import move_blob
+            new_path = upload.blob_path.replace("input/", "exception/", 1)
+            move_blob(upload.blob_path, new_path)
+            upload.blob_path = new_path
+            upload.save(update_fields=["blob_path", "updated_at"])
+        except Exception as mv_err:
+            logger.warning("Blob move to exception/ failed: %s", mv_err)

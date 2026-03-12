@@ -4,6 +4,7 @@ from rest_framework import serializers
 from apps.reconciliation.models import (
     ReconciliationConfig,
     ReconciliationException,
+    ReconciliationPolicy,
     ReconciliationResult,
     ReconciliationResultLine,
     ReconciliationRun,
@@ -20,6 +21,8 @@ class ReconciliationConfigSerializer(serializers.ModelSerializer):
             "id", "name", "quantity_tolerance_pct", "price_tolerance_pct",
             "amount_tolerance_pct", "auto_close_on_match", "enable_agents",
             "extraction_confidence_threshold", "is_default",
+            "default_reconciliation_mode", "enable_mode_resolver",
+            "enable_grn_for_stock_items", "enable_two_way_for_services",
             "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
@@ -39,6 +42,7 @@ class ReconciliationRunListSerializer(serializers.ModelSerializer):
             "id", "status", "started_at", "completed_at",
             "total_invoices", "matched_count", "partial_count",
             "unmatched_count", "error_count", "review_count",
+            "reconciliation_mode",
             "triggered_by_email", "created_at",
         ]
 
@@ -47,6 +51,7 @@ class ReconciliationRunDetailSerializer(ReconciliationRunListSerializer):
     class Meta(ReconciliationRunListSerializer.Meta):
         fields = ReconciliationRunListSerializer.Meta.fields + [
             "error_message", "celery_task_id",
+            "policy_name_applied", "grn_required_flag", "grn_checked_flag",
         ]
 
 
@@ -59,7 +64,7 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
         fields = [
             "id", "exception_type", "severity", "message",
             "details", "resolved", "resolved_by", "resolved_at",
-            "created_at",
+            "applies_to_mode", "created_at",
         ]
 
 
@@ -94,6 +99,7 @@ class ReconciliationResultListSerializer(serializers.ModelSerializer):
             "vendor_name", "po_number", "match_status",
             "requires_review", "deterministic_confidence",
             "total_amount_difference", "total_amount_difference_pct",
+            "reconciliation_mode", "is_two_way_result", "is_three_way_result",
             "exception_count", "created_at",
         ]
 
@@ -121,6 +127,9 @@ class ReconciliationResultDetailSerializer(serializers.ModelSerializer):
             "total_amount_difference_pct",
             "grn_available", "grn_fully_received",
             "extraction_confidence", "deterministic_confidence",
+            "reconciliation_mode", "grn_required_flag", "grn_checked_flag",
+            "mode_resolution_reason", "policy_applied",
+            "is_two_way_result", "is_three_way_result",
             "summary", "line_results", "exceptions",
             "created_at", "updated_at",
         ]
@@ -129,3 +138,22 @@ class ReconciliationResultDetailSerializer(serializers.ModelSerializer):
         if obj.invoice.vendor:
             return obj.invoice.vendor.name
         return obj.invoice.raw_vendor_name
+
+
+# ---------------------------------------------------------------------------
+# Policy
+# ---------------------------------------------------------------------------
+class ReconciliationPolicySerializer(serializers.ModelSerializer):
+    vendor_name = serializers.CharField(source="vendor.name", read_only=True, default="")
+
+    class Meta:
+        model = ReconciliationPolicy
+        fields = [
+            "id", "policy_code", "policy_name", "reconciliation_mode",
+            "vendor", "vendor_name", "invoice_type", "item_category",
+            "business_unit", "location_code",
+            "is_service_invoice", "is_stock_invoice",
+            "priority", "is_active", "effective_from", "effective_to",
+            "notes", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]

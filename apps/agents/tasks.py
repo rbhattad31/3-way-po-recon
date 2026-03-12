@@ -39,7 +39,8 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int) -> dict:
         outcome = orchestrator.execute(result)
     except Exception as exc:
         logger.exception("Agent pipeline failed for result %s", reconciliation_result_id)
-        raise self.retry(exc=exc)
+        from apps.core.utils import safe_retry
+        safe_retry(self, exc)
 
     return {
         "reconciliation_result_id": reconciliation_result_id,

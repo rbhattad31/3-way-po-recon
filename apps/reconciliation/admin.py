@@ -3,6 +3,7 @@ from django.utils.html import format_html
 
 from apps.reconciliation.models import (
     ReconciliationConfig,
+    ReconciliationPolicy,
     ReconciliationRun,
     ReconciliationResult,
     ReconciliationResultLine,
@@ -49,11 +50,11 @@ class ResultInline(admin.TabularInline):
 @admin.register(ReconciliationConfig)
 class ReconciliationConfigAdmin(admin.ModelAdmin):
     list_display = (
-        "name", "quantity_tolerance_pct", "price_tolerance_pct",
+        "name", "default_reconciliation_mode", "quantity_tolerance_pct", "price_tolerance_pct",
         "amount_tolerance_pct", "extraction_confidence_threshold",
-        "is_default", "auto_close_on_match", "enable_agents",
+        "is_default", "auto_close_on_match", "enable_agents", "enable_mode_resolver",
     )
-    list_filter = ("is_default", "enable_agents", "auto_close_on_match")
+    list_filter = ("is_default", "enable_agents", "auto_close_on_match", "default_reconciliation_mode")
     search_fields = ("name",)
     readonly_fields = ("created_at", "updated_at", "created_by", "updated_by")
     fieldsets = (
@@ -61,8 +62,16 @@ class ReconciliationConfigAdmin(admin.ModelAdmin):
         ("Tolerance Thresholds", {"fields": (
             "quantity_tolerance_pct", "price_tolerance_pct", "amount_tolerance_pct",
         )}),
+        ("Auto-Close Tolerance (wider band)", {"fields": (
+            "auto_close_qty_tolerance_pct", "auto_close_price_tolerance_pct",
+            "auto_close_amount_tolerance_pct",
+        )}),
         ("Behavior", {"fields": (
             "auto_close_on_match", "enable_agents", "extraction_confidence_threshold",
+        )}),
+        ("Reconciliation Mode", {"fields": (
+            "default_reconciliation_mode", "enable_mode_resolver",
+            "enable_grn_for_stock_items", "enable_two_way_for_services",
         )}),
         ("Audit", {"fields": ("created_at", "updated_at", "created_by", "updated_by"), "classes": ("collapse",)}),
     )
@@ -75,7 +84,7 @@ class ReconciliationRunAdmin(admin.ModelAdmin):
         "matched_count", "partial_count", "unmatched_count", "error_count", "review_count",
         "triggered_by",
     )
-    list_filter = ("status", "config")
+    list_filter = ("status", "config", "reconciliation_mode")
     list_per_page = 25
     date_hierarchy = "created_at"
     readonly_fields = (
@@ -89,6 +98,10 @@ class ReconciliationRunAdmin(admin.ModelAdmin):
         ("Counts", {"fields": (
             "total_invoices", "matched_count", "partial_count",
             "unmatched_count", "error_count", "review_count",
+        )}),
+        ("Mode", {"fields": (
+            "reconciliation_mode", "policy_name_applied",
+            "grn_required_flag", "grn_checked_flag",
         )}),
         ("Error", {"fields": ("error_message",), "classes": ("collapse",)}),
         ("Audit", {"fields": ("created_at", "updated_at", "created_by", "updated_by"), "classes": ("collapse",)}),
@@ -114,8 +127,8 @@ class ReconciliationResultAdmin(admin.ModelAdmin):
         "review_flag", "vendor_match", "currency_match", "po_total_match",
         "confidence_display", "exception_count", "created_at",
     )
-    list_filter = ("match_status", "requires_review", "vendor_match", "currency_match", "grn_available")
-    search_fields = ("invoice__invoice_number", "purchase_order__po_number", "summary")
+    list_filter = ("match_status", "requires_review", "vendor_match", "currency_match", "grn_available", "reconciliation_mode")
+    search_fields = ("invoice__invoice_number", "purchase_order__po_number", "summary", "policy_applied")
     list_per_page = 25
     date_hierarchy = "created_at"
     readonly_fields = ("created_at", "updated_at", "created_by", "updated_by")
@@ -129,6 +142,11 @@ class ReconciliationResultAdmin(admin.ModelAdmin):
         )}),
         ("GRN", {"fields": ("grn_available", "grn_fully_received")}),
         ("Confidence", {"fields": ("extraction_confidence", "deterministic_confidence")}),
+        ("Reconciliation Mode", {"fields": (
+            "reconciliation_mode", "policy_applied", "mode_resolution_reason",
+            "grn_required_flag", "grn_checked_flag",
+            "is_two_way_result", "is_three_way_result",
+        )}),
         ("Summary", {"fields": ("summary",)}),
         ("Audit", {"fields": ("created_at", "updated_at", "created_by", "updated_by"), "classes": ("collapse",)}),
     )
@@ -181,14 +199,14 @@ class ReconciliationResultLineAdmin(admin.ModelAdmin):
 @admin.register(ReconciliationException)
 class ReconciliationExceptionAdmin(admin.ModelAdmin):
     list_display = ("id", "result", "type_badge", "severity_badge", "message_short", "resolved_flag", "created_at")
-    list_filter = ("exception_type", "severity", "resolved")
+    list_filter = ("exception_type", "severity", "resolved", "applies_to_mode")
     search_fields = ("message",)
     list_per_page = 25
     date_hierarchy = "created_at"
     readonly_fields = ("created_at", "updated_at")
     fieldsets = (
         ("Links", {"fields": ("result", "result_line")}),
-        ("Exception", {"fields": ("exception_type", "severity", "message", "details")}),
+        ("Exception", {"fields": ("exception_type", "severity", "message", "details", "applies_to_mode")}),
         ("Resolution", {"fields": ("resolved", "resolved_by", "resolved_at")}),
         ("Audit", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
     )
@@ -222,3 +240,30 @@ class ReconciliationExceptionAdmin(admin.ModelAdmin):
     def mark_resolved(self, request, queryset):
         from django.utils import timezone as tz
         queryset.filter(resolved=False).update(resolved=True, resolved_by=request.user, resolved_at=tz.now())
+
+
+@admin.register(ReconciliationPolicy)
+class ReconciliationPolicyAdmin(admin.ModelAdmin):
+    list_display = (
+        "policy_code", "policy_name", "reconciliation_mode", "vendor",
+        "is_service_invoice", "is_stock_invoice", "priority",
+        "is_active", "effective_from", "effective_to",
+    )
+    list_filter = ("reconciliation_mode", "is_active", "is_service_invoice", "is_stock_invoice")
+    search_fields = ("policy_code", "policy_name", "item_category", "business_unit")
+    list_per_page = 25
+    readonly_fields = ("created_at", "updated_at", "created_by", "updated_by")
+    fieldsets = (
+        ("Identity", {"fields": ("policy_code", "policy_name")}),
+        ("Mode", {"fields": ("reconciliation_mode",)}),
+        ("Matching Criteria", {"fields": (
+            "vendor", "invoice_type", "item_category",
+            "business_unit", "location_code",
+            "is_service_invoice", "is_stock_invoice",
+        )}),
+        ("Priority & Validity", {"fields": (
+            "priority", "is_active", "effective_from", "effective_to",
+        )}),
+        ("Notes", {"fields": ("notes",)}),
+        ("Audit", {"fields": ("created_at", "updated_at", "created_by", "updated_by"), "classes": ("collapse",)}),
+    )

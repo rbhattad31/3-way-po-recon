@@ -1,54 +1,87 @@
 {% extends "base.html" %}
-{% block title %}Invoice {{ invoice.invoice_number }} – PO Reconciliation{% endblock %}
+{% block title %}Invoice {{ invoice.invoice_number }} – AP Operations{% endblock %}
 
 {% block breadcrumb %}
-<nav aria-label="breadcrumb"><ol class="breadcrumb">
-  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
-  <li class="breadcrumb-item"><a href="{% url 'documents:invoice_list' %}">Invoices</a></li>
-  <li class="breadcrumb-item active">{{ invoice.invoice_number|default:"Detail" }}</li>
-</ol></nav>
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'documents:invoice_list' %}" class="text-decoration-none">Invoices</a></li>
+    <li class="breadcrumb-item active">{{ invoice.invoice_number|default:"Detail" }}</li>
+  </ol>
+</nav>
 {% endblock %}
 
 {% block content %}
 <div class="row g-3">
-  <!-- Header Info -->
+  {# Header Info #}
   <div class="col-md-6">
-    <div class="card">
-      <div class="card-header bg-white"><strong>Invoice Details</strong></div>
-      <table class="table table-sm mb-0">
-        <tr><th>Invoice #</th><td>{{ invoice.invoice_number }}</td></tr>
-        <tr><th>Date</th><td>{{ invoice.invoice_date|date:"d M Y"|default:"—" }}</td></tr>
-        <tr><th>Vendor</th><td>{{ invoice.vendor.name|default:invoice.raw_vendor_name }}</td></tr>
-        <tr><th>PO #</th><td>{{ invoice.po_number|default:"—" }}</td></tr>
-        <tr><th>Currency</th><td>{{ invoice.currency }}</td></tr>
-        <tr><th>Subtotal</th><td>{{ invoice.subtotal|default:"—" }}</td></tr>
-        <tr><th>Tax</th><td>{{ invoice.tax_amount|default:"—" }}</td></tr>
-        <tr><th>Total</th><td><strong>{{ invoice.total_amount|default:"—" }}</strong></td></tr>
-        <tr><th>Status</th><td><span class="badge status-badge status-{{ invoice.status }}">{{ invoice.status }}</span></td></tr>
-        <tr><th>Confidence</th><td>{% if invoice.extraction_confidence %}{% widthratio invoice.extraction_confidence 1 100 %}%{% else %}—{% endif %}</td></tr>
-      </table>
+    <div class="ap-card">
+      <div class="ap-card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-file-earmark-text"></i> Invoice Details</span>
+        {% if invoice.document_upload %}
+        <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" target="_blank"
+           class="btn btn-sm btn-outline-primary" title="View original document">
+          <i class="bi bi-file-earmark-arrow-down"></i> View Document
+        </a>
+        {% endif %}
+      </div>
+      <div class="ap-card-body p-0">
+        <table class="ap-table">
+          <tbody>
+            <tr><th style="width:130px;color:var(--ap-text-muted)">Invoice #</th><td style="font-weight:500">{{ invoice.invoice_number }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Date</th><td>{{ invoice.invoice_date|date:"d M Y"|default:"—" }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Vendor</th><td>{{ invoice.vendor.name|default:invoice.raw_vendor_name }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">PO #</th><td>{{ invoice.po_number|default:"—" }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Currency</th><td>{{ invoice.currency }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Subtotal</th><td>{{ invoice.subtotal|default:"—" }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Tax</th><td>{{ invoice.tax_amount|default:"—" }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Total</th><td style="font-weight:600">{{ invoice.total_amount|default:"—" }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Status</th><td>
+              <span class="ap-badge {% if invoice.status == 'RECONCILED' or invoice.status == 'VALIDATED' %}ap-badge-success{% elif invoice.status == 'FAILED' or invoice.status == 'INVALID' %}ap-badge-danger{% elif invoice.status == 'EXTRACTED' or invoice.status == 'EXTRACTION_IN_PROGRESS' %}ap-badge-primary{% else %}ap-badge-muted{% endif %}">
+                {{ invoice.status }}
+              </span>
+            </td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Confidence</th><td>
+              {% if invoice.extraction_confidence %}
+              <div class="d-flex align-items-center gap-2">
+                <div class="ap-confidence-bar">
+                  <div class="ap-confidence-fill {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                       style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></div>
+                </div>
+                <span style="font-size:var(--ap-font-size-xs)">{% widthratio invoice.extraction_confidence 1 100 %}%</span>
+              </div>
+              {% else %}—{% endif %}
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
-  <!-- Line Items -->
+  {# Line Items #}
   <div class="col-md-6">
-    <div class="card">
-      <div class="card-header bg-white"><strong>Line Items</strong></div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <thead class="table-light">
-            <tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr>
+    <div class="ap-card">
+      <div class="ap-card-header"><i class="bi bi-list-ul"></i> Line Items</div>
+      <div class="ap-card-body p-0">
+        <table class="ap-table">
+          <thead>
+            <tr><th>#</th><th>Description</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Amount</th></tr>
           </thead>
           <tbody>
             {% for line in invoice.line_items.all %}
             <tr>
-              <td>{{ line.line_number }}</td>
-              <td>{{ line.description|truncatechars:50 }}</td>
-              <td>{{ line.quantity }}</td>
-              <td>{{ line.unit_price }}</td>
-              <td>{{ line.line_amount }}</td>
+              <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ line.line_number }}</td>
+              <td style="font-size:var(--ap-font-size-sm)">{{ line.description|truncatechars:50 }}</td>
+              <td class="text-end" style="font-size:var(--ap-font-size-sm)">{{ line.quantity }}</td>
+              <td class="text-end" style="font-size:var(--ap-font-size-sm)">{{ line.unit_price }}</td>
+              <td class="text-end" style="font-size:var(--ap-font-size-sm);font-weight:500">{{ line.line_amount }}</td>
             </tr>
             {% empty %}
-            <tr><td colspan="5" class="text-center text-muted">No line items</td></tr>
+            <tr><td colspan="5">
+              <div class="ap-empty-state" style="padding:1rem">
+                <i class="bi bi-list-ul"></i>
+                <div class="ap-empty-state-label">No line items</div>
+              </div>
+            </td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -57,24 +90,28 @@
   </div>
 </div>
 
-<!-- Reconciliation Results -->
+{# Reconciliation Results #}
 {% if recon_results %}
-<div class="card mt-3">
-  <div class="card-header bg-white"><strong>Reconciliation Results</strong></div>
-  <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0">
-      <thead class="table-light">
+<div class="ap-card mt-3">
+  <div class="ap-card-header"><i class="bi bi-arrow-left-right"></i> Reconciliation Results</div>
+  <div class="ap-card-body p-0">
+    <table class="ap-table">
+      <thead>
         <tr><th>ID</th><th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th></tr>
       </thead>
       <tbody>
         {% for r in recon_results %}
         <tr>
-          <td><a href="{% url 'reconciliation:result_detail' r.pk %}">{{ r.pk }}</a></td>
-          <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
+          <td><a href="{% url 'reconciliation:result_detail' r.pk %}" class="text-decoration-none" style="color:var(--ap-primary)">{{ r.pk }}</a></td>
+          <td>
+            <span class="ap-badge {% if r.match_status == 'MATCHED' %}ap-badge-success{% elif r.match_status == 'PARTIAL_MATCH' %}ap-badge-warning{% elif r.match_status == 'UNMATCHED' %}ap-badge-danger{% else %}ap-badge-muted{% endif %}">
+              {{ r.match_status }}
+            </span>
+          </td>
           <td>{% if r.deterministic_confidence %}{% widthratio r.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td>
-          <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
-          <td>{{ r.exceptions.count }}</td>
-          <td class="text-muted">{{ r.created_at|date:"d M Y" }}</td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ r.total_amount_difference_pct|default:"—" }}%</td>
+          <td class="text-center" style="font-size:var(--ap-font-size-sm)">{{ r.exceptions.count }}</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ r.created_at|date:"d M Y" }}</td>
         </tr>
         {% endfor %}
       </tbody>

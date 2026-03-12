@@ -32,39 +32,9 @@ class ExtractionResponse:
 
 
 # ---------------------------------------------------------------------------
-# Extraction prompt for the LLM
+# Extraction prompt for the LLM — loaded from PromptRegistry at runtime
 # ---------------------------------------------------------------------------
-EXTRACTION_SYSTEM_PROMPT = """You are an expert invoice data extraction system. You will receive OCR text from an invoice document.
-Extract ALL relevant fields and return a JSON object with EXACTLY this structure:
-
-{
-  "confidence": <float 0.0-1.0 representing your overall confidence>,
-  "vendor_name": "<vendor/supplier company name>",
-  "invoice_number": "<invoice number/ID>",
-  "invoice_date": "<invoice date in YYYY-MM-DD format>",
-  "po_number": "<purchase order number referenced on the invoice>",
-  "currency": "<3-letter ISO currency code e.g. USD, EUR, INR>",
-  "subtotal": "<subtotal amount before tax as a number>",
-  "tax_amount": "<total tax amount as a number>",
-  "total_amount": "<grand total amount as a number>",
-  "line_items": [
-    {
-      "item_description": "<description of the line item>",
-      "quantity": "<quantity as a number>",
-      "unit_price": "<unit price as a number>",
-      "tax_amount": "<tax for this line as a number or null>",
-      "line_amount": "<total amount for this line as a number>"
-    }
-  ]
-}
-
-Rules:
-- Extract EVERY line item visible in the invoice.
-- For amounts, return numeric values only (no currency symbols or commas).
-- If a field is not found, return an empty string for text fields or null for numeric fields.
-- Parse dates into YYYY-MM-DD format.
-- If the PO number is referenced anywhere (header, footer, reference fields), extract it.
-- Return ONLY valid JSON, no markdown or explanation."""
+# Hardcoded fallback removed; see apps/core/prompt_registry.py for defaults.
 
 
 class InvoiceExtractionAdapter:
@@ -159,7 +129,7 @@ class InvoiceExtractionAdapter:
         response = client.chat.completions.create(
             model=deployment,
             messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                {"role": "system", "content": InvoiceExtractionAdapter._get_extraction_prompt()},
                 {"role": "user", "content": f"Extract invoice data from the following OCR text:\n\n{ocr_text}"},
             ],
             temperature=0.0,
@@ -175,3 +145,9 @@ class InvoiceExtractionAdapter:
         )
 
         return json.loads(content)
+
+    @staticmethod
+    def _get_extraction_prompt() -> str:
+        """Load the extraction system prompt from the PromptRegistry."""
+        from apps.core.prompt_registry import PromptRegistry
+        return PromptRegistry.get("extraction.invoice_system")

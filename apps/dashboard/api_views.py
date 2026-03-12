@@ -9,6 +9,7 @@ from apps.dashboard.serializers import (
     DashboardSummarySerializer,
     ExceptionBreakdownSerializer,
     MatchStatusBreakdownSerializer,
+    ModeBreakdownSerializer,
     RecentActivitySerializer,
 )
 from apps.dashboard.services import DashboardService
@@ -62,3 +63,11 @@ class RecentActivityAPIView(APIView):
         limit = int(request.query_params.get("limit", 20))
         data = DashboardService.get_recent_activity(limit=min(limit, 50))
         return Response(RecentActivitySerializer(data, many=True).data)
+
+
+class ModeBreakdownAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        data = DashboardService.get_mode_breakdown()
+        return Response(ModeBreakdownSerializer(data, many=True).data)
