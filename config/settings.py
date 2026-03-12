@@ -54,6 +54,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.LoginRequiredMiddleware",
+    "apps.core.middleware.RBACMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -70,6 +71,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.core.context_processors.pending_reviews",
+                "apps.core.context_processors.rbac_context",
             ],
         },
     },
