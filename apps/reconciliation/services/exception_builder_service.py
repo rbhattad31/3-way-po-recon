@@ -1,11 +1,12 @@
 """Exception builder — creates structured ReconciliationException records from comparison evidence."""
-from __future__ import annotations
+from __future__  import annotations
 
 import logging
 from decimal import Decimal
 from typing import List, Optional
 
-from apps.core.enums import ExceptionSeverity, ExceptionType
+from apps.core.constants import THREE_WAY_ONLY_EXCEPTION_TYPES
+from apps.core.enums import ExceptionSeverity, ExceptionType, ReconciliationMode, ReconciliationModeApplicability
 from apps.reconciliation.models import ReconciliationException, ReconciliationResult, ReconciliationResultLine
 from apps.reconciliation.services.header_match_service import HeaderMatchResult
 from apps.reconciliation.services.line_match_service import LineMatchPair, LineMatchResult
@@ -32,8 +33,10 @@ class ExceptionBuilderService:
         result_line_map: Optional[dict] = None,
         extraction_confidence: Optional[float] = None,
         confidence_threshold: float = 0.75,
+        reconciliation_mode: str = "",
     ) -> List[ReconciliationException]:
         """Return a list of unsaved ReconciliationException instances."""
+        is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
         exceptions: List[ReconciliationException] = []
 
         # PO not found
@@ -65,11 +68,19 @@ class ExceptionBuilderService:
         if line_result and result_line_map:
             exceptions.extend(self._line_exceptions(result, line_result, result_line_map))
 
-        # GRN exceptions
-        if grn_result:
+        # GRN exceptions (3-way only)
+        if not is_two_way and grn_result:
             exceptions.extend(self._grn_exceptions(result, grn_result))
 
-        logger.info("Built %d exceptions for result %s", len(exceptions), result.pk)
+        # Tag each exception with the applicable mode
+        for exc in exceptions:
+            exc_type = exc.exception_type
+            if exc_type in THREE_WAY_ONLY_EXCEPTION_TYPES:
+                exc.applies_to_mode = ReconciliationModeApplicability.THREE_WAY
+            else:
+                exc.applies_to_mode = ReconciliationModeApplicability.BOTH
+
+        logger.info("Built %d exceptions for result %s (mode=%s)", len(exceptions), result.pk, reconciliation_mode)
         return exceptions
 
     # ------------------------------------------------------------------
@@ -243,7 +254,7 @@ class ExceptionBuilderService:
             if cmp.invoiced_exceeds_received:
                 excs.append(self._make(
                     result=result,
-                    exc_type=ExceptionType.QTY_MISMATCH,
+                    exc_type=ExceptionType.INVOICE_QTY_EXCEEDS_RECEIVED,
                     severity=ExceptionSeverity.HIGH,
                     message=(
                         f"Invoiced quantity ({cmp.qty_invoiced}) exceeds "
@@ -253,6 +264,58 @@ class ExceptionBuilderService:
                         "po_line_id": cmp.po_line_id,
                         "qty_invoiced": str(cmp.qty_invoiced),
                         "qty_received": str(cmp.qty_received),
+                    },
+                ))
+
+            if cmp.over_receipt:
+                excs.append(self._make(
+                    result=result,
+                    exc_type=ExceptionType.OVER_RECEIPT,
+                    severity=ExceptionSeverity.MEDIUM,
+                    message=(
+                        f"Over-delivery: received {cmp.qty_received} vs "
+                        f"ordered {cmp.qty_ordered} for PO line {cmp.po_line_id}"
+                    ),
+                    details={
+                        "po_line_id": cmp.po_line_id,
+                        "qty_ordered": str(cmp.qty_ordered),
+                        "qty_received": str(cmp.qty_received),
+                    },
+                ))
+
+            if cmp.under_receipt and not cmp.invoiced_exceeds_received:
+                excs.append(self._make(
+                    result=result,
+                    exc_type=ExceptionType.RECEIPT_SHORTAGE,
+                    severity=ExceptionSeverity.MEDIUM,
+                    message=(
+                        f"Partial receipt: received {cmp.qty_received} vs "
+                        f"ordered {cmp.qty_ordered} for PO line {cmp.po_line_id}"
+                    ),
+                    details={
+                        "po_line_id": cmp.po_line_id,
+                        "qty_ordered": str(cmp.qty_ordered),
+                        "qty_received": str(cmp.qty_received),
+                    },
+                ))
+
+        # Delayed receipt: GRN received after invoice date
+        invoice = result.invoice
+        if invoice.invoice_date and grn.latest_receipt_date:
+            if grn.latest_receipt_date > invoice.invoice_date:
+                days_late = (grn.latest_receipt_date - invoice.invoice_date).days
+                excs.append(self._make(
+                    result=result,
+                    exc_type=ExceptionType.DELAYED_RECEIPT,
+                    severity=ExceptionSeverity.LOW,
+                    message=(
+                        f"Goods received {days_late} day(s) after invoice date "
+                        f"(invoice: {invoice.invoice_date}, receipt: {grn.latest_receipt_date})"
+                    ),
+                    details={
+                        "invoice_date": str(invoice.invoice_date),
+                        "latest_receipt_date": str(grn.latest_receipt_date),
+                        "days_late": days_late,
                     },
                 ))
 

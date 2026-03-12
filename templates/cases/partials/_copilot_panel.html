@@ -1,0 +1,62 @@
+{# ── Copilot Chat Panel ── #}
+{# Context: case (APCase), summary (APCaseSummary) #}
+
+<div class="ap-copilot mb-3" id="copilotPanel">
+  <div class="ap-copilot-header">
+    <i class="bi bi-stars"></i> Reviewer Copilot
+    <span class="ap-badge ap-badge-muted ms-auto" style="font-size:.6rem">AI-Assisted</span>
+  </div>
+
+  {# Messages area #}
+  <div class="ap-copilot-messages" id="copilotMessages">
+    {# Initial summary from Case Summary agent #}
+    {% if summary and summary.latest_summary %}
+    <div class="ap-copilot-msg assistant">
+      <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-bottom:.25rem">
+        <i class="bi bi-robot me-1"></i>Case Summary
+      </div>
+      {{ summary.latest_summary|truncatechars:400 }}
+    </div>
+    {% else %}
+    <div class="ap-copilot-msg assistant">
+      <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-bottom:.25rem">
+        <i class="bi bi-robot me-1"></i>Copilot
+      </div>
+      I'm ready to help investigate this case. Ask me about exceptions, risks, or what to verify.
+    </div>
+    {% endif %}
+  </div>
+
+  {# Suggested prompts #}
+  <div class="ap-copilot-prompts" id="copilotPrompts">
+    <button class="ap-copilot-prompt-chip" data-prompt="Summarize this case">
+      <i class="bi bi-card-text me-1"></i>Summarize
+    </button>
+    <button class="ap-copilot-prompt-chip" data-prompt="Why was this flagged?">
+      <i class="bi bi-flag me-1"></i>Why flagged?
+    </button>
+    <button class="ap-copilot-prompt-chip" data-prompt="What are the key risks?">
+      <i class="bi bi-shield-exclamation me-1"></i>Key risks
+    </button>
+    <button class="ap-copilot-prompt-chip" data-prompt="What should the reviewer verify?">
+      <i class="bi bi-search me-1"></i>What to verify
+    </button>
+    <button class="ap-copilot-prompt-chip" data-prompt="What is missing from this case?">
+      <i class="bi bi-question-circle me-1"></i>What's missing
+    </button>
+  </div>
+
+  {# Input area #}
+  <div class="ap-copilot-input">
+    <input type="text" class="form-control form-control-sm" id="copilotInput"
+           placeholder="Ask the copilot…" autocomplete="off">
+    <button class="btn btn-sm btn-primary" id="copilotSend" type="button">
+      <i class="bi bi-send"></i>
+    </button>
+  </div>
+
+  {# Disclaimer #}
+  <div class="text-center py-1" style="font-size:.625rem;color:var(--ap-text-muted);border-top:1px solid var(--ap-border-light)">
+    <i class="bi bi-info-circle me-1"></i>AI recommendations — always verify before acting
+  </div>
+</div>

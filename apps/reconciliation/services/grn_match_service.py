@@ -34,6 +34,8 @@ class GRNMatchResult:
     fully_received: bool = False
     line_comparisons: List[GRNLineComparison] = field(default_factory=list)
     has_receipt_issues: bool = False
+    latest_receipt_date: Optional['date'] = None
+    grn_count: int = 0
 
 
 class GRNMatchService:
@@ -88,6 +90,8 @@ class GRNMatchService:
             fully_received=grn_summary.fully_received,
             line_comparisons=comparisons,
             has_receipt_issues=has_issues,
+            latest_receipt_date=grn_summary.latest_receipt_date,
+            grn_count=grn_summary.grn_count,
         )
 
         logger.info(

@@ -6,6 +6,8 @@ from apps.core.enums import (
     ExceptionSeverity,
     ExceptionType,
     MatchStatus,
+    ReconciliationMode,
+    ReconciliationModeApplicability,
     ReconciliationRunStatus,
 )
 from apps.core.models import BaseModel, TimestampMixin
@@ -30,6 +32,21 @@ class ReconciliationConfig(BaseModel):
     extraction_confidence_threshold = models.FloatField(default=0.75)
     is_default = models.BooleanField(default=False, db_index=True)
 
+    # Mode configuration
+    default_reconciliation_mode = models.CharField(
+        max_length=20, choices=ReconciliationMode.choices,
+        default=ReconciliationMode.THREE_WAY, db_index=True,
+    )
+    enable_mode_resolver = models.BooleanField(
+        default=True, help_text="Use policy rules to auto-resolve 2-way vs 3-way per invoice",
+    )
+    enable_grn_for_stock_items = models.BooleanField(
+        default=True, help_text="Require GRN for stock/inventory items",
+    )
+    enable_two_way_for_services = models.BooleanField(
+        default=True, help_text="Auto-select 2-way mode for service invoices",
+    )
+
     class Meta:
         db_table = "reconciliation_config"
         ordering = ["name"]
@@ -38,6 +55,58 @@ class ReconciliationConfig(BaseModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation Policy
+# ---------------------------------------------------------------------------
+class ReconciliationPolicy(BaseModel):
+    """Rule-based policy to resolve reconciliation mode per invoice.
+
+    The mode resolver evaluates active policies ordered by priority
+    (lower = higher precedence) and returns the first match.
+    """
+
+    policy_code = models.CharField(max_length=50, unique=True, db_index=True)
+    policy_name = models.CharField(max_length=200)
+    reconciliation_mode = models.CharField(
+        max_length=20, choices=ReconciliationMode.choices,
+    )
+
+    # Matching criteria — nullable means "any / not evaluated"
+    vendor = models.ForeignKey(
+        "vendors.Vendor", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="recon_policies",
+    )
+    invoice_type = models.CharField(max_length=100, blank=True, default="")
+    item_category = models.CharField(max_length=100, blank=True, default="")
+    business_unit = models.CharField(max_length=100, blank=True, default="")
+    location_code = models.CharField(max_length=100, blank=True, default="")
+    is_service_invoice = models.BooleanField(null=True, blank=True)
+    is_stock_invoice = models.BooleanField(null=True, blank=True)
+
+    # Ordering and validity
+    priority = models.PositiveIntegerField(
+        default=100, db_index=True,
+        help_text="Lower number = higher precedence",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    effective_from = models.DateField(null=True, blank=True)
+    effective_to = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "reconciliation_policy"
+        ordering = ["priority", "policy_code"]
+        verbose_name = "Reconciliation Policy"
+        verbose_name_plural = "Reconciliation Policies"
+        indexes = [
+            models.Index(fields=["priority"], name="idx_recon_pol_priority"),
+            models.Index(fields=["reconciliation_mode"], name="idx_recon_pol_mode"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.policy_code} – {self.policy_name} ({self.reconciliation_mode})"
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +134,25 @@ class ReconciliationRun(BaseModel):
     )
     celery_task_id = models.CharField(max_length=255, blank=True, default="")
     error_message = models.TextField(blank=True, default="")
+
+    # Mode metadata
+    reconciliation_mode = models.CharField(
+        max_length=20, choices=ReconciliationMode.choices,
+        blank=True, default="", db_index=True,
+        help_text="Dominant mode used across invoices in this run",
+    )
+    policy_name_applied = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Policy code that determined the mode (if uniform)",
+    )
+    grn_required_flag = models.BooleanField(
+        null=True, blank=True,
+        help_text="Whether GRN was required for this run",
+    )
+    grn_checked_flag = models.BooleanField(
+        null=True, blank=True,
+        help_text="Whether GRN matching was actually performed",
+    )
 
     class Meta:
         db_table = "reconciliation_run"
@@ -114,6 +202,30 @@ class ReconciliationResult(BaseModel):
     # Summary
     summary = models.TextField(blank=True, default="")
 
+    # Mode metadata
+    reconciliation_mode = models.CharField(
+        max_length=20, choices=ReconciliationMode.choices,
+        blank=True, default="", db_index=True,
+    )
+    grn_required_flag = models.BooleanField(
+        null=True, blank=True,
+        help_text="Whether GRN verification was required for this invoice",
+    )
+    grn_checked_flag = models.BooleanField(
+        null=True, blank=True,
+        help_text="Whether GRN matching was actually executed",
+    )
+    mode_resolution_reason = models.TextField(
+        blank=True, default="",
+        help_text="Explanation of why this mode was selected",
+    )
+    policy_applied = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Policy code that determined the reconciliation mode",
+    )
+    is_two_way_result = models.BooleanField(default=False, db_index=True)
+    is_three_way_result = models.BooleanField(default=False, db_index=True)
+
     class Meta:
         db_table = "reconciliation_result"
         ordering = ["-created_at"]
@@ -123,6 +235,7 @@ class ReconciliationResult(BaseModel):
             models.Index(fields=["match_status"], name="idx_recon_result_status"),
             models.Index(fields=["requires_review"], name="idx_recon_result_review"),
             models.Index(fields=["run", "invoice"], name="idx_recon_result_run_inv"),
+            models.Index(fields=["reconciliation_mode"], name="idx_recon_result_mode"),
         ]
 
     def __str__(self) -> str:
@@ -199,6 +312,13 @@ class ReconciliationException(TimestampMixin):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
     )
     resolved_at = models.DateTimeField(null=True, blank=True)
+
+    # Mode applicability
+    applies_to_mode = models.CharField(
+        max_length=20, choices=ReconciliationModeApplicability.choices,
+        default=ReconciliationModeApplicability.BOTH, db_index=True,
+        help_text="Which reconciliation mode(s) this exception is relevant for",
+    )
 
     class Meta:
         db_table = "reconciliation_exception"

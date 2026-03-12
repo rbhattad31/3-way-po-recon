@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional
 
@@ -24,6 +25,8 @@ class GRNSummary:
     grns: List[GoodsReceiptNote] = field(default_factory=list)
     total_received_by_po_line: Dict[int, Decimal] = field(default_factory=dict)
     fully_received: bool = False
+    latest_receipt_date: Optional[date] = None
+    grn_count: int = 0
 
 
 class GRNLookupService:
@@ -62,11 +65,17 @@ class GRNLookupService:
                 fully = False
                 break
 
+        # Track latest receipt date across all GRNs
+        receipt_dates = [g.receipt_date for g in grns if g.receipt_date]
+        latest_date = max(receipt_dates) if receipt_dates else None
+
         summary = GRNSummary(
             grn_available=True,
             grns=grns,
             total_received_by_po_line=received_map,
             fully_received=fully,
+            latest_receipt_date=latest_date,
+            grn_count=len(grns),
         )
         logger.info(
             "GRN lookup for PO %s: %d GRNs, fully_received=%s",

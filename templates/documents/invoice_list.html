@@ -1,18 +1,23 @@
 {% extends "base.html" %}
-{% block title %}Invoices – PO Reconciliation{% endblock %}
+{% block title %}Invoices – AP Operations{% endblock %}
 
 {% block breadcrumb %}
-<nav aria-label="breadcrumb"><ol class="breadcrumb">
-  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
-  <li class="breadcrumb-item active">Invoices</li>
-</ol></nav>
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item active">Invoices</li>
+  </ol>
+</nav>
 {% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h5 class="mb-0">Invoices</h5>
+  <div>
+    <h4 class="mb-0 fw-semibold">Invoices</h4>
+    <small style="color:var(--ap-text-muted)">All uploaded invoice documents</small>
+  </div>
   <div class="d-flex gap-2">
-    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
       <i class="bi bi-cloud-arrow-up me-1"></i>Upload Invoice
     </button>
     <form class="d-inline-flex gap-2" method="get">
@@ -29,31 +34,30 @@
 </div>
 
 {% if pending_uploads %}
-<div class="card mb-3 border-warning">
-  <div class="card-header bg-warning bg-opacity-10 d-flex align-items-center">
-    <i class="bi bi-hourglass-split me-2 text-warning"></i>
-    <strong>Pending Uploads</strong>
-    <span class="badge bg-warning text-dark ms-2">{{ pending_uploads|length }}</span>
+<div class="ap-card mb-3" style="border-left:3px solid var(--ap-warning)">
+  <div class="ap-card-header" style="color:var(--ap-warning)">
+    <i class="bi bi-hourglass-split"></i> Pending Uploads
+    <span class="ap-badge ap-badge-warning ms-2">{{ pending_uploads|length }}</span>
   </div>
-  <div class="card-body p-0">
-    <table class="table table-sm mb-0">
-      <thead class="table-light">
+  <div class="ap-card-body p-0">
+    <table class="ap-table">
+      <thead>
         <tr><th>Filename</th><th>Type</th><th>Size</th><th>Status</th><th>Uploaded</th></tr>
       </thead>
       <tbody>
         {% for upload in pending_uploads %}
         <tr>
           <td><i class="bi bi-file-earmark-pdf me-1 text-danger"></i>{{ upload.original_filename }}</td>
-          <td><span class="badge bg-info text-dark">{{ upload.document_type }}</span></td>
-          <td class="text-muted">{{ upload.file_size|filesizeformat }}</td>
+          <td><span class="ap-badge ap-badge-primary">{{ upload.document_type }}</span></td>
+          <td style="color:var(--ap-text-muted);font-size:var(--ap-font-size-sm)">{{ upload.file_size|filesizeformat }}</td>
           <td>
             {% if upload.processing_state == 'PROCESSING' %}
-              <span class="badge bg-primary"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Processing</span>
+              <span class="ap-badge ap-badge-primary"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Processing</span>
             {% else %}
-              <span class="badge bg-secondary">Queued</span>
+              <span class="ap-badge ap-badge-muted">Queued</span>
             {% endif %}
           </td>
-          <td class="text-muted">{{ upload.created_at|timesince }} ago</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ upload.created_at|timesince }} ago</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -62,10 +66,10 @@
 </div>
 {% endif %}
 
-<div class="card">
-  <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0 table-fixed-header">
-      <thead class="table-light">
+<div class="ap-card">
+  <div class="ap-card-body p-0">
+    <table class="ap-table">
+      <thead>
         <tr>
           <th>Invoice #</th><th>Vendor</th><th>PO #</th>
           <th>Amount</th><th>Status</th><th>Confidence</th><th>Date</th>
@@ -74,16 +78,32 @@
       <tbody>
         {% for inv in invoices %}
         <tr>
-          <td><a href="{% url 'documents:invoice_detail' inv.pk %}">{{ inv.invoice_number|default:"—" }}</a></td>
-          <td>{{ inv.vendor.name|default:inv.raw_vendor_name }}</td>
-          <td>{{ inv.po_number|default:"—" }}</td>
-          <td>{{ inv.currency }} {{ inv.total_amount|default:"—" }}</td>
-          <td><span class="badge status-badge status-{{ inv.status }}">{{ inv.status }}</span></td>
-          <td>{% if inv.extraction_confidence %}{% widthratio inv.extraction_confidence 1 100 %}%{% else %}—{% endif %}</td>
-          <td class="text-muted">{{ inv.created_at|date:"d M Y" }}</td>
+          <td><a href="{% url 'documents:invoice_detail' inv.pk %}" class="text-decoration-none" style="color:var(--ap-primary);font-weight:500">{{ inv.invoice_number|default:"—" }}</a></td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ inv.vendor.name|default:inv.raw_vendor_name }}</td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ inv.po_number|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-sm);font-weight:500">{{ inv.currency }} {{ inv.total_amount|default:"—" }}</td>
+          <td>
+            <span class="ap-badge {% if inv.status == 'RECONCILED' or inv.status == 'VALIDATED' %}ap-badge-success{% elif inv.status == 'FAILED' or inv.status == 'INVALID' %}ap-badge-danger{% elif inv.status == 'EXTRACTED' or inv.status == 'EXTRACTION_IN_PROGRESS' %}ap-badge-primary{% else %}ap-badge-muted{% endif %}">
+              {{ inv.status }}
+            </span>
+          </td>
+          <td>
+            {% if inv.extraction_confidence %}
+            <div class="ap-confidence-meter" data-bs-toggle="tooltip" title="{% widthratio inv.extraction_confidence 1 100 %}%">
+              <div class="ap-confidence-bar {% if inv.extraction_confidence >= 0.8 %}high{% elif inv.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                   style="width:{% widthratio inv.extraction_confidence 1 100 %}%"></div>
+            </div>
+            {% else %}—{% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ inv.created_at|date:"d M Y" }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="7" class="text-center text-muted py-3">No invoices found</td></tr>
+        <tr><td colspan="7">
+          <div class="ap-empty-state">
+            <i class="bi bi-file-earmark-text"></i>
+            <div class="ap-empty-state-label">No invoices found</div>
+          </div>
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>
