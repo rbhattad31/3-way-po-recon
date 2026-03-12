@@ -1,0 +1,33 @@
+{# ── GRN Snapshot Card ── #}
+{# Context: grns (list of GRN models), shown only for THREE_WAY path #}
+
+{% if grns %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-box-seam"></i> Goods Receipts
+    <span class="ap-badge ap-badge-muted ms-auto">{{ grns|length }}</span>
+  </div>
+  <div class="ap-card-body-flush">
+    <table class="ap-table">
+      <thead>
+        <tr>
+          <th>GRN #</th>
+          <th>Date</th>
+          <th>Location</th>
+          <th>Lines</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for grn in grns %}
+        <tr>
+          <td class="fw-semibold">{{ grn.grn_number }}</td>
+          <td>{{ grn.receipt_date|date:"d M Y"|default:"—" }}</td>
+          <td>{{ grn.delivery_location|default:"—" }}</td>
+          <td>{{ grn.line_items.count }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}

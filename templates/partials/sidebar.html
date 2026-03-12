@@ -23,6 +23,11 @@
       </li>
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'cases' %}active fw-bold{% endif %}" href="{% url 'cases:case_inbox' %}">
+          <i class="bi bi-briefcase me-2"></i>AP Cases
+        </a>
+      </li>
+      <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'reconciliation' %}active fw-bold{% endif %}" href="{% url 'reconciliation:result_list' %}">
           <i class="bi bi-arrow-left-right me-2"></i>Reconciliation
         </a>

@@ -24,6 +24,15 @@ class ExceptionBreakdownSerializer(serializers.Serializer):
     count = serializers.IntegerField()
 
 
+class ModeBreakdownSerializer(serializers.Serializer):
+    reconciliation_mode = serializers.CharField()
+    count = serializers.IntegerField()
+    percentage = serializers.FloatField()
+    matched_count = serializers.IntegerField()
+    match_rate = serializers.FloatField()
+    avg_confidence = serializers.FloatField()
+
+
 class AgentPerformanceSerializer(serializers.Serializer):
     agent_type = serializers.CharField()
     total_runs = serializers.IntegerField()

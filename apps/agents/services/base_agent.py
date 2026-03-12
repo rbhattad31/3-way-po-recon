@@ -44,6 +44,7 @@ class AgentContext:
     po_number: Optional[str] = None
     exceptions: List[Dict[str, Any]] = field(default_factory=list)
     extra: Dict[str, Any] = field(default_factory=dict)
+    reconciliation_mode: str = ""  # ReconciliationMode value (TWO_WAY / THREE_WAY)
 
 
 @dataclass
@@ -254,4 +255,5 @@ class BaseAgent(ABC):
             "invoice_id": ctx.invoice_id,
             "po_number": ctx.po_number,
             "exception_count": len(ctx.exceptions),
+            "reconciliation_mode": ctx.reconciliation_mode,
         }

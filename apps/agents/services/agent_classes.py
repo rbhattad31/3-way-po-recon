@@ -27,6 +27,17 @@ _JSON_OUTPUT_INSTRUCTION = (
 )
 
 
+def _mode_context(ctx: AgentContext) -> str:
+    """Return a short reconciliation-mode context string for user messages."""
+    mode = ctx.reconciliation_mode or ctx.extra.get("reconciliation_mode", "")
+    if mode == "TWO_WAY":
+        return (
+            "Reconciliation Mode: 2-WAY (Invoice vs PO only — GRN/receipt data is NOT part of this reconciliation. "
+            "Do NOT flag GRN-related issues.)\n"
+        )
+    return "Reconciliation Mode: 3-WAY (Invoice vs PO vs GRN)\n"
+
+
 def _parse_agent_json(content: str) -> Dict[str, Any]:
     """Best-effort JSON extraction from LLM content."""
     content = content.strip()
@@ -66,9 +77,11 @@ class ExceptionAnalysisAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         return (
-            "You are an expert Accounts Payable exception analyst for a 3-way PO reconciliation system. "
-            "Your job is to analyse reconciliation exceptions (mismatches between Invoice, PO, and GRN), "
-            "determine root causes, and recommend the best next action.\n\n"
+            "You are an expert Accounts Payable exception analyst for a PO reconciliation system "
+            "that supports both 2-way (Invoice vs PO) and 3-way (Invoice vs PO vs GRN) matching.\n\n"
+            "IMPORTANT: Check the Reconciliation Mode in the context. "
+            "In 2-WAY mode, ignore any GRN/receipt-related exceptions — they are not applicable. "
+            "In 3-WAY mode, GRN data is relevant and should be analysed.\n\n"
             "Rules:\n"
             "- Never fabricate data. Use only the tool outputs and context provided.\n"
             "- If exceptions are within tolerance or clearly explainable, recommend AUTO_CLOSE.\n"
@@ -83,7 +96,8 @@ class ExceptionAnalysisAgent(BaseAgent):
 
     def build_user_message(self, ctx: AgentContext) -> str:
         return (
-            f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
+            _mode_context(ctx)
+            + f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
             f"Invoice ID: {ctx.invoice_id}\n"
             f"PO Number: {ctx.po_number or 'N/A'}\n"
             f"Match Status: {ctx.reconciliation_result.match_status}\n"
@@ -187,16 +201,22 @@ class PORetrievalAgent(BaseAgent):
 # 4. GRN Retrieval Agent
 # ============================================================================
 class GRNRetrievalAgent(BaseAgent):
-    """Investigates GRN data when GRN is missing or has receipt issues."""
+    """Investigates GRN data when GRN is missing or has receipt issues.
+
+    NOTE: This agent is only invoked in 3-way mode. The PolicyEngine
+    suppresses it when the reconciliation mode is TWO_WAY.
+    """
 
     agent_type = AgentType.GRN_RETRIEVAL
 
     @property
     def system_prompt(self) -> str:
         return (
-            "You are a GRN (Goods Receipt Note) specialist. You investigate goods receipt "
-            "data when the deterministic engine found GRN issues (missing, partial receipt, "
-            "over-delivery, etc.).\n\n"
+            "You are a GRN (Goods Receipt Note) specialist for a 3-way PO reconciliation system. "
+            "You investigate goods receipt data when the deterministic engine found GRN issues "
+            "(missing, partial receipt, over-delivery, etc.).\n\n"
+            "NOTE: You are only called in 3-WAY reconciliation mode where receipt verification "
+            "is required. The invoice being investigated requires goods receipt matching.\n\n"
             "Rules:\n"
             "- Use grn_lookup to retrieve receipt details.\n"
             "- Compare received quantities against PO and invoice.\n"
@@ -207,7 +227,8 @@ class GRNRetrievalAgent(BaseAgent):
 
     def build_user_message(self, ctx: AgentContext) -> str:
         return (
-            f"Invoice ID: {ctx.invoice_id}\n"
+            _mode_context(ctx)
+            + f"Invoice ID: {ctx.invoice_id}\n"
             f"PO Number: {ctx.po_number or 'N/A'}\n"
             f"GRN Available: {ctx.extra.get('grn_available', 'unknown')}\n"
             f"GRN Fully Received: {ctx.extra.get('grn_fully_received', 'unknown')}\n"
@@ -247,7 +268,8 @@ class ReviewRoutingAgent(BaseAgent):
 
     def build_user_message(self, ctx: AgentContext) -> str:
         return (
-            f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
+            _mode_context(ctx)
+            + f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
             f"Match Status: {ctx.reconciliation_result.match_status}\n"
             f"Exceptions: {json.dumps(ctx.exceptions, indent=2, default=str)}\n"
             f"Prior agent reasoning: {ctx.extra.get('prior_reasoning', 'N/A')}\n"
@@ -277,7 +299,8 @@ class CaseSummaryAgent(BaseAgent):
             "You are a case summary agent. You produce clear, concise, human-readable "
             "summaries of reconciliation cases for AP reviewers and managers.\n\n"
             "Rules:\n"
-            "- Summarise the invoice, PO, GRN, exceptions, and agent analysis.\n"
+            "- Summarise the invoice, PO, and (if 3-way mode) GRN, exceptions, and agent analysis.\n"
+            "- In 2-WAY mode, do NOT reference GRN or receipt data — they are not applicable.\n"
             "- Include key numbers (amounts, quantities, differences).\n"
             "- Highlight the recommended action and confidence.\n"
             "- Use professional business language.\n"
@@ -286,7 +309,8 @@ class CaseSummaryAgent(BaseAgent):
 
     def build_user_message(self, ctx: AgentContext) -> str:
         return (
-            f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
+            _mode_context(ctx)
+            + f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
             f"Invoice ID: {ctx.invoice_id}\n"
             f"PO Number: {ctx.po_number or 'N/A'}\n"
             f"Match Status: {ctx.reconciliation_result.match_status}\n"
@@ -318,9 +342,13 @@ class ReconciliationAssistAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         return (
-            "You are a reconciliation assistant. You help resolve partial matches "
-            "by investigating line-level discrepancies, checking for rounding issues, "
-            "unit-of-measure differences, or tax calculation discrepancies.\n\n"
+            "You are a reconciliation assistant that supports both 2-way and 3-way matching. "
+            "You help resolve partial matches by investigating line-level discrepancies, "
+            "checking for rounding issues, unit-of-measure differences, or tax calculation "
+            "discrepancies.\n\n"
+            "IMPORTANT: Check the Reconciliation Mode in the context. "
+            "In 2-WAY mode, focus only on Invoice vs PO comparisons — do NOT reference GRN/receipt data. "
+            "In 3-WAY mode, also consider GRN receipt status.\n\n"
             "Rules:\n"
             "- Focus on explaining WHY the match is partial.\n"
             "- Determine if differences are acceptable tolerances.\n"
@@ -331,7 +359,8 @@ class ReconciliationAssistAgent(BaseAgent):
 
     def build_user_message(self, ctx: AgentContext) -> str:
         return (
-            f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
+            _mode_context(ctx)
+            + f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
             f"Invoice ID: {ctx.invoice_id}\n"
             f"PO Number: {ctx.po_number or 'N/A'}\n"
             f"Match Status: {ctx.reconciliation_result.match_status}\n"

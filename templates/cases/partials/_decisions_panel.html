@@ -1,0 +1,47 @@
+{# ── Decisions Panel ── #}
+{# Context: decisions (list of APCaseDecision) #}
+
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-signpost-2"></i> Decisions
+    <span class="ap-badge ap-badge-muted ms-auto">{{ decisions|length }}</span>
+  </div>
+  {% if decisions %}
+  <div class="ap-card-body-flush">
+    <div class="list-group list-group-flush">
+      {% for d in decisions %}
+      <div class="list-group-item border-0 px-3 py-2" style="border-bottom:1px solid var(--ap-border-light)!important">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <span class="fw-semibold" style="font-size:var(--ap-font-size-sm)">{{ d.get_decision_type_display }}</span>
+          <span class="ap-badge {% if d.decision_source == 'DETERMINISTIC' %}ap-src-deterministic{% elif d.decision_source == 'POLICY' %}ap-src-policy{% elif d.decision_source == 'AGENT' %}ap-src-agent{% elif d.decision_source == 'HUMAN' %}ap-src-human{% else %}ap-badge-muted{% endif %}">
+            {{ d.get_decision_source_display }}
+          </span>
+        </div>
+        <div style="font-size:var(--ap-font-size-sm)">
+          <code class="bg-light px-1 rounded" style="font-size:var(--ap-font-size-xs)">{{ d.decision_value }}</code>
+        </div>
+        {% if d.rationale %}
+        <div class="ap-evidence-box mt-2">{{ d.rationale|truncatechars:250 }}</div>
+        {% endif %}
+        {% if d.confidence %}
+        <div class="mt-1">
+          <div class="ap-confidence">
+            <div class="ap-confidence-bar" style="width:48px">
+              <div class="ap-confidence-fill {% if d.confidence >= 80 %}high{% elif d.confidence >= 50 %}medium{% else %}low{% endif %}"
+                   style="width:{{ d.confidence|floatformat:0 }}%"></div>
+            </div>
+            <span>{{ d.confidence|floatformat:0 }}% confidence</span>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="ap-empty-state">
+    <i class="bi bi-signpost-2"></i>
+    <div class="ap-empty-state-label">No decisions recorded</div>
+  </div>
+  {% endif %}
+</div>

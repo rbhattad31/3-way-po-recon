@@ -48,6 +48,25 @@ class CaseTimelineService:
         results = ReconciliationResult.objects.filter(invoice_id=invoice_id)
         result_ids = list(results.values_list("id", flat=True))
 
+        # 2a. Mode resolution events from results
+        for result in results:
+            if result.reconciliation_mode:
+                mode_label = "2-Way" if result.is_two_way_result else "3-Way"
+                timeline.append({
+                    "timestamp": result.created_at,
+                    "event_category": "mode_resolution",
+                    "event_type": "RECONCILIATION_MODE_RESOLVED",
+                    "description": f"Reconciliation mode resolved: {mode_label}"
+                                   + (f" — {result.mode_resolution_reason}" if result.mode_resolution_reason else ""),
+                    "actor": "system",
+                    "metadata": {
+                        "reconciliation_mode": result.reconciliation_mode,
+                        "policy_applied": result.policy_applied,
+                        "grn_required": result.grn_required_flag,
+                        "is_two_way": result.is_two_way_result,
+                    },
+                })
+
         # 3. Audit events on reconciliation results
         result_events = AuditEvent.objects.filter(
             entity_type="ReconciliationResult", entity_id__in=result_ids,

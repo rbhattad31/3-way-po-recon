@@ -1,0 +1,11 @@
+{# ── Path Badge ── #}
+{# Context: path (str) - TWO_WAY, THREE_WAY, NON_PO #}
+{% if path == "TWO_WAY" %}
+  <span class="ap-badge ap-badge-2way"><i class="bi bi-arrow-left-right"></i> 2-Way</span>
+{% elif path == "THREE_WAY" %}
+  <span class="ap-badge ap-badge-3way"><i class="bi bi-diagram-3"></i> 3-Way</span>
+{% elif path == "NON_PO" %}
+  <span class="ap-badge ap-badge-nonpo"><i class="bi bi-file-earmark-x"></i> Non-PO</span>
+{% else %}
+  <span class="ap-badge ap-badge-unresolved"><i class="bi bi-question-circle"></i> Unresolved</span>
+{% endif %}

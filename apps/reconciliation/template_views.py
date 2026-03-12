@@ -9,9 +9,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.agents.models import AgentRecommendation, AgentRun
 from apps.auditlog.timeline_service import CaseTimelineService
-from apps.core.enums import InvoiceStatus, MatchStatus, UserRole
+from apps.core.enums import InvoiceStatus, MatchStatus, ReconciliationMode, UserRole
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
-from apps.reconciliation.models import ReconciliationConfig, ReconciliationResult
+from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy, ReconciliationResult
 from apps.reviews.models import ReviewAssignment
 from apps.tools.models import ToolCall
 
@@ -27,6 +27,9 @@ def result_list(request):
     match_status = request.GET.get("match_status")
     if match_status:
         qs = qs.filter(match_status=match_status)
+    recon_mode = request.GET.get("reconciliation_mode")
+    if recon_mode:
+        qs = qs.filter(reconciliation_mode=recon_mode)
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -41,6 +44,7 @@ def result_list(request):
         "results": page_obj,
         "page_obj": page_obj,
         "match_status_choices": MatchStatus.choices,
+        "reconciliation_mode_choices": ReconciliationMode.choices,
         "ready_invoices": ready_invoices,
     })
 
@@ -85,76 +89,27 @@ def result_detail(request, pk):
         "agent_runs": agent_runs,
         "timeline": timeline,
         "show_full_trace": show_full_trace,
+        "is_two_way": result.is_two_way_result,
+        "mode_label": "2-Way" if result.is_two_way_result else "3-Way",
     })
 
 
 @login_required
 def start_reconciliation(request):
-    """Trigger reconciliation for selected invoices."""
-    if request.method != "POST":
-        return redirect("reconciliation:result_list")
+    """
+    Legacy reconciliation entry point — DISABLED.
 
-    invoice_ids = request.POST.getlist("invoice_ids")
-    if not invoice_ids:
-        messages.warning(request, "No invoices selected for reconciliation.")
-        return redirect("reconciliation:result_list")
+    All new invoices are now processed via the AP Cases pipeline.
+    Invoice upload → extraction → APCase creation → CaseOrchestrator.
 
-    invoice_ids = [int(i) for i in invoice_ids]
-
-    from django.conf import settings as django_settings
-
-    if getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False):
-        # Run synchronously — no broker needed
-        from apps.reconciliation.services.runner_service import ReconciliationRunnerService
-        from apps.documents.models import Invoice as InvoiceModel
-
-        invoices = list(
-            InvoiceModel.objects.filter(pk__in=invoice_ids)
-            .select_related("vendor", "document_upload")
-        )
-        runner = ReconciliationRunnerService()
-        run = runner.run(invoices=invoices, triggered_by=request.user)
-
-        # Run agent pipeline for non-matched results
-        from apps.agents.services.orchestrator import AgentOrchestrator
-        from apps.reconciliation.models import ReconciliationResult as ReconResult
-
-        agent_count = 0
-        results_needing_agents = ReconResult.objects.filter(
-            run=run,
-        ).exclude(match_status=MatchStatus.MATCHED).select_related(
-            "invoice", "invoice__vendor", "purchase_order",
-        )
-        orchestrator = AgentOrchestrator()
-        for recon_result in results_needing_agents:
-            try:
-                orchestrator.execute(recon_result)
-                agent_count += 1
-            except Exception:
-                import logging as _logging
-                _logging.getLogger(__name__).exception(
-                    "Agent pipeline failed for result %s", recon_result.pk
-                )
-
-        agent_msg = f" Agent analysis ran on {agent_count} result(s)." if agent_count else ""
-        messages.success(
-            request,
-            f"Reconciliation complete for {run.total_invoices} invoice(s): "
-            f"{run.matched_count} matched, {run.partial_count} partial, "
-            f"{run.unmatched_count} unmatched.{agent_msg}",
-        )
-    else:
-        from apps.reconciliation.tasks import run_reconciliation_task
-        run_reconciliation_task.delay(
-            invoice_ids=invoice_ids,
-            triggered_by_id=request.user.pk,
-        )
-        messages.success(
-            request,
-            f"Reconciliation started for {len(invoice_ids)} invoice(s). Results will appear shortly.",
-        )
-
-    return redirect("reconciliation:result_list")
+    This view redirects to the AP Cases inbox.
+    """
+    messages.info(
+        request,
+        "Manual reconciliation has been replaced by the AP Cases pipeline. "
+        "Invoices are now automatically processed after upload."
+    )
+    return redirect("cases:case_inbox")
 
 
 @login_required
@@ -263,6 +218,8 @@ def case_console(request, pk):
         "case_summary_text": case_summary_text,
         "case_summary_agent": case_summary_agent,
         "match_status_choices": MatchStatus.choices,
+        "is_two_way": result.is_two_way_result,
+        "mode_label": "2-Way" if result.is_two_way_result else "3-Way",
     }
     return render(request, "reconciliation/case_console.html", context)
 
@@ -293,6 +250,10 @@ def case_export_csv(request, pk):
     writer.writerow([])
     writer.writerow(["Case ID", result.pk])
     writer.writerow(["Match Status", result.get_match_status_display()])
+    writer.writerow(["Reconciliation Mode", "2-Way" if result.is_two_way_result else "3-Way"])
+    writer.writerow(["Mode Resolution", result.mode_resolution_reason or ""])
+    writer.writerow(["Policy Applied", result.policy_applied or ""])
+    writer.writerow(["GRN Required", "Yes" if result.grn_required_flag else "No"])
     writer.writerow(["Confidence", f"{result.deterministic_confidence * 100:.0f}%" if result.deterministic_confidence else "N/A"])
     writer.writerow(["Summary", result.summary or ""])
     writer.writerow([])
@@ -445,12 +406,24 @@ def recon_settings(request):
         config.auto_close_on_match = request.POST.get("auto_close_on_match") == "on"
         config.enable_agents = request.POST.get("enable_agents") == "on"
 
+        # Mode configuration
+        config.default_reconciliation_mode = request.POST.get(
+            "default_reconciliation_mode", ReconciliationMode.THREE_WAY
+        )
+        config.enable_mode_resolver = request.POST.get("enable_mode_resolver") == "on"
+        config.enable_grn_for_stock_items = request.POST.get("enable_grn_for_stock_items") == "on"
+        config.enable_two_way_for_services = request.POST.get("enable_two_way_for_services") == "on"
+
         config.save()
         verb = "updated" if config_id else "created"
         messages.success(request, f"Config '{config.name}' {verb}.")
         return redirect("reconciliation:recon_settings")
 
+    policies = ReconciliationPolicy.objects.filter(is_active=True).order_by("priority")
+
     return render(request, "reconciliation/settings.html", {
         "configs": configs,
         "is_admin": is_admin,
+        "policies": policies,
+        "reconciliation_mode_choices": ReconciliationMode.choices,
     })
