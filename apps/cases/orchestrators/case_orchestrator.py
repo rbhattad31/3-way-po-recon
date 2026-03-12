@@ -11,12 +11,13 @@ from typing import Optional
 from django.db import transaction
 from django.utils import timezone
 
-from apps.cases.models import APCase, APCaseStage
+from apps.cases.models import APCase, APCaseDecision, APCaseStage
 from apps.cases.services.case_routing_service import CaseRoutingService
 from apps.cases.state_machine.case_state_machine import CaseStateMachine
 from apps.core.enums import (
     CaseStageType,
     CaseStatus,
+    DecisionType,
     PerformedByType,
     ProcessingPath,
     StageStatus,
@@ -117,6 +118,21 @@ class CaseOrchestrator:
 
         return self.case
 
+    # Map stage → status the case should be in before that stage runs
+    STAGE_RESET_STATUS = {
+        CaseStageType.INTAKE: CaseStatus.NEW,
+        CaseStageType.EXTRACTION: CaseStatus.EXTRACTION_IN_PROGRESS,
+        CaseStageType.PATH_RESOLUTION: CaseStatus.EXTRACTION_COMPLETED,
+        CaseStageType.PO_RETRIEVAL: CaseStatus.PATH_RESOLUTION_IN_PROGRESS,
+        CaseStageType.TWO_WAY_MATCHING: CaseStatus.TWO_WAY_IN_PROGRESS,
+        CaseStageType.THREE_WAY_MATCHING: CaseStatus.THREE_WAY_IN_PROGRESS,
+        CaseStageType.GRN_ANALYSIS: CaseStatus.GRN_ANALYSIS_IN_PROGRESS,
+        CaseStageType.NON_PO_VALIDATION: CaseStatus.NON_PO_VALIDATION_IN_PROGRESS,
+        CaseStageType.EXCEPTION_ANALYSIS: CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS,
+        CaseStageType.REVIEW_ROUTING: CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS,
+        CaseStageType.CASE_SUMMARY: CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS,
+    }
+
     def run_from(self, stage: str) -> APCase:
         """Reprocess from a specific stage forward."""
         logger.info("Reprocessing case %s from stage %s", self.case.case_number, stage)
@@ -126,8 +142,15 @@ class CaseOrchestrator:
             stage_name=stage, stage_status__in=[StageStatus.COMPLETED, StageStatus.FAILED]
         ).update(stage_status=StageStatus.SKIPPED)
 
+        # Reset case status to the correct pre-stage status so the pipeline
+        # can proceed through the state machine without invalid transitions.
+        reset_status = self.STAGE_RESET_STATUS.get(stage)
         self.case.current_stage = stage
-        self.case.save(update_fields=["current_stage", "updated_at"])
+        if reset_status:
+            self.case.status = reset_status
+            self.case.save(update_fields=["current_stage", "status", "updated_at"])
+        else:
+            self.case.save(update_fields=["current_stage", "updated_at"])
 
         return self.run()
 
@@ -137,10 +160,27 @@ class CaseOrchestrator:
         if path == ProcessingPath.UNRESOLVED:
             # Try PO Retrieval Agent, then re-resolve
             self._execute_stage(CaseStageType.PO_RETRIEVAL)
-            # After PO retrieval, re-resolve path
-            CaseRoutingService.resolve_path(self.case)
             self.case.refresh_from_db()
-            path = self.case.processing_path
+
+            # If PO_RETRIEVAL linked a PO, resolve path using mode resolver
+            # directly (bypasses PO number lookup which may still have noisy value)
+            if self.case.purchase_order:
+                path = self._resolve_path_from_linked_po()
+            else:
+                CaseRoutingService.resolve_path(self.case)
+                self.case.refresh_from_db()
+                path = self.case.processing_path
+
+            # Set the case status to match the newly resolved path
+            _PATH_IN_PROGRESS = {
+                ProcessingPath.TWO_WAY: CaseStatus.TWO_WAY_IN_PROGRESS,
+                ProcessingPath.THREE_WAY: CaseStatus.THREE_WAY_IN_PROGRESS,
+                ProcessingPath.NON_PO: CaseStatus.NON_PO_VALIDATION_IN_PROGRESS,
+            }
+            target_status = _PATH_IN_PROGRESS.get(path)
+            if target_status and self.case.status != target_status:
+                self.case.status = target_status
+                self.case.save(update_fields=["status", "updated_at"])
 
         if path == ProcessingPath.TWO_WAY:
             self._run_two_way_path()
@@ -236,6 +276,55 @@ class CaseOrchestrator:
         return self.case.reconciliation_result.exceptions.filter(
             exception_type__in=grn_exception_types
         ).exists()
+
+    def _resolve_path_from_linked_po(self) -> str:
+        """Resolve processing path when PO_RETRIEVAL has already linked a PO.
+
+        Uses the mode resolver directly (instead of re-running PO lookup
+        which would fail on the original noisy PO number).
+        """
+        from apps.reconciliation.services.mode_resolver import ReconciliationModeResolver
+        from apps.core.enums import DecisionSource, InvoiceType
+
+        invoice = self.case.invoice
+        po = self.case.purchase_order
+        resolver = ReconciliationModeResolver()
+        mode_result = resolver.resolve(invoice, po)
+
+        self.case.reconciliation_mode = mode_result.mode
+        self.case.invoice_type = InvoiceType.PO_BACKED
+        self.case.save(update_fields=["reconciliation_mode", "invoice_type", "updated_at"])
+
+        if mode_result.mode == "TWO_WAY":
+            path = ProcessingPath.TWO_WAY
+        else:
+            path = ProcessingPath.THREE_WAY
+
+        self.case.processing_path = path
+        self.case.save(update_fields=["processing_path", "updated_at"])
+
+        APCaseDecision.objects.create(
+            case=self.case,
+            decision_type=DecisionType.PATH_SELECTED,
+            decision_source=DecisionSource.DETERMINISTIC,
+            decision_value=path,
+            confidence=0.8,
+            rationale=(
+                f"PO {po.po_number} linked via PO retrieval stage; "
+                f"mode resolved as {mode_result.mode} via {mode_result.resolution_method}"
+            ),
+            evidence={
+                "po_number": po.po_number,
+                "resolution_method": mode_result.resolution_method,
+                "grn_required": mode_result.grn_required,
+            },
+        )
+
+        logger.info(
+            "Case %s path resolved from linked PO %s: %s",
+            self.case.case_number, po.po_number, path,
+        )
+        return path
 
     def _get_retry_count(self, stage_name: str) -> int:
         """Get the current retry count for a stage."""

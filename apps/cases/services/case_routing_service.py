@@ -41,10 +41,12 @@ class CaseRoutingService:
                 "No PO number on invoice",
             )
 
-        # 2. Try PO lookup
+        # 2. Try PO lookup (strict: exact + normalized only, no vendor+amount)
+        #    Vendor+amount discovery is deferred to the PO_RETRIEVAL stage
+        #    so the PO Retrieval Agent gets a chance to run for fuzzy matching.
         from apps.reconciliation.services.po_lookup_service import POLookupService
 
-        po_result = POLookupService().lookup(invoice)
+        po_result = POLookupService().lookup(invoice, skip_vendor_amount=True)
 
         if not po_result.found:
             # PO number present but not found
@@ -66,7 +68,8 @@ class CaseRoutingService:
         # 3. PO found → use mode resolver
         from apps.reconciliation.services.mode_resolver import ReconciliationModeResolver
 
-        mode_result = ReconciliationModeResolver.resolve(invoice, po_result.purchase_order)
+        resolver = ReconciliationModeResolver()
+        mode_result = resolver.resolve(invoice, po_result.purchase_order)
 
         # Link PO to case
         case.purchase_order = po_result.purchase_order

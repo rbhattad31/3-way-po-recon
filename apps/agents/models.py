@@ -46,7 +46,8 @@ class AgentRun(BaseModel):
     agent_definition = models.ForeignKey(AgentDefinition, on_delete=models.SET_NULL, null=True, related_name="runs")
     agent_type = models.CharField(max_length=40, choices=AgentType.choices, db_index=True)
     reconciliation_result = models.ForeignKey(
-        "reconciliation.ReconciliationResult", on_delete=models.CASCADE, related_name="agent_runs"
+        "reconciliation.ReconciliationResult", on_delete=models.CASCADE,
+        related_name="agent_runs", null=True, blank=True,
     )
     status = models.CharField(max_length=20, choices=AgentRunStatus.choices, default=AgentRunStatus.PENDING, db_index=True)
 
