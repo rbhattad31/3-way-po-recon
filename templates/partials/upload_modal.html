@@ -1,7 +1,7 @@
 <!-- Upload Invoice Modal -->
 <div class="modal fade" id="uploadInvoiceModal" tabindex="-1" aria-labelledby="uploadInvoiceModalLabel" aria-hidden="true">
   <div class="modal-dialog">
-    <form method="post" action="{% url 'documents:upload_invoice' %}" enctype="multipart/form-data">
+    <form id="uploadInvoiceForm" method="post" action="{% url 'documents:upload_invoice' %}" enctype="multipart/form-data">
       {% csrf_token %}
       <div class="modal-content">
         <div class="modal-header">
@@ -28,7 +28,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">
+          <button type="submit" class="btn btn-primary" id="uploadInvoiceSubmitBtn">
             <i class="bi bi-upload me-1"></i>Upload &amp; Process
           </button>
         </div>
@@ -36,3 +36,39 @@
     </form>
   </div>
 </div>
+
+<div id="uploadProcessingOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-none align-items-center justify-content-center bg-dark bg-opacity-50" style="z-index: 2000;">
+  <div class="card shadow-sm">
+    <div class="card-body d-flex align-items-center gap-3 px-4 py-3">
+      <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
+      <div>
+        <div class="fw-semibold">Uploading invoice...</div>
+        <small class="text-muted">Please wait while we process your document.</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('uploadInvoiceForm');
+    const submitBtn = document.getElementById('uploadInvoiceSubmitBtn');
+    const overlay = document.getElementById('uploadProcessingOverlay');
+    const modalEl = document.getElementById('uploadInvoiceModal');
+
+    if (!form || !submitBtn || !overlay || !modalEl) {
+      return;
+    }
+
+    form.addEventListener('submit', function () {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Uploading...';
+
+      const modalInstance = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+      modalInstance.hide();
+
+      overlay.classList.remove('d-none');
+      overlay.classList.add('d-flex');
+    });
+  });
+</script>

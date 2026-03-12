@@ -56,6 +56,8 @@ MIDDLEWARE = [
     "apps.core.middleware.LoginRequiredMiddleware",
 ]
 
+X_FRAME_OPTIONS = "SAMEORIGIN"
+
 ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
@@ -193,6 +195,17 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
 AZURE_DI_KEY = os.getenv("AZURE_DI_KEY", "")
 
+# Azure Blob Storage
+AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
+AZURE_STORAGE_ACCOUNT_NAME = os.getenv("AZURE_STORAGE_ACCOUNT_NAME", "")
+AZURE_STORAGE_ACCOUNT_KEY = os.getenv("AZURE_STORAGE_ACCOUNT_KEY", "")
+AZURE_STORAGE_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "uploads")
+
+# Optional service principal auth
+AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID", "")
+AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID", "")
+AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET", "")
+
 # ---------------------------------------------------------------------------
 # Azure Blob Storage (document storage)
 # ---------------------------------------------------------------------------
@@ -219,7 +232,7 @@ LOGGING = {
             "style": "{",
         },
         "simple": {
-            "format": "{levelname} {asctime} {module} {message}",
+            "format": "{levelname} | {name} | {message}",
             "style": "{",
         },
     },
@@ -242,6 +255,6 @@ LOGGING = {
     },
     "loggers": {
         "django": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
-        "apps": {"handlers": ["console", "file"], "level": "DEBUG", "propagate": False},
+        "apps": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
     },
 }

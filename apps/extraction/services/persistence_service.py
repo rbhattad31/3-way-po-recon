@@ -4,7 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from django.db import transaction
+from django.db import connection, transaction
+from django.utils import timezone
 
 from apps.core.enums import InvoiceStatus
 from apps.core.utils import normalize_string
@@ -16,6 +17,9 @@ from apps.extraction.services.validation_service import ValidationResult
 from apps.vendors.models import Vendor
 
 logger = logging.getLogger(__name__)
+
+
+_INVOICE_LINE_HAS_ITEM_CATEGORY: bool | None = None
 
 
 class InvoicePersistenceService:
@@ -99,7 +103,7 @@ class InvoicePersistenceService:
                 line_amount=li.line_amount,
             ))
         if line_objs:
-            InvoiceLineItem.objects.bulk_create(line_objs)
+            self._persist_line_items(line_objs)
 
         logger.info("Invoice saved: id=%s number=%s lines=%d status=%s", invoice.pk, invoice.invoice_number, len(line_objs), status)
         return invoice
@@ -118,6 +122,68 @@ class InvoicePersistenceService:
         if alias:
             return alias.vendor
         return None
+
+    @staticmethod
+    def _persist_line_items(line_objs: list[InvoiceLineItem]) -> None:
+        if InvoicePersistenceService._invoice_line_table_has_item_category():
+            InvoicePersistenceService._bulk_insert_with_item_category(line_objs)
+            return
+        InvoiceLineItem.objects.bulk_create(line_objs)
+
+    @staticmethod
+    def _invoice_line_table_has_item_category() -> bool:
+        global _INVOICE_LINE_HAS_ITEM_CATEGORY
+        if _INVOICE_LINE_HAS_ITEM_CATEGORY is not None:
+            return _INVOICE_LINE_HAS_ITEM_CATEGORY
+
+        with connection.cursor() as cursor:
+            description = connection.introspection.get_table_description(cursor, InvoiceLineItem._meta.db_table)
+        column_names = {col.name for col in description}
+        _INVOICE_LINE_HAS_ITEM_CATEGORY = "item_category" in column_names
+        return _INVOICE_LINE_HAS_ITEM_CATEGORY
+
+    @staticmethod
+    def _bulk_insert_with_item_category(line_objs: list[InvoiceLineItem]) -> None:
+        now = timezone.now()
+        table_name = InvoiceLineItem._meta.db_table
+        sql = f"""
+            INSERT INTO {table_name} (
+                invoice_id, line_number,
+                raw_description, raw_quantity, raw_unit_price, raw_tax_amount, raw_line_amount,
+                description, normalized_description,
+                quantity, unit_price, tax_amount, line_amount,
+                created_at, updated_at, item_category
+            ) VALUES (
+                %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s
+            )
+        """
+        rows = [
+            (
+                obj.invoice_id,
+                obj.line_number,
+                obj.raw_description,
+                obj.raw_quantity,
+                obj.raw_unit_price,
+                obj.raw_tax_amount,
+                obj.raw_line_amount,
+                obj.description,
+                obj.normalized_description,
+                obj.quantity,
+                obj.unit_price,
+                obj.tax_amount,
+                obj.line_amount,
+                now,
+                now,
+                "UNCATEGORIZED",
+            )
+            for obj in line_objs
+        ]
+        with connection.cursor() as cursor:
+            cursor.executemany(sql, rows)
 
 
 class ExtractionResultPersistenceService:
