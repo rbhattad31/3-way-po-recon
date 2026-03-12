@@ -197,6 +197,12 @@ class StageExecutor:
         """
         Non-PO validation: deterministic checks + agent reasoning.
         """
+        # Ensure we're in the correct status (handles rerouted UNRESOLVED cases)
+        if case.status != CaseStatus.NON_PO_VALIDATION_IN_PROGRESS:
+            CaseStateMachine.transition(
+                case, CaseStatus.NON_PO_VALIDATION_IN_PROGRESS, PerformedByType.DETERMINISTIC
+            )
+
         from apps.cases.services.non_po_validation_service import NonPOValidationService
 
         result = NonPOValidationService.validate(case)

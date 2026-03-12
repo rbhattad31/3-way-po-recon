@@ -115,7 +115,7 @@ class CaseRoutingService:
             evidence={"old_path": old_path, "new_path": new_path},
         )
 
-        logger.info("Case %s rerouted: %s → %s (%s)", case.case_number, old_path, new_path, reason)
+        logger.info("Case %s rerouted: %s -> %s (%s)", case.case_number, old_path, new_path, reason)
         return new_path
 
     @staticmethod
