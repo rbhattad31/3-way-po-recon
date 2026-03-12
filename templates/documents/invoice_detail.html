@@ -16,7 +16,15 @@
   {# Header Info #}
   <div class="col-md-6">
     <div class="ap-card">
-      <div class="ap-card-header"><i class="bi bi-file-earmark-text"></i> Invoice Details</div>
+      <div class="ap-card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-file-earmark-text"></i> Invoice Details</span>
+        {% if invoice.document_upload %}
+        <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" target="_blank"
+           class="btn btn-sm btn-outline-primary" title="View original document">
+          <i class="bi bi-file-earmark-arrow-down"></i> View Document
+        </a>
+        {% endif %}
+      </div>
       <div class="ap-card-body p-0">
         <table class="ap-table">
           <tbody>
@@ -36,8 +44,8 @@
             <tr><th style="color:var(--ap-text-muted)">Confidence</th><td>
               {% if invoice.extraction_confidence %}
               <div class="d-flex align-items-center gap-2">
-                <div class="ap-confidence-meter">
-                  <div class="ap-confidence-bar {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                <div class="ap-confidence-bar">
+                  <div class="ap-confidence-fill {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
                        style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></div>
                 </div>
                 <span style="font-size:var(--ap-font-size-xs)">{% widthratio invoice.extraction_confidence 1 100 %}%</span>
