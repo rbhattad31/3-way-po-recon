@@ -52,9 +52,11 @@ class ReconciliationRunViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(
                 {"error": "invoice_id is required"}, status=status.HTTP_400_BAD_REQUEST
             )
-        task = run_reconciliation_task.delay(int(invoice_id))
+        from apps.core.utils import dispatch_task
+        result = dispatch_task(run_reconciliation_task, int(invoice_id))
+        task_id = getattr(result, 'id', None)
         return Response(
-            {"task_id": task.id, "invoice_id": invoice_id},
+            {"task_id": task_id, "invoice_id": invoice_id},
             status=status.HTTP_202_ACCEPTED,
         )
 

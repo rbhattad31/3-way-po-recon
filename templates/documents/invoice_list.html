@@ -72,7 +72,7 @@
       <thead>
         <tr>
           <th>Invoice #</th><th>Vendor</th><th>PO #</th>
-          <th>Amount</th><th>Status</th><th>Confidence</th><th>Date</th>
+          <th>Amount</th><th>Status</th><th>Case</th><th>Confidence</th><th>Date</th>
         </tr>
       </thead>
       <tbody>
@@ -88,17 +88,29 @@
             </span>
           </td>
           <td>
+            {% if inv.ap_case %}
+            <a href="{% url 'cases:case_console' inv.ap_case.pk %}" class="text-decoration-none" style="font-size:var(--ap-font-size-sm)">
+              <span class="ap-badge {% if inv.ap_case.status == 'CLOSED' or inv.ap_case.status == 'APPROVED' %}ap-badge-success{% elif inv.ap_case.status == 'FAILED' %}ap-badge-danger{% elif inv.ap_case.status == 'IN_REVIEW' or inv.ap_case.status == 'PENDING_REVIEW' %}ap-badge-warning{% else %}ap-badge-primary{% endif %}">
+                {{ inv.ap_case.case_number }}
+              </span>
+            </a>
+            {% else %}—{% endif %}
+          </td>
+          <td>
             {% if inv.extraction_confidence %}
-            <div class="ap-confidence-meter" data-bs-toggle="tooltip" title="{% widthratio inv.extraction_confidence 1 100 %}%">
-              <div class="ap-confidence-bar {% if inv.extraction_confidence >= 0.8 %}high{% elif inv.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                   style="width:{% widthratio inv.extraction_confidence 1 100 %}%"></div>
+            <div class="ap-confidence">
+              <div class="ap-confidence-bar">
+                <div class="ap-confidence-fill {% if inv.extraction_confidence >= 0.8 %}high{% elif inv.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                     style="width:{% widthratio inv.extraction_confidence 1 100 %}%"></div>
+              </div>
+              <span>{% widthratio inv.extraction_confidence 1 100 %}%</span>
             </div>
             {% else %}—{% endif %}
           </td>
           <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ inv.created_at|date:"d M Y" }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="7">
+        <tr><td colspan="8">
           <div class="ap-empty-state">
             <i class="bi bi-file-earmark-text"></i>
             <div class="ap-empty-state-label">No invoices found</div>

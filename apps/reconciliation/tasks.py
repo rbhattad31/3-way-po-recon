@@ -59,7 +59,8 @@ def run_reconciliation_task(
         run = runner.run(invoices=invoices, triggered_by=triggered_by)
     except Exception as exc:
         logger.exception("Reconciliation task failed")
-        raise self.retry(exc=exc)
+        from apps.core.utils import safe_retry
+        safe_retry(self, exc)
 
     # Chain agent pipeline for non-matched results
     from apps.agents.tasks import run_agent_pipeline_task
@@ -70,8 +71,9 @@ def run_reconciliation_task(
         .exclude(match_status="MATCHED")
         .values_list("pk", flat=True)
     )
+    from apps.core.utils import dispatch_task
     for result_id in agent_result_ids:
-        run_agent_pipeline_task.delay(result_id)
+        dispatch_task(run_agent_pipeline_task, result_id)
 
     return {
         "status": "ok",

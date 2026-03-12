@@ -25,7 +25,8 @@ def process_case_task(self, case_id: int):
         logger.error("Case %d not found", case_id)
     except Exception as exc:
         logger.exception("Case %d processing failed", case_id)
-        raise self.retry(exc=exc)
+        from apps.core.utils import safe_retry
+        safe_retry(self, exc)
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=10, acks_late=True)
@@ -43,4 +44,5 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
         logger.error("Case %d not found", case_id)
     except Exception as exc:
         logger.exception("Case %d reprocessing failed from %s", case_id, stage)
-        raise self.retry(exc=exc)
+        from apps.core.utils import safe_retry
+        safe_retry(self, exc)
