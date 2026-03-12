@@ -2,7 +2,7 @@ from django.urls import path
 from django.contrib.auth import views as auth_views
 
 from apps.accounts.template_views import (
-    UserListView, UserDetailView,
+    UserListView, UserCreateView, UserDetailView,
     RoleListView, RoleDetailView, RoleCreateView,
     PermissionListView,
     RolePermissionMatrixView,
@@ -17,6 +17,7 @@ urlpatterns = [
 
     # Admin Console — User Management
     path("admin-console/users/", UserListView.as_view(), name="user_list"),
+    path("admin-console/users/new/", UserCreateView.as_view(), name="user_create"),
     path("admin-console/users/<int:pk>/", UserDetailView.as_view(), name="user_detail"),
 
     # Admin Console — Role Management

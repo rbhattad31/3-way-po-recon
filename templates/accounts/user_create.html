@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+
+{% block title %}Add User — AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'accounts:user_list' %}">Users</a></li>
+    <li class="breadcrumb-item active">Add User</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <h4><i class="bi bi-person-plus me-2"></i>Add New User</h4>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {% if form.errors %}
+      <div class="alert alert-danger py-2">
+        <ul class="mb-0 small">
+          {% for field, errors in form.errors.items %}
+            {% for error in errors %}<li><strong>{{ field }}:</strong> {{ error }}</li>{% endfor %}
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Email <span class="text-danger">*</span></label>
+          {{ form.email }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">First Name</label>
+          {{ form.first_name }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Last Name</label>
+          {{ form.last_name }}
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-4">
+          <label class="form-label">Department</label>
+          {{ form.department }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Initial Role</label>
+          {{ form.initial_role }}
+          <small class="text-muted">Assigned as the primary role</small>
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-4">
+          <label class="form-label">Password <span class="text-danger">*</span></label>
+          {{ form.password1 }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Confirm Password <span class="text-danger">*</span></label>
+          {{ form.password2 }}
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-check-lg me-1"></i>Create User</button>
+        <a href="{% url 'accounts:user_list' %}" class="btn btn-outline-secondary btn-sm ms-2">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

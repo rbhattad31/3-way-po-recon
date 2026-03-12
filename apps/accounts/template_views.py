@@ -10,7 +10,8 @@ from django.utils import timezone
 from django.views.generic import ListView, DetailView, TemplateView
 
 from apps.accounts.forms import (
-    UserProfileForm, UserRoleAssignForm, UserPermissionOverrideForm, RoleForm,
+    UserCreateForm, UserProfileForm, UserRoleAssignForm,
+    UserPermissionOverrideForm, RoleForm,
 )
 from apps.accounts.models import User
 from apps.accounts.rbac_models import (
@@ -68,6 +69,39 @@ class UserListView(PermissionRequiredMixin, ListView):
         ctx["dept_filter"] = self.request.GET.get("department", "")
         ctx["status_filter"] = self.request.GET.get("status", "")
         return ctx
+
+
+class UserCreateView(PermissionRequiredMixin, TemplateView):
+    """Create a new user."""
+
+    template_name = "accounts/user_create.html"
+    required_permission = "users.manage"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["form"] = UserCreateForm()
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        form = UserCreateForm(request.POST)
+        if form.is_valid():
+            with transaction.atomic():
+                user = form.save()
+                # Assign initial role if selected
+                initial_role = form.cleaned_data.get("initial_role")
+                if initial_role:
+                    user.role = initial_role.code
+                    user.save(update_fields=["role"])
+                    UserRole.objects.create(
+                        user=user,
+                        role=initial_role,
+                        is_primary=True,
+                        assigned_by=request.user,
+                    )
+                    RBACEventService.log_role_assigned(user, initial_role, request.user, is_primary=True)
+            messages.success(request, f"User '{user.email}' created.")
+            return redirect("accounts:user_detail", pk=user.pk)
+        return self.render_to_response({"form": form})
 
 
 class UserDetailView(PermissionRequiredMixin, DetailView):
