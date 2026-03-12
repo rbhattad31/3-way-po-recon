@@ -33,7 +33,7 @@ class POLookupService:
          if FK is missing, then matches open POs by amount)
     """
 
-    def lookup(self, invoice: Invoice) -> POLookupResult:
+    def lookup(self, invoice: Invoice, skip_vendor_amount: bool = False) -> POLookupResult:
         # Try raw PO number (exact)
         if invoice.po_number:
             po = PurchaseOrder.objects.filter(po_number=invoice.po_number).first()
@@ -50,9 +50,10 @@ class POLookupService:
                 return POLookupResult(found=True, purchase_order=po, lookup_method="normalized")
 
         # Fallback: deterministic vendor + amount discovery
-        result = self._discover_by_vendor_amount(invoice)
-        if result.found:
-            return result
+        if not skip_vendor_amount:
+            result = self._discover_by_vendor_amount(invoice)
+            if result.found:
+                return result
 
         logger.warning("PO not found for invoice %s (po_number=%s)", invoice.pk, invoice.po_number)
         return POLookupResult(found=False, lookup_method="not_found")

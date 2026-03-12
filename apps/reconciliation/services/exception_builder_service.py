@@ -129,6 +129,24 @@ class ExceptionBuilderService:
                 },
             ))
 
+        if header.tax_match is False and header.tax_comparison:
+            txc = header.tax_comparison
+            excs.append(self._make(
+                result=result,
+                exc_type=ExceptionType.TAX_MISMATCH,
+                severity=ExceptionSeverity.MEDIUM,
+                message=(
+                    f"Tax amount mismatch: invoice={txc.invoice_value}, "
+                    f"PO={txc.po_value}, diff={txc.difference} ({txc.difference_pct}%)"
+                ),
+                details={
+                    "invoice_tax": str(txc.invoice_value),
+                    "po_tax": str(txc.po_value),
+                    "difference": str(txc.difference),
+                    "difference_pct": str(txc.difference_pct),
+                },
+            ))
+
         return excs
 
     # ------------------------------------------------------------------
@@ -299,23 +317,25 @@ class ExceptionBuilderService:
                     },
                 ))
 
-        # Delayed receipt: GRN received after invoice date
-        invoice = result.invoice
-        if invoice.invoice_date and grn.latest_receipt_date:
-            if grn.latest_receipt_date > invoice.invoice_date:
-                days_late = (grn.latest_receipt_date - invoice.invoice_date).days
+        # Delayed receipt: GRN received long after PO date
+        po = result.purchase_order
+        po_date = po.po_date if po else None
+        if po_date and grn.latest_receipt_date:
+            days_since_po = (grn.latest_receipt_date - po_date).days
+            if days_since_po > 30:
+                severity = ExceptionSeverity.HIGH if days_since_po > 45 else ExceptionSeverity.MEDIUM
                 excs.append(self._make(
                     result=result,
                     exc_type=ExceptionType.DELAYED_RECEIPT,
-                    severity=ExceptionSeverity.LOW,
+                    severity=severity,
                     message=(
-                        f"Goods received {days_late} day(s) after invoice date "
-                        f"(invoice: {invoice.invoice_date}, receipt: {grn.latest_receipt_date})"
+                        f"Goods received {days_since_po} day(s) after PO date "
+                        f"(PO: {po_date}, receipt: {grn.latest_receipt_date})"
                     ),
                     details={
-                        "invoice_date": str(invoice.invoice_date),
+                        "po_date": str(po_date),
                         "latest_receipt_date": str(grn.latest_receipt_date),
-                        "days_late": days_late,
+                        "days_late": days_since_po,
                     },
                 ))
 

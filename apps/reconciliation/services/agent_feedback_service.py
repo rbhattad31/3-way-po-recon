@@ -78,7 +78,7 @@ class AgentFeedbackService:
         grn_summary = self.grn_lookup.lookup(po)
         grn_result = None
         if grn_summary.grn_available and line_result:
-            grn_result = self.grn_match.match(line_result.pairs, grn_summary)
+            grn_result = self.grn_match.match(line_result.pairs, grn_summary, po_date=po.po_date)
 
         # 4. Re-classify (respect original reconciliation mode)
         recon_mode = result.reconciliation_mode or ""

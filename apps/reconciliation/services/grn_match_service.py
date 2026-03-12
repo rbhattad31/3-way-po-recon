@@ -6,8 +6,13 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Dict, List, Optional
 
+import datetime
+
 from apps.reconciliation.services.grn_lookup_service import GRNSummary
 from apps.reconciliation.services.line_match_service import LineMatchPair
+
+# Receipts arriving more than this many days after PO date are flagged.
+_DELAYED_RECEIPT_THRESHOLD_DAYS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +50,7 @@ class GRNMatchService:
         self,
         line_pairs: List[LineMatchPair],
         grn_summary: GRNSummary,
+        po_date: Optional[datetime.date] = None,
     ) -> GRNMatchResult:
         if not grn_summary.grn_available:
             return GRNMatchResult(grn_available=False)
@@ -84,6 +90,16 @@ class GRNMatchService:
                 has_issues = True
 
             comparisons.append(cmp)
+
+        # Check delayed receipt: receipt date significantly after PO date
+        if po_date and grn_summary.latest_receipt_date:
+            days_since_po = (grn_summary.latest_receipt_date - po_date).days
+            if days_since_po > _DELAYED_RECEIPT_THRESHOLD_DAYS:
+                has_issues = True
+                logger.info(
+                    "GRN delayed receipt detected: %d days after PO date (threshold=%d)",
+                    days_since_po, _DELAYED_RECEIPT_THRESHOLD_DAYS,
+                )
 
         result = GRNMatchResult(
             grn_available=True,
