@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from celery import shared_task
 from django.db import transaction
@@ -35,7 +34,6 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         InvoicePersistenceService,
         ExtractionResultPersistenceService,
     )
-    from apps.documents.blob_storage import AzureBlobStorageService
 
     try:
         upload = DocumentUpload.objects.get(pk=upload_id)
@@ -43,62 +41,51 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         logger.error("DocumentUpload %s not found", upload_id)
         return {"status": "error", "message": f"Upload {upload_id} not found"}
 
-    logger.info("[EXTRACT][START] upload=%s", upload_id)
-    logger.info("[EXTRACT][FILE] %s", upload.original_filename)
-
     upload.processing_state = FileProcessingState.PROCESSING
     upload.save(update_fields=["processing_state", "updated_at"])
 
-    extraction_file_path = None
     try:
-        logger.info("[EXTRACT][A] Preparing file for extraction")
-        if upload.blob_name:
-            blob_service = AzureBlobStorageService()
-            extraction_file_path = blob_service.download_blob_to_temp_path(
-                upload.blob_name,
-                original_filename=upload.original_filename,
-            )
-            logger.info("[EXTRACT][A] Completed: blob downloaded to temp path")
-        else:
-            raise ValueError("No file reference available for extraction.")
-
         # 1. Extract
-        logger.info("[EXTRACT][B] Running adapter extraction")
         adapter = InvoiceExtractionAdapter()
-        extraction_resp: ExtractionResponse = adapter.extract(extraction_file_path)
+        # Download from Azure Blob Storage
+        if not upload.blob_path:
+            _fail_upload(upload, "No blob_path set — document not in Azure Blob Storage")
+            return {"status": "error", "message": "No blob_path set on upload"}
+
+        from apps.documents.blob_service import download_blob_to_tempfile
+        file_path = download_blob_to_tempfile(upload.blob_path)
+
+        try:
+            extraction_resp: ExtractionResponse = adapter.extract(file_path)
+        finally:
+            import os
+            try:
+                os.unlink(file_path)
+            except OSError:
+                pass
 
         if not extraction_resp.success:
             _fail_upload(upload, extraction_resp.error_message)
             ExtractionResultPersistenceService.save(upload, None, extraction_resp)
             return {"status": "error", "message": extraction_resp.error_message}
-        logger.info("[EXTRACT][B] Completed")
 
         # 2. Parse
-        logger.info("[EXTRACT][C] Parsing extracted payload")
         parser = ExtractionParserService()
         parsed = parser.parse(extraction_resp.raw_json)
-        logger.info("[EXTRACT][C] Completed: parsed %d line item(s)", len(parsed.line_items))
 
         # 3. Normalise
-        logger.info("[EXTRACT][D] Normalizing parsed values")
         normalizer = NormalizationService()
         normalized = normalizer.normalize(parsed)
-        logger.info("[EXTRACT][D] Completed")
 
         # 4. Validate
-        logger.info("[EXTRACT][E] Validating normalized invoice")
         validator = ValidationService()
         validation_result = validator.validate(normalized)
-        logger.info("[EXTRACT][E] Completed: valid=%s, issues=%d", validation_result.is_valid, len(validation_result.issues))
 
         # 5. Duplicate check
-        logger.info("[EXTRACT][F] Running duplicate detection")
         dup_service = DuplicateDetectionService()
         dup_result = dup_service.check(normalized)
-        logger.info("[EXTRACT][F] Completed: duplicate=%s", dup_result.is_duplicate)
 
         # 6. Persist
-        logger.info("[EXTRACT][G] Persisting invoice and line items")
         persistence = InvoicePersistenceService()
         invoice = persistence.save(
             normalized=normalized,
@@ -108,10 +95,8 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             duplicate_result=dup_result,
         )
         ExtractionResultPersistenceService.save(upload, invoice, extraction_resp)
-        logger.info("[EXTRACT][G] Completed: invoice_id=%s", invoice.pk)
 
         # 7. Finalise upload state
-        logger.info("[EXTRACT][H] Finalizing upload state")
         upload.processing_state = FileProcessingState.COMPLETED
         upload.save(update_fields=["processing_state", "updated_at"])
 
@@ -165,14 +150,13 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
                 )
 
         logger.info(
-            "[EXTRACT][END] upload=%s invoice=%s status=%s",
+            "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",
             upload_id, invoice.pk, invoice.status,
         )
         return {
             "status": "ok",
             "upload_id": upload_id,
             "invoice_id": invoice.pk,
-            "invoice_number": invoice.invoice_number,
             "invoice_status": invoice.status,
             "is_duplicate": dup_result.is_duplicate,
             "is_valid": validation_result.is_valid,
@@ -180,7 +164,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         }
 
     except Exception as exc:
-        logger.exception("[EXTRACT][ERROR] Pipeline failed for upload %s", upload_id)
+        logger.exception("Extraction pipeline failed for upload %s", upload_id)
         _fail_upload(upload, str(exc))
         # Audit: extraction failed
         try:
@@ -200,12 +184,6 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         except (AttributeError, TypeError):
             # Running outside Celery context (sync fallback) — re-raise directly
             raise exc
-    finally:
-        if extraction_file_path and os.path.exists(extraction_file_path):
-            try:
-                os.remove(extraction_file_path)
-            except OSError:
-                pass
 
 
 def _fail_upload(upload: DocumentUpload, message: str) -> None:
