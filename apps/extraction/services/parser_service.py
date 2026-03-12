@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -43,11 +44,11 @@ class ExtractionParserService:
         for idx, item in enumerate(raw_json.get("line_items", []) or [], start=1):
             lines.append(ParsedLineItem(
                 line_number=idx,
-                raw_description=self._safe_str(self._first_present(item, "item_description", "description")),
+                raw_description=self._safe_str(item.get("item_description") or item.get("description")),
                 raw_quantity=self._safe_str(item.get("quantity")),
                 raw_unit_price=self._safe_str(item.get("unit_price")),
                 raw_tax_amount=self._safe_str(item.get("tax_amount")),
-                raw_line_amount=self._safe_str(self._first_present(item, "line_amount", "amount")),
+                raw_line_amount=self._safe_str(item.get("line_amount") or item.get("amount")),
             ))
 
         parsed = ParsedInvoice(
@@ -75,11 +76,3 @@ class ExtractionParserService:
         if value is None:
             return ""
         return str(value)
-
-    @staticmethod
-    def _first_present(item: Dict[str, Any], *keys: str) -> Any:
-        """Return first present key value, preserving falsy values like 0."""
-        for key in keys:
-            if key in item and item.get(key) is not None:
-                return item.get(key)
-        return None

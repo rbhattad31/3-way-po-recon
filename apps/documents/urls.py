@@ -1,20 +1,12 @@
 from django.urls import path
 
-from apps.documents.template_views import (
-    grn_list,
-    invoice_detail,
-    invoice_list,
-    po_list,
-    upload_invoice,
-    uploaded_file,
-)
+from apps.documents.template_views import document_download, grn_detail, grn_list, invoice_detail, invoice_list, po_detail, po_list, upload_invoice
 
 app_name = "documents"
 
 urlpatterns = [
     path("", invoice_list, name="invoice_list"),
     path("upload/", upload_invoice, name="upload_invoice"),
-    path("upload/<int:upload_id>/file/", uploaded_file, name="uploaded_file"),
     path("<int:pk>/", invoice_detail, name="invoice_detail"),
     path("download/<int:pk>/", document_download, name="document_download"),
     path("purchase-orders/", po_list, name="po_list"),

@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import List, Optional
 from datetime import date
 
 from apps.core.utils import (
@@ -123,51 +122,12 @@ class NormalizationService:
         )
 
     @staticmethod
-    def _safe_decimal(value: Any, four_places: bool = False) -> Optional[Decimal]:
-        if value is None:
+    def _safe_decimal(value: str, four_places: bool = False) -> Optional[Decimal]:
+        if not value or not value.strip():
             return None
-
-        text_value = str(value).strip()
-        if not text_value:
+        d = to_decimal(value)
+        if d == Decimal("0.00") and value.strip() not in ("0", "0.0", "0.00"):
             return None
-
-        normalized_numeric = NormalizationService._coerce_numeric_string(text_value)
-        if not normalized_numeric:
-            return None
-
-        try:
-            Decimal(normalized_numeric)
-        except Exception:
-            return None
-
-        d = to_decimal(normalized_numeric)
         if four_places:
             return d.quantize(Decimal("0.0001"))
         return d
-
-    @staticmethod
-    def _coerce_numeric_string(text_value: str) -> Optional[str]:
-        candidate = re.sub(r"[^0-9,.-]", "", text_value)
-        if not candidate or not re.search(r"\d", candidate):
-            return None
-
-        if "," in candidate and "." in candidate:
-            if candidate.rfind(",") > candidate.rfind("."):
-                candidate = candidate.replace(".", "").replace(",", ".")
-            else:
-                candidate = candidate.replace(",", "")
-        elif "," in candidate:
-            parts = candidate.split(",")
-            if len(parts) > 2:
-                candidate = "".join(parts)
-            elif len(parts[-1]) in (2, 4):
-                candidate = f"{parts[0]}.{parts[1]}"
-            else:
-                candidate = "".join(parts)
-
-        if candidate.count("-") > 1:
-            return None
-        if "-" in candidate and not candidate.startswith("-"):
-            candidate = candidate.replace("-", "")
-
-        return candidate

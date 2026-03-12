@@ -14,16 +14,11 @@ from apps.vendors.models import Vendor
 class DocumentUpload(BaseModel):
     """Tracks every file uploaded into the system."""
 
-    file = models.FileField(upload_to="invoices/%Y/%m/", blank=True, null=True)
+    file = models.FileField(upload_to="invoices/%Y/%m/", blank=True, default="")
     original_filename = models.CharField(max_length=500)
     file_size = models.PositiveIntegerField(default=0, help_text="Bytes")
     file_hash = models.CharField(max_length=64, blank=True, db_index=True, help_text="SHA-256")
     content_type = models.CharField(max_length=100, blank=True)
-    blob_name = models.CharField(max_length=1024, blank=True, default="")
-    blob_container = models.CharField(max_length=255, blank=True, default="")
-    blob_url = models.URLField(max_length=2048, blank=True, default="")
-    blob_uploaded_at = models.DateTimeField(null=True, blank=True)
-    blob_metadata = models.JSONField(default=dict, blank=True)
     document_type = models.CharField(max_length=20, choices=DocumentType.choices, default=DocumentType.INVOICE)
     processing_state = models.CharField(
         max_length=20, choices=FileProcessingState.choices, default=FileProcessingState.QUEUED
