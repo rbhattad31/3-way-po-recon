@@ -13,11 +13,11 @@ from apps.auditlog.serializers import (
 )
 from apps.auditlog.services import AuditService
 from apps.auditlog.timeline_service import CaseTimelineService
-from apps.core.permissions import IsAuditor, IsReviewer
+from rest_framework.permissions import IsAuthenticated
 
 
 @api_view(["GET"])
-@permission_classes([IsAuditor])
+@permission_classes([IsAuthenticated])
 def invoice_audit_history(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/audit-history — full audit trail."""
     events = AuditService.fetch_invoice_history(invoice_id)
@@ -26,7 +26,7 @@ def invoice_audit_history(request, invoice_id: int):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuditor])
+@permission_classes([IsAuthenticated])
 def invoice_agent_trace(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/agent-trace — agent runs, steps, tools, decisions."""
     trace = AgentTraceService.get_trace_for_invoice(invoice_id)
@@ -35,7 +35,7 @@ def invoice_agent_trace(request, invoice_id: int):
 
 
 @api_view(["GET"])
-@permission_classes([IsReviewer])
+@permission_classes([IsAuthenticated])
 def invoice_recommendations(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/recommendations — agent recommendations."""
     recs = RecommendationService.get_recommendations_for_invoice(invoice_id)
@@ -44,7 +44,7 @@ def invoice_recommendations(request, invoice_id: int):
 
 
 @api_view(["GET"])
-@permission_classes([IsReviewer])
+@permission_classes([IsAuthenticated])
 def invoice_timeline(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/timeline — combined decision timeline."""
     timeline = CaseTimelineService.get_case_timeline(invoice_id)

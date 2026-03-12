@@ -4,18 +4,23 @@ The policy engine is the "brain" that decides the agentic workflow based on
 the deterministic reconciliation outcome.  It enforces:
   - Which agents fire for each match status / exception combination
   - Agent ordering (pipeline)
+  - Mode awareness: skips GRN-related agents in 2-way mode
   - Confidence thresholds for auto-close vs. escalation
   - Token budget guardrails
+  - Auto-close tolerance band for PARTIAL_MATCH (skip AI when discrepancies
+    are within the wider auto-close thresholds)
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Dict, List, Optional
 
 from apps.core.constants import AGENT_CONFIDENCE_THRESHOLD, REVIEW_AUTO_CLOSE_THRESHOLD
-from apps.core.enums import AgentType, ExceptionType, MatchStatus, RecommendationType
-from apps.reconciliation.models import ReconciliationResult
+from apps.core.enums import AgentType, ExceptionType, MatchStatus, ReconciliationMode, RecommendationType
+from apps.core.utils import within_tolerance
+from apps.reconciliation.models import ReconciliationConfig, ReconciliationResult
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,8 @@ class AgentPlan:
     agents: List[str] = field(default_factory=list)  # AgentType values
     reason: str = ""
     skip_agents: bool = False
+    auto_close: bool = False  # True when auto-closed by tolerance band
+    reconciliation_mode: str = ""  # Propagated to orchestrator/agents
 
 
 class PolicyEngine:
@@ -33,17 +40,24 @@ class PolicyEngine:
 
     Rules (deterministic, no LLM):
       1. MATCHED + high confidence → no agents needed (auto-close)
+      1b. PARTIAL_MATCH + all line discrepancies within auto-close tolerance → auto-close, skip agents
       2. UNMATCHED with PO_NOT_FOUND → PO_RETRIEVAL → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
-      3. UNMATCHED with GRN_NOT_FOUND → GRN_RETRIEVAL → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
-      4. PARTIAL_MATCH → RECONCILIATION_ASSIST → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
+      3. UNMATCHED with GRN_NOT_FOUND (3-way only) → GRN_RETRIEVAL → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
+      4. PARTIAL_MATCH (outside auto-close band) → RECONCILIATION_ASSIST → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
       5. REQUIRES_REVIEW with low extraction confidence → INVOICE_UNDERSTANDING → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
       6. REQUIRES_REVIEW (general) → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY
+
+    Mode awareness: In TWO_WAY mode, GRN_RETRIEVAL is never included and
+    GRN_NOT_FOUND exceptions are ignored because receipt verification is
+    irrelevant for service/non-stock invoices.
     """
 
     def plan(self, result: ReconciliationResult) -> AgentPlan:
         status = result.match_status
         confidence = result.deterministic_confidence or 0.0
         extraction_conf = result.extraction_confidence or 0.0
+        recon_mode = getattr(result, "reconciliation_mode", "") or ""
+        is_two_way = recon_mode == ReconciliationMode.TWO_WAY
 
         # Gather exception types
         exc_types = set(
@@ -55,6 +69,19 @@ class PolicyEngine:
             return AgentPlan(
                 skip_agents=True,
                 reason=f"Full match with confidence {confidence:.2f} >= {REVIEW_AUTO_CLOSE_THRESHOLD}",
+                reconciliation_mode=recon_mode,
+            )
+
+        # Rule 1b: PARTIAL_MATCH within auto-close tolerance band → auto-close, skip agents
+        if status == MatchStatus.PARTIAL_MATCH and self._within_auto_close_band(result):
+            return AgentPlan(
+                skip_agents=True,
+                auto_close=True,
+                reason=(
+                    f"PARTIAL_MATCH but all line discrepancies within auto-close tolerance band — "
+                    f"auto-closing without AI agents"
+                ),
+                reconciliation_mode=recon_mode,
             )
 
         agents: List[str] = []
@@ -63,8 +90,8 @@ class PolicyEngine:
         if ExceptionType.PO_NOT_FOUND in exc_types:
             agents.append(AgentType.PO_RETRIEVAL)
 
-        # Rule 3: GRN not found
-        if ExceptionType.GRN_NOT_FOUND in exc_types:
+        # Rule 3: GRN not found (3-way only — irrelevant in 2-way mode)
+        if not is_two_way and ExceptionType.GRN_NOT_FOUND in exc_types:
             agents.append(AgentType.GRN_RETRIEVAL)
 
         # Rule 4: Low extraction confidence
@@ -93,14 +120,70 @@ class PolicyEngine:
                 AgentType.CASE_SUMMARY,
             ]
 
+        mode_label = "2-way" if is_two_way else "3-way"
         reason = (
-            f"Status={status}, confidence={confidence:.2f}, "
+            f"Mode={mode_label}, status={status}, confidence={confidence:.2f}, "
             f"extraction_conf={extraction_conf:.2f}, "
             f"exceptions={sorted(exc_types)}"
         )
 
         logger.info("Policy plan for result %s: %s (%s)", result.pk, agents, reason)
-        return AgentPlan(agents=agents, reason=reason)
+        return AgentPlan(agents=agents, reason=reason, reconciliation_mode=recon_mode)
+
+    # ------------------------------------------------------------------
+    # Auto-close tolerance check
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _within_auto_close_band(result: ReconciliationResult) -> bool:
+        """Check if all line discrepancies fall within the wider auto-close tolerance.
+
+        Also verifies no HIGH severity exceptions exist (vendor mismatch,
+        PO not found, etc.) — those always need review regardless of numbers.
+        """
+        # Check for HIGH-severity exceptions that can't be auto-closed
+        high_severity_exceptions = result.exceptions.filter(severity="HIGH").exists()
+        if high_severity_exceptions:
+            return False
+
+        # Load auto-close thresholds from the run's config (or defaults)
+        config = getattr(result.run, "config", None) if result.run else None
+        if config:
+            ac_qty = config.auto_close_qty_tolerance_pct
+            ac_price = config.auto_close_price_tolerance_pct
+            ac_amount = config.auto_close_amount_tolerance_pct
+        else:
+            from apps.core.constants import (
+                AUTO_CLOSE_QTY_TOLERANCE_PCT,
+                AUTO_CLOSE_PRICE_TOLERANCE_PCT,
+                AUTO_CLOSE_AMOUNT_TOLERANCE_PCT,
+            )
+            ac_qty = AUTO_CLOSE_QTY_TOLERANCE_PCT
+            ac_price = AUTO_CLOSE_PRICE_TOLERANCE_PCT
+            ac_amount = AUTO_CLOSE_AMOUNT_TOLERANCE_PCT
+
+        lines = result.line_results.all()
+        if not lines.exists():
+            return False
+
+        for ln in lines:
+            # Only check matched/partial lines that have comparison data
+            if ln.qty_invoice is not None and ln.qty_po is not None:
+                if not within_tolerance(ln.qty_invoice, ln.qty_po, ac_qty):
+                    return False
+
+            if ln.price_invoice is not None and ln.price_po is not None:
+                if not within_tolerance(ln.price_invoice, ln.price_po, ac_price):
+                    return False
+
+            if ln.amount_invoice is not None and ln.amount_po is not None:
+                if not within_tolerance(ln.amount_invoice, ln.amount_po, ac_amount):
+                    return False
+
+        logger.info(
+            "Result %s: all lines within auto-close band (qty<=%.1f%%, price<=%.1f%%, amt<=%.1f%%)",
+            result.pk, ac_qty, ac_price, ac_amount,
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Post-run policy checks

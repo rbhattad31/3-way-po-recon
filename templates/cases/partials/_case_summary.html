@@ -1,0 +1,40 @@
+{# ── Case Summary Card ── #}
+{# Context: summary (APCaseSummary, dict, or None) #}
+
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-card-text"></i> Case Summary</div>
+  <div class="ap-card-body">
+    {% if summary %}
+      <div style="font-size:var(--ap-font-size-sm);line-height:1.6">
+        {% if summary.is_fallback %}
+          {{ summary.latest_summary }}
+        {% else %}
+          {{ summary.latest_summary }}
+        {% endif %}
+      </div>
+      {% with rec=summary.recommendation %}
+      {% if rec %}
+      <div class="ap-recommendation mt-3">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <i class="bi bi-lightbulb-fill text-warning"></i>
+          <strong class="ap-recommendation-action">Recommendation</strong>
+        </div>
+        <div style="font-size:var(--ap-font-size-sm)">{{ rec }}</div>
+      </div>
+      {% endif %}
+      {% endwith %}
+      {% with rev=summary.reviewer_summary %}
+      {% if rev %}
+      <div class="mt-2 p-2 rounded" style="background:var(--ap-bg-subtle);font-size:var(--ap-font-size-xs)">
+        <strong class="text-muted">Reviewer Notes:</strong> {{ rev }}
+      </div>
+      {% endif %}
+      {% endwith %}
+    {% else %}
+    <div class="ap-empty-state">
+      <i class="bi bi-card-text"></i>
+      <div class="ap-empty-state-label">Summary not generated yet</div>
+    </div>
+    {% endif %}
+  </div>
+</div>

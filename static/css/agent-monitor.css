@@ -1,0 +1,30 @@
+/* Case Operations Dashboard — page-specific styles */
+
+/* Ensure tables always stretch full-width inside cards */
+.ap-card .ap-table {
+  width: 100%;
+  table-layout: auto;
+}
+
+/* Tighter spacing for breakdown tables */
+.ap-card-body.p-0 .table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* KPI icon + value alignment inside strip */
+.ap-kpi-strip .ap-kpi-card {
+  min-width: 0;          /* allow shrink in grid */
+}
+
+/* Distribution bar inside status table */
+.ap-confidence-bar {
+  display: block;
+  overflow: hidden;
+}
+
+/* Agent activity mini-KPIs row */
+.agent-mini-kpi {
+  text-align: center;
+  padding: 0.5rem 0;
+}

@@ -16,6 +16,9 @@ urlpatterns = [
     path("upload/", upload_invoice, name="upload_invoice"),
     path("upload/<int:upload_id>/file/", uploaded_file, name="uploaded_file"),
     path("<int:pk>/", invoice_detail, name="invoice_detail"),
+    path("download/<int:pk>/", document_download, name="document_download"),
     path("purchase-orders/", po_list, name="po_list"),
+    path("purchase-orders/<int:pk>/", po_detail, name="po_detail"),
     path("grns/", grn_list, name="grn_list"),
+    path("grns/<int:pk>/", grn_detail, name="grn_detail"),
 ]

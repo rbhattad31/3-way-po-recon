@@ -23,6 +23,11 @@
       </li>
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'cases' %}active fw-bold{% endif %}" href="{% url 'cases:case_inbox' %}">
+          <i class="bi bi-briefcase me-2"></i>AP Cases
+        </a>
+      </li>
+      <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'reconciliation' %}active fw-bold{% endif %}" href="{% url 'reconciliation:result_list' %}">
           <i class="bi bi-arrow-left-right me-2"></i>Reconciliation
         </a>
@@ -36,7 +41,7 @@
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item">
         <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
-          <i class="bi bi-robot me-2"></i>Agent Monitor
+          <i class="bi bi-briefcase me-2"></i>Case Operations
         </a>
       </li>
       <li class="nav-item">
@@ -48,6 +53,12 @@
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'governance' %}active fw-bold{% endif %}" href="{% url 'governance:audit_event_list' %}">
           <i class="bi bi-shield-lock me-2"></i>Audit Log
+        </a>
+      </li>
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'recon_settings' %}active fw-bold{% endif %}" href="{% url 'reconciliation:recon_settings' %}">
+          <i class="bi bi-gear me-2"></i>Settings
         </a>
       </li>
     </ul>

@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 
-from apps.core.permissions import IsAdminOrReadOnly, IsReviewer
+from apps.core.permissions import IsAdminOrReadOnly
 from apps.agents.models import AgentDefinition, AgentRun
 from apps.agents.serializers import (
     AgentDefinitionSerializer,
@@ -31,7 +31,7 @@ class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
         .prefetch_related("steps", "tool_calls", "decisions", "recommendations", "escalations")
         .order_by("-created_at")
     )
-    permission_classes = [IsReviewer]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ["agent_type", "status", "reconciliation_result"]
     ordering_fields = ["created_at", "confidence", "total_tokens"]
@@ -52,8 +52,10 @@ class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(
                 {"error": "reconciliation_result_id is required"}, status=400
             )
-        task = run_agent_pipeline_task.delay(int(result_id))
+        from apps.core.utils import dispatch_task
+        result = dispatch_task(run_agent_pipeline_task, int(result_id))
+        task_id = getattr(result, 'id', None)
         return Response(
-            {"task_id": task.id, "reconciliation_result_id": result_id},
+            {"task_id": task_id, "reconciliation_result_id": result_id},
             status=202,
         )

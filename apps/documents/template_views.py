@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.http import Http404, HttpResponse
 from django.core.paginator import Paginator
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -81,6 +82,30 @@ def upload_invoice(request):
         uploaded_by=request.user,
     )
 
+    try:
+        from django.conf import settings as django_settings
+        from django.utils import timezone as tz
+        from apps.documents.blob_service import build_blob_path, upload_to_blob
+        container_name = getattr(django_settings, "AZURE_BLOB_CONTAINER_NAME", "")
+        blob_path = build_blob_path("input", uploaded_file.name, doc_upload.pk)
+        uploaded_file.seek(0)
+        upload_to_blob(uploaded_file, blob_path, content_type=uploaded_file.content_type)
+        doc_upload.blob_path = blob_path
+        doc_upload.blob_container = container_name
+        doc_upload.blob_name = blob_path
+        doc_upload.blob_url = f"https://bradblob.blob.core.windows.net/{container_name}/{blob_path}"
+        doc_upload.blob_uploaded_at = tz.now()
+        doc_upload.save(update_fields=[
+            "blob_path", "blob_container", "blob_name", "blob_url",
+            "blob_uploaded_at", "updated_at",
+        ])
+    except Exception as blob_exc:
+        import logging
+        logging.getLogger(__name__).exception("Blob upload failed for upload %s", doc_upload.pk)
+        doc_upload.delete()
+        messages.error(request, f"Upload to Azure Blob failed: {blob_exc}")
+        return redirect(request.META.get("HTTP_REFERER", "dashboard:index"))
+
     # Audit: invoice uploaded
     from apps.auditlog.services import AuditService
     from apps.core.enums import AuditEventType
@@ -138,7 +163,7 @@ def upload_invoice(request):
 
 @login_required
 def invoice_list(request):
-    qs = Invoice.objects.select_related("vendor").order_by("-created_at")
+    qs = Invoice.objects.select_related("vendor").prefetch_related("ap_case").order_by("-created_at")
     status_filter = request.GET.get("status")
     if status_filter:
         qs = qs.filter(status=status_filter)
@@ -188,22 +213,108 @@ def invoice_detail(request, pk):
 @login_required
 def po_list(request):
     qs = PurchaseOrder.objects.select_related("vendor").order_by("-po_date")
+
+    status_filter = request.GET.get("status")
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+
+    vendor_filter = request.GET.get("vendor")
+    if vendor_filter:
+        qs = qs.filter(vendor_id=vendor_filter)
+
+    q = request.GET.get("q")
+    if q:
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(po_number__icontains=q)
+            | Q(vendor__name__icontains=q)
+            | Q(buyer_name__icontains=q)
+            | Q(department__icontains=q)
+        )
+
+    # Distinct status values for the filter dropdown
+    status_choices = (
+        PurchaseOrder.objects.order_by("status")
+        .values_list("status", flat=True)
+        .distinct()
+    )
+    # Vendors that have POs
+    from apps.vendors.models import Vendor
+    vendor_choices = (
+        Vendor.objects.filter(purchase_orders__isnull=False)
+        .distinct()
+        .order_by("name")
+        .values_list("pk", "name")
+    )
+
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     return render(request, "documents/po_list.html", {
         "purchase_orders": page_obj,
         "page_obj": page_obj,
+        "status_choices": status_choices,
+        "vendor_choices": vendor_choices,
+    })
+
+
+@login_required
+def po_detail(request, pk):
+    po = get_object_or_404(
+        PurchaseOrder.objects.select_related("vendor").prefetch_related(
+            "line_items", "grns__line_items",
+        ),
+        pk=pk,
+    )
+    recon_results = po.recon_results.select_related("invoice").prefetch_related("exceptions").order_by("-created_at")
+    return render(request, "documents/po_detail.html", {
+        "po": po,
+        "recon_results": recon_results,
     })
 
 
 @login_required
 def grn_list(request):
     qs = GoodsReceiptNote.objects.select_related("purchase_order", "vendor").order_by("-receipt_date")
+
+    status_filter = request.GET.get("status")
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+
+    vendor_filter = request.GET.get("vendor")
+    if vendor_filter:
+        qs = qs.filter(vendor_id=vendor_filter)
+
+    q = request.GET.get("q")
+    if q:
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(grn_number__icontains=q)
+            | Q(purchase_order__po_number__icontains=q)
+            | Q(vendor__name__icontains=q)
+            | Q(warehouse__icontains=q)
+            | Q(receiver_name__icontains=q)
+        )
+
+    status_choices = (
+        GoodsReceiptNote.objects.order_by("status")
+        .values_list("status", flat=True)
+        .distinct()
+    )
+    from apps.vendors.models import Vendor
+    vendor_choices = (
+        Vendor.objects.filter(grns__isnull=False)
+        .distinct()
+        .order_by("name")
+        .values_list("pk", "name")
+    )
+
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     return render(request, "documents/grn_list.html", {
         "grns": page_obj,
         "page_obj": page_obj,
+        "status_choices": status_choices,
+        "vendor_choices": vendor_choices,
     })
 
 

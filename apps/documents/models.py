@@ -29,6 +29,15 @@ class DocumentUpload(BaseModel):
         max_length=20, choices=FileProcessingState.choices, default=FileProcessingState.QUEUED
     )
     processing_message = models.TextField(blank=True, default="")
+    blob_path = models.CharField(
+        max_length=1000, blank=True, default="",
+        help_text="Azure Blob Storage path (e.g. input/2026/03/42_invoice.pdf)",
+    )
+    blob_container = models.CharField(max_length=255, blank=True, default="")
+    blob_name = models.CharField(max_length=1024, blank=True, default="")
+    blob_url = models.CharField(max_length=2048, blank=True, default="")
+    blob_metadata = models.JSONField(default=dict, blank=True)
+    blob_uploaded_at = models.DateTimeField(null=True, blank=True)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="uploads"
     )
@@ -139,6 +148,11 @@ class InvoiceLineItem(TimestampMixin):
 
     extraction_confidence = models.FloatField(null=True, blank=True)
 
+    # Item classification (for reconciliation mode resolution)
+    item_category = models.CharField(max_length=100, blank=True, default="")
+    is_service_item = models.BooleanField(null=True, blank=True)
+    is_stock_item = models.BooleanField(null=True, blank=True)
+
     class Meta:
         db_table = "documents_invoice_line"
         ordering = ["invoice", "line_number"]
@@ -197,6 +211,11 @@ class PurchaseOrderLineItem(TimestampMixin):
     tax_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
     line_amount = models.DecimalField(max_digits=18, decimal_places=2)
     unit_of_measure = models.CharField(max_length=30, blank=True, default="EA")
+
+    # Item classification (for reconciliation mode resolution)
+    item_category = models.CharField(max_length=100, blank=True, default="")
+    is_service_item = models.BooleanField(null=True, blank=True)
+    is_stock_item = models.BooleanField(null=True, blank=True)
 
     class Meta:
         db_table = "documents_po_line"

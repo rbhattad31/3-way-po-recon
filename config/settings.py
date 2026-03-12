@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "apps.reports",
     "apps.auditlog",
     "apps.integrations",
+    "apps.cases",
 ]
 
 MIDDLEWARE = [
@@ -204,6 +205,12 @@ AZURE_STORAGE_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "uploads")
 AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID", "")
 AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID", "")
 AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET", "")
+
+# ---------------------------------------------------------------------------
+# Azure Blob Storage (document storage)
+# ---------------------------------------------------------------------------
+AZURE_BLOB_CONNECTION_STRING = os.getenv("AZURE_BLOB_CONNECTION_STRING", "")
+AZURE_BLOB_CONTAINER_NAME = os.getenv("AZURE_BLOB_CONTAINER_NAME", "finance-agents")
 
 # ---------------------------------------------------------------------------
 # Reconciliation defaults

@@ -32,7 +32,7 @@ class ExtractionResponse:
 
 
 # ---------------------------------------------------------------------------
-# Extraction prompt for the LLM
+# Extraction prompt for the LLM — loaded from PromptRegistry at runtime
 # ---------------------------------------------------------------------------
 EXTRACTION_SYSTEM_PROMPT = """You are an expert invoice data extraction system. You will receive OCR text from an invoice document.
 Extract ALL relevant fields and return a JSON object with EXACTLY this structure:
@@ -176,7 +176,7 @@ class InvoiceExtractionAdapter:
         response = client.chat.completions.create(
             model=deployment,
             messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                {"role": "system", "content": InvoiceExtractionAdapter._get_extraction_prompt()},
                 {"role": "user", "content": f"Extract invoice data from the following OCR text:\n\n{ocr_text}"},
             ],
             temperature=0.0,
@@ -192,3 +192,9 @@ class InvoiceExtractionAdapter:
         )
 
         return json.loads(content)
+
+    @staticmethod
+    def _get_extraction_prompt() -> str:
+        """Load the extraction system prompt from the PromptRegistry."""
+        from apps.core.prompt_registry import PromptRegistry
+        return PromptRegistry.get("extraction.invoice_system")

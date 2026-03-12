@@ -11,52 +11,112 @@
 {% endblock %}
 
 {% block content %}
-<!-- Intro -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- INTRO — Case-Centric Flow Overview                            -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
 <div class="card mb-4">
   <div class="card-body">
-    <h4 class="card-title mb-2"><i class="bi bi-robot"></i> How the AI Agent System Works</h4>
-    <p class="text-muted mb-2">
-      After reconciliation, invoices that don't fully match their PO/GRN are automatically analysed by
-      <strong>LLM-powered agents</strong>. Each agent uses a <strong>ReAct loop</strong>
-      (Reason → Act → Observe) with up to <strong>{{ max_tool_rounds }} tool-calling rounds</strong>
-      to investigate exceptions, look up data, and produce a recommendation.
+    <h4 class="card-title mb-2"><i class="bi bi-diagram-3"></i> Case-Centric Processing Flow</h4>
+    <p class="text-muted mb-3">
+      Every invoice creates an <strong>AP Case</strong> that is driven through a sequence of
+      <strong>stages</strong> by the <strong>Case Orchestrator</strong>. The processing path
+      (2-Way, 3-Way, or Non-PO) is resolved automatically after extraction
+      and determines which stages run. LLM-powered agents use a
+      <strong>ReAct loop</strong> (Reason&nbsp;→ Act&nbsp;→ Observe) with up to
+      <strong>{{ max_tool_rounds }} tool-calling rounds</strong> for investigation stages.
     </p>
-    <div class="row text-center g-2">
+
+    <!-- Three-path visual -->
+    <div class="row text-center g-2 mb-3">
       <div class="col-md-2">
-        <div class="border rounded p-2">
+        <div class="border rounded p-2 bg-light">
+          <i class="bi bi-upload fs-3 text-secondary"></i>
+          <div class="small mt-1 fw-semibold">Upload &amp;<br>Intake</div>
+        </div>
+      </div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center">
+        <i class="bi bi-arrow-right fs-4 text-muted"></i>
+      </div>
+      <div class="col-md-2">
+        <div class="border rounded p-2 bg-light">
           <i class="bi bi-file-earmark-text fs-3 text-primary"></i>
-          <div class="small mt-1">Reconciliation<br>flags exceptions</div>
+          <div class="small mt-1 fw-semibold">Extraction<br>(OCR + LLM)</div>
         </div>
       </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center"><i class="bi bi-arrow-right fs-4 text-muted"></i></div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center">
+        <i class="bi bi-arrow-right fs-4 text-muted"></i>
+      </div>
       <div class="col-md-2">
-        <div class="border rounded p-2">
-          <i class="bi bi-gear fs-3 text-info"></i>
-          <div class="small mt-1">Policy Engine<br>picks agents</div>
+        <div class="border rounded p-2 bg-light">
+          <i class="bi bi-signpost-split fs-3 text-info"></i>
+          <div class="small mt-1 fw-semibold">Path<br>Resolution</div>
         </div>
       </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center"><i class="bi bi-arrow-right fs-4 text-muted"></i></div>
-      <div class="col-md-2">
-        <div class="border rounded p-2">
-          <i class="bi bi-robot fs-3 text-success"></i>
-          <div class="small mt-1">Agents reason<br>&amp; use tools</div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center">
+        <i class="bi bi-arrow-right fs-4 text-muted"></i>
+      </div>
+      <div class="col-md-3">
+        <div class="border rounded p-2" style="background:#f0f7ff">
+          <div class="d-flex justify-content-around">
+            <div><span class="badge bg-primary">2-Way</span></div>
+            <div><span class="badge bg-warning text-dark">3-Way</span></div>
+            <div><span class="badge bg-info text-dark">Non-PO</span></div>
+          </div>
+          <div class="small mt-1 fw-semibold">Path-Specific<br>Processing</div>
         </div>
       </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center"><i class="bi bi-arrow-right fs-4 text-muted"></i></div>
+    </div>
+
+    <!-- Second row: post-path -->
+    <div class="row text-center g-2">
+      <div class="col-md-3">
+        <div class="border rounded p-2" style="background:#fff8e6">
+          <i class="bi bi-exclamation-triangle fs-3 text-warning"></i>
+          <div class="small mt-1 fw-semibold">Exception<br>Analysis (AI)</div>
+        </div>
+      </div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center">
+        <i class="bi bi-arrow-right fs-4 text-muted"></i>
+      </div>
       <div class="col-md-2">
-        <div class="border rounded p-2">
-          <i class="bi bi-lightbulb fs-3 text-warning"></i>
-          <div class="small mt-1">Recommendation<br>generated</div>
+        <div class="border rounded p-2" style="background:#fce4ec">
+          <i class="bi bi-people fs-3 text-danger"></i>
+          <div class="small mt-1 fw-semibold">Review<br>Routing</div>
+        </div>
+      </div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center">
+        <i class="bi bi-arrow-right fs-4 text-muted"></i>
+      </div>
+      <div class="col-md-2">
+        <div class="border rounded p-2" style="background:#e8f5e9">
+          <i class="bi bi-journal-text fs-3 text-success"></i>
+          <div class="small mt-1 fw-semibold">Case<br>Summary</div>
+        </div>
+      </div>
+      <div class="col-md-1 d-flex align-items-center justify-content-center">
+        <i class="bi bi-arrow-right fs-4 text-muted"></i>
+      </div>
+      <div class="col-md-2">
+        <div class="border rounded p-2 bg-light">
+          <i class="bi bi-check-circle fs-3 text-success"></i>
+          <div class="small mt-1 fw-semibold">Closed /<br>Rejected</div>
         </div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Navigation tabs -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- NAVIGATION TABS                                                -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
 <ul class="nav nav-tabs mb-4" role="tablist">
   <li class="nav-item">
-    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-agents" type="button">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-lifecycle" type="button">
+      <i class="bi bi-diagram-3 me-1"></i> Case Lifecycle
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-agents" type="button">
       <i class="bi bi-robot me-1"></i> Agents ({{ agents_info|length }})
     </button>
   </li>
@@ -67,7 +127,7 @@
   </li>
   <li class="nav-item">
     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-recommendations" type="button">
-      <i class="bi bi-lightbulb me-1"></i> Recommendation Types
+      <i class="bi bi-lightbulb me-1"></i> Recommendations
     </button>
   </li>
   <li class="nav-item">
@@ -79,9 +139,173 @@
 
 <div class="tab-content">
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- AGENTS TAB -->
+  <!-- CASE LIFECYCLE TAB                                             -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade show active" id="tab-agents" role="tabpanel">
+  <div class="tab-pane fade show active" id="tab-lifecycle" role="tabpanel">
+
+    <!-- Processing paths -->
+    <h5 class="mb-3"><i class="bi bi-signpost-split me-1"></i> Processing Paths</h5>
+    <div class="row g-3 mb-4">
+      {% for path in processing_paths %}
+      <div class="col-lg-4">
+        <div class="card h-100">
+          <div class="card-header bg-white">
+            <strong>
+              {% if path.value == "TWO_WAY" %}<i class="bi bi-arrow-left-right text-primary me-1"></i>
+              {% elif path.value == "THREE_WAY" %}<i class="bi bi-diagram-3 text-warning me-1"></i>
+              {% elif path.value == "NON_PO" %}<i class="bi bi-shield-check text-info me-1"></i>
+              {% endif %}
+              {{ path.label }}
+            </strong>
+            <span class="badge bg-secondary ms-2">{{ path.stages|length }} stages</span>
+          </div>
+          <div class="card-body p-0">
+            <ol class="list-group list-group-flush list-group-numbered">
+              {% for stage in path.stages %}
+              <li class="list-group-item d-flex align-items-start py-2">
+                <div class="ms-2">
+                  <div>
+                    <i class="bi {{ stage.icon }} text-{{ stage.color }} me-1"></i>
+                    <strong class="small">{{ stage.label }}</strong>
+                  </div>
+                  <div class="text-muted" style="font-size:.78rem">{{ stage.performer }}</div>
+                </div>
+              </li>
+              {% endfor %}
+            </ol>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Stage details -->
+    <h5 class="mb-3"><i class="bi bi-list-check me-1"></i> Stage Details</h5>
+    <div class="table-responsive mb-4">
+      <table class="table table-bordered table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:22%">Stage</th>
+            <th style="width:20%">Performer</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for path in processing_paths %}
+            {% for stage in path.stages %}
+              {% if forloop.parentloop.first %}
+              <tr>
+                <td>
+                  <i class="bi {{ stage.icon }} text-{{ stage.color }} me-1"></i>
+                  <strong>{{ stage.label }}</strong>
+                  <br><code class="small text-muted">{{ stage.value }}</code>
+                </td>
+                <td class="small">{{ stage.performer }}</td>
+                <td class="small">{{ stage.description }}</td>
+              </tr>
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+          {# Stages only in non-first paths #}
+          {% for path in processing_paths %}
+            {% if not forloop.first %}
+              {% for stage in path.stages %}
+                {% if stage.value == "NON_PO_VALIDATION" or stage.value == "THREE_WAY_MATCHING" or stage.value == "GRN_ANALYSIS" %}
+                <tr>
+                  <td>
+                    <i class="bi {{ stage.icon }} text-{{ stage.color }} me-1"></i>
+                    <strong>{{ stage.label }}</strong>
+                    <br><code class="small text-muted">{{ stage.value }}</code>
+                  </td>
+                  <td class="small">{{ stage.performer }}</td>
+                  <td class="small">{{ stage.description }}</td>
+                </tr>
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Non-PO Validation Checks -->
+    <h5 class="mb-3"><i class="bi bi-shield-check me-1"></i> Non-PO Validation — 9 Deterministic Checks</h5>
+    <div class="row g-2 mb-4">
+      {% for check in non_po_checks %}
+      <div class="col-md-4">
+        <div class="card h-100 border-0 shadow-sm">
+          <div class="card-body py-2 px-3">
+            <div class="fw-semibold small">
+              <i class="bi {{ check.icon }} text-info me-1"></i>
+              {{ forloop.counter }}. {{ check.name }}
+            </div>
+            <div class="text-muted" style="font-size:.78rem">{{ check.description }}</div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- State Machine -->
+    <h5 class="mb-3"><i class="bi bi-arrows-move me-1"></i> State Machine Transitions</h5>
+    <div class="card mb-3">
+      <div class="card-body">
+        <p class="text-muted mb-2">
+          The case state machine enforces <strong>{{ transitions|length }} transitions</strong>
+          between statuses. Terminal states:
+          {% for ts in terminal_states %}<span class="badge bg-dark ms-1">{{ ts }}</span>{% endfor %}.
+          Each transition specifies who can trigger it (System, Deterministic Engine, Agent, or Human).
+        </p>
+        <div class="table-responsive" style="max-height:420px;overflow-y:auto">
+          <table class="table table-sm table-bordered table-hover mb-0">
+            <thead class="table-light position-sticky top-0">
+              <tr><th>From</th><th></th><th>To</th><th>Triggered By</th></tr>
+            </thead>
+            <tbody>
+              {% for t in transitions %}
+              <tr>
+                <td class="small"><code>{{ t.from_value }}</code></td>
+                <td class="text-center"><i class="bi bi-arrow-right text-muted"></i></td>
+                <td class="small">
+                  {% if t.to_value == "CLOSED" or t.to_value == "REJECTED" %}
+                    <span class="badge bg-dark">{{ t.to_value }}</span>
+                  {% elif t.to_value == "FAILED" %}
+                    <span class="badge bg-danger">{{ t.to_value }}</span>
+                  {% elif t.to_value == "ESCALATED" %}
+                    <span class="badge bg-warning text-dark">{{ t.to_value }}</span>
+                  {% else %}
+                    <code>{{ t.to_value }}</code>
+                  {% endif %}
+                </td>
+                <td class="small text-muted">{{ t.triggers }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- AGENTS TAB                                                     -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade" id="tab-agents" role="tabpanel">
+
+    <!-- Stage-to-agent mapping overview -->
+    <div class="alert alert-light border mb-4">
+      <strong><i class="bi bi-info-circle me-1"></i> When do agents run?</strong>
+      <ul class="mb-0 mt-1 small">
+        <li><strong>Intake / Extraction</strong> — <em>Invoice Understanding</em> agent classifies and validates the uploaded document.</li>
+        <li><strong>PO Retrieval</strong> — <em>PO Retrieval</em> agent is the fallback when deterministic lookup fails.</li>
+        <li><strong>GRN Analysis</strong> — <em>GRN Retrieval</em> agent investigates receipt discrepancies (3-Way only, conditional).</li>
+        <li><strong>Exception Analysis</strong> — <em>Exception Analysis</em> + <em>Reconciliation Assist</em> agents reason over exceptions.</li>
+        <li><strong>Review Routing</strong> — <em>Review Routing</em> agent assigns the case to the right reviewer queue.</li>
+        <li><strong>Case Summary</strong> — <em>Case Summary</em> agent produces the final narrative for reviewers.</li>
+        <li><strong>Reviewer Copilot</strong> — Interactive advisory assistant during human review (prompt-based, no autonomous run).</li>
+      </ul>
+    </div>
+
     <div class="accordion" id="agentAccordion">
       {% for agent in agents_info %}
       <div class="accordion-item">
@@ -107,20 +331,19 @@
         <div id="agent-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
              data-bs-parent="#agentAccordion">
           <div class="accordion-body">
-            <!-- Description -->
             <p class="mb-3"><em>{{ agent.description }}</em></p>
 
-            <!-- Tools Used -->
             <h6><i class="bi bi-tools me-1"></i> Tools Used</h6>
             <div class="mb-3">
               {% for tool_name in agent.allowed_tools %}
               <span class="badge bg-info text-dark me-1 mb-1">
                 <i class="bi bi-wrench me-1"></i>{{ tool_name }}
               </span>
+              {% empty %}
+              <span class="text-muted small">No tools — prompt-only agent</span>
               {% endfor %}
             </div>
 
-            <!-- System Prompt -->
             <h6><i class="bi bi-chat-left-text me-1"></i> System Prompt</h6>
             <div class="bg-light border rounded p-3 mb-2" style="max-height:300px;overflow-y:auto">
               <pre class="mb-0" style="white-space:pre-wrap;font-size:.85rem">{{ agent.system_prompt }}</pre>
@@ -133,7 +356,7 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- TOOLS TAB -->
+  <!-- TOOLS TAB                                                      -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
   <div class="tab-pane fade" id="tab-tools" role="tabpanel">
     <div class="row g-3">
@@ -175,7 +398,7 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- RECOMMENDATION TYPES TAB -->
+  <!-- RECOMMENDATION TYPES TAB                                       -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
   <div class="tab-pane fade" id="tab-recommendations" role="tabpanel">
     <div class="card">
@@ -223,16 +446,16 @@
           <li>A <strong>confidence score (0–100%)</strong> indicates how certain the agent is about its recommendation.</li>
           <li>If confidence is below the threshold, the case is <strong>escalated</strong> for human review.</li>
           <li>Multiple agents may run in sequence (e.g., Exception Analysis → Review Routing → Case Summary).</li>
+          <li>The <strong>Policy Engine</strong> may <strong>auto-close</strong> cases that fall within auto-close tolerance bands (qty: 5%, price: 3%, amount: 3%).</li>
         </ul>
       </div>
     </div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- PROMPTS TAB -->
+  <!-- PROMPTS TAB                                                    -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
   <div class="tab-pane fade" id="tab-prompts" role="tabpanel">
-    <!-- Prompt overview -->
     <div class="alert alert-info mb-4">
       <i class="bi bi-info-circle me-1"></i>
       These are the LLM prompts (system messages) used across the application.
@@ -241,27 +464,35 @@
 
     <!-- Category summary cards -->
     <div class="row g-3 mb-4">
-      <div class="col-md-4">
-        <div class="card card-metric info">
+      <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
           <div class="card-body text-center py-3">
             <div class="fs-3 fw-bold text-primary">{{ prompts|length }}</div>
             <small class="text-muted">Total Prompts</small>
           </div>
         </div>
       </div>
-      <div class="col-md-4">
-        <div class="card card-metric info">
+      <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
           <div class="card-body text-center py-3">
             <div class="fs-3 fw-bold" style="color:#0d6efd">1</div>
-            <small class="text-muted">Extraction Prompts</small>
+            <small class="text-muted">Extraction</small>
           </div>
         </div>
       </div>
-      <div class="col-md-4">
-        <div class="card card-metric matched">
+      <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
           <div class="card-body text-center py-3">
             <div class="fs-3 fw-bold text-success">{{ agents_info|length }}</div>
-            <small class="text-muted">Agent Prompts</small>
+            <small class="text-muted">Agent</small>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card border-0 shadow-sm">
+          <div class="card-body text-center py-3">
+            <div class="fs-3 fw-bold text-info">4</div>
+            <small class="text-muted">Case</small>
           </div>
         </div>
       </div>
@@ -283,7 +514,6 @@
         <div id="prompt-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
              data-bs-parent="#promptAccordion">
           <div class="accordion-body">
-            <!-- Meta info -->
             <div class="row mb-3">
               <div class="col-md-6">
                 <small class="text-muted d-block"><strong>Description:</strong></small>
@@ -299,7 +529,6 @@
               </div>
             </div>
 
-            <!-- Prompt text -->
             <h6><i class="bi bi-chat-left-text me-1"></i> Prompt Text</h6>
             <div class="bg-light border rounded p-3" style="max-height:400px;overflow-y:auto">
               <pre class="mb-0" style="white-space:pre-wrap;font-size:.85rem">{{ prompt.prompt_text }}</pre>

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}GRN {{ grn.grn_number }} – PO Reconciliation{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'documents:grn_list' %}">Goods Receipt Notes</a></li>
+  <li class="breadcrumb-item active">{{ grn.grn_number }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+{# ── Header ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-box-seam me-2 text-info"></i>{{ grn.grn_number }}</h4>
+  {% if grn.status == "RECEIVED" %}
+    <span class="ap-badge ap-badge-matched">{{ grn.status }}</span>
+  {% elif grn.status == "PARTIAL" %}
+    <span class="ap-badge ap-badge-partial">{{ grn.status }}</span>
+  {% else %}
+    <span class="ap-badge ap-badge-info">{{ grn.status }}</span>
+  {% endif %}
+</div>
+
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-info-circle me-2"></i>Receipt Details
+  </div>
+  <div class="ap-card-body">
+    <div class="row g-3">
+      <div class="col-md-3"><small class="text-muted d-block">Purchase Order</small>
+        <a href="{% url 'documents:po_detail' grn.purchase_order.pk %}" class="fw-semibold">{{ grn.purchase_order.po_number }}</a>
+      </div>
+      <div class="col-md-3"><small class="text-muted d-block">Vendor</small>{{ grn.vendor.name|default:"—" }}</div>
+      <div class="col-md-3"><small class="text-muted d-block">Receipt Date</small>{{ grn.receipt_date|date:"d M Y"|default:"—" }}</div>
+      <div class="col-md-3"><small class="text-muted d-block">Warehouse</small>{{ grn.warehouse|default:"—" }}</div>
+      <div class="col-md-3"><small class="text-muted d-block">Receiver</small>{{ grn.receiver_name|default:"—" }}</div>
+      <div class="col-md-3"><small class="text-muted d-block">Created</small>{{ grn.created_at|date:"d M Y H:i"|default:"—" }}</div>
+    </div>
+  </div>
+</div>
+
+{# ── Line Items ── #}
+<div class="ap-card mb-3">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-list-ul me-2"></i>Line Items</span>
+    <span class="ap-badge ap-badge-info">{{ grn.line_items.count }} items</span>
+  </div>
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead>
+        <tr>
+          <th>#</th><th>Item Code</th><th>Description</th>
+          <th class="text-end">Received</th><th class="text-end">Accepted</th>
+          <th class="text-end">Rejected</th><th>UOM</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for li in grn.line_items.all %}
+        <tr>
+          <td>{{ li.line_number }}</td>
+          <td class="fw-medium">{{ li.item_code|default:"—" }}</td>
+          <td>{{ li.description|default:"—"|truncatechars:50 }}</td>
+          <td class="text-end">{{ li.quantity_received|floatformat:2 }}</td>
+          <td class="text-end">{{ li.quantity_accepted|floatformat:2 }}</td>
+          <td class="text-end {% if li.quantity_rejected > 0 %}text-danger fw-bold{% endif %}">{{ li.quantity_rejected|floatformat:2 }}</td>
+          <td class="text-muted">{{ li.unit_of_measure|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-3">No line items</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Linked PO Summary ── #}
+{% with po=grn.purchase_order %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-cart-check me-2"></i>Linked Purchase Order
+  </div>
+  <div class="ap-card-body">
+    <div class="row g-3">
+      <div class="col-md-3"><small class="text-muted d-block">PO Number</small>
+        <a href="{% url 'documents:po_detail' po.pk %}" class="fw-semibold">{{ po.po_number }}</a>
+      </div>
+      <div class="col-md-3"><small class="text-muted d-block">Vendor</small>{{ po.vendor.name|default:"—" }}</div>
+      <div class="col-md-3"><small class="text-muted d-block">Status</small>
+        {% if po.status == "OPEN" %}
+          <span class="ap-badge ap-badge-matched">{{ po.status }}</span>
+        {% elif po.status == "CLOSED" %}
+          <span class="ap-badge" style="background:var(--ap-bg-muted);color:var(--ap-text-secondary)">{{ po.status }}</span>
+        {% else %}
+          <span class="ap-badge ap-badge-info">{{ po.status }}</span>
+        {% endif %}
+      </div>
+      <div class="col-md-3"><small class="text-muted d-block">Total Amount</small><span class="fw-semibold">{{ po.total_amount|floatformat:2|default:"—" }}</span></div>
+    </div>
+  </div>
+</div>
+{% endwith %}
+{% endblock %}

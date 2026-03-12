@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from apps.agents.models import AgentRecommendation, AgentRun
 from apps.auditlog.models import AuditEvent
+from apps.cases.models import APCase
 from apps.reconciliation.models import ReconciliationResult
 from apps.reviews.models import ManualReviewAction, ReviewAssignment, ReviewDecision
 from apps.tools.models import ToolCall
@@ -47,6 +48,25 @@ class CaseTimelineService:
         # 2. Get all reconciliation results for this invoice
         results = ReconciliationResult.objects.filter(invoice_id=invoice_id)
         result_ids = list(results.values_list("id", flat=True))
+
+        # 2a. Mode resolution events from results
+        for result in results:
+            if result.reconciliation_mode:
+                mode_label = "2-Way" if result.is_two_way_result else "3-Way"
+                timeline.append({
+                    "timestamp": result.created_at,
+                    "event_category": "mode_resolution",
+                    "event_type": "RECONCILIATION_MODE_RESOLVED",
+                    "description": f"Reconciliation mode resolved: {mode_label}"
+                                   + (f" — {result.mode_resolution_reason}" if result.mode_resolution_reason else ""),
+                    "actor": "system",
+                    "metadata": {
+                        "reconciliation_mode": result.reconciliation_mode,
+                        "policy_applied": result.policy_applied,
+                        "grn_required": result.grn_required_flag,
+                        "is_two_way": result.is_two_way_result,
+                    },
+                })
 
         # 3. Audit events on reconciliation results
         result_events = AuditEvent.objects.filter(
@@ -174,6 +194,69 @@ class CaseTimelineService:
                 })
             except ReviewDecision.DoesNotExist:
                 pass
+
+        # 7. Case stages and decisions (from APCase model)
+        try:
+            case = APCase.objects.get(invoice_id=invoice_id, is_active=True)
+        except APCase.DoesNotExist:
+            case = None
+
+        if case:
+            # 7a. Case created
+            timeline.append({
+                "timestamp": case.created_at,
+                "event_category": "case",
+                "event_type": "CASE_CREATED",
+                "description": f"Case {case.case_number} created",
+                "actor": "system",
+                "metadata": {"case_id": case.pk, "processing_path": case.processing_path},
+            })
+
+            # 7b. Processing stages
+            for stage in case.stages.order_by("created_at"):
+                if stage.started_at:
+                    timeline.append({
+                        "timestamp": stage.started_at,
+                        "event_category": "stage",
+                        "event_type": f"STAGE_{stage.stage_name}_STARTED",
+                        "description": f"{stage.get_stage_name_display()} started",
+                        "actor": stage.performed_by_type or "system",
+                        "metadata": {
+                            "stage_name": stage.stage_name,
+                            "retry_count": stage.retry_count,
+                        },
+                    })
+                if stage.completed_at:
+                    status_label = stage.stage_status.lower()
+                    timeline.append({
+                        "timestamp": stage.completed_at,
+                        "event_category": "stage",
+                        "event_type": f"STAGE_{stage.stage_name}_{stage.stage_status}",
+                        "description": f"{stage.get_stage_name_display()} {status_label}",
+                        "actor": stage.performed_by_type or "system",
+                        "metadata": {
+                            "stage_name": stage.stage_name,
+                            "stage_status": stage.stage_status,
+                            "output": stage.output_payload,
+                            "notes": stage.notes[:300] if stage.notes else "",
+                        },
+                    })
+
+            # 7c. Decisions
+            for decision in case.decisions.order_by("created_at"):
+                timeline.append({
+                    "timestamp": decision.created_at,
+                    "event_category": "decision",
+                    "event_type": f"DECISION_{decision.decision_type}",
+                    "description": f"{decision.get_decision_type_display()}: {decision.decision_value}",
+                    "actor": decision.decision_source,
+                    "metadata": {
+                        "decision_type": decision.decision_type,
+                        "decision_value": decision.decision_value,
+                        "confidence": decision.confidence,
+                        "rationale": decision.rationale[:300] if decision.rationale else "",
+                    },
+                })
 
         # Sort by timestamp
         timeline.sort(key=lambda x: x["timestamp"])
