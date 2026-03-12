@@ -68,6 +68,37 @@ class DashboardService:
         )
 
     @staticmethod
+    def get_mode_breakdown() -> List[Dict[str, Any]]:
+        """Breakdown of reconciliation results by mode (2-Way vs 3-Way)."""
+        total = ReconciliationResult.objects.count() or 1
+        qs = (
+            ReconciliationResult.objects
+            .values("reconciliation_mode")
+            .annotate(
+                count=Count("id"),
+                matched_count=Count("id", filter=Q(match_status=MatchStatus.MATCHED)),
+                avg_confidence=Avg("deterministic_confidence"),
+            )
+            .order_by("-count")
+        )
+        return [
+            {
+                "reconciliation_mode": row["reconciliation_mode"] or "UNSET",
+                "count": row["count"],
+                "percentage": round(row["count"] / total * 100, 1),
+                "matched_count": row["matched_count"],
+                "match_rate": round(
+                    (row["matched_count"] / row["count"] * 100)
+                    if row["count"] else 0, 1
+                ),
+                "avg_confidence": round(
+                    (row["avg_confidence"] or 0) * 100, 1
+                ),
+            }
+            for row in qs
+        ]
+
+    @staticmethod
     def get_agent_performance() -> List[Dict[str, Any]]:
         return list(
             AgentRun.objects

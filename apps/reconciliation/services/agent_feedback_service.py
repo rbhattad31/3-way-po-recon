@@ -80,7 +80,8 @@ class AgentFeedbackService:
         if grn_summary.grn_available and line_result:
             grn_result = self.grn_match.match(line_result.pairs, grn_summary)
 
-        # 4. Re-classify
+        # 4. Re-classify (respect original reconciliation mode)
+        recon_mode = result.reconciliation_mode or ""
         new_status = self.classifier.classify(
             po_result=po_result,
             header_result=header_result,
@@ -88,6 +89,7 @@ class AgentFeedbackService:
             grn_result=grn_result,
             extraction_confidence=invoice.extraction_confidence,
             confidence_threshold=self.config.extraction_confidence_threshold,
+            reconciliation_mode=recon_mode,
         )
 
         # 5. Remove old exceptions and line results, rebuild
@@ -137,6 +139,7 @@ class AgentFeedbackService:
             result_line_map=result_line_map,
             extraction_confidence=invoice.extraction_confidence,
             confidence_threshold=self.config.extraction_confidence_threshold,
+            reconciliation_mode=recon_mode,
         )
         if exceptions:
             ReconciliationException.objects.bulk_create(exceptions)

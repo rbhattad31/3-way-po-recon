@@ -1,137 +1,159 @@
 {% extends "base.html" %}
-{% block title %}Dashboard – PO Reconciliation{% endblock %}
+{% load static %}
+{% block title %}Dashboard – AP Operations{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/dashboard.css' %}" rel="stylesheet">
+{% endblock %}
 
 {% block breadcrumb %}
-<nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item active">Dashboard</li></ol></nav>
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item active">Dashboard</li>
+  </ol>
+</nav>
 {% endblock %}
 
 {% block content %}
-<!-- Upload Button -->
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h5 class="mb-0">Dashboard</h5>
-  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
-    <i class="bi bi-cloud-arrow-up me-1"></i>Upload Invoice
-  </button>
+{# PAGE HEADER #}
+<div class="ap-page-header d-flex justify-content-between align-items-center">
+  <div>
+    <h4 class="mb-0 fw-semibold">Operations Dashboard</h4>
+    <small style="color:var(--ap-text-muted)">Real-time overview of AP processing</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
+      <i class="bi bi-cloud-arrow-up me-1"></i>Upload Invoice
+    </button>
+  </div>
 </div>
 
-<!-- KPI Cards -->
-<div class="row g-3 mb-4">
-  <div class="col-sm-6 col-xl-3">
-    <div class="card card-metric matched">
-      <div class="card-body">
-        <div class="d-flex justify-content-between">
-          <div>
-            <h6 class="text-muted mb-1">Match Rate</h6>
-            <h3 class="mb-0">{{ summary.matched_pct }}%</h3>
-          </div>
-          <i class="bi bi-check-circle fs-1 text-success opacity-50"></i>
-        </div>
-      </div>
+{# KPI STRIP #}
+<div class="ap-kpi-strip">
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-value text-success">{{ summary.matched_pct }}%</div>
+    <div class="ap-kpi-label">Match Rate</div>
+    <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
+      <i class="bi bi-check-circle text-success"></i> Auto-resolved
     </div>
   </div>
-  <div class="col-sm-6 col-xl-3">
-    <div class="card card-metric info">
-      <div class="card-body">
-        <div class="d-flex justify-content-between">
-          <div>
-            <h6 class="text-muted mb-1">Total Invoices</h6>
-            <h3 class="mb-0">{{ summary.total_invoices }}</h3>
-          </div>
-          <i class="bi bi-file-earmark-text fs-1 text-primary opacity-50"></i>
-        </div>
-      </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-value" style="color:var(--ap-primary)">{{ summary.total_invoices }}</div>
+    <div class="ap-kpi-label">Total Invoices</div>
+    <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
+      <i class="bi bi-file-earmark-text"></i> All documents
     </div>
   </div>
-  <div class="col-sm-6 col-xl-3">
-    <div class="card card-metric review">
-      <div class="card-body">
-        <div class="d-flex justify-content-between">
-          <div>
-            <h6 class="text-muted mb-1">Pending Reviews</h6>
-            <h3 class="mb-0">{{ summary.pending_reviews }}</h3>
-          </div>
-          <i class="bi bi-clipboard-check fs-1 text-warning opacity-50"></i>
-        </div>
-      </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-value text-warning">{{ summary.pending_reviews }}</div>
+    <div class="ap-kpi-label">Pending Reviews</div>
+    <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
+      <i class="bi bi-person-check"></i> Awaiting action
     </div>
   </div>
-  <div class="col-sm-6 col-xl-3">
-    <div class="card card-metric error">
-      <div class="card-body">
-        <div class="d-flex justify-content-between">
-          <div>
-            <h6 class="text-muted mb-1">Open Exceptions</h6>
-            <h3 class="mb-0">{{ summary.open_exceptions }}</h3>
-          </div>
-          <i class="bi bi-exclamation-triangle fs-1 text-danger opacity-50"></i>
-        </div>
-      </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-value text-danger">{{ summary.open_exceptions }}</div>
+    <div class="ap-kpi-label">Open Exceptions</div>
+    <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
+      <i class="bi bi-exclamation-triangle"></i> Need resolution
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-value" style="color:var(--ap-primary)">{{ summary.avg_confidence|default:"—" }}%</div>
+    <div class="ap-kpi-label">Avg Confidence</div>
+    <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
+      <i class="bi bi-speedometer2"></i> Extraction quality
     </div>
   </div>
 </div>
 
-<!-- Charts Row 1 -->
-<div class="row g-3 mb-4">
-  <div class="col-md-5">
-    <div class="card h-100">
-      <div class="card-header bg-white"><strong>Match Status</strong></div>
-      <div class="card-body d-flex align-items-center justify-content-center">
-        <canvas id="matchStatusChart" height="260"></canvas>
+{# CHARTS ROW 1 — Match Status + Daily Volume #}
+<div class="row g-3 mb-3">
+  <div class="col-lg-5">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-pie-chart"></i> Match Status Distribution
+      </div>
+      <div class="ap-card-body d-flex align-items-center justify-content-center" style="min-height:280px">
+        <canvas id="matchStatusChart"></canvas>
       </div>
     </div>
   </div>
-  <div class="col-md-7">
-    <div class="card h-100">
-      <div class="card-header bg-white"><strong>Daily Volume (30 days)</strong></div>
-      <div class="card-body">
-        <canvas id="dailyVolumeChart" height="200"></canvas>
+  <div class="col-lg-7">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-graph-up"></i> Daily Volume (30 days)
+      </div>
+      <div class="ap-card-body" style="min-height:280px">
+        <canvas id="dailyVolumeChart"></canvas>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Charts Row 2 -->
-<div class="row g-3 mb-4">
-  <div class="col-md-6">
-    <div class="card h-100">
-      <div class="card-header bg-white"><strong>Open Exceptions by Type</strong></div>
-      <div class="card-body">
-        <canvas id="exceptionChart" height="250"></canvas>
+{# CHARTS ROW 2 — Exceptions + Agent Performance #}
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-exclamation-triangle"></i> Open Exceptions by Type
+      </div>
+      <div class="ap-card-body" style="min-height:260px">
+        <canvas id="exceptionChart"></canvas>
       </div>
     </div>
   </div>
-  <div class="col-md-6">
-    <div class="card h-100">
-      <div class="card-header bg-white"><strong>Agent Performance</strong></div>
-      <div class="card-body">
-        <canvas id="agentPerfChart" height="250"></canvas>
+  <div class="col-lg-6">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-robot"></i> Agent Performance
+      </div>
+      <div class="ap-card-body" style="min-height:260px">
+        <canvas id="agentPerfChart"></canvas>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Recent Activity -->
-<div class="card">
-  <div class="card-header bg-white"><strong>Recent Activity</strong></div>
-  <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0">
-      <thead class="table-light">
-        <tr><th>Type</th><th>Description</th><th>Status</th><th>Time</th></tr>
+{# RECENT ACTIVITY #}
+<div class="ap-card">
+  <div class="ap-card-header">
+    <i class="bi bi-activity"></i> Recent Activity
+    <a href="{% url 'governance:audit_event_list' %}" class="btn btn-sm btn-outline-secondary ms-auto"
+       style="font-size:var(--ap-font-size-xs)">View All</a>
+  </div>
+  <div class="ap-card-body p-0">
+    <table class="ap-table">
+      <thead>
+        <tr><th>Type</th><th>Description</th><th>Status</th><th style="width:100px">Time</th></tr>
       </thead>
       <tbody>
         {% for a in recent_activity %}
         <tr>
-          <td><span class="badge bg-secondary">{{ a.entity_type }}</span></td>
-          <td>{{ a.description }}</td>
-          <td><span class="badge status-badge status-{{ a.status }}">{{ a.status }}</span></td>
-          <td class="text-muted">{{ a.timestamp|timesince }} ago</td>
+          <td><span class="ap-badge ap-badge-muted">{{ a.entity_type }}</span></td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ a.description }}</td>
+          <td>
+            <span class="ap-badge {% if a.status == 'COMPLETED' or a.status == 'MATCHED' %}ap-badge-success{% elif a.status == 'FAILED' or a.status == 'ERROR' %}ap-badge-danger{% elif a.status == 'RUNNING' or a.status == 'IN_PROGRESS' %}ap-badge-primary{% else %}ap-badge-muted{% endif %}">
+              {{ a.status }}
+            </span>
+          </td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ a.timestamp|timesince }} ago</td>
         </tr>
         {% empty %}
-        <tr><td colspan="4" class="text-center text-muted py-3">No activity yet</td></tr>
+        <tr><td colspan="4">
+          <div class="ap-empty-state">
+            <i class="bi bi-activity"></i>
+            <div class="ap-empty-state-label">No activity yet</div>
+          </div>
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
 {% include "partials/upload_modal.html" %}
 {% endblock %}

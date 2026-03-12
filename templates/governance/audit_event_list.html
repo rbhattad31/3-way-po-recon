@@ -11,48 +11,46 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Audit Log</h4>
-  <small class="text-muted">{{ page_obj.paginator.count }} event{{ page_obj.paginator.count|pluralize }}</small>
+  <span class="text-muted">{{ page_obj.paginator.count }} event{{ page_obj.paginator.count|pluralize }}</span>
 </div>
 
-<!-- Filters -->
-<div class="card mb-3">
-  <div class="card-body py-2">
-    <form method="get" class="row g-2 align-items-end">
-      <div class="col-md-3">
-        <label class="form-label form-label-sm mb-0">Entity Type</label>
-        <select name="entity_type" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% for et in entity_types %}
-          <option value="{{ et }}" {% if et == current_entity_type %}selected{% endif %}>{{ et }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-3">
-        <label class="form-label form-label-sm mb-0">Event Type</label>
-        <select name="event_type" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% for ev in event_types %}
-          <option value="{{ ev }}" {% if ev == current_event_type %}selected{% endif %}>{{ ev }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-2">
-        <label class="form-label form-label-sm mb-0">Entity ID</label>
-        <input type="number" name="entity_id" class="form-control form-control-sm" value="{{ current_entity_id }}" placeholder="e.g. 42">
-      </div>
-      <div class="col-md-2">
-        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
-        <a href="{% url 'governance:audit_event_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
-      </div>
-    </form>
-  </div>
+{# ── Filters ── #}
+<div class="ap-filter-bar mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label form-label-sm mb-0">Entity Type</label>
+      <select name="entity_type" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for et in entity_types %}
+        <option value="{{ et }}" {% if et == current_entity_type %}selected{% endif %}>{{ et }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label form-label-sm mb-0">Event Type</label>
+      <select name="event_type" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for ev in event_types %}
+        <option value="{{ ev }}" {% if ev == current_event_type %}selected{% endif %}>{{ ev }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label form-label-sm mb-0">Entity ID</label>
+      <input type="number" name="entity_id" class="form-control form-control-sm" value="{{ current_entity_id }}" placeholder="e.g. 42">
+    </div>
+    <div class="col-md-2">
+      <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
+      <a href="{% url 'governance:audit_event_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+    </div>
+  </form>
 </div>
 
-<!-- Event Table -->
-<div class="card">
-  <div class="card-body p-0">
-    <table class="table table-sm table-hover mb-0">
-      <thead class="table-light">
+{# ── Event Table ── #}
+<div class="ap-card">
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead>
         <tr>
           <th style="width:50px">ID</th>
           <th>Event Type</th>
@@ -68,16 +66,16 @@
           <td class="text-muted">{{ ev.id }}</td>
           <td>
             {% if ev.event_type %}
-            <span class="badge
-              {% if 'COMPLETED' in ev.event_type or 'APPROVED' in ev.event_type %}bg-success
-              {% elif 'FAILED' in ev.event_type or 'REJECTED' in ev.event_type %}bg-danger
-              {% elif 'STARTED' in ev.event_type or 'UPLOADED' in ev.event_type %}bg-primary
-              {% elif 'ASSIGNED' in ev.event_type %}bg-info
-              {% elif 'RECOMMENDATION' in ev.event_type %}bg-warning text-dark
-              {% elif 'CORRECTED' in ev.event_type %}bg-secondary
-              {% else %}bg-dark{% endif %}">{{ ev.event_type }}</span>
+            <span class="ap-badge
+              {% if 'COMPLETED' in ev.event_type or 'APPROVED' in ev.event_type %}ap-badge-matched
+              {% elif 'FAILED' in ev.event_type or 'REJECTED' in ev.event_type %}ap-badge-unmatched
+              {% elif 'STARTED' in ev.event_type or 'UPLOADED' in ev.event_type %}ap-badge-info
+              {% elif 'ASSIGNED' in ev.event_type %}ap-badge-review
+              {% elif 'RECOMMENDATION' in ev.event_type %}ap-badge-partial
+              {% elif 'CORRECTED' in ev.event_type %}ap-badge-status-closed
+              {% else %}ap-badge-status-new{% endif %}">{{ ev.event_type }}</span>
             {% else %}
-              <span class="badge bg-secondary">{{ ev.action }}</span>
+              <span class="ap-badge ap-badge-status-new">{{ ev.action }}</span>
             {% endif %}
           </td>
           <td>
@@ -108,7 +106,7 @@
   </div>
 </div>
 
-<!-- Pagination -->
+{# ── Pagination ── #}
 {% if page_obj.has_other_pages %}
 <nav class="mt-3">
   <ul class="pagination pagination-sm justify-content-center">

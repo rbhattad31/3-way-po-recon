@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from django.db import transaction
 
-from apps.core.enums import MatchStatus
+from apps.core.enums import MatchStatus, ReconciliationMode
 from apps.documents.models import Invoice, PurchaseOrder
 from apps.reconciliation.models import (
     ReconciliationException,
@@ -18,6 +18,7 @@ from apps.reconciliation.models import (
 from apps.reconciliation.services.grn_match_service import GRNMatchResult
 from apps.reconciliation.services.header_match_service import HeaderMatchResult
 from apps.reconciliation.services.line_match_service import LineMatchPair, LineMatchResult
+from apps.reconciliation.services.mode_resolver import ModeResolutionResult
 from apps.reconciliation.services.po_lookup_service import POLookupResult
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,11 @@ class ReconciliationResultService:
         line_result: Optional[LineMatchResult],
         grn_result: Optional[GRNMatchResult],
         exceptions: Optional[List[ReconciliationException]] = None,
+        reconciliation_mode: str = "",
+        mode_resolution: Optional[ModeResolutionResult] = None,
     ) -> ReconciliationResult:
         po: Optional[PurchaseOrder] = po_result.purchase_order if po_result.found else None
+        is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
 
         # Header-level evidence
         tc = header_result.total_comparison if header_result and header_result.total_comparison else None
@@ -63,9 +67,17 @@ class ReconciliationResultService:
             grn_fully_received=grn_result.fully_received if grn_result else None,
             extraction_confidence=invoice.extraction_confidence,
             deterministic_confidence=self._compute_confidence(
-                header_result, line_result, grn_result
+                header_result, line_result, grn_result, reconciliation_mode,
             ),
-            summary=self._build_summary(match_status, header_result, line_result, grn_result),
+            summary=self._build_summary(match_status, header_result, line_result, grn_result, reconciliation_mode),
+            # Mode metadata
+            reconciliation_mode=reconciliation_mode,
+            grn_required_flag=mode_resolution.grn_required if mode_resolution else (not is_two_way),
+            grn_checked_flag=grn_result is not None,
+            mode_resolution_reason=mode_resolution.reason if mode_resolution else "",
+            policy_applied=mode_resolution.policy_code if mode_resolution else "",
+            is_two_way_result=is_two_way,
+            is_three_way_result=not is_two_way,
         )
 
         # Line-level results
@@ -177,32 +189,37 @@ class ReconciliationResultService:
         header: Optional[HeaderMatchResult],
         lines: Optional[LineMatchResult],
         grn: Optional[GRNMatchResult],
+        reconciliation_mode: str = "",
     ) -> float:
         """Compute a 0–1 deterministic confidence from comparison evidence."""
+        is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
         score = 0.0
         weight = 0.0
 
         if header:
-            weight += 0.40
+            header_weight = 0.45 if is_two_way else 0.40
+            weight += header_weight
             header_score = 0.0
             checks = [header.vendor_match, header.currency_match, header.po_total_match]
             total = sum(1 for c in checks if c is not None)
             passed = sum(1 for c in checks if c is True)
             if total:
                 header_score = passed / total
-            score += 0.40 * header_score
+            score += header_weight * header_score
 
         if lines:
-            weight += 0.45
+            line_weight = 0.55 if is_two_way else 0.45
+            weight += line_weight
             if lines.all_lines_matched and lines.all_within_tolerance:
-                score += 0.45
+                score += line_weight
             elif lines.all_lines_matched:
-                score += 0.30
+                score += line_weight * 0.667
             elif lines.pairs:
                 matched_ratio = sum(1 for p in lines.pairs if p.matched) / len(lines.pairs)
-                score += 0.45 * matched_ratio * 0.5
+                score += line_weight * matched_ratio * 0.5
 
-        if grn:
+        # GRN weight only applies in 3-way mode
+        if not is_two_way and grn:
             weight += 0.15
             if grn.grn_available and not grn.has_receipt_issues:
                 score += 0.15
@@ -217,8 +234,11 @@ class ReconciliationResultService:
         header: Optional[HeaderMatchResult],
         lines: Optional[LineMatchResult],
         grn: Optional[GRNMatchResult],
+        reconciliation_mode: str = "",
     ) -> str:
-        parts = [f"Status: {status}"]
+        is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
+        mode_label = "2-Way" if is_two_way else "3-Way"
+        parts = [f"Mode: {mode_label}", f"Status: {status}"]
         if header:
             parts.append(
                 f"Header: vendor={'OK' if header.vendor_match else 'MISMATCH'}, "
@@ -232,10 +252,12 @@ class ReconciliationResultService:
                 f"{len(lines.unmatched_invoice_lines)} unmatched inv, "
                 f"{len(lines.unmatched_po_lines)} unmatched PO"
             )
-        if grn:
+        if grn and not is_two_way:
             parts.append(
                 f"GRN: available={grn.grn_available}, "
                 f"fully_received={grn.fully_received}, "
                 f"issues={grn.has_receipt_issues}"
             )
+        elif is_two_way:
+            parts.append("GRN: skipped (2-way mode)")
         return " | ".join(parts)

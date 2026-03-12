@@ -70,6 +70,11 @@
             </div>
             <div class="vr d-none d-md-block"></div>
             <div>
+              <small class="text-muted d-block">Mode</small>
+              {% if is_two_way %}<span class="badge bg-info">2-Way</span>{% else %}<span class="badge bg-primary">3-Way</span>{% endif %}
+            </div>
+            <div class="vr d-none d-md-block"></div>
+            <div>
               <small class="text-muted d-block">Confidence</small>
               {% if result.deterministic_confidence %}
               <span class="fw-semibold">{% widthratio result.deterministic_confidence 1 100 %}%</span>
@@ -210,7 +215,8 @@
       </div>
     </div>
 
-    {# GRN Card #}
+    {# GRN Card — only shown in 3-way mode #}
+    {% if not is_two_way %}
     <div class="col-lg-4">
       <div class="card h-100 cc-doc-card">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
@@ -246,6 +252,23 @@
         {% endif %}
       </div>
     </div>
+    {% else %}
+    {# 2-Way mode: note that GRN is not applicable #}
+    <div class="col-lg-4">
+      <div class="card h-100 cc-doc-card border-light">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-box-seam me-1 text-muted"></i><strong class="text-muted">Goods Receipt</strong></span>
+          <span class="badge bg-light text-muted border">N/A (2-Way)</span>
+        </div>
+        <div class="card-body">
+          <div class="text-center text-muted py-4">
+            <i class="bi bi-dash-circle fs-1 d-block mb-2"></i>
+            <p class="mb-0">GRN verification is not applicable in 2-Way reconciliation mode.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 
@@ -280,10 +303,10 @@
             {% if result.po_total_match %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% elif result.po_total_match == False %}<i class="bi bi-x-circle-fill text-danger ms-1"></i>{% else %}<i class="bi bi-dash-circle text-muted ms-1"></i>{% endif %}
           </span>
           <span><small class="text-muted">GRN Available</small>
-            {% if result.grn_available %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% else %}<i class="bi bi-x-circle-fill text-secondary ms-1"></i>{% endif %}
+            {% if is_two_way %}<span class="badge bg-light text-muted border ms-1">N/A</span>{% elif result.grn_available %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% else %}<i class="bi bi-x-circle-fill text-secondary ms-1"></i>{% endif %}
           </span>
           <span><small class="text-muted">GRN Fully Received</small>
-            {% if result.grn_fully_received %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% elif result.grn_fully_received == False %}<i class="bi bi-x-circle-fill text-danger ms-1"></i>{% else %}<i class="bi bi-dash-circle text-muted ms-1"></i>{% endif %}
+            {% if is_two_way %}<span class="badge bg-light text-muted border ms-1">N/A</span>{% elif result.grn_fully_received %}<i class="bi bi-check-circle-fill text-success ms-1"></i>{% elif result.grn_fully_received == False %}<i class="bi bi-x-circle-fill text-danger ms-1"></i>{% else %}<i class="bi bi-dash-circle text-muted ms-1"></i>{% endif %}
           </span>
           <span><small class="text-muted">Amount Diff</small>
             <strong class="ms-1 {% if result.total_amount_difference and result.total_amount_difference != 0 %}text-danger{% else %}text-success{% endif %}">
@@ -301,7 +324,7 @@
               <th>Item</th>
               <th>Inv Qty</th>
               <th>PO Qty</th>
-              <th>GRN Qty</th>
+              {% if not is_two_way %}<th>GRN Qty</th>{% endif %}
               <th>Inv Price</th>
               <th>PO Price</th>
               <th>Inv Amt</th>
@@ -319,7 +342,7 @@
               </td>
               <td>{{ ln.qty_invoice|default:"—" }}</td>
               <td {% if ln.qty_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.qty_po|default:"—" }}</td>
-              <td>{{ ln.qty_received|default:"—" }}</td>
+              {% if not is_two_way %}<td>{{ ln.qty_received|default:"—" }}</td>{% endif %}
               <td>{{ ln.price_invoice|default:"—" }}</td>
               <td {% if ln.price_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.price_po|default:"—" }}</td>
               <td>{{ ln.amount_invoice|default:"—" }}</td>
@@ -330,7 +353,7 @@
               <td><span class="badge status-badge status-{{ ln.match_status }}">{{ ln.get_match_status_display }}</span></td>
             </tr>
             {% empty %}
-            <tr><td colspan="11" class="text-muted text-center py-3">No line-level results available</td></tr>
+            <tr><td colspan="{% if is_two_way %}10{% else %}11{% endif %}" class="text-muted text-center py-3">No line-level results available</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -695,6 +718,8 @@
           <div class="cc-timeline-marker">
             {% if event.event_category == "audit" %}
               <i class="bi bi-file-earmark-text text-primary"></i>
+            {% elif event.event_category == "mode_resolution" %}
+              <i class="bi bi-arrow-left-right text-info"></i>
             {% elif event.event_category == "agent_run" %}
               <i class="bi bi-robot text-success"></i>
             {% elif event.event_category == "tool_call" %}

@@ -1,0 +1,75 @@
+{# ── Case Header Card ── #}
+{# Context: case (APCase) #}
+<div class="ap-card mb-3">
+  <div class="d-flex align-items-start justify-content-between p-3">
+    {# Left: case identity #}
+    <div>
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <h5 class="mb-0 fw-bold">{{ case.case_number }}</h5>
+        {# Status badge #}
+        {% if case.status == "CLOSED" %}
+          <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle"></i> Closed</span>
+        {% elif case.status == "FAILED" %}
+          <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle"></i> Failed</span>
+        {% elif case.status == "REJECTED" %}
+          <span class="ap-badge ap-badge-danger"><i class="bi bi-slash-circle"></i> Rejected</span>
+        {% elif case.status == "ESCALATED" %}
+          <span class="ap-badge ap-badge-warning"><i class="bi bi-exclamation-triangle"></i> Escalated</span>
+        {% elif case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
+          <span class="ap-badge ap-badge-warning"><i class="bi bi-eye"></i> {{ case.get_status_display }}</span>
+        {% elif case.status == "NEW" %}
+          <span class="ap-badge ap-badge-muted"><i class="bi bi-plus-circle"></i> New</span>
+        {% else %}
+          <span class="ap-badge ap-badge-info">{{ case.get_status_display }}</span>
+        {% endif %}
+        {# Path badge #}
+        {% include "cases/partials/_path_badge.html" with path=case.processing_path %}
+      </div>
+      <div class="d-flex align-items-center gap-3 mt-2" style="font-size:var(--ap-font-size-sm)">
+        {% if case.vendor %}
+        <span class="text-muted"><i class="bi bi-building me-1"></i>{{ case.vendor.name|truncatechars:30 }}</span>
+        {% endif %}
+        {% if invoice %}
+        <span class="text-muted"><i class="bi bi-hash me-1"></i>{{ invoice.invoice_number|default:"No invoice #" }}</span>
+        {% endif %}
+        {% if invoice.total_amount %}
+        <span class="fw-semibold"><i class="bi bi-currency-exchange me-1"></i>{{ invoice.currency }} {{ invoice.total_amount|floatformat:2 }}</span>
+        {% endif %}
+        <span class="text-muted"><i class="bi bi-clock me-1"></i>{{ case.created_at|timesince }} ago</span>
+      </div>
+    </div>
+    {# Right: priority + assignment + actions #}
+    <div class="d-flex align-items-center gap-2">
+      {# Priority #}
+      {% if case.priority == "CRITICAL" %}
+        <span class="ap-badge ap-sev-critical"><i class="bi bi-fire"></i> Critical</span>
+      {% elif case.priority == "HIGH" %}
+        <span class="ap-badge ap-sev-high"><i class="bi bi-arrow-up-circle"></i> High</span>
+      {% elif case.priority == "MEDIUM" %}
+        <span class="ap-badge ap-sev-medium">Medium</span>
+      {% endif %}
+      {# Assigned to #}
+      {% if case.assigned_to %}
+        <span class="ap-badge ap-badge-muted"><i class="bi bi-person"></i> {{ case.assigned_to.get_short_name }}</span>
+      {% endif %}
+      {# Confidence meter if available #}
+      {% if invoice.extraction_confidence %}
+        <div class="ap-confidence" title="Extraction Confidence: {% widthratio invoice.extraction_confidence 1 100 %}%">
+          <div class="ap-confidence-bar">
+            <div class="ap-confidence-fill {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                 style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></div>
+          </div>
+          <span>{% widthratio invoice.extraction_confidence 1 100 %}%</span>
+        </div>
+      {% endif %}
+      {# Retry action for failed cases #}
+      {% if case.status == "FAILED" %}
+      <form method="post" action="{% url 'cases:reprocess_case' case.pk %}" class="d-inline">
+        {% csrf_token %}
+        <input type="hidden" name="stage" value="INTAKE">
+        <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>

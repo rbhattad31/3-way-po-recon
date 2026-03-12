@@ -1,0 +1,4 @@
+/* Case Inbox — page-specific styles */
+.case-row:hover {
+  background: var(--ap-bg-subtle) !important;
+}

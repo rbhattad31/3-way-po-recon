@@ -1,4 +1,4 @@
-/* PO Reconciliation – Dashboard JS */
+/* AP Operations — Dashboard Charts & Global Utilities */
 document.addEventListener("DOMContentLoaded", function () {
   "use strict";
 
@@ -12,13 +12,28 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  /* Design-system-aligned colors */
   var COLORS = {
-    MATCHED: "#198754",
-    PARTIAL_MATCH: "#ffc107",
-    UNMATCHED: "#dc3545",
-    REQUIRES_REVIEW: "#6c757d",
-    ERROR: "#0d6efd",
+    MATCHED: "#10b981",
+    PARTIAL_MATCH: "#f59e0b",
+    UNMATCHED: "#ef4444",
+    REQUIRES_REVIEW: "#64748b",
+    ERROR: "#3b82f6",
   };
+
+  var CHART_DEFAULTS = {
+    font: { family: "'Inter', system-ui, sans-serif", size: 11 },
+  };
+
+  /* Apply global Chart.js defaults */
+  if (typeof Chart !== "undefined") {
+    Chart.defaults.font.family = CHART_DEFAULTS.font.family;
+    Chart.defaults.font.size = CHART_DEFAULTS.font.size;
+    Chart.defaults.color = "#64748b";
+    Chart.defaults.plugins.legend.labels.usePointStyle = true;
+    Chart.defaults.plugins.legend.labels.pointStyle = "circle";
+    Chart.defaults.plugins.legend.labels.padding = 16;
+  }
 
   /* ------------------------------------------------------------------ */
   /* Match-status donut                                                  */
@@ -32,10 +47,16 @@ document.addEventListener("DOMContentLoaded", function () {
           labels: data.map(function (d) { return d.match_status; }),
           datasets: [{
             data: data.map(function (d) { return d.count; }),
-            backgroundColor: data.map(function (d) { return COLORS[d.match_status] || "#adb5bd"; }),
+            backgroundColor: data.map(function (d) { return COLORS[d.match_status] || "#cbd5e1"; }),
+            borderWidth: 0,
+            hoverOffset: 4,
           }],
         },
-        options: { responsive: true, plugins: { legend: { position: "bottom" } } },
+        options: {
+          responsive: true,
+          cutout: "65%",
+          plugins: { legend: { position: "bottom" } },
+        },
       });
     });
   }
@@ -53,13 +74,19 @@ document.addEventListener("DOMContentLoaded", function () {
           datasets: [{
             label: "Open Exceptions",
             data: data.map(function (d) { return d.count; }),
-            backgroundColor: "#fd7e14",
+            backgroundColor: "#f97316",
+            borderRadius: 4,
+            barThickness: 18,
           }],
         },
         options: {
           responsive: true,
           indexAxis: "y",
           plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { precision: 0 } },
+            y: { grid: { display: false } },
+          },
         },
       });
     });
@@ -76,12 +103,20 @@ document.addEventListener("DOMContentLoaded", function () {
         data: {
           labels: data.map(function (d) { return d.date; }),
           datasets: [
-            { label: "Invoices", data: data.map(function (d) { return d.invoices; }), borderColor: "#0d6efd", tension: 0.3 },
-            { label: "Reconciled", data: data.map(function (d) { return d.reconciled; }), borderColor: "#198754", tension: 0.3 },
-            { label: "Exceptions", data: data.map(function (d) { return d.exceptions; }), borderColor: "#dc3545", tension: 0.3 },
+            { label: "Invoices", data: data.map(function (d) { return d.invoices; }), borderColor: "#3b82f6", backgroundColor: "rgba(59,130,246,.08)", fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 },
+            { label: "Reconciled", data: data.map(function (d) { return d.reconciled; }), borderColor: "#10b981", backgroundColor: "rgba(16,185,129,.08)", fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 },
+            { label: "Exceptions", data: data.map(function (d) { return d.exceptions; }), borderColor: "#ef4444", backgroundColor: "rgba(239,68,68,.08)", fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 },
           ],
         },
-        options: { responsive: true, plugins: { legend: { position: "bottom" } } },
+        options: {
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          plugins: { legend: { position: "bottom" } },
+          scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+            y: { grid: { color: "rgba(0,0,0,.04)" }, ticks: { precision: 0 } },
+          },
+        },
       });
     });
   }
@@ -97,12 +132,27 @@ document.addEventListener("DOMContentLoaded", function () {
         data: {
           labels: data.map(function (d) { return d.agent_type; }),
           datasets: [
-            { label: "Total Runs", data: data.map(function (d) { return d.total_runs; }), backgroundColor: "#0d6efd" },
-            { label: "Successes", data: data.map(function (d) { return d.success_count; }), backgroundColor: "#198754" },
+            { label: "Total Runs", data: data.map(function (d) { return d.total_runs; }), backgroundColor: "#3b82f6", borderRadius: 4, barThickness: 16 },
+            { label: "Successes", data: data.map(function (d) { return d.success_count; }), backgroundColor: "#10b981", borderRadius: 4, barThickness: 16 },
           ],
         },
-        options: { responsive: true, plugins: { legend: { position: "bottom" } } },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: "bottom" } },
+          scales: {
+            x: { grid: { display: false } },
+            y: { grid: { color: "rgba(0,0,0,.04)" }, ticks: { precision: 0 } },
+          },
+        },
       });
     });
   }
+
+  /* ------------------------------------------------------------------ */
+  /* Global: Bootstrap tooltip init on every page                        */
+  /* ------------------------------------------------------------------ */
+  var tooltipEls = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+  tooltipEls.forEach(function (el) {
+    new bootstrap.Tooltip(el);
+  });
 });

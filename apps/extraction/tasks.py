@@ -101,6 +101,31 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             metadata={"upload_id": upload_id, "is_duplicate": dup_result.is_duplicate, "is_valid": validation_result.is_valid},
         )
 
+        # --- Auto-create AP Case and trigger case processing ---
+        case_id = None
+        if validation_result.is_valid and not dup_result.is_duplicate:
+            try:
+                from apps.cases.services.case_creation_service import CaseCreationService
+                case = CaseCreationService.create_from_upload(
+                    invoice=invoice,
+                    uploaded_by=upload.uploaded_by,
+                )
+                case_id = case.pk
+                logger.info("Created AP Case %s for invoice %s", case.case_number, invoice.invoice_number)
+
+                # Trigger case orchestration
+                from apps.cases.tasks import process_case_task
+                from django.conf import settings as django_settings
+                if getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False):
+                    process_case_task.run(case_id=case.pk)
+                else:
+                    process_case_task.delay(case.pk)
+            except Exception as case_exc:
+                logger.exception(
+                    "AP Case creation/processing failed for invoice %s: %s",
+                    invoice.pk, case_exc,
+                )
+
         logger.info(
             "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",
             upload_id, invoice.pk, invoice.status,
@@ -112,6 +137,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             "invoice_status": invoice.status,
             "is_duplicate": dup_result.is_duplicate,
             "is_valid": validation_result.is_valid,
+            "case_id": case_id,
         }
 
     except Exception as exc:
