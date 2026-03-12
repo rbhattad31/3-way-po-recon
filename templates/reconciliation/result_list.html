@@ -12,7 +12,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h5 class="mb-0">Reconciliation Results</h5>
   <form class="d-inline-flex gap-2" method="get">
-    <select name="match_status" class="form-select form-select-sm" onchange="this.form.submit()">
+    <select name="match_status" class="form-select form-select-sm" style="width:170px" onchange="this.form.submit()">
       <option value="">All Statuses</option>
       {% for val, label in match_status_choices %}
         <option value="{{ val }}" {% if request.GET.match_status == val %}selected{% endif %}>{{ label }}</option>
@@ -28,6 +28,10 @@
       <i class="bi bi-arrow-repeat me-2 text-success"></i>
       <strong>Invoices Ready for Reconciliation</strong>
       <span class="badge bg-success ms-2">{{ ready_invoices|length }}</span>
+    </div>
+    <div class="position-relative">
+      <input type="text" id="readySearch" class="form-control form-control-sm" placeholder="Search invoice #..." style="min-width:220px;" autocomplete="off">
+      <i class="bi bi-search position-absolute top-50 end-0 translate-middle-y me-2 text-muted" style="pointer-events:none;"></i>
     </div>
   </div>
   <div class="card-body p-0">
@@ -67,8 +71,15 @@
 </div>
 {% endif %}
 <div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <strong>Reconciliation Results</strong>
+    <div class="position-relative">
+      <input type="text" id="resultsSearch" class="form-control form-control-sm" placeholder="Search invoice #..." style="min-width:220px;" autocomplete="off">
+      <i class="bi bi-search position-absolute top-50 end-0 translate-middle-y me-2 text-muted" style="pointer-events:none;"></i>
+    </div>
+  </div>
   <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0 table-fixed-header">
+    <table id="resultsTable" class="table table-hover table-sm mb-0 table-fixed-header">
       <thead class="table-light">
         <tr>
           <th>ID</th><th>Invoice #</th><th>PO #</th><th>Vendor</th>
@@ -125,6 +136,32 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   checkboxes.forEach(cb => cb.addEventListener('change', updateState));
+
+  // Real-time search for "Ready for Reconciliation" table (invoice # is column index 1)
+  const readySearch = document.getElementById('readySearch');
+  if (readySearch) {
+    readySearch.addEventListener('input', function() {
+      const term = this.value.trim().toLowerCase();
+      document.querySelectorAll('#reconForm tbody tr').forEach(function(row) {
+        const cell = row.cells[1];
+        if (!cell) return;
+        row.style.display = cell.textContent.trim().toLowerCase().includes(term) ? '' : 'none';
+      });
+    });
+  }
+
+  // Real-time search for "Reconciliation Results" table (invoice # is column index 1)
+  const resultsSearch = document.getElementById('resultsSearch');
+  if (resultsSearch) {
+    resultsSearch.addEventListener('input', function() {
+      const term = this.value.trim().toLowerCase();
+      document.querySelectorAll('#resultsTable tbody tr').forEach(function(row) {
+        const cell = row.cells[1];
+        if (!cell) return;
+        row.style.display = cell.textContent.trim().toLowerCase().includes(term) ? '' : 'none';
+      });
+    });
+  }
 });
 </script>
 {% endblock %}

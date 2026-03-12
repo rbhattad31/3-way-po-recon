@@ -4,6 +4,7 @@ import csv
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
@@ -27,6 +28,16 @@ def result_list(request):
     match_status = request.GET.get("match_status")
     if match_status:
         qs = qs.filter(match_status=match_status)
+
+    search = request.GET.get("search", "").strip()
+    if search:
+        qs = qs.filter(
+            Q(invoice__invoice_number__icontains=search)
+            | Q(invoice__vendor__name__icontains=search)
+            | Q(invoice__raw_vendor_name__icontains=search)
+            | Q(purchase_order__po_number__icontains=search)
+        )
+
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -36,12 +47,20 @@ def result_list(request):
         .select_related("vendor")
         .order_by("-created_at")
     )
+    if search:
+        ready_invoices = ready_invoices.filter(
+            Q(invoice_number__icontains=search)
+            | Q(vendor__name__icontains=search)
+            | Q(raw_vendor_name__icontains=search)
+            | Q(po_number__icontains=search)
+        )
 
     return render(request, "reconciliation/result_list.html", {
         "results": page_obj,
         "page_obj": page_obj,
         "match_status_choices": MatchStatus.choices,
         "ready_invoices": ready_invoices,
+        "search": search,
     })
 
 

@@ -11,14 +11,20 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h5 class="mb-0">Review Queue</h5>
-  <form class="d-inline-flex gap-2" method="get">
-    <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
-      <option value="">All Statuses</option>
-      {% for val, label in review_status_choices %}
-        <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </form>
+  <div class="d-inline-flex gap-2 align-items-center">
+    <div class="position-relative">
+      <input type="text" id="invoiceSearch" class="form-control form-control-sm" placeholder="Search invoice #..." style="min-width:200px;" autocomplete="off">
+      <i class="bi bi-search position-absolute top-50 end-0 translate-middle-y me-2 text-muted" style="pointer-events:none;"></i>
+    </div>
+    <form class="d-inline-flex gap-2" method="get">
+      <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Statuses</option>
+        {% for val, label in review_status_choices %}
+          <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
 </div>
 
 {% if unassigned_results %}
@@ -124,6 +130,26 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   checks.forEach(cb => cb.addEventListener('change', updateState));
+
+  // Real-time invoice search filter
+  const searchInput = document.getElementById('invoiceSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', function() {
+      const term = this.value.trim().toLowerCase();
+      // Filter unassigned results table (invoice # is column index 1)
+      document.querySelectorAll('#assignForm tbody tr').forEach(function(row) {
+        const cell = row.cells[1];
+        if (!cell) return;
+        row.style.display = cell.textContent.trim().toLowerCase().includes(term) ? '' : 'none';
+      });
+      // Filter assignments table (invoice # is column index 1)
+      document.querySelectorAll('.card:last-of-type table tbody tr').forEach(function(row) {
+        const cell = row.cells[1];
+        if (!cell) return;
+        row.style.display = cell.textContent.trim().toLowerCase().includes(term) ? '' : 'none';
+      });
+    });
+  }
 });
 </script>
 {% endblock %}
