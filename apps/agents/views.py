@@ -52,8 +52,10 @@ class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(
                 {"error": "reconciliation_result_id is required"}, status=400
             )
-        task = run_agent_pipeline_task.delay(int(result_id))
+        from apps.core.utils import dispatch_task
+        result = dispatch_task(run_agent_pipeline_task, int(result_id))
+        task_id = getattr(result, 'id', None)
         return Response(
-            {"task_id": task.id, "reconciliation_result_id": result_id},
+            {"task_id": task_id, "reconciliation_result_id": result_id},
             status=202,
         )

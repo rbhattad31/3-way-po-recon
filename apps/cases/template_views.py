@@ -130,17 +130,13 @@ def reprocess_case(request, pk):
         messages.warning(request, "No stage specified for reprocessing.")
         return redirect("cases:case_console", pk=pk)
 
-    from django.conf import settings as django_settings
     from apps.cases.tasks import reprocess_case_from_stage_task
+    from apps.core.utils import dispatch_task
 
-    if getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False):
-        try:
-            reprocess_case_from_stage_task.run(case_id=case.pk, stage=stage)
-            messages.success(request, f"Case {case.case_number} reprocessed from {stage}.")
-        except Exception as exc:
-            messages.error(request, f"Reprocessing failed: {exc}")
-    else:
-        reprocess_case_from_stage_task.delay(case.pk, stage)
-        messages.success(request, f"Case {case.case_number} reprocessing started from {stage}.")
+    try:
+        dispatch_task(reprocess_case_from_stage_task, case_id=case.pk, stage=stage)
+        messages.success(request, f"Case {case.case_number} reprocessed from {stage}.")
+    except Exception as exc:
+        messages.error(request, f"Reprocessing failed: {exc}")
 
     return redirect("cases:case_console", pk=pk)

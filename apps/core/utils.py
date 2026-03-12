@@ -68,3 +68,47 @@ def pct_difference(a: Decimal, b: Decimal) -> Decimal:
 def within_tolerance(a: Decimal, b: Decimal, tolerance_pct: float) -> bool:
     """Check whether the percentage difference between a and b is within tolerance."""
     return pct_difference(a, b) <= Decimal(str(tolerance_pct))
+
+
+# ---------------------------------------------------------------------------
+# Celery helpers — Windows/no-Redis fallback
+# ---------------------------------------------------------------------------
+import logging as _logging
+
+_celery_logger = _logging.getLogger("apps.core.celery_utils")
+
+
+def dispatch_task(task, *args, **kwargs):
+    """Dispatch a Celery task: try async, fall back to synchronous .run().
+
+    Use this instead of ``task.delay(...)`` anywhere a task is dispatched to
+    ensure it works on Windows without Redis.
+    """
+    try:
+        return task.delay(*args, **kwargs)
+    except Exception:
+        _celery_logger.info(
+            "Celery broker unavailable — running %s synchronously", task.name,
+        )
+        return task.run(*args, **kwargs)
+
+
+def safe_retry(task_self, exc):
+    """Attempt Celery retry; if the broker is down, re-raise the original error.
+
+    Use this instead of ``raise self.retry(exc=exc)`` in ``@shared_task``
+    functions so tasks don't crash with a Redis ``ConnectionError`` on Windows.
+    """
+    try:
+        raise task_self.retry(exc=exc)
+    except (AttributeError, TypeError):
+        # Running outside Celery context (sync fallback)
+        raise exc
+    except Exception as retry_exc:
+        # Broker unavailable (e.g. Redis not running on Windows)
+        if "Connection" in type(retry_exc).__name__ or "OperationalError" in type(retry_exc).__name__:
+            _celery_logger.warning(
+                "Celery retry failed (broker unavailable) — propagating original error"
+            )
+            raise exc
+        raise

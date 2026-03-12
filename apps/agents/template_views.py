@@ -1,8 +1,8 @@
 """Agent template views — reference pages for end users."""
-import os
-
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
+
+from apps.core.prompt_registry import PromptRegistry
 
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
 from apps.cases.orchestrators.case_orchestrator import PATH_STAGES, STAGE_TO_STATUS
@@ -15,16 +15,6 @@ from apps.core.enums import (
     ProcessingPath,
     RecommendationType,
 )
-
-
-def _load_case_prompt(filename):
-    """Load a case prompt .txt file from apps/cases/prompts/."""
-    path = os.path.join(os.path.dirname(__file__), os.pardir, "cases", "prompts", filename)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return ""
 
 
 # Stage metadata: icon, colour, description, performer
@@ -178,7 +168,6 @@ def agent_reference(request):
     terminal_states = [CaseStatus(s).label for s in TERMINAL_STATES]
 
     # ---- Prompts (extraction + agent + case) ----
-    from apps.extraction.services.extraction_adapter import EXTRACTION_SYSTEM_PROMPT
     prompts = [
         {
             "name": "Invoice Extraction",
@@ -192,7 +181,7 @@ def agent_reference(request):
             ),
             "used_in": "apps/extraction/services/extraction_adapter.py",
             "model": "Azure OpenAI GPT-4o (temperature: 0.0)",
-            "prompt_text": EXTRACTION_SYSTEM_PROMPT,
+            "prompt_text": PromptRegistry.get("extraction.invoice_system"),
         },
     ]
     for agent in agents_info:
@@ -207,19 +196,19 @@ def agent_reference(request):
             "prompt_text": agent["system_prompt"],
         })
 
-    # Case-specific prompts from apps/cases/prompts/
-    case_prompt_files = [
-        ("Case Summary", "case_summary_prompt.txt",
+    # Case-specific prompts from PromptRegistry
+    case_prompts = [
+        ("Case Summary", "case.case_summary",
          "Produces a reviewer-facing narrative with SUMMARY, REVIEWER NOTES, and RECOMMENDATION sections."),
-        ("Exception Analysis", "exception_analysis_prompt.txt",
+        ("Exception Analysis", "case.exception_analysis",
          "Analyses exceptions/validation issues — determines root cause, severity, and remediation path."),
-        ("Non-PO Validation", "non_po_validation_prompt.txt",
+        ("Non-PO Validation", "case.non_po_validation",
          "Reasons over 9 deterministic check results for invoices without a Purchase Order."),
-        ("Reviewer Copilot", "reviewer_copilot_prompt.txt",
+        ("Reviewer Copilot", "case.reviewer_copilot",
          "Advisory assistant for human reviewers — answers case questions using tools but never commits actions."),
     ]
-    for name, filename, description in case_prompt_files:
-        text = _load_case_prompt(filename)
+    for name, slug, description in case_prompts:
+        text = PromptRegistry.get(slug, "")
         if text:
             prompts.append({
                 "name": name,
@@ -227,7 +216,7 @@ def agent_reference(request):
                 "icon": "bi-briefcase",
                 "color": "info",
                 "description": description,
-                "used_in": f"apps/cases/prompts/{filename}",
+                "used_in": f"PromptRegistry: {slug}",
                 "model": "Azure OpenAI GPT-4o",
                 "prompt_text": text,
             })
