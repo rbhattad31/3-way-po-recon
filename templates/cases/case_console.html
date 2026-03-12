@@ -17,19 +17,18 @@
 {% endblock %}
 
 {% block content %}
-{# CASE HEADER #}
-{% include "cases/partials/_case_header.html" %}
-
-{# STAGE PROGRESS STEPPER #}
-{% include "cases/partials/_stage_stepper.html" %}
-
-{# AGENT STATUS STRIP #}
-{% include "cases/partials/_agent_status_strip.html" %}
-
-{# MAIN CONTENT — 2-column layout #}
+{# 2-COLUMN LAYOUT: Left = case content, Right = Reviewer Copilot #}
 <div class="row g-3">
-  {# ── LEFT COLUMN: Investigation panels ── #}
+
+  {# ── LEFT COLUMN: All case content ── #}
   <div class="col-lg-8">
+   <div class="ap-card p-3">
+
+    {# CASE HEADER #}
+    {% include "cases/partials/_case_header.html" %}
+
+    {# STAGE PROGRESS STEPPER #}
+    {% include "cases/partials/_stage_stepper.html" %}
 
     {# Tab navigation for investigation sections #}
     <ul class="nav nav-pills mb-3 ap-section-nav" id="caseTabNav" role="tablist">
@@ -41,6 +40,16 @@
       <li class="nav-item" role="presentation">
         <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabDocuments" type="button" role="tab">
           <i class="bi bi-file-earmark me-1"></i>Documents
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabExceptions" type="button" role="tab">
+          <i class="bi bi-exclamation-triangle me-1"></i>Exceptions{% if total_issues_count %} <span class="ap-badge ap-badge-danger">{{ total_issues_count }}</span>{% endif %}
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabDecisions" type="button" role="tab">
+          <i class="bi bi-signpost-2 me-1"></i>Decisions{% if decisions %} <span class="ap-badge ap-badge-primary">{{ decisions|length }}</span>{% endif %}
         </button>
       </li>
       <li class="nav-item" role="presentation">
@@ -60,19 +69,20 @@
 
       {# ── OVERVIEW TAB ── #}
       <div class="tab-pane fade show active" id="tabOverview" role="tabpanel">
-        {# Case summary at top #}
         {% include "cases/partials/_case_summary.html" %}
-
-        {# Exceptions if any #}
-        {% include "cases/partials/_exceptions_panel.html" %}
-
-        {# Decisions #}
-        {% include "cases/partials/_decisions_panel.html" %}
-
-        {# Path-specific panels #}
         {% if case.processing_path == "NON_PO" %}
           {% include "cases/partials/_non_po_panel.html" %}
         {% endif %}
+      </div>
+
+      {# ── EXCEPTIONS TAB ── #}
+      <div class="tab-pane fade" id="tabExceptions" role="tabpanel">
+        {% include "cases/partials/_exceptions_panel.html" %}
+      </div>
+
+      {# ── DECISIONS TAB ── #}
+      <div class="tab-pane fade" id="tabDecisions" role="tabpanel">
+        {% include "cases/partials/_decisions_panel.html" %}
       </div>
 
       {# ── DOCUMENTS TAB ── #}
@@ -92,8 +102,6 @@
           </div>
           {% endif %}
         </div>
-
-        {# Reconciliation result link #}
         {% if case.reconciliation_result %}
         <div class="mt-3">
           <a href="{% url 'reconciliation:case_console' case.reconciliation_result.pk %}" class="btn btn-sm btn-outline-secondary">
@@ -113,22 +121,26 @@
         {% include "cases/partials/_timeline_panel.html" %}
       </div>
     </div>
+
+    {# AGENT ACTIVITY — bottom of left column #}
+    {% include "cases/partials/_agent_status_strip.html" %}
+
   </div>
 
-  {# ── RIGHT COLUMN: Sticky action + copilot ── #}
+  {# ── RIGHT COLUMN: Reviewer Copilot (sticky, from top) ── #}
   <div class="col-lg-4">
-    <div class="ap-right-panel">
-      {# Review Action Panel #}
-      {% include "cases/partials/_review_action_panel.html" %}
-
-      {# Copilot Chat Panel #}
+    <div style="position:sticky;top:1rem">
       {% include "cases/partials/_copilot_panel.html" %}
     </div>
   </div>
+
 </div>
 {% endblock %}
 
 {% block extra_js %}
+<script>
+  window.CASE_CONTEXT = {{ copilot_context_json|safe }};
+</script>
 <script src="{% static 'js/case-console.js' %}"></script>
 <script src="{% static 'js/copilot-panel.js' %}"></script>
 {% endblock %}

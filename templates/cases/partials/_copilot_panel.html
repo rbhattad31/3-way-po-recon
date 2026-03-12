@@ -1,14 +1,14 @@
 {# ── Copilot Chat Panel ── #}
 {# Context: case (APCase), summary (APCaseSummary) #}
 
-<div class="ap-copilot mb-3" id="copilotPanel">
+<div class="ap-copilot mb-3" id="copilotPanel" style="display:flex;flex-direction:column;min-height:500px">
   <div class="ap-copilot-header">
     <i class="bi bi-stars"></i> Reviewer Copilot
     <span class="ap-badge ap-badge-muted ms-auto" style="font-size:.6rem">AI-Assisted</span>
   </div>
 
   {# Messages area #}
-  <div class="ap-copilot-messages" id="copilotMessages">
+  <div class="ap-copilot-messages" id="copilotMessages" style="flex:1;overflow-y:auto">
     {# Initial summary from Case Summary agent #}
     {% if summary and summary.latest_summary %}
     <div class="ap-copilot-msg assistant">
@@ -59,4 +59,15 @@
   <div class="text-center py-1" style="font-size:.625rem;color:var(--ap-text-muted);border-top:1px solid var(--ap-border-light)">
     <i class="bi bi-info-circle me-1"></i>AI recommendations — always verify before acting
   </div>
+
+  {# Add reviewer note #}
+  {% if case.status != "CLOSED" %}
+  <div class="p-2" style="border-top:1px solid var(--ap-border-light)">
+    <textarea class="form-control form-control-sm" rows="2" id="caseComment" placeholder="Add a reviewer note…"
+              style="font-size:var(--ap-font-size-sm)"></textarea>
+    <button class="btn btn-sm btn-outline-secondary mt-1 w-100" onclick="addComment()" type="button">
+      <i class="bi bi-plus-circle me-1"></i>Add Note
+    </button>
+  </div>
+  {% endif %}
 </div>
