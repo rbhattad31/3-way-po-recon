@@ -4,6 +4,7 @@ import hashlib
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -49,8 +50,13 @@ def upload_invoice(request):
     file_hash = sha256.hexdigest()
     uploaded_file.seek(0)
 
+    # Upload to Azure Blob Storage — this is the primary storage
+    from apps.documents.blob_service import is_blob_storage_enabled
+    if not is_blob_storage_enabled():
+        messages.error(request, "Azure Blob Storage is not configured. Cannot upload.")
+        return redirect(request.META.get("HTTP_REFERER", "dashboard:index"))
+
     doc_upload = DocumentUpload.objects.create(
-        file=uploaded_file,
         original_filename=uploaded_file.name,
         file_size=uploaded_file.size,
         file_hash=file_hash,
@@ -58,6 +64,30 @@ def upload_invoice(request):
         document_type=document_type,
         uploaded_by=request.user,
     )
+
+    try:
+        from django.conf import settings as django_settings
+        from django.utils import timezone as tz
+        from apps.documents.blob_service import build_blob_path, upload_to_blob
+        container_name = getattr(django_settings, "AZURE_BLOB_CONTAINER_NAME", "")
+        blob_path = build_blob_path("input", uploaded_file.name, doc_upload.pk)
+        uploaded_file.seek(0)
+        upload_to_blob(uploaded_file, blob_path, content_type=uploaded_file.content_type)
+        doc_upload.blob_path = blob_path
+        doc_upload.blob_container = container_name
+        doc_upload.blob_name = blob_path
+        doc_upload.blob_url = f"https://bradblob.blob.core.windows.net/{container_name}/{blob_path}"
+        doc_upload.blob_uploaded_at = tz.now()
+        doc_upload.save(update_fields=[
+            "blob_path", "blob_container", "blob_name", "blob_url",
+            "blob_uploaded_at", "updated_at",
+        ])
+    except Exception as blob_exc:
+        import logging
+        logging.getLogger(__name__).exception("Blob upload failed for upload %s", doc_upload.pk)
+        doc_upload.delete()
+        messages.error(request, f"Upload to Azure Blob failed: {blob_exc}")
+        return redirect(request.META.get("HTTP_REFERER", "dashboard:index"))
 
     # Audit: invoice uploaded
     from apps.auditlog.services import AuditService
@@ -91,7 +121,7 @@ def upload_invoice(request):
 
 @login_required
 def invoice_list(request):
-    qs = Invoice.objects.select_related("vendor").order_by("-created_at")
+    qs = Invoice.objects.select_related("vendor").prefetch_related("ap_case").order_by("-created_at")
     status_filter = request.GET.get("status")
     if status_filter:
         qs = qs.filter(status=status_filter)
@@ -247,3 +277,23 @@ def grn_detail(request, pk):
     return render(request, "documents/grn_detail.html", {
         "grn": grn,
     })
+
+
+@login_required
+def document_download(request, pk):
+    """Serve the original uploaded document from Azure Blob Storage."""
+    upload = get_object_or_404(DocumentUpload, pk=pk)
+
+    if not upload.blob_path:
+        raise Http404("No document available — blob_path not set.")
+
+    from apps.documents.blob_service import is_blob_storage_enabled, generate_blob_sas_url
+    if not is_blob_storage_enabled():
+        raise Http404("Azure Blob Storage is not configured.")
+
+    try:
+        sas_url = generate_blob_sas_url(upload.blob_path, expiry_minutes=15)
+        from django.http import HttpResponseRedirect
+        return HttpResponseRedirect(sas_url)
+    except Exception:
+        raise Http404("Failed to generate download URL.")
