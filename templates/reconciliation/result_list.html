@@ -10,69 +10,54 @@
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h5 class="mb-0">Reconciliation Results</h5>
-  <form class="d-inline-flex gap-2" method="get">
-    <select name="match_status" class="form-select form-select-sm" onchange="this.form.submit()">
-      <option value="">All Statuses</option>
-      {% for val, label in match_status_choices %}
-        <option value="{{ val }}" {% if request.GET.match_status == val %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </form>
-</div>
-
-{% if ready_invoices %}
-<div class="card mb-3 border-success">
-  <div class="card-header bg-success bg-opacity-10 d-flex justify-content-between align-items-center">
-    <div>
-      <i class="bi bi-arrow-repeat me-2 text-success"></i>
-      <strong>Invoices Ready for Reconciliation</strong>
-      <span class="badge bg-success ms-2">{{ ready_invoices|length }}</span>
-    </div>
-  </div>
-  <div class="card-body p-0">
-    <form method="post" action="{% url 'reconciliation:start_reconciliation' %}" id="reconForm">
-      {% csrf_token %}
-      <table class="table table-sm mb-0">
-        <thead class="table-light">
-          <tr>
-            <th style="width:40px"><input type="checkbox" id="selectAll" class="form-check-input"></th>
-            <th>Invoice #</th><th>Vendor</th><th>PO #</th><th>Amount</th><th>Uploaded</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for inv in ready_invoices %}
-          <tr>
-            <td><input type="checkbox" name="invoice_ids" value="{{ inv.pk }}" class="form-check-input inv-check"></td>
-            <td><a href="{% url 'documents:invoice_detail' inv.pk %}">{{ inv.invoice_number|default:"—" }}</a></td>
-            <td>{{ inv.vendor.name|default:inv.raw_vendor_name }}</td>
-            <td>{{ inv.po_number|default:"—" }}</td>
-            <td>{{ inv.currency }} {{ inv.total_amount|default:"—" }}</td>
-            <td class="text-muted">{{ inv.created_at|timesince }} ago</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <div class="card-footer d-flex justify-content-between align-items-center">
-        <small class="text-muted"><span id="selectedCount">0</span> invoice(s) selected</small>
-        <div class="d-flex gap-2">
-          <button type="button" class="btn btn-outline-success btn-sm" id="selectAllBtn">Select All</button>
-          <button type="submit" class="btn btn-success btn-sm" id="startReconBtn" disabled>
-            <i class="bi bi-play-fill me-1"></i>Start Reconciliation
-          </button>
-        </div>
-      </div>
+  <h4 class="mb-0"><i class="bi bi-arrow-left-right me-2"></i>Reconciliation Results</h4>
+  <div class="ap-filter-bar d-inline-flex gap-2 p-0 border-0 bg-transparent">
+    <form class="d-inline-flex gap-2" method="get">
+      <select name="match_status" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Statuses</option>
+        {% for val, label in match_status_choices %}
+          <option value="{{ val }}" {% if request.GET.match_status == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select name="reconciliation_mode" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="">All Modes</option>
+        {% for val, label in reconciliation_mode_choices %}
+          <option value="{{ val }}" {% if request.GET.reconciliation_mode == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
     </form>
   </div>
 </div>
+
+{% if ready_invoices %}
+<div class="ap-card mb-3" style="border-left:3px solid var(--ap-info)">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <div>
+      <i class="bi bi-briefcase me-2 text-info"></i>
+      <strong>Invoices Awaiting Case Processing</strong>
+      <span class="ap-badge ap-badge-info ms-2">{{ ready_invoices|length }}</span>
+    </div>
+    <a href="{% url 'cases:case_inbox' %}" class="btn btn-info btn-sm">
+      <i class="bi bi-arrow-right me-1"></i>View in AP Cases
+    </a>
+  </div>
+  <div class="ap-card-body">
+    <p class="text-muted mb-0">
+      <i class="bi bi-info-circle me-1"></i>
+      Invoices are now automatically processed through the <strong>AP Cases</strong> pipeline after upload.
+      Manual reconciliation has been replaced by automated case-based processing.
+    </p>
+  </div>
+</div>
 {% endif %}
-<div class="card">
-  <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0 table-fixed-header">
-      <thead class="table-light">
+
+<div class="ap-card">
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead>
         <tr>
           <th>ID</th><th>Invoice #</th><th>PO #</th><th>Vendor</th>
-          <th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th><th></th>
+          <th>Mode</th><th>Match Status</th><th>Confidence</th><th>Diff %</th><th>Exceptions</th><th>Date</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -82,7 +67,13 @@
           <td>{{ r.invoice.invoice_number|default:"—" }}</td>
           <td>{{ r.purchase_order.po_number|default:"—" }}</td>
           <td>{% if r.invoice.vendor %}{{ r.invoice.vendor.name }}{% else %}{{ r.invoice.raw_vendor_name }}{% endif %}</td>
-          <td><span class="badge status-badge status-{{ r.match_status }}">{{ r.match_status }}</span></td>
+          <td>{% if r.is_two_way_result %}<span class="ap-badge ap-badge-path-2way">2-Way</span>{% elif r.is_three_way_result %}<span class="ap-badge ap-badge-path-3way">3-Way</span>{% else %}<span class="ap-badge ap-badge-status-new">—</span>{% endif %}</td>
+          <td>
+            {% if r.match_status == "MATCHED" %}<span class="ap-badge ap-badge-matched">{{ r.match_status }}</span>
+            {% elif r.match_status == "PARTIAL_MATCH" %}<span class="ap-badge ap-badge-partial">{{ r.match_status }}</span>
+            {% elif r.match_status == "UNMATCHED" %}<span class="ap-badge ap-badge-unmatched">{{ r.match_status }}</span>
+            {% else %}<span class="ap-badge ap-badge-review">{{ r.match_status }}</span>{% endif %}
+          </td>
           <td>{% if r.deterministic_confidence %}{% widthratio r.deterministic_confidence 1 100 %}%{% else %}—{% endif %}</td>
           <td>{{ r.total_amount_difference_pct|default:"—" }}%</td>
           <td>{{ r.exceptions.count }}</td>
@@ -90,7 +81,7 @@
           <td><a href="{% url 'reconciliation:case_console' r.pk %}" class="btn btn-sm btn-outline-primary py-0 px-1" title="Case Console"><i class="bi bi-layout-text-window-reverse"></i></a></td>
         </tr>
         {% empty %}
-        <tr><td colspan="10" class="text-center text-muted py-3">No results found</td></tr>
+        <tr><td colspan="11" class="text-center text-muted py-3">No results found</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -98,33 +89,4 @@
 </div>
 {% include "partials/pagination.html" %}
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  const checkboxes = document.querySelectorAll('.inv-check');
-  const selectAll = document.getElementById('selectAll');
-  const selectAllBtn = document.getElementById('selectAllBtn');
-  const startBtn = document.getElementById('startReconBtn');
-  const countSpan = document.getElementById('selectedCount');
-
-  function updateState() {
-    const checked = document.querySelectorAll('.inv-check:checked').length;
-    if (countSpan) countSpan.textContent = checked;
-    if (startBtn) startBtn.disabled = checked === 0;
-    if (selectAll) selectAll.checked = checked === checkboxes.length && checkboxes.length > 0;
-  }
-
-  if (selectAll) selectAll.addEventListener('change', function() {
-    checkboxes.forEach(cb => cb.checked = this.checked);
-    updateState();
-  });
-
-  if (selectAllBtn) selectAllBtn.addEventListener('click', function() {
-    checkboxes.forEach(cb => cb.checked = true);
-    if (selectAll) selectAll.checked = true;
-    updateState();
-  });
-
-  checkboxes.forEach(cb => cb.addEventListener('change', updateState));
-});
-</script>
 {% endblock %}

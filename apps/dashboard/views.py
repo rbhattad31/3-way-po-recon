@@ -1,12 +1,19 @@
 """Dashboard template views."""
 from django.contrib.auth.decorators import login_required
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, F, Q, Sum
 from django.shortcuts import render
 
 from apps.agents.models import AgentRun
-from apps.core.enums import AgentRunStatus, AgentType
+from apps.cases.models import APCase, APCaseStage
+from apps.core.enums import (
+    AgentRunStatus,
+    AgentType,
+    CasePriority,
+    CaseStatus,
+    ProcessingPath,
+    StageStatus,
+)
 from apps.dashboard.services import DashboardService
-from apps.reconciliation.models import ReconciliationRun
 
 
 @login_required
@@ -19,77 +26,141 @@ def index(request):
     })
 
 
+# ---------------------------------------------------------------------------
+# Grouping helpers
+# ---------------------------------------------------------------------------
+_STATUS_GROUPS = {
+    "in_flight": [
+        CaseStatus.NEW,
+        CaseStatus.INTAKE_IN_PROGRESS,
+        CaseStatus.EXTRACTION_IN_PROGRESS,
+        CaseStatus.EXTRACTION_COMPLETED,
+        CaseStatus.PATH_RESOLUTION_IN_PROGRESS,
+        CaseStatus.TWO_WAY_IN_PROGRESS,
+        CaseStatus.THREE_WAY_IN_PROGRESS,
+        CaseStatus.NON_PO_VALIDATION_IN_PROGRESS,
+        CaseStatus.GRN_ANALYSIS_IN_PROGRESS,
+        CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS,
+    ],
+    "review": [
+        CaseStatus.READY_FOR_REVIEW,
+        CaseStatus.IN_REVIEW,
+        CaseStatus.REVIEW_COMPLETED,
+    ],
+    "approval": [
+        CaseStatus.READY_FOR_APPROVAL,
+        CaseStatus.APPROVAL_IN_PROGRESS,
+        CaseStatus.READY_FOR_GL_CODING,
+        CaseStatus.READY_FOR_POSTING,
+    ],
+    "closed": [CaseStatus.CLOSED],
+    "exception": [CaseStatus.FAILED, CaseStatus.ESCALATED, CaseStatus.REJECTED],
+}
+
+
 @login_required
 def agent_monitor(request):
-    # --- Filters from query params ---
-    run_id = request.GET.get("run")
-    agent_type = request.GET.get("agent_type")
-    status = request.GET.get("status")
+    """Case Operations Dashboard — case-centric view with agent activity."""
 
-    qs = AgentRun.objects.select_related(
-        "agent_definition", "reconciliation_result", "reconciliation_result__invoice",
-        "reconciliation_result__run",
-    ).order_by("-created_at")
+    # --- Filters ---
+    path_filter = request.GET.get("path")
+    status_filter = request.GET.get("status")
+    priority_filter = request.GET.get("priority")
 
-    if run_id:
-        qs = qs.filter(reconciliation_result__run_id=run_id)
-    if agent_type:
-        qs = qs.filter(agent_type=agent_type)
-    if status:
-        qs = qs.filter(status=status)
+    case_qs = APCase.objects.select_related(
+        "invoice", "vendor", "purchase_order", "assigned_to",
+    )
 
-    agent_runs = qs[:100]
+    if path_filter:
+        case_qs = case_qs.filter(processing_path=path_filter)
+    if status_filter:
+        case_qs = case_qs.filter(status=status_filter)
+    if priority_filter:
+        case_qs = case_qs.filter(priority=priority_filter)
 
-    # --- Aggregate stats (on filtered queryset) ---
-    stats = qs.aggregate(
+    # ---- KPI aggregates ----
+    total_cases = case_qs.count()
+    kpis = case_qs.aggregate(
+        in_flight=Count("id", filter=Q(status__in=_STATUS_GROUPS["in_flight"])),
+        review=Count("id", filter=Q(status__in=_STATUS_GROUPS["review"])),
+        approval=Count("id", filter=Q(status__in=_STATUS_GROUPS["approval"])),
+        closed=Count("id", filter=Q(status__in=_STATUS_GROUPS["closed"])),
+        exception=Count("id", filter=Q(status__in=_STATUS_GROUPS["exception"])),
+        avg_risk=Avg("risk_score"),
+        needs_human=Count("id", filter=Q(requires_human_review=True)),
+    )
+
+    # ---- By processing path ----
+    path_breakdown = (
+        case_qs.values("processing_path")
+        .annotate(
+            count=Count("id"),
+            closed=Count("id", filter=Q(status=CaseStatus.CLOSED)),
+            in_review=Count("id", filter=Q(status__in=_STATUS_GROUPS["review"])),
+            failed=Count("id", filter=Q(status=CaseStatus.FAILED)),
+            avg_risk=Avg("risk_score"),
+        )
+        .order_by("processing_path")
+    )
+
+    # ---- By status ----
+    status_breakdown = (
+        case_qs.values("status")
+        .annotate(count=Count("id"))
+        .order_by("-count")
+    )
+
+    # ---- By priority ----
+    priority_breakdown = (
+        case_qs.values("priority")
+        .annotate(count=Count("id"))
+        .order_by("priority")
+    )
+
+    # ---- Agent activity summary (over same case set) ----
+    # Get invoice IDs from the filtered cases, then find agent runs via reconciliation_result
+    case_invoice_ids = case_qs.values_list("invoice_id", flat=True)
+    agent_qs = AgentRun.objects.filter(
+        reconciliation_result__invoice_id__in=case_invoice_ids,
+    )
+    agent_stats = agent_qs.aggregate(
         total=Count("id"),
         completed=Count("id", filter=Q(status=AgentRunStatus.COMPLETED)),
         failed=Count("id", filter=Q(status=AgentRunStatus.FAILED)),
-        skipped=Count("id", filter=Q(status=AgentRunStatus.SKIPPED)),
-        running=Count("id", filter=Q(status=AgentRunStatus.RUNNING)),
         total_tokens=Sum("total_tokens"),
         avg_duration=Avg("duration_ms"),
         avg_confidence=Avg("confidence"),
     )
 
-    # --- Per-agent-type breakdown ---
-    type_breakdown = (
-        qs.values("agent_type")
+    # per-type breakdown
+    agent_type_breakdown = (
+        agent_qs.values("agent_type")
         .annotate(
             count=Count("id"),
             completed=Count("id", filter=Q(status=AgentRunStatus.COMPLETED)),
             failed=Count("id", filter=Q(status=AgentRunStatus.FAILED)),
-            avg_duration=Avg("duration_ms"),
             avg_confidence=Avg("confidence"),
-            tokens=Sum("total_tokens"),
         )
         .order_by("agent_type")
     )
 
-    # --- Per reconciliation-run breakdown ---
-    run_breakdown = (
-        qs.values("reconciliation_result__run_id", "reconciliation_result__run__status")
-        .annotate(
-            agents=Count("id"),
-            completed=Count("id", filter=Q(status=AgentRunStatus.COMPLETED)),
-            failed=Count("id", filter=Q(status=AgentRunStatus.FAILED)),
-            tokens=Sum("total_tokens"),
-        )
-        .order_by("-reconciliation_result__run_id")[:20]
-    )
-
-    # --- Filter dropdown options ---
-    recon_runs = ReconciliationRun.objects.order_by("-created_at")[:30]
+    # ---- Recent cases ----
+    recent_cases = case_qs.order_by("-created_at")[:50]
 
     return render(request, "dashboard/agent_monitor.html", {
-        "agent_runs": agent_runs,
-        "stats": stats,
-        "type_breakdown": type_breakdown,
-        "run_breakdown": run_breakdown,
-        "recon_runs": recon_runs,
-        "agent_types": AgentType.choices,
-        "agent_statuses": AgentRunStatus.choices,
-        "selected_run": run_id or "",
-        "selected_agent_type": agent_type or "",
-        "selected_status": status or "",
+        "total_cases": total_cases,
+        "kpis": kpis,
+        "path_breakdown": path_breakdown,
+        "status_breakdown": status_breakdown,
+        "priority_breakdown": priority_breakdown,
+        "agent_stats": agent_stats,
+        "agent_type_breakdown": agent_type_breakdown,
+        "recent_cases": recent_cases,
+        # Filter support
+        "processing_paths": ProcessingPath.choices,
+        "case_statuses": CaseStatus.choices,
+        "priorities": CasePriority.choices,
+        "selected_path": path_filter or "",
+        "selected_status": status_filter or "",
+        "selected_priority": priority_filter or "",
     })

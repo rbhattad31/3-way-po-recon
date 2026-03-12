@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Case Inbox – AP Operations{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/case-inbox.css' %}" rel="stylesheet">
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item active">Case Inbox</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# ── Page Header ── #}
+<div class="ap-page-header">
+  <div>
+    <h1 class="ap-page-title"><i class="bi bi-inbox"></i> Case Inbox</h1>
+    <p class="ap-page-subtitle">All AP cases across intake, matching, review, and closure</p>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-download me-1"></i>Export</button>
+    <a href="{% url 'documents:invoice_list' %}" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg me-1"></i>New Invoice</a>
+  </div>
+</div>
+
+{# ── KPI Strip ── #}
+<div class="ap-kpi-strip">
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-primary-light);color:var(--ap-primary)">
+      <i class="bi bi-briefcase"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value">{{ stats.total|default:"0" }}</div>
+      <div class="ap-kpi-label">Total Cases</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-warning-light);color:var(--ap-warning)">
+      <i class="bi bi-eye"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value">{{ stats.by_status.READY_FOR_REVIEW|default:"0" }}</div>
+      <div class="ap-kpi-label">Awaiting Review</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-info-light);color:var(--ap-info)">
+      <i class="bi bi-arrow-repeat"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value">{{ stats.in_progress|default:"0" }}</div>
+      <div class="ap-kpi-label">In Progress</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-success-light);color:var(--ap-success)">
+      <i class="bi bi-check-circle"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value">{{ stats.by_status.CLOSED|default:"0" }}</div>
+      <div class="ap-kpi-label">Closed</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-danger-light);color:var(--ap-danger)">
+      <i class="bi bi-alarm"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value">{{ stats.overdue|default:"0" }}</div>
+      <div class="ap-kpi-label">Overdue (&gt;48h)</div>
+    </div>
+  </div>
+</div>
+
+{# ── Filter Toolbar ── #}
+<form method="get" class="ap-filter-bar" id="filterForm">
+  <div class="position-relative" style="flex:1;max-width:280px">
+    <i class="bi bi-search position-absolute" style="left:.75rem;top:50%;transform:translateY(-50%);color:var(--ap-text-muted);font-size:.8rem"></i>
+    <input type="text" name="q" class="form-control form-control-sm" placeholder="Search cases, invoices…"
+           value="{{ request.GET.q|default:'' }}" style="padding-left:2.25rem">
+  </div>
+  <select name="status" class="form-select form-select-sm" style="max-width:160px" onchange="this.form.submit()">
+    <option value="">All Statuses</option>
+    {% for val, label in status_choices %}
+      <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="processing_path" class="form-select form-select-sm" style="max-width:140px" onchange="this.form.submit()">
+    <option value="">All Paths</option>
+    {% for val, label in path_choices %}
+      <option value="{{ val }}" {% if request.GET.processing_path == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="priority" class="form-select form-select-sm" style="max-width:130px" onchange="this.form.submit()">
+    <option value="">All Priorities</option>
+    {% for val, label in priority_choices %}
+      <option value="{{ val }}" {% if request.GET.priority == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
+  {% if request.GET.q or request.GET.status or request.GET.processing_path or request.GET.priority %}
+  <a href="{% url 'cases:case_inbox' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-lg me-1"></i>Clear</a>
+  {% endif %}
+</form>
+
+{# Active filter chips #}
+{% if request.GET.status or request.GET.processing_path or request.GET.priority %}
+<div class="d-flex gap-2 mb-3 flex-wrap">
+  {% if request.GET.status %}
+  <span class="ap-filter-chip">Status: {{ request.GET.status }}
+    <a href="?{% if request.GET.q %}q={{ request.GET.q }}&{% endif %}{% if request.GET.processing_path %}processing_path={{ request.GET.processing_path }}&{% endif %}{% if request.GET.priority %}priority={{ request.GET.priority }}{% endif %}" class="text-decoration-none"><i class="bi bi-x"></i></a>
+  </span>
+  {% endif %}
+  {% if request.GET.processing_path %}
+  <span class="ap-filter-chip">Path: {{ request.GET.processing_path }}
+    <a href="?{% if request.GET.q %}q={{ request.GET.q }}&{% endif %}{% if request.GET.status %}status={{ request.GET.status }}&{% endif %}{% if request.GET.priority %}priority={{ request.GET.priority }}{% endif %}" class="text-decoration-none"><i class="bi bi-x"></i></a>
+  </span>
+  {% endif %}
+  {% if request.GET.priority %}
+  <span class="ap-filter-chip">Priority: {{ request.GET.priority }}
+    <a href="?{% if request.GET.q %}q={{ request.GET.q }}&{% endif %}{% if request.GET.status %}status={{ request.GET.status }}&{% endif %}{% if request.GET.processing_path %}processing_path={{ request.GET.processing_path }}{% endif %}" class="text-decoration-none"><i class="bi bi-x"></i></a>
+  </span>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ── Cases Table ── #}
+<div class="ap-card">
+  <div class="ap-card-body-flush">
+    <table class="ap-table table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Case</th>
+          <th>Invoice</th>
+          <th>Vendor</th>
+          <th>Path</th>
+          <th>Status</th>
+          <th>Stage</th>
+          <th>Priority</th>
+          <th>Amount</th>
+          <th>Assigned</th>
+          <th>Age</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for case in cases %}
+        <tr class="case-row" onclick="window.location='{% url 'cases:case_console' case.pk %}'" style="cursor:pointer">
+          <td>
+            <a href="{% url 'cases:case_console' case.pk %}" class="fw-bold text-decoration-none text-primary">
+              {{ case.case_number }}
+            </a>
+          </td>
+          <td>
+            {% if case.invoice %}
+              <span class="text-muted">{{ case.invoice.invoice_number|default:"—"|truncatechars:18 }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td><span title="{{ case.vendor.name|default:'—' }}">{{ case.vendor.name|default:"—"|truncatechars:22 }}</span></td>
+          <td>{% include "cases/partials/_path_badge.html" with path=case.processing_path %}</td>
+          <td>
+            {% if case.status == "CLOSED" %}
+              <span class="ap-badge ap-badge-success">Closed</span>
+            {% elif case.status == "FAILED" %}
+              <span class="ap-badge ap-badge-danger">Failed</span>
+            {% elif case.status == "REJECTED" %}
+              <span class="ap-badge ap-badge-danger">Rejected</span>
+            {% elif case.status == "ESCALATED" %}
+              <span class="ap-badge ap-badge-warning">Escalated</span>
+            {% elif case.status == "READY_FOR_REVIEW" %}
+              <span class="ap-badge ap-badge-warning">Review</span>
+            {% elif case.status == "IN_REVIEW" %}
+              <span class="ap-badge ap-badge-info">In Review</span>
+            {% elif case.status == "NEW" %}
+              <span class="ap-badge ap-badge-muted">New</span>
+            {% else %}
+              <span class="ap-badge ap-badge-primary">{{ case.get_status_display }}</span>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ case.get_current_stage_display|default:"—" }}</small></td>
+          <td>
+            {% if case.priority == "CRITICAL" %}
+              <span class="ap-badge ap-sev-critical"><i class="bi bi-fire"></i> Critical</span>
+            {% elif case.priority == "HIGH" %}
+              <span class="ap-badge ap-sev-high">High</span>
+            {% elif case.priority == "MEDIUM" %}
+              <span class="ap-badge ap-sev-medium">Med</span>
+            {% else %}
+              <span class="ap-badge ap-badge-muted">Low</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if case.invoice.total_amount %}
+              <span class="fw-semibold">{{ case.invoice.currency }} {{ case.invoice.total_amount|floatformat:2 }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if case.assigned_to %}
+              <span class="ap-badge ap-badge-muted"><i class="bi bi-person"></i> {{ case.assigned_to.get_short_name|truncatechars:12 }}</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ case.created_at|timesince }}</small></td>
+          <td>
+            <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" title="Open Case Console"
+               onclick="event.stopPropagation()">
+              <i class="bi bi-arrow-right"></i>
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="11">
+            <div class="ap-empty-state">
+              <i class="bi bi-inbox"></i>
+              <div class="ap-empty-state-label">No cases found matching your filters</div>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "partials/pagination.html" %}
+{% endblock %}

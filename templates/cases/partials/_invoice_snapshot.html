@@ -1,0 +1,53 @@
+{# ── Invoice Snapshot Card ── #}
+{# Context: invoice (Invoice model) #}
+
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-file-earmark-text"></i> Invoice</div>
+  {% if invoice %}
+  <div class="ap-card-body-flush">
+    <table class="ap-table">
+      <tbody>
+        <tr>
+          <td class="text-muted" style="width:35%">Invoice #</td>
+          <td class="fw-semibold">
+            <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="text-decoration-none">
+              {{ invoice.invoice_number|default:"—" }}
+            </a>
+          </td>
+        </tr>
+        <tr><td class="text-muted">Vendor</td><td>{{ invoice.vendor.name|default:invoice.raw_vendor_name|default:"—" }}</td></tr>
+        <tr><td class="text-muted">Date</td><td>{{ invoice.invoice_date|date:"d M Y"|default:"—" }}</td></tr>
+        <tr><td class="text-muted">PO Reference</td><td>{{ invoice.po_number|default:"—" }}</td></tr>
+        <tr>
+          <td class="text-muted">Amount</td>
+          <td class="fw-bold">
+            {% if invoice.total_amount %}{{ invoice.currency }} {{ invoice.total_amount|floatformat:2 }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        <tr><td class="text-muted">Tax</td>
+          <td>{% if invoice.tax_amount %}{{ invoice.currency }} {{ invoice.tax_amount|floatformat:2 }}{% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+          <td class="text-muted">Confidence</td>
+          <td>
+            {% if invoice.extraction_confidence %}
+            <div class="ap-confidence">
+              <div class="ap-confidence-bar" style="width:64px">
+                <div class="ap-confidence-fill {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                     style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></div>
+              </div>
+              <span>{% widthratio invoice.extraction_confidence 1 100 %}%</span>
+            </div>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="ap-empty-state">
+    <i class="bi bi-file-earmark-text"></i>
+    <div class="ap-empty-state-label">No invoice linked</div>
+  </div>
+  {% endif %}
+</div>

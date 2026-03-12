@@ -48,10 +48,19 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - Tool-calling uses **OpenAI-compliant format**: `tool_calls` array on assistant messages, `tool_call_id` + `name` on tool response messages.
 - Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`.
 - `AgentOrchestrator` is the entry point; `PolicyEngine` decides which agents to run based on match status + exception types.
+- `PolicyEngine` also handles **auto-close logic**: `should_auto_close()` and `_within_auto_close_band()` check if PARTIAL_MATCH falls within wider auto-close thresholds (qty: 5%, price: 3%, amount: 3%).
 - Agent pipeline is **wired to run automatically** after reconciliation for non-MATCHED results (sync via `start_reconciliation` view, async via `run_agent_pipeline_task`).
-- Every agent run, message, tool call, and decision is persisted for auditability.
+- Every agent run, message, tool call, and decision is persisted for auditability via `AgentTraceService`.
+- `RecommendationService` manages agent recommendations (`AgentRecommendation` model) with acceptance tracking.
+- `AgentFeedbackService` handles PO/GRN re-reconciliation when an agent recovers a missing document (atomic re-linking + re-matching).
 - LLM client supports both OpenAI and Azure OpenAI (configurable via env vars).
 - Agent definitions include `config_json` with `allowed_tools` per agent type.
+
+### Governance & Audit
+- `CaseTimelineService` in `apps/auditlog/timeline_service.py` builds a unified chronological timeline per invoice (audit events + agent runs + tool calls + recommendations + review actions).
+- `AgentTraceService` in `apps/agents/services/agent_trace_service.py` is the single entry point for recording all agent activity (runs, steps, tool calls, decisions).
+- Governance views (`apps/auditlog/template_views.py`): `audit_event_list` (filterable log) and `invoice_governance` (full dashboard with role-based access: ADMIN/AUDITOR see full trace).
+- Templates are in `templates/governance/`.
 
 ### Templates
 - Templates use **Bootstrap 5** with Django template inheritance from `base.html`.
@@ -77,7 +86,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Permissions | `apps/core/permissions.py` |
 | Utilities | `apps/core/utils.py` |
 | Admin | `apps/<app>/admin.py` |
-| Templates | `templates/<app>/` |
+| Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views) |
 | Static files | `static/css/`, `static/js/` |
 | Config | `config/settings.py`, `config/urls.py`, `config/celery.py` |
 
@@ -97,18 +106,21 @@ DocumentUpload (documents)
        ├── references: PurchaseOrder.po_number
        └── has: extraction_confidence, status (InvoiceStatus)
 
-PurchaseOrder (documents) ──< PurchaseOrderLineItem
+PurchaseOrder (documents) ──< PurchaseOrderLineItem (item_category, is_service_item, is_stock_item)
   └── GoodsReceiptNote (documents) ──< GRNLineItem
 
 ExtractionResult (extraction) ── linked to DocumentUpload + Invoice
 
-ReconciliationConfig (reconciliation)
+ReconciliationConfig (reconciliation) — tiered tolerance: strict + auto-close bands; mode resolver settings
+ReconciliationPolicy (reconciliation) — vendor/category/location/business-unit → mode mapping
 ReconciliationRun ──< ReconciliationResult ──< ReconciliationResultLine
                                             ──< ReconciliationException
-ReconciliationResult ── linked to Invoice + PurchaseOrder
+ReconciliationResult ── linked to Invoice + PurchaseOrder (reconciliation_mode, mode_resolved_by)
 
 AgentDefinition (agents)
 AgentRun ──< AgentStep, AgentMessage, DecisionLog
+AgentRun ──< AgentRecommendation (with acceptance tracking)
+AgentRun ──< AgentEscalation (severity-based, suggested assignee)
 AgentRun ── linked to ReconciliationResult
 ToolCall (tools) ── linked to AgentRun + ToolDefinition
 
@@ -189,24 +201,38 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 ## What's Implemented vs. What's Next
 
 ### ✅ Fully implemented
-- All models, migrations, enums (14 enum classes), permissions, middleware
+- All models, migrations, enums (17 enum classes incl. `ReconciliationMode`, `ReconciliationModeApplicability`), permissions, middleware
 - Extraction pipeline (8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction)
-- Reconciliation engine (10 services + Celery tasks)
-- Agent orchestration (7 agents, policy engine, tool registry, LLM client, decision log service)
+- Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
+- `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
+- `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
+- `ReconciliationPolicy` model: vendor, item_category, location_code, business_unit, is_service_invoice, is_stock_invoice, priority-ordered matching
+- Mode-aware classification, exception building (applies_to_mode tagging), result persistence (mode metadata + confidence weights)
+- Agent orchestration (7 agents, policy engine with auto-close logic + mode-aware GRN suppression, tool registry, LLM client, decision log service)
+- Mode-aware agents: `AgentContext.reconciliation_mode`, `_mode_context()` helper on all agent types, PolicyEngine suppresses GRN_RETRIEVAL in 2-way
+- Agent feedback loop: `AgentFeedbackService` re-reconciles when PO/GRN agent recovers missing document (atomic)
+- Agent recommendation service: `AgentRecommendation` model with acceptance tracking + `AgentEscalation` model
+- Agent trace service: unified governance tracing (`AgentTraceService`)
 - Agent pipeline wired to run automatically after reconciliation for non-MATCHED results (sync + async paths)
 - 6 class-based tools (po_lookup, grn_lookup, vendor_search, invoice_details, exception_list, reconciliation_summary)
 - OpenAI-compliant tool-calling format (tool_calls on assistant messages, tool_call_id on tool responses)
+- Tool call logging: `ToolCallLogger` persists every invocation with status, duration, input/output
 - Review workflow (service + API + templates) with auto-creation of ReviewAssignment for REQUIRES_REVIEW results
 - Review UI: "Awaiting Assignment" panel + bulk assignment creation
 - Reconciliation UI: "Start Reconciliation" panel with checkbox invoice selection (triggers matching + agent pipeline)
-- Dashboard analytics (service + 6 API endpoints)
-- DRF APIs (all ViewSets, serializers, routing)
-- Bootstrap 5 templates (16 templates incl. partials)
+- Case console: deep-dive investigation view per reconciliation result + CSV export
+- Reconciliation settings viewer (tolerance configuration)
+- Dashboard analytics (service + 7 API endpoints incl. mode-breakdown)
+- DRF APIs (all ViewSets, serializers, routing) + Governance API (`/api/v1/governance/`) + Reconciliation Policies API (`/api/v1/reconciliation/policies/`)
+- Bootstrap 5 templates (23 templates incl. partials, governance views)
 - Admin panel registration
-- Audit logging models
+- Audit logging & governance: ProcessingLog, AuditEvent (17 event types incl. MODE_RESOLUTION, MODE_OVERRIDE, MODE_POLICY_APPLIED), FileProcessingStatus, CaseTimelineService (unified case timeline with mode resolution events), governance views (audit event list + invoice governance dashboard with role-based access)
 - Seed data management command (`python manage.py seed_data`) — 5 users, 5 vendors, 13 invoices (with edge-case scenarios), POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions
 - Saudi McD master data (`python manage.py seed_saudi_mcd_data`) — 6 users, 10 vendors + aliases, 25 POs (~62 line items), 30 GRNs (~70 line items) across Riyadh/Jeddah/Dammam warehouses
-- Invoice test scenarios (`python manage.py seed_invoice_test_data`) — 12 scenarios (SCN-KSA-001..012, 13 invoices, 34 line items): perfect match, qty/price/VAT mismatch, missing PO, missing GRN, multi-GRN aggregation, duplicate invoice, low-confidence Arabic-English, location mismatch, GRN shortage, review case
+- Invoice test scenarios (`python manage.py seed_invoice_test_data`) — 18 scenarios (SCN-KSA-001..018): perfect match, qty/price/VAT mismatch, missing PO, missing GRN, multi-GRN aggregation, duplicate invoice, low-confidence Arabic-English, location mismatch, GRN shortage, review case, auto-close band (013–015), AI-resolvable (016–018)
+- PO Agent test scenarios (`python manage.py seed_po_agent_test_data`) — 10 scenarios (SCN-POAG-001..010): reordered PO, vendor-based discovery, Arabic aliases, closed POs, wrong vendor, ambiguous matches
+- GRN Agent test scenarios (`python manage.py seed_grn_agent_test_data`) — 12 scenarios (SCN-GRNAG-001..012): full receipt, missing GRN, partial receipt, over-delivery, multi-GRN, delayed receipt, location mismatch, wrong item mix, service invoices, cold-chain shortage
+- Mixed-mode reconciliation test data (`python manage.py seed_mixed_mode_data`) — 12 scenarios (SCN-MODE-001..012), 7 reconciliation policies, 1 service vendor, covering all mode resolution paths (policy, heuristic, default fallback). Requires `seed_saudi_mcd_data`.
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
@@ -214,7 +240,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **Tests**: pytest + factory-boy configured but no tests written. Need unit tests for services, integration tests for API endpoints, and factory classes for all models.
 - **Extraction refinement**: Tune LLM extraction prompts, add support for multi-page invoices, handle edge-case layouts.
 - **ERP integrations**: Build actual connectors for PO/GRN ingestion (PO_API, GRN_API).
-- **Report export services**: GeneratedReport model exists but CSV/Excel export logic not built.
+- **Report export services**: GeneratedReport model exists but full CSV/Excel export logic not built (CSV export exists for case console only).
 - **Celery Beat schedules**: No periodic tasks configured yet.
 - **Email notifications**: No notification system for review assignments.
 - **Docker / deployment**: No Dockerfile or docker-compose.
@@ -247,6 +273,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/documents/models.py` | Invoice, PO, GRN data models |
 | `apps/reconciliation/template_views.py` | Start reconciliation view + agent pipeline wiring |
 | `apps/reconciliation/services/runner_service.py` | Core 3-way matching orchestration + auto-ReviewAssignment |
+| `apps/reconciliation/services/tolerance_engine.py` | Tiered tolerance comparison (strict + auto-close bands) |
+| `apps/reconciliation/services/agent_feedback_service.py` | Agent PO/GRN re-reconciliation loop |
 | `apps/agents/services/orchestrator.py` | Agent pipeline orchestration |
 | `apps/agents/services/base_agent.py` | Base agent with ReAct loop |
 | `apps/agents/services/agent_classes.py` | All 7 agent implementations |
@@ -254,3 +282,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/tools/registry/base.py` | BaseTool, ToolRegistry, @register_tool |
 | `apps/extraction/tasks.py` | Extraction pipeline task |
 | `apps/reviews/services.py` | Review workflow lifecycle |
+| `apps/agents/services/recommendation_service.py` | Agent recommendation lifecycle (create, query, accept) |
+| `apps/agents/services/agent_trace_service.py` | Unified agent governance tracing |
+| `apps/agents/services/policy_engine.py` | Agent plan + auto-close band logic |
+| `apps/auditlog/timeline_service.py` | Unified case timeline service |
+| `apps/auditlog/template_views.py` | Governance views (audit log + invoice governance) |

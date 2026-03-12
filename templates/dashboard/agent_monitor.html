@@ -1,255 +1,464 @@
 {% extends "base.html" %}
-{% block title %}Agent Monitor – PO Reconciliation{% endblock %}
+{% load static %}
+{% block title %}Case Operations – AP Operations{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/agent-monitor.css' %}" rel="stylesheet">
+{% endblock %}
 
 {% block breadcrumb %}
-<nav aria-label="breadcrumb">
-  <ol class="breadcrumb">
-    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
-    <li class="breadcrumb-item active">Agent Monitor</li>
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item active">Case Operations</li>
   </ol>
 </nav>
 {% endblock %}
 
 {% block content %}
-<!-- ── Filters ── -->
-<div class="card mb-4">
-  <div class="card-body py-2">
-    <form method="get" class="row g-2 align-items-end">
-      <div class="col-md-3">
-        <label class="form-label form-label-sm mb-0">Reconciliation Run</label>
-        <select name="run" class="form-select form-select-sm">
-          <option value="">All runs</option>
-          {% for r in recon_runs %}
-          <option value="{{ r.pk }}" {% if selected_run == r.pk|stringformat:"d" %}selected{% endif %}>
-            Run #{{ r.pk }} – {{ r.status }} ({{ r.total_invoices }} inv)
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-3">
-        <label class="form-label form-label-sm mb-0">Agent Type</label>
-        <select name="agent_type" class="form-select form-select-sm">
-          <option value="">All types</option>
-          {% for val, label in agent_types %}
-          <option value="{{ val }}" {% if selected_agent_type == val %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-2">
-        <label class="form-label form-label-sm mb-0">Status</label>
-        <select name="status" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% for val, label in agent_statuses %}
-          <option value="{{ val }}" {% if selected_status == val %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-2">
-        <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-funnel"></i> Filter</button>
-      </div>
-      <div class="col-md-2">
-        <a href="{% url 'dashboard:agent_monitor' %}" class="btn btn-outline-secondary btn-sm w-100">Clear</a>
-      </div>
-    </form>
+{# PAGE HEADER #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0 fw-semibold"><i class="bi bi-briefcase me-2"></i>Case Operations</h4>
+    <small style="color:var(--ap-text-muted)">End-to-end case processing &amp; AI agent activity</small>
+  </div>
+  <a href="{% url 'cases:case_inbox' %}" class="btn btn-sm btn-outline-primary">
+    <i class="bi bi-inbox me-1"></i>Case Inbox
+  </a>
+</div>
+
+{# ═══════════ FILTER BAR ═══════════ #}
+<div class="ap-filter-bar mb-3">
+  <form method="get" class="d-flex gap-2 align-items-end flex-wrap">
+    <div style="min-width:180px">
+      <label class="form-label mb-0" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Processing Path</label>
+      <select name="path" class="form-select form-select-sm">
+        <option value="">All paths</option>
+        {% for val, label in processing_paths %}
+        <option value="{{ val }}" {% if selected_path == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="min-width:200px">
+      <label class="form-label mb-0" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Status</label>
+      <select name="status" class="form-select form-select-sm">
+        <option value="">All statuses</option>
+        {% for val, label in case_statuses %}
+        <option value="{{ val }}" {% if selected_status == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="min-width:130px">
+      <label class="form-label mb-0" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Priority</label>
+      <select name="priority" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for val, label in priorities %}
+        <option value="{{ val }}" {% if selected_priority == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
+    <a href="{% url 'dashboard:agent_monitor' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </form>
+</div>
+
+{# ═══════════ CASE KPI STRIP ═══════════ #}
+<div class="ap-kpi-strip">
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-primary-light);color:var(--ap-primary)">
+      <i class="bi bi-briefcase"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value" style="color:var(--ap-primary)">{{ total_cases }}</div>
+      <div class="ap-kpi-label">Total Cases</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-info-light);color:var(--ap-info)">
+      <i class="bi bi-play-circle"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value" style="color:var(--ap-info)">{{ kpis.in_flight }}</div>
+      <div class="ap-kpi-label">In Flight</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-warning-light);color:var(--ap-warning)">
+      <i class="bi bi-person-check"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value" style="color:var(--ap-warning)">{{ kpis.review }}</div>
+      <div class="ap-kpi-label">In Review</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-success-light);color:var(--ap-success)">
+      <i class="bi bi-check-circle"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value text-success">{{ kpis.closed }}</div>
+      <div class="ap-kpi-label">Closed</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:var(--ap-danger-light);color:var(--ap-danger)">
+      <i class="bi bi-exclamation-triangle"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value text-danger">{{ kpis.exception }}</div>
+      <div class="ap-kpi-label">Failed / Escalated</div>
+    </div>
+  </div>
+  <div class="ap-kpi-card">
+    <div class="ap-kpi-icon" style="background:#fef3c7;color:#d97706">
+      <i class="bi bi-person-raised-hand"></i>
+    </div>
+    <div>
+      <div class="ap-kpi-value" style="color:#d97706">{{ kpis.needs_human }}</div>
+      <div class="ap-kpi-label">Needs Human</div>
+    </div>
   </div>
 </div>
 
-<!-- ── Summary Cards ── -->
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg">
-    <div class="card card-metric info">
-      <div class="card-body text-center py-3">
-        <div class="fs-3 fw-bold text-primary">{{ stats.total }}</div>
-        <small class="text-muted">Total Runs</small>
+{# ═══════════ BREAKDOWN CARDS ═══════════ #}
+<div class="row g-3 mb-3">
+
+  {# --- By Processing Path --- #}
+  <div class="col-lg-5">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-signpost-split"></i> By Processing Path
       </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg">
-    <div class="card card-metric matched">
-      <div class="card-body text-center py-3">
-        <div class="fs-3 fw-bold text-success">{{ stats.completed }}</div>
-        <small class="text-muted">Completed</small>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg">
-    <div class="card card-metric error">
-      <div class="card-body text-center py-3">
-        <div class="fs-3 fw-bold text-danger">{{ stats.failed }}</div>
-        <small class="text-muted">Failed</small>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg">
-    <div class="card card-metric review">
-      <div class="card-body text-center py-3">
-        <div class="fs-3 fw-bold" style="color:#6c757d">{{ stats.skipped }}</div>
-        <small class="text-muted">Skipped</small>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg">
-    <div class="card card-metric info">
-      <div class="card-body text-center py-3">
-        <div class="fs-3 fw-bold" style="color:#0d6efd">{{ stats.total_tokens|default:"0" }}</div>
-        <small class="text-muted">Total Tokens</small>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg">
-    <div class="card card-metric info">
-      <div class="card-body text-center py-3">
-        <div class="fs-3 fw-bold" style="color:#0d6efd">
-          {% if stats.avg_duration %}{{ stats.avg_duration|floatformat:0 }}ms{% else %}—{% endif %}
+      <div class="ap-card-body p-0">
+        <div class="table-responsive">
+          <table class="ap-table w-100">
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th class="text-center">Cases</th>
+                <th class="text-center">Closed</th>
+                <th class="text-center">Review</th>
+                <th class="text-center">Failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in path_breakdown %}
+              <tr>
+                <td>
+                  <a href="?path={{ row.processing_path }}" class="text-decoration-none">
+                    <span class="ap-badge {% if row.processing_path == 'TWO_WAY' %}ap-badge-2way{% elif row.processing_path == 'THREE_WAY' %}ap-badge-3way{% elif row.processing_path == 'NON_PO' %}ap-badge-nonpo{% else %}ap-badge-unresolved{% endif %}">
+                      {{ row.processing_path }}
+                    </span>
+                  </a>
+                </td>
+                <td class="text-center fw-semibold">{{ row.count }}</td>
+                <td class="text-center"><span class="text-success fw-semibold">{{ row.closed }}</span></td>
+                <td class="text-center"><span style="color:var(--ap-warning)">{{ row.in_review }}</span></td>
+                <td class="text-center"><span class="text-danger">{{ row.failed }}</span></td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="5">
+                <div class="ap-empty-state">
+                  <i class="bi bi-signpost-split"></i>
+                  <div class="ap-empty-state-label">No case data</div>
+                </div>
+              </td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-        <small class="text-muted">Avg Duration</small>
+      </div>
+    </div>
+  </div>
+
+  {# --- By Status --- #}
+  <div class="col-lg-4">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-bar-chart-steps"></i> By Status
+      </div>
+      <div class="ap-card-body p-0" style="max-height:320px;overflow-y:auto">
+        <div class="table-responsive">
+          <table class="ap-table w-100">
+            <thead>
+              <tr><th>Status</th><th class="text-center">Count</th><th style="width:40%">Distribution</th></tr>
+            </thead>
+            <tbody>
+              {% for row in status_breakdown %}
+              <tr>
+                <td>
+                  <a href="?status={{ row.status }}" class="text-decoration-none">
+                    <span class="ap-badge {% if row.status == 'CLOSED' %}ap-badge-success{% elif row.status == 'FAILED' or row.status == 'REJECTED' %}ap-badge-danger{% elif row.status == 'ESCALATED' %}ap-badge-warning{% elif row.status == 'READY_FOR_REVIEW' or row.status == 'IN_REVIEW' %}ap-badge-info{% else %}ap-badge-muted{% endif %}">
+                      {{ row.status }}
+                    </span>
+                  </a>
+                </td>
+                <td class="text-center fw-semibold">{{ row.count }}</td>
+                <td>
+                  {% if total_cases %}
+                  <div class="ap-confidence-bar" style="height:6px;border-radius:3px;background:var(--ap-border-light)">
+                    <div style="height:100%;border-radius:3px;background:var(--ap-primary);width:{% widthratio row.count total_cases 100 %}%"></div>
+                  </div>
+                  {% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="3">
+                <div class="ap-empty-state">
+                  <i class="bi bi-bar-chart-steps"></i>
+                  <div class="ap-empty-state-label">No data</div>
+                </div>
+              </td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# --- By Priority --- #}
+  <div class="col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-flag"></i> By Priority
+      </div>
+      <div class="ap-card-body p-0">
+        <div class="table-responsive">
+          <table class="ap-table w-100">
+            <thead>
+              <tr><th>Priority</th><th class="text-center">Cases</th></tr>
+            </thead>
+            <tbody>
+              {% for row in priority_breakdown %}
+              <tr>
+                <td>
+                  <span class="ap-badge {% if row.priority == 'CRITICAL' %}ap-sev-critical{% elif row.priority == 'HIGH' %}ap-sev-high{% elif row.priority == 'MEDIUM' %}ap-sev-medium{% else %}ap-sev-low{% endif %}">
+                    {{ row.priority }}
+                  </span>
+                </td>
+                <td class="text-center fw-semibold">{{ row.count }}</td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="2">
+                <div class="ap-empty-state">
+                  <i class="bi bi-flag"></i>
+                  <div class="ap-empty-state-label">No data</div>
+                </div>
+              </td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ── Breakdown Cards Row ── -->
-<div class="row g-3 mb-4">
-  <!-- Per Agent Type Breakdown -->
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-header bg-white"><strong><i class="bi bi-robot"></i> By Agent Type</strong></div>
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-light">
-            <tr><th>Agent Type</th><th class="text-center">Runs</th><th class="text-center">OK</th><th class="text-center">Fail</th><th class="text-center">Avg ms</th><th class="text-center">Tokens</th></tr>
-          </thead>
-          <tbody>
-            {% for row in type_breakdown %}
-            <tr>
-              <td>
-                <a href="?agent_type={{ row.agent_type }}" class="text-decoration-none">
-                  {{ row.agent_type }}
-                </a>
-              </td>
-              <td class="text-center">{{ row.count }}</td>
-              <td class="text-center text-success fw-bold">{{ row.completed }}</td>
-              <td class="text-center text-danger fw-bold">{{ row.failed }}</td>
-              <td class="text-center">{% if row.avg_duration %}{{ row.avg_duration|floatformat:0 }}{% else %}—{% endif %}</td>
-              <td class="text-center">{{ row.tokens|default:"—" }}</td>
-            </tr>
-            {% empty %}
-            <tr><td colspan="6" class="text-center text-muted py-3">No data</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+{# ═══════════ AGENT ACTIVITY SUMMARY ═══════════ #}
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="ap-card">
+      <div class="ap-card-header">
+        <i class="bi bi-robot"></i> AI Agent Activity
+        <span class="ms-auto" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);font-weight:400;text-transform:none">
+          Across {{ total_cases }} case{{ total_cases|pluralize }}
+        </span>
       </div>
-    </div>
-  </div>
+      <div class="ap-card-body">
+        {# Agent KPIs #}
+        <div class="row g-3 mb-3">
+          <div class="col-md-2">
+            <div class="text-center">
+              <div class="fs-4 fw-bold" style="color:var(--ap-primary)">{{ agent_stats.total|default:"0" }}</div>
+              <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase">Agent Runs</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="text-center">
+              <div class="fs-4 fw-bold text-success">{{ agent_stats.completed|default:"0" }}</div>
+              <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase">Completed</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="text-center">
+              <div class="fs-4 fw-bold text-danger">{{ agent_stats.failed|default:"0" }}</div>
+              <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase">Failed</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="text-center">
+              <div class="fs-4 fw-bold" style="color:var(--ap-primary)">{{ agent_stats.total_tokens|default:"0" }}</div>
+              <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase">Tokens</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="text-center">
+              <div class="fs-4 fw-bold" style="color:var(--ap-info)">{% if agent_stats.avg_duration %}{{ agent_stats.avg_duration|floatformat:0 }}ms{% else %}—{% endif %}</div>
+              <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase">Avg Duration</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <div class="text-center">
+              <div class="fs-4 fw-bold" style="color:var(--ap-warning)">{% if agent_stats.avg_confidence %}{% widthratio agent_stats.avg_confidence 1 100 %}%{% else %}—{% endif %}</div>
+              <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase">Avg Confidence</div>
+            </div>
+          </div>
+        </div>
 
-  <!-- Per Reconciliation Run Breakdown -->
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <div class="card-header bg-white"><strong><i class="bi bi-list-check"></i> By Reconciliation Run</strong></div>
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-light">
-            <tr><th>Run</th><th>Run Status</th><th class="text-center">Agents</th><th class="text-center">OK</th><th class="text-center">Fail</th><th class="text-center">Tokens</th></tr>
-          </thead>
-          <tbody>
-            {% for row in run_breakdown %}
-            <tr>
-              <td>
-                <a href="?run={{ row.reconciliation_result__run_id }}" class="text-decoration-none">
-                  #{{ row.reconciliation_result__run_id }}
-                </a>
-              </td>
-              <td>
-                <span class="badge status-badge status-{{ row.reconciliation_result__run__status }}">
-                  {{ row.reconciliation_result__run__status }}
-                </span>
-              </td>
-              <td class="text-center">{{ row.agents }}</td>
-              <td class="text-center text-success fw-bold">{{ row.completed }}</td>
-              <td class="text-center text-danger fw-bold">{{ row.failed }}</td>
-              <td class="text-center">{{ row.tokens|default:"—" }}</td>
-            </tr>
-            {% empty %}
-            <tr><td colspan="6" class="text-center text-muted py-3">No data</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        {# Per agent type #}
+        <div class="table-responsive">
+          <table class="ap-table w-100">
+            <thead>
+              <tr>
+                <th>Agent Type</th>
+                <th class="text-center">Runs</th>
+                <th class="text-center">Completed</th>
+                <th class="text-center">Failed</th>
+                <th class="text-center">Avg Confidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in agent_type_breakdown %}
+              <tr>
+                <td>
+                  <span class="ap-badge ap-badge-primary">{{ row.agent_type }}</span>
+                </td>
+                <td class="text-center">{{ row.count }}</td>
+                <td class="text-center"><span class="text-success fw-semibold">{{ row.completed }}</span></td>
+                <td class="text-center"><span class="text-danger fw-semibold">{{ row.failed }}</span></td>
+                <td class="text-center">
+                  {% if row.avg_confidence %}
+                    <div class="d-inline-flex align-items-center gap-1">
+                      <div class="ap-confidence-bar" style="width:60px;height:6px;border-radius:3px;background:var(--ap-border-light)">
+                        <div style="height:100%;border-radius:3px;width:{% widthratio row.avg_confidence 1 100 %}%;background:{% if row.avg_confidence >= 0.8 %}var(--ap-success){% elif row.avg_confidence >= 0.5 %}var(--ap-warning){% else %}var(--ap-danger){% endif %}"></div>
+                      </div>
+                      <span style="font-size:var(--ap-font-size-xs)">{% widthratio row.avg_confidence 1 100 %}%</span>
+                    </div>
+                  {% else %}—{% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="5">
+                <div class="ap-empty-state">
+                  <i class="bi bi-robot"></i>
+                  <div class="ap-empty-state-label">No agent runs</div>
+                </div>
+              </td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ── Recent Agent Runs Table ── -->
-<div class="card">
-  <div class="card-header bg-white d-flex justify-content-between align-items-center">
-    <strong><i class="bi bi-journal-text"></i> Agent Runs</strong>
-    <span class="text-muted small">Showing {{ agent_runs|length }} of {{ stats.total }}</span>
+{# ═══════════ RECENT CASES TABLE ═══════════ #}
+<div class="ap-card">
+  <div class="ap-card-header">
+    <i class="bi bi-clock-history"></i> Recent Cases
+    <span class="ms-auto" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);font-weight:400;text-transform:none">
+      Showing {{ recent_cases|length }} of {{ total_cases }}
+    </span>
   </div>
-  <div class="card-body p-0">
+  <div class="ap-card-body p-0">
     <div class="table-responsive">
-      <table class="table table-hover table-sm mb-0">
-        <thead class="table-light">
+      <table class="ap-table w-100">
+        <thead>
           <tr>
-            <th>ID</th>
-            <th>Agent Type</th>
+            <th>Case #</th>
             <th>Invoice</th>
-            <th>Recon Result</th>
+            <th>Vendor</th>
+            <th>Path</th>
             <th>Status</th>
-            <th class="text-center">Confidence</th>
-            <th class="text-center">Tokens</th>
-            <th class="text-center">Duration</th>
+            <th>Priority</th>
+            <th class="text-end">Amount</th>
+            <th class="text-center">Risk</th>
             <th>Created</th>
-            <th class="text-center">Console</th>
+            <th class="text-center">Open</th>
           </tr>
         </thead>
         <tbody>
-          {% for run in agent_runs %}
+          {% for case in recent_cases %}
           <tr>
-            <td>{{ run.pk }}</td>
-            <td><span class="text-nowrap">{{ run.get_agent_type_display }}</span></td>
             <td>
-              {% if run.reconciliation_result and run.reconciliation_result.invoice %}
-                <a href="{% url 'documents:invoice_detail' run.reconciliation_result.invoice.pk %}">
-                  {{ run.reconciliation_result.invoice.invoice_number|default:"—" }}
-                </a>
+              <a href="{% url 'cases:case_console' case.pk %}" class="text-decoration-none fw-semibold" style="color:var(--ap-primary)">
+                {{ case.case_number }}
+              </a>
+            </td>
+            <td style="font-size:var(--ap-font-size-sm)">
+              {% if case.invoice %}
+                {{ case.invoice.invoice_number|default:"—" }}
+              {% else %}—{% endif %}
+            </td>
+            <td style="font-size:var(--ap-font-size-sm)">
+              {% if case.vendor %}
+                {{ case.vendor.name|truncatechars:25 }}
+              {% else %}<span style="color:var(--ap-text-muted)">—</span>{% endif %}
+            </td>
+            <td>
+              {% if case.processing_path == "TWO_WAY" %}
+                <span class="ap-badge ap-badge-2way">2-Way</span>
+              {% elif case.processing_path == "THREE_WAY" %}
+                <span class="ap-badge ap-badge-3way">3-Way</span>
+              {% elif case.processing_path == "NON_PO" %}
+                <span class="ap-badge ap-badge-nonpo">Non-PO</span>
               {% else %}
-                —
+                <span class="ap-badge ap-badge-unresolved">{{ case.processing_path }}</span>
               {% endif %}
             </td>
             <td>
-              {% if run.reconciliation_result %}
-                <a href="{% url 'reconciliation:case_console' run.reconciliation_result.pk %}" class="text-decoration-none">
-                  #{{ run.reconciliation_result.pk }}
-                </a>
-              {% else %}
-                —
-              {% endif %}
+              <span class="ap-badge {% if case.status == 'CLOSED' %}ap-badge-success{% elif case.status == 'FAILED' or case.status == 'REJECTED' %}ap-badge-danger{% elif case.status == 'ESCALATED' %}ap-badge-warning{% elif case.status == 'READY_FOR_REVIEW' or case.status == 'IN_REVIEW' %}ap-badge-info{% elif case.status == 'NEW' %}ap-badge-muted{% else %}ap-badge-primary{% endif %}">
+                {{ case.get_status_display }}
+              </span>
             </td>
-            <td><span class="badge status-badge status-{{ run.status }}">{{ run.get_status_display }}</span></td>
-            <td class="text-center">
-              {% if run.confidence %}
-                <span class="{% if run.confidence >= 0.8 %}text-success{% elif run.confidence >= 0.5 %}text-warning{% else %}text-danger{% endif %} fw-bold">
-                  {% widthratio run.confidence 1 100 %}%
+            <td>
+              {% if case.priority %}
+                <span class="ap-badge {% if case.priority == 'CRITICAL' %}ap-sev-critical{% elif case.priority == 'HIGH' %}ap-sev-high{% elif case.priority == 'MEDIUM' %}ap-sev-medium{% else %}ap-sev-low{% endif %}">
+                  {{ case.priority }}
                 </span>
+              {% else %}<span style="color:var(--ap-text-muted)">—</span>{% endif %}
+            </td>
+            <td class="text-end" style="font-size:var(--ap-font-size-sm)">
+              {% if case.invoice and case.invoice.total_amount %}
+                {{ case.invoice.total_amount|floatformat:2 }}
               {% else %}—{% endif %}
             </td>
-            <td class="text-center">{{ run.total_tokens|default:"—" }}</td>
-            <td class="text-center">{% if run.duration_ms %}{{ run.duration_ms|floatformat:0 }}ms{% else %}—{% endif %}</td>
-            <td class="text-muted text-nowrap">{{ run.created_at|timesince }} ago</td>
             <td class="text-center">
-              {% if run.reconciliation_result %}
-                <a href="{% url 'reconciliation:case_console' run.reconciliation_result.pk %}" class="btn btn-sm btn-outline-primary py-0 px-1" title="Open Case Console">
-                  <i class="bi bi-display"></i>
-                </a>
-              {% else %}—{% endif %}
+              {% if case.risk_score is not None %}
+                <span class="ap-badge {% if case.risk_score >= 0.7 %}ap-sev-critical{% elif case.risk_score >= 0.4 %}ap-sev-medium{% else %}ap-sev-low{% endif %}">
+                  {% widthratio case.risk_score 1 100 %}%
+                </span>
+              {% else %}<span style="color:var(--ap-text-muted)">—</span>{% endif %}
+            </td>
+            <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);white-space:nowrap">{{ case.created_at|timesince }} ago</td>
+            <td class="text-center">
+              <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" title="Open Case Console" data-bs-toggle="tooltip">
+                <i class="bi bi-box-arrow-up-right"></i>
+              </a>
             </td>
           </tr>
           {% empty %}
-          <tr><td colspan="10" class="text-center text-muted py-4">No agent runs found{% if selected_run or selected_agent_type or selected_status %} matching filters{% endif %}</td></tr>
+          <tr><td colspan="10">
+            <div class="ap-empty-state">
+              <i class="bi bi-briefcase"></i>
+              <div class="ap-empty-state-label">No cases found{% if selected_path or selected_status or selected_priority %} matching filters{% endif %}</div>
+            </div>
+          </td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var tooltipEls = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+  tooltipEls.forEach(function(el) { new bootstrap.Tooltip(el); });
+});
+</script>
 {% endblock %}
