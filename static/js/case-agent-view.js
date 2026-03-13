@@ -6,6 +6,7 @@
 document.addEventListener('DOMContentLoaded', function () {
 
   var feedScroll = document.getElementById('feedScroll');
+  var chatMessages = document.getElementById('avChatMessages');
   var inputEl = document.getElementById('avInput');
   var sendBtn = document.getElementById('avSend');
   var promptChips = document.querySelectorAll('.av-prompt-chip');
@@ -23,18 +24,24 @@ document.addEventListener('DOMContentLoaded', function () {
     var shown = 0;
 
     if (filter === 'overview') {
-      // Show overview block, hide all feed messages
+      // Show overview block, hide feed messages but NOT overview's own children
       if (overviewEl) overviewEl.style.display = '';
-      msgs.forEach(function (msg) { msg.style.display = 'none'; });
+      msgs.forEach(function (msg) {
+        if (!overviewEl || !overviewEl.contains(msg)) {
+          msg.style.display = 'none';
+        }
+      });
       if (eventCountEl) eventCountEl.textContent = '';
       return;
     }
 
-    // Hide overview, show feed messages
+    // Hide overview, show matching feed messages
     if (overviewEl) overviewEl.style.display = 'none';
     msgs.forEach(function (msg) {
+      if (overviewEl && overviewEl.contains(msg)) return;
       var cat = msg.dataset.category || '';
-      if (filter === 'all' || cat === filter) {
+      var cats = cat.split(/\s+/);
+      if (filter === 'all' || cats.indexOf(filter) !== -1) {
         msg.style.display = '';
         shown++;
       } else {
@@ -90,7 +97,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var text = inputEl.value.trim();
     if (!text) return;
 
-    appendFeedMessage('user', 'You', text);
+    appendChatMessage('user', 'You', text);
     inputEl.value = '';
     inputEl.style.height = 'auto';
 
@@ -104,36 +111,31 @@ document.addEventListener('DOMContentLoaded', function () {
     setTimeout(function () {
       removeEl(typingEl);
       var response = generateResponse(text);
-      appendFeedMessage('assistant', 'Copilot', response, true);
+      appendChatMessage('assistant', 'Copilot', response, true);
     }, 300 + Math.random() * 500);
   }
 
   // ---------------------------------------------------------------
-  // 4. Append Message to Feed
+  // 4. Append Message to Chat
   // ---------------------------------------------------------------
-  function appendFeedMessage(role, sender, content, isHtml) {
+  function appendChatMessage(role, sender, content, isHtml) {
+    // Hide welcome message on first interaction
+    var welcome = chatMessages ? chatMessages.querySelector('.av-chat__welcome') : null;
+    if (welcome) welcome.style.display = 'none';
+
     var msg = document.createElement('div');
-    msg.className = 'av-msg';
-    msg.dataset.category = role === 'user' ? 'human' : 'agent';
+    msg.className = 'av-chat-msg av-chat-msg--' + role;
 
-    var avatarClass = role === 'user' ? 'av-avatar--human' : 'av-avatar--agent';
-    var avatarIcon = role === 'user' ? 'bi-person' : 'bi-stars';
-    var labelClass = role === 'user' ? 'av-label--human' : 'av-label--agent';
-    var labelText = role === 'user' ? 'You' : 'AI';
+    if (role === 'user') {
+      msg.innerHTML = '<div class="av-chat-msg__text">' + escapeHtml(content) + '</div>';
+    } else {
+      msg.innerHTML =
+        '<div class="av-chat-msg__icon"><i class="bi bi-stars"></i></div>' +
+        '<div class="av-chat-msg__text">' + (isHtml ? content : escapeHtml(content)) + '</div>';
+    }
 
-    var html = '<div class="av-avatar ' + avatarClass + '"><i class="bi ' + avatarIcon + '"></i></div>' +
-      '<div class="av-body">' +
-      '<div class="av-header">' +
-      '<span class="av-sender">' + escapeHtml(sender) + '</span>' +
-      '<span class="av-label ' + labelClass + '">' + labelText + '</span>' +
-      '<span class="av-time">just now</span>' +
-      '</div>' +
-      '<div class="av-text">' + (isHtml ? content : escapeHtml(content)) + '</div>' +
-      '</div>';
-
-    msg.innerHTML = html;
-    feedScroll.appendChild(msg);
-    feedScroll.scrollTop = feedScroll.scrollHeight;
+    chatMessages.appendChild(msg);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
   // ---------------------------------------------------------------
@@ -141,11 +143,11 @@ document.addEventListener('DOMContentLoaded', function () {
   // ---------------------------------------------------------------
   function showTyping() {
     var div = document.createElement('div');
-    div.className = 'av-msg';
-    div.innerHTML = '<div class="av-avatar av-avatar--agent"><i class="bi bi-stars"></i></div>' +
-      '<div class="av-body"><div class="av-typing"><span></span><span></span><span></span></div></div>';
-    feedScroll.appendChild(div);
-    feedScroll.scrollTop = feedScroll.scrollHeight;
+    div.className = 'av-chat-msg av-chat-msg--assistant';
+    div.innerHTML = '<div class="av-chat-msg__icon"><i class="bi bi-stars"></i></div>' +
+      '<div class="av-chat-msg__text"><div class="av-typing"><span></span><span></span><span></span></div></div>';
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
     return div;
   }
 

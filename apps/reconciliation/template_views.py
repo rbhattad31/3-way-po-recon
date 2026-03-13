@@ -52,6 +52,14 @@ def result_list(request):
 
 @login_required
 def result_detail(request, pk):
+    result = get_object_or_404(ReconciliationResult, pk=pk)
+
+    # Redirect to new case agent view if an AP case exists for this result
+    from apps.cases.models import APCase
+    ap_case = APCase.objects.filter(reconciliation_result=result, is_active=True).first()
+    if ap_case:
+        return redirect("cases:case_agent_view", pk=ap_case.pk)
+
     result = get_object_or_404(
         ReconciliationResult.objects
         .select_related("invoice", "invoice__vendor", "purchase_order")
@@ -117,6 +125,12 @@ def start_reconciliation(request):
 @login_required
 def case_console(request, pk):
     """Investigation console — single-page deep dive into one reconciliation case."""
+    # Redirect to new case agent view if an AP case exists for this result
+    from apps.cases.models import APCase
+    ap_case = APCase.objects.filter(reconciliation_result_id=pk, is_active=True).first()
+    if ap_case:
+        return redirect("cases:case_agent_view", pk=ap_case.pk)
+
     result = get_object_or_404(
         ReconciliationResult.objects
         .select_related("invoice", "invoice__vendor", "invoice__document_upload", "purchase_order", "purchase_order__vendor")

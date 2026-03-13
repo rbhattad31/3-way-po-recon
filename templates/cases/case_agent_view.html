@@ -74,9 +74,6 @@
         <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
       </form>
     {% endif %}
-    <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-secondary" title="Classic view">
-      <i class="bi bi-layout-text-sidebar-reverse"></i>
-    </a>
     {% if invoice %}
     <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Governance">
       <i class="bi bi-shield-lock"></i>
@@ -94,11 +91,8 @@
     {# Filter bar #}
     <div class="av-filters">
       <button class="av-filter-btn active" data-filter="overview"><i class="bi bi-house me-1"></i>Overview</button>
-      <button class="av-filter-btn" data-filter="all">All</button>
-      <button class="av-filter-btn" data-filter="agent"><i class="bi bi-robot me-1"></i>Agents</button>
-      <button class="av-filter-btn" data-filter="tool"><i class="bi bi-tools me-1"></i>Tools</button>
-      <button class="av-filter-btn" data-filter="decision"><i class="bi bi-signpost-2 me-1"></i>Decisions</button>
-      <button class="av-filter-btn" data-filter="exception"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions</button>
+      <button class="av-filter-btn" data-filter="timeline"><i class="bi bi-clock-history me-1"></i>Timeline</button>
+      <button class="av-filter-btn" data-filter="exception"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions{% if total_issues_count %}<span class="ap-badge ap-badge-danger ms-1" style="font-size:.6rem">{{ total_issues_count }}</span>{% endif %}</button>
       <button class="av-filter-btn" data-filter="system"><i class="bi bi-gear me-1"></i>System</button>
       <button class="av-filter-btn" data-filter="human"><i class="bi bi-person me-1"></i>Human</button>
       <span class="ms-auto text-muted" style="font-size:var(--ap-font-size-xs)" id="eventCount"></span>
@@ -145,31 +139,6 @@
 
       </div>{# /avOverview #}
 
-      {# ── AI Summary (shown in All/Agent feed) ── #}
-      {% if summary %}
-      <div class="av-msg" data-category="agent" style="display:none">
-        <div class="av-avatar av-avatar--agent"><i class="bi bi-stars"></i></div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">Case Summary Agent</span>
-            <span class="av-label av-label--agent">AI Summary</span>
-          </div>
-          <div class="av-text">
-            {% if summary.latest_summary %}{{ summary.latest_summary }}{% elif summary.is_fallback %}{{ summary.latest_summary }}{% endif %}
-          </div>
-          {% if summary.recommendation %}
-          <div class="av-recommendation mt-2">
-            <div class="d-flex align-items-center gap-2">
-              <i class="bi bi-lightbulb text-warning"></i>
-              <span style="font-size:var(--ap-font-size-xs);font-weight:600;">Recommended Action</span>
-            </div>
-            <div style="font-size:var(--ap-font-size-xs);margin-top:.25rem">{{ summary.recommendation }}</div>
-          </div>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-
       {# ── Stage Transitions ── #}
       {% for stage in stages %}
       <div class="av-msg" data-category="system">
@@ -199,40 +168,6 @@
             <span>{{ stage.error_message|truncatechars:300 }}</span>
           </div>
           {% endif %}
-        </div>
-      </div>
-      {% endfor %}
-
-      {# ── Decisions ── #}
-      {% for d in decisions %}
-      <div class="av-msg" data-category="decision">
-        <div class="av-avatar av-avatar--decision"><i class="bi bi-signpost-2"></i></div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">{{ d.get_decision_type_display }}</span>
-            <span class="av-label av-label--decision">Decision</span>
-            <span class="ap-badge {% if d.decision_source == 'DETERMINISTIC' %}ap-src-deterministic{% elif d.decision_source == 'POLICY' %}ap-src-policy{% elif d.decision_source == 'AGENT' %}ap-src-agent{% elif d.decision_source == 'HUMAN' %}ap-src-human{% else %}ap-badge-muted{% endif %}" style="font-size:.6rem">
-              {{ d.get_decision_source_display }}
-            </span>
-            <span class="av-time">{{ d.created_at|timesince }} ago</span>
-          </div>
-          <div class="av-decision-card">
-            <div class="av-decision-card__value">{{ d.decision_value }}</div>
-            {% if d.rationale %}
-            <div class="av-decision-card__rationale">{{ d.rationale|truncatechars:300 }}</div>
-            {% endif %}
-            {% if d.confidence %}
-            <div class="mt-1">
-              <div class="ap-confidence">
-                <div class="ap-confidence-bar" style="width:60px">
-                  <div class="ap-confidence-fill {% if d.confidence >= 0.8 %}high{% elif d.confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                       style="width:{% widthratio d.confidence 1 100 %}%"></div>
-                </div>
-                <span style="font-size:.625rem">{% widthratio d.confidence 1 100 %}% confidence</span>
-              </div>
-            </div>
-            {% endif %}
-          </div>
         </div>
       </div>
       {% endfor %}
@@ -292,134 +227,281 @@
       </div>
       {% endfor %}
 
-      {# ── Agent Runs (the core agentic section) ── #}
-      {% for run in agent_runs %}
-      <div class="av-msg" data-category="agent">
-        <div class="av-avatar av-avatar--agent"><i class="bi bi-robot"></i></div>
+      {# ══════════ UNIFIED AGENT TIMELINE (agents + decisions interleaved) ══════════ #}
+      {% for entry in agent_timeline %}
+
+      {# ── Decision card ── #}
+      {% if entry.kind == 'decision' %}
+      <div class="av-msg av-tl-decision-highlight" data-category="timeline">
+        <div class="av-tl-stripe av-tl-stripe--decision"></div>
+        <div class="av-avatar av-avatar--decision"><i class="bi bi-signpost-2"></i></div>
         <div class="av-body">
           <div class="av-header">
-            <span class="av-sender">{{ run.agent_definition.name|default:run.agent_type }}</span>
+            <span class="av-sender">{{ entry.decision.get_decision_type_display }}</span>
+            <span class="av-label av-label--decision">Decision</span>
+            <span class="ap-badge {% if entry.decision.decision_source == 'DETERMINISTIC' %}ap-src-deterministic{% elif entry.decision.decision_source == 'POLICY' %}ap-src-policy{% elif entry.decision.decision_source == 'AGENT' %}ap-src-agent{% elif entry.decision.decision_source == 'HUMAN' %}ap-src-human{% else %}ap-badge-muted{% endif %}" style="font-size:.6rem">
+              {{ entry.decision.get_decision_source_display }}
+            </span>
+            <span class="av-time">{{ entry.timestamp|timesince }} ago</span>
+          </div>
+          <div class="av-decision-card">
+            <div class="av-decision-card__value">{{ entry.decision.decision_value }}</div>
+            {% if entry.decision.rationale %}
+            <div class="av-decision-card__rationale">{{ entry.decision.rationale|truncatechars:300 }}</div>
+            {% endif %}
+            {% if entry.decision.confidence %}
+            <div class="mt-1">
+              <div class="ap-confidence">
+                <div class="ap-confidence-bar" style="width:60px">
+                  <div class="ap-confidence-fill {% if entry.decision.confidence >= 0.8 %}high{% elif entry.decision.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                       style="width:{% widthratio entry.decision.confidence 1 100 %}%"></div>
+                </div>
+                <span style="font-size:.625rem">{% widthratio entry.decision.confidence 1 100 %}% confidence</span>
+              </div>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      {# ── Agent card ── #}
+      {% elif entry.kind == 'agent' %}
+      {% with ag=entry %}
+      <div class="av-msg av-tl-agent" data-category="timeline">
+        <div class="av-tl-stripe av-tl-stripe--agent"></div>
+        <div class="av-avatar av-avatar--agent"><i class="bi bi-robot"></i></div>
+        <div class="av-body">
+          {# Agent header row #}
+          <div class="av-header">
+            <span class="av-sender">{{ ag.agent_name }}</span>
             <span class="av-label av-label--agent">Agent</span>
-            {% if run.status == "COMPLETED" %}
+            {% if ag.run.status == "COMPLETED" %}
               <span class="ap-badge ap-badge-success">Completed</span>
-            {% elif run.status == "RUNNING" %}
+            {% elif ag.run.status == "RUNNING" %}
               <span class="ap-badge ap-badge-info">Running</span>
-            {% elif run.status == "FAILED" %}
+            {% elif ag.run.status == "FAILED" %}
               <span class="ap-badge ap-badge-danger">Failed</span>
-            {% elif run.status == "SKIPPED" %}
+            {% elif ag.run.status == "SKIPPED" %}
               <span class="ap-badge ap-badge-muted">Skipped</span>
             {% else %}
-              <span class="ap-badge ap-badge-muted">{{ run.status }}</span>
+              <span class="ap-badge ap-badge-muted">{{ ag.run.status }}</span>
             {% endif %}
-            {% if run.confidence %}
+            {% if ag.run.confidence %}
             <span class="ap-confidence ms-1">
               <div class="ap-confidence-bar">
-                <div class="ap-confidence-fill {% if run.confidence >= 0.8 %}high{% elif run.confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                     style="width:{% widthratio run.confidence 1 100 %}%"></div>
+                <div class="ap-confidence-fill {% if ag.run.confidence >= 0.8 %}high{% elif ag.run.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                     style="width:{% widthratio ag.run.confidence 1 100 %}%"></div>
               </div>
-              <span>{% widthratio run.confidence 1 100 %}%</span>
+              <span>{% widthratio ag.run.confidence 1 100 %}%</span>
             </span>
             {% endif %}
-            <span class="av-time">{{ run.created_at|timesince }} ago</span>
+            <span class="av-time">{{ ag.run.created_at|timesince }} ago</span>
           </div>
 
-          {# Agent reasoning / summary #}
-          {% if run.summarized_reasoning %}
-          <div class="av-text">{{ run.summarized_reasoning }}</div>
+          {# Agent reasoning #}
+          {% if ag.run.summarized_reasoning %}
+          <div class="av-text">{{ ag.run.summarized_reasoning }}</div>
           {% endif %}
 
-          {# Thinking block (expandable) — show raw reasoning if admin #}
-          {% if show_full_trace and run.raw_reasoning %}
-          <div class="av-thinking">
-            <button class="av-thinking__toggle" type="button" data-bs-toggle="collapse" data-bs-target="#thinking{{ run.pk }}" aria-expanded="false">
-              <i class="bi bi-chevron-right"></i> Thinking
-              {% if run.duration_seconds %}<span class="av-tool-duration ms-auto">{{ run.duration_seconds|floatformat:1 }}s</span>{% endif %}
-            </button>
-            <div id="thinking{{ run.pk }}" class="collapse">
-              <div class="av-thinking__content">{{ run.raw_reasoning }}</div>
-            </div>
+          {# Compact stats bar #}
+          <div class="av-tl-stats">
+            {% if ag.step_count %}<span><i class="bi bi-layers"></i> {{ ag.step_count }} step{{ ag.step_count|pluralize }}</span>{% endif %}
+            {% if ag.tool_count %}<span><i class="bi bi-tools"></i> {{ ag.tool_count }} tool{{ ag.tool_count|pluralize }}</span>{% endif %}
+            {% if ag.run.duration_seconds %}<span><i class="bi bi-clock"></i> {{ ag.run.duration_seconds|floatformat:1 }}s</span>{% endif %}
+            {% if show_full_trace and ag.run.total_tokens %}<span><i class="bi bi-cpu"></i> {{ ag.run.total_tokens }} tokens</span>{% endif %}
           </div>
-          {% endif %}
 
-          {# Tool calls (nested inside agent message) #}
-          {% for tc in run.tool_calls.all %}
-          <div class="av-tool-block" data-category-child="tool">
-            <button class="av-tool-header" type="button" data-bs-toggle="collapse" data-bs-target="#tool{{ tc.pk }}" aria-expanded="false">
-              <i class="bi bi-tools"></i>
-              <span>{% firstof tc.tool_name tc.tool_definition.name "Unknown Tool" %}</span>
-              {% if tc.status == "SUCCESS" %}
-                <span class="av-tool-status av-tool-status--success">OK</span>
-              {% elif tc.status == "ERROR" %}
-                <span class="av-tool-status av-tool-status--error">ERR</span>
-              {% endif %}
-              {% if tc.duration_ms %}<span class="av-tool-duration">{{ tc.duration_ms }}ms</span>{% endif %}
+          {# ── Accordion: Steps & Tools ── #}
+          {% if ag.children %}
+          <div class="av-tl-accordion">
+            <button class="av-tl-accordion__toggle" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#agDetail{{ ag.run.pk }}" aria-expanded="false">
               <i class="bi bi-chevron-right"></i>
+              <span>Steps &amp; Tools</span>
+              <span class="av-tl-accordion__count">{{ ag.children|length }}</span>
             </button>
-            <div id="tool{{ tc.pk }}" class="collapse">
-              <div class="av-tool-io">
-                {% if tc.input_data %}
-                <div class="av-tool-io__label">Input</div>
-                <pre>{{ tc.input_data }}</pre>
-                {% endif %}
-                {% if tc.output_data %}
-                <div class="av-tool-io__label mt-2">Output</div>
-                <pre>{{ tc.output_data|truncatechars:500 }}</pre>
-                {% endif %}
-              </div>
-            </div>
-          </div>
-          {% endfor %}
+            <div id="agDetail{{ ag.run.pk }}" class="collapse">
+              <div class="av-tl-children">
+                {% for child in ag.children %}
 
-          {# Recommendations #}
-          {% for rec in run.recommendations.all %}
-          <div class="av-recommendation mt-2" data-category-child="recommendation">
-            <div class="d-flex align-items-center gap-2">
-              <i class="bi bi-lightbulb text-warning"></i>
-              <span style="font-size:var(--ap-font-size-xs);font-weight:600">{{ rec.get_recommendation_type_display }}</span>
-              {% if rec.confidence %}
-              <span class="ap-confidence ms-auto">
-                <div class="ap-confidence-bar">
-                  <div class="ap-confidence-fill {% if rec.confidence >= 0.8 %}high{% elif rec.confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                       style="width:{% widthratio rec.confidence 1 100 %}%"></div>
-                </div>
-                <span>{% widthratio rec.confidence 1 100 %}%</span>
-              </span>
-              {% endif %}
+                  {# ── Step ── #}
+                  {% if child.type == 'step' %}
+                  <div class="av-tl-child av-tl-child--step">
+                    <div class="av-tl-child__icon av-tl-child__icon--step"><i class="bi bi-gear-wide-connected"></i></div>
+                    <div class="av-tl-child__body">
+                      <div class="av-tl-child__header">
+                        <span class="av-tl-child__name">Step {{ child.obj.step_number }}</span>
+                        <span class="av-label av-label--step">{{ child.obj.action|default:'Reasoning' }}</span>
+                        {% if child.obj.success %}
+                          <span class="av-tool-status av-tool-status--success">OK</span>
+                        {% elif child.obj.success == False %}
+                          <span class="av-tool-status av-tool-status--error">ERR</span>
+                        {% endif %}
+                        {% if child.obj.duration_ms %}<span class="av-tool-duration">{{ child.obj.duration_ms }}ms</span>{% endif %}
+                        <span class="av-time">{{ child.timestamp|timesince }} ago</span>
+                      </div>
+                      {% if child.obj.output_data %}
+                      <div class="av-tl-child__detail">
+                        <button class="av-tool-header" type="button" data-bs-toggle="collapse" data-bs-target="#step{{ child.obj.pk }}" aria-expanded="false">
+                          <i class="bi bi-chevron-right"></i>
+                          <span>Detail</span>
+                        </button>
+                        <div id="step{{ child.obj.pk }}" class="collapse">
+                          <div class="av-tool-io">
+                            {% if child.obj.input_data %}
+                            <div class="av-tool-io__label">Input</div>
+                            <pre>{{ child.obj.input_data }}</pre>
+                            {% endif %}
+                            <div class="av-tool-io__label mt-2">Output</div>
+                            <pre>{{ child.obj.output_data|truncatechars:500 }}</pre>
+                          </div>
+                        </div>
+                      </div>
+                      {% endif %}
+                    </div>
+                  </div>
+
+                  {# ── Tool Call ── #}
+                  {% elif child.type == 'tool_call' %}
+                  <div class="av-tl-child av-tl-child--tool">
+                    <div class="av-tl-child__icon av-tl-child__icon--tool"><i class="bi bi-tools"></i></div>
+                    <div class="av-tl-child__body">
+                      <div class="av-tl-child__header">
+                        <span class="av-tl-child__name">{% firstof child.obj.tool_name child.obj.tool_definition.name "Unknown Tool" %}</span>
+                        <span class="av-label av-label--tool">Tool</span>
+                        {% if child.obj.status == "SUCCESS" %}
+                          <span class="av-tool-status av-tool-status--success">OK</span>
+                        {% elif child.obj.status == "FAILED" or child.obj.status == "ERROR" %}
+                          <span class="av-tool-status av-tool-status--error">ERR</span>
+                        {% elif child.obj.status == "EXECUTING" %}
+                          <span class="ap-badge ap-badge-info">Running</span>
+                        {% endif %}
+                        {% if child.obj.duration_ms %}<span class="av-tool-duration">{{ child.obj.duration_ms }}ms</span>{% endif %}
+                        <span class="av-time">{{ child.timestamp|timesince }} ago</span>
+                      </div>
+                      {% if child.obj.error_message %}
+                      <div class="text-danger" style="font-size:var(--ap-font-size-xs)">{{ child.obj.error_message|truncatechars:120 }}</div>
+                      {% endif %}
+                      <div class="av-tl-child__detail">
+                        <button class="av-tool-header" type="button" data-bs-toggle="collapse" data-bs-target="#tool{{ child.obj.pk }}" aria-expanded="false">
+                          <i class="bi bi-chevron-right"></i>
+                          <span>I/O</span>
+                        </button>
+                        <div id="tool{{ child.obj.pk }}" class="collapse">
+                          <div class="av-tool-io">
+                            {% if child.obj.input_payload %}
+                            <div class="av-tool-io__label">Input</div>
+                            <pre>{{ child.obj.input_payload }}</pre>
+                            {% endif %}
+                            {% if child.obj.output_payload %}
+                            <div class="av-tool-io__label mt-2">Output</div>
+                            <pre>{{ child.obj.output_payload|truncatechars:500 }}</pre>
+                            {% endif %}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {# ── Decision ── #}
+                  {% elif child.type == 'decision' %}
+                  <div class="av-tl-child av-tl-child--decision">
+                    <div class="av-tl-child__icon av-tl-child__icon--decision"><i class="bi bi-signpost-2"></i></div>
+                    <div class="av-tl-child__body">
+                      <div class="av-tl-child__header">
+                        <span class="av-tl-child__name">{{ child.obj.get_decision_type_display|default:child.obj.decision_type }}</span>
+                        <span class="av-label av-label--decision">Decision</span>
+                        {% if child.obj.deterministic_flag %}
+                          <span class="ap-badge ap-src-deterministic" style="font-size:.6rem">Rule</span>
+                        {% else %}
+                          <span class="ap-badge ap-src-agent" style="font-size:.6rem">Agent</span>
+                        {% endif %}
+                        {% if child.obj.confidence %}
+                        <span class="ap-confidence ms-1">
+                          <div class="ap-confidence-bar" style="width:50px">
+                            <div class="ap-confidence-fill {% if child.obj.confidence >= 0.8 %}high{% elif child.obj.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                                 style="width:{% widthratio child.obj.confidence 1 100 %}%"></div>
+                          </div>
+                          <span style="font-size:.625rem">{% widthratio child.obj.confidence 1 100 %}%</span>
+                        </span>
+                        {% endif %}
+                      </div>
+                      <div class="av-decision-card mt-1">
+                        <div class="av-decision-card__value">{{ child.obj.decision }}</div>
+                        {% if child.obj.rationale %}
+                        <div class="av-decision-card__rationale">{{ child.obj.rationale|truncatechars:300 }}</div>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </div>
+
+                  {# ── Recommendation ── #}
+                  {% elif child.type == 'recommendation' %}
+                  <div class="av-tl-child av-tl-child--recommendation">
+                    <div class="av-tl-child__icon av-tl-child__icon--recommendation"><i class="bi bi-lightbulb"></i></div>
+                    <div class="av-tl-child__body">
+                      <div class="av-tl-child__header">
+                        <span class="av-tl-child__name">{{ child.obj.get_recommendation_type_display }}</span>
+                        <span class="av-label av-label--recommendation">Recommendation</span>
+                        {% if child.obj.accepted == True %}
+                          <span class="ap-badge ap-badge-success">Accepted</span>
+                        {% elif child.obj.accepted == False %}
+                          <span class="ap-badge ap-badge-danger">Rejected</span>
+                        {% else %}
+                          <span class="ap-badge ap-badge-muted">Pending</span>
+                        {% endif %}
+                      </div>
+                      {% if child.obj.reasoning %}
+                      <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-secondary);margin-top:.25rem">{{ child.obj.reasoning|truncatechars:300 }}</div>
+                      {% endif %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                {% endfor %}
+              </div>{# /av-tl-children #}
             </div>
-            {% if rec.rationale %}
-            <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-secondary);margin-top:.25rem">{{ rec.rationale|truncatechars:300 }}</div>
-            {% endif %}
           </div>
-          {% endfor %}
+          {% endif %}
+
+          {# Thinking block (admin) #}
+          {% if show_full_trace and ag.run.raw_reasoning %}
+          <div class="av-thinking mt-2">
+            <button class="av-thinking__toggle" type="button" data-bs-toggle="collapse" data-bs-target="#thinking{{ ag.run.pk }}" aria-expanded="false">
+              <i class="bi bi-chevron-right"></i> Raw Reasoning
+            </button>
+            <div id="thinking{{ ag.run.pk }}" class="collapse">
+              <div class="av-thinking__content">{{ ag.run.raw_reasoning }}</div>
+            </div>
+          </div>
+          {% endif %}
 
           {# Trace metadata (admin) #}
-          {% if show_full_trace %}
-          <div class="mt-2 p-2 rounded d-flex gap-3" style="background:var(--ap-bg-subtle);font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
-            <span><i class="bi bi-layers me-1"></i>{{ run.steps.count }} steps</span>
-            <span><i class="bi bi-tools me-1"></i>{{ run.tool_calls.count }} tools</span>
-            {% if run.total_tokens %}<span><i class="bi bi-cpu me-1"></i>{{ run.total_tokens }} tokens</span>{% endif %}
-            {% if run.duration_seconds %}<span><i class="bi bi-clock me-1"></i>{{ run.duration_seconds|floatformat:1 }}s</span>{% endif %}
-            {% if run.trace_id %}<span><i class="bi bi-fingerprint me-1"></i>{{ run.trace_id|truncatechars:12 }}</span>{% endif %}
+          {% if show_full_trace and ag.run.trace_id %}
+          <div class="av-tl-trace">
+            <i class="bi bi-fingerprint"></i> {{ ag.run.trace_id|truncatechars:20 }}
           </div>
           {% endif %}
         </div>
       </div>
+      {% endwith %}
+      {% endif %}
       {% endfor %}
 
-      {# ── Timeline Events (non-duplicated) ── #}
+      {# ── Non-agent Timeline Events (audit, review, stage from governance) ── #}
       {% for event in timeline %}
-      <div class="av-msg" data-category="{{ event.event_category|default:'system' }}">
-        <div class="av-avatar av-avatar--{% if event.event_category == 'agent_run' or event.event_category == 'tool_call' %}agent{% elif event.event_category == 'decision' %}decision{% elif event.event_category == 'review' or event.event_category == 'review_action' %}human{% else %}system{% endif %}">
-          {% if event.event_category == "agent_run" or event.event_category == "tool_call" %}<i class="bi bi-robot"></i>
-          {% elif event.event_category == "decision" %}<i class="bi bi-signpost-2"></i>
-          {% elif event.event_category == "review" or event.event_category == "review_action" %}<i class="bi bi-person-check"></i>
-          {% elif event.event_category == "recommendation" %}<i class="bi bi-lightbulb"></i>
+      {% if event.event_category != 'agent_run' and event.event_category != 'tool_call' and event.event_category != 'decision' and event.event_category != 'recommendation' %}
+      <div class="av-msg" data-category="{% if event.event_category == 'review' or event.event_category == 'review_action' or event.event_category == 'review_decision' %}human{% elif event.event_category == 'stage' %}system{% else %}system{% endif %}">
+        <div class="av-avatar av-avatar--{% if event.event_category == 'review' or event.event_category == 'review_action' %}human{% else %}system{% endif %}">
+          {% if event.event_category == "review" or event.event_category == "review_action" %}<i class="bi bi-person-check"></i>
+          {% elif event.event_category == "mode_resolution" %}<i class="bi bi-diagram-3"></i>
+          {% elif event.event_category == "stage" %}<i class="bi bi-signpost-split"></i>
           {% else %}<i class="bi bi-gear"></i>{% endif %}
         </div>
         <div class="av-body">
           <div class="av-header">
             <span class="av-sender" style="font-size:var(--ap-font-size-xs)">{{ event.description|default:event.event_type }}</span>
-            <span class="av-label av-label--{% if event.event_category == 'agent_run' %}agent{% elif event.event_category == 'decision' %}decision{% elif event.event_category == 'review' %}human{% else %}system{% endif %}" style="font-size:.55rem">
+            <span class="av-label av-label--{% if event.event_category == 'review' %}human{% else %}system{% endif %}" style="font-size:.55rem">
               {{ event.event_category|default:"system" }}
             </span>
             <span class="av-time">{{ event.timestamp|timesince }} ago</span>
@@ -429,6 +511,7 @@
           {% endif %}
         </div>
       </div>
+      {% endif %}
       {% endfor %}
 
       {# ── Comments (human) ── #}
@@ -456,22 +539,38 @@
 
     </div>{# /av-feed__scroll #}
 
-    {# ── Prompt chips ── #}
-    <div class="av-prompts" id="avPrompts">
-      <button class="av-prompt-chip" data-prompt="Summarize this case"><i class="bi bi-card-text"></i> Summarize</button>
-      <button class="av-prompt-chip" data-prompt="Why was this case flagged?"><i class="bi bi-flag"></i> Why flagged?</button>
-      <button class="av-prompt-chip" data-prompt="What are the key risks?"><i class="bi bi-shield-exclamation"></i> Key risks</button>
-      <button class="av-prompt-chip" data-prompt="What should the reviewer verify?"><i class="bi bi-search"></i> What to verify</button>
-      <button class="av-prompt-chip" data-prompt="What is missing?"><i class="bi bi-question-circle"></i> What's missing</button>
-    </div>
+    {# ══════════ CHAT SECTION (always visible, separate from tabs) ══════════ #}
+    <div class="av-chat" id="avChat">
+      <div class="av-chat__header">
+        <i class="bi bi-chat-dots me-1"></i> Case Copilot
+        <span class="av-chat__badge">AI</span>
+      </div>
 
-    {# ── Chat Input Bar ── #}
-    <div class="av-input-bar">
-      <textarea id="avInput" rows="1" placeholder="Ask the AI about this case..." autocomplete="off"></textarea>
-      <button class="av-input-bar__send" id="avSend" type="button" title="Send">
-        <i class="bi bi-send"></i>
-      </button>
-    </div>
+      {# Chat messages scroll area #}
+      <div class="av-chat__messages" id="avChatMessages">
+        <div class="av-chat__welcome">
+          <i class="bi bi-stars"></i>
+          <div>Ask me anything about this case — exceptions, documents, agent reasoning, or what to do next.</div>
+        </div>
+      </div>
+
+      {# Prompt chips #}
+      <div class="av-prompts" id="avPrompts">
+        <button class="av-prompt-chip" data-prompt="Summarize this case"><i class="bi bi-card-text"></i> Summarize</button>
+        <button class="av-prompt-chip" data-prompt="Why was this case flagged?"><i class="bi bi-flag"></i> Why flagged?</button>
+        <button class="av-prompt-chip" data-prompt="What are the key risks?"><i class="bi bi-shield-exclamation"></i> Key risks</button>
+        <button class="av-prompt-chip" data-prompt="What should the reviewer verify?"><i class="bi bi-search"></i> What to verify</button>
+        <button class="av-prompt-chip" data-prompt="What is missing?"><i class="bi bi-question-circle"></i> What's missing</button>
+      </div>
+
+      {# Chat input #}
+      <div class="av-input-bar">
+        <textarea id="avInput" rows="1" placeholder="Ask anything about this case..." autocomplete="off"></textarea>
+        <button class="av-input-bar__send" id="avSend" type="button" title="Send">
+          <i class="bi bi-send"></i>
+        </button>
+      </div>
+    </div>{# /av-chat #}
 
   </div>{# /av-feed #}
 
@@ -691,9 +790,6 @@
         <i class="bi bi-chevron-down"></i>
       </div>
       <div class="av-context-card__body collapsed d-flex flex-column gap-1">
-        <a href="{% url 'reconciliation:case_console' case.reconciliation_result.pk %}" class="btn btn-sm btn-outline-secondary w-100 text-start" style="font-size:var(--ap-font-size-xs)">
-          <i class="bi bi-table me-1"></i>Line-Level Comparison
-        </a>
         {% if invoice %}
         <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary w-100 text-start" style="font-size:var(--ap-font-size-xs)">
           <i class="bi bi-shield-lock me-1"></i>Full Governance Trail

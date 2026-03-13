@@ -113,11 +113,12 @@
           </td>
           <td>
             {% if inv.ap_case %}
-            <a href="{% url 'cases:case_console' inv.ap_case.pk %}" class="text-decoration-none" style="font-size:var(--ap-font-size-sm)">
-              <span class="ap-badge {% if inv.ap_case.status == 'CLOSED' or inv.ap_case.status == 'APPROVED' %}ap-badge-success{% elif inv.ap_case.status == 'FAILED' %}ap-badge-danger{% elif inv.ap_case.status == 'IN_REVIEW' or inv.ap_case.status == 'PENDING_REVIEW' %}ap-badge-warning{% else %}ap-badge-primary{% endif %}">
+            <a href="{% url 'cases:case_agent_view' inv.ap_case.pk %}" class="text-decoration-none" style="font-size:var(--ap-font-size-sm)">
+              <span class="ap-badge {% if inv.ap_case.status == 'CLOSED' or inv.ap_case.status == 'APPROVED' %}ap-badge-success{% elif inv.ap_case.status == 'FAILED' %}ap-badge-danger{% elif inv.ap_case.status == 'IN_REVIEW' or inv.ap_case.status == 'PENDING_REVIEW' or inv.ap_case.status == 'READY_FOR_REVIEW' %}ap-badge-warning{% else %}ap-badge-primary{% endif %}">
                 {{ inv.ap_case.case_number }}
               </span>
             </a>
+            <div style="font-size:.65rem;color:var(--ap-text-muted);margin-top:2px">{{ inv.ap_case.get_status_display }}</div>
             {% else %}
             <form method="post" action="{% url 'cases:create_case_for_invoice' inv.pk %}" class="d-inline">
               {% csrf_token %}

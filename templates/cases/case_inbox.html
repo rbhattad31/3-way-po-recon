@@ -158,7 +158,7 @@
           </td>
           <td>
             {% if case.invoice %}
-              <span class="text-muted">{{ case.invoice.invoice_number|default:"—"|truncatechars:18 }}</span>
+              <a href="{% url 'documents:invoice_detail' case.invoice.pk %}" class="text-decoration-none" style="color:var(--ap-text-muted)">{{ case.invoice.invoice_number|default:"—"|truncatechars:18 }}</a>
             {% else %}—{% endif %}
           </td>
           <td><span title="{{ case.vendor.name|default:'—' }}">{{ case.vendor.name|default:"—"|truncatechars:22 }}</span></td>
