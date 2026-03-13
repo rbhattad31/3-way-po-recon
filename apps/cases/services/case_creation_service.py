@@ -20,6 +20,8 @@ from apps.core.enums import (
     SourceChannel,
     StageStatus,
 )
+from apps.core.decorators import observed_service
+from apps.core.metrics import MetricsService
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ class CaseCreationService:
 
     @staticmethod
     @transaction.atomic
+    @observed_service("cases.creation.create_from_upload", audit_event="CASE_CREATED", entity_type="APCase")
     def create_from_upload(invoice, uploaded_by=None, source_channel=None) -> APCase:
         """
         Create an APCase for an uploaded invoice.

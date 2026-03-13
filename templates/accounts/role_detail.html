@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+
+{% block title %}{{ role.name }} — Role Management{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'accounts:role_list' %}">Roles</a></li>
+    <li class="breadcrumb-item active">{{ role.code }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0">
+      <i class="bi bi-shield me-2"></i>{{ role.name }}
+      {% if role.is_system_role %}<span class="badge bg-dark ms-2" style="font-size:.65rem">System</span>{% endif %}
+      {% if role.is_active %}<span class="badge bg-success ms-2" style="font-size:.65rem">Active</span>
+      {% else %}<span class="badge bg-danger ms-2" style="font-size:.65rem">Inactive</span>{% endif %}
+    </h4>
+    <small class="text-muted">{{ role.description }}</small>
+  </div>
+</div>
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-details">Details</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-permissions">Permissions <span class="badge bg-secondary ms-1">{{ granted_count }}/{{ total_count }}</span></a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-users">Users <span class="badge bg-secondary ms-1">{{ role_users.count }}</span></a></li>
+</ul>
+
+<div class="tab-content">
+
+  {# ── Details Tab ── #}
+  <div class="tab-pane fade show active" id="tab-details">
+    <div class="card">
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update_role">
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label">Code</label>
+              {{ form.code }}
+              {% if role.is_system_role %}<small class="text-muted">System role code cannot be changed</small>{% endif %}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Name</label>
+              {{ form.name }}
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Rank</label>
+              {{ form.rank }}
+            </div>
+            <div class="col-md-2">
+              <div class="form-check mt-4">
+                {{ form.is_active }}
+                <label class="form-check-label">Active</label>
+              </div>
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
+            <div class="col-12">
+              <label class="form-label">Description</label>
+              {{ form.description }}
+            </div>
+          </div>
+          <div class="mt-3">
+            <button type="submit" class="btn btn-primary btn-sm">Save Changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# ── Permissions Tab ── #}
+  <div class="tab-pane fade" id="tab-permissions">
+    <div class="card">
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update_permissions">
+
+          {% for module_name, perms in modules.items %}
+          <div class="mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <h6 class="text-uppercase text-muted mb-0">{{ module_name }}</h6>
+              <div>
+                <button type="button" class="btn btn-sm btn-outline-secondary select-all-btn" data-module="{{ module_name }}">Select All</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary clear-all-btn" data-module="{{ module_name }}">Clear All</button>
+              </div>
+            </div>
+            <div class="row g-2">
+              {% for item in perms %}
+              <div class="col-md-4">
+                <div class="form-check">
+                  <input class="form-check-input module-{{ module_name }}" type="checkbox" name="permissions" value="{{ item.perm.id }}"
+                    id="perm_{{ item.perm.id }}" {% if item.granted %}checked{% endif %}>
+                  <label class="form-check-label" for="perm_{{ item.perm.id }}">
+                    <code>{{ item.perm.code }}</code>
+                    <br><small class="text-muted">{{ item.perm.name }}</small>
+                  </label>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+
+          <div class="mt-3">
+            <button type="submit" class="btn btn-primary btn-sm">Save Permissions</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# ── Users Tab ── #}
+  <div class="tab-pane fade" id="tab-users">
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr><th>User</th><th>Email</th><th>Primary</th><th>Assigned</th></tr>
+          </thead>
+          <tbody>
+            {% for ur in role_users %}
+            <tr>
+              <td><a href="{% url 'accounts:user_detail' pk=ur.user.pk %}">{{ ur.user.get_full_name }}</a></td>
+              <td><small class="text-muted">{{ ur.user.email }}</small></td>
+              <td>{% if ur.is_primary %}<i class="bi bi-star-fill text-warning"></i>{% endif %}</td>
+              <td><small>{{ ur.assigned_at|date:"M d, Y" }}</small></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4" class="text-center text-muted py-2">No users with this role.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.querySelectorAll('.select-all-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.module-' + btn.dataset.module).forEach(cb => cb.checked = true);
+  });
+});
+document.querySelectorAll('.clear-all-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.module-' + btn.dataset.module).forEach(cb => cb.checked = false);
+  });
+});
+</script>
+{% endblock %}

@@ -97,7 +97,7 @@ class Command(BaseCommand):
     def _reset_data(self):
         self.stdout.write(self.style.WARNING("Resetting seeded AP data..."))
 
-        from apps.auditlog.models import AuditEvent
+        from apps.auditlog.models import AuditEvent, ProcessingLog, FileProcessingStatus
         from apps.cases.models import (
             APCase,
             APCaseActivity,
@@ -109,7 +109,7 @@ class Command(BaseCommand):
             APCaseSummary,
         )
         from apps.reviews.models import ReviewAssignment, ReviewComment, ReviewDecision, ManualReviewAction
-        from apps.agents.models import AgentRun, AgentRecommendation, AgentStep, AgentMessage, DecisionLog
+        from apps.agents.models import AgentRun, AgentRecommendation, AgentStep, AgentMessage, DecisionLog, AgentEscalation
         from apps.reconciliation.models import (
             ReconciliationException,
             ReconciliationResult,
@@ -123,9 +123,14 @@ class Command(BaseCommand):
             Invoice,
             PurchaseOrderLineItem,
             PurchaseOrder,
+            DocumentUpload,
         )
+        from apps.extraction.models import ExtractionResult
+        from apps.tools.models import ToolCall
 
         # Delete in dependency order
+        ProcessingLog.objects.all().delete()
+        FileProcessingStatus.objects.all().delete()
         APCaseActivity.objects.all().delete()
         APCaseComment.objects.all().delete()
         APCaseSummary.objects.all().delete()
@@ -139,20 +144,24 @@ class Command(BaseCommand):
         ReviewComment.objects.all().delete()
         ReviewAssignment.objects.all().delete()
 
+        ToolCall.objects.all().delete()
+        AgentEscalation.objects.all().delete()
         AgentRecommendation.objects.all().delete()
         DecisionLog.objects.all().delete()
         AgentMessage.objects.all().delete()
         AgentStep.objects.all().delete()
         AgentRun.objects.all().delete()
 
-        AuditEvent.objects.filter(entity_type="APCase").delete()
+        AuditEvent.objects.all().delete()
 
         APCase.objects.all().delete()
 
         ReconciliationException.objects.all().delete()
         ReconciliationResultLine.objects.all().delete()
         ReconciliationResult.objects.all().delete()
-        ReconciliationRun.objects.filter(celery_task_id__startswith="seed-").delete()
+        ReconciliationRun.objects.all().delete()
+
+        ExtractionResult.objects.all().delete()
 
         GRNLineItem.objects.all().delete()
         GoodsReceiptNote.objects.all().delete()
@@ -160,6 +169,7 @@ class Command(BaseCommand):
         Invoice.objects.all().delete()
         PurchaseOrderLineItem.objects.all().delete()
         PurchaseOrder.objects.all().delete()
+        DocumentUpload.objects.all().delete()
 
         from apps.vendors.models import VendorAlias, Vendor
         VendorAlias.objects.all().delete()
@@ -206,7 +216,7 @@ class Command(BaseCommand):
         ))
 
         # 4. Agent, Review, Audit data
-        self.stdout.write("  [5/5] Creating Agent runs, Reviews, Summaries, Audit events...")
+        self.stdout.write("  [5/6] Creating Agent runs, Reviews, Summaries, Audit events...")
         stats = seed_agent_review_data(scenario_data, case_data, users, admin)
         self.stdout.write(self.style.SUCCESS(
             f"        {stats['agent_runs']} agent runs, "
@@ -216,7 +226,21 @@ class Command(BaseCommand):
             f"{stats['summaries']} summaries"
         ))
 
-        # 5. QA/Large mode — generate additional random scenarios
+        # 5. Observability & traceability data
+        self.stdout.write("  [6/6] Creating observability & traceability data...")
+        from .seed_helpers.observability_data import seed_observability_data
+        obs_stats = seed_observability_data(scenario_data, case_data, users, admin)
+        self.stdout.write(self.style.SUCCESS(
+            f"        {obs_stats['agent_steps']} steps, "
+            f"{obs_stats['agent_messages']} messages, "
+            f"{obs_stats['tool_calls']} tool_calls, "
+            f"{obs_stats['decision_logs']} decisions, "
+            f"{obs_stats['escalations']} escalations, "
+            f"{obs_stats['processing_logs']} proc_logs, "
+            f"{obs_stats['review_actions']} review_actions"
+        ))
+
+        # 6. QA/Large mode — generate additional random scenarios
         if mode in ("qa", "large"):
             extra = 50 if mode == "qa" else 200
             self.stdout.write(f"  [+] Generating {extra} additional random scenarios (seed={rand_seed})...")

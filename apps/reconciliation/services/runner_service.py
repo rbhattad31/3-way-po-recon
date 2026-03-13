@@ -34,6 +34,8 @@ from apps.reconciliation.services.mode_resolver import ModeResolutionResult, Rec
 from apps.reconciliation.services.po_lookup_service import POLookupService
 from apps.reconciliation.services.result_service import ReconciliationResultService
 from apps.reconciliation.services.tolerance_engine import ToleranceEngine
+from apps.core.decorators import observed_service
+from apps.core.metrics import MetricsService
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,7 @@ class ReconciliationRunnerService:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    @observed_service("reconciliation.runner.run", audit_event="RECONCILIATION_STARTED", entity_type="ReconciliationRun")
     def run(
         self,
         invoices: Optional[List[Invoice]] = None,

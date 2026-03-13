@@ -1,10 +1,19 @@
-"""Case timeline service — merges audit events, agent runs, recommendations, and review actions."""
+"""Case timeline service — unified investigation timeline for governance.
+
+Merges ALL event sources into a single chronological view:
+- Audit events (with RBAC context)
+- Case stage history (with durations)
+- Decision logs (with rule/policy traceability)
+- Agent trace (with tool calls and token usage)
+- Review history (with field corrections)
+- Reprocess history
+"""
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from apps.agents.models import AgentRecommendation, AgentRun
+from apps.agents.models import AgentRecommendation, AgentRun, DecisionLog
 from apps.auditlog.models import AuditEvent
 from apps.cases.models import APCase
 from apps.reconciliation.models import ReconciliationResult
@@ -14,36 +23,62 @@ from apps.tools.models import ToolCall
 logger = logging.getLogger(__name__)
 
 
+def _rbac_badge(event) -> Dict[str, Any]:
+    """Extract RBAC context from an AuditEvent for display."""
+    data = {}
+    if hasattr(event, "actor_email") and event.actor_email:
+        data["actor_email"] = event.actor_email
+    if hasattr(event, "actor_primary_role") and event.actor_primary_role:
+        data["actor_role"] = event.actor_primary_role
+    if hasattr(event, "permission_checked") and event.permission_checked:
+        data["permission_checked"] = event.permission_checked
+    if hasattr(event, "permission_source") and event.permission_source:
+        data["permission_source"] = event.permission_source
+    if hasattr(event, "access_granted") and event.access_granted is not None:
+        data["access_granted"] = event.access_granted
+    if hasattr(event, "actor_roles_snapshot_json") and event.actor_roles_snapshot_json:
+        data["actor_roles"] = event.actor_roles_snapshot_json
+    return data
+
+
 class CaseTimelineService:
-    """Builds a unified, chronologically-ordered timeline for an invoice case."""
+    """Builds a unified, chronologically-ordered timeline for an invoice case.
+
+    This is the single-pane-of-glass investigation view combining all event sources.
+    """
 
     @staticmethod
     def get_case_timeline(invoice_id: int) -> List[Dict[str, Any]]:
-        """Return an ordered list of all governance events for one invoice.
-
-        Merges:
-        - Audit events (entity_type='Invoice')
-        - Audit events on related ReconciliationResults
-        - Agent runs
-        - Agent tool calls
-        - Agent recommendations
-        - Review assignments, actions, and decisions
-        """
+        """Return an ordered list of all governance events for one invoice."""
         timeline: List[Dict[str, Any]] = []
 
-        # 1. Audit events on the invoice
-        invoice_events = AuditEvent.objects.filter(
-            entity_type="Invoice", entity_id=invoice_id,
-        ).order_by("created_at")
-        for ev in invoice_events:
-            timeline.append({
+        # 1. Audit events linked to this invoice (entity_type + cross-ref)
+        from django.db.models import Q
+        audit_events = AuditEvent.objects.filter(
+            Q(entity_type="Invoice", entity_id=invoice_id) |
+            Q(invoice_id=invoice_id)
+        ).select_related("performed_by").order_by("created_at")
+
+        seen_audit_ids = set()
+        for ev in audit_events:
+            if ev.pk in seen_audit_ids:
+                continue
+            seen_audit_ids.add(ev.pk)
+            entry = {
                 "timestamp": ev.created_at,
                 "event_category": "audit",
                 "event_type": ev.event_type or ev.action,
                 "description": ev.event_description or ev.action,
                 "actor": ev.performed_by.email if ev.performed_by else ev.performed_by_agent or "system",
                 "metadata": ev.metadata_json,
-            })
+                "trace_id": ev.trace_id,
+                "rbac": _rbac_badge(ev),
+            }
+            if ev.status_before or ev.status_after:
+                entry["status_change"] = {"before": ev.status_before, "after": ev.status_after}
+            if ev.duration_ms:
+                entry["duration_ms"] = ev.duration_ms
+            timeline.append(entry)
 
         # 2. Get all reconciliation results for this invoice
         results = ReconciliationResult.objects.filter(invoice_id=invoice_id)
@@ -71,8 +106,11 @@ class CaseTimelineService:
         # 3. Audit events on reconciliation results
         result_events = AuditEvent.objects.filter(
             entity_type="ReconciliationResult", entity_id__in=result_ids,
-        ).order_by("created_at")
+        ).select_related("performed_by").order_by("created_at")
         for ev in result_events:
+            if ev.pk in seen_audit_ids:
+                continue
+            seen_audit_ids.add(ev.pk)
             timeline.append({
                 "timestamp": ev.created_at,
                 "event_category": "audit",
@@ -80,6 +118,8 @@ class CaseTimelineService:
                 "description": ev.event_description or ev.action,
                 "actor": ev.performed_by.email if ev.performed_by else ev.performed_by_agent or "system",
                 "metadata": ev.metadata_json,
+                "trace_id": ev.trace_id,
+                "rbac": _rbac_badge(ev),
             })
 
         # 4. Agent runs
@@ -94,6 +134,8 @@ class CaseTimelineService:
                 "event_type": f"AGENT_{run.status}",
                 "description": f"Agent '{agent_name}' {run.status.lower()} (confidence: {run.confidence or 0:.0%})",
                 "actor": agent_name,
+                "trace_id": getattr(run, "trace_id", ""),
+                "duration_ms": run.duration_ms,
                 "metadata": {
                     "agent_run_id": run.pk,
                     "agent_type": run.agent_type,
@@ -101,6 +143,10 @@ class CaseTimelineService:
                     "confidence": run.confidence,
                     "summarized_reasoning": run.summarized_reasoning[:300] if run.summarized_reasoning else "",
                     "duration_ms": run.duration_ms,
+                    "llm_model": run.llm_model_used,
+                    "total_tokens": run.total_tokens,
+                    "prompt_version": getattr(run, "prompt_version", ""),
+                    "invocation_reason": getattr(run, "invocation_reason", ""),
                 },
             })
 
@@ -113,11 +159,32 @@ class CaseTimelineService:
                     "event_type": f"TOOL_{tc.status}",
                     "description": f"Tool '{tc.tool_name}' called ({tc.status.lower()})",
                     "actor": agent_name,
+                    "duration_ms": tc.duration_ms,
                     "metadata": {
                         "tool_call_id": tc.pk,
                         "tool_name": tc.tool_name,
                         "status": tc.status,
                         "duration_ms": tc.duration_ms,
+                    },
+                })
+
+            # 4b. Decision logs within this run
+            decisions = DecisionLog.objects.filter(agent_run=run).order_by("created_at")
+            for dl in decisions:
+                timeline.append({
+                    "timestamp": dl.created_at,
+                    "event_category": "decision",
+                    "event_type": f"DECISION_{dl.decision_type}" if dl.decision_type else "DECISION",
+                    "description": dl.decision[:300],
+                    "actor": agent_name,
+                    "metadata": {
+                        "decision_type": dl.decision_type,
+                        "rationale": dl.rationale[:300] if dl.rationale else "",
+                        "confidence": dl.confidence,
+                        "deterministic": dl.deterministic_flag,
+                        "rule_name": dl.rule_name,
+                        "policy_code": dl.policy_code,
+                        "recommendation_type": dl.recommendation_type,
                     },
                 })
 
@@ -138,6 +205,7 @@ class CaseTimelineService:
                     "recommendation_type": rec.recommendation_type,
                     "confidence": rec.confidence,
                     "accepted": rec.accepted,
+                    "accepted_by": rec.accepted_by.email if rec.accepted_by else None,
                     "reasoning": rec.reasoning[:300] if rec.reasoning else "",
                 },
             })
@@ -160,12 +228,12 @@ class CaseTimelineService:
                 },
             })
 
-            # Review actions
+            # Review actions (field corrections, comments, etc.)
             actions = ManualReviewAction.objects.filter(
                 assignment=assignment,
             ).select_related("performed_by").order_by("created_at")
             for action in actions:
-                timeline.append({
+                entry = {
                     "timestamp": action.created_at,
                     "event_category": "review_action",
                     "event_type": f"REVIEW_{action.action_type}",
@@ -174,9 +242,19 @@ class CaseTimelineService:
                     "metadata": {
                         "action_type": action.action_type,
                         "field_name": action.field_name,
+                        "old_value": action.old_value[:200] if action.old_value else "",
+                        "new_value": action.new_value[:200] if action.new_value else "",
                         "reason": action.reason[:300] if action.reason else "",
                     },
-                })
+                }
+                # Flag field corrections specifically
+                if action.field_name:
+                    entry["field_change"] = {
+                        "field": action.field_name,
+                        "old": action.old_value[:100] if action.old_value else "",
+                        "new": action.new_value[:100] if action.new_value else "",
+                    }
+                timeline.append(entry)
 
             # Review decision
             try:
@@ -209,10 +287,15 @@ class CaseTimelineService:
                 "event_type": "CASE_CREATED",
                 "description": f"Case {case.case_number} created",
                 "actor": "system",
-                "metadata": {"case_id": case.pk, "processing_path": case.processing_path},
+                "metadata": {
+                    "case_id": case.pk,
+                    "case_number": case.case_number,
+                    "processing_path": case.processing_path,
+                    "priority": case.priority,
+                },
             })
 
-            # 7b. Processing stages
+            # 7b. Processing stages (with duration tracking)
             for stage in case.stages.order_by("created_at"):
                 if stage.started_at:
                     timeline.append({
@@ -224,25 +307,33 @@ class CaseTimelineService:
                         "metadata": {
                             "stage_name": stage.stage_name,
                             "retry_count": stage.retry_count,
+                            "trace_id": getattr(stage, "trace_id", ""),
                         },
                     })
                 if stage.completed_at:
                     status_label = stage.stage_status.lower()
+                    duration = getattr(stage, "duration_ms", None)
+                    if duration is None and stage.started_at:
+                        duration = int((stage.completed_at - stage.started_at).total_seconds() * 1000)
                     timeline.append({
                         "timestamp": stage.completed_at,
                         "event_category": "stage",
                         "event_type": f"STAGE_{stage.stage_name}_{stage.stage_status}",
-                        "description": f"{stage.get_stage_name_display()} {status_label}",
+                        "description": f"{stage.get_stage_name_display()} {status_label}"
+                                       + (f" ({duration}ms)" if duration else ""),
                         "actor": stage.performed_by_type or "system",
+                        "duration_ms": duration,
                         "metadata": {
                             "stage_name": stage.stage_name,
                             "stage_status": stage.stage_status,
-                            "output": stage.output_payload,
+                            "duration_ms": duration,
+                            "error_code": getattr(stage, "error_code", ""),
+                            "error_message": (getattr(stage, "error_message", "") or "")[:300],
                             "notes": stage.notes[:300] if stage.notes else "",
                         },
                     })
 
-            # 7c. Decisions
+            # 7c. Case decisions (with policy/rule traceability)
             for decision in case.decisions.order_by("created_at"):
                 timeline.append({
                     "timestamp": decision.created_at,
@@ -252,12 +343,63 @@ class CaseTimelineService:
                     "actor": decision.decision_source,
                     "metadata": {
                         "decision_type": decision.decision_type,
+                        "decision_source": decision.decision_source,
                         "decision_value": decision.decision_value,
                         "confidence": decision.confidence,
                         "rationale": decision.rationale[:300] if decision.rationale else "",
                     },
                 })
 
+        # 8. Standalone decision logs (not from agent runs, e.g. from services)
+        standalone_decisions = DecisionLog.objects.filter(
+            invoice_id=invoice_id, agent_run__isnull=True
+        ).order_by("created_at")
+        for dl in standalone_decisions:
+            timeline.append({
+                "timestamp": dl.created_at,
+                "event_category": "decision",
+                "event_type": f"DECISION_{dl.decision_type}" if dl.decision_type else "DECISION",
+                "description": dl.decision[:300],
+                "actor": "system",
+                "metadata": {
+                    "decision_type": dl.decision_type,
+                    "rationale": dl.rationale[:300] if dl.rationale else "",
+                    "confidence": dl.confidence,
+                    "deterministic": dl.deterministic_flag,
+                    "rule_name": dl.rule_name,
+                    "policy_code": dl.policy_code,
+                },
+            })
+
         # Sort by timestamp
         timeline.sort(key=lambda x: x["timestamp"])
         return timeline
+
+    @staticmethod
+    def get_stage_timeline(case_id: int) -> List[Dict[str, Any]]:
+        """Return a stage-focused execution timeline for a case."""
+        try:
+            case = APCase.objects.get(pk=case_id, is_active=True)
+        except APCase.DoesNotExist:
+            return []
+
+        stages = []
+        for stage in case.stages.order_by("created_at"):
+            duration = getattr(stage, "duration_ms", None)
+            if duration is None and stage.started_at and stage.completed_at:
+                duration = int((stage.completed_at - stage.started_at).total_seconds() * 1000)
+            stages.append({
+                "stage_name": stage.stage_name,
+                "stage_display": stage.get_stage_name_display(),
+                "status": stage.stage_status,
+                "performed_by_type": stage.performed_by_type,
+                "started_at": stage.started_at,
+                "completed_at": stage.completed_at,
+                "duration_ms": duration,
+                "retry_count": stage.retry_count,
+                "error_code": getattr(stage, "error_code", ""),
+                "error_message": (getattr(stage, "error_message", "") or "")[:300],
+                "notes": stage.notes[:300] if stage.notes else "",
+                "trace_id": getattr(stage, "trace_id", ""),
+            })
+        return stages

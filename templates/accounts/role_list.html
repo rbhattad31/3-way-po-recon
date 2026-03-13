@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+
+{% block title %}Role Management — AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active">Role Management</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Role Management</h4>
+  <a href="{% url 'accounts:role_create' %}" class="btn btn-sm btn-primary">
+    <i class="bi bi-plus-lg me-1"></i>New Role
+  </a>
+</div>
+
+{# Search #}
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-4">
+        <input type="text" name="q" class="form-control form-control-sm" placeholder="Search roles…" value="{{ request.GET.q }}">
+      </div>
+      <div class="col-md-1">
+        <button type="submit" class="btn btn-sm btn-primary w-100">Search</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Code</th>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Type</th>
+          <th>Rank</th>
+          <th>Users</th>
+          <th>Status</th>
+          <th style="width:80px">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in roles %}
+        <tr>
+          <td><code>{{ r.code }}</code></td>
+          <td><strong>{{ r.name }}</strong></td>
+          <td><small class="text-muted">{{ r.description|truncatewords:15 }}</small></td>
+          <td>
+            {% if r.is_system_role %}
+              <span class="badge bg-dark">System</span>
+            {% else %}
+              <span class="badge bg-info text-dark">Custom</span>
+            {% endif %}
+          </td>
+          <td>{{ r.rank }}</td>
+          <td><span class="badge bg-secondary">{{ r.active_user_count }}</span></td>
+          <td>
+            {% if r.is_active %}<span class="badge bg-success">Active</span>
+            {% else %}<span class="badge bg-danger">Inactive</span>{% endif %}
+          </td>
+          <td>
+            <a href="{% url 'accounts:role_detail' pk=r.pk %}" class="btn btn-sm btn-outline-primary" title="View / Edit">
+              <i class="bi bi-pencil-square"></i>
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-center text-muted py-3">No roles found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="mt-3">
+  <a href="{% url 'accounts:role_matrix' %}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-grid me-1"></i>View Role-Permission Matrix
+  </a>
+</div>
+{% endblock %}

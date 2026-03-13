@@ -73,7 +73,16 @@ class PolicyEngine:
             )
 
         # Rule 1b: PARTIAL_MATCH within auto-close tolerance band → auto-close, skip agents
-        if status == MatchStatus.PARTIAL_MATCH and self._within_auto_close_band(result):
+        #   Exception: GRN_NOT_FOUND in 3-way mode blocks auto-close (goods not confirmed received)
+        grn_blocks_close = (
+            not is_two_way
+            and ExceptionType.GRN_NOT_FOUND in exc_types
+        )
+        if (
+            status == MatchStatus.PARTIAL_MATCH
+            and not grn_blocks_close
+            and self._within_auto_close_band(result)
+        ):
             return AgentPlan(
                 skip_agents=True,
                 auto_close=True,

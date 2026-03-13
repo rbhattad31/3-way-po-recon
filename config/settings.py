@@ -54,6 +54,8 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.LoginRequiredMiddleware",
+    "apps.core.middleware.RBACMiddleware",
+    "apps.core.middleware.RequestTraceMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -70,6 +72,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.core.context_processors.pending_reviews",
+                "apps.core.context_processors.rbac_context",
             ],
         },
     },
@@ -222,18 +225,26 @@ LOGGING = {
             "format": "{levelname} {asctime} {module} {message}",
             "style": "{",
         },
+        "dev_traced": {
+            "()": "apps.core.logging_utils.DevLogFormatter",
+            "format": "{levelname} {asctime} {module} {message}",
+            "style": "{",
+        },
+        "json": {
+            "()": "apps.core.logging_utils.JSONLogFormatter",
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "simple",
+            "formatter": "dev_traced" if DEBUG else "json",
         },
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
             "filename": BASE_DIR / "logs" / "po_recon.log",
             "maxBytes": 10 * 1024 * 1024,
             "backupCount": 5,
-            "formatter": "verbose",
+            "formatter": "verbose" if DEBUG else "json",
         },
     },
     "root": {
@@ -243,5 +254,8 @@ LOGGING = {
     "loggers": {
         "django": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
         "apps": {"handlers": ["console", "file"], "level": "DEBUG", "propagate": False},
+        "apps.observed": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "apps.action": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "apps.task": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
     },
 }

@@ -1,6 +1,6 @@
 # 3-Way PO Reconciliation Platform — Comprehensive Project Documentation
 
-> **Version**: 1.0 · **Last Updated**: March 2026  
+> **Version**: 1.1 · **Last Updated**: March 2026  
 > **Stack**: Django 4.2 · MySQL · Celery + Redis · Azure OpenAI · Azure Document Intelligence · Bootstrap 5
 
 ---
@@ -181,11 +181,11 @@ The project contains **13 Django apps** under `apps/`:
 
 | App | Purpose | Key Files |
 |---|---|---|
-| **accounts** | Custom User model (email login), roles | `models.py`, `managers.py` |
+| **accounts** | Custom User model (email login), enterprise RBAC (roles, permissions, overrides) | `models.py`, `rbac_models.py`, `rbac_services.py`, `managers.py`, `forms.py`, `template_views.py` |
 | **agents** | AI agent orchestration, ReAct loop, 7 agent types | `models.py`, `services/` (10 files) |
-| **auditlog** | Audit events, processing logs, governance views | `models.py`, `services.py`, `timeline_service.py` |
+| **auditlog** | Audit events, processing logs, governance views, observability API | `models.py`, `services.py`, `timeline_service.py`, `serializers.py`, `views.py` |
 | **cases** | AP Case lifecycle, state machine, stage orchestration | `models.py`, `orchestrators/`, `services/`, `state_machine/` |
-| **core** | Base models, enums, constants, permissions, utilities | `models.py`, `enums.py`, `constants.py`, `permissions.py`, `utils.py` |
+| **core** | Base models, enums, constants, permissions, utilities, observability | `models.py`, `enums.py`, `constants.py`, `permissions.py`, `utils.py`, `trace.py`, `logging_utils.py`, `metrics.py`, `decorators.py` |
 | **dashboard** | Analytics, KPIs, summary endpoints | `services.py`, `api_views.py` |
 | **documents** | Invoice, PO, GRN data models & upload | `models.py`, `blob_service.py` |
 | **extraction** | OCR + LLM extraction pipeline (7 services) | `services/`, `tasks.py` |
@@ -236,13 +236,21 @@ Additional mixins:
 
 **PromptTemplate** — Versioned LLM prompt templates with `{variable}` placeholders, organized by category (extraction, agent, case).
 
-### 5.2 Accounts (`apps/accounts/models.py`)
+### 5.2 Accounts (`apps/accounts/models.py`, `rbac_models.py`)
 
 | Model | Fields | Notes |
 |---|---|---|
-| **User** | email (login), first_name, last_name, role, is_active, is_staff, department | Custom model; `AUTH_USER_MODEL = "accounts.User"` |
+| **User** | email (login), first_name, last_name, role (legacy), is_active, is_staff, department | Custom model; RBAC helpers: `get_primary_role()`, `get_all_roles()`, `has_permission()`, `get_effective_permissions()`, `clear_permission_cache()`, `sync_legacy_role_field()` |
+| **Role** | code, name, description, is_system_role, is_active, rank | 5 system roles seeded; supports custom roles |
+| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 20 permissions across 7 modules |
+| **RolePermission** | role FK, permission FK, is_allowed | Many-to-many with explicit allow flag; unique_together |
+| **UserRole** | user FK, role FK, is_primary, assigned_by, expires_at, is_active | Multi-role with expiry; `is_expired`/`is_effective` properties |
+| **UserPermissionOverride** | user FK, permission FK, override_type (ALLOW/DENY), reason, assigned_by, expires_at | Per-user overrides with audit trail |
+| **MenuConfig** | label, icon_class, url_name, required_permission, parent FK, order, is_separator | Dynamic menu items (future use) |
 
-Roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`, `AUDITOR`
+**Permission Resolution Order**: Admin bypass → User DENY overrides → User ALLOW overrides → Role permissions
+
+Legacy roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`, `AUDITOR` — synced to new RBAC UserRole table
 
 ### 5.3 Documents (`apps/documents/models.py`)
 
@@ -965,7 +973,47 @@ All review decisions log to `AuditService`:
 
 ## 13. Governance & Audit Trail
 
-### 13.1 Audit Events
+### 13.1 Observability Infrastructure
+
+Three core modules provide enterprise-grade observability:
+
+| Module | File | Purpose |
+|---|---|---|
+| **TraceContext** | `apps/core/trace.py` | Distributed tracing — `trace_id`, `span_id`, `parent_span_id`, RBAC snapshot. Thread-local propagation via `get_current()`/`set_current()`. Celery header serialization. |
+| **Structured Logging** | `apps/core/logging_utils.py` | `JSONLogFormatter` (production) and `DevLogFormatter` (development). `TraceLogger` auto-injects trace context. `redact_dict()` scrubs PII/financial data. `DurationTimer` for latency tracking. |
+| **Metrics** | `apps/core/metrics.py` | Thread-safe in-process counters via `MetricsService`. Tracks RBAC checks, extractions, reconciliations, reviews, agent runs, case transitions, task executions. |
+
+`RequestTraceMiddleware` (in `apps/core/middleware.py`) creates a root `TraceContext` per HTTP request, enriches it with the authenticated user's RBAC snapshot, and sets `X-Trace-ID` / `X-Request-ID` response headers.
+
+### 13.2 Observability Decorators
+
+Three decorators in `apps/core/decorators.py` instrument service methods, view functions, and Celery tasks:
+
+| Decorator | Target | Behaviour |
+|---|---|---|
+| `@observed_service` | Service class methods | Creates child span, measures duration, writes `ProcessingLog`, optionally writes `AuditEvent`. |
+| `@observed_action` | Django view functions (FBV) | Resolves RBAC permission source, checks permission, writes both `AuditEvent` and `ProcessingLog`. |
+| `@observed_task` | Celery tasks | Reconstructs `TraceContext` from Celery headers, wraps execution with duration/error tracking. |
+
+Instrumented services: extraction task, reconciliation runner, agent feedback, agent orchestrator, review approve/reject/reprocess, case orchestrator, case creation, case routing, invoice upload view, start reconciliation view.
+
+### 13.3 RBAC-Aware Audit Events
+
+`AuditEvent` model carries 20+ fields for full RBAC and traceability context:
+
+| Field Group | Fields |
+|---|---|
+| **Trace** | `trace_id`, `span_id`, `parent_span_id` |
+| **Actor RBAC** | `actor_primary_role`, `actor_email`, `actor_roles_snapshot` (JSON) |
+| **Permission** | `permission_checked`, `permission_source`, `access_granted` |
+| **Cross-references** | `invoice_id`, `case_id`, `reconciliation_result_id` |
+| **Status Change** | `status_before`, `status_after` |
+| **Timing** | `duration_ms` |
+| **Error** | `error_code`, `is_redacted` |
+
+`AuditService.log_event()` accepts an optional `TraceContext`, auto-populates RBAC fields from the actor, and redacts sensitive payload data.
+
+Query helpers: `fetch_case_history()`, `fetch_access_history()`, `fetch_permission_denials()`, `fetch_rbac_activity()`.
 
 `AuditService` logs 17+ event types:
 
@@ -978,25 +1026,59 @@ All review decisions log to `AuditService`:
 | **Agent** | AGENT_RUN_STARTED, AGENT_RUN_COMPLETED, AGENT_RUN_FAILED, AGENT_RECOMMENDATION_CREATED |
 | **Review** | REVIEW_ASSIGNED, REVIEW_APPROVED, REVIEW_REJECTED, FIELD_CORRECTED |
 
-### 13.2 Case Timeline
+### 13.4 Enhanced Case Timeline
 
-`CaseTimelineService` builds a unified chronological timeline per invoice, merging:
-- AuditEvent records (Invoice + ReconciliationResult entities)
-- AgentRun records (with agent definition names)
-- ToolCall records (per run)
-- AgentRecommendation records
-- ReviewAssignment, ManualReviewAction, ReviewDecision records
+`CaseTimelineService` builds a unified chronological timeline per invoice, merging 8 event categories:
 
-Each entry is categorized: `audit`, `agent_run`, `tool_call`, `recommendation`, `review`, `review_action`, `review_decision`
+| Category | Source | Enrichment |
+|---|---|---|
+| `audit` | AuditEvent | RBAC badge (role + permission + granted/denied), status change, field corrections |
+| `mode_resolution` | AuditEvent (MODE events) | Mode-specific context |
+| `agent_run` | AgentRun | Duration, agent type, invocation reason |
+| `tool_call` | ToolCall | Input/output summary, duration |
+| `decision` | DecisionLog | Decision type, rule/policy traceability, RBAC context |
+| `recommendation` | AgentRecommendation | Acceptance status |
+| `review` / `review_action` / `review_decision` | ReviewAssignment + children | Review lifecycle |
+| `case` / `stage` | APCase / APCaseStage | Stage durations, trace IDs |
 
-### 13.3 Governance UI
+Each timeline entry includes an `rbac_badge` dict (`{role, permission, granted}`) when RBAC context is available, plus `status_change`, `field_changes`, and `duration_ms` when applicable.
+
+`get_stage_timeline(case_id)` returns a stage-centric timeline for case governance views.
+
+### 13.5 Agent Run Traceability
+
+`AgentRun` model now carries trace and RBAC fields:
+
+| Field | Purpose |
+|---|---|
+| `trace_id` / `span_id` | Links agent execution to the request trace |
+| `invocation_reason` | Why the agent was triggered (e.g., "PARTIAL_MATCH exception") |
+| `prompt_version` | Version of the prompt template used |
+| `actor_user_id` / `permission_checked` | Who initiated and what permission was checked |
+| `cost_estimate` | Estimated LLM cost for the run |
+
+`DecisionLog` entries now include `decision_type`, rule/policy references, and RBAC context fields.
+
+### 13.6 Governance UI
 
 | View | URL | Access |
 |---|---|---|
-| **Audit Event List** | `/governance/` | Filterable log, 50 per page |
-| **Invoice Governance** | `/governance/invoice/<id>/` | Full dashboard: audit trail + agent trace + timeline |
+| **Audit Event List** | `/governance/` | Filterable log (role, trace_id, denied-only filter, 50/page), RBAC columns |
+| **Invoice Governance** | `/governance/invoice/<id>/` | Full dashboard: audit trail + agent trace + timeline + access history |
 
-Role-based visibility: ADMIN and AUDITOR see full agent trace data.
+Audit Event List enhancements:
+- **RBAC columns**: Actor Role, Permission (with granted/denied icon)
+- **New filters**: Role dropdown, Trace ID text input, "Denied Only" checkbox
+- **Visual**: `table-danger` row highlighting for access-denied events
+
+Invoice Governance enhancements:
+- **Access History tab**: Shows all access events for the invoice with actor, role, permission, granted/denied status
+- **RBAC badges** in timeline entries: role, permission, granted/denied icons
+- **Status change** display in timeline events
+- **Field correction** display in timeline events
+- **Trace ID** display per timeline entry
+
+Role-based visibility: ADMIN and AUDITOR see full agent trace data and access history.
 
 ---
 
@@ -1055,6 +1137,11 @@ All APIs are under `/api/v1/` using Django REST Framework.
 | `invoices/{id}/agent-trace/` | GET | Agent runs with steps, tools, decisions |
 | `invoices/{id}/recommendations/` | GET | Agent recommendations |
 | `invoices/{id}/timeline/` | GET | Unified case timeline |
+| `invoices/{id}/access-history/` | GET | RBAC access events for invoice (who accessed, permission, granted/denied) |
+| `cases/{id}/stage-timeline/` | GET | Stage-centric timeline for a case |
+| `permission-denials/` | GET | Recent permission denial events (filterable by user/date) |
+| `rbac-activity/` | GET | RBAC-related audit events (role changes, permission checks) |
+| `agent-performance/` | GET | Agent run performance summary (counts, durations, success rates) |
 
 ### 14.6 Dashboard API (`/api/v1/dashboard/`)
 
@@ -1067,6 +1154,24 @@ All APIs are under `/api/v1/` using Django REST Framework.
 | `agent-performance/` | GET | Per-agent metrics |
 | `daily-volume/` | GET | Daily processing volume |
 | `recent-activity/` | GET | Recent events |
+
+### 14.7 Accounts / RBAC API (`/api/v1/accounts/`)
+
+| Endpoint | Method | Description | Permission |
+|---|---|---|---|
+| `users/` | GET | List users (search, filter by role/dept/status) | `users.manage` |
+| `users/{id}/` | GET, PUT | User detail / update | `users.manage` |
+| `users/{id}/roles/` | GET | User's role assignments | `users.manage` |
+| `users/{id}/assign-role/` | POST | Assign role to user | `users.manage` |
+| `users/{id}/remove-role/` | POST | Remove role from user | `users.manage` |
+| `users/{id}/overrides/` | GET | User's permission overrides | `users.manage` |
+| `users/{id}/create-override/` | POST | Add permission override | `users.manage` |
+| `users/{id}/remove-override/` | POST | Remove permission override | `users.manage` |
+| `roles/` | GET, POST | List/create roles | `roles.manage` |
+| `roles/{id}/` | GET, PUT, DELETE | Role CRUD (soft-delete for system roles) | `roles.manage` |
+| `roles/{id}/clone/` | POST | Clone role with permissions | `roles.manage` |
+| `permissions/` | GET | Permission catalog (read-only) | `roles.manage` |
+| `role-matrix/` | GET, PUT | Full role-permission matrix (bulk update) | `roles.manage` |
 
 ### 14.7 Cases API (`/api/v1/cases/`)
 
@@ -1110,7 +1215,15 @@ All APIs are under `/api/v1/` using Django REST Framework.
 templates/
 ├── base.html                          # Base layout (Bootstrap 5, navbar, sidebar)
 ├── accounts/
-│   └── login.html                     # Login page
+│   ├── login.html                     # Login page
+│   ├── user_list.html                 # User management (search, filter, paginated)
+│   ├── user_create.html               # Add new user with role assignment
+│   ├── user_detail.html               # Tabbed: profile, roles, permissions, overrides
+│   ├── role_list.html                 # Role management (search, user counts)
+│   ├── role_create.html               # Create new custom role
+│   ├── role_detail.html               # Role editor with permission checkboxes
+│   ├── permission_list.html           # Permission catalog by module
+│   └── role_matrix.html               # Full role×permission matrix grid
 ├── agents/
 │   └── reference.html                 # Agent/stage reference guide
 ├── cases/
@@ -1172,6 +1285,14 @@ templates/
 | `/governance/invoice/<id>/` | `invoice_governance` | Full governance dashboard |
 | `/agents/reference/` | `agent_reference` | Agent/stage reference page |
 | `/accounts/login/` | Django LoginView | Authentication |
+| `/accounts/admin-console/users/` | `UserListView` | User management list |
+| `/accounts/admin-console/users/new/` | `UserCreateView` | Create new user |
+| `/accounts/admin-console/users/<id>/` | `UserDetailView` | User detail/edit (tabs) |
+| `/accounts/admin-console/roles/` | `RoleListView` | Role management list |
+| `/accounts/admin-console/roles/new/` | `RoleCreateView` | Create new role |
+| `/accounts/admin-console/roles/<id>/` | `RoleDetailView` | Role detail/permission editor |
+| `/accounts/admin-console/permissions/` | `PermissionListView` | Permission catalog |
+| `/accounts/admin-console/role-matrix/` | `RolePermissionMatrixView` | Role-permission matrix |
 
 ### 15.3 Static Assets
 
@@ -1210,29 +1331,90 @@ templates/
 
 ### 17.1 Commands
 
-| Command | Purpose |
+| Command | Flags | Purpose |
+|---|---|---|
+| `python manage.py seed_config` | `--flush` | Foundation data: 6 users, 7 agent definitions, 6 tool definitions, reconciliation config, 7 policies |
+| `python manage.py seed_rbac` | `--sync-users` | 5 RBAC roles, 25 permissions, role-permission matrix; `--sync-users` maps existing users to RBAC roles |
+| `python manage.py seed_prompts` | `--force` | 12 PromptTemplate records from registry defaults; `--force` overwrites existing |
+| `python manage.py seed_ap_data` | `--reset --mode demo\|qa\|large --summary --seed N` | Realistic Saudi McDonald's AP case data (30 demo / +50 qa / +200 large scenarios) |
+| `python manage.py create_cases_for_existing_invoices` | `--process` | Backfill APCase records for existing invoices; `--process` auto-runs pipeline |
+
+**Recommended seed order:**
+```bash
+python manage.py seed_config --flush     # 1. Users, agents, tools, recon config
+python manage.py seed_rbac --sync-users   # 2. RBAC roles & permissions
+python manage.py seed_prompts --force     # 3. Prompt templates
+python manage.py seed_ap_data --reset --summary  # 4. Full AP case data + observability
+```
+
+### 17.2 `seed_config` Details
+
+Creates platform foundation data:
+- **6 users**: admin, ap_processor, reviewer, finance_mgr, auditor, demo_user
+- **7 agent definitions** with `config_json` & `allowed_tools` per agent type (INVOICE_UNDERSTANDING, PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY)
+- **6 tool definitions**: po_lookup, grn_lookup, vendor_search, invoice_details, exception_list, reconciliation_summary
+- **1 ReconciliationConfig**: default tolerances (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
+- **7 ReconciliationPolicies**: vendor/category/location-based mode mappings
+
+`--flush` deletes policies, config, tool defs, agent defs before recreating (users are preserved).
+
+### 17.3 `seed_ap_data` Details
+
+Creates realistic McDonald's Saudi Arabia AP data in a **6-stage pipeline**:
+
+| Stage | What's Created | Key Counts (demo mode) |
+|---|---|---|
+| 1. Users | 10 users (admin, processors, reviewers, finance, auditor) | 10 |
+| 2. Vendors | Vendors + Arabic aliases across 5 KSA regions | 30 vendors, 81 aliases |
+| 3. Transactional data | POs, GRNs, Invoices with line items per scenario | 20 POs, 13 GRNs, 30 invoices |
+| 4. Cases & recon | APCase, ReconciliationRun/Result/Exception, stages, decisions, artifacts | 30 cases, 21 results, 22 exceptions |
+| 5. Agent & review | AgentRun, Recommendations, ReviewAssignment, Comments, Summaries, AuditEvents | 120 runs, 15 reviews, 125 audit events |
+| 6. Observability | AgentStep, AgentMessage, ToolCall, DecisionLog, AgentEscalation, ProcessingLog, ManualReviewAction; enriches AgentRun (trace_id, tokens, cost) & AuditEvent (RBAC, cross-refs) | 280 steps, 568 messages, 137 tool calls, 78 decisions, 193 proc logs |
+
+**30 deterministic scenarios** covering:
+- **TWO_WAY (1–8)**: Perfect match, amount/price/qty/tax mismatch, PO not found, duplicate, auto-close band, escalation
+- **THREE_WAY (9–16)**: Perfect 3-way, receipt shortage, over-delivery, missing GRN, multi-GRN, low-confidence extraction
+- **NON_PO (17–24)**: Government fees, pest control, marketing, staffing, training — no PO reference
+- **Cross-cutting (25–30)**: Escalated multi-exception, early pipeline stages, rejected, in-review
+
+**Modes**: `--mode demo` (30 scenarios), `--mode qa` (+50 random), `--mode large` (+200 random).
+
+`--reset` performs a full flush of all AP-related data (cases, recon, agents, reviews, audit, documents, vendors) before seeding.
+
+### 17.4 Seed Helpers Architecture
+
+Seed data helpers live in `apps/cases/management/commands/seed_helpers/`:
+
+| File | Purpose |
 |---|---|
-| `python manage.py seed_config` | Foundation data: 6 users, 7 agent definitions, 6 tool definitions, reconciliation config, policies |
-| `python manage.py seed_prompts` | Populate PromptTemplate records from registry defaults (--force to overwrite) |
-| `python manage.py seed_ap_data` | Realistic Saudi McDonald's test data (modes: demo, qa, large) |
-| `python manage.py create_cases_for_existing_invoices` | Backfill APCase records for existing invoices (--process to auto-run) |
+| `constants.py` | 30 vendors, 10 users, 5 regions, 12 branches, 9 line-item categories, 30 scenario definitions |
+| `master_data.py` | `seed_users()`, `seed_vendors()`, `seed_vendor_aliases()` |
+| `transactional_data.py` | `create_transactional_data()` — POs, GRNs, Invoices with line items per scenario |
+| `case_builder.py` | `create_cases_and_recon()` — APCase, ReconciliationRun/Result/Exception, stages, decisions, artifacts |
+| `agent_review_data.py` | `seed_agent_review_data()` — AgentRun, Recommendations, ReviewAssignment, Comments, Summaries, AuditEvents |
+| `observability_data.py` | `seed_observability_data()` — AgentStep, AgentMessage, ToolCall, DecisionLog, Escalation, ProcessingLog, ManualReviewAction; trace/RBAC enrichment |
+| `bulk_generator.py` | `generate_bulk_scenarios()` — random scenario generation for qa/large modes |
 
-### 17.2 Seed Data Details
+### 17.5 Observability Data (Stage 6)
 
-**`seed_config`** creates:
-- 6 users (admin, ap_processor, reviewer, finance_mgr, auditor, demo_user)
-- 7 agent definitions with config_json & allowed_tools
-- 6 tool definitions (po_lookup, grn_lookup, vendor_search, invoice_details, exception_list, reconciliation_summary)
-- Reconciliation config with default tolerances
-- Reconciliation policies
+The observability seeder (`observability_data.py`) creates full traceability records:
 
-**`seed_ap_data`** creates realistic McDonald's Saudi Arabia data:
-- **demo mode**: Small dataset for quick testing
-- **qa mode**: Medium dataset for QA validation
-- **large mode**: Full dataset for performance testing
-- Includes: users, vendors (with Arabic aliases), POs, GRNs, invoices, cases, reconciliation data, agent/review data
-- 5-stage pipeline: users → vendors → transactional data → cases/recon → agent/review data
-- Covers: Riyadh/Jeddah/Dammam warehouses, multiple item categories
+| Model | Per-Case Data | Total (demo) |
+|---|---|---|
+| **AgentStep** | 2–3 ReAct loop steps per agent run (action, input/output, duration) | ~280 |
+| **AgentMessage** | 3–5 LLM conversation messages (system, user, assistant, tool) per run | ~568 |
+| **ToolCall** | 1–2 tool invocations per relevant agent run with realistic I/O payloads | ~137 |
+| **DecisionLog** | 2–3 decisions: MODE_RESOLUTION, MATCH_DETERMINATION, ROUTING_DECISION/AUTO_CLOSE | ~78 |
+| **AgentEscalation** | For ESCALATED cases — severity, reason, suggested assignee role | ~2 |
+| **ProcessingLog** | 5–8 structured log entries tracing the pipeline lifecycle | ~193 |
+| **ManualReviewAction** | CORRECT_FIELD, ESCALATE, REJECT, ADD_COMMENT for reviewed cases | ~9 |
+
+**Enrichment applied to existing records:**
+- **AgentRun**: `trace_id`, `span_id`, `llm_model_used` (gpt-4o), `prompt_tokens`, `completion_tokens`, `cost_estimate`, `invocation_reason`, `permission_checked`
+- **AuditEvent**: `trace_id`, `span_id`, `actor_email`, `actor_primary_role`, `actor_roles_snapshot_json`, `permission_checked`, `permission_source`, `status_before`/`status_after`, `duration_ms`, cross-refs (`invoice_id`, `case_id`, `reconciliation_result_id`, `review_assignment_id`)
+- **DecisionLog**: `trace_id`, `rule_name`, `rule_version`, `config_snapshot_json` (tolerance bands), `policy_code`, `actor_primary_role`
+
+All trace IDs are consistent per case lifecycle — a single `trace_id` links all records for one case across AgentRun → AuditEvent → DecisionLog → ProcessingLog.
 
 ---
 
@@ -1347,22 +1529,102 @@ All agents produce JSON following this schema:
 - Django session authentication for web UI
 - DRF SessionAuthentication for API
 - `LoginRequiredMiddleware` redirects anonymous users to `/accounts/login/`
+- `RBACMiddleware` pre-loads role codes and effective permissions per request (warm cache)
 - Exempt paths: `/admin/`, `/accounts/`, `/api/`
 
-### 20.2 Role-Based Permissions
+### 20.2 Enterprise RBAC System
 
-| Permission Class | Allowed Roles |
+The platform implements a full enterprise RBAC (Role-Based Access Control) system layered on top of the original single-role model.
+
+#### Architecture
+
+| Component | File | Purpose |
+|---|---|---|
+| **RBAC Models** | `apps/accounts/rbac_models.py` | Role, Permission, RolePermission, UserRole, UserPermissionOverride, MenuConfig |
+| **Permission Engine** | `apps/core/permissions.py` | DRF classes, CBV mixins, FBV decorators — all RBAC-backed |
+| **Middleware** | `apps/core/middleware.py` | `RBACMiddleware` pre-loads permissions into `request.user` cache |
+| **Template Tags** | `apps/core/templatetags/rbac_tags.py` | `has_permission`, `has_role`, `has_any_permission`, `if_can` block tag |
+| **Context Processor** | `apps/core/context_processors.py` | `rbac_context` injects `user_permissions`, `user_role_codes`, `is_admin` |
+| **Audit Service** | `apps/accounts/rbac_services.py` | `RBACEventService` logs all RBAC changes to `AuditEvent` |
+| **Seed Command** | `apps/accounts/management/commands/seed_rbac.py` | Seeds roles, permissions, matrix; syncs legacy users |
+
+#### Permission Resolution Order
+
+```
+1. Admin bypass → all permissions granted
+2. User DENY overrides → explicitly blocked
+3. User ALLOW overrides → explicitly granted
+4. Role permissions → union of all active role permissions
+5. Legacy fallback → uses User.role field if no UserRole entries exist
+```
+
+#### Seeded Roles & Permission Matrix
+
+| Role | Rank | Key Permissions |
+|---|---|---|
+| **ADMIN** | 10 | All 20 permissions |
+| **FINANCE_MANAGER** | 20 | invoices.view/approve, reconciliation.view/run, reviews.view/assign, governance.view, agents.view, config.view |
+| **AUDITOR** | 30 | *.view (read-only across all modules), governance.view |
+| **REVIEWER** | 40 | invoices.view, reconciliation.view, reviews.view/decide, agents.view |
+| **AP_PROCESSOR** | 50 | invoices.view/create/edit, reconciliation.view/run, reviews.view, cases.view/edit/assign |
+
+#### Permission Codes (20 total, 7 modules)
+
+| Module | Permissions |
 |---|---|
-| `IsAdmin` | ADMIN |
-| `IsAPProcessor` | AP_PROCESSOR, ADMIN |
-| `IsReviewer` | REVIEWER, FINANCE_MANAGER, ADMIN |
-| `IsFinanceManager` | FINANCE_MANAGER, ADMIN |
-| `IsAuditor` | AUDITOR, ADMIN |
-| `IsAdminOrReadOnly` | Any authenticated (read), ADMIN (write) |
-| `IsReviewAssignee` | Assigned reviewer, ADMIN, FINANCE_MANAGER |
-| `HasAnyRole` | Configurable via view's `allowed_roles` |
+| invoices | `view`, `create`, `edit`, `approve` |
+| reconciliation | `view`, `run` |
+| cases | `view`, `edit`, `assign`, `copilot` |
+| reviews | `view`, `assign`, `decide` |
+| governance | `view` |
+| agents | `view`, `configure` |
+| config | `view`, `edit` |
+| users | `manage` |
+| roles | `manage` |
 
-### 20.3 Case Permissions
+### 20.3 DRF Permission Classes (Backward-Compatible)
+
+| Permission Class | RBAC Backing | Notes |
+|---|---|---|
+| `IsAdmin` | `user.role == ADMIN` or RBAC admin | Preserved original |
+| `IsAPProcessor` | `has_role(AP_PROCESSOR)` | Preserved original |
+| `IsReviewer` | `has_role(REVIEWER)` | Preserved original |
+| `IsFinanceManager` | `has_role(FINANCE_MANAGER)` | Preserved original |
+| `IsAuditor` | `has_role(AUDITOR)` | Preserved original |
+| `IsAdminOrReadOnly` | Read: any, Write: admin | Preserved original |
+| `IsReviewAssignee` | Assignment check + admin/FM | Preserved original |
+| `HasAnyRole` | Configurable `allowed_roles` | Preserved original |
+| **`HasPermissionCode`** | `user.has_permission(code)` | **New** — code-level check |
+| **`HasAnyPermission`** | Any of listed codes | **New** |
+| **`HasRole`** | RBAC role check | **New** |
+
+### 20.4 Django View Mixins & Decorators
+
+| Helper | Type | Usage |
+|---|---|---|
+| `PermissionRequiredMixin` | CBV mixin | `required_permission = "invoices.view"` |
+| `AnyPermissionRequiredMixin` | CBV mixin | `required_permissions = ["invoices.view", "cases.view"]` |
+| `RoleRequiredMixin` | CBV mixin | `required_role = "ADMIN"` |
+| `@permission_required_code("code")` | FBV decorator | Function view permission check |
+| `@role_required("ADMIN")` | FBV decorator | Function view role check |
+
+### 20.5 Template Tags
+
+```django
+{% load rbac_tags %}
+
+{% has_permission "invoices.view" as can_view %}
+{% if can_view %}<a href="...">Invoices</a>{% endif %}
+
+{% has_role "ADMIN" as is_admin %}
+{% has_any_permission "invoices.view,cases.view" as can_see %}
+
+{% if_can "reconciliation.run" %}
+  <button>Run Reconciliation</button>
+{% end_if_can %}
+```
+
+### 20.6 Case Permissions
 
 | Permission | Description |
 |---|---|
@@ -1371,7 +1633,38 @@ All agents produce JSON following this schema:
 | `CanAssignCase` | ADMIN, FINANCE_MANAGER |
 | `CanUseCopilot` | ADMIN, AP_PROCESSOR, REVIEWER |
 
-### 20.4 Soft Delete
+### 20.7 RBAC Audit Events
+
+| Event Type | Trigger |
+|---|---|
+| `ROLE_ASSIGNED` | Role assigned to user |
+| `ROLE_REMOVED` | Role removed from user |
+| `ROLE_PERMISSION_CHANGED` | Permissions added/removed from role |
+| `USER_PERMISSION_OVERRIDE` | User-level ALLOW/DENY override added |
+| `USER_ACTIVATED` | User activated |
+| `USER_DEACTIVATED` | User deactivated |
+| `ROLE_CREATED` | New role created |
+| `ROLE_UPDATED` | Role metadata updated |
+| `PRIMARY_ROLE_CHANGED` | User's primary role changed |
+
+### 20.8 Admin Console UI
+
+Full Bootstrap 5 management screens at `/accounts/admin-console/`:
+
+| Screen | URL | Features |
+|---|---|---|
+| User List | `/users/` | Search, filter by role/dept/status, pagination, Add User button |
+| User Create | `/users/new/` | Email, name, password, department, initial role |
+| User Detail | `/users/<id>/` | Profile edit, role assign/remove/set-primary, overrides, activate/deactivate |
+| Role List | `/roles/` | Search, user counts, system/custom badges |
+| Role Create | `/roles/new/` | Code, name, description, rank |
+| Role Detail | `/roles/<id>/` | Edit metadata, permission checkboxes by module (Select All / Clear All) |
+| Permission Catalog | `/permissions/` | Grouped by module, shows granted-to roles |
+| Role Matrix | `/role-matrix/` | Full role×permission grid with bulk save |
+
+Sidebar navigation shows Admin Console links only to users with `users.manage` or `roles.manage` permissions.
+
+### 20.9 Soft Delete
 
 Business entities use `SoftDeleteMixin` (is_active flag) — never hard-delete. This ensures auditability and data integrity.
 
@@ -1502,8 +1795,22 @@ celery -A config worker -l info
 - Dashboard analytics (7 API endpoints)
 - Audit logging (17 event types)
 - Unified case timeline
+- Observability infrastructure: `TraceContext` (distributed tracing), structured JSON logging with PII redaction, in-process metrics service
+- Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
+- `RequestTraceMiddleware` for per-request trace context propagation with `X-Trace-ID` / `X-Request-ID` headers
+- RBAC-aware audit trail: `AuditEvent` with 20+ fields (trace IDs, actor RBAC snapshot, permission checks, cross-references, status changes, duration, error codes)
+- Enhanced `CaseTimelineService`: 8 event categories, RBAC badges, status changes, field corrections, duration tracking, decision logs, stage timeline
+- Enhanced governance API: 9 endpoints (4 original + 5 new: access history, stage timeline, permission denials, RBAC activity, agent performance)
+- Enhanced governance templates: RBAC columns + filters in audit list, access history tab + RBAC badges in invoice governance
+- `AgentRun` traceability: trace_id, span_id, invocation reason, prompt version, actor/permission tracking, cost estimate
+- `ProcessingLog` traceability: trace fields, service/task name tracking, duration, success/error tracking
 - DRF APIs with filtering, search, pagination
-- Bootstrap 5 templates (23 templates)
+- Bootstrap 5 templates (32 templates including RBAC admin console)
+- Enterprise RBAC: Role, Permission, RolePermission, UserRole, UserPermissionOverride models
+- RBAC permission engine: code-level checks, middleware cache, template tags, DRF classes, CBV mixins, FBV decorators
+- RBAC admin console: 8 Bootstrap 5 screens (user CRUD, role CRUD, permission catalog, role-permission matrix)
+- RBAC audit: 9 event types logged via RBACEventService to AuditEvent
+- RBAC API: full REST endpoints for users, roles, permissions, matrix
 - Prompt registry with 13 defaults
 - Seed data commands (4 commands including Saudi McD scenarios)
 - Azure Blob Storage integration

@@ -39,7 +39,7 @@ MAX_TOOL_ROUNDS = 6  # Safety cap on tool-call loops
 @dataclass
 class AgentContext:
     """Immutable context bag passed into an agent run."""
-    reconciliation_result: ReconciliationResult
+    reconciliation_result: Optional[ReconciliationResult]
     invoice_id: int
     po_number: Optional[str] = None
     exceptions: List[Dict[str, Any]] = field(default_factory=list)
@@ -169,7 +169,8 @@ class BaseAgent(ABC):
             self._finalise_run(agent_run, output, start)
 
         except Exception as exc:
-            logger.exception("Agent %s failed for result %s", self.agent_type, ctx.reconciliation_result.pk)
+            rr_pk = ctx.reconciliation_result.pk if ctx.reconciliation_result else None
+            logger.exception("Agent %s failed for result %s", self.agent_type, rr_pk)
             agent_run.status = AgentRunStatus.FAILED
             agent_run.error_message = str(exc)[:2000]
             agent_run.duration_ms = int((time.monotonic() - start) * 1000)
@@ -251,7 +252,7 @@ class BaseAgent(ABC):
     @staticmethod
     def _serialise_context(ctx: AgentContext) -> dict:
         return {
-            "reconciliation_result_id": ctx.reconciliation_result.pk,
+            "reconciliation_result_id": ctx.reconciliation_result.pk if ctx.reconciliation_result else None,
             "invoice_id": ctx.invoice_id,
             "po_number": ctx.po_number,
             "exception_count": len(ctx.exceptions),
