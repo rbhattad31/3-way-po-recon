@@ -27,8 +27,8 @@
           <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
-      <input type="text" name="q" class="form-control form-control-sm" placeholder="Search…"
-             value="{{ request.GET.q }}">
+      <input type="text" name="q" id="invoiceSearchInput" class="form-control form-control-sm"
+             placeholder="Search…" value="{{ request.GET.q }}" autocomplete="off">
     </form>
   </div>
 </div>
@@ -154,4 +154,20 @@
 </div>
 {% include "partials/pagination.html" %}
 {% include "partials/upload_modal.html" %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const input = document.getElementById('invoiceSearchInput');
+  if (!input) return;
+  let timer = null;
+  input.addEventListener('input', function () {
+    clearTimeout(timer);
+    var trimmed = input.value.replace(/^\s+/, '');
+    if (trimmed !== input.value) input.value = trimmed;
+    timer = setTimeout(function () { input.form.submit(); }, 400);
+  });
+})();
+</script>
 {% endblock %}
