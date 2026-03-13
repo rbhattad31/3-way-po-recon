@@ -256,12 +256,8 @@ def case_console(request, pk):
             .order_by("created_at")
         )
 
-    # Summary — prefer AI-generated, then APCaseSummary, then fallback
+    # Summary — prefer existing APCaseSummary, then fallback
     summary = getattr(case, "summary", None)
-    if summary and not summary.generated_by_agent_run and recon_result:
-        # Try to upgrade existing summary with AI content
-        from apps.cases.services.case_summary_service import CaseSummaryService
-        summary = CaseSummaryService.build_summary(case)
     if not summary:
         # Build a lightweight summary dict from available stage/decision data
         built_summary = _build_fallback_summary(case, decisions, validation_issues)
@@ -312,9 +308,11 @@ def reprocess_case(request, pk):
     case = get_object_or_404(APCase, pk=pk, is_active=True)
     stage = request.POST.get("stage", "")
 
+    redirect_view = "cases:case_agent_view" if request.POST.get("next") == "agent" else "cases:case_console"
+
     if not stage:
         messages.warning(request, "No stage specified for reprocessing.")
-        return redirect("cases:case_console", pk=pk)
+        return redirect(redirect_view, pk=pk)
 
     from apps.cases.tasks import reprocess_case_from_stage_task
     from apps.core.utils import dispatch_task
@@ -325,7 +323,7 @@ def reprocess_case(request, pk):
     except Exception as exc:
         messages.error(request, f"Reprocessing failed: {exc}")
 
-    return redirect("cases:case_console", pk=pk)
+    return redirect(redirect_view, pk=pk)
 
 
 @login_required
@@ -356,3 +354,116 @@ def create_case_for_invoice(request, invoice_pk):
         messages.warning(request, f"Case {case.case_number} created but processing failed to start: {exc}")
 
     return redirect("cases:case_console", pk=case.pk)
+
+
+@login_required
+def case_agent_view(request, pk):
+    """Agentic case view — ChatGPT-style conversation feed for case investigation."""
+    case = get_object_or_404(
+        APCase.objects.select_related(
+            "invoice", "invoice__vendor", "invoice__document_upload",
+            "vendor", "purchase_order", "reconciliation_result",
+            "assigned_to",
+        ).prefetch_related(
+            "stages", "artifacts", "decisions",
+            "assignments", "comments", "activities",
+        ),
+        pk=pk, is_active=True,
+    )
+
+    invoice = case.invoice
+    po = case.purchase_order
+    stages = list(case.stages.order_by("created_at"))
+    decisions = list(case.decisions.order_by("created_at"))
+    comments = list(case.comments.select_related("author").order_by("created_at"))
+
+    # GRNs linked to PO
+    grns = []
+    if po:
+        from apps.documents.models import GoodsReceiptNote
+        grns = list(
+            GoodsReceiptNote.objects.filter(purchase_order=po)
+            .select_related("vendor")
+            .prefetch_related("line_items")
+        )
+
+    # Reconciliation exceptions
+    exceptions = []
+    recon_result = case.reconciliation_result
+    if recon_result:
+        exceptions = list(recon_result.exceptions.all().order_by("-severity", "exception_type"))
+
+    # Non-PO validation issues
+    validation_issues = []
+    validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version").first()
+    if validation_artifact and isinstance(validation_artifact.payload, dict):
+        checks = validation_artifact.payload.get("checks", {})
+        for check_name, check_data in checks.items():
+            status = check_data.get("status", "")
+            if status in ("FAIL", "WARNING"):
+                validation_issues.append({
+                    "check_name": check_name.replace("_", " ").title(),
+                    "status": status,
+                    "message": check_data.get("message", ""),
+                })
+
+    # Agent runs
+    agent_runs = []
+    if recon_result:
+        from apps.agents.models import AgentRun
+        agent_runs = list(
+            AgentRun.objects.filter(reconciliation_result=recon_result)
+            .select_related("agent_definition")
+            .prefetch_related("steps", "tool_calls", "decisions", "recommendations")
+            .order_by("created_at")
+        )
+
+    # Summary
+    summary = getattr(case, "summary", None)
+    if not summary:
+        built_summary = _build_fallback_summary(case, decisions, validation_issues)
+        if built_summary:
+            summary = built_summary
+
+    # Timeline
+    from apps.auditlog.timeline_service import CaseTimelineService
+    timeline = CaseTimelineService.get_case_timeline(invoice.pk)
+
+    # Role-based trace visibility
+    from apps.core.enums import UserRole
+    user_role = getattr(request.user, "role", None)
+    show_full_trace = user_role in (UserRole.ADMIN, UserRole.AUDITOR)
+
+    # Copilot context
+    copilot_context = _build_copilot_context(
+        case, invoice, po, grns, stages, decisions,
+        exceptions, validation_issues, agent_runs, summary,
+    )
+
+    # Get active review assignment for approve/reject actions
+    review_assignment = None
+    if recon_result:
+        review_assignment = (
+            recon_result.review_assignments
+            .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
+            .first()
+        )
+
+    return render(request, "cases/case_agent_view.html", {
+        "case": case,
+        "invoice": invoice,
+        "po": po,
+        "stages": stages,
+        "decisions": decisions,
+        "comments": comments,
+        "grns": grns,
+        "exceptions": exceptions,
+        "validation_issues": validation_issues,
+        "total_issues_count": len(exceptions) + len(validation_issues),
+        "agent_runs": agent_runs,
+        "summary": summary,
+        "timeline": timeline,
+        "show_full_trace": show_full_trace,
+        "review_assignment": review_assignment,
+        "copilot_context_json": json.dumps(copilot_context, default=str),
+    })

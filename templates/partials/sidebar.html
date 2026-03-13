@@ -7,6 +7,10 @@
           <i class="bi bi-speedometer2 me-2"></i>Dashboard
         </a>
       </li>
+
+      {# ── Documents ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documents</li>
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'documents' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
           <i class="bi bi-file-earmark-text me-2"></i>Invoices
@@ -22,15 +26,13 @@
           <i class="bi bi-box-seam me-2"></i>GRNs
         </a>
       </li>
+
+      {# ── Processing ── #}
       <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Processing</li>
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'cases' %}active fw-bold{% endif %}" href="{% url 'cases:case_inbox' %}">
           <i class="bi bi-briefcase me-2"></i>AP Cases
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'reconciliation' %}active fw-bold{% endif %}" href="{% url 'reconciliation:result_list' %}">
-          <i class="bi bi-arrow-left-right me-2"></i>Reconciliation
         </a>
       </li>
       <li class="nav-item">
@@ -39,10 +41,13 @@
           {% if pending_review_count %}<span class="badge bg-warning text-dark ms-1">{{ pending_review_count }}</span>{% endif %}
         </a>
       </li>
+
+      {# ── Operations ── #}
       <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Operations</li>
       <li class="nav-item">
         <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
-          <i class="bi bi-briefcase me-2"></i>Case Operations
+          <i class="bi bi-activity me-2"></i>Case Operations
         </a>
       </li>
       <li class="nav-item">
@@ -50,7 +55,10 @@
           <i class="bi bi-book me-2"></i>Agent Reference
         </a>
       </li>
+
+      {# ── Governance ── #}
       <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Governance</li>
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'governance' %}active fw-bold{% endif %}" href="{% url 'governance:audit_event_list' %}">
           <i class="bi bi-shield-lock me-2"></i>Audit Log
@@ -87,14 +95,12 @@
         </a>
       </li>
       {% endif %}
-      {% endif %}
-
-      <li class="hr my-2 border-bottom"></li>
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.url_name == 'recon_settings' %}active fw-bold{% endif %}" href="{% url 'reconciliation:recon_settings' %}">
           <i class="bi bi-gear me-2"></i>Settings
         </a>
       </li>
+      {% endif %}
     </ul>
   </div>
 </nav>
