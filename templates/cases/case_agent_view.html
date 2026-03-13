@@ -79,6 +79,9 @@
       <i class="bi bi-shield-lock"></i>
     </a>
     {% endif %}
+    <button class="btn btn-sm btn-outline-primary av-chat-toggle" id="avChatToggle" onclick="toggleChatPanel()" title="Case Copilot">
+      <i class="bi bi-chat-dots"></i>
+    </button>
   </div>
 </div>
 
@@ -559,39 +562,6 @@
 
     </div>{# /av-feed__scroll #}
 
-    {# ══════════ CHAT SECTION (always visible, separate from tabs) ══════════ #}
-    <div class="av-chat" id="avChat">
-      <div class="av-chat__header">
-        <i class="bi bi-chat-dots me-1"></i> Case Copilot
-        <span class="av-chat__badge">AI</span>
-      </div>
-
-      {# Chat messages scroll area #}
-      <div class="av-chat__messages" id="avChatMessages">
-        <div class="av-chat__welcome">
-          <i class="bi bi-stars"></i>
-          <div>Ask me anything about this case — exceptions, documents, agent reasoning, or what to do next.</div>
-        </div>
-      </div>
-
-      {# Prompt chips #}
-      <div class="av-prompts" id="avPrompts">
-        <button class="av-prompt-chip" data-prompt="Summarize this case"><i class="bi bi-card-text"></i> Summarize</button>
-        <button class="av-prompt-chip" data-prompt="Why was this case flagged?"><i class="bi bi-flag"></i> Why flagged?</button>
-        <button class="av-prompt-chip" data-prompt="What are the key risks?"><i class="bi bi-shield-exclamation"></i> Key risks</button>
-        <button class="av-prompt-chip" data-prompt="What should the reviewer verify?"><i class="bi bi-search"></i> What to verify</button>
-        <button class="av-prompt-chip" data-prompt="What is missing?"><i class="bi bi-question-circle"></i> What's missing</button>
-      </div>
-
-      {# Chat input #}
-      <div class="av-input-bar">
-        <textarea id="avInput" rows="1" placeholder="Ask anything about this case..." autocomplete="off"></textarea>
-        <button class="av-input-bar__send" id="avSend" type="button" title="Send">
-          <i class="bi bi-send"></i>
-        </button>
-      </div>
-    </div>{# /av-chat #}
-
   </div>{# /av-feed #}
 
 
@@ -618,24 +588,6 @@
           {% widthratio invoice.extraction_confidence 1 100 %}%
         </span></div>
         {% endif %}
-        {% if invoice.line_items.count %}
-        <div class="mt-2">
-          <table class="av-mini-table">
-            <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead>
-            <tbody>
-              {% for li in invoice.line_items.all|slice:":5" %}
-              <tr>
-                <td>{{ li.description|truncatechars:25 }}</td>
-                <td>{{ li.quantity|default:"—" }}</td>
-                <td>{{ li.unit_price|default:"—" }}</td>
-                <td>{{ li.line_amount|default:"—" }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-          {% if invoice.line_items.count > 5 %}<div class="text-muted mt-1" style="font-size:.625rem">+{{ invoice.line_items.count|add:"-5" }} more items</div>{% endif %}
-        </div>
-        {% endif %}
       </div>
     </div>
 
@@ -654,24 +606,6 @@
         <div class="av-kv"><span class="av-kv__label">Total</span><span class="av-kv__value fw-semibold">{{ po.total_amount|floatformat:2|default:"—" }}</span></div>
         <div class="av-kv"><span class="av-kv__label">Lines</span><span class="av-kv__value">{{ po.line_items.count }}</span></div>
         {% if po.po_date %}<div class="av-kv"><span class="av-kv__label">Date</span><span class="av-kv__value">{{ po.po_date }}</span></div>{% endif %}
-        {% if po.line_items.count %}
-        <div class="mt-2">
-          <table class="av-mini-table">
-            <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead>
-            <tbody>
-              {% for li in po.line_items.all|slice:":5" %}
-              <tr>
-                <td>{{ li.description|truncatechars:25 }}</td>
-                <td>{{ li.quantity|default:"—" }}</td>
-                <td>{{ li.unit_price|default:"—" }}</td>
-                <td>{{ li.line_amount|default:"—" }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-          {% if po.line_items.count > 5 %}<div class="text-muted mt-1" style="font-size:.625rem">+{{ po.line_items.count|add:"-5" }} more items</div>{% endif %}
-        </div>
-        {% endif %}
       </div>
     </div>
     {% endif %}
@@ -700,21 +634,6 @@
             <span class="av-kv__label">Items</span>
             <span class="av-kv__value">{{ g.line_items.count }}</span>
           </div>
-          {% if g.line_items.count %}
-          <div class="mt-1">
-            <table class="av-mini-table">
-              <thead><tr><th>Item</th><th>Qty</th></tr></thead>
-              <tbody>
-                {% for li in g.line_items.all|slice:":5" %}
-                <tr>
-                  <td>{{ li.description|default:li.item_code|default:"—"|truncatechars:25 }}</td>
-                  <td>{{ li.quantity_received|default:"—" }}</td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          {% endif %}
         </div>
         {% endfor %}
       </div>
@@ -821,6 +740,43 @@
   </div>{# /av-context #}
 
 </div>{# /agent-view #}
+
+{# ══════════ CHAT PANEL (full-height slide-in) ══════════ #}
+<div class="av-chat-panel" id="avChatPanel">
+  <div class="av-chat-panel__header">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-stars" style="font-size:1.1rem;color:var(--ap-primary)"></i>
+      <span>Case Copilot</span>
+      <span class="av-chat__badge">AI</span>
+    </div>
+    <button class="av-chat-panel__close" onclick="toggleChatPanel()" title="Close chat">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+
+  <div class="av-chat__messages" id="avChatMessages">
+    <div class="av-chat__welcome">
+      <i class="bi bi-stars"></i>
+      <div>Ask about exceptions, line items, vendor, PO, GRN, decisions, risks, or what to verify next.</div>
+    </div>
+  </div>
+
+  <div class="av-prompts" id="avPrompts">
+    <button class="av-prompt-chip" data-prompt="Summarize this case"><i class="bi bi-card-text"></i> Summarize</button>
+    <button class="av-prompt-chip" data-prompt="Why was this case flagged?"><i class="bi bi-flag"></i> Why flagged?</button>
+    <button class="av-prompt-chip" data-prompt="What are the key risks?"><i class="bi bi-shield-exclamation"></i> Key risks</button>
+    <button class="av-prompt-chip" data-prompt="What should the reviewer verify?"><i class="bi bi-search"></i> What to verify</button>
+    <button class="av-prompt-chip" data-prompt="What is missing?"><i class="bi bi-question-circle"></i> What's missing</button>
+  </div>
+
+  <div class="av-input-bar">
+    <textarea id="avInput" rows="1" placeholder="Ask anything about this case..." autocomplete="off"></textarea>
+    <button class="av-input-bar__send" id="avSend" type="button" title="Send">
+      <i class="bi bi-send"></i>
+    </button>
+  </div>
+</div>
+<div class="av-chat-overlay" id="avChatOverlay" onclick="toggleChatPanel()"></div>
 
 {% endblock %}
 

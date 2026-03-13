@@ -133,7 +133,8 @@ def _build_agent_timeline(agent_runs, decisions, show_full_trace):
 
 
 def _build_copilot_context(case, invoice, po, grns, stages, decisions,
-                           exceptions, validation_issues, agent_runs, summary):
+                           exceptions, validation_issues, agent_runs, summary,
+                           timeline=None):
     """Build a structured dict of case data for the copilot panel JS."""
     ctx = {
         "case_number": case.case_number,
@@ -224,6 +225,25 @@ def _build_copilot_context(case, invoice, po, grns, stages, decisions,
          "reasoning": (r.summarized_reasoning or "")[:200]}
         for r in agent_runs
     ]
+
+    # Audit / timeline events
+    ctx["audit_events"] = []
+    ctx["system_actions"] = []
+    for ev in (timeline or []):
+        cat = ev.get("event_category", "")
+        entry = {
+            "category": cat,
+            "type": ev.get("event_type", ""),
+            "description": ev.get("description", ""),
+            "actor": ev.get("actor", "system"),
+            "timestamp": str(ev.get("timestamp", "")),
+        }
+        if ev.get("status_change"):
+            entry["status_change"] = ev["status_change"]
+        if cat == "audit":
+            ctx["audit_events"].append(entry)
+        elif cat in ("mode_resolution", "case", "stage"):
+            ctx["system_actions"].append(entry)
 
     return ctx
 
@@ -400,7 +420,7 @@ def case_agent_view(request, pk):
     # Copilot context
     copilot_context = _build_copilot_context(
         case, invoice, po, grns, stages, decisions,
-        exceptions, validation_issues, agent_runs, summary,
+        exceptions, validation_issues, agent_runs, summary, timeline,
     )
 
     # Get active review assignment for approve/reject actions
@@ -411,6 +431,15 @@ def case_agent_view(request, pk):
             .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
             .first()
         )
+        # Auto-create assignment if case needs review but none exists
+        if not review_assignment and case.status in ("READY_FOR_REVIEW", "IN_REVIEW"):
+            from apps.reviews.models import ReviewAssignment
+            review_assignment = ReviewAssignment.objects.create(
+                reconciliation_result=recon_result,
+                assigned_to=request.user,
+                status="IN_REVIEW",
+                priority=5,
+            )
 
     return render(request, "cases/case_agent_view.html", {
         "case": case,
