@@ -1331,30 +1331,90 @@ templates/
 
 ### 17.1 Commands
 
-| Command | Purpose |
+| Command | Flags | Purpose |
+|---|---|---|
+| `python manage.py seed_config` | `--flush` | Foundation data: 6 users, 7 agent definitions, 6 tool definitions, reconciliation config, 7 policies |
+| `python manage.py seed_rbac` | `--sync-users` | 5 RBAC roles, 25 permissions, role-permission matrix; `--sync-users` maps existing users to RBAC roles |
+| `python manage.py seed_prompts` | `--force` | 12 PromptTemplate records from registry defaults; `--force` overwrites existing |
+| `python manage.py seed_ap_data` | `--reset --mode demo\|qa\|large --summary --seed N` | Realistic Saudi McDonald's AP case data (30 demo / +50 qa / +200 large scenarios) |
+| `python manage.py create_cases_for_existing_invoices` | `--process` | Backfill APCase records for existing invoices; `--process` auto-runs pipeline |
+
+**Recommended seed order:**
+```bash
+python manage.py seed_config --flush     # 1. Users, agents, tools, recon config
+python manage.py seed_rbac --sync-users   # 2. RBAC roles & permissions
+python manage.py seed_prompts --force     # 3. Prompt templates
+python manage.py seed_ap_data --reset --summary  # 4. Full AP case data + observability
+```
+
+### 17.2 `seed_config` Details
+
+Creates platform foundation data:
+- **6 users**: admin, ap_processor, reviewer, finance_mgr, auditor, demo_user
+- **7 agent definitions** with `config_json` & `allowed_tools` per agent type (INVOICE_UNDERSTANDING, PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY)
+- **6 tool definitions**: po_lookup, grn_lookup, vendor_search, invoice_details, exception_list, reconciliation_summary
+- **1 ReconciliationConfig**: default tolerances (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
+- **7 ReconciliationPolicies**: vendor/category/location-based mode mappings
+
+`--flush` deletes policies, config, tool defs, agent defs before recreating (users are preserved).
+
+### 17.3 `seed_ap_data` Details
+
+Creates realistic McDonald's Saudi Arabia AP data in a **6-stage pipeline**:
+
+| Stage | What's Created | Key Counts (demo mode) |
+|---|---|---|
+| 1. Users | 10 users (admin, processors, reviewers, finance, auditor) | 10 |
+| 2. Vendors | Vendors + Arabic aliases across 5 KSA regions | 30 vendors, 81 aliases |
+| 3. Transactional data | POs, GRNs, Invoices with line items per scenario | 20 POs, 13 GRNs, 30 invoices |
+| 4. Cases & recon | APCase, ReconciliationRun/Result/Exception, stages, decisions, artifacts | 30 cases, 21 results, 22 exceptions |
+| 5. Agent & review | AgentRun, Recommendations, ReviewAssignment, Comments, Summaries, AuditEvents | 120 runs, 15 reviews, 125 audit events |
+| 6. Observability | AgentStep, AgentMessage, ToolCall, DecisionLog, AgentEscalation, ProcessingLog, ManualReviewAction; enriches AgentRun (trace_id, tokens, cost) & AuditEvent (RBAC, cross-refs) | 280 steps, 568 messages, 137 tool calls, 78 decisions, 193 proc logs |
+
+**30 deterministic scenarios** covering:
+- **TWO_WAY (1–8)**: Perfect match, amount/price/qty/tax mismatch, PO not found, duplicate, auto-close band, escalation
+- **THREE_WAY (9–16)**: Perfect 3-way, receipt shortage, over-delivery, missing GRN, multi-GRN, low-confidence extraction
+- **NON_PO (17–24)**: Government fees, pest control, marketing, staffing, training — no PO reference
+- **Cross-cutting (25–30)**: Escalated multi-exception, early pipeline stages, rejected, in-review
+
+**Modes**: `--mode demo` (30 scenarios), `--mode qa` (+50 random), `--mode large` (+200 random).
+
+`--reset` performs a full flush of all AP-related data (cases, recon, agents, reviews, audit, documents, vendors) before seeding.
+
+### 17.4 Seed Helpers Architecture
+
+Seed data helpers live in `apps/cases/management/commands/seed_helpers/`:
+
+| File | Purpose |
 |---|---|
-| `python manage.py seed_config` | Foundation data: 6 users, 7 agent definitions, 6 tool definitions, reconciliation config, policies |
-| `python manage.py seed_prompts` | Populate PromptTemplate records from registry defaults (--force to overwrite) |
-| `python manage.py seed_ap_data` | Realistic Saudi McDonald's test data (modes: demo, qa, large) |
-| `python manage.py create_cases_for_existing_invoices` | Backfill APCase records for existing invoices (--process to auto-run) |
-| `python manage.py seed_rbac` | Seed RBAC roles, permissions, and role-permission matrix (--sync-users to map existing users) |
+| `constants.py` | 30 vendors, 10 users, 5 regions, 12 branches, 9 line-item categories, 30 scenario definitions |
+| `master_data.py` | `seed_users()`, `seed_vendors()`, `seed_vendor_aliases()` |
+| `transactional_data.py` | `create_transactional_data()` — POs, GRNs, Invoices with line items per scenario |
+| `case_builder.py` | `create_cases_and_recon()` — APCase, ReconciliationRun/Result/Exception, stages, decisions, artifacts |
+| `agent_review_data.py` | `seed_agent_review_data()` — AgentRun, Recommendations, ReviewAssignment, Comments, Summaries, AuditEvents |
+| `observability_data.py` | `seed_observability_data()` — AgentStep, AgentMessage, ToolCall, DecisionLog, Escalation, ProcessingLog, ManualReviewAction; trace/RBAC enrichment |
+| `bulk_generator.py` | `generate_bulk_scenarios()` — random scenario generation for qa/large modes |
 
-### 17.2 Seed Data Details
+### 17.5 Observability Data (Stage 6)
 
-**`seed_config`** creates:
-- 6 users (admin, ap_processor, reviewer, finance_mgr, auditor, demo_user)
-- 7 agent definitions with config_json & allowed_tools
-- 6 tool definitions (po_lookup, grn_lookup, vendor_search, invoice_details, exception_list, reconciliation_summary)
-- Reconciliation config with default tolerances
-- Reconciliation policies
+The observability seeder (`observability_data.py`) creates full traceability records:
 
-**`seed_ap_data`** creates realistic McDonald's Saudi Arabia data:
-- **demo mode**: Small dataset for quick testing
-- **qa mode**: Medium dataset for QA validation
-- **large mode**: Full dataset for performance testing
-- Includes: users, vendors (with Arabic aliases), POs, GRNs, invoices, cases, reconciliation data, agent/review data
-- 5-stage pipeline: users → vendors → transactional data → cases/recon → agent/review data
-- Covers: Riyadh/Jeddah/Dammam warehouses, multiple item categories
+| Model | Per-Case Data | Total (demo) |
+|---|---|---|
+| **AgentStep** | 2–3 ReAct loop steps per agent run (action, input/output, duration) | ~280 |
+| **AgentMessage** | 3–5 LLM conversation messages (system, user, assistant, tool) per run | ~568 |
+| **ToolCall** | 1–2 tool invocations per relevant agent run with realistic I/O payloads | ~137 |
+| **DecisionLog** | 2–3 decisions: MODE_RESOLUTION, MATCH_DETERMINATION, ROUTING_DECISION/AUTO_CLOSE | ~78 |
+| **AgentEscalation** | For ESCALATED cases — severity, reason, suggested assignee role | ~2 |
+| **ProcessingLog** | 5–8 structured log entries tracing the pipeline lifecycle | ~193 |
+| **ManualReviewAction** | CORRECT_FIELD, ESCALATE, REJECT, ADD_COMMENT for reviewed cases | ~9 |
+
+**Enrichment applied to existing records:**
+- **AgentRun**: `trace_id`, `span_id`, `llm_model_used` (gpt-4o), `prompt_tokens`, `completion_tokens`, `cost_estimate`, `invocation_reason`, `permission_checked`
+- **AuditEvent**: `trace_id`, `span_id`, `actor_email`, `actor_primary_role`, `actor_roles_snapshot_json`, `permission_checked`, `permission_source`, `status_before`/`status_after`, `duration_ms`, cross-refs (`invoice_id`, `case_id`, `reconciliation_result_id`, `review_assignment_id`)
+- **DecisionLog**: `trace_id`, `rule_name`, `rule_version`, `config_snapshot_json` (tolerance bands), `policy_code`, `actor_primary_role`
+
+All trace IDs are consistent per case lifecycle — a single `trace_id` links all records for one case across AgentRun → AuditEvent → DecisionLog → ProcessingLog.
 
 ---
 

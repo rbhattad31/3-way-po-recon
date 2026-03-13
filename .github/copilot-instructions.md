@@ -100,6 +100,8 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Permissions | `apps/core/permissions.py` |
 | Observability | `apps/core/trace.py`, `apps/core/logging_utils.py`, `apps/core/metrics.py`, `apps/core/decorators.py` |
 | Utilities | `apps/core/utils.py` |
+| Seed Commands | `apps/core/management/commands/seed_config.py`, `seed_prompts.py`; `apps/cases/management/commands/seed_ap_data.py` |
+| Seed Helpers | `apps/cases/management/commands/seed_helpers/` (constants, master_data, transactional_data, case_builder, agent_review_data, observability_data, bulk_generator) |
 | Admin | `apps/<app>/admin.py` |
 | Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views) |
 | Static files | `static/css/`, `static/js/` |
@@ -269,12 +271,9 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Observability infrastructure: TraceContext (distributed tracing), structured JSON logging with PII redaction, in-process MetricsService, RequestTraceMiddleware
 - Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
 - Enhanced governance API: 9 endpoints (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance)
-- Seed data management command (`python manage.py seed_data`) — 5 users, 5 vendors, 13 invoices (with edge-case scenarios), POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions
-- Saudi McD master data (`python manage.py seed_saudi_mcd_data`) — 6 users, 10 vendors + aliases, 25 POs (~62 line items), 30 GRNs (~70 line items) across Riyadh/Jeddah/Dammam warehouses
-- Invoice test scenarios (`python manage.py seed_invoice_test_data`) — 18 scenarios (SCN-KSA-001..018): perfect match, qty/price/VAT mismatch, missing PO, missing GRN, multi-GRN aggregation, duplicate invoice, low-confidence Arabic-English, location mismatch, GRN shortage, review case, auto-close band (013–015), AI-resolvable (016–018)
-- PO Agent test scenarios (`python manage.py seed_po_agent_test_data`) — 10 scenarios (SCN-POAG-001..010): reordered PO, vendor-based discovery, Arabic aliases, closed POs, wrong vendor, ambiguous matches
-- GRN Agent test scenarios (`python manage.py seed_grn_agent_test_data`) — 12 scenarios (SCN-GRNAG-001..012): full receipt, missing GRN, partial receipt, over-delivery, multi-GRN, delayed receipt, location mismatch, wrong item mix, service invoices, cold-chain shortage
-- Mixed-mode reconciliation test data (`python manage.py seed_mixed_mode_data`) — 12 scenarios (SCN-MODE-001..012), 7 reconciliation policies, 1 service vendor, covering all mode resolution paths (policy, heuristic, default fallback). Requires `seed_saudi_mcd_data`.
+- Seed data: `seed_config` (6 users, 7 agent defs, 6 tool defs, recon config, 7 policies), `seed_rbac` (5 roles, 25 permissions, matrix, user sync), `seed_prompts` (12 prompt templates), `seed_ap_data` (30 deterministic scenarios: TWO_WAY/THREE_WAY/NON_PO + cross-cutting, with 6-stage pipeline: users → vendors → transactional → cases/recon → agent/review → observability)
+- Seed observability data (stage 6 of `seed_ap_data`): AgentStep (~280), AgentMessage (~568), ToolCall (~137), DecisionLog (~78), AgentEscalation (~2), ProcessingLog (~193), ManualReviewAction (~9); enriches AgentRun with trace_id/tokens/cost and AuditEvent with RBAC/cross-refs
+- Seed helpers architecture in `apps/cases/management/commands/seed_helpers/`: constants.py, master_data.py, transactional_data.py, case_builder.py, agent_review_data.py, observability_data.py, bulk_generator.py
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
