@@ -162,10 +162,14 @@ def invoice_detail(request, pk):
     except Exception:
         pass
 
+    # Check if any line items have tax amounts (to conditionally show tax column)
+    has_line_tax = invoice.line_items.filter(tax_amount__isnull=False).exclude(tax_amount=0).exists()
+
     return render(request, "documents/invoice_detail.html", {
         "invoice": invoice,
         "recon_results": recon_results,
         "ap_case": ap_case,
+        "has_line_tax": has_line_tax,
     })
 
 

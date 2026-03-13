@@ -104,6 +104,20 @@
       {# ── OVERVIEW PANEL (default view) ── #}
       <div id="avOverview" class="av-overview">
 
+        {# Recommended Action (above summary) #}
+        {% if summary.recommendation %}
+        <div class="av-msg" data-category="overview">
+          <div class="av-avatar" style="background:rgba(234,179,8,.12);color:#ca8a04"><i class="bi bi-lightbulb"></i></div>
+          <div class="av-body">
+            <div class="av-header">
+              <span class="av-sender">Recommended Action</span>
+              <span class="av-label" style="background:rgba(234,179,8,.10);color:#a16207;font-size:.55rem">Action</span>
+            </div>
+            <div class="av-text" style="font-weight:500">{{ summary.recommendation }}</div>
+          </div>
+        </div>
+        {% endif %}
+
         {# AI Summary #}
         {% if summary %}
         <div class="av-msg" data-category="overview">
@@ -116,15 +130,6 @@
             <div class="av-text">
               {% if summary.latest_summary %}{{ summary.latest_summary }}{% elif summary.is_fallback %}{{ summary.latest_summary }}{% endif %}
             </div>
-            {% if summary.recommendation %}
-            <div class="av-recommendation mt-2">
-              <div class="d-flex align-items-center gap-2">
-                <i class="bi bi-lightbulb text-warning"></i>
-                <span style="font-size:var(--ap-font-size-xs);font-weight:600;">Recommended Action</span>
-              </div>
-              <div style="font-size:var(--ap-font-size-xs);margin-top:.25rem">{{ summary.recommendation }}</div>
-            </div>
-            {% endif %}
           </div>
         </div>
         {% endif %}
@@ -139,38 +144,36 @@
 
       </div>{# /avOverview #}
 
-      {# ── Stage Transitions ── #}
-      {% for stage in stages %}
+      {# ── Pipeline Progress (compact tracker) ── #}
+      {% if stages %}
       <div class="av-msg" data-category="system">
-        <div class="av-avatar av-avatar--system"><i class="bi bi-signpost-split"></i></div>
+        <div class="av-avatar av-avatar--system"><i class="bi bi-diagram-3"></i></div>
         <div class="av-body">
           <div class="av-header">
-            <span class="av-sender">Pipeline</span>
-            <span class="av-label av-label--system">Stage</span>
-            <span class="av-time">{{ stage.created_at|timesince }} ago</span>
+            <span class="av-sender">Processing Pipeline</span>
+            <span class="av-label av-label--system">System</span>
           </div>
-          <div class="av-text">
-            <span class="av-stage-transition">
-              {% if stage.stage_status == "COMPLETED" %}<i class="bi bi-check-circle-fill text-success"></i>
-              {% elif stage.stage_status == "IN_PROGRESS" %}<i class="bi bi-arrow-repeat text-primary"></i>
-              {% elif stage.stage_status == "FAILED" %}<i class="bi bi-x-circle-fill text-danger"></i>
-              {% elif stage.stage_status == "SKIPPED" %}<i class="bi bi-dash-circle text-muted"></i>
-              {% else %}<i class="bi bi-circle text-muted"></i>{% endif %}
-              <strong>{{ stage.get_stage_name_display }}</strong> — {{ stage.get_stage_status_display }}
-            </span>
+          <div class="av-pipeline">
+            {% for stage in stages %}
+            <div class="av-pipeline__step {% if stage.stage_status == 'COMPLETED' %}av-pipeline__step--done{% elif stage.stage_status == 'IN_PROGRESS' %}av-pipeline__step--active{% elif stage.stage_status == 'FAILED' %}av-pipeline__step--fail{% elif stage.stage_status == 'SKIPPED' %}av-pipeline__step--skip{% endif %}">
+              <div class="av-pipeline__icon">
+                {% if stage.stage_status == "COMPLETED" %}<i class="bi bi-check-circle-fill"></i>
+                {% elif stage.stage_status == "IN_PROGRESS" %}<i class="bi bi-arrow-repeat"></i>
+                {% elif stage.stage_status == "FAILED" %}<i class="bi bi-x-circle-fill"></i>
+                {% elif stage.stage_status == "SKIPPED" %}<i class="bi bi-dash-circle"></i>
+                {% else %}<i class="bi bi-circle"></i>{% endif %}
+              </div>
+              <span class="av-pipeline__name">{{ stage.get_stage_name_display }}</span>
+              {% if stage.error_message %}
+              <span class="av-pipeline__err" title="{{ stage.error_message }}"><i class="bi bi-exclamation-triangle-fill"></i></span>
+              {% endif %}
+            </div>
+            {% if not forloop.last %}<div class="av-pipeline__connector"></div>{% endif %}
+            {% endfor %}
           </div>
-          {% if stage.notes %}
-          <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">{{ stage.notes|truncatechars:200 }}</div>
-          {% endif %}
-          {% if stage.error_message %}
-          <div class="av-exception av-exception--high mt-1">
-            <i class="bi bi-exclamation-triangle-fill"></i>
-            <span>{{ stage.error_message|truncatechars:300 }}</span>
-          </div>
-          {% endif %}
         </div>
       </div>
-      {% endfor %}
+      {% endif %}
 
       {# ── Exceptions ── #}
       {% for exc in exceptions %}
@@ -488,27 +491,44 @@
       {% endif %}
       {% endfor %}
 
-      {# ── Non-agent Timeline Events (audit, review, stage from governance) ── #}
+      {# ── System Activity (audit, mode_resolution, case events only) ── #}
       {% for event in timeline %}
-      {% if event.event_category != 'agent_run' and event.event_category != 'tool_call' and event.event_category != 'decision' and event.event_category != 'recommendation' %}
-      <div class="av-msg" data-category="{% if event.event_category == 'review' or event.event_category == 'review_action' or event.event_category == 'review_decision' %}human{% elif event.event_category == 'stage' %}system{% else %}system{% endif %}">
-        <div class="av-avatar av-avatar--{% if event.event_category == 'review' or event.event_category == 'review_action' %}human{% else %}system{% endif %}">
-          {% if event.event_category == "review" or event.event_category == "review_action" %}<i class="bi bi-person-check"></i>
-          {% elif event.event_category == "mode_resolution" %}<i class="bi bi-diagram-3"></i>
-          {% elif event.event_category == "stage" %}<i class="bi bi-signpost-split"></i>
+      {% if event.event_category == 'audit' or event.event_category == 'mode_resolution' or event.event_category == 'case' %}
+      <div class="av-msg" data-category="system">
+        <div class="av-avatar av-avatar--system">
+          {% if event.event_category == "mode_resolution" %}<i class="bi bi-diagram-3"></i>
+          {% elif event.event_category == "case" %}<i class="bi bi-folder-plus"></i>
+          {% elif 'UPLOAD' in event.event_type %}<i class="bi bi-cloud-upload"></i>
+          {% elif 'EXTRACTION' in event.event_type %}<i class="bi bi-file-earmark-text"></i>
+          {% elif 'RECONCILIATION' in event.event_type %}<i class="bi bi-arrow-left-right"></i>
           {% else %}<i class="bi bi-gear"></i>{% endif %}
         </div>
         <div class="av-body">
           <div class="av-header">
-            <span class="av-sender" style="font-size:var(--ap-font-size-xs)">{{ event.description|default:event.event_type }}</span>
-            <span class="av-label av-label--{% if event.event_category == 'review' %}human{% else %}system{% endif %}" style="font-size:.55rem">
-              {{ event.event_category|default:"system" }}
+            <span class="av-sender">{{ event.description|default:event.event_type }}</span>
+            <span class="av-label av-label--system" style="font-size:.55rem">
+              {% if event.event_category == 'mode_resolution' %}mode{% elif event.event_category == 'case' %}case{% else %}audit{% endif %}
             </span>
             <span class="av-time">{{ event.timestamp|timesince }} ago</span>
           </div>
-          {% if event.detail %}
-          <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-secondary)">{{ event.detail|truncatechars:200 }}</div>
+          {% if event.status_change %}
+          <div style="font-size:var(--ap-font-size-xs);margin-top:.15rem">
+            <span class="text-muted">{{ event.status_change.before }}</span>
+            <i class="bi bi-arrow-right" style="font-size:.5rem;margin:0 .25rem"></i>
+            <span style="font-weight:600">{{ event.status_change.after }}</span>
+          </div>
           {% endif %}
+        </div>
+      </div>
+      {% elif event.event_category == 'review' or event.event_category == 'review_action' or event.event_category == 'review_decision' %}
+      <div class="av-msg" data-category="human">
+        <div class="av-avatar av-avatar--human"><i class="bi bi-person-check"></i></div>
+        <div class="av-body">
+          <div class="av-header">
+            <span class="av-sender">{{ event.description|default:event.event_type }}</span>
+            <span class="av-label av-label--human" style="font-size:.55rem">review</span>
+            <span class="av-time">{{ event.timestamp|timesince }} ago</span>
+          </div>
         </div>
       </div>
       {% endif %}

@@ -506,19 +506,61 @@
   font-family: var(--ap-font-mono);
 }
 
-/* ── Stage Transition (compact inline) ── */
-.av-stage-transition {
+/* ── Pipeline Tracker (compact stepper) ── */
+.av-pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  margin-top: 0.5rem;
+}
+.av-pipeline__step {
   display: inline-flex;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.25rem 0.625rem;
-  background: var(--ap-bg-subtle);
+  gap: 0.3rem;
+  padding: 0.2rem 0.5rem;
   border-radius: var(--ap-radius-pill);
-  font-size: var(--ap-font-size-xs);
-  color: var(--ap-text-secondary);
+  font-size: 0.675rem;
   font-weight: 500;
+  color: var(--ap-text-muted);
+  background: var(--ap-bg-subtle);
+  white-space: nowrap;
 }
-.av-stage-transition .bi { font-size: 0.7rem; }
+.av-pipeline__step--done {
+  color: var(--ap-success);
+  background: rgba(34, 197, 94, 0.08);
+}
+.av-pipeline__step--active {
+  color: var(--ap-primary);
+  background: rgba(37, 99, 235, 0.10);
+  font-weight: 600;
+}
+.av-pipeline__step--fail {
+  color: var(--ap-danger);
+  background: rgba(239, 68, 68, 0.08);
+}
+.av-pipeline__step--skip {
+  color: var(--ap-text-muted);
+  opacity: 0.6;
+}
+.av-pipeline__icon {
+  display: flex;
+  font-size: 0.65rem;
+}
+.av-pipeline__name {
+  line-height: 1;
+}
+.av-pipeline__err {
+  color: var(--ap-danger);
+  font-size: 0.6rem;
+  cursor: help;
+}
+.av-pipeline__connector {
+  width: 12px;
+  height: 1px;
+  background: var(--ap-border);
+  flex-shrink: 0;
+}
 
 /* ══════════════════════════════════════════════════════════════════
    CHAT SECTION — persistent chat area below the tab feed
