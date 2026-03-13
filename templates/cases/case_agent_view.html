@@ -58,21 +58,14 @@
 
   <div class="av-identity__actions"
        data-reprocess-url="{% url 'cases:reprocess_case' case.pk %}"
-       {% if review_assignment %}data-decide-url="{% url 'reviews:decide' review_assignment.pk %}"{% endif %}>
+       data-decide-url="{% url 'cases:case_decide' case.pk %}">
     {% csrf_token %}
-    {% if case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
-      {% if review_assignment %}
+    {% if show_actions or case.status == "FAILED" %}
+      {% if show_actions %}
       <button class="btn btn-success btn-sm" onclick="caseAction('approve')" title="Approve"><i class="bi bi-check-circle me-1"></i>Approve</button>
       <button class="btn btn-danger btn-sm" onclick="caseAction('reject')" title="Reject"><i class="bi bi-x-circle me-1"></i>Reject</button>
-      <button class="btn btn-outline-warning btn-sm" onclick="caseAction('escalate')" title="Escalate"><i class="bi bi-arrow-up-right-circle"></i></button>
       {% endif %}
-    {% elif case.status == "FAILED" %}
-      <form method="post" action="{% url 'cases:reprocess_case' case.pk %}" class="d-inline">
-        {% csrf_token %}
-        <input type="hidden" name="stage" value="INTAKE">
-        <input type="hidden" name="next" value="agent">
-        <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
-      </form>
+      <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
     {% endif %}
     {% if invoice %}
     <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Governance">

@@ -382,7 +382,7 @@ def case_agent_view(request, pk):
 
     # Non-PO validation issues
     validation_issues = []
-    validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version").first()
+    validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version", "-created_at").first()
     if validation_artifact and isinstance(validation_artifact.payload, dict):
         checks = validation_artifact.payload.get("checks", {})
         for check_name, check_data in checks.items():
@@ -448,6 +448,12 @@ def case_agent_view(request, pk):
                 priority=5,
             )
 
+    # Determine if actions should be shown (for both PO and Non-PO paths)
+    show_actions = case.status in (
+        "READY_FOR_REVIEW", "IN_REVIEW", "REVIEW_COMPLETED",
+        "READY_FOR_APPROVAL", "APPROVAL_IN_PROGRESS",
+    )
+
     return render(request, "cases/case_agent_view.html", {
         "case": case,
         "invoice": invoice,
@@ -465,5 +471,64 @@ def case_agent_view(request, pk):
         "timeline": timeline,
         "show_full_trace": show_full_trace,
         "review_assignment": review_assignment,
+        "show_actions": show_actions,
         "copilot_context_json": json.dumps(copilot_context, default=str),
     })
+
+
+@login_required
+def case_decide(request, pk):
+    """Handle approve/reject/escalate directly on a case.
+
+    Works for both PO cases (delegates to ReviewAssignment workflow) and
+    Non-PO cases (updates case status directly).
+    """
+    if request.method != "POST":
+        return redirect("cases:case_agent_view", pk=pk)
+
+    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    decision = request.POST.get("decision", "").upper()
+
+    # If there's a review assignment, delegate to the review workflow
+    recon_result = case.reconciliation_result
+    if recon_result:
+        assignment = (
+            recon_result.review_assignments
+            .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
+            .first()
+        )
+        if assignment:
+            from apps.reviews.services import ReviewWorkflowService
+            reason = request.POST.get("reason", "")
+            if decision == "APPROVED":
+                ReviewWorkflowService.approve(assignment, request.user, reason)
+            elif decision == "REJECTED":
+                ReviewWorkflowService.reject(assignment, request.user, reason)
+            elif decision == "REPROCESSED":
+                ReviewWorkflowService.request_reprocess(assignment, request.user, reason)
+
+    # Handle reprocessing
+    if decision == "REPROCESSED":
+        from apps.cases.tasks import reprocess_case_from_stage_task
+        from apps.core.utils import dispatch_task
+        try:
+            dispatch_task(reprocess_case_from_stage_task, case_id=case.pk, stage="INTAKE")
+            messages.success(request, f"Case {case.case_number} submitted for reprocessing.")
+        except Exception as exc:
+            messages.error(request, f"Reprocessing failed: {exc}")
+        return redirect("cases:case_agent_view", pk=pk)
+
+    # Update case status
+    status_map = {
+        "APPROVED": CaseStatus.CLOSED,
+        "REJECTED": CaseStatus.REJECTED,
+    }
+    new_status = status_map.get(decision)
+    if new_status:
+        case.status = new_status
+        case.save(update_fields=["status", "updated_at"])
+        messages.success(request, f"Case {case.case_number} marked as {case.get_status_display()}.")
+    else:
+        messages.warning(request, f"Unknown decision: {decision}")
+
+    return redirect("cases:case_agent_view", pk=pk)

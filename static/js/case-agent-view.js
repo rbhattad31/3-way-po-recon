@@ -490,7 +490,7 @@ function caseAction(action) {
   var labels = {
     'approve': 'Approve this case',
     'reject': 'Reject this case',
-    'escalate': 'Escalate this case',
+    'reprocess': 'Reprocess this case from start',
   };
   if (!confirm('Are you sure you want to: ' + (labels[action] || action) + '?')) return;
 
@@ -502,23 +502,16 @@ function caseAction(action) {
   form.method = 'POST';
   form.style.display = 'none';
 
-  // Route approve/reject to review decide endpoint, escalate to reprocess
-  var decisionMap = { 'approve': 'APPROVED', 'reject': 'REJECTED' };
-  if (decisionMap[action] && actionsEl && actionsEl.dataset.decideUrl) {
-    form.action = actionsEl.dataset.decideUrl;
+  // All actions route to case decide endpoint
+  var decisionMap = { 'approve': 'APPROVED', 'reject': 'REJECTED', 'reprocess': 'REPROCESSED' };
+  var decideUrl = actionsEl ? actionsEl.dataset.decideUrl : '';
+  if (decisionMap[action] && decideUrl) {
+    form.action = decideUrl;
     var dec = document.createElement('input');
     dec.type = 'hidden'; dec.name = 'decision'; dec.value = decisionMap[action];
     form.appendChild(dec);
   } else {
-    var reprocessUrl = actionsEl ? actionsEl.dataset.reprocessUrl : '';
-    if (!reprocessUrl) return;
-    form.action = reprocessUrl;
-    var stg = document.createElement('input');
-    stg.type = 'hidden'; stg.name = 'stage'; stg.value = 'INTAKE';
-    form.appendChild(stg);
-    var nxt = document.createElement('input');
-    nxt.type = 'hidden'; nxt.name = 'next'; nxt.value = 'agent';
-    form.appendChild(nxt);
+    return;
   }
 
   var csrf = document.createElement('input');

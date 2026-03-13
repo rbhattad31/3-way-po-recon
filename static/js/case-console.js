@@ -76,8 +76,7 @@ function caseAction(action) {
   var labels = {
     'approve': 'Approve this case',
     'reject': 'Reject this case',
-    'escalate': 'Escalate this case',
-    'request_info': 'Request additional information',
+    'reprocess': 'Reprocess this case from start',
   };
   var label = labels[action] || action;
 
@@ -93,20 +92,27 @@ function caseAction(action) {
   // Build the form data
   var form = document.createElement('form');
   form.method = 'POST';
-  form.action = window.location.pathname + 'reprocess/';
   form.style.display = 'none';
+
+  // All actions route to case decide endpoint
+  var decisionMap = { 'approve': 'APPROVED', 'reject': 'REJECTED', 'reprocess': 'REPROCESSED' };
+  var actionsEl = document.querySelector('.ap-case-header__actions');
+  var decideUrl = actionsEl ? actionsEl.dataset.decideUrl : '';
+
+  if (decisionMap[action] && decideUrl) {
+    form.action = decideUrl;
+    var dec = document.createElement('input');
+    dec.type = 'hidden'; dec.name = 'decision'; dec.value = decisionMap[action];
+    form.appendChild(dec);
+  } else {
+    return;
+  }
 
   var csrfInput = document.createElement('input');
   csrfInput.type = 'hidden';
   csrfInput.name = 'csrfmiddlewaretoken';
   csrfInput.value = token;
   form.appendChild(csrfInput);
-
-  var actionInput = document.createElement('input');
-  actionInput.type = 'hidden';
-  actionInput.name = 'action';
-  actionInput.value = action;
-  form.appendChild(actionInput);
 
   // Show feedback toast
   var toastHtml = '<div class="position-fixed bottom-0 end-0 p-3" style="z-index:1090">' +
