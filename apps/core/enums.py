@@ -162,6 +162,21 @@ class AuditEventType(models.TextChoices):
     RECONCILIATION_MODE_RESOLVED = "RECONCILIATION_MODE_RESOLVED", "Reconciliation Mode Resolved"
     POLICY_APPLIED = "POLICY_APPLIED", "Policy Applied"
     MANUAL_MODE_OVERRIDE = "MANUAL_MODE_OVERRIDE", "Manual Mode Override"
+    # RBAC audit events
+    ROLE_ASSIGNED = "ROLE_ASSIGNED", "Role Assigned"
+    ROLE_REMOVED = "ROLE_REMOVED", "Role Removed"
+    ROLE_PERMISSION_CHANGED = "ROLE_PERMISSION_CHANGED", "Role Permission Changed"
+    USER_PERMISSION_OVERRIDE = "USER_PERMISSION_OVERRIDE", "User Permission Override"
+    USER_ACTIVATED = "USER_ACTIVATED", "User Activated"
+    USER_DEACTIVATED = "USER_DEACTIVATED", "User Deactivated"
+    ROLE_CREATED = "ROLE_CREATED", "Role Created"
+    ROLE_UPDATED = "ROLE_UPDATED", "Role Updated"
+    PRIMARY_ROLE_CHANGED = "PRIMARY_ROLE_CHANGED", "Primary Role Changed"
+
+
+class PermissionOverrideType(models.TextChoices):
+    ALLOW = "ALLOW", "Allow"
+    DENY = "DENY", "Deny"
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,11 @@ from apps.core.models import TimestampMixin
 
 
 class ProcessingLog(TimestampMixin):
-    """Operational log for pipeline steps (extraction, recon, agent, etc.)."""
+    """Operational log for pipeline steps (extraction, recon, agent, etc.).
+
+    This is the observability layer — durations, retries, failures, queue health.
+    Do NOT use this for business audit events (use AuditEvent instead).
+    """
 
     level = models.CharField(max_length=10, default="INFO", db_index=True)
     source = models.CharField(max_length=100, db_index=True, help_text="Module or service name")
@@ -14,12 +18,31 @@ class ProcessingLog(TimestampMixin):
     message = models.TextField()
     details = models.JSONField(null=True, blank=True)
     invoice_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    case_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     reconciliation_result_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    review_assignment_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     agent_run_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
     )
     trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    span_id = models.CharField(max_length=64, blank=True, default="")
+
+    # Observability fields
+    task_name = models.CharField(max_length=200, blank=True, default="")
+    task_id = models.CharField(max_length=100, blank=True, default="")
+    service_name = models.CharField(max_length=100, blank=True, default="")
+    endpoint_name = models.CharField(max_length=200, blank=True, default="")
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    success = models.BooleanField(null=True, blank=True)
+    retry_count = models.PositiveIntegerField(null=True, blank=True)
+    exception_class = models.CharField(max_length=200, blank=True, default="")
+    error_code = models.CharField(max_length=100, blank=True, default="")
+
+    # RBAC context (nullable — only populated for sensitive operations)
+    actor_primary_role = models.CharField(max_length=50, blank=True, default="")
+    permission_checked = models.CharField(max_length=100, blank=True, default="")
+    access_granted = models.BooleanField(null=True, blank=True)
 
     class Meta:
         db_table = "auditlog_processing_log"
@@ -30,6 +53,9 @@ class ProcessingLog(TimestampMixin):
             models.Index(fields=["source", "event"], name="idx_proclog_src_event"),
             models.Index(fields=["level"], name="idx_proclog_level"),
             models.Index(fields=["trace_id"], name="idx_proclog_trace"),
+            models.Index(fields=["task_name"], name="idx_proclog_task"),
+            models.Index(fields=["success"], name="idx_proclog_success"),
+            models.Index(fields=["case_id"], name="idx_proclog_case"),
         ]
 
     def __str__(self) -> str:
@@ -37,11 +63,16 @@ class ProcessingLog(TimestampMixin):
 
 
 class AuditEvent(TimestampMixin):
-    """State change audit trail and governance event log on business objects.
+    """Compliance-grade business event history.
 
-    Supports two usage patterns:
-    - State-change audits: old_values/new_values capture before/after
-    - Governance events: event_type/event_description capture typed lifecycle events
+    Captures business-significant events only:
+    - invoice uploaded, extraction completed, duplicate flagged
+    - reconciliation triggered/completed, mode resolved
+    - review assigned/approved/rejected, field corrected
+    - override applied, reprocess requested, case rerouted/closed
+    - role/permission changes, access denied for sensitive actions
+
+    Do NOT use this for operational noise (use ProcessingLog instead).
     """
 
     entity_type = models.CharField(max_length=100, db_index=True, help_text="e.g. Invoice, ReconciliationResult")
@@ -61,6 +92,43 @@ class AuditEvent(TimestampMixin):
     performed_by_agent = models.CharField(max_length=100, blank=True, default="", help_text="Agent name if action performed by an agent")
     metadata_json = models.JSONField(null=True, blank=True, help_text="Additional structured context")
 
+    # Traceability fields
+    trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    span_id = models.CharField(max_length=64, blank=True, default="")
+    parent_span_id = models.CharField(max_length=64, blank=True, default="")
+
+    # Entity cross-references (for efficient queries)
+    invoice_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    case_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    reconciliation_result_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    review_assignment_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    agent_run_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
+    # RBAC context snapshot (captured at action time)
+    actor_email = models.EmailField(blank=True, default="")
+    actor_primary_role = models.CharField(max_length=50, blank=True, default="")
+    actor_roles_snapshot_json = models.JSONField(null=True, blank=True, help_text="List of active role codes at action time")
+    permission_checked = models.CharField(max_length=100, blank=True, default="")
+    permission_source = models.CharField(
+        max_length=50, blank=True, default="",
+        help_text="ROLE | USER_OVERRIDE_ALLOW | ADMIN_BYPASS | USER_OVERRIDE_DENY | NO_PERMISSION | USER_INACTIVE",
+    )
+    access_granted = models.BooleanField(null=True, blank=True)
+
+    # Business context
+    status_before = models.CharField(max_length=60, blank=True, default="")
+    status_after = models.CharField(max_length=60, blank=True, default="")
+    reason_code = models.CharField(max_length=100, blank=True, default="")
+
+    # Payload snapshots (redacted)
+    input_snapshot_json = models.JSONField(null=True, blank=True, help_text="Redacted input snapshot")
+    output_snapshot_json = models.JSONField(null=True, blank=True, help_text="Redacted output snapshot")
+
+    # Operational
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    error_code = models.CharField(max_length=100, blank=True, default="")
+    is_redacted = models.BooleanField(default=False)
+
     class Meta:
         db_table = "auditlog_audit_event"
         ordering = ["-created_at"]
@@ -70,6 +138,12 @@ class AuditEvent(TimestampMixin):
             models.Index(fields=["entity_type", "entity_id"], name="idx_audit_entity"),
             models.Index(fields=["action"], name="idx_audit_action"),
             models.Index(fields=["event_type"], name="idx_audit_event_type"),
+            models.Index(fields=["trace_id"], name="idx_audit_trace"),
+            models.Index(fields=["invoice_id"], name="idx_audit_invoice"),
+            models.Index(fields=["case_id"], name="idx_audit_case"),
+            models.Index(fields=["actor_primary_role"], name="idx_audit_role"),
+            models.Index(fields=["permission_checked"], name="idx_audit_perm"),
+            models.Index(fields=["access_granted"], name="idx_audit_access"),
         ]
 
     def __str__(self) -> str:

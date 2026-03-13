@@ -37,8 +37,7 @@ Upload PDF → OCR (Azure DI) → LLM Extract (Azure OpenAI GPT-4o) → Normaliz
 - **Dashboard analytics** — 7 API endpoints for summary stats, match breakdowns, agent performance, mode breakdown
 - **23 Bootstrap 5 templates** — invoices, POs, GRNs, reconciliation results, case console, settings, reviews, agent monitor/reference, governance (audit log + invoice governance), upload modal
 - **Full DRF API** — REST endpoints under `/api/v1/` with filtering, search, and pagination; governance API under `/api/v1/governance/`
-- **Seed data** — `python manage.py seed_data` — 5 users, 5 vendors, 13 invoices (with edge-case scenarios), POs, GRNs, 7 agent definitions, 6 tool definitions
-- **Saudi McD test data** — `seed_saudi_mcd_data` + `seed_invoice_test_data` + `seed_po_agent_test_data` + `seed_grn_agent_test_data` — 10 vendors, 25 POs, 30 GRNs, 40 test scenarios (18 invoice + 10 PO Agent + 12 GRN Agent) for Saudi Arabia McDonald’s distributor reconciliation testing- **Mixed-mode test data** — `seed_mixed_mode_data` — 12 scenarios (SCN-MODE-001..012), 7 reconciliation policies, service vendor, covering all mode resolution paths (policy, heuristic, default fallback)
+- **Seed data pipeline** — `seed_config` (6 users, 7 agent defs, 6 tool defs, recon config, 7 policies) + `seed_rbac` (RBAC roles/permissions) + `seed_prompts` (12 templates) + `seed_ap_data` (30 Saudi McDonald's scenarios across TWO_WAY/THREE_WAY/NON_PO with full observability: 120 agent runs, 280 steps, 568 messages, 137 tool calls, 78 decision logs, 193 processing logs, 125 audit events)
 ## Quick Start
 
 ```bash
@@ -56,15 +55,11 @@ python manage.py migrate
 # Create superuser
 python manage.py createsuperuser
 
-# Seed sample data (optional)
-python manage.py seed_data
-
-# Or: Seed Saudi McD master data + 52 test scenarios
-python manage.py seed_saudi_mcd_data
-python manage.py seed_invoice_test_data
-python manage.py seed_po_agent_test_data
-python manage.py seed_grn_agent_test_data
-python manage.py seed_mixed_mode_data
+# Seed sample data (recommended order)
+python manage.py seed_config --flush
+python manage.py seed_rbac --sync-users
+python manage.py seed_prompts --force
+python manage.py seed_ap_data --reset --summary
 
 # Option A: Windows dev mode (no Redis needed — runs synchronously)
 # CELERY_TASK_ALWAYS_EAGER=True is the default in settings.py

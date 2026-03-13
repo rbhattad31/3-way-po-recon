@@ -54,7 +54,8 @@ class ClassificationService:
         # In 2-way mode, GRN issues are irrelevant
         grn_ok = True
         if not is_two_way and grn_result is not None:
-            grn_ok = not grn_result.has_receipt_issues
+            # Missing GRN (grn_available=False) is itself a critical issue in 3-way mode
+            grn_ok = grn_result.grn_available and not grn_result.has_receipt_issues
 
         # Gate 3: Full match
         if (

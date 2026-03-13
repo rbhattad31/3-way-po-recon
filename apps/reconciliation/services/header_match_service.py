@@ -21,6 +21,8 @@ class HeaderMatchResult:
     currency_match: Optional[bool] = None
     po_total_match: Optional[bool] = None
     total_comparison: Optional[FieldComparison] = None
+    tax_match: Optional[bool] = None
+    tax_comparison: Optional[FieldComparison] = None
     all_ok: bool = False
 
 
@@ -47,11 +49,19 @@ class HeaderMatchService:
         )
         result.po_total_match = result.total_comparison.within_tolerance
 
+        # 4. Tax amount comparison
+        if invoice.tax_amount is not None and po.tax_amount is not None:
+            result.tax_comparison = self.engine.compare_amount(
+                invoice.tax_amount, po.tax_amount
+            )
+            result.tax_match = result.tax_comparison.within_tolerance
+
         # Overall header pass
         result.all_ok = all([
             result.vendor_match is True,
             result.currency_match is True,
             result.po_total_match is True,
+            result.tax_match is not False,  # None (missing tax) is acceptable
         ])
 
         logger.info(

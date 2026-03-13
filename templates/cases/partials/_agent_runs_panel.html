@@ -98,9 +98,48 @@
     </div>
   </div>
   {% else %}
-  <div class="ap-empty-state">
-    <i class="bi bi-robot"></i>
-    <div class="ap-empty-state-label">No agent runs yet</div>
-  </div>
+    {# Show stage-based activity for cases without agent runs (e.g. NON_PO) #}
+    {% if stages %}
+    <div class="ap-card-body-flush">
+      <div class="px-3 pt-2 pb-1" style="font-size:var(--ap-font-size-xs); font-weight:600; color:var(--ap-text-secondary, #6c757d);">
+        <i class="bi bi-diagram-3"></i> Processing Stages
+      </div>
+      <table class="ap-table">
+        <thead>
+          <tr>
+            <th>Stage</th>
+            <th>Status</th>
+            <th>Performed By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for stage in stages %}
+          <tr>
+            <td><span class="fw-semibold" style="font-size:var(--ap-font-size-xs)">{{ stage.get_stage_name_display|default:stage.stage_name }}</span></td>
+            <td>
+              {% if stage.stage_status == "COMPLETED" %}
+                <span class="ap-badge ap-badge-success">Completed</span>
+              {% elif stage.stage_status == "FAILED" %}
+                <span class="ap-badge ap-badge-danger">Failed</span>
+              {% elif stage.stage_status == "IN_PROGRESS" %}
+                <span class="ap-badge ap-badge-info">In Progress</span>
+              {% elif stage.stage_status == "SKIPPED" %}
+                <span class="ap-badge ap-badge-muted">Skipped</span>
+              {% else %}
+                <span class="ap-badge ap-badge-muted">{{ stage.stage_status }}</span>
+              {% endif %}
+            </td>
+            <td style="font-size:var(--ap-font-size-xs)">{{ stage.performed_by_type|default:"System" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="ap-empty-state">
+      <i class="bi bi-robot"></i>
+      <div class="ap-empty-state-label">No agent runs yet</div>
+    </div>
+    {% endif %}
   {% endif %}
 </div>

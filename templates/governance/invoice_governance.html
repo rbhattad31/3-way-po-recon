@@ -17,6 +17,9 @@
   </div>
   <div>
     <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-file-earmark-text me-1"></i>Invoice Detail</a>
+    {% if ap_case %}
+    <a href="{% url 'cases:case_console' ap_case.pk %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-folder2-open me-1"></i>Case Console</a>
+    {% endif %}
     <a href="{% url 'governance:audit_event_list' %}?entity_type=Invoice&entity_id={{ invoice.pk }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-funnel me-1"></i>Filter Audit Log</a>
   </div>
 </div>
@@ -25,6 +28,7 @@
 <ul class="nav nav-tabs mb-3" role="tablist">
   <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-timeline" role="tab"><i class="bi bi-clock-history me-1"></i>Timeline</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-audit" role="tab"><i class="bi bi-list-check me-1"></i>Audit Events</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-access" role="tab"><i class="bi bi-shield-exclamation me-1"></i>Access History</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-agents" role="tab"><i class="bi bi-diagram-3 me-1"></i>Agent Trace</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-recommendations" role="tab"><i class="bi bi-lightbulb me-1"></i>Recommendations</a></li>
 </ul>
@@ -64,7 +68,18 @@
                 <br><small class="text-muted">
                   <span class="ap-badge ap-badge-status-new">{{ event.event_category }}</span>
                   by {{ event.actor }}
+                  {% if event.rbac.actor_role %}<span class="badge bg-secondary ms-1">{{ event.rbac.actor_role }}</span>{% endif %}
+                  {% if event.rbac.permission_checked %}<span class="font-monospace text-muted ms-1">[{{ event.rbac.permission_checked }}]</span>{% endif %}
+                  {% if event.rbac.access_granted == False %}<i class="bi bi-x-circle text-danger ms-1" title="Access Denied"></i>{% endif %}
+                  {% if event.duration_ms %}<span class="text-muted ms-1">({{ event.duration_ms }}ms)</span>{% endif %}
                 </small>
+                {% if event.status_change %}
+                <br><small><span class="text-muted">Status:</span> {{ event.status_change.before|default:"—" }} <i class="bi bi-arrow-right"></i> {{ event.status_change.after|default:"—" }}</small>
+                {% endif %}
+                {% if event.field_change %}
+                <br><small class="text-warning"><i class="bi bi-pencil-square me-1"></i>{{ event.field_change.field }}: "{{ event.field_change.old }}" → "{{ event.field_change.new }}"</small>
+                {% endif %}
+                {% if event.trace_id %}<br><small class="text-muted font-monospace">trace: {{ event.trace_id|truncatechars:16 }}</small>{% endif %}
               </div>
               <small class="text-muted text-nowrap ms-2">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
             </div>
@@ -117,6 +132,46 @@
     <div class="ap-empty-state">
       <i class="bi bi-list-check"></i>
       <p>No audit events found.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  {# ── TAB: Access History ── #}
+  <div class="tab-pane fade" id="tab-access" role="tabpanel">
+    {% if access_events %}
+    <div class="ap-card">
+      <div class="ap-card-body p-0">
+        <table class="ap-table mb-0">
+          <thead><tr><th>Event</th><th>Actor</th><th>Role</th><th>Permission</th><th>Result</th><th>Timestamp</th></tr></thead>
+          <tbody>
+            {% for ev in access_events %}
+            <tr {% if ev.access_granted == False %}class="table-danger"{% endif %}>
+              <td><span class="ap-badge ap-badge-status-new">{{ ev.event_type|default:ev.action }}</span></td>
+              <td>
+                {% if ev.actor_email %}<small>{{ ev.actor_email }}</small>
+                {% elif ev.performed_by %}<small>{{ ev.performed_by.email }}</small>
+                {% else %}<small class="text-muted">system</small>{% endif %}
+              </td>
+              <td>{% if ev.actor_primary_role %}<span class="badge bg-secondary">{{ ev.actor_primary_role }}</span>{% endif %}</td>
+              <td><small class="font-monospace">{{ ev.permission_checked }}</small>
+                {% if ev.permission_source %}<br><small class="text-muted">via {{ ev.permission_source }}</small>{% endif %}
+              </td>
+              <td>
+                {% if ev.access_granted == False %}<span class="badge bg-danger">DENIED</span>
+                {% elif ev.access_granted %}<span class="badge bg-success">GRANTED</span>
+                {% else %}<span class="text-muted">—</span>{% endif %}
+              </td>
+              <td><small class="text-muted">{{ ev.created_at|date:"M d, Y H:i:s" }}</small></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="ap-empty-state">
+      <i class="bi bi-shield-exclamation"></i>
+      <p>No permission-checked events for this invoice.</p>
     </div>
     {% endif %}
   </div>

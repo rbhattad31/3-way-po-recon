@@ -130,21 +130,116 @@ class StageExecutor:
     @staticmethod
     def _execute_po_retrieval(case: APCase) -> Dict:
         """
-        PO retrieval: deterministic lookup + agent fallback.
+        PO retrieval: deterministic lookup + PO Retrieval Agent + vendor+amount fallback.
+
+        Flow:
+        1. Exact + normalized PO lookup (quick deterministic check)
+        2. PO Retrieval Agent (LLM-based fuzzy matching)
+        3. Vendor + amount discovery (deterministic fallback)
         """
         from apps.reconciliation.services.po_lookup_service import POLookupService
 
         invoice = case.invoice
-        po_result = POLookupService().lookup(invoice)
+        lookup_svc = POLookupService()
 
+        # Step 1: strict lookup (exact + normalized only)
+        po_result = lookup_svc.lookup(invoice, skip_vendor_amount=True)
         if po_result.found:
             case.purchase_order = po_result.purchase_order
             case.save(update_fields=["purchase_order", "updated_at"])
-            return {"po_found": True, "po_number": po_result.purchase_order.po_number}
+            return {
+                "po_found": True,
+                "po_number": po_result.purchase_order.po_number,
+                "method": po_result.lookup_method,
+            }
 
-        # Agent fallback: PO Retrieval Agent
-        # TODO: Invoke PO Retrieval Agent via agent orchestrator
-        return {"po_found": False, "agent_attempted": False}
+        # Step 2: Invoke PO Retrieval Agent (LLM-based fuzzy matching)
+        agent_result = StageExecutor._run_po_retrieval_agent(case)
+        if agent_result.get("po_found"):
+            return agent_result
+
+        # Step 3: Vendor + amount discovery (deterministic fallback)
+        po_result = lookup_svc._discover_by_vendor_amount(invoice)
+        if po_result.found:
+            case.purchase_order = po_result.purchase_order
+            case.save(update_fields=["purchase_order", "updated_at"])
+            logger.info(
+                "PO found via vendor+amount fallback for case %s: PO %s",
+                case.case_number, po_result.purchase_order.po_number,
+            )
+            return {
+                "po_found": True,
+                "po_number": po_result.purchase_order.po_number,
+                "method": "vendor_amount_fallback",
+                "agent_attempted": True,
+            }
+
+        return {"po_found": False, "agent_attempted": True}
+
+    @staticmethod
+    def _run_po_retrieval_agent(case: APCase) -> Dict:
+        """Invoke the PO Retrieval Agent to attempt fuzzy PO matching."""
+        try:
+            from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
+            from apps.agents.services.base_agent import AgentContext
+            from apps.core.enums import AgentRunStatus, AgentType
+            from apps.documents.models import PurchaseOrder
+
+            agent_cls = AGENT_CLASS_REGISTRY.get(AgentType.PO_RETRIEVAL)
+            if not agent_cls:
+                logger.warning("PO Retrieval Agent class not found in registry")
+                return {"po_found": False, "agent_attempted": False}
+
+            invoice = case.invoice
+            ctx = AgentContext(
+                reconciliation_result=None,
+                invoice_id=invoice.pk,
+                po_number=invoice.po_number,
+                extra={
+                    "vendor_name": invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name,
+                    "total_amount": str(invoice.total_amount) if invoice.total_amount else "unknown",
+                    "case_number": case.case_number,
+                },
+            )
+
+            agent = agent_cls()
+            agent_run = agent.run(ctx)
+
+            if agent_run.status != AgentRunStatus.COMPLETED:
+                logger.warning(
+                    "PO Retrieval Agent did not complete for case %s: status=%s",
+                    case.case_number, agent_run.status,
+                )
+                return {"po_found": False, "agent_attempted": True}
+
+            # Parse agent output for a found PO number
+            output = agent_run.output_payload or {}
+            evidence = output.get("evidence", {})
+            found_po_number = evidence.get("po_number") or evidence.get("found_po_number")
+
+            if found_po_number:
+                po = PurchaseOrder.objects.filter(po_number=found_po_number).first()
+                if po:
+                    case.purchase_order = po
+                    case.save(update_fields=["purchase_order", "updated_at"])
+                    logger.info(
+                        "PO Retrieval Agent found PO %s for case %s",
+                        po.po_number, case.case_number,
+                    )
+                    return {
+                        "po_found": True,
+                        "po_number": po.po_number,
+                        "method": "agent",
+                        "agent_attempted": True,
+                        "agent_confidence": output.get("confidence"),
+                    }
+
+            logger.info("PO Retrieval Agent did not find a PO for case %s", case.case_number)
+            return {"po_found": False, "agent_attempted": True}
+
+        except Exception:
+            logger.exception("PO Retrieval Agent error for case %s", case.case_number)
+            return {"po_found": False, "agent_attempted": True, "agent_error": True}
 
     @staticmethod
     def _execute_two_way_matching(case: APCase) -> Dict:
@@ -164,6 +259,11 @@ class StageExecutor:
 
             if result.match_status == MatchStatus.MATCHED:
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
+            else:
+                # Advance to exception analysis for non-matched results
+                CaseStateMachine.transition(
+                    case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
+                )
 
         return {
             "run_id": run.id,
@@ -192,9 +292,20 @@ class StageExecutor:
         """
         Non-PO validation: deterministic checks + agent reasoning.
         """
+        # Ensure we're in the correct status (handles rerouted UNRESOLVED cases)
+        if case.status != CaseStatus.NON_PO_VALIDATION_IN_PROGRESS:
+            CaseStateMachine.transition(
+                case, CaseStatus.NON_PO_VALIDATION_IN_PROGRESS, PerformedByType.DETERMINISTIC
+            )
+
         from apps.cases.services.non_po_validation_service import NonPOValidationService
 
         result = NonPOValidationService.validate(case)
+
+        # Advance to exception analysis
+        CaseStateMachine.transition(
+            case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
+        )
 
         return {
             "overall_status": result.overall_status,
@@ -224,10 +335,10 @@ class StageExecutor:
             return {
                 "agents_executed": orch_result.agents_executed,
                 "final_recommendation": orch_result.final_recommendation,
-                "confidence": orch_result.confidence,
+                "confidence": orch_result.final_confidence,
             }
 
-        # Non-PO cases without reconciliation result
+        # Non-PO cases without reconciliation result — send to review deterministically
         CaseStateMachine.transition(case, CaseStatus.READY_FOR_REVIEW, PerformedByType.DETERMINISTIC)
         return {"non_po": True, "sent_to_review": True}
 

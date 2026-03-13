@@ -18,12 +18,29 @@
     <div class="ap-card">
       <div class="ap-card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-file-earmark-text"></i> Invoice Details</span>
-        {% if invoice.document_upload %}
-        <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" target="_blank"
-           class="btn btn-sm btn-outline-primary" title="View original document">
-          <i class="bi bi-file-earmark-arrow-down"></i> View Document
-        </a>
-        {% endif %}
+        <div class="d-flex gap-2">
+          {% if ap_case %}
+          <a href="{% url 'cases:case_console' ap_case.pk %}" class="btn btn-sm btn-outline-primary" title="Open case console">
+            <i class="bi bi-folder2-open me-1"></i>{{ ap_case.case_number }}
+          </a>
+          {% else %}
+          <form method="post" action="{% url 'cases:create_case_for_invoice' invoice.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-primary" title="Create an AP Case for this invoice">
+              <i class="bi bi-plus-circle me-1"></i>Create Case
+            </button>
+          </form>
+          {% endif %}
+          <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Audit trail & governance">
+            <i class="bi bi-shield-lock me-1"></i>Governance
+          </a>
+          {% if invoice.document_upload %}
+          <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" target="_blank"
+             class="btn btn-sm btn-outline-primary" title="View original document">
+            <i class="bi bi-file-earmark-arrow-down"></i> View Document
+          </a>
+          {% endif %}
+        </div>
       </div>
       <div class="ap-card-body p-0">
         <table class="ap-table">
