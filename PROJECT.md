@@ -183,9 +183,9 @@ The project contains **13 Django apps** under `apps/`:
 |---|---|---|
 | **accounts** | Custom User model (email login), enterprise RBAC (roles, permissions, overrides) | `models.py`, `rbac_models.py`, `rbac_services.py`, `managers.py`, `forms.py`, `template_views.py` |
 | **agents** | AI agent orchestration, ReAct loop, 7 agent types | `models.py`, `services/` (10 files) |
-| **auditlog** | Audit events, processing logs, governance views | `models.py`, `services.py`, `timeline_service.py` |
+| **auditlog** | Audit events, processing logs, governance views, observability API | `models.py`, `services.py`, `timeline_service.py`, `serializers.py`, `views.py` |
 | **cases** | AP Case lifecycle, state machine, stage orchestration | `models.py`, `orchestrators/`, `services/`, `state_machine/` |
-| **core** | Base models, enums, constants, permissions, utilities | `models.py`, `enums.py`, `constants.py`, `permissions.py`, `utils.py` |
+| **core** | Base models, enums, constants, permissions, utilities, observability | `models.py`, `enums.py`, `constants.py`, `permissions.py`, `utils.py`, `trace.py`, `logging_utils.py`, `metrics.py`, `decorators.py` |
 | **dashboard** | Analytics, KPIs, summary endpoints | `services.py`, `api_views.py` |
 | **documents** | Invoice, PO, GRN data models & upload | `models.py`, `blob_service.py` |
 | **extraction** | OCR + LLM extraction pipeline (7 services) | `services/`, `tasks.py` |
@@ -973,7 +973,47 @@ All review decisions log to `AuditService`:
 
 ## 13. Governance & Audit Trail
 
-### 13.1 Audit Events
+### 13.1 Observability Infrastructure
+
+Three core modules provide enterprise-grade observability:
+
+| Module | File | Purpose |
+|---|---|---|
+| **TraceContext** | `apps/core/trace.py` | Distributed tracing — `trace_id`, `span_id`, `parent_span_id`, RBAC snapshot. Thread-local propagation via `get_current()`/`set_current()`. Celery header serialization. |
+| **Structured Logging** | `apps/core/logging_utils.py` | `JSONLogFormatter` (production) and `DevLogFormatter` (development). `TraceLogger` auto-injects trace context. `redact_dict()` scrubs PII/financial data. `DurationTimer` for latency tracking. |
+| **Metrics** | `apps/core/metrics.py` | Thread-safe in-process counters via `MetricsService`. Tracks RBAC checks, extractions, reconciliations, reviews, agent runs, case transitions, task executions. |
+
+`RequestTraceMiddleware` (in `apps/core/middleware.py`) creates a root `TraceContext` per HTTP request, enriches it with the authenticated user's RBAC snapshot, and sets `X-Trace-ID` / `X-Request-ID` response headers.
+
+### 13.2 Observability Decorators
+
+Three decorators in `apps/core/decorators.py` instrument service methods, view functions, and Celery tasks:
+
+| Decorator | Target | Behaviour |
+|---|---|---|
+| `@observed_service` | Service class methods | Creates child span, measures duration, writes `ProcessingLog`, optionally writes `AuditEvent`. |
+| `@observed_action` | Django view functions (FBV) | Resolves RBAC permission source, checks permission, writes both `AuditEvent` and `ProcessingLog`. |
+| `@observed_task` | Celery tasks | Reconstructs `TraceContext` from Celery headers, wraps execution with duration/error tracking. |
+
+Instrumented services: extraction task, reconciliation runner, agent feedback, agent orchestrator, review approve/reject/reprocess, case orchestrator, case creation, case routing, invoice upload view, start reconciliation view.
+
+### 13.3 RBAC-Aware Audit Events
+
+`AuditEvent` model carries 20+ fields for full RBAC and traceability context:
+
+| Field Group | Fields |
+|---|---|
+| **Trace** | `trace_id`, `span_id`, `parent_span_id` |
+| **Actor RBAC** | `actor_primary_role`, `actor_email`, `actor_roles_snapshot` (JSON) |
+| **Permission** | `permission_checked`, `permission_source`, `access_granted` |
+| **Cross-references** | `invoice_id`, `case_id`, `reconciliation_result_id` |
+| **Status Change** | `status_before`, `status_after` |
+| **Timing** | `duration_ms` |
+| **Error** | `error_code`, `is_redacted` |
+
+`AuditService.log_event()` accepts an optional `TraceContext`, auto-populates RBAC fields from the actor, and redacts sensitive payload data.
+
+Query helpers: `fetch_case_history()`, `fetch_access_history()`, `fetch_permission_denials()`, `fetch_rbac_activity()`.
 
 `AuditService` logs 17+ event types:
 
@@ -986,25 +1026,59 @@ All review decisions log to `AuditService`:
 | **Agent** | AGENT_RUN_STARTED, AGENT_RUN_COMPLETED, AGENT_RUN_FAILED, AGENT_RECOMMENDATION_CREATED |
 | **Review** | REVIEW_ASSIGNED, REVIEW_APPROVED, REVIEW_REJECTED, FIELD_CORRECTED |
 
-### 13.2 Case Timeline
+### 13.4 Enhanced Case Timeline
 
-`CaseTimelineService` builds a unified chronological timeline per invoice, merging:
-- AuditEvent records (Invoice + ReconciliationResult entities)
-- AgentRun records (with agent definition names)
-- ToolCall records (per run)
-- AgentRecommendation records
-- ReviewAssignment, ManualReviewAction, ReviewDecision records
+`CaseTimelineService` builds a unified chronological timeline per invoice, merging 8 event categories:
 
-Each entry is categorized: `audit`, `agent_run`, `tool_call`, `recommendation`, `review`, `review_action`, `review_decision`
+| Category | Source | Enrichment |
+|---|---|---|
+| `audit` | AuditEvent | RBAC badge (role + permission + granted/denied), status change, field corrections |
+| `mode_resolution` | AuditEvent (MODE events) | Mode-specific context |
+| `agent_run` | AgentRun | Duration, agent type, invocation reason |
+| `tool_call` | ToolCall | Input/output summary, duration |
+| `decision` | DecisionLog | Decision type, rule/policy traceability, RBAC context |
+| `recommendation` | AgentRecommendation | Acceptance status |
+| `review` / `review_action` / `review_decision` | ReviewAssignment + children | Review lifecycle |
+| `case` / `stage` | APCase / APCaseStage | Stage durations, trace IDs |
 
-### 13.3 Governance UI
+Each timeline entry includes an `rbac_badge` dict (`{role, permission, granted}`) when RBAC context is available, plus `status_change`, `field_changes`, and `duration_ms` when applicable.
+
+`get_stage_timeline(case_id)` returns a stage-centric timeline for case governance views.
+
+### 13.5 Agent Run Traceability
+
+`AgentRun` model now carries trace and RBAC fields:
+
+| Field | Purpose |
+|---|---|
+| `trace_id` / `span_id` | Links agent execution to the request trace |
+| `invocation_reason` | Why the agent was triggered (e.g., "PARTIAL_MATCH exception") |
+| `prompt_version` | Version of the prompt template used |
+| `actor_user_id` / `permission_checked` | Who initiated and what permission was checked |
+| `cost_estimate` | Estimated LLM cost for the run |
+
+`DecisionLog` entries now include `decision_type`, rule/policy references, and RBAC context fields.
+
+### 13.6 Governance UI
 
 | View | URL | Access |
 |---|---|---|
-| **Audit Event List** | `/governance/` | Filterable log, 50 per page |
-| **Invoice Governance** | `/governance/invoice/<id>/` | Full dashboard: audit trail + agent trace + timeline |
+| **Audit Event List** | `/governance/` | Filterable log (role, trace_id, denied-only filter, 50/page), RBAC columns |
+| **Invoice Governance** | `/governance/invoice/<id>/` | Full dashboard: audit trail + agent trace + timeline + access history |
 
-Role-based visibility: ADMIN and AUDITOR see full agent trace data.
+Audit Event List enhancements:
+- **RBAC columns**: Actor Role, Permission (with granted/denied icon)
+- **New filters**: Role dropdown, Trace ID text input, "Denied Only" checkbox
+- **Visual**: `table-danger` row highlighting for access-denied events
+
+Invoice Governance enhancements:
+- **Access History tab**: Shows all access events for the invoice with actor, role, permission, granted/denied status
+- **RBAC badges** in timeline entries: role, permission, granted/denied icons
+- **Status change** display in timeline events
+- **Field correction** display in timeline events
+- **Trace ID** display per timeline entry
+
+Role-based visibility: ADMIN and AUDITOR see full agent trace data and access history.
 
 ---
 
@@ -1063,6 +1137,11 @@ All APIs are under `/api/v1/` using Django REST Framework.
 | `invoices/{id}/agent-trace/` | GET | Agent runs with steps, tools, decisions |
 | `invoices/{id}/recommendations/` | GET | Agent recommendations |
 | `invoices/{id}/timeline/` | GET | Unified case timeline |
+| `invoices/{id}/access-history/` | GET | RBAC access events for invoice (who accessed, permission, granted/denied) |
+| `cases/{id}/stage-timeline/` | GET | Stage-centric timeline for a case |
+| `permission-denials/` | GET | Recent permission denial events (filterable by user/date) |
+| `rbac-activity/` | GET | RBAC-related audit events (role changes, permission checks) |
+| `agent-performance/` | GET | Agent run performance summary (counts, durations, success rates) |
 
 ### 14.6 Dashboard API (`/api/v1/dashboard/`)
 
@@ -1656,6 +1735,15 @@ celery -A config worker -l info
 - Dashboard analytics (7 API endpoints)
 - Audit logging (17 event types)
 - Unified case timeline
+- Observability infrastructure: `TraceContext` (distributed tracing), structured JSON logging with PII redaction, in-process metrics service
+- Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
+- `RequestTraceMiddleware` for per-request trace context propagation with `X-Trace-ID` / `X-Request-ID` headers
+- RBAC-aware audit trail: `AuditEvent` with 20+ fields (trace IDs, actor RBAC snapshot, permission checks, cross-references, status changes, duration, error codes)
+- Enhanced `CaseTimelineService`: 8 event categories, RBAC badges, status changes, field corrections, duration tracking, decision logs, stage timeline
+- Enhanced governance API: 9 endpoints (4 original + 5 new: access history, stage timeline, permission denials, RBAC activity, agent performance)
+- Enhanced governance templates: RBAC columns + filters in audit list, access history tab + RBAC badges in invoice governance
+- `AgentRun` traceability: trace_id, span_id, invocation reason, prompt version, actor/permission tracking, cost estimate
+- `ProcessingLog` traceability: trace fields, service/task name tracking, duration, success/error tracking
 - DRF APIs with filtering, search, pagination
 - Bootstrap 5 templates (32 templates including RBAC admin console)
 - Enterprise RBAC: Role, Permission, RolePermission, UserRole, UserPermissionOverride models

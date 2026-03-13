@@ -56,10 +56,21 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - LLM client supports both OpenAI and Azure OpenAI (configurable via env vars).
 - Agent definitions include `config_json` with `allowed_tools` per agent type.
 
+### Observability & Tracing
+- **TraceContext** (`apps/core/trace.py`): Distributed tracing with `trace_id`, `span_id`, `parent_span_id`, RBAC snapshot. Thread-local propagation. Celery header (de)serialization.
+- **Structured Logging** (`apps/core/logging_utils.py`): `JSONLogFormatter` (production), `DevLogFormatter` (dev). `TraceLogger` auto-injects trace context. `redact_dict()` scrubs PII/financial data.
+- **Metrics** (`apps/core/metrics.py`): Thread-safe in-process counters via `MetricsService`. Tracks RBAC, extraction, reconciliation, review, agent, case, task metrics.
+- **Decorators** (`apps/core/decorators.py`): `@observed_service` (service methods), `@observed_action` (FBV views), `@observed_task` (Celery tasks). All create child spans, measure duration, write `ProcessingLog`/`AuditEvent`.
+- **RequestTraceMiddleware** (`apps/core/middleware.py`): Creates root `TraceContext` per request, enriches with RBAC, sets `X-Trace-ID`/`X-Request-ID` headers.
+- When adding new services or views, decorate entry-point methods with the appropriate `@observed_*` decorator.
+
 ### Governance & Audit
-- `CaseTimelineService` in `apps/auditlog/timeline_service.py` builds a unified chronological timeline per invoice (audit events + agent runs + tool calls + recommendations + review actions).
+- `AuditEvent` model has 20+ fields: trace IDs, RBAC snapshot (actor_primary_role, actor_email, actor_roles_snapshot), permission tracking (permission_checked, permission_source, access_granted), cross-references (invoice_id, case_id, reconciliation_result_id), status_before/after, duration_ms, error_code.
+- `AuditService` (`apps/auditlog/services.py`) has query helpers: `fetch_case_history()`, `fetch_access_history()`, `fetch_permission_denials()`, `fetch_rbac_activity()`.
+- `CaseTimelineService` (`apps/auditlog/timeline_service.py`) builds a unified chronological timeline per invoice with 8 event categories: audit, mode_resolution, agent_run, tool_call, decision, recommendation, review/review_action/review_decision, case/stage. Entries include RBAC badges, status changes, field corrections, duration tracking.
 - `AgentTraceService` in `apps/agents/services/agent_trace_service.py` is the single entry point for recording all agent activity (runs, steps, tool calls, decisions).
-- Governance views (`apps/auditlog/template_views.py`): `audit_event_list` (filterable log) and `invoice_governance` (full dashboard with role-based access: ADMIN/AUDITOR see full trace).
+- Governance API: 9 endpoints at `/api/v1/governance/` (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance).
+- Governance views (`apps/auditlog/template_views.py`): `audit_event_list` (filterable log with RBAC columns, role/trace_id/denied-only filters) and `invoice_governance` (full dashboard with access history tab, RBAC badges in timeline; ADMIN/AUDITOR see full trace).
 - Templates are in `templates/governance/`.
 
 ### Templates
@@ -87,6 +98,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | RBAC Services | `apps/accounts/rbac_services.py` |
 | RBAC Template Tags | `apps/core/templatetags/rbac_tags.py` |
 | Permissions | `apps/core/permissions.py` |
+| Observability | `apps/core/trace.py`, `apps/core/logging_utils.py`, `apps/core/metrics.py`, `apps/core/decorators.py` |
 | Utilities | `apps/core/utils.py` |
 | Admin | `apps/<app>/admin.py` |
 | Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views) |
@@ -253,7 +265,10 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - DRF APIs (all ViewSets, serializers, routing) + Governance API (`/api/v1/governance/`) + Reconciliation Policies API (`/api/v1/reconciliation/policies/`)
 - Bootstrap 5 templates (32 templates incl. partials, governance views, RBAC admin console)
 - Admin panel registration
-- Audit logging & governance: ProcessingLog, AuditEvent (17 event types incl. MODE_RESOLUTION, MODE_OVERRIDE, MODE_POLICY_APPLIED), FileProcessingStatus, CaseTimelineService (unified case timeline with mode resolution events), governance views (audit event list + invoice governance dashboard with role-based access)
+- Audit logging & governance: ProcessingLog, AuditEvent (17 event types, 20+ RBAC/trace fields), FileProcessingStatus, CaseTimelineService (8 event categories with RBAC badges, status changes, field corrections, duration tracking), governance views (audit event list with RBAC columns + invoice governance dashboard with access history tab)
+- Observability infrastructure: TraceContext (distributed tracing), structured JSON logging with PII redaction, in-process MetricsService, RequestTraceMiddleware
+- Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
+- Enhanced governance API: 9 endpoints (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance)
 - Seed data management command (`python manage.py seed_data`) — 5 users, 5 vendors, 13 invoices (with edge-case scenarios), POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions
 - Saudi McD master data (`python manage.py seed_saudi_mcd_data`) — 6 users, 10 vendors + aliases, 25 POs (~62 line items), 30 GRNs (~70 line items) across Riyadh/Jeddah/Dammam warehouses
 - Invoice test scenarios (`python manage.py seed_invoice_test_data`) — 18 scenarios (SCN-KSA-001..018): perfect match, qty/price/VAT mismatch, missing PO, missing GRN, multi-GRN aggregation, duplicate invoice, low-confidence Arabic-English, location mismatch, GRN shortage, review case, auto-close band (013–015), AI-resolvable (016–018)
@@ -307,6 +322,10 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/agents/services/agent_classes.py` | All 7 agent implementations |
 | `apps/tools/registry/tools.py` | All 6 tool classes |
 | `apps/tools/registry/base.py` | BaseTool, ToolRegistry, @register_tool |
+| `apps/core/trace.py` | TraceContext for distributed tracing |
+| `apps/core/logging_utils.py` | Structured JSON logging, PII redaction |
+| `apps/core/metrics.py` | In-process metrics collection |
+| `apps/core/decorators.py` | `@observed_service`, `@observed_action`, `@observed_task` decorators |
 | `apps/extraction/tasks.py` | Extraction pipeline task |
 | `apps/reviews/services.py` | Review workflow lifecycle |
 | `apps/agents/services/recommendation_service.py` | Agent recommendation lifecycle (create, query, accept) |

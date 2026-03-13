@@ -113,6 +113,19 @@ def create_users():
 def create_agent_definitions(admin):
     agents = [
         {
+            "agent_type": AgentType.INVOICE_UNDERSTANDING,
+            "name": "Invoice Understanding Agent",
+            "description": (
+                "Deep-dives into low-confidence extractions. Validates "
+                "extracted fields, checks for OCR errors, and confirms "
+                "vendor identity and line item accuracy."
+            ),
+            "config_json": {
+                "allowed_tools": ["invoice_details"],
+                "confidence_threshold": 0.75,
+            },
+        },
+        {
             "agent_type": AgentType.PO_RETRIEVAL,
             "name": "PO Retrieval Agent",
             "description": (
@@ -190,20 +203,6 @@ def create_agent_definitions(admin):
             },
         },
     ]
-
-    # Check if there's a 7th agent type (VENDOR_VALIDATION) in enums
-    if hasattr(AgentType, "VENDOR_VALIDATION"):
-        agents.append({
-            "agent_type": AgentType.VENDOR_VALIDATION,
-            "name": "Vendor Validation Agent",
-            "description": (
-                "Validates vendor identity and detects potential vendor "
-                "mismatches or alias resolution issues."
-            ),
-            "config_json": {
-                "allowed_tools": ["vendor_search", "invoice_details", "po_lookup"],
-            },
-        })
 
     created = 0
     for agent_data in agents:
