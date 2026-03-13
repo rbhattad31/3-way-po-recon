@@ -51,6 +51,9 @@
           <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
         </form>
       {% endif %}
+      <a href="{% url 'cases:case_agent_view' case.pk %}" class="btn btn-sm btn-outline-primary" title="Agent View">
+        <i class="bi bi-robot me-1"></i>Agent View
+      </a>
       {% if invoice %}
       <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Audit trail & governance">
         <i class="bi bi-shield-lock me-1"></i>Governance
