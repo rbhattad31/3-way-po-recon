@@ -454,6 +454,12 @@ def case_agent_view(request, pk):
         "READY_FOR_APPROVAL", "APPROVAL_IN_PROGRESS",
     )
 
+    # Count open (unresolved) exceptions and failed validations
+    open_exceptions_count = sum(1 for e in exceptions if not getattr(e, 'resolved', False))
+    failed_validations_count = sum(1 for v in validation_issues if v.get('status') == 'FAIL')
+    failed_stages_count = sum(1 for s in stages if s.stage_status == 'FAILED')
+    has_open_issues = (open_exceptions_count + failed_validations_count + failed_stages_count) > 0
+
     return render(request, "cases/case_agent_view.html", {
         "case": case,
         "invoice": invoice,
@@ -472,6 +478,10 @@ def case_agent_view(request, pk):
         "show_full_trace": show_full_trace,
         "review_assignment": review_assignment,
         "show_actions": show_actions,
+        "has_open_issues": has_open_issues,
+        "open_exceptions_count": open_exceptions_count,
+        "failed_validations_count": failed_validations_count,
+        "failed_stages_count": failed_stages_count,
         "copilot_context_json": json.dumps(copilot_context, default=str),
     })
 
@@ -488,6 +498,38 @@ def case_decide(request, pk):
 
     case = get_object_or_404(APCase, pk=pk, is_active=True)
     decision = request.POST.get("decision", "").upper()
+
+    # Block approval if there are open exceptions or failed validations
+    if decision == "APPROVED":
+        open_exc = 0
+        recon_res = case.reconciliation_result
+        if recon_res:
+            open_exc = recon_res.exceptions.filter(resolved=False).count()
+
+        failed_val = 0
+        val_artifact = case.artifacts.filter(
+            artifact_type="VALIDATION_RESULT"
+        ).order_by("-version", "-created_at").first()
+        if val_artifact and isinstance(val_artifact.payload, dict):
+            for cd in val_artifact.payload.get("checks", {}).values():
+                if cd.get("status") == "FAIL":
+                    failed_val += 1
+
+        failed_stg = case.stages.filter(stage_status="FAILED").count()
+
+        if open_exc + failed_val + failed_stg > 0:
+            parts = []
+            if open_exc:
+                parts.append(f"{open_exc} unresolved exception(s)")
+            if failed_val:
+                parts.append(f"{failed_val} failed validation(s)")
+            if failed_stg:
+                parts.append(f"{failed_stg} failed stage(s)")
+            messages.error(
+                request,
+                f"Cannot approve: {', '.join(parts)}. Resolve all issues before approving.",
+            )
+            return redirect("cases:case_agent_view", pk=pk)
 
     # If there's a review assignment, delegate to the review workflow
     recon_result = case.reconciliation_result

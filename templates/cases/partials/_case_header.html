@@ -30,7 +30,11 @@
     </div>
 
     {# Actions #}
-    <div class="ap-case-header__actions" data-decide-url="{% url 'cases:case_decide' case.pk %}">
+    <div class="ap-case-header__actions"
+         data-decide-url="{% url 'cases:case_decide' case.pk %}"
+         data-open-exceptions="{{ open_exceptions_count|default:'0' }}"
+         data-failed-validations="{{ failed_validations_count|default:'0' }}"
+         data-failed-stages="{{ failed_stages_count|default:'0' }}">
       {% if case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
         <button class="btn btn-success btn-sm" onclick="caseAction('approve')" type="button" title="Approve">
           <i class="bi bi-check-circle me-1"></i>Approve

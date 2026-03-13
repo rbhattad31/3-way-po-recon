@@ -58,7 +58,10 @@
 
   <div class="av-identity__actions"
        data-reprocess-url="{% url 'cases:reprocess_case' case.pk %}"
-       data-decide-url="{% url 'cases:case_decide' case.pk %}">
+       data-decide-url="{% url 'cases:case_decide' case.pk %}"
+       data-open-exceptions="{{ open_exceptions_count|default:'0' }}"
+       data-failed-validations="{{ failed_validations_count|default:'0' }}"
+       data-failed-stages="{{ failed_stages_count|default:'0' }}">
     {% csrf_token %}
     {% if show_actions or case.status == "FAILED" %}
       {% if show_actions %}
