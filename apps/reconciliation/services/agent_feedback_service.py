@@ -15,6 +15,7 @@ from typing import Optional
 from django.db import transaction
 
 from apps.core.enums import MatchStatus
+from apps.core.decorators import observed_service
 from apps.documents.models import Invoice, PurchaseOrder
 from apps.reconciliation.models import (
     ReconciliationConfig,
@@ -47,6 +48,7 @@ class AgentFeedbackService:
         self.exception_builder = ExceptionBuilderService()
 
     @transaction.atomic
+    @observed_service("reconciliation.agent_feedback.apply_found_po", audit_event="AGENT_FEEDBACK_APPLIED", entity_type="ReconciliationResult")
     def apply_found_po(
         self,
         result: ReconciliationResult,
@@ -78,7 +80,7 @@ class AgentFeedbackService:
         grn_summary = self.grn_lookup.lookup(po)
         grn_result = None
         if grn_summary.grn_available and line_result:
-            grn_result = self.grn_match.match(line_result.pairs, grn_summary)
+            grn_result = self.grn_match.match(line_result.pairs, grn_summary, po_date=po.po_date)
 
         # 4. Re-classify (respect original reconciliation mode)
         recon_mode = result.reconciliation_mode or ""

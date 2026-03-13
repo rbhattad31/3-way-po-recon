@@ -256,8 +256,12 @@ def case_console(request, pk):
             .order_by("created_at")
         )
 
-    # Summary — use APCaseSummary if available, otherwise build from decisions/artifacts
+    # Summary — prefer AI-generated, then APCaseSummary, then fallback
     summary = getattr(case, "summary", None)
+    if summary and not summary.generated_by_agent_run and recon_result:
+        # Try to upgrade existing summary with AI content
+        from apps.cases.services.case_summary_service import CaseSummaryService
+        summary = CaseSummaryService.build_summary(case)
     if not summary:
         # Build a lightweight summary dict from available stage/decision data
         built_summary = _build_fallback_summary(case, decisions, validation_issues)

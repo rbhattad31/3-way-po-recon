@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from apps.agents.models import AgentRecommendation, AgentRun
 from apps.auditlog.timeline_service import CaseTimelineService
 from apps.core.enums import InvoiceStatus, MatchStatus, ReconciliationMode, UserRole
+from apps.core.decorators import observed_action
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy, ReconciliationResult
 from apps.reviews.models import ReviewAssignment
@@ -95,6 +96,7 @@ def result_detail(request, pk):
 
 
 @login_required
+@observed_action("reconciliation.start_reconciliation", permission="reconciliation.run", entity_type="Invoice", audit_event="RECONCILIATION_STARTED")
 def start_reconciliation(request):
     """
     Legacy reconciliation entry point — DISABLED.

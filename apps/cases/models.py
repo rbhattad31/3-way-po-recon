@@ -190,10 +190,19 @@ class APCaseStage(TimestampMixin):
     )
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
     retry_count = models.PositiveIntegerField(default=0)
     input_payload = models.JSONField(default=dict, blank=True)
     output_payload = models.JSONField(default=dict, blank=True)
     notes = models.TextField(blank=True, default="")
+
+    # Traceability
+    trace_id = models.CharField(max_length=64, blank=True, default="")
+    span_id = models.CharField(max_length=64, blank=True, default="")
+    parent_span_id = models.CharField(max_length=64, blank=True, default="")
+    error_code = models.CharField(max_length=100, blank=True, default="")
+    error_message = models.TextField(blank=True, default="")
+    config_snapshot_json = models.JSONField(null=True, blank=True, help_text="Config/tolerance snapshot at execution time")
 
     class Meta:
         ordering = ["created_at"]

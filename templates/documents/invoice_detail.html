@@ -31,6 +31,9 @@
             </button>
           </form>
           {% endif %}
+          <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Audit trail & governance">
+            <i class="bi bi-shield-lock me-1"></i>Governance
+          </a>
           {% if invoice.document_upload %}
           <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" target="_blank"
              class="btn btn-sm btn-outline-primary" title="View original document">

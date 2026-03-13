@@ -99,7 +99,7 @@ class ThreeWayMatchService:
         # 4. GRN match (only if GRNs exist and lines were matched)
         grn_result: Optional[GRNMatchResult] = None
         if grn_summary.grn_available and line_result:
-            grn_result = self.grn_match.match(line_result.pairs, grn_summary)
+            grn_result = self.grn_match.match(line_result.pairs, grn_summary, po_date=po.po_date)
         elif not grn_summary.grn_available:
             grn_result = GRNMatchResult(grn_available=False)
 
