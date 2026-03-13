@@ -150,9 +150,9 @@
       </thead>
       <tbody>
         {% for case in cases %}
-        <tr class="case-row" onclick="window.location='{% url 'cases:case_console' case.pk %}'" style="cursor:pointer">
+        <tr class="case-row" onclick="window.location='{% url 'cases:case_agent_view' case.pk %}'" style="cursor:pointer">
           <td>
-            <a href="{% url 'cases:case_console' case.pk %}" class="fw-bold text-decoration-none text-primary">
+            <a href="{% url 'cases:case_agent_view' case.pk %}" class="fw-bold text-decoration-none text-primary">
               {{ case.case_number }}
             </a>
           </td>
@@ -207,10 +207,14 @@
             {% endif %}
           </td>
           <td><small class="text-muted">{{ case.created_at|timesince }}</small></td>
-          <td>
-            <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" title="Open Case Console"
+          <td class="d-flex gap-1">
+            <a href="{% url 'cases:case_agent_view' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" title="Agent View"
                onclick="event.stopPropagation()">
-              <i class="bi bi-arrow-right"></i>
+              <i class="bi bi-robot"></i>
+            </a>
+            <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Classic View"
+               onclick="event.stopPropagation()">
+              <i class="bi bi-layout-text-sidebar-reverse"></i>
             </a>
           </td>
         </tr>
