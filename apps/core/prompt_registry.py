@@ -153,7 +153,13 @@ Rules:
 - If a field is not found, return an empty string for text fields or 0 for numeric fields.
 - Parse dates into YYYY-MM-DD format.
 - If the PO number is referenced anywhere (header, footer, reference fields), extract it.
-- Return ONLY valid JSON, no markdown or explanation.""",
+- Return ONLY valid JSON, no markdown or explanation.
+- ## Strictly For the vendor_name field ##:
+    - The value in vendor_name MUST be in English characters only.
+    - If OCR contains Arabic/Urdu/other non-English script, convert vendor_name to the official English company name.
+    - If official English company name is not explicitly present, transliterate or translate to English.
+    - Never return vendor_name in Arabic, Urdu, or any non-English script.
+    - Keep the most likely legal/business name in English (avoid abbreviating unless OCR itself only has abbreviation).""",
 )
 
 # ---------------------------------------------------------------------------

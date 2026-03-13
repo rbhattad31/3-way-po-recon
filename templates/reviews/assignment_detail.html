@@ -54,6 +54,11 @@
             <tr><th style="color:var(--ap-text-muted)">Priority</th><td>{{ assignment.priority }}</td></tr>
             <tr><th style="color:var(--ap-text-muted)">Assigned To</th><td>{{ assignment.assigned_to.get_full_name|default:"Unassigned" }}</td></tr>
             <tr><th style="color:var(--ap-text-muted)">Notes</th><td>{{ assignment.notes|default:"—" }}</td></tr>
+            <tr><th style="color:var(--ap-text-muted)">Governance</th><td>
+              <a href="{% url 'governance:invoice_governance' assignment.reconciliation_result.invoice_id %}" class="text-decoration-none" style="color:var(--ap-primary)">
+                <i class="bi bi-shield-lock me-1"></i>View Audit Trail
+              </a>
+            </td></tr>
           </tbody>
         </table>
       </div>

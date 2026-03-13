@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.core.enums import DocumentType, InvoiceStatus
+from apps.core.decorators import observed_action
 from apps.documents.models import DocumentUpload, GoodsReceiptNote, Invoice, PurchaseOrder
 
 
@@ -24,6 +25,7 @@ MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
 
 @login_required
 @require_POST
+@observed_action("documents.upload_invoice", permission="documents.upload", entity_type="DocumentUpload", audit_event="DOCUMENT_UPLOADED")
 def upload_invoice(request):
     """Handle invoice file upload from the modal form."""
     uploaded_file = request.FILES.get("file")

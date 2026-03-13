@@ -7,12 +7,15 @@ from celery import shared_task
 from django.db import transaction
 
 from apps.core.enums import FileProcessingState, InvoiceStatus
+from apps.core.decorators import observed_task
+from apps.core.metrics import MetricsService
 from apps.documents.models import DocumentUpload
 
 logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
+@observed_task("extraction.process_invoice_upload", audit_event="EXTRACTION_STARTED", entity_type="DocumentUpload")
 def process_invoice_upload_task(self, upload_id: int) -> dict:
     """End-to-end extraction pipeline for a single DocumentUpload.
 

@@ -17,6 +17,13 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+_VENDOR_ENGLISH_ENFORCEMENT = (
+    "\n\nMANDATORY vendor_name rule:\n"
+    "- vendor_name must be in English characters only.\n"
+    "- If source text is Arabic/Urdu/non-English, return translated/transliterated English vendor name.\n"
+    "- Never return vendor_name in non-English script."
+)
+
 
 @dataclass
 class ExtractionResponse:
@@ -150,4 +157,7 @@ class InvoiceExtractionAdapter:
     def _get_extraction_prompt() -> str:
         """Load the extraction system prompt from the PromptRegistry."""
         from apps.core.prompt_registry import PromptRegistry
-        return PromptRegistry.get("extraction.invoice_system")
+        base_prompt = PromptRegistry.get("extraction.invoice_system")
+        if "vendor_name must be in English" in base_prompt:
+            return base_prompt
+        return base_prompt + _VENDOR_ENGLISH_ENFORCEMENT

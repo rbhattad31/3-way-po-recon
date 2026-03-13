@@ -30,6 +30,7 @@ from apps.core.enums import (
     CasePriority,
     CaseStatus,
     ExceptionSeverity,
+    PerformedByType,
     RecommendationType,
     ReviewActionType,
     ReviewStatus,
@@ -462,10 +463,6 @@ def seed_agent_review_data(
         stats["comments"], stats["summaries"],
     )
     return stats
-
-
-# We need PerformedByType import in this module
-from apps.core.enums import PerformedByType  # noqa: E402
 
 
 def _create_audit_events(case: APCase, scenario: dict, invoice, admin: User):
