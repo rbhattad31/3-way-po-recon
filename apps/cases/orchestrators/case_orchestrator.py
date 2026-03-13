@@ -22,6 +22,8 @@ from apps.core.enums import (
     ProcessingPath,
     StageStatus,
 )
+from apps.core.decorators import observed_service
+from apps.core.metrics import MetricsService
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,7 @@ class CaseOrchestrator:
     def __init__(self, case: APCase):
         self.case = case
 
+    @observed_service("cases.orchestrator.run", audit_event="CASE_PROCESSING_STARTED", entity_type="APCase")
     def run(self) -> APCase:
         """Execute the case from its current position through completion."""
         logger.info("Orchestrating case %s (status=%s, path=%s)",

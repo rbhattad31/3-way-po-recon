@@ -17,7 +17,7 @@
 {# ── Filters ── #}
 <div class="ap-filter-bar mb-3">
   <form method="get" class="row g-2 align-items-end">
-    <div class="col-md-3">
+    <div class="col-md-2">
       <label class="form-label form-label-sm mb-0">Entity Type</label>
       <select name="entity_type" class="form-select form-select-sm">
         <option value="">All</option>
@@ -26,7 +26,7 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
       <label class="form-label form-label-sm mb-0">Event Type</label>
       <select name="event_type" class="form-select form-select-sm">
         <option value="">All</option>
@@ -36,8 +36,27 @@
       </select>
     </div>
     <div class="col-md-2">
+      <label class="form-label form-label-sm mb-0">Role</label>
+      <select name="role" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for r in roles %}
+        <option value="{{ r }}" {% if r == current_role %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label form-label-sm mb-0">Trace ID</label>
+      <input type="text" name="trace_id" class="form-control form-control-sm" value="{{ current_trace_id|default:'' }}" placeholder="trace-id...">
+    </div>
+    <div class="col-md-1">
       <label class="form-label form-label-sm mb-0">Entity ID</label>
-      <input type="number" name="entity_id" class="form-control form-control-sm" value="{{ current_entity_id }}" placeholder="e.g. 42">
+      <input type="number" name="entity_id" class="form-control form-control-sm" value="{{ current_entity_id }}" placeholder="ID">
+    </div>
+    <div class="col-md-1">
+      <div class="form-check mt-3">
+        <input type="checkbox" name="denied_only" value="1" class="form-check-input" id="deniedCheck" {% if current_denied_only %}checked{% endif %}>
+        <label class="form-check-label form-label-sm" for="deniedCheck">Denied</label>
+      </div>
     </div>
     <div class="col-md-2">
       <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
@@ -57,12 +76,14 @@
           <th>Entity</th>
           <th>Description</th>
           <th>Actor</th>
-          <th style="width:160px">Timestamp</th>
+          <th>Role</th>
+          <th>Permission</th>
+          <th style="width:140px">Timestamp</th>
         </tr>
       </thead>
       <tbody>
         {% for ev in events %}
-        <tr>
+        <tr {% if ev.access_granted == False %}class="table-danger"{% endif %}>
           <td class="text-muted">{{ ev.id }}</td>
           <td>
             {% if ev.event_type %}
@@ -86,7 +107,10 @@
               <span class="text-muted">#{{ ev.entity_id }}</span>
             {% endif %}
           </td>
-          <td>{{ ev.event_description|default:ev.action|truncatewords:20 }}</td>
+          <td>
+            {{ ev.event_description|default:ev.action|truncatewords:15 }}
+            {% if ev.trace_id %}<br><small class="text-muted font-monospace">{{ ev.trace_id|truncatechars:12 }}</small>{% endif %}
+          </td>
           <td>
             {% if ev.performed_by %}
               <small>{{ ev.performed_by.email }}</small>
@@ -96,7 +120,22 @@
               <small class="text-muted">system</small>
             {% endif %}
           </td>
-          <td><small class="text-muted">{{ ev.created_at|date:"M d, Y H:i:s" }}</small></td>
+          <td>
+            {% if ev.actor_primary_role %}
+              <span class="badge bg-secondary">{{ ev.actor_primary_role }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if ev.permission_checked %}
+              <small class="font-monospace">{{ ev.permission_checked }}</small>
+              {% if ev.access_granted == False %}
+                <i class="bi bi-x-circle text-danger ms-1" title="Denied"></i>
+              {% elif ev.access_granted %}
+                <i class="bi bi-check-circle text-success ms-1" title="Granted"></i>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ ev.created_at|date:"M d, H:i:s" }}</small></td>
         </tr>
         {% empty %}
         <tr><td colspan="6" class="text-center text-muted py-4">No audit events found.</td></tr>

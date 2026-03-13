@@ -22,6 +22,8 @@ from apps.agents.services.decision_log_service import DecisionLogService
 from apps.agents.services.deterministic_resolver import DeterministicResolver
 from apps.agents.services.policy_engine import PolicyEngine
 from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
+from apps.core.decorators import observed_service
+from apps.core.metrics import MetricsService
 
 # Only these agents should emit formal recommendations to avoid duplicates.
 # Other agents contribute analysis/reasoning via summarized_reasoning on the run.
@@ -57,6 +59,7 @@ class AgentOrchestrator:
         self.decision_service = DecisionLogService()
         self.resolver = DeterministicResolver()
 
+    @observed_service("agents.orchestrator.execute", audit_event="AGENT_PIPELINE_STARTED", entity_type="ReconciliationResult")
     def execute(self, result: ReconciliationResult) -> OrchestrationResult:
         """Run the full agentic pipeline for one reconciliation result."""
         orch_result = OrchestrationResult(reconciliation_result_id=result.pk)

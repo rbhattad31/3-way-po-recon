@@ -14,6 +14,7 @@ from apps.core.enums import (
     InvoiceType,
     ProcessingPath,
 )
+from apps.core.decorators import observed_service
 from apps.cases.models import APCase, APCaseDecision
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 class CaseRoutingService:
 
     @staticmethod
+    @observed_service("cases.routing.resolve_path", entity_type="APCase")
     def resolve_path(case: APCase) -> str:
         """
         Determine the processing path for a case.

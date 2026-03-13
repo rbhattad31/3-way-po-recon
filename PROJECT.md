@@ -1,6 +1,6 @@
 # 3-Way PO Reconciliation Platform — Comprehensive Project Documentation
 
-> **Version**: 1.0 · **Last Updated**: March 2026  
+> **Version**: 1.1 · **Last Updated**: March 2026  
 > **Stack**: Django 4.2 · MySQL · Celery + Redis · Azure OpenAI · Azure Document Intelligence · Bootstrap 5
 
 ---
@@ -181,7 +181,7 @@ The project contains **13 Django apps** under `apps/`:
 
 | App | Purpose | Key Files |
 |---|---|---|
-| **accounts** | Custom User model (email login), roles | `models.py`, `managers.py` |
+| **accounts** | Custom User model (email login), enterprise RBAC (roles, permissions, overrides) | `models.py`, `rbac_models.py`, `rbac_services.py`, `managers.py`, `forms.py`, `template_views.py` |
 | **agents** | AI agent orchestration, ReAct loop, 7 agent types | `models.py`, `services/` (10 files) |
 | **auditlog** | Audit events, processing logs, governance views | `models.py`, `services.py`, `timeline_service.py` |
 | **cases** | AP Case lifecycle, state machine, stage orchestration | `models.py`, `orchestrators/`, `services/`, `state_machine/` |
@@ -236,13 +236,21 @@ Additional mixins:
 
 **PromptTemplate** — Versioned LLM prompt templates with `{variable}` placeholders, organized by category (extraction, agent, case).
 
-### 5.2 Accounts (`apps/accounts/models.py`)
+### 5.2 Accounts (`apps/accounts/models.py`, `rbac_models.py`)
 
 | Model | Fields | Notes |
 |---|---|---|
-| **User** | email (login), first_name, last_name, role, is_active, is_staff, department | Custom model; `AUTH_USER_MODEL = "accounts.User"` |
+| **User** | email (login), first_name, last_name, role (legacy), is_active, is_staff, department | Custom model; RBAC helpers: `get_primary_role()`, `get_all_roles()`, `has_permission()`, `get_effective_permissions()`, `clear_permission_cache()`, `sync_legacy_role_field()` |
+| **Role** | code, name, description, is_system_role, is_active, rank | 5 system roles seeded; supports custom roles |
+| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 20 permissions across 7 modules |
+| **RolePermission** | role FK, permission FK, is_allowed | Many-to-many with explicit allow flag; unique_together |
+| **UserRole** | user FK, role FK, is_primary, assigned_by, expires_at, is_active | Multi-role with expiry; `is_expired`/`is_effective` properties |
+| **UserPermissionOverride** | user FK, permission FK, override_type (ALLOW/DENY), reason, assigned_by, expires_at | Per-user overrides with audit trail |
+| **MenuConfig** | label, icon_class, url_name, required_permission, parent FK, order, is_separator | Dynamic menu items (future use) |
 
-Roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`, `AUDITOR`
+**Permission Resolution Order**: Admin bypass → User DENY overrides → User ALLOW overrides → Role permissions
+
+Legacy roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`, `AUDITOR` — synced to new RBAC UserRole table
 
 ### 5.3 Documents (`apps/documents/models.py`)
 
@@ -1068,6 +1076,24 @@ All APIs are under `/api/v1/` using Django REST Framework.
 | `daily-volume/` | GET | Daily processing volume |
 | `recent-activity/` | GET | Recent events |
 
+### 14.7 Accounts / RBAC API (`/api/v1/accounts/`)
+
+| Endpoint | Method | Description | Permission |
+|---|---|---|---|
+| `users/` | GET | List users (search, filter by role/dept/status) | `users.manage` |
+| `users/{id}/` | GET, PUT | User detail / update | `users.manage` |
+| `users/{id}/roles/` | GET | User's role assignments | `users.manage` |
+| `users/{id}/assign-role/` | POST | Assign role to user | `users.manage` |
+| `users/{id}/remove-role/` | POST | Remove role from user | `users.manage` |
+| `users/{id}/overrides/` | GET | User's permission overrides | `users.manage` |
+| `users/{id}/create-override/` | POST | Add permission override | `users.manage` |
+| `users/{id}/remove-override/` | POST | Remove permission override | `users.manage` |
+| `roles/` | GET, POST | List/create roles | `roles.manage` |
+| `roles/{id}/` | GET, PUT, DELETE | Role CRUD (soft-delete for system roles) | `roles.manage` |
+| `roles/{id}/clone/` | POST | Clone role with permissions | `roles.manage` |
+| `permissions/` | GET | Permission catalog (read-only) | `roles.manage` |
+| `role-matrix/` | GET, PUT | Full role-permission matrix (bulk update) | `roles.manage` |
+
 ### 14.7 Cases API (`/api/v1/cases/`)
 
 | Endpoint | Method | Description |
@@ -1110,7 +1136,15 @@ All APIs are under `/api/v1/` using Django REST Framework.
 templates/
 ├── base.html                          # Base layout (Bootstrap 5, navbar, sidebar)
 ├── accounts/
-│   └── login.html                     # Login page
+│   ├── login.html                     # Login page
+│   ├── user_list.html                 # User management (search, filter, paginated)
+│   ├── user_create.html               # Add new user with role assignment
+│   ├── user_detail.html               # Tabbed: profile, roles, permissions, overrides
+│   ├── role_list.html                 # Role management (search, user counts)
+│   ├── role_create.html               # Create new custom role
+│   ├── role_detail.html               # Role editor with permission checkboxes
+│   ├── permission_list.html           # Permission catalog by module
+│   └── role_matrix.html               # Full role×permission matrix grid
 ├── agents/
 │   └── reference.html                 # Agent/stage reference guide
 ├── cases/
@@ -1172,6 +1206,14 @@ templates/
 | `/governance/invoice/<id>/` | `invoice_governance` | Full governance dashboard |
 | `/agents/reference/` | `agent_reference` | Agent/stage reference page |
 | `/accounts/login/` | Django LoginView | Authentication |
+| `/accounts/admin-console/users/` | `UserListView` | User management list |
+| `/accounts/admin-console/users/new/` | `UserCreateView` | Create new user |
+| `/accounts/admin-console/users/<id>/` | `UserDetailView` | User detail/edit (tabs) |
+| `/accounts/admin-console/roles/` | `RoleListView` | Role management list |
+| `/accounts/admin-console/roles/new/` | `RoleCreateView` | Create new role |
+| `/accounts/admin-console/roles/<id>/` | `RoleDetailView` | Role detail/permission editor |
+| `/accounts/admin-console/permissions/` | `PermissionListView` | Permission catalog |
+| `/accounts/admin-console/role-matrix/` | `RolePermissionMatrixView` | Role-permission matrix |
 
 ### 15.3 Static Assets
 
@@ -1216,6 +1258,7 @@ templates/
 | `python manage.py seed_prompts` | Populate PromptTemplate records from registry defaults (--force to overwrite) |
 | `python manage.py seed_ap_data` | Realistic Saudi McDonald's test data (modes: demo, qa, large) |
 | `python manage.py create_cases_for_existing_invoices` | Backfill APCase records for existing invoices (--process to auto-run) |
+| `python manage.py seed_rbac` | Seed RBAC roles, permissions, and role-permission matrix (--sync-users to map existing users) |
 
 ### 17.2 Seed Data Details
 
@@ -1347,22 +1390,102 @@ All agents produce JSON following this schema:
 - Django session authentication for web UI
 - DRF SessionAuthentication for API
 - `LoginRequiredMiddleware` redirects anonymous users to `/accounts/login/`
+- `RBACMiddleware` pre-loads role codes and effective permissions per request (warm cache)
 - Exempt paths: `/admin/`, `/accounts/`, `/api/`
 
-### 20.2 Role-Based Permissions
+### 20.2 Enterprise RBAC System
 
-| Permission Class | Allowed Roles |
+The platform implements a full enterprise RBAC (Role-Based Access Control) system layered on top of the original single-role model.
+
+#### Architecture
+
+| Component | File | Purpose |
+|---|---|---|
+| **RBAC Models** | `apps/accounts/rbac_models.py` | Role, Permission, RolePermission, UserRole, UserPermissionOverride, MenuConfig |
+| **Permission Engine** | `apps/core/permissions.py` | DRF classes, CBV mixins, FBV decorators — all RBAC-backed |
+| **Middleware** | `apps/core/middleware.py` | `RBACMiddleware` pre-loads permissions into `request.user` cache |
+| **Template Tags** | `apps/core/templatetags/rbac_tags.py` | `has_permission`, `has_role`, `has_any_permission`, `if_can` block tag |
+| **Context Processor** | `apps/core/context_processors.py` | `rbac_context` injects `user_permissions`, `user_role_codes`, `is_admin` |
+| **Audit Service** | `apps/accounts/rbac_services.py` | `RBACEventService` logs all RBAC changes to `AuditEvent` |
+| **Seed Command** | `apps/accounts/management/commands/seed_rbac.py` | Seeds roles, permissions, matrix; syncs legacy users |
+
+#### Permission Resolution Order
+
+```
+1. Admin bypass → all permissions granted
+2. User DENY overrides → explicitly blocked
+3. User ALLOW overrides → explicitly granted
+4. Role permissions → union of all active role permissions
+5. Legacy fallback → uses User.role field if no UserRole entries exist
+```
+
+#### Seeded Roles & Permission Matrix
+
+| Role | Rank | Key Permissions |
+|---|---|---|
+| **ADMIN** | 10 | All 20 permissions |
+| **FINANCE_MANAGER** | 20 | invoices.view/approve, reconciliation.view/run, reviews.view/assign, governance.view, agents.view, config.view |
+| **AUDITOR** | 30 | *.view (read-only across all modules), governance.view |
+| **REVIEWER** | 40 | invoices.view, reconciliation.view, reviews.view/decide, agents.view |
+| **AP_PROCESSOR** | 50 | invoices.view/create/edit, reconciliation.view/run, reviews.view, cases.view/edit/assign |
+
+#### Permission Codes (20 total, 7 modules)
+
+| Module | Permissions |
 |---|---|
-| `IsAdmin` | ADMIN |
-| `IsAPProcessor` | AP_PROCESSOR, ADMIN |
-| `IsReviewer` | REVIEWER, FINANCE_MANAGER, ADMIN |
-| `IsFinanceManager` | FINANCE_MANAGER, ADMIN |
-| `IsAuditor` | AUDITOR, ADMIN |
-| `IsAdminOrReadOnly` | Any authenticated (read), ADMIN (write) |
-| `IsReviewAssignee` | Assigned reviewer, ADMIN, FINANCE_MANAGER |
-| `HasAnyRole` | Configurable via view's `allowed_roles` |
+| invoices | `view`, `create`, `edit`, `approve` |
+| reconciliation | `view`, `run` |
+| cases | `view`, `edit`, `assign`, `copilot` |
+| reviews | `view`, `assign`, `decide` |
+| governance | `view` |
+| agents | `view`, `configure` |
+| config | `view`, `edit` |
+| users | `manage` |
+| roles | `manage` |
 
-### 20.3 Case Permissions
+### 20.3 DRF Permission Classes (Backward-Compatible)
+
+| Permission Class | RBAC Backing | Notes |
+|---|---|---|
+| `IsAdmin` | `user.role == ADMIN` or RBAC admin | Preserved original |
+| `IsAPProcessor` | `has_role(AP_PROCESSOR)` | Preserved original |
+| `IsReviewer` | `has_role(REVIEWER)` | Preserved original |
+| `IsFinanceManager` | `has_role(FINANCE_MANAGER)` | Preserved original |
+| `IsAuditor` | `has_role(AUDITOR)` | Preserved original |
+| `IsAdminOrReadOnly` | Read: any, Write: admin | Preserved original |
+| `IsReviewAssignee` | Assignment check + admin/FM | Preserved original |
+| `HasAnyRole` | Configurable `allowed_roles` | Preserved original |
+| **`HasPermissionCode`** | `user.has_permission(code)` | **New** — code-level check |
+| **`HasAnyPermission`** | Any of listed codes | **New** |
+| **`HasRole`** | RBAC role check | **New** |
+
+### 20.4 Django View Mixins & Decorators
+
+| Helper | Type | Usage |
+|---|---|---|
+| `PermissionRequiredMixin` | CBV mixin | `required_permission = "invoices.view"` |
+| `AnyPermissionRequiredMixin` | CBV mixin | `required_permissions = ["invoices.view", "cases.view"]` |
+| `RoleRequiredMixin` | CBV mixin | `required_role = "ADMIN"` |
+| `@permission_required_code("code")` | FBV decorator | Function view permission check |
+| `@role_required("ADMIN")` | FBV decorator | Function view role check |
+
+### 20.5 Template Tags
+
+```django
+{% load rbac_tags %}
+
+{% has_permission "invoices.view" as can_view %}
+{% if can_view %}<a href="...">Invoices</a>{% endif %}
+
+{% has_role "ADMIN" as is_admin %}
+{% has_any_permission "invoices.view,cases.view" as can_see %}
+
+{% if_can "reconciliation.run" %}
+  <button>Run Reconciliation</button>
+{% end_if_can %}
+```
+
+### 20.6 Case Permissions
 
 | Permission | Description |
 |---|---|
@@ -1371,7 +1494,38 @@ All agents produce JSON following this schema:
 | `CanAssignCase` | ADMIN, FINANCE_MANAGER |
 | `CanUseCopilot` | ADMIN, AP_PROCESSOR, REVIEWER |
 
-### 20.4 Soft Delete
+### 20.7 RBAC Audit Events
+
+| Event Type | Trigger |
+|---|---|
+| `ROLE_ASSIGNED` | Role assigned to user |
+| `ROLE_REMOVED` | Role removed from user |
+| `ROLE_PERMISSION_CHANGED` | Permissions added/removed from role |
+| `USER_PERMISSION_OVERRIDE` | User-level ALLOW/DENY override added |
+| `USER_ACTIVATED` | User activated |
+| `USER_DEACTIVATED` | User deactivated |
+| `ROLE_CREATED` | New role created |
+| `ROLE_UPDATED` | Role metadata updated |
+| `PRIMARY_ROLE_CHANGED` | User's primary role changed |
+
+### 20.8 Admin Console UI
+
+Full Bootstrap 5 management screens at `/accounts/admin-console/`:
+
+| Screen | URL | Features |
+|---|---|---|
+| User List | `/users/` | Search, filter by role/dept/status, pagination, Add User button |
+| User Create | `/users/new/` | Email, name, password, department, initial role |
+| User Detail | `/users/<id>/` | Profile edit, role assign/remove/set-primary, overrides, activate/deactivate |
+| Role List | `/roles/` | Search, user counts, system/custom badges |
+| Role Create | `/roles/new/` | Code, name, description, rank |
+| Role Detail | `/roles/<id>/` | Edit metadata, permission checkboxes by module (Select All / Clear All) |
+| Permission Catalog | `/permissions/` | Grouped by module, shows granted-to roles |
+| Role Matrix | `/role-matrix/` | Full role×permission grid with bulk save |
+
+Sidebar navigation shows Admin Console links only to users with `users.manage` or `roles.manage` permissions.
+
+### 20.9 Soft Delete
 
 Business entities use `SoftDeleteMixin` (is_active flag) — never hard-delete. This ensures auditability and data integrity.
 
@@ -1503,7 +1657,12 @@ celery -A config worker -l info
 - Audit logging (17 event types)
 - Unified case timeline
 - DRF APIs with filtering, search, pagination
-- Bootstrap 5 templates (23 templates)
+- Bootstrap 5 templates (32 templates including RBAC admin console)
+- Enterprise RBAC: Role, Permission, RolePermission, UserRole, UserPermissionOverride models
+- RBAC permission engine: code-level checks, middleware cache, template tags, DRF classes, CBV mixins, FBV decorators
+- RBAC admin console: 8 Bootstrap 5 screens (user CRUD, role CRUD, permission catalog, role-permission matrix)
+- RBAC audit: 9 event types logged via RBACEventService to AuditEvent
+- RBAC API: full REST endpoints for users, roles, permissions, matrix
 - Prompt registry with 13 defaults
 - Seed data commands (4 commands including Saudi McD scenarios)
 - Azure Blob Storage integration

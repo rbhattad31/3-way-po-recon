@@ -61,6 +61,15 @@ class AgentRun(BaseModel):
     duration_ms = models.PositiveIntegerField(null=True, blank=True)
     error_message = models.TextField(blank=True, default="")
 
+    # Traceability
+    trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    span_id = models.CharField(max_length=64, blank=True, default="")
+    invocation_reason = models.CharField(max_length=500, blank=True, default="")
+    prompt_version = models.CharField(max_length=50, blank=True, default="")
+    actor_user_id = models.PositiveIntegerField(null=True, blank=True, help_text="User who triggered agent, if user-initiated")
+    permission_checked = models.CharField(max_length=100, blank=True, default="")
+    cost_estimate = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+
     # LLM usage tracking
     llm_model_used = models.CharField(max_length=100, blank=True, default="")
     prompt_tokens = models.PositiveIntegerField(null=True, blank=True)
@@ -144,13 +153,48 @@ class AgentMessage(TimestampMixin):
 # Decision Log
 # ---------------------------------------------------------------------------
 class DecisionLog(TimestampMixin):
-    """Stores key agent decisions for audit."""
+    """Stores key decisions for audit and explainability.
 
-    agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="decisions")
+    Captures the 'why' behind every major decision — agent, deterministic,
+    policy, or human. Each entry explains the decision_type, rationale,
+    confidence, and the rule/policy/prompt that produced it.
+    """
+
+    agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="decisions", null=True, blank=True)
+
+    # Decision identification
+    decision_type = models.CharField(max_length=100, blank=True, default="", db_index=True,
+                                     help_text="E.g. path_selected, mode_resolved, match_determined, auto_closed")
     decision = models.CharField(max_length=500)
     rationale = models.TextField(blank=True, default="")
     confidence = models.FloatField(null=True, blank=True)
+    deterministic_flag = models.BooleanField(default=False, help_text="True if rule-based, False if LLM-generated")
     evidence_refs = models.JSONField(null=True, blank=True, help_text="References to data that support the decision")
+
+    # Rule/policy traceability
+    rule_name = models.CharField(max_length=200, blank=True, default="")
+    rule_version = models.CharField(max_length=50, blank=True, default="")
+    policy_code = models.CharField(max_length=100, blank=True, default="")
+    policy_version = models.CharField(max_length=50, blank=True, default="")
+    prompt_template_id = models.PositiveIntegerField(null=True, blank=True)
+    prompt_version = models.CharField(max_length=50, blank=True, default="")
+    config_snapshot_json = models.JSONField(null=True, blank=True, help_text="Config/tolerance values at decision time")
+    recommendation_type = models.CharField(max_length=60, blank=True, default="")
+
+    # RBAC context (nullable — for human decisions)
+    actor_user_id = models.PositiveIntegerField(null=True, blank=True)
+    actor_primary_role = models.CharField(max_length=50, blank=True, default="")
+    permission_checked = models.CharField(max_length=100, blank=True, default="")
+    authorization_snapshot_json = models.JSONField(null=True, blank=True)
+
+    # Traceability
+    trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    span_id = models.CharField(max_length=64, blank=True, default="")
+
+    # Cross-references
+    invoice_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    case_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    reconciliation_result_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = "agents_decision_log"

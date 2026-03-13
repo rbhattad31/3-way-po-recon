@@ -17,7 +17,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Enums** live in `apps/core/enums.py` — always add new enums there, never inline string choices.
 - **Constants** live in `apps/core/constants.py`.
 - **Utility functions** (normalization, parsing, tolerance checks) live in `apps/core/utils.py`.
-- **Permissions** are role-based classes in `apps/core/permissions.py`.
+- **Permissions** are RBAC-backed classes in `apps/core/permissions.py`; RBAC models in `apps/accounts/rbac_models.py`; template tags in `apps/core/templatetags/rbac_tags.py`.
 - Custom **User model** uses email login (not username): `AUTH_USER_MODEL = "accounts.User"`.
 - **Settings** are in `config/settings.py`; environment-specific values come from env vars or `.env`.
 
@@ -83,6 +83,9 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Celery Tasks | `apps/<app>/tasks.py` |
 | Business Logic | `apps/<app>/services/` (directory) or `apps/<app>/services.py` |
 | Enums | `apps/core/enums.py` |
+| RBAC Models | `apps/accounts/rbac_models.py` |
+| RBAC Services | `apps/accounts/rbac_services.py` |
+| RBAC Template Tags | `apps/core/templatetags/rbac_tags.py` |
 | Permissions | `apps/core/permissions.py` |
 | Utilities | `apps/core/utils.py` |
 | Admin | `apps/<app>/admin.py` |
@@ -96,8 +99,16 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 
 ```
 User (accounts)
-  ├── has role: ADMIN | AP_PROCESSOR | REVIEWER | FINANCE_MANAGER | AUDITOR
+  ├── has legacy role field: ADMIN | AP_PROCESSOR | REVIEWER | FINANCE_MANAGER | AUDITOR
+  ├── ──< UserRole ──> Role (RBAC multi-role with expiry)
+  ├── ──< UserPermissionOverride ──> Permission (ALLOW/DENY per-user)
   └── referenced by: Invoice.created_by, ReviewAssignment.assigned_to, etc.
+
+Role (accounts) ──< RolePermission ──> Permission (accounts)
+  └── has: code, name, rank, is_system_role, is_active
+
+Permission (accounts)
+  └── has: code (e.g. invoices.view), module, action, is_active
 
 Vendor (vendors) ──< VendorAlias
 
@@ -190,11 +201,19 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 4. Add `ToolDefinition` record.
 5. Reference in relevant agent's `allowed_tools`.
 
+### When adding a new permission
+1. Add `Permission` record via `seed_rbac` command or Django admin.
+2. Use convention: `{module}.{action}` (e.g. `reports.export`).
+3. Assign to roles via `RolePermission` or the role-permission matrix UI.
+4. Use in views: `HasPermissionCode("reports.export")` (DRF) or `required_permission = "reports.export"` (CBV mixin).
+5. Use in templates: `{% has_permission "reports.export" as can_export %}`.
+
 ### When adding a new template view
 1. Create view in `apps/<app>/template_views.py`.
 2. Add URL in `apps/<app>/urls.py`.
 3. Create template in `templates/<app>/`.
 4. Extend `base.html` with `{% extends "base.html" %}`.
+5. Add permission: use `PermissionRequiredMixin` with `required_permission`.
 
 ---
 
@@ -202,6 +221,14 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 
 ### ✅ Fully implemented
 - All models, migrations, enums (17 enum classes incl. `ReconciliationMode`, `ReconciliationModeApplicability`), permissions, middleware
+- **Enterprise RBAC**: Role, Permission, RolePermission, UserRole, UserPermissionOverride models (`apps/accounts/rbac_models.py`)
+- **RBAC Permission Engine**: `HasPermissionCode`, `HasAnyPermission`, `HasRole` (DRF); `PermissionRequiredMixin`, `AnyPermissionRequiredMixin`, `RoleRequiredMixin` (CBV); `@permission_required_code`, `@role_required` (FBV)
+- **RBAC Middleware**: `RBACMiddleware` pre-loads permission cache per request; `rbac_context` processor injects `user_permissions`, `user_role_codes`, `is_admin`
+- **RBAC Template Tags**: `{% has_permission %}`, `{% has_role %}`, `{% has_any_permission %}`, `{% if_can %}` block tag
+- **RBAC Audit**: `RBACEventService` logs 9 event types (ROLE_ASSIGNED, ROLE_REMOVED, ROLE_PERMISSION_CHANGED, USER_PERMISSION_OVERRIDE, USER_ACTIVATED, USER_DEACTIVATED, ROLE_CREATED, ROLE_UPDATED, PRIMARY_ROLE_CHANGED)
+- **RBAC Admin Console**: 8 Bootstrap 5 UI screens — User list/create/detail, Role list/create/detail, Permission catalog, Role-Permission matrix
+- **RBAC API**: `/api/v1/accounts/` — UserViewSet (CRUD + roles/overrides), RoleViewSet (CRUD + clone), PermissionViewSet, RolePermissionMatrixView
+- **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 5 roles, 20 permissions, full matrix, legacy user sync
 - Extraction pipeline (8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction)
 - Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
 - `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
@@ -224,7 +251,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Reconciliation settings viewer (tolerance configuration)
 - Dashboard analytics (service + 7 API endpoints incl. mode-breakdown)
 - DRF APIs (all ViewSets, serializers, routing) + Governance API (`/api/v1/governance/`) + Reconciliation Policies API (`/api/v1/reconciliation/policies/`)
-- Bootstrap 5 templates (23 templates incl. partials, governance views)
+- Bootstrap 5 templates (32 templates incl. partials, governance views, RBAC admin console)
 - Admin panel registration
 - Audit logging & governance: ProcessingLog, AuditEvent (17 event types incl. MODE_RESOLUTION, MODE_OVERRIDE, MODE_POLICY_APPLIED), FileProcessingStatus, CaseTimelineService (unified case timeline with mode resolution events), governance views (audit event list + invoice governance dashboard with role-based access)
 - Seed data management command (`python manage.py seed_data`) — 5 users, 5 vendors, 13 invoices (with edge-case scenarios), POs, GRNs, 7 agent definitions with `config_json`/`allowed_tools`, 6 tool definitions
@@ -269,7 +296,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `config/settings.py` | All configuration (DB, Celery, LLM, REST, Auth, tolerances) |
 | `apps/core/enums.py` | All business enumerations |
 | `apps/core/utils.py` | Normalization, parsing, tolerance utilities |
-| `apps/core/permissions.py` | Role-based permission classes |
+| `apps/core/permissions.py` | RBAC-backed permission classes, CBV mixins, FBV decorators |
 | `apps/documents/models.py` | Invoice, PO, GRN data models |
 | `apps/reconciliation/template_views.py` | Start reconciliation view + agent pipeline wiring |
 | `apps/reconciliation/services/runner_service.py` | Core 3-way matching orchestration + auto-ReviewAssignment |
@@ -287,3 +314,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/agents/services/policy_engine.py` | Agent plan + auto-close band logic |
 | `apps/auditlog/timeline_service.py` | Unified case timeline service |
 | `apps/auditlog/template_views.py` | Governance views (audit log + invoice governance) |
+| `apps/accounts/rbac_models.py` | RBAC data models (Role, Permission, UserRole, etc.) |
+| `apps/accounts/rbac_services.py` | RBAC audit service |
+| `apps/accounts/template_views.py` | Admin console UI views (user/role/perm management) |
+| `apps/core/templatetags/rbac_tags.py` | RBAC template tags for permission-aware rendering |

@@ -15,6 +15,7 @@ from typing import Optional
 from django.db import transaction
 
 from apps.core.enums import MatchStatus
+from apps.core.decorators import observed_service
 from apps.documents.models import Invoice, PurchaseOrder
 from apps.reconciliation.models import (
     ReconciliationConfig,
@@ -47,6 +48,7 @@ class AgentFeedbackService:
         self.exception_builder = ExceptionBuilderService()
 
     @transaction.atomic
+    @observed_service("reconciliation.agent_feedback.apply_found_po", audit_event="AGENT_FEEDBACK_APPLIED", entity_type="ReconciliationResult")
     def apply_found_po(
         self,
         result: ReconciliationResult,
