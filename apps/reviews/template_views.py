@@ -101,6 +101,21 @@ def decide(request, pk):
     handler = decision_map.get(decision)
     if handler:
         handler(assignment, request.user, reason)
+
+    # Update AP Case status if one exists
+    from apps.cases.models import APCase
+    ap_case = APCase.objects.filter(
+        reconciliation_result=assignment.reconciliation_result, is_active=True
+    ).first()
+    if ap_case:
+        if decision == "APPROVED":
+            ap_case.status = "CLOSED"
+            ap_case.save(update_fields=["status", "updated_at"])
+        elif decision == "REJECTED":
+            ap_case.status = "REJECTED"
+            ap_case.save(update_fields=["status", "updated_at"])
+        return redirect("cases:case_agent_view", pk=ap_case.pk)
+
     return redirect("reviews:assignment_detail", pk=pk)
 
 

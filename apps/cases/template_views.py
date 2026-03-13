@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.cases.models import APCase
 from apps.cases.selectors.case_selectors import CaseSelectors
-from apps.core.enums import CasePriority, CaseStatus, ProcessingPath
+from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +72,69 @@ def _build_fallback_summary(case, decisions, validation_issues):
     }
 
 
+def _build_agent_timeline(agent_runs, decisions, show_full_trace):
+    """Build a chronological timeline mixing agent cards and case decisions.
+
+    Returns a list of dicts sorted by timestamp. Each dict has a ``kind``
+    key: ``"agent"`` (with grouped children) or ``"decision"``.
+    """
+    entries = []
+
+    for run in agent_runs:
+        agent_name = (
+            run.agent_definition.name if run.agent_definition else run.agent_type
+        )
+        children = []
+        for step in run.steps.all():
+            children.append({
+                "type": "step",
+                "timestamp": step.created_at,
+                "obj": step,
+            })
+        for tc in run.tool_calls.all():
+            children.append({
+                "type": "tool_call",
+                "timestamp": tc.created_at,
+                "obj": tc,
+            })
+        for dec in run.decisions.all():
+            children.append({
+                "type": "decision",
+                "timestamp": dec.created_at,
+                "obj": dec,
+            })
+        for rec in run.recommendations.all():
+            children.append({
+                "type": "recommendation",
+                "timestamp": rec.created_at,
+                "obj": rec,
+            })
+        children.sort(key=lambda c: c["timestamp"])
+        entries.append({
+            "kind": "agent",
+            "timestamp": run.started_at or run.created_at,
+            "run": run,
+            "agent_name": agent_name,
+            "children": children,
+            "step_count": sum(1 for c in children if c["type"] == "step"),
+            "tool_count": sum(1 for c in children if c["type"] == "tool_call"),
+        })
+
+    # Interleave case-level decisions
+    for d in decisions:
+        entries.append({
+            "kind": "decision",
+            "timestamp": d.created_at,
+            "decision": d,
+        })
+
+    entries.sort(key=lambda e: e["timestamp"])
+    return entries
+
+
 def _build_copilot_context(case, invoice, po, grns, stages, decisions,
-                           exceptions, validation_issues, agent_runs, summary):
+                           exceptions, validation_issues, agent_runs, summary,
+                           timeline=None):
     """Build a structured dict of case data for the copilot panel JS."""
     ctx = {
         "case_number": case.case_number,
@@ -165,6 +226,25 @@ def _build_copilot_context(case, invoice, po, grns, stages, decisions,
         for r in agent_runs
     ]
 
+    # Audit / timeline events
+    ctx["audit_events"] = []
+    ctx["system_actions"] = []
+    for ev in (timeline or []):
+        cat = ev.get("event_category", "")
+        entry = {
+            "category": cat,
+            "type": ev.get("event_type", ""),
+            "description": ev.get("description", ""),
+            "actor": ev.get("actor", "system"),
+            "timestamp": str(ev.get("timestamp", "")),
+        }
+        if ev.get("status_change"):
+            entry["status_change"] = ev["status_change"]
+        if cat == "audit":
+            ctx["audit_events"].append(entry)
+        elif cat in ("mode_resolution", "case", "stage"):
+            ctx["system_actions"].append(entry)
+
     return ctx
 
 
@@ -176,6 +256,11 @@ def case_inbox(request):
         status=request.GET.get("status", ""),
         priority=request.GET.get("priority", ""),
         search=request.GET.get("q", ""),
+        match_status=request.GET.get("match_status", ""),
+        reconciliation_mode=request.GET.get("reconciliation_mode", ""),
+        date_from=request.GET.get("date_from", ""),
+        date_to=request.GET.get("date_to", ""),
+        processing_type=request.GET.get("processing_type", ""),
     )
 
     paginator = Paginator(qs, 25)
@@ -190,113 +275,15 @@ def case_inbox(request):
         "status_choices": CaseStatus.choices,
         "path_choices": ProcessingPath.choices,
         "priority_choices": CasePriority.choices,
+        "match_status_choices": MatchStatus.choices,
+        "reconciliation_mode_choices": ReconciliationMode.choices,
     })
 
 
 @login_required
 def case_console(request, pk):
-    """Case console — deep-dive investigation view for a single AP Case."""
-    case = get_object_or_404(
-        APCase.objects.select_related(
-            "invoice", "invoice__vendor", "invoice__document_upload",
-            "vendor", "purchase_order", "reconciliation_result",
-            "assigned_to",
-        ).prefetch_related(
-            "stages", "artifacts", "decisions",
-            "assignments", "comments", "activities",
-        ),
-        pk=pk, is_active=True,
-    )
-
-    invoice = case.invoice
-    po = case.purchase_order
-    stages = list(case.stages.order_by("created_at"))
-    decisions = list(case.decisions.order_by("created_at"))
-    artifacts = list(case.artifacts.order_by("-created_at"))
-    comments = list(case.comments.select_related("author").order_by("created_at"))
-
-    # GRNs linked to PO
-    grns = []
-    if po:
-        from apps.documents.models import GoodsReceiptNote
-        grns = list(
-            GoodsReceiptNote.objects.filter(purchase_order=po)
-            .select_related("vendor")
-            .prefetch_related("line_items")
-        )
-
-    # Reconciliation exceptions
-    exceptions = []
-    recon_result = case.reconciliation_result
-    if recon_result:
-        exceptions = list(recon_result.exceptions.all().order_by("-severity", "exception_type"))
-
-    # Non-PO validation issues (from VALIDATION_RESULT artifact)
-    validation_issues = []
-    validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version").first()
-    if validation_artifact and isinstance(validation_artifact.payload, dict):
-        checks = validation_artifact.payload.get("checks", {})
-        for check_name, check_data in checks.items():
-            status = check_data.get("status", "")
-            if status in ("FAIL", "WARNING"):
-                validation_issues.append({
-                    "check_name": check_name.replace("_", " ").title(),
-                    "status": status,
-                    "message": check_data.get("message", ""),
-                })
-
-    # Agent runs — check via recon result, then fall back to case's invoice
-    agent_runs = []
-    if recon_result:
-        from apps.agents.models import AgentRun
-        agent_runs = list(
-            AgentRun.objects.filter(reconciliation_result=recon_result)
-            .select_related("agent_definition")
-            .prefetch_related("steps", "tool_calls", "decisions", "recommendations")
-            .order_by("created_at")
-        )
-
-    # Summary — prefer existing APCaseSummary, then fallback
-    summary = getattr(case, "summary", None)
-    if not summary:
-        # Build a lightweight summary dict from available stage/decision data
-        built_summary = _build_fallback_summary(case, decisions, validation_issues)
-        if built_summary:
-            summary = built_summary
-
-    # Timeline
-    from apps.auditlog.timeline_service import CaseTimelineService
-    timeline = CaseTimelineService.get_case_timeline(invoice.pk)
-
-    # Security: role-aware trace visibility
-    from apps.core.enums import UserRole
-    user_role = getattr(request.user, "role", None)
-    show_full_trace = user_role in (UserRole.ADMIN, UserRole.AUDITOR)
-
-    # Build copilot context — structured case data for client-side Q&A
-    copilot_context = _build_copilot_context(
-        case, invoice, po, grns, stages, decisions,
-        exceptions, validation_issues, agent_runs, summary,
-    )
-
-    return render(request, "cases/case_console.html", {
-        "case": case,
-        "invoice": invoice,
-        "po": po,
-        "stages": stages,
-        "decisions": decisions,
-        "artifacts": artifacts,
-        "comments": comments,
-        "grns": grns,
-        "exceptions": exceptions,
-        "validation_issues": validation_issues,
-        "total_issues_count": len(exceptions) + len(validation_issues),
-        "agent_runs": agent_runs,
-        "summary": summary,
-        "timeline": timeline,
-        "show_full_trace": show_full_trace,
-        "copilot_context_json": json.dumps(copilot_context, default=str),
-    })
+    """Case console — redirect to new agent view."""
+    return redirect("cases:case_agent_view", pk=pk)
 
 
 @login_required
@@ -425,7 +412,7 @@ def case_agent_view(request, pk):
         if built_summary:
             summary = built_summary
 
-    # Timeline
+    # Timeline (from audit/governance service)
     from apps.auditlog.timeline_service import CaseTimelineService
     timeline = CaseTimelineService.get_case_timeline(invoice.pk)
 
@@ -434,10 +421,13 @@ def case_agent_view(request, pk):
     user_role = getattr(request.user, "role", None)
     show_full_trace = user_role in (UserRole.ADMIN, UserRole.AUDITOR)
 
+    # Build unified agent timeline — agents + decisions interleaved chronologically
+    agent_timeline = _build_agent_timeline(agent_runs, decisions, show_full_trace)
+
     # Copilot context
     copilot_context = _build_copilot_context(
         case, invoice, po, grns, stages, decisions,
-        exceptions, validation_issues, agent_runs, summary,
+        exceptions, validation_issues, agent_runs, summary, timeline,
     )
 
     # Get active review assignment for approve/reject actions
@@ -448,6 +438,15 @@ def case_agent_view(request, pk):
             .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
             .first()
         )
+        # Auto-create assignment if case needs review but none exists
+        if not review_assignment and case.status in ("READY_FOR_REVIEW", "IN_REVIEW"):
+            from apps.reviews.models import ReviewAssignment
+            review_assignment = ReviewAssignment.objects.create(
+                reconciliation_result=recon_result,
+                assigned_to=request.user,
+                status="IN_REVIEW",
+                priority=5,
+            )
 
     return render(request, "cases/case_agent_view.html", {
         "case": case,
@@ -461,6 +460,7 @@ def case_agent_view(request, pk):
         "validation_issues": validation_issues,
         "total_issues_count": len(exceptions) + len(validation_issues),
         "agent_runs": agent_runs,
+        "agent_timeline": agent_timeline,
         "summary": summary,
         "timeline": timeline,
         "show_full_trace": show_full_trace,
