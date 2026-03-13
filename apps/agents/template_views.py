@@ -9,6 +9,7 @@ from apps.cases.orchestrators.case_orchestrator import PATH_STAGES, STAGE_TO_STA
 from apps.cases.state_machine.case_state_machine import CASE_TRANSITIONS, TERMINAL_STATES
 from apps.core.enums import (
     AgentType,
+    AuditEventType,
     CaseStageType,
     CaseStatus,
     PerformedByType,
@@ -221,6 +222,145 @@ def agent_reference(request):
                 "prompt_text": text,
             })
 
+    # ---- Traceability context fields ----
+    trace_field_groups = [
+        {
+            "group": "Correlation IDs",
+            "icon": "bi-link-45deg",
+            "fields": [
+                ("trace_id", "Root ID linking all spans in a single request / task chain"),
+                ("span_id", "Unique ID for one unit of work (view call, service method, Celery task)"),
+                ("parent_span_id", "The span that spawned this one — forms the tree"),
+                ("request_id", "HTTP-request-scoped ID (mirrors trace_id for web requests)"),
+            ],
+        },
+        {
+            "group": "Business Entity IDs",
+            "icon": "bi-box",
+            "fields": [
+                ("invoice_id", "The invoice being processed"),
+                ("case_id", "The AP Case wrapping this invoice"),
+                ("reconciliation_run_id", "The reconciliation batch run"),
+                ("reconciliation_result_id", "The specific matching result"),
+                ("review_assignment_id", "The human-review assignment"),
+                ("agent_run_id", "The AI agent execution"),
+                ("task_id", "Celery async-task ID"),
+            ],
+        },
+        {
+            "group": "Processing Context",
+            "icon": "bi-gear",
+            "fields": [
+                ("processing_path", "TWO_WAY / THREE_WAY / NON_PO"),
+                ("stage_name", "Current case stage (e.g. EXTRACTION, THREE_WAY_MATCHING)"),
+                ("source_service", "The service class / function emitting the trace"),
+                ("source_layer", "UI · API · TASK · SERVICE · AGENT · SYSTEM"),
+            ],
+        },
+        {
+            "group": "RBAC Snapshot",
+            "icon": "bi-shield-lock",
+            "fields": [
+                ("actor_user_id", "Authenticated user's PK"),
+                ("actor_email", "User email (for audit cross-reference)"),
+                ("actor_primary_role", "User's primary RBAC role at time of action"),
+                ("actor_roles_snapshot", "All active roles the user held"),
+                ("permission_checked", "Permission code evaluated (e.g. reconciliation.run)"),
+                ("permission_source", "How it was resolved: ROLE / ADMIN_BYPASS / USER_OVERRIDE / …"),
+                ("access_granted", "True / False — was the action allowed?"),
+            ],
+        },
+    ]
+
+    trace_propagation = [
+        {
+            "method": "HTTP Request",
+            "how": "RequestTraceMiddleware creates a root TraceContext per request, enriches with RBAC if authenticated, stores in thread-local, sets X-Trace-ID and X-Request-ID response headers.",
+            "icon": "bi-globe",
+        },
+        {
+            "method": "Child Spans",
+            "how": "@observed_service, @observed_action, @observed_task decorators call .child() to derive a child span inheriting trace_id with a new span_id.",
+            "icon": "bi-diagram-3",
+        },
+        {
+            "method": "Celery Tasks",
+            "how": ".as_celery_headers() serialises minimal trace fields into task headers; .from_celery_headers() reconstructs in the worker — keeps the same trace_id across async boundaries.",
+            "icon": "bi-arrow-repeat",
+        },
+        {
+            "method": "Thread-Local",
+            "how": "TraceContext.get_current() / .set_current() stores context on the current thread, ensuring every log line and audit event within the same request shares the same trace.",
+            "icon": "bi-cpu",
+        },
+    ]
+
+    # ---- Observability info ----
+    observed_entries = [
+        {"decorator": "@observed_service", "location": "reconciliation/services/runner_service.py", "name": "reconciliation.runner.run", "event": "RECONCILIATION_STARTED"},
+        {"decorator": "@observed_service", "location": "reconciliation/services/agent_feedback_service.py", "name": "reconciliation.agent_feedback.apply_found_po", "event": "AGENT_FEEDBACK_APPLIED"},
+        {"decorator": "@observed_service", "location": "agents/services/orchestrator.py", "name": "agents.orchestrator.execute", "event": "AGENT_PIPELINE_STARTED"},
+        {"decorator": "@observed_service", "location": "reviews/services.py", "name": "reviews.approve", "event": "REVIEW_APPROVED"},
+        {"decorator": "@observed_service", "location": "reviews/services.py", "name": "reviews.reject", "event": "REVIEW_REJECTED"},
+        {"decorator": "@observed_service", "location": "reviews/services.py", "name": "reviews.request_reprocess", "event": "RECONCILIATION_RERUN"},
+        {"decorator": "@observed_action", "location": "documents/template_views.py", "name": "documents.upload_invoice", "event": "perm: documents.upload"},
+        {"decorator": "@observed_action", "location": "reconciliation/template_views.py", "name": "reconciliation.start_reconciliation", "event": "perm: reconciliation.run"},
+        {"decorator": "@observed_task", "location": "extraction/tasks.py", "name": "extraction.process_invoice_upload", "event": "EXTRACTION_STARTED"},
+    ]
+
+    metrics_categories = [
+        {"category": "RBAC", "icon": "bi-shield-lock", "counters": "permission_checks_total, permission_granted, permission_denied, eval_duration_ms, role_assignment_changes, role_matrix_changes, unauthorized_sensitive_action"},
+        {"category": "Extraction", "icon": "bi-file-earmark-text", "counters": "invoices_uploaded, extraction_runs, extraction_failures, extraction_duration_ms, extraction_confidence_avg"},
+        {"category": "Reconciliation", "icon": "bi-arrow-left-right", "counters": "reconciliation_runs, reconciliation_failures, duration_ms, mode_resolution, match_status, po_lookup_miss, grn_lookup_miss, reprocess"},
+        {"category": "Reviews", "icon": "bi-people", "counters": "reviews_created, reviews_completed, review_duration_ms, manual_field_corrections"},
+        {"category": "Agents", "icon": "bi-robot", "counters": "agent_runs, agent_failures, agent_duration_ms, agent_token_usage, recommendation_total"},
+        {"category": "Cases / System", "icon": "bi-briefcase", "counters": "cases_created, stage_duration_ms, stage_retry, task_failures, task_retries"},
+    ]
+
+    audit_event_types = [
+        {"value": val, "label": label}
+        for val, label in AuditEventType.choices
+    ]
+
+    # Split business vs RBAC events
+    rbac_event_values = {
+        "ROLE_ASSIGNED", "ROLE_REMOVED", "ROLE_PERMISSION_CHANGED",
+        "USER_PERMISSION_OVERRIDE", "USER_ACTIVATED", "USER_DEACTIVATED",
+        "ROLE_CREATED", "ROLE_UPDATED", "PRIMARY_ROLE_CHANGED",
+    }
+    business_events = [e for e in audit_event_types if e["value"] not in rbac_event_values]
+    rbac_events = [e for e in audit_event_types if e["value"] in rbac_event_values]
+
+    # ---- RBAC info ----
+    rbac_permission_classes = [
+        {"name": "HasPermissionCode", "usage": 'required_permission = "invoices.view"', "description": "Single RBAC permission code check"},
+        {"name": "HasAnyPermission", "usage": 'required_permissions = ["invoices.view", "reconciliation.view"]', "description": "Any of multiple permission codes"},
+        {"name": "HasRole", "usage": 'required_role = "FINANCE_MANAGER"', "description": "Single role code check"},
+        {"name": "HasAnyRole", "usage": 'allowed_roles = ["ADMIN", "AUDITOR"]', "description": "Any of multiple role codes"},
+        {"name": "IsReviewAssignee", "usage": "(object-level)", "description": "Checks if user is the assigned reviewer or Admin/FM"},
+    ]
+
+    rbac_cbv_mixins = [
+        {"name": "PermissionRequiredMixin", "attribute": 'required_permission = "invoices.view"'},
+        {"name": "AnyPermissionRequiredMixin", "attribute": 'required_permissions = [...]'},
+        {"name": "RoleRequiredMixin", "attribute": 'required_roles = [...]'},
+    ]
+
+    rbac_template_tags = [
+        {"tag": '{% has_permission "invoices.view" as can_view %}', "description": "Check a single permission code"},
+        {"tag": '{% has_role "ADMIN" as is_admin %}', "description": "Check if user has a role"},
+        {"tag": '{% has_any_permission "invoices.view,reconciliation.view" as can_see %}', "description": "Check any of multiple permissions"},
+        {"tag": '{% if_can "reconciliation.run" %}...{% end_if_can %}', "description": "Block tag — renders content only if permission granted"},
+    ]
+
+    rbac_precedence = [
+        {"step": "1", "rule": "ADMIN Bypass", "description": "Users with the ADMIN role skip all permission checks — always granted.", "icon": "bi-lightning-charge", "color": "danger"},
+        {"step": "2", "rule": "User DENY Override", "description": "Explicit per-user DENY overrides block access regardless of roles.", "icon": "bi-x-octagon", "color": "dark"},
+        {"step": "3", "rule": "User ALLOW Override", "description": "Explicit per-user ALLOW overrides grant access even if no role provides it.", "icon": "bi-check-circle", "color": "success"},
+        {"step": "4", "rule": "Role Permissions", "description": "Permissions granted through any of the user's active, non-expired roles.", "icon": "bi-person-badge", "color": "primary"},
+        {"step": "5", "rule": "Default Deny", "description": "If no rule above matched, the action is denied.", "icon": "bi-slash-circle", "color": "secondary"},
+    ]
+
     return render(request, "agents/reference.html", {
         "agents_info": agents_info,
         "tools_info": tools_info,
@@ -231,4 +371,17 @@ def agent_reference(request):
         "terminal_states": terminal_states,
         "non_po_checks": _NON_PO_CHECKS,
         "max_tool_rounds": 6,
+        # Traceability
+        "trace_field_groups": trace_field_groups,
+        "trace_propagation": trace_propagation,
+        # Observability
+        "observed_entries": observed_entries,
+        "metrics_categories": metrics_categories,
+        "business_events": business_events,
+        "rbac_events": rbac_events,
+        # RBAC
+        "rbac_permission_classes": rbac_permission_classes,
+        "rbac_cbv_mixins": rbac_cbv_mixins,
+        "rbac_template_tags": rbac_template_tags,
+        "rbac_precedence": rbac_precedence,
     })
