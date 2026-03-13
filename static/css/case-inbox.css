@@ -2,3 +2,79 @@
 .case-row:hover {
   background: var(--ap-bg-subtle) !important;
 }
+
+/* KPI row — compact inline stats */
+.ci-kpi-row {
+  display: flex;
+  gap: .5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.ci-kpi {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .4rem .75rem;
+  background: var(--ap-bg-card, #fff);
+  border: 1px solid var(--ap-border, #e2e8f0);
+  border-radius: var(--ap-radius, .375rem);
+  font-size: .78rem;
+  color: var(--ap-text-muted, #64748b);
+  white-space: nowrap;
+}
+.ci-kpi-num {
+  font-weight: 700;
+  font-size: .95rem;
+  color: var(--ap-text, #1e293b);
+}
+.ci-kpi-num.ci-kpi-ok   { color: var(--ap-success, #16a34a); }
+.ci-kpi-num.ci-kpi-warn { color: var(--ap-warning, #d97706); }
+.ci-kpi-num.ci-kpi-bad  { color: var(--ap-danger, #dc2626); }
+.ci-kpi-num.ci-kpi-info { color: var(--ap-info, #2563eb); }
+
+/* ── Advanced filter row ── */
+.ci-advanced-row {
+  margin-top: -.5rem !important;
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+}
+
+/* Toggle button active state */
+#toggleAdvancedFilters.active {
+  background: var(--ap-primary);
+  color: #fff;
+  border-color: var(--ap-primary);
+}
+
+/* ── Processing badges ── */
+.ci-processing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  font-size: .72rem;
+  font-weight: 600;
+  padding: .15rem .5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  letter-spacing: .01em;
+}
+.ci-processing-agent {
+  background: #eef6ff;
+  color: #2563eb;
+}
+.ci-processing-human {
+  background: #fdf4e7;
+  color: #c2790a;
+}
+.ci-processing-mixed {
+  background: #f0ebff;
+  color: #7c3aed;
+}
+.ci-processing-system {
+  background: var(--ap-bg-subtle, #f8fafc);
+  color: var(--ap-text-muted, #94a3b8);
+}
+.ci-processing-pending {
+  background: var(--ap-bg-subtle, #f8fafc);
+  color: var(--ap-text-muted, #94a3b8);
+}

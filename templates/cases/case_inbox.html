@@ -3,7 +3,7 @@
 {% block title %}Case Inbox – AP Operations{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/case-inbox.css' %}" rel="stylesheet">
+<link href="{% static 'css/case-inbox.css' %}?v=2" rel="stylesheet">
 {% endblock %}
 
 {% block breadcrumb %}
@@ -16,6 +16,7 @@
 {% endblock %}
 
 {% block content %}
+<div class="container-fluid px-0">
 {# ── Page Header ── #}
 <div class="ap-page-header">
   <div>
@@ -29,110 +30,114 @@
 </div>
 
 {# ── KPI Strip ── #}
-<div class="ap-kpi-strip">
-  <div class="ap-kpi-card">
-    <div class="ap-kpi-icon" style="background:var(--ap-primary-light);color:var(--ap-primary)">
-      <i class="bi bi-briefcase"></i>
-    </div>
-    <div>
-      <div class="ap-kpi-value">{{ stats.total|default:"0" }}</div>
-      <div class="ap-kpi-label">Total Cases</div>
-    </div>
-  </div>
-  <div class="ap-kpi-card">
-    <div class="ap-kpi-icon" style="background:var(--ap-warning-light);color:var(--ap-warning)">
-      <i class="bi bi-eye"></i>
-    </div>
-    <div>
-      <div class="ap-kpi-value">{{ stats.by_status.READY_FOR_REVIEW|default:"0" }}</div>
-      <div class="ap-kpi-label">Awaiting Review</div>
-    </div>
-  </div>
-  <div class="ap-kpi-card">
-    <div class="ap-kpi-icon" style="background:var(--ap-info-light);color:var(--ap-info)">
-      <i class="bi bi-arrow-repeat"></i>
-    </div>
-    <div>
-      <div class="ap-kpi-value">{{ stats.in_progress|default:"0" }}</div>
-      <div class="ap-kpi-label">In Progress</div>
-    </div>
-  </div>
-  <div class="ap-kpi-card">
-    <div class="ap-kpi-icon" style="background:var(--ap-success-light);color:var(--ap-success)">
-      <i class="bi bi-check-circle"></i>
-    </div>
-    <div>
-      <div class="ap-kpi-value">{{ stats.by_status.CLOSED|default:"0" }}</div>
-      <div class="ap-kpi-label">Closed</div>
-    </div>
-  </div>
-  <div class="ap-kpi-card">
-    <div class="ap-kpi-icon" style="background:var(--ap-danger-light);color:var(--ap-danger)">
-      <i class="bi bi-alarm"></i>
-    </div>
-    <div>
-      <div class="ap-kpi-value">{{ stats.overdue|default:"0" }}</div>
-      <div class="ap-kpi-label">Overdue (&gt;48h)</div>
-    </div>
-  </div>
+<div class="ci-kpi-row">
+  <div class="ci-kpi"><span class="ci-kpi-num">{{ stats.total|default:"0" }}</span> Total</div>
+  <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-warn">{{ stats.by_status.READY_FOR_REVIEW|default:"0" }}</span> Awaiting Review</div>
+  <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-ok">{{ stats.by_status.CLOSED|default:"0" }}</span> Closed</div>
+  <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-info">{{ stats.agent_processed|default:"0" }}</span> Agent Processed</div>
+  <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-warn">{{ stats.human_involved|default:"0" }}</span> Human Involved</div>
+  <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-bad">{{ stats.overdue|default:"0" }}</span> Overdue</div>
 </div>
 
 {# ── Filter Toolbar ── #}
 <form method="get" class="ap-filter-bar" id="filterForm">
-  <div class="position-relative" style="flex:1;max-width:280px">
+  <div class="position-relative" style="width:240px">
     <i class="bi bi-search position-absolute" style="left:.75rem;top:50%;transform:translateY(-50%);color:var(--ap-text-muted);font-size:.8rem"></i>
-    <input type="text" name="q" class="form-control form-control-sm" placeholder="Search cases, invoices…"
+    <input type="text" name="q" class="form-control form-control-sm" placeholder="Search cases, invoices, vendors…"
            value="{{ request.GET.q|default:'' }}" style="padding-left:2.25rem">
   </div>
-  <select name="status" class="form-select form-select-sm" style="max-width:160px" onchange="this.form.submit()">
+  <select name="status" class="form-select form-select-sm" style="width:155px" onchange="this.form.submit()">
     <option value="">All Statuses</option>
     {% for val, label in status_choices %}
       <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
     {% endfor %}
   </select>
-  <select name="processing_path" class="form-select form-select-sm" style="max-width:140px" onchange="this.form.submit()">
+  <select name="processing_path" class="form-select form-select-sm" style="width:140px" onchange="this.form.submit()">
     <option value="">All Paths</option>
     {% for val, label in path_choices %}
       <option value="{{ val }}" {% if request.GET.processing_path == val %}selected{% endif %}>{{ label }}</option>
     {% endfor %}
   </select>
-  <select name="priority" class="form-select form-select-sm" style="max-width:130px" onchange="this.form.submit()">
+  <select name="priority" class="form-select form-select-sm" style="width:130px" onchange="this.form.submit()">
     <option value="">All Priorities</option>
     {% for val, label in priority_choices %}
       <option value="{{ val }}" {% if request.GET.priority == val %}selected{% endif %}>{{ label }}</option>
     {% endfor %}
   </select>
+  <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleAdvancedFilters" title="More filters">
+    <i class="bi bi-funnel me-1"></i>Filters
+  </button>
   <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
-  {% if request.GET.q or request.GET.status or request.GET.processing_path or request.GET.priority %}
+  {% if request.GET.q or request.GET.status or request.GET.processing_path or request.GET.priority or request.GET.match_status or request.GET.reconciliation_mode or request.GET.processing_type or request.GET.date_from or request.GET.date_to %}
   <a href="{% url 'cases:case_inbox' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-lg me-1"></i>Clear</a>
   {% endif %}
 </form>
 
+{# ── Advanced Filters (toggleable) ── #}
+<form method="get" class="ap-filter-bar ci-advanced-row {% if not request.GET.match_status and not request.GET.reconciliation_mode and not request.GET.processing_type and not request.GET.date_from and not request.GET.date_to %}d-none{% endif %}" id="advancedFilters">
+  {# Carry forward primary filter values as hidden inputs #}
+  {% if request.GET.q %}<input type="hidden" name="q" value="{{ request.GET.q }}">{% endif %}
+  {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+  {% if request.GET.processing_path %}<input type="hidden" name="processing_path" value="{{ request.GET.processing_path }}">{% endif %}
+  {% if request.GET.priority %}<input type="hidden" name="priority" value="{{ request.GET.priority }}">{% endif %}
+  <select name="match_status" class="form-select form-select-sm" style="width:160px" onchange="this.form.submit()">
+    <option value="">All Match Statuses</option>
+    {% for val, label in match_status_choices %}
+      <option value="{{ val }}" {% if request.GET.match_status == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="reconciliation_mode" class="form-select form-select-sm" style="width:155px" onchange="this.form.submit()">
+    <option value="">All Recon Modes</option>
+    {% for val, label in reconciliation_mode_choices %}
+      <option value="{{ val }}" {% if request.GET.reconciliation_mode == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="processing_type" class="form-select form-select-sm" style="width:175px" onchange="this.form.submit()">
+    <option value="">All Processing Types</option>
+    <option value="agent_only" {% if request.GET.processing_type == "agent_only" %}selected{% endif %}>Agent Only</option>
+    <option value="human_involved" {% if request.GET.processing_type == "human_involved" %}selected{% endif %}>Human Involved</option>
+    <option value="mixed" {% if request.GET.processing_type == "mixed" %}selected{% endif %}>Mixed (Agent + Human)</option>
+  </select>
+  <span class="text-muted" style="font-size:.75rem">From</span>
+  <input type="date" name="date_from" class="form-control form-control-sm" style="width:150px" value="{{ request.GET.date_from|default:'' }}" onchange="this.form.submit()">
+  <span class="text-muted" style="font-size:.75rem">To</span>
+  <input type="date" name="date_to" class="form-control form-control-sm" style="width:150px" value="{{ request.GET.date_to|default:'' }}" onchange="this.form.submit()">
+</form>
+
 {# Active filter chips #}
-{% if request.GET.status or request.GET.processing_path or request.GET.priority %}
+{% if request.GET.status or request.GET.processing_path or request.GET.priority or request.GET.match_status or request.GET.reconciliation_mode or request.GET.processing_type or request.GET.date_from or request.GET.date_to %}
 <div class="d-flex gap-2 mb-3 flex-wrap">
   {% if request.GET.status %}
-  <span class="ap-filter-chip">Status: {{ request.GET.status }}
-    <a href="?{% if request.GET.q %}q={{ request.GET.q }}&{% endif %}{% if request.GET.processing_path %}processing_path={{ request.GET.processing_path }}&{% endif %}{% if request.GET.priority %}priority={{ request.GET.priority }}{% endif %}" class="text-decoration-none"><i class="bi bi-x"></i></a>
-  </span>
+  <span class="ap-filter-chip">Status: {{ request.GET.status }}<a href="javascript:void(0)" onclick="removeFilter('status')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
   {% endif %}
   {% if request.GET.processing_path %}
-  <span class="ap-filter-chip">Path: {{ request.GET.processing_path }}
-    <a href="?{% if request.GET.q %}q={{ request.GET.q }}&{% endif %}{% if request.GET.status %}status={{ request.GET.status }}&{% endif %}{% if request.GET.priority %}priority={{ request.GET.priority }}{% endif %}" class="text-decoration-none"><i class="bi bi-x"></i></a>
-  </span>
+  <span class="ap-filter-chip">Path: {{ request.GET.processing_path }}<a href="javascript:void(0)" onclick="removeFilter('processing_path')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
   {% endif %}
   {% if request.GET.priority %}
-  <span class="ap-filter-chip">Priority: {{ request.GET.priority }}
-    <a href="?{% if request.GET.q %}q={{ request.GET.q }}&{% endif %}{% if request.GET.status %}status={{ request.GET.status }}&{% endif %}{% if request.GET.processing_path %}processing_path={{ request.GET.processing_path }}{% endif %}" class="text-decoration-none"><i class="bi bi-x"></i></a>
-  </span>
+  <span class="ap-filter-chip">Priority: {{ request.GET.priority }}<a href="javascript:void(0)" onclick="removeFilter('priority')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
+  {% endif %}
+  {% if request.GET.match_status %}
+  <span class="ap-filter-chip">Match: {{ request.GET.match_status }}<a href="javascript:void(0)" onclick="removeFilter('match_status')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
+  {% endif %}
+  {% if request.GET.reconciliation_mode %}
+  <span class="ap-filter-chip">Mode: {{ request.GET.reconciliation_mode }}<a href="javascript:void(0)" onclick="removeFilter('reconciliation_mode')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
+  {% endif %}
+  {% if request.GET.processing_type %}
+  <span class="ap-filter-chip">Processing: {{ request.GET.processing_type }}<a href="javascript:void(0)" onclick="removeFilter('processing_type')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
+  {% endif %}
+  {% if request.GET.date_from %}
+  <span class="ap-filter-chip">From: {{ request.GET.date_from }}<a href="javascript:void(0)" onclick="removeFilter('date_from')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
+  {% endif %}
+  {% if request.GET.date_to %}
+  <span class="ap-filter-chip">To: {{ request.GET.date_to }}<a href="javascript:void(0)" onclick="removeFilter('date_to')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
   {% endif %}
 </div>
 {% endif %}
 
 {# ── Cases Table ── #}
 <div class="ap-card">
-  <div class="ap-card-body-flush">
-    <table class="ap-table table table-hover mb-0">
+  <div class="ap-card-body-flush" style="overflow-x:auto">
+    <table class="ap-table table table-hover mb-0" style="min-width:1100px">
       <thead>
         <tr>
           <th>Case</th>
@@ -140,7 +145,8 @@
           <th>Vendor</th>
           <th>Path</th>
           <th>Status</th>
-          <th>Stage</th>
+          <th>Match</th>
+          <th>Processed By</th>
           <th>Priority</th>
           <th>Amount</th>
           <th>Assigned</th>
@@ -182,7 +188,46 @@
               <span class="ap-badge ap-badge-primary">{{ case.get_status_display }}</span>
             {% endif %}
           </td>
-          <td><small class="text-muted">{{ case.get_current_stage_display|default:"—" }}</small></td>
+          <td>
+            {% if case.reconciliation_result %}
+              {% if case.reconciliation_result.match_status == "MATCHED" %}
+                <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle-fill"></i> Matched</span>
+              {% elif case.reconciliation_result.match_status == "PARTIAL_MATCH" %}
+                <span class="ap-badge ap-badge-warning"><i class="bi bi-exclamation-triangle-fill"></i> Partial</span>
+              {% elif case.reconciliation_result.match_status == "UNMATCHED" %}
+                <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle-fill"></i> Unmatched</span>
+              {% elif case.reconciliation_result.match_status == "ERROR" %}
+                <span class="ap-badge ap-badge-danger">Error</span>
+              {% else %}
+                <span class="ap-badge ap-badge-muted">{{ case.reconciliation_result.get_match_status_display }}</span>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if case.requires_human_review and case.has_agent_runs %}
+              <span class="ci-processing-badge ci-processing-mixed" title="Agent processed, then routed to human review">
+                <i class="bi bi-robot"></i><i class="bi bi-plus-lg" style="font-size:.55rem;margin:0 1px"></i><i class="bi bi-person"></i> Mixed
+              </span>
+            {% elif case.requires_human_review %}
+              <span class="ci-processing-badge ci-processing-human" title="Required human review">
+                <i class="bi bi-person-check"></i> Human
+              </span>
+            {% elif case.has_agent_runs %}
+              <span class="ci-processing-badge ci-processing-agent" title="Fully processed by agents">
+                <i class="bi bi-robot"></i> Agent
+              </span>
+            {% elif case.status == "NEW" %}
+              <span class="ci-processing-badge ci-processing-pending" title="Not yet processed">
+                <i class="bi bi-hourglass-split"></i> Pending
+              </span>
+            {% else %}
+              <span class="ci-processing-badge ci-processing-system" title="System / deterministic processing">
+                <i class="bi bi-gear"></i> System
+              </span>
+            {% endif %}
+          </td>
           <td>
             {% if case.priority == "CRITICAL" %}
               <span class="ap-badge ap-sev-critical"><i class="bi bi-fire"></i> Critical</span>
@@ -207,20 +252,16 @@
             {% endif %}
           </td>
           <td><small class="text-muted">{{ case.created_at|timesince }}</small></td>
-          <td class="d-flex gap-1">
-            <a href="{% url 'cases:case_agent_view' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" title="Agent View"
+          <td>
+            <a href="{% url 'cases:case_agent_view' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" title="Investigate"
                onclick="event.stopPropagation()">
               <i class="bi bi-robot"></i>
-            </a>
-            <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Classic View"
-               onclick="event.stopPropagation()">
-              <i class="bi bi-layout-text-sidebar-reverse"></i>
             </a>
           </td>
         </tr>
         {% empty %}
         <tr>
-          <td colspan="11">
+          <td colspan="12">
             <div class="ap-empty-state">
               <i class="bi bi-inbox"></i>
               <div class="ap-empty-state-label">No cases found matching your filters</div>
@@ -234,4 +275,23 @@
 </div>
 
 {% include "partials/pagination.html" %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Toggle advanced filters
+document.getElementById('toggleAdvancedFilters').addEventListener('click', function() {
+  var panel = document.getElementById('advancedFilters');
+  panel.classList.toggle('d-none');
+  this.classList.toggle('active');
+});
+
+// Remove a single filter chip
+function removeFilter(name) {
+  var params = new URLSearchParams(window.location.search);
+  params.delete(name);
+  window.location.search = params.toString();
+}
+</script>
 {% endblock %}

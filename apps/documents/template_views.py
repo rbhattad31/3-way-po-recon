@@ -123,13 +123,55 @@ def upload_invoice(request):
 
 @login_required
 def invoice_list(request):
+    from django.db.models import Count, Sum, Q
+
     qs = Invoice.objects.select_related("vendor").prefetch_related("ap_case").order_by("-created_at")
+
+    # --- Primary filters ---
     status_filter = request.GET.get("status")
     if status_filter:
         qs = qs.filter(status=status_filter)
     q = request.GET.get("q")
     if q:
-        qs = qs.filter(invoice_number__icontains=q) | qs.filter(raw_vendor_name__icontains=q)
+        qs = qs.filter(
+            Q(invoice_number__icontains=q)
+            | Q(raw_vendor_name__icontains=q)
+            | Q(vendor__name__icontains=q)
+            | Q(po_number__icontains=q)
+        )
+
+    # --- Advanced filters ---
+    has_case = request.GET.get("has_case")
+    if has_case == "yes":
+        qs = qs.filter(ap_case__isnull=False)
+    elif has_case == "no":
+        qs = qs.filter(ap_case__isnull=True)
+
+    confidence = request.GET.get("confidence")
+    if confidence == "low":
+        qs = qs.filter(extraction_confidence__lt=0.75, extraction_confidence__isnull=False)
+    elif confidence == "high":
+        qs = qs.filter(extraction_confidence__gte=0.75)
+
+    is_dup = request.GET.get("duplicate")
+    if is_dup == "yes":
+        qs = qs.filter(is_duplicate=True)
+    elif is_dup == "no":
+        qs = qs.filter(is_duplicate=False)
+
+    has_po = request.GET.get("has_po")
+    if has_po == "yes":
+        qs = qs.exclude(po_number="")
+    elif has_po == "no":
+        qs = qs.filter(Q(po_number="") | Q(po_number__isnull=True))
+
+    date_from = request.GET.get("date_from")
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    date_to = request.GET.get("date_to")
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -139,11 +181,33 @@ def invoice_list(request):
         processing_state__in=[FileProcessingState.QUEUED, FileProcessingState.PROCESSING],
     ).select_related("uploaded_by").order_by("-created_at")[:10]
 
+    # KPI stats
+    from django.db.models import Count, Sum, Q
+    total_invoices = Invoice.objects.count()
+    by_status = dict(
+        Invoice.objects.values_list("status").annotate(c=Count("id")).values_list("status", "c")
+    )
+    total_amount = Invoice.objects.aggregate(s=Sum("total_amount"))["s"] or 0
+    with_case = Invoice.objects.filter(ap_case__isnull=False).count()
+    low_confidence = Invoice.objects.filter(extraction_confidence__lt=0.75, extraction_confidence__isnull=False).count()
+
+    invoice_stats = {
+        "total": total_invoices,
+        "uploaded": by_status.get("UPLOADED", 0),
+        "extracted": by_status.get("EXTRACTED", 0) + by_status.get("VALIDATED", 0),
+        "reconciled": by_status.get("RECONCILED", 0),
+        "failed": by_status.get("FAILED", 0) + by_status.get("INVALID", 0),
+        "with_case": with_case,
+        "low_confidence": low_confidence,
+        "total_amount": f"{total_amount:,.2f}",
+    }
+
     return render(request, "documents/invoice_list.html", {
         "invoices": page_obj,
         "page_obj": page_obj,
         "status_choices": InvoiceStatus.choices,
         "pending_uploads": pending_uploads,
+        "stats": invoice_stats,
     })
 
 

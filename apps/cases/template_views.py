@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.cases.models import APCase
 from apps.cases.selectors.case_selectors import CaseSelectors
-from apps.core.enums import CasePriority, CaseStatus, ProcessingPath
+from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +256,11 @@ def case_inbox(request):
         status=request.GET.get("status", ""),
         priority=request.GET.get("priority", ""),
         search=request.GET.get("q", ""),
+        match_status=request.GET.get("match_status", ""),
+        reconciliation_mode=request.GET.get("reconciliation_mode", ""),
+        date_from=request.GET.get("date_from", ""),
+        date_to=request.GET.get("date_to", ""),
+        processing_type=request.GET.get("processing_type", ""),
     )
 
     paginator = Paginator(qs, 25)
@@ -270,6 +275,8 @@ def case_inbox(request):
         "status_choices": CaseStatus.choices,
         "path_choices": ProcessingPath.choices,
         "priority_choices": CasePriority.choices,
+        "match_status_choices": MatchStatus.choices,
+        "reconciliation_mode_choices": ReconciliationMode.choices,
     })
 
 
