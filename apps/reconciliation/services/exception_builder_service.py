@@ -50,6 +50,25 @@ class ExceptionBuilderService:
             ))
             return exceptions  # No further checks possible
 
+        # Duplicate invoice
+        invoice = result.invoice
+        if getattr(invoice, 'is_duplicate', False):
+            dup_details = {"duplicate_of_id": invoice.duplicate_of_id}
+            if invoice.duplicate_of_id:
+                try:
+                    from apps.documents.models import Invoice as InvModel
+                    dup_inv = InvModel.objects.only('invoice_number').get(pk=invoice.duplicate_of_id)
+                    dup_details["duplicate_of_invoice"] = dup_inv.invoice_number
+                except InvModel.DoesNotExist:
+                    pass
+            exceptions.append(self._make(
+                result=result,
+                exc_type=ExceptionType.DUPLICATE_INVOICE,
+                severity=ExceptionSeverity.HIGH,
+                message=f"Invoice flagged as duplicate of Invoice #{invoice.duplicate_of_id}",
+                details=dup_details,
+            ))
+
         # Low confidence
         if extraction_confidence is not None and extraction_confidence < confidence_threshold:
             exceptions.append(self._make(

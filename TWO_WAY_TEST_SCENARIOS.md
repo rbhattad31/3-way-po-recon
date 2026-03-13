@@ -11,9 +11,41 @@
 
 This document describes the 15 deterministic test scenarios seeded by the `seed_two_way_invoices` management command. Each scenario creates a **service invoice** with a backing Purchase Order (where applicable) designed to exercise a specific TWO_WAY reconciliation outcome when matching is triggered later from the invoice detail page.
 
-**What is seeded:** Vendors, vendor aliases, POs, PO line items, invoices, invoice line items, document uploads, and extraction JSON payloads.
+**What is seeded:** Vendors, vendor aliases, POs, PO line items, invoices, invoice line items, document uploads, extraction results (`ExtractionResult`), extraction JSON payloads, and **audit events** (`INVOICE_UPLOADED` + `EXTRACTION_COMPLETED` per invoice — 30 total).
 
-**What is NOT seeded:** AP Cases, reconciliation runs/results/exceptions, agent runs, review assignments, audit events. These are created later when reconciliation is triggered.
+**What is NOT seeded:** AP Cases, reconciliation runs/results/exceptions, agent runs, review assignments. These are created later when reconciliation is triggered.
+
+### Audit & RBAC Attribution
+
+All seeded records are created under the **AP_PROCESSOR** role:
+
+| Field | Value |
+|-------|-------|
+| **Seed user** | `ap.processor@mcd-ksa.com` (Fatima Al-Rashid) |
+| **Legacy role** | `AP_PROCESSOR` |
+| **RBAC role** | `AP_PROCESSOR` (primary, active, non-expiring) |
+| **Audit fields** | `created_by`, `updated_by`, `created_at`, `updated_at` |
+
+The command ensures the RBAC `Role` record exists and creates a `UserRole` assignment linking the user to the AP_PROCESSOR role. Every `BaseModel` record (Vendor, VendorAlias, PurchaseOrder, DocumentUpload, Invoice, ExtractionResult) carries both `created_by` and `updated_by` pointing to this actor.
+
+### Traceability
+
+Each invoice has a corresponding `ExtractionResult` record that stores:
+
+| Field | Value |
+|-------|-------|
+| `engine_name` | `azure_document_intelligence` |
+| `engine_version` | `2024-02-29-preview` |
+| `raw_response` | Full extraction JSON payload (same as `Invoice.extraction_raw_json`) |
+| `confidence` | Matches `Invoice.extraction_confidence` |
+| `duration_ms` | Simulated 1200–4500ms |
+| `success` | `True` |
+
+Invoice records also include traceability-enabling attributes:
+- `extraction_raw_json` — realistic OCR output with vendor block, totals, tax, PO detection, service period, line items, and per-field confidence scores
+- `extraction_confidence` — 0.0–1.0 overall confidence
+- `raw_*` fields — raw extracted values before normalization
+- `document_upload` — linked `DocumentUpload` with filename, size, content type, and processing state
 
 ### Seed Modes
 
@@ -26,12 +58,70 @@ This document describes the 15 deterministic test scenarios seeded by the `seed_
 ### Command Examples
 
 ```bash
-python manage.py seed_two_way_invoices                     # demo mode
-python manage.py seed_two_way_invoices --mode=qa           # +10 random
-python manage.py seed_two_way_invoices --mode=large        # +30 random
+python manage.py seed_two_way_invoices                     # demo mode (15 invoices)
+python manage.py seed_two_way_invoices --mode=qa           # +10 random = 25
+python manage.py seed_two_way_invoices --mode=large        # +30 random = 45
 python manage.py seed_two_way_invoices --reset             # delete & recreate
-python manage.py seed_two_way_invoices --summary           # print table
+python manage.py seed_two_way_invoices --summary           # print invoice table
+python manage.py seed_two_way_invoices --seed=99           # custom random seed
 python manage.py seed_two_way_invoices --reset --mode=qa --summary
+```
+
+### Reset Behavior (`--reset`)
+
+The `--reset` flag performs a **full cascading delete** of all seeded TWO_WAY data, including downstream records created during reconciliation:
+
+1. **AP Cases** — `APCase`, `APCaseStage`, `APCaseArtifact`
+2. **Reconciliation** — `ReconciliationResult`, `ReconciliationResultLine`, `ReconciliationException`
+3. **Agent pipeline** — `AgentRun`, `AgentStep`, `AgentMessage`, `DecisionLog`, `AgentEscalation`, `AgentRecommendation`, `ToolCall`
+4. **Reviews** — `ReviewAssignment`, `ReviewComment`, `ManualReviewAction`, `ReviewDecision`
+5. **Audit events** — `AuditEvent` records linked to seeded invoices
+6. **Extraction** — `ExtractionResult` records
+7. **Documents** — `Invoice`, `InvoiceLineItem`, `DocumentUpload`
+8. **Purchase Orders** — `PurchaseOrder`, `PurchaseOrderLineItem`
+9. **Vendors** — `Vendor`, `VendorAlias`
+
+This ensures a clean re-seed even after reconciliation has been triggered.
+
+### Example Console Output (demo mode)
+
+```
+================================================================
+  McDonald's KSA – TWO_WAY Invoice Seed Data
+  Mode: DEMO | Reset: True | Seed: 42
+================================================================
+
+  Resetting seeded TWO_WAY data...
+  Reset complete.
+  [0/5] Setting up AP_PROCESSOR seed user...
+        Audit actor: Fatima Al-Rashid (ap.processor@mcd-ksa.com)
+        Legacy role: AP_PROCESSOR
+        RBAC roles:  AP_PROCESSOR
+  [1/5] Creating TWO_WAY service vendors...
+        10 vendors, 26 aliases
+  [2/5] Creating POs & Invoices (15 scenarios)...
+        15 invoices, 14 POs created
+  [3/5] Skipping bulk generation (demo mode)
+  [4/5] Creating audit trail events...
+        30 audit events created (2 per invoice)
+  [5/5] Seed statistics:
+
+  ──────────────────────────────────────────────────
+  SEED SUMMARY
+  ──────────────────────────────────────────────────
+  Vendors created/reused:       10
+  Vendor aliases:               26
+  Purchase Orders:              14
+  Invoices created:             15
+  Extraction results:           15
+  ├─ Duplicate-prone:           1
+  ├─ Malformed PO refs:         2
+  ├─ High-value (>50k SAR):     4
+  └─ Incomplete fields:         3  Audit events:                 30  ──────────────────────────────────────────────────
+  Audit user:                   ap.processor@mcd-ksa.com
+  Audit role:                   AP_PROCESSOR
+
+  Seeding completed in 67.6s
 ```
 
 ### Expected TWO_WAY Processing Pipeline
@@ -283,12 +373,17 @@ These invoices have data quality issues, amount discrepancies, or tax mismatches
 
 **What to verify:**
 - **PO retrieval challenge:** Invoice shows `PO-2W-0060` but actual PO is `PO-2W-0006`
-- PO_RETRIEVAL agent should detect the near-miss and resolve
-- Once PO is found, amounts should match
-- Lower confidence (0.72) should trigger agent attention
-- Tests PO num fuzzy-match / correction logic
+- Normalized PO `2W0060` does not match any PO → `PO_NOT_FOUND` exception raised
+- **PO lookup behavior:** Because the invoice has an extracted PO reference, the vendor+amount discovery fallback is **skipped** — the system deliberately returns "not found" so the PO_RETRIEVAL agent handles fuzzy matching
+- PolicyEngine detects `PO_NOT_FOUND` exception → queues **PO_RETRIEVAL** agent
+- Agent pipeline: `PO_RETRIEVAL → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY` (4 agents)
+- Once PO_RETRIEVAL agent resolves the correct PO, amounts should match
+- Lower confidence (0.72) also triggers `EXTRACTION_LOW_CONFIDENCE` exception
+- Tests OCR-noise recovery via agent pipeline (not silent auto-correction)
 
-**Expected exceptions:** PO_NOT_FOUND (initially), recoverable via agent
+**Validated outcome:** Case created with 4 agent runs, final status `READY_FOR_REVIEW`, recommendation `SEND_TO_AP_REVIEW`.
+
+**Expected exceptions:** PO_NOT_FOUND, EXTRACTION_LOW_CONFIDENCE
 
 ---
 
@@ -638,7 +733,7 @@ These invoices have severe data quality issues — corrupted PO references, dupl
 | AMOUNT_MISMATCH | SCN-07, SCN-08, SCN-09, SCN-14, SCN-15 |
 | TAX_MISMATCH | SCN-09, SCN-10, SCN-15 |
 | DUPLICATE_INVOICE | SCN-12 |
-| EXTRACTION_LOW_CONFIDENCE | SCN-13 |
+| EXTRACTION_LOW_CONFIDENCE | SCN-06, SCN-13 |
 | CURRENCY_MISMATCH | SCN-13 |
 
 ## Data Quality Signal Coverage
@@ -697,14 +792,36 @@ Random seed is configurable via `--seed=N` for reproducibility.
 - [ ] PO reference shown (including malformed ones)
 - [ ] Extraction confidence displayed as percentage
 - [ ] Raw extraction JSON renders in the extraction data section
+- [ ] ExtractionResult record accessible (engine name, version, duration)
 - [ ] Line items table shows all service line items with descriptions
 - [ ] Missing fields (cost center, tax, currency) shown as blank or "N/A"
 - [ ] Duplicate linkage shown for SCN-12 → SCN-05
 - [ ] "Start Reconciliation" action is available for READY_FOR_RECON invoices
 - [ ] Document upload metadata (filename, size) is accessible
+- [ ] `created_by` / `updated_by` show AP_PROCESSOR user (Fatima Al-Rashid)
 
 ### Reconciliation Trigger
 - [ ] Can trigger reconciliation from invoice detail for READY_FOR_RECON invoices
 - [ ] EXTRACTED invoices may need status progression before reconciliation
 - [ ] Reconciliation creates AP Case + stages correctly
 - [ ] TWO_WAY path is selected (not THREE_WAY) based on service invoice characteristics
+
+### Audit Trail Verification
+- [ ] All invoices have `created_by` = ap.processor@mcd-ksa.com
+- [ ] All invoices have `updated_by` = ap.processor@mcd-ksa.com
+- [ ] All POs have `created_by` / `updated_by` = AP_PROCESSOR user
+- [ ] All vendors have `created_by` / `updated_by` = AP_PROCESSOR user
+- [ ] RBAC `UserRole` record exists: AP_PROCESSOR, primary=True, active=True
+- [ ] `ExtractionResult` records exist for all 15 invoices
+- [ ] `ExtractionResult.created_by` = AP_PROCESSOR user
+- [ ] `DocumentUpload.uploaded_by` = AP_PROCESSOR user
+
+### Governance Page Verification (`/governance/`)
+- [ ] 30 `AuditEvent` records visible (2 per invoice)
+- [ ] `INVOICE_UPLOADED` events present for all 15 invoices
+- [ ] `EXTRACTION_COMPLETED` events present for all 15 invoices
+- [ ] `performed_by` = ap.processor@mcd-ksa.com on all events
+- [ ] `actor_primary_role` = AP_PROCESSOR on all events
+- [ ] `invoice_id` cross-reference is populated on all events
+- [ ] `status_before` / `status_after` reflect correct transitions (UPLOADED→EXTRACTION_IN_PROGRESS, EXTRACTION_IN_PROGRESS→EXTRACTED/VALIDATED/READY_FOR_RECON)
+- [ ] `metadata_json` contains extraction details (confidence, engine, vendor, amount)
