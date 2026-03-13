@@ -135,6 +135,21 @@
       <i class="bi bi-chat-left-text me-1"></i> Prompts ({{ prompts|length }})
     </button>
   </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-traceability" type="button">
+      <i class="bi bi-bezier2 me-1"></i> Traceability
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-observability" type="button">
+      <i class="bi bi-activity me-1"></i> Observability
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-rbac" type="button">
+      <i class="bi bi-shield-lock me-1"></i> RBAC
+    </button>
+  </li>
 </ul>
 
 <div class="tab-content">
@@ -537,6 +552,558 @@
         </div>
       </div>
       {% endfor %}
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- TRACEABILITY TAB                                               -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade" id="tab-traceability" role="tabpanel">
+
+    <div class="alert alert-light border mb-4">
+      <i class="bi bi-info-circle me-1"></i>
+      Every HTTP request, Celery task, service call, and agent step is wrapped in a
+      <strong>TraceContext</strong> — a structured envelope that carries correlation IDs,
+      business entity references, and an RBAC snapshot. This lets you follow any invoice
+      from upload to close across all layers.
+    </div>
+
+    <!-- Trace propagation -->
+    <h5 class="mb-3"><i class="bi bi-arrow-repeat me-1"></i> How Traces Propagate</h5>
+    <div class="row g-3 mb-4">
+      {% for prop in trace_propagation %}
+      <div class="col-md-6 col-lg-3">
+        <div class="card h-100 border-0 shadow-sm">
+          <div class="card-body">
+            <div class="fw-semibold mb-2">
+              <i class="bi {{ prop.icon }} text-primary me-1"></i> {{ prop.method }}
+            </div>
+            <div class="text-muted small">{{ prop.how }}</div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Span hierarchy diagram -->
+    <h5 class="mb-3"><i class="bi bi-diagram-3 me-1"></i> Span Hierarchy Example</h5>
+    <div class="card mb-4">
+      <div class="card-body">
+        <pre class="mb-0 small" style="line-height:1.8">
+<strong>HTTP POST /reconciliation/start/</strong>                      ← Root span (RequestTraceMiddleware)
+  └─ <span class="text-primary">@observed_action</span> start_reconciliation             ← Child span (source_layer=UI)
+       └─ <span class="text-success">@observed_service</span> reconciliation.runner.run      ← Child span (source_layer=SERVICE)
+            ├─ ProcessingLog  ✓                               ← Written on completion
+            └─ AuditEvent  RECONCILIATION_STARTED             ← Written if audit_event is set
+       └─ <span class="text-warning">@observed_task</span> extraction.process_invoice_upload ← Reconstructed from Celery headers (source_layer=TASK)
+            └─ <span class="text-success">@observed_service</span> agents.orchestrator.execute  ← Child span (source_layer=SERVICE)
+                 └─ AgentTraceService.start_agent_run()       ← Agent-level tracing
+                      ├─ AgentStep #1                         ← log_agent_step()
+                      ├─ ToolCall: po_lookup                  ← log_tool_call()
+                      └─ DecisionLog: AUTO_CLOSE              ← log_agent_decision()</pre>
+      </div>
+    </div>
+
+    <!-- TraceContext fields -->
+    <h5 class="mb-3"><i class="bi bi-card-list me-1"></i> TraceContext Fields</h5>
+    {% for group in trace_field_groups %}
+    <div class="card mb-3">
+      <div class="card-header bg-white">
+        <i class="bi {{ group.icon }} me-1"></i> <strong>{{ group.group }}</strong>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr><th style="width:25%">Field</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            {% for field_name, field_desc in group.fields %}
+            <tr>
+              <td><code>{{ field_name }}</code></td>
+              <td class="small text-muted">{{ field_desc }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+
+    <!-- Agent tracing -->
+    <h5 class="mb-3"><i class="bi bi-robot me-1"></i> Agent-Level Tracing</h5>
+    <div class="card mb-3">
+      <div class="card-body">
+        <p class="text-muted mb-3">
+          <strong>AgentTraceService</strong> records every AI-agent activity for full auditability.
+          Each agent run produces a hierarchy: <strong>AgentRun → AgentStep → ToolCall / DecisionLog</strong>.
+        </p>
+        <table class="table table-sm table-bordered mb-0">
+          <thead class="table-light">
+            <tr><th>Method</th><th>Records</th><th>What It Captures</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>start_agent_run()</code></td>
+              <td><span class="badge bg-primary">AgentRun</span></td>
+              <td class="small">Links to ReconciliationResult, agent type, input payload, status=RUNNING</td>
+            </tr>
+            <tr>
+              <td><code>log_agent_step()</code></td>
+              <td><span class="badge bg-info text-dark">AgentStep</span></td>
+              <td class="small">Step name, description, output, success flag, duration_ms, auto-incremented step_number</td>
+            </tr>
+            <tr>
+              <td><code>log_tool_call()</code></td>
+              <td><span class="badge bg-success">ToolCall</span></td>
+              <td class="small">Tool name, input/output JSON, success flag, duration_ms, linked ToolDefinition</td>
+            </tr>
+            <tr>
+              <td><code>log_agent_decision()</code></td>
+              <td><span class="badge bg-warning text-dark">DecisionLog</span></td>
+              <td class="small">Decision type, summary, confidence score, evidence JSON</td>
+            </tr>
+            <tr>
+              <td><code>finish_agent_run()</code></td>
+              <td><span class="badge bg-primary">AgentRun</span></td>
+              <td class="small">Sets status=COMPLETED/FAILED, confidence_score, summarized_reasoning, duration_ms</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Where to see traces -->
+    <h5 class="mb-3"><i class="bi bi-eye me-1"></i> Where Traces Are Visible</h5>
+    <div class="row g-3 mb-3">
+      <div class="col-md-4">
+        <div class="card h-100 border-0 shadow-sm">
+          <div class="card-body text-center py-3">
+            <i class="bi bi-journal-text fs-3 text-secondary"></i>
+            <div class="fw-semibold mt-1">Case Agent View</div>
+            <div class="text-muted small">Feed shows agent steps, tool calls, and decisions with timestamps</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card h-100 border-0 shadow-sm">
+          <div class="card-body text-center py-3">
+            <i class="bi bi-clock-history fs-3 text-info"></i>
+            <div class="fw-semibold mt-1">Governance Timeline</div>
+            <div class="text-muted small">8 event categories with RBAC badges, status changes, durations</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card h-100 border-0 shadow-sm">
+          <div class="card-body text-center py-3">
+            <i class="bi bi-code-slash fs-3 text-success"></i>
+            <div class="fw-semibold mt-1">Governance API</div>
+            <div class="text-muted small">/api/v1/governance/ — 9 endpoints for audit trail, agent trace, timeline</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- OBSERVABILITY TAB                                               -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade" id="tab-observability" role="tabpanel">
+
+    <div class="alert alert-light border mb-4">
+      <i class="bi bi-info-circle me-1"></i>
+      The platform instruments key entry points with <strong>decorators</strong> that
+      automatically create child spans, measure duration, write audit events, and record
+      processing logs. Combined with structured JSON logging and in-process metrics,
+      this provides full visibility into every operation.
+    </div>
+
+    <!-- Decorators -->
+    <h5 class="mb-3"><i class="bi bi-braces me-1"></i> Observability Decorators</h5>
+    <div class="row g-3 mb-4">
+      <div class="col-md-4">
+        <div class="card h-100 border-start border-4 border-success">
+          <div class="card-body">
+            <h6 class="card-title"><code>@observed_service</code></h6>
+            <div class="small text-muted">
+              <strong>Target:</strong> Service class methods<br>
+              <strong>Creates:</strong> Child span (source_layer=SERVICE)<br>
+              <strong>Writes:</strong> ProcessingLog always; AuditEvent if audit_event is set<br>
+              <strong>Measures:</strong> Duration via DurationTimer
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card h-100 border-start border-4 border-primary">
+          <div class="card-body">
+            <h6 class="card-title"><code>@observed_action</code></h6>
+            <div class="small text-muted">
+              <strong>Target:</strong> FBV view functions<br>
+              <strong>Creates:</strong> Child span (source_layer=UI)<br>
+              <strong>Writes:</strong> Both AuditEvent and ProcessingLog<br>
+              <strong>Extra:</strong> Resolves permission source, records RBAC check result
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card h-100 border-start border-4 border-warning">
+          <div class="card-body">
+            <h6 class="card-title"><code>@observed_task</code></h6>
+            <div class="small text-muted">
+              <strong>Target:</strong> Celery task functions<br>
+              <strong>Creates:</strong> Child span (source_layer=TASK)<br>
+              <strong>Writes:</strong> ProcessingLog<br>
+              <strong>Extra:</strong> Reconstructs TraceContext from Celery headers
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Instrumented entry points -->
+    <h5 class="mb-3"><i class="bi bi-pin-map me-1"></i> Instrumented Entry Points ({{ observed_entries|length }})</h5>
+    <div class="table-responsive mb-4">
+      <table class="table table-sm table-bordered table-hover mb-0">
+        <thead class="table-light">
+          <tr><th>Decorator</th><th>Location</th><th>Name</th><th>Event / Permission</th></tr>
+        </thead>
+        <tbody>
+          {% for entry in observed_entries %}
+          <tr>
+            <td>
+              {% if "service" in entry.decorator %}<span class="badge bg-success">{{ entry.decorator }}</span>
+              {% elif "action" in entry.decorator %}<span class="badge bg-primary">{{ entry.decorator }}</span>
+              {% else %}<span class="badge bg-warning text-dark">{{ entry.decorator }}</span>{% endif %}
+            </td>
+            <td class="small"><code>{{ entry.location }}</code></td>
+            <td class="small"><code>{{ entry.name }}</code></td>
+            <td class="small">{{ entry.event }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Structured logging -->
+    <h5 class="mb-3"><i class="bi bi-file-text me-1"></i> Structured Logging</h5>
+    <div class="row g-3 mb-4">
+      <div class="col-md-6">
+        <div class="card h-100">
+          <div class="card-header bg-white"><strong>JSONLogFormatter</strong> <span class="badge bg-dark">Production</span></div>
+          <div class="card-body small text-muted">
+            Outputs JSON with: <code>timestamp</code>, <code>level</code>, <code>logger</code>,
+            <code>message</code> + 20+ structured fields from TraceContext
+            (<code>trace_id</code>, <code>span_id</code>, <code>invoice_id</code>, <code>actor_email</code>, …)
+            + record extras (<code>event_name</code>, <code>duration_ms</code>, <code>success</code>) + exception info.
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card h-100">
+          <div class="card-header bg-white"><strong>DevLogFormatter</strong> <span class="badge bg-secondary">Development</span></div>
+          <div class="card-body small text-muted">
+            Human-readable base message with appended suffixes:
+            <code>[trace=…]</code>, <code>[inv=…]</code>, <code>[Nms]</code>.
+            Uses TraceLogger that auto-merges TraceContext into every record's <code>extra</code> dict.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PII Redaction -->
+    <div class="card mb-4">
+      <div class="card-header bg-white">
+        <i class="bi bi-shield-exclamation me-1"></i> <strong>PII Redaction</strong>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted mb-2">
+          <code>redact_dict()</code> is applied automatically to audit payloads — scrubs sensitive fields
+          before they're persisted. Redacted fields:
+        </p>
+        <div>
+          <span class="badge bg-danger me-1 mb-1">bank_account</span>
+          <span class="badge bg-danger me-1 mb-1">account_number</span>
+          <span class="badge bg-danger me-1 mb-1">iban</span>
+          <span class="badge bg-danger me-1 mb-1">swift</span>
+          <span class="badge bg-danger me-1 mb-1">tax_id</span>
+          <span class="badge bg-danger me-1 mb-1">ssn</span>
+          <span class="badge bg-danger me-1 mb-1">national_id</span>
+          <span class="badge bg-danger me-1 mb-1">routing_number</span>
+          <span class="badge bg-danger me-1 mb-1">sort_code</span>
+          <span class="badge bg-danger me-1 mb-1">credit_card</span>
+          <span class="badge bg-danger me-1 mb-1">card_number</span>
+          <span class="badge bg-danger me-1 mb-1">bank_name</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics categories -->
+    <h5 class="mb-3"><i class="bi bi-speedometer2 me-1"></i> In-Process Metrics</h5>
+    <div class="row g-3 mb-4">
+      {% for cat in metrics_categories %}
+      <div class="col-md-6 col-lg-4">
+        <div class="card h-100 border-0 shadow-sm">
+          <div class="card-body">
+            <div class="fw-semibold mb-2">
+              <i class="bi {{ cat.icon }} me-1"></i> {{ cat.category }}
+            </div>
+            <div class="text-muted small" style="word-break:break-word">{{ cat.counters }}</div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Audit event types -->
+    <h5 class="mb-3"><i class="bi bi-journal-check me-1"></i> Audit Event Types ({{ business_events|length|add:rbac_events|length }})</h5>
+    <div class="row g-3 mb-3">
+      <div class="col-md-7">
+        <div class="card h-100">
+          <div class="card-header bg-white"><strong>Business Events</strong> <span class="badge bg-primary">{{ business_events|length }}</span></div>
+          <div class="card-body p-0">
+            <div class="d-flex flex-wrap p-3 gap-1">
+              {% for evt in business_events %}
+              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-5">
+        <div class="card h-100">
+          <div class="card-header bg-white"><strong>RBAC Events</strong> <span class="badge bg-warning text-dark">{{ rbac_events|length }}</span></div>
+          <div class="card-body p-0">
+            <div class="d-flex flex-wrap p-3 gap-1">
+              {% for evt in rbac_events %}
+              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- What gets written when -->
+    <h5 class="mb-3"><i class="bi bi-database me-1"></i> What Gets Written &amp; When</h5>
+    <div class="card mb-3">
+      <div class="card-body">
+        <table class="table table-sm table-bordered mb-0">
+          <thead class="table-light">
+            <tr><th>Record Type</th><th>Written By</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge bg-secondary">ProcessingLog</span></td>
+              <td class="small">All @observed_* decorators</td>
+              <td class="small">Operational log — traces request/service/task execution with duration, success/failure, exception class</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-primary">AuditEvent</span></td>
+              <td class="small">@observed_service (if audit_event set), @observed_action, service methods</td>
+              <td class="small">Compliance audit — captures old/new values, RBAC snapshot, entity cross-references, input/output (redacted)</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-info text-dark">AgentRun / AgentStep</span></td>
+              <td class="small">AgentTraceService</td>
+              <td class="small">Agent-specific audit — records each LLM reasoning iteration, tool invocation, and final decision</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-success">ToolCall</span></td>
+              <td class="small">AgentTraceService + ToolCallLogger</td>
+              <td class="small">Tool invocation log — input/output JSON, success, duration, linked ToolDefinition</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-warning text-dark">DecisionLog</span></td>
+              <td class="small">AgentTraceService</td>
+              <td class="small">Agent decisions — confidence score, evidence, recommendation type</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- RBAC TAB                                                        -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade" id="tab-rbac" role="tabpanel">
+
+    <div class="alert alert-light border mb-4">
+      <i class="bi bi-info-circle me-1"></i>
+      The platform uses an <strong>enterprise RBAC system</strong> with roles, permissions,
+      per-user overrides, and expiry support. Every permission check is evaluated at runtime
+      and recorded in the audit trail.
+    </div>
+
+    <!-- Permission precedence -->
+    <h5 class="mb-3"><i class="bi bi-funnel me-1"></i> Permission Evaluation Order</h5>
+    <div class="row g-2 mb-4">
+      {% for step in rbac_precedence %}
+      <div class="col-12">
+        <div class="card border-start border-4 border-{{ step.color }}">
+          <div class="card-body py-2 d-flex align-items-center">
+            <div class="me-3">
+              <span class="badge bg-{{ step.color }} rounded-pill fs-6">{{ step.step }}</span>
+            </div>
+            <div class="me-3">
+              <i class="bi {{ step.icon }} text-{{ step.color }} fs-5"></i>
+            </div>
+            <div>
+              <strong>{{ step.rule }}</strong>
+              <div class="small text-muted">{{ step.description }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- RBAC model overview -->
+    <h5 class="mb-3"><i class="bi bi-diagram-2 me-1"></i> RBAC Data Model</h5>
+    <div class="card mb-4">
+      <div class="card-body">
+        <pre class="mb-0 small" style="line-height:1.7">
+<strong>Role</strong> (code, name, rank, is_system_role)
+  │
+  ├──< <strong>RolePermission</strong> ──> <strong>Permission</strong> (code: "module.action", e.g. invoices.view)
+  │
+  └──< <strong>UserRole</strong> (is_primary, assigned_by, expires_at, is_active)
+        │
+        └──> <strong>User</strong>
+               │
+               └──< <strong>UserPermissionOverride</strong> (ALLOW/DENY, reason, expires_at)
+                      │
+                      └──> <strong>Permission</strong></pre>
+      </div>
+    </div>
+
+    <!-- DRF Permission classes -->
+    <h5 class="mb-3"><i class="bi bi-code-slash me-1"></i> API Permission Classes (DRF)</h5>
+    <div class="table-responsive mb-4">
+      <table class="table table-sm table-bordered table-hover mb-0">
+        <thead class="table-light">
+          <tr><th>Class</th><th>View Attribute</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          {% for cls in rbac_permission_classes %}
+          <tr>
+            <td><code>{{ cls.name }}</code></td>
+            <td class="small"><code>{{ cls.usage }}</code></td>
+            <td class="small text-muted">{{ cls.description }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- CBV Mixins -->
+    <h5 class="mb-3"><i class="bi bi-layers me-1"></i> Class-Based View Mixins</h5>
+    <div class="table-responsive mb-4">
+      <table class="table table-sm table-bordered mb-0">
+        <thead class="table-light">
+          <tr><th>Mixin</th><th>Attribute</th></tr>
+        </thead>
+        <tbody>
+          {% for mixin in rbac_cbv_mixins %}
+          <tr>
+            <td><code>{{ mixin.name }}</code></td>
+            <td class="small"><code>{{ mixin.attribute }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- FBV Decorators -->
+    <h5 class="mb-3"><i class="bi bi-at me-1"></i> Function-Based View Decorators</h5>
+    <div class="card mb-4">
+      <div class="card-body">
+        <div class="mb-2">
+          <code>@permission_required_code("invoices.view")</code>
+          <span class="text-muted small ms-2">— Raises PermissionDenied if the check fails</span>
+        </div>
+        <div>
+          <code>@role_required("ADMIN", "FINANCE_MANAGER")</code>
+          <span class="text-muted small ms-2">— Raises PermissionDenied if user lacks all listed roles</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Template tags -->
+    <h5 class="mb-3"><i class="bi bi-braces me-1"></i> Template Tags</h5>
+    <div class="card mb-4">
+      <div class="card-header bg-white">
+        <code>{% templatetag openblock %} load rbac_tags {% templatetag closeblock %}</code>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr><th>Tag</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            {% for tag in rbac_template_tags %}
+            <tr>
+              <td><code>{{ tag.tag }}</code></td>
+              <td class="small text-muted">{{ tag.description }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Middleware -->
+    <h5 class="mb-3"><i class="bi bi-layers me-1"></i> RBAC Middleware Chain</h5>
+    <div class="card mb-4">
+      <div class="card-body">
+        <ol class="mb-0">
+          <li class="mb-2">
+            <strong>RequestTraceMiddleware</strong> — Creates root TraceContext, enriches with RBAC
+            snapshot (actor_user_id, actor_email, actor_primary_role, actor_roles_snapshot). Sets
+            <code>X-Trace-ID</code> / <code>X-Request-ID</code> response headers.
+          </li>
+          <li class="mb-2">
+            <strong>RBACMiddleware</strong> — Pre-loads <code>user.get_role_codes()</code> and
+            <code>user.get_effective_permissions()</code> on every authenticated request. Cached on
+            the user instance for the request lifecycle.
+          </li>
+          <li class="mb-2">
+            <strong>LoginRequiredMiddleware</strong> — Redirects all anonymous requests to login
+            (except /admin/, /accounts/, /api/).
+          </li>
+          <li class="mb-0">
+            <strong>rbac_context</strong> (context processor) — Injects <code>user_permissions</code>,
+            <code>user_role_codes</code>, and <code>is_admin</code> into every template context.
+          </li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- RBAC audit events -->
+    <h5 class="mb-3"><i class="bi bi-journal-check me-1"></i> RBAC Audit Events</h5>
+    <div class="card mb-3">
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          <strong>RBACEventService</strong> records every role and permission change as an AuditEvent.
+          These events are queryable via the Governance API
+          (<code>/api/v1/governance/rbac-activity/</code>) and visible in the Audit Event Log.
+        </p>
+        <div class="row g-2">
+          {% for evt in rbac_events %}
+          <div class="col-md-4">
+            <div class="d-flex align-items-center p-2 border rounded">
+              <i class="bi bi-shield-lock text-warning me-2"></i>
+              <div>
+                <div class="small fw-semibold">{{ evt.label }}</div>
+                <code class="small text-muted">{{ evt.value }}</code>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
     </div>
   </div>
 </div>
