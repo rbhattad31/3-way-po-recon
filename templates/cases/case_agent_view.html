@@ -543,7 +543,7 @@
             <span class="av-label av-label--human">Note</span>
             <span class="av-time">{{ c.created_at|timesince }} ago</span>
           </div>
-          <div class="av-text">{{ c.content }}</div>
+          <div class="av-text">{{ c.body }}</div>
         </div>
       </div>
       {% endfor %}
@@ -736,6 +736,108 @@
   </div>{# /av-context #}
 
 </div>{# /agent-view #}
+
+{# ══════════ REVIEW & NOTES (full-width, below layout) ══════════ #}
+<div class="av-review-panel" id="avReviewPanel">
+  <div class="av-review-panel__header">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-clipboard-check"></i>
+      <span class="av-review-panel__title">Review & Notes</span>
+      {% if review_assignment %}
+        {% if review_assignment.status == "APPROVED" %}
+          <span class="ap-badge ap-badge-success" style="font-size:.55rem">Approved</span>
+        {% elif review_assignment.status == "REJECTED" %}
+          <span class="ap-badge ap-badge-danger" style="font-size:.55rem">Rejected</span>
+        {% elif review_assignment.status == "REPROCESSED" %}
+          <span class="ap-badge ap-badge-warning" style="font-size:.55rem">Reprocessed</span>
+        {% elif review_assignment.status == "IN_REVIEW" %}
+          <span class="ap-badge ap-badge-info" style="font-size:.55rem">In Review</span>
+        {% else %}
+          <span class="ap-badge ap-badge-muted" style="font-size:.55rem">{{ review_assignment.status }}</span>
+        {% endif %}
+      {% endif %}
+    </div>
+    {% if review_assignment %}
+    <div class="av-review-panel__meta">
+      <span><i class="bi bi-person me-1"></i>{{ review_assignment.assigned_to.get_full_name|default:"Unassigned" }}</span>
+      <span><i class="bi bi-flag me-1"></i>{{ review_assignment.priority }}</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="av-review-panel__content">
+    {# Left: decision + comment form + action log #}
+    <div class="av-review-panel__left">
+      {# Decision banner #}
+      {% if review_decision %}
+      <div class="av-review-decision mb-2">
+        <div class="d-flex align-items-center gap-2">
+          <i class="bi bi-check-circle-fill {% if review_decision.decision == 'APPROVED' %}text-success{% elif review_decision.decision == 'REJECTED' %}text-danger{% else %}text-warning{% endif %}"></i>
+          <strong style="font-size:var(--ap-font-size-sm)">{{ review_decision.decision }}</strong>
+          <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+            by {{ review_decision.decided_by.get_full_name|default:"System" }}
+          </span>
+        </div>
+        {% if review_decision.reason %}
+        <div class="av-review-reason mt-1">{{ review_decision.reason }}</div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# Comment form #}
+      {% if show_actions or case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" or case.status == "NEW" or case.status == "IN_PROGRESS" or case.status == "FAILED" %}
+      <form method="post" action="{% url 'cases:case_add_comment' case.pk %}" class="av-review-panel__form">
+        {% csrf_token %}
+        <textarea name="body" class="form-control av-review-textarea" rows="4" placeholder="Add a note or comment…" required></textarea>
+        <button type="submit" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-send me-1"></i>Post Comment
+        </button>
+      </form>
+      {% endif %}
+
+      {# Action history (below form) #}
+      {% if review_actions %}
+      <div class="av-review-actions mt-2">
+        <div class="av-review-actions__header"><i class="bi bi-shield-check me-1"></i>Action Log</div>
+        {% for act in review_actions %}
+        <div class="av-review-action">
+          <span class="ap-badge ap-badge-muted" style="font-size:.55rem">{{ act.action_type }}</span>
+          <span style="font-size:var(--ap-font-size-xs)">{{ act.performed_by.get_full_name|default:"System" }}</span>
+          {% if act.field_name %}
+          <span style="font-size:.6rem;color:var(--ap-text-muted)">{{ act.field_name }}: {{ act.old_value|truncatechars:20 }} &rarr; {{ act.new_value|truncatechars:20 }}</span>
+          {% endif %}
+          <span style="font-size:.55rem;color:var(--ap-text-muted);margin-left:auto">{{ act.created_at|timesince }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    {# Right: comment history #}
+    <div class="av-review-panel__right">
+      <div class="av-review-panel__right-header">
+        <i class="bi bi-chat-left-text me-1"></i>Comment History
+        {% if review_comments %}<span class="ap-badge ap-badge-muted" style="font-size:.55rem">{{ review_comments|length }}</span>{% endif %}
+      </div>
+      <div class="av-review-comments">
+        {% for rc in review_comments %}
+        <div class="av-review-comment">
+          <div class="d-flex justify-content-between align-items-center">
+            <strong style="font-size:var(--ap-font-size-xs)">{{ rc.author.get_full_name|default:"System" }}</strong>
+            <span style="font-size:.6rem;color:var(--ap-text-muted)">{{ rc.created_at|timesince }} ago</span>
+          </div>
+          <div class="av-review-comment__body">{% firstof rc.body rc.content "" %}</div>
+        </div>
+        {% empty %}
+        <div class="av-review-comments__empty">
+          <i class="bi bi-chat-dots"></i>
+          <span>No comments yet</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
 
 {# ══════════ CHAT PANEL (full-height slide-in) ══════════ #}
 <div class="av-chat-panel" id="avChatPanel">

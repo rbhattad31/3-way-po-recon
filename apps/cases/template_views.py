@@ -447,6 +447,42 @@ def case_agent_view(request, pk):
                 status="IN_REVIEW",
                 priority=5,
             )
+        # Fall back to the most recent completed/decided assignment for history
+        if not review_assignment:
+            review_assignment = (
+                recon_result.review_assignments
+                .order_by("-created_at")
+                .first()
+            )
+
+    # Review comments and actions for the embedded review panel
+    review_comments = []
+    review_actions = []
+    review_decision = None
+    if review_assignment:
+        review_comments = list(
+            review_assignment.comments
+            .select_related("author")
+            .order_by("created_at")
+        )
+        review_actions = list(
+            review_assignment.actions
+            .select_related("performed_by")
+            .order_by("-created_at")
+        )
+        try:
+            review_decision = review_assignment.decision
+        except Exception:
+            review_decision = None
+
+    # For Non-PO cases (or cases without review assignment), use case comments
+    # Merge them into review_comments so the panel always has content
+    case_comments = list(
+        case.comments.select_related("author").order_by("created_at")
+    )
+    if not review_assignment:
+        # No review assignment — show case comments in the review panel
+        review_comments = case_comments
 
     # Determine if actions should be shown (for both PO and Non-PO paths)
     show_actions = case.status in (
@@ -477,6 +513,9 @@ def case_agent_view(request, pk):
         "timeline": timeline,
         "show_full_trace": show_full_trace,
         "review_assignment": review_assignment,
+        "review_comments": review_comments,
+        "review_actions": review_actions,
+        "review_decision": review_decision,
         "show_actions": show_actions,
         "has_open_issues": has_open_issues,
         "open_exceptions_count": open_exceptions_count,
@@ -573,4 +612,44 @@ def case_decide(request, pk):
     else:
         messages.warning(request, f"Unknown decision: {decision}")
 
+    return redirect("cases:case_agent_view", pk=pk)
+
+
+@login_required
+def case_add_comment(request, pk):
+    """Add a review comment from the agent view."""
+    if request.method != "POST":
+        return redirect("cases:case_agent_view", pk=pk)
+
+    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    body = request.POST.get("body", "").strip()
+    if not body:
+        messages.warning(request, "Comment cannot be empty.")
+        return redirect("cases:case_agent_view", pk=pk)
+
+    # Find or create review assignment
+    recon_result = case.reconciliation_result
+    assignment = None
+    if recon_result:
+        assignment = (
+            recon_result.review_assignments
+            .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
+            .first()
+        )
+        if not assignment:
+            assignment = recon_result.review_assignments.order_by("-created_at").first()
+
+    if assignment:
+        from apps.reviews.services import ReviewWorkflowService
+        ReviewWorkflowService.add_comment(assignment, request.user, body)
+    else:
+        # For Non-PO cases without review assignment, store as case comment
+        from apps.cases.models import APCaseComment
+        APCaseComment.objects.create(
+            case=case,
+            author=request.user,
+            content=body,
+        )
+
+    messages.success(request, "Comment added.")
     return redirect("cases:case_agent_view", pk=pk)

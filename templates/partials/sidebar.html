@@ -16,12 +16,6 @@
           <i class="bi bi-briefcase me-2"></i>AP Cases
         </a>
       </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'reviews' %}active fw-bold{% endif %}" href="{% url 'reviews:assignment_list' %}">
-          <i class="bi bi-clipboard-check me-2"></i>Reviews
-          {% if pending_review_count %}<span class="badge bg-warning text-dark ms-1">{{ pending_review_count }}</span>{% endif %}
-        </a>
-      </li>
 
       {# ── Documents ── #}
       <li class="hr my-2 border-bottom"></li>
