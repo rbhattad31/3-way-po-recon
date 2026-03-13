@@ -2,6 +2,7 @@
 from django.urls import path, include
 
 urlpatterns = [
+    path("v1/accounts/", include("apps.accounts.api_urls")),
     path("v1/documents/", include("apps.documents.api_urls")),
     path("v1/extraction/", include("apps.extraction.api_urls")),
     path("v1/reconciliation/", include("apps.reconciliation.api_urls")),

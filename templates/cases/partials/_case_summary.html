@@ -1,27 +1,58 @@
 {# ── Case Summary Card ── #}
-{# Context: summary (APCaseSummary or None) #}
+{# Context: summary (APCaseSummary, dict, or None) #}
 
 <div class="ap-card mb-3">
-  <div class="ap-card-header"><i class="bi bi-card-text"></i> Case Summary</div>
+  <div class="ap-card-header d-flex align-items-center justify-content-between">
+    <span>
+      {% if summary.generated_by_agent_run %}
+        <i class="bi bi-stars me-1" style="color:var(--ap-primary)"></i> AI Case Summary
+      {% elif summary.is_fallback %}
+        <i class="bi bi-card-text me-1"></i> Case Summary
+      {% else %}
+        <i class="bi bi-card-text me-1"></i> Case Summary
+      {% endif %}
+    </span>
+    {% if summary.generated_by_agent_run %}
+    <span class="ap-badge ap-badge-primary" style="font-size:.65rem">
+      <i class="bi bi-cpu me-1"></i>
+      {% if summary.generated_by_agent_run.confidence %}
+        {% widthratio summary.generated_by_agent_run.confidence 1 100 %}% confidence
+      {% else %}
+        AI Generated
+      {% endif %}
+    </span>
+    {% endif %}
+  </div>
   <div class="ap-card-body">
     {% if summary %}
-      <div style="font-size:var(--ap-font-size-sm);line-height:1.6">
-        {{ summary.latest_summary }}
-      </div>
-      {% if summary.recommendation %}
-      <div class="ap-recommendation mt-3">
-        <div class="d-flex align-items-center gap-2 mb-1">
-          <i class="bi bi-lightbulb-fill text-warning"></i>
-          <strong class="ap-recommendation-action">Recommendation</strong>
+      {% if summary.generated_by_agent_run %}
+        {# AI-generated structured summary — render with line breaks #}
+        <div style="font-size:var(--ap-font-size-sm);line-height:1.7;white-space:pre-line;font-family:var(--bs-font-monospace);background:var(--ap-bg-subtle);padding:.75rem 1rem;border-radius:.375rem;border:1px solid var(--ap-border-color)">
+{{ summary.latest_summary }}
         </div>
-        <div style="font-size:var(--ap-font-size-sm)">{{ summary.recommendation }}</div>
+      {% else %}
+        <div style="font-size:var(--ap-font-size-sm);line-height:1.6">
+          {{ summary.latest_summary }}
+        </div>
+      {% endif %}
+      {% with rec=summary.recommendation %}
+      {% if rec %}
+      <div class="mt-3 p-2 rounded" style="background:var(--ap-warning-light);border:1px solid var(--ap-warning);border-radius:.375rem">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <i class="bi bi-lightbulb-fill" style="color:var(--ap-warning)"></i>
+          <strong style="font-size:var(--ap-font-size-sm)">Recommended Action</strong>
+        </div>
+        <div style="font-size:var(--ap-font-size-sm)">{{ rec }}</div>
       </div>
       {% endif %}
-      {% if summary.reviewer_summary %}
+      {% endwith %}
+      {% with rev=summary.reviewer_summary %}
+      {% if rev %}
       <div class="mt-2 p-2 rounded" style="background:var(--ap-bg-subtle);font-size:var(--ap-font-size-xs)">
-        <strong class="text-muted">Reviewer Notes:</strong> {{ summary.reviewer_summary }}
+        <strong class="text-muted">Reviewer Notes:</strong> {{ rev }}
       </div>
       {% endif %}
+      {% endwith %}
     {% else %}
     <div class="ap-empty-state">
       <i class="bi bi-card-text"></i>

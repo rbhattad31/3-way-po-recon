@@ -13,6 +13,8 @@ from apps.core.enums import (
     ReviewStatus,
     RecommendationType,
 )
+from apps.core.decorators import observed_service
+from apps.core.metrics import MetricsService
 from apps.reconciliation.models import ReconciliationResult
 from apps.reviews.models import (
     ManualReviewAction,
@@ -134,14 +136,17 @@ class ReviewWorkflowService:
     # Final decisions
     # ------------------------------------------------------------------
     @classmethod
+    @observed_service("reviews.approve", audit_event="REVIEW_APPROVED", entity_type="ReviewAssignment")
     def approve(cls, assignment: ReviewAssignment, user, reason: str = "") -> ReviewDecision:
         return cls._finalise(assignment, user, ReviewStatus.APPROVED, reason)
 
     @classmethod
+    @observed_service("reviews.reject", audit_event="REVIEW_REJECTED", entity_type="ReviewAssignment")
     def reject(cls, assignment: ReviewAssignment, user, reason: str = "") -> ReviewDecision:
         return cls._finalise(assignment, user, ReviewStatus.REJECTED, reason)
 
     @classmethod
+    @observed_service("reviews.request_reprocess", audit_event="RECONCILIATION_RERUN", entity_type="ReviewAssignment")
     def request_reprocess(cls, assignment: ReviewAssignment, user, reason: str = "") -> ReviewDecision:
         return cls._finalise(assignment, user, ReviewStatus.REPROCESSED, reason)
 
