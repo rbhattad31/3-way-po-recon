@@ -17,6 +17,12 @@ from apps.dashboard.services import DashboardService
 
 
 @login_required
+def command_center(request):
+    """Agentic AP Command Center — AI Operations dashboard."""
+    return render(request, "dashboard/agentic_command_center.html")
+
+
+@login_required
 def index(request):
     summary = DashboardService.get_summary()
     recent_activity = DashboardService.get_recent_activity(limit=15)

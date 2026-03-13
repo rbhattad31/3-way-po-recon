@@ -8,6 +8,21 @@
         </a>
       </li>
 
+      {# ── Processing ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Processing</li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'cases' %}active fw-bold{% endif %}" href="{% url 'cases:case_inbox' %}">
+          <i class="bi bi-briefcase me-2"></i>AP Cases
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'reviews' %}active fw-bold{% endif %}" href="{% url 'reviews:assignment_list' %}">
+          <i class="bi bi-clipboard-check me-2"></i>Reviews
+          {% if pending_review_count %}<span class="badge bg-warning text-dark ms-1">{{ pending_review_count }}</span>{% endif %}
+        </a>
+      </li>
+
       {# ── Documents ── #}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documents</li>
@@ -27,27 +42,17 @@
         </a>
       </li>
 
-      {# ── Processing ── #}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Processing</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'cases' %}active fw-bold{% endif %}" href="{% url 'cases:case_inbox' %}">
-          <i class="bi bi-briefcase me-2"></i>AP Cases
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'reviews' %}active fw-bold{% endif %}" href="{% url 'reviews:assignment_list' %}">
-          <i class="bi bi-clipboard-check me-2"></i>Reviews
-          {% if pending_review_count %}<span class="badge bg-warning text-dark ms-1">{{ pending_review_count }}</span>{% endif %}
-        </a>
-      </li>
-
       {# ── Operations ── #}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Operations</li>
       <li class="nav-item">
         <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
           <i class="bi bi-activity me-2"></i>Case Operations
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'command_center' %}active fw-bold{% endif %}" href="{% url 'dashboard:command_center' %}">
+          <i class="bi bi-cpu me-2"></i>Command Center
         </a>
       </li>
       <li class="nav-item">

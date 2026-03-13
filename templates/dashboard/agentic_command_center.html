@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Command Center — AP Operations{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/agentic-dashboard.css' %}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="cc-page">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       COMMAND BAR
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="cc-command-bar">
+    <i class="bi bi-terminal-fill" style="color:var(--ap-primary);font-size:1.25rem"></i>
+    <span class="fw-bold" style="font-size:var(--ap-font-size-lg);white-space:nowrap">
+      <i class="bi bi-cpu"></i> AP Command Center
+    </span>
+    <div class="flex-grow-1 mx-2">
+      <input type="text" id="cc-search" class="form-control form-control-sm"
+             placeholder="Search invoices, vendors, case IDs…"
+             autocomplete="off">
+    </div>
+    <div class="d-flex align-items-center gap-3">
+      <span class="d-flex align-items-center gap-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+        <span class="cc-status-dot"></span> System Online
+      </span>
+      <span id="last-refresh" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);font-family:var(--ap-font-mono)">—</span>
+      <button class="btn btn-sm btn-outline-primary" onclick="location.reload()" title="Refresh now">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 1: KPI HEADER
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="cc-kpi-grid">
+
+    <div class="cc-kpi cc-kpi--primary">
+      <div class="cc-kpi-icon cc-kpi-icon--primary"><i class="bi bi-receipt"></i></div>
+      <div class="cc-kpi-body">
+        <div class="cc-kpi-value" id="kpi-total-invoices">—</div>
+        <div class="cc-kpi-label">Total Invoices</div>
+        <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> today</div>
+      </div>
+    </div>
+
+    <div class="cc-kpi cc-kpi--success">
+      <div class="cc-kpi-icon cc-kpi-icon--success"><i class="bi bi-check-circle"></i></div>
+      <div class="cc-kpi-body">
+        <div class="cc-kpi-value" id="kpi-auto-reconciled">—</div>
+        <div class="cc-kpi-label">Auto Match Rate</div>
+        <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> reconciled</div>
+      </div>
+    </div>
+
+    <div class="cc-kpi cc-kpi--warning">
+      <div class="cc-kpi-icon cc-kpi-icon--warning"><i class="bi bi-hourglass-split"></i></div>
+      <div class="cc-kpi-body">
+        <div class="cc-kpi-value" id="kpi-pending-reviews">—</div>
+        <div class="cc-kpi-label">Pending Reviews</div>
+        <div class="cc-kpi-trend"><i class="bi bi-dash"></i> awaiting</div>
+      </div>
+    </div>
+
+    <div class="cc-kpi cc-kpi--danger">
+      <div class="cc-kpi-icon cc-kpi-icon--danger"><i class="bi bi-exclamation-triangle"></i></div>
+      <div class="cc-kpi-body">
+        <div class="cc-kpi-value" id="kpi-exceptions">—</div>
+        <div class="cc-kpi-label">Open Exceptions</div>
+        <div class="cc-kpi-trend cc-kpi-trend--down"><i class="bi bi-arrow-down-short"></i> flagged</div>
+      </div>
+    </div>
+
+    <div class="cc-kpi cc-kpi--info">
+      <div class="cc-kpi-icon cc-kpi-icon--info"><i class="bi bi-speedometer"></i></div>
+      <div class="cc-kpi-body">
+        <div class="cc-kpi-value" id="kpi-avg-confidence">—</div>
+        <div class="cc-kpi-label">Avg Confidence</div>
+        <div class="cc-kpi-trend"><i class="bi bi-graph-up"></i> model</div>
+      </div>
+    </div>
+
+    <div class="cc-kpi cc-kpi--purple">
+      <div class="cc-kpi-icon cc-kpi-icon--purple"><i class="bi bi-robot"></i></div>
+      <div class="cc-kpi-body">
+        <div class="cc-kpi-value" id="kpi-active-agents">—</div>
+        <div class="cc-kpi-label">Active Agents</div>
+        <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-lightning"></i> running</div>
+      </div>
+    </div>
+
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       SECTION 3 + 4: TWO-COLUMN MAIN GRID
+       Pipeline + Charts | Case Intelligence
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="cc-main-grid">
+
+    <!-- ────────────────── LEFT: Pipeline + Charts ────────────────── -->
+    <div class="d-flex flex-column gap-3">
+
+      <!-- SECTION 3: Processing Pipeline -->
+      <div class="cc-pipeline-card">
+        <div class="cc-panel-header">
+          <span class="cc-panel-title"><i class="bi bi-diagram-3"></i> Processing Pipeline</span>
+          <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Invoice Lifecycle</span>
+        </div>
+        <div class="cc-pipeline-flow">
+
+          <!-- Upload -->
+          <div class="cc-pipeline-stage cc-pipeline-stage--active">
+            <div class="cc-pipeline-stage-icon cc-pipeline-stage-icon--upload"><i class="bi bi-cloud-arrow-up"></i></div>
+            <div class="cc-pipeline-stage-label">Upload</div>
+            <div class="cc-pipeline-stage-count" id="pipeline-upload-count">—</div>
+            <div class="cc-pipeline-stage-meta" id="pipeline-upload-meta">invoices</div>
+          </div>
+          <div class="cc-pipeline-arrow"><i class="bi bi-chevron-right"></i></div>
+
+          <!-- Extraction -->
+          <div class="cc-pipeline-stage">
+            <div class="cc-pipeline-stage-icon cc-pipeline-stage-icon--extraction"><i class="bi bi-file-earmark-text"></i></div>
+            <div class="cc-pipeline-stage-label">Extraction</div>
+            <div class="cc-pipeline-stage-count" id="pipeline-extraction-count">—</div>
+            <div class="cc-pipeline-stage-meta" id="pipeline-extraction-meta">success</div>
+          </div>
+          <div class="cc-pipeline-arrow"><i class="bi bi-chevron-right"></i></div>
+
+          <!-- Reconciliation -->
+          <div class="cc-pipeline-stage">
+            <div class="cc-pipeline-stage-icon cc-pipeline-stage-icon--recon"><i class="bi bi-arrow-left-right"></i></div>
+            <div class="cc-pipeline-stage-label">Reconciliation</div>
+            <div class="cc-pipeline-stage-count" id="pipeline-recon-count">—</div>
+            <div class="cc-pipeline-stage-meta" id="pipeline-recon-meta">matched</div>
+          </div>
+          <div class="cc-pipeline-arrow"><i class="bi bi-chevron-right"></i></div>
+
+          <!-- Agent Analysis -->
+          <div class="cc-pipeline-stage">
+            <div class="cc-pipeline-stage-icon cc-pipeline-stage-icon--agent"><i class="bi bi-robot"></i></div>
+            <div class="cc-pipeline-stage-label">Agent Analysis</div>
+            <div class="cc-pipeline-stage-count" id="pipeline-agent-count">—</div>
+            <div class="cc-pipeline-stage-meta" id="pipeline-agent-meta">exceptions</div>
+          </div>
+          <div class="cc-pipeline-arrow"><i class="bi bi-chevron-right"></i></div>
+
+          <!-- Review -->
+          <div class="cc-pipeline-stage">
+            <div class="cc-pipeline-stage-icon cc-pipeline-stage-icon--review"><i class="bi bi-person-check"></i></div>
+            <div class="cc-pipeline-stage-label">Review</div>
+            <div class="cc-pipeline-stage-count" id="pipeline-review-count">—</div>
+            <div class="cc-pipeline-stage-meta" id="pipeline-review-meta">pending</div>
+          </div>
+          <div class="cc-pipeline-arrow"><i class="bi bi-chevron-right"></i></div>
+
+          <!-- Posting -->
+          <div class="cc-pipeline-stage">
+            <div class="cc-pipeline-stage-icon cc-pipeline-stage-icon--posting"><i class="bi bi-check2-all"></i></div>
+            <div class="cc-pipeline-stage-label">Posting</div>
+            <div class="cc-pipeline-stage-count" id="pipeline-posting-count">—</div>
+            <div class="cc-pipeline-stage-meta" id="pipeline-posting-meta">complete</div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- SECTION 5: Exception Intelligence Charts -->
+      <div class="cc-charts-grid">
+
+        <!-- Exception Distribution Pie -->
+        <div class="cc-chart-card">
+          <div class="cc-panel-header">
+            <span class="cc-panel-title"><i class="bi bi-pie-chart"></i> Exception Distribution</span>
+          </div>
+          <div class="cc-chart-body">
+            <canvas id="exceptionPieChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Reconciliation Match Bar -->
+        <div class="cc-chart-card">
+          <div class="cc-panel-header">
+            <span class="cc-panel-title"><i class="bi bi-bar-chart-line"></i> Reconciliation Results</span>
+          </div>
+          <div class="cc-chart-body">
+            <canvas id="reconBarChart"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+    </div><!-- /center column -->
+
+
+  </div><!-- /cc-main-grid -->
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       CASE INTELLIGENCE
+       ═══════════════════════════════════════════════════════════════ -->
+  <div>
+    <div class="cc-panel-header" style="border:none;padding-left:0">
+      <span class="cc-panel-title"><i class="bi bi-briefcase"></i> Case Intelligence</span>
+      <a href="/cases/" class="btn btn-sm btn-outline-primary" style="font-size:0.7rem;padding:0.2rem 0.6rem">
+        <i class="bi bi-box-arrow-up-right"></i> All Cases
+      </a>
+    </div>
+    <div class="cc-kpi-grid" id="case-kpi-grid">
+      <div class="cc-kpi cc-kpi--primary"><div class="cc-kpi-icon cc-kpi-icon--primary"><i class="bi bi-folder2-open"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-total">—</div><div class="cc-kpi-label">Total Cases</div></div></div>
+      <div class="cc-kpi cc-kpi--info"><div class="cc-kpi-icon cc-kpi-icon--info"><i class="bi bi-play-circle"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-inflight">—</div><div class="cc-kpi-label">In Flight</div></div></div>
+      <div class="cc-kpi cc-kpi--purple"><div class="cc-kpi-icon cc-kpi-icon--purple"><i class="bi bi-eye"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-review">—</div><div class="cc-kpi-label">In Review</div></div></div>
+      <div class="cc-kpi cc-kpi--success"><div class="cc-kpi-icon cc-kpi-icon--success"><i class="bi bi-check-circle"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-closed">—</div><div class="cc-kpi-label">Closed</div></div></div>
+      <div class="cc-kpi cc-kpi--danger"><div class="cc-kpi-icon cc-kpi-icon--danger"><i class="bi bi-exclamation-octagon"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-escalated">—</div><div class="cc-kpi-label">Escalated / Failed</div></div></div>
+      <div class="cc-kpi cc-kpi--warning"><div class="cc-kpi-icon cc-kpi-icon--warning"><i class="bi bi-person-exclamation"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-human">—</div><div class="cc-kpi-label">Needs Human</div></div></div>
+    </div>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       AGENT PERFORMANCE CARDS
+       ═══════════════════════════════════════════════════════════════ -->
+  <div>
+    <div class="cc-panel-header" style="border:none;padding-left:0">
+      <span class="cc-panel-title"><i class="bi bi-graph-up-arrow"></i> Agent Performance</span>
+      <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">All-time metrics</span>
+    </div>
+    <div class="cc-agent-perf-grid" id="agent-perf-cards">
+      <!-- Shimmer placeholders -->
+      <div class="cc-agent-card"><div class="cc-shimmer" style="height:100%;border-radius:var(--ap-radius)"></div></div>
+      <div class="cc-agent-card"><div class="cc-shimmer" style="height:100%;border-radius:var(--ap-radius)"></div></div>
+      <div class="cc-agent-card"><div class="cc-shimmer" style="height:100%;border-radius:var(--ap-radius)"></div></div>
+    </div>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       CASE TIMELINE VIEWER (Collapsible)
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="cc-timeline-card">
+    <div class="cc-panel-header" style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#timelineCollapse" aria-expanded="false">
+      <span class="cc-panel-title"><i class="bi bi-clock-history"></i> Invoice Timeline</span>
+      <span class="d-flex align-items-center gap-2">
+        <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Sample invoice lifecycle</span>
+        <i class="bi bi-chevron-down" style="font-size:0.8rem;color:var(--ap-text-muted);transition:transform 0.2s"></i>
+      </span>
+    </div>
+    <div class="collapse" id="timelineCollapse">
+      <div class="cc-timeline">
+
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--complete"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">Invoice Uploaded</div>
+            <div class="cc-timeline-desc">Document received and queued for processing</div>
+          </div>
+          <div class="cc-timeline-time">09:00:12</div>
+        </div>
+
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--complete"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">Extraction Completed</div>
+            <div class="cc-timeline-desc">OCR + AI extraction — confidence 92%</div>
+          </div>
+          <div class="cc-timeline-time">09:00:18</div>
+        </div>
+
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--complete"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">PO Retrieved</div>
+            <div class="cc-timeline-desc">Purchase Order PO-2024-0847 matched</div>
+          </div>
+          <div class="cc-timeline-time">09:00:20</div>
+        </div>
+
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--complete"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">3-Way Reconciliation Executed</div>
+            <div class="cc-timeline-desc">Invoice vs PO vs GRN — partial match detected</div>
+          </div>
+          <div class="cc-timeline-time">09:00:24</div>
+        </div>
+
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--error"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">Exception Detected</div>
+            <div class="cc-timeline-desc">PRICE_MISMATCH — unit price deviation 4.2%</div>
+          </div>
+          <div class="cc-timeline-time">09:00:24</div>
+        </div>
+
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--active"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">Exception Analysis Agent Invoked</div>
+            <div class="cc-timeline-desc">Analyzing price deviation against tolerance bands</div>
+          </div>
+          <div class="cc-timeline-time">09:00:25</div>
+        </div>
+
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--pending"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">Recommendation Generated</div>
+            <div class="cc-timeline-desc">Agent recommends auto-close within tolerance</div>
+          </div>
+          <div class="cc-timeline-time">09:00:28</div>
+        </div>
+
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--pending"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">Review Assigned</div>
+            <div class="cc-timeline-desc">Routed to AP Processor for final approval</div>
+          </div>
+          <div class="cc-timeline-time">09:00:29</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div><!-- /cc-page -->
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/agentic-dashboard.js' %}"></script>
+{% endblock %}
