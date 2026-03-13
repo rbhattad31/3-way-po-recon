@@ -12,105 +12,147 @@
 {% endblock %}
 
 {% block content %}
-<div class="row g-3">
-  {# Header Info #}
-  <div class="col-md-6">
-    <div class="ap-card">
-      <div class="ap-card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-file-earmark-text"></i> Invoice Details</span>
-        <div class="d-flex gap-2">
-          {% if ap_case %}
-          <a href="{% url 'cases:case_console' ap_case.pk %}" class="btn btn-sm btn-outline-primary" title="Open case console">
-            <i class="bi bi-folder2-open me-1"></i>{{ ap_case.case_number }}
-          </a>
-          {% else %}
-          <form method="post" action="{% url 'cases:create_case_for_invoice' invoice.pk %}" class="d-inline">
-            {% csrf_token %}
-            <button type="submit" class="btn btn-sm btn-primary" title="Create an AP Case for this invoice">
-              <i class="bi bi-plus-circle me-1"></i>Create Case
-            </button>
-          </form>
-          {% endif %}
-          <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Audit trail & governance">
-            <i class="bi bi-shield-lock me-1"></i>Governance
-          </a>
-          {% if invoice.document_upload %}
-          <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" target="_blank"
-             class="btn btn-sm btn-outline-primary" title="View original document">
-            <i class="bi bi-file-earmark-arrow-down"></i> View Document
-          </a>
-          {% endif %}
-        </div>
+{# ── Action bar ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <span class="ap-badge {% if invoice.status == 'RECONCILED' or invoice.status == 'VALIDATED' %}ap-badge-success{% elif invoice.status == 'FAILED' or invoice.status == 'INVALID' %}ap-badge-danger{% elif invoice.status == 'EXTRACTED' or invoice.status == 'EXTRACTION_IN_PROGRESS' %}ap-badge-primary{% elif invoice.status == 'READY_FOR_RECON' %}ap-badge-warning{% else %}ap-badge-muted{% endif %}">
+      {{ invoice.get_status_display }}
+    </span>
+    {% if invoice.extraction_confidence %}
+    <div class="ap-confidence ms-1">
+      <div class="ap-confidence-bar">
+        <div class="ap-confidence-fill {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
+             style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></div>
       </div>
-      <div class="ap-card-body p-0">
-        <table class="ap-table">
-          <tbody>
-            <tr><th style="width:130px;color:var(--ap-text-muted)">Invoice #</th><td style="font-weight:500">{{ invoice.invoice_number }}</td></tr>
-            <tr><th style="color:var(--ap-text-muted)">Date</th><td>{{ invoice.invoice_date|date:"d M Y"|default:"—" }}</td></tr>
-            <tr><th style="color:var(--ap-text-muted)">Vendor</th><td>{{ invoice.vendor.name|default:invoice.raw_vendor_name }}</td></tr>
-            <tr><th style="color:var(--ap-text-muted)">PO #</th><td>{{ invoice.po_number|default:"—" }}</td></tr>
-            <tr><th style="color:var(--ap-text-muted)">Currency</th><td>{{ invoice.currency }}</td></tr>
-            <tr><th style="color:var(--ap-text-muted)">Subtotal</th><td>{{ invoice.subtotal|default:"—" }}</td></tr>
-            <tr><th style="color:var(--ap-text-muted)">Tax</th><td>{{ invoice.tax_amount|default:"—" }}</td></tr>
-            <tr><th style="color:var(--ap-text-muted)">Total</th><td style="font-weight:600">{{ invoice.total_amount|default:"—" }}</td></tr>
-            <tr><th style="color:var(--ap-text-muted)">Status</th><td>
-              <span class="ap-badge {% if invoice.status == 'RECONCILED' or invoice.status == 'VALIDATED' %}ap-badge-success{% elif invoice.status == 'FAILED' or invoice.status == 'INVALID' %}ap-badge-danger{% elif invoice.status == 'EXTRACTED' or invoice.status == 'EXTRACTION_IN_PROGRESS' %}ap-badge-primary{% else %}ap-badge-muted{% endif %}">
-                {{ invoice.status }}
-              </span>
-            </td></tr>
-            <tr><th style="color:var(--ap-text-muted)">Confidence</th><td>
-              {% if invoice.extraction_confidence %}
-              <div class="d-flex align-items-center gap-2">
-                <div class="ap-confidence-bar">
-                  <div class="ap-confidence-fill {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                       style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></div>
-                </div>
-                <span style="font-size:var(--ap-font-size-xs)">{% widthratio invoice.extraction_confidence 1 100 %}%</span>
-              </div>
-              {% else %}—{% endif %}
-            </td></tr>
-          </tbody>
-        </table>
-      </div>
+      <span>{% widthratio invoice.extraction_confidence 1 100 %}%</span>
     </div>
+    {% endif %}
+    {% if invoice.is_duplicate %}
+    <span class="ap-badge ap-badge-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>Duplicate</span>
+    {% endif %}
   </div>
-  {# Line Items #}
-  <div class="col-md-6">
-    <div class="ap-card">
-      <div class="ap-card-header"><i class="bi bi-list-ul"></i> Line Items</div>
-      <div class="ap-card-body p-0">
-        <table class="ap-table">
-          <thead>
-            <tr><th>#</th><th>Description</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Amount</th></tr>
-          </thead>
-          <tbody>
-            {% for line in invoice.line_items.all %}
-            <tr>
-              <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ line.line_number }}</td>
-              <td style="font-size:var(--ap-font-size-sm)">{{ line.description|truncatechars:50 }}</td>
-              <td class="text-end" style="font-size:var(--ap-font-size-sm)">{{ line.quantity }}</td>
-              <td class="text-end" style="font-size:var(--ap-font-size-sm)">{{ line.unit_price }}</td>
-              <td class="text-end" style="font-size:var(--ap-font-size-sm);font-weight:500">{{ line.line_amount }}</td>
-            </tr>
-            {% empty %}
-            <tr><td colspan="5">
-              <div class="ap-empty-state" style="padding:1rem">
-                <i class="bi bi-list-ul"></i>
-                <div class="ap-empty-state-label">No line items</div>
-              </div>
-            </td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+  <div class="d-flex gap-2">
+    {% if ap_case %}
+    <a href="{% url 'cases:case_agent_view' ap_case.pk %}" class="btn btn-sm btn-primary">
+      <i class="bi bi-folder2-open me-1"></i>{{ ap_case.case_number }}
+    </a>
+    {% else %}
+    <form method="post" action="{% url 'cases:create_case_for_invoice' invoice.pk %}" class="d-inline">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-plus-circle me-1"></i>Create Case</button>
+    </form>
+    {% endif %}
+    <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Audit trail">
+      <i class="bi bi-shield-lock"></i>
+    </a>
+    {% if invoice.document_upload %}
+    <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" target="_blank"
+       class="btn btn-sm btn-outline-secondary" title="View original PDF">
+      <i class="bi bi-file-earmark-pdf"></i>
+    </a>
+    {% endif %}
   </div>
 </div>
 
-{# Reconciliation Results #}
+{# ══════════ INVOICE DOCUMENT ══════════ #}
+<div class="ap-card" style="max-width:860px;margin:0 auto">
+  <div class="ap-card-body" style="padding:2rem 2.5rem">
+
+    {# ── Invoice Header ── #}
+    <div class="d-flex justify-content-between align-items-start mb-4">
+      <div>
+        <h4 class="mb-1 fw-bold" style="color:var(--ap-primary);letter-spacing:-0.5px">INVOICE</h4>
+        <div style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+          {{ invoice.vendor.name|default:invoice.raw_vendor_name }}
+        </div>
+      </div>
+      <div class="text-end">
+        <div style="font-size:1.25rem;font-weight:700;color:var(--ap-text-primary)">{{ invoice.invoice_number }}</div>
+        <div style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+          {% if invoice.invoice_date %}{{ invoice.invoice_date|date:"d M Y" }}{% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <hr style="border-color:var(--ap-border);margin:0 0 1.25rem">
+
+    {# ── Bill To / Details grid ── #}
+    <div class="row mb-4" style="font-size:var(--ap-font-size-sm)">
+      <div class="col-sm-4">
+        <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Vendor</div>
+        <div style="font-weight:500">{{ invoice.vendor.name|default:invoice.raw_vendor_name }}</div>
+      </div>
+      <div class="col-sm-4">
+        <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">PO Number</div>
+        <div style="font-weight:500">{{ invoice.po_number|default:"—" }}</div>
+      </div>
+      <div class="col-sm-4">
+        <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Currency</div>
+        <div style="font-weight:500">{{ invoice.currency }}</div>
+      </div>
+    </div>
+
+    {# ── Line Items Table ── #}
+    <table class="w-100 mb-3" style="font-size:var(--ap-font-size-sm);border-collapse:collapse">
+      <thead>
+        <tr style="border-bottom:2px solid var(--ap-border)">
+          <th style="padding:.5rem .5rem .5rem 0;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;width:30px">#</th>
+          <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px">Description</th>
+          <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:70px">Qty</th>
+          <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:110px">Unit Price</th>
+          {% if has_line_tax %}<th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:90px">Tax</th>{% endif %}
+          <th style="padding:.5rem .0 .5rem .5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:110px">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in invoice.line_items.all %}
+        <tr style="border-bottom:1px solid var(--ap-border)">
+          <td style="padding:.6rem .5rem .6rem 0;color:var(--ap-text-muted)">{{ line.line_number }}</td>
+          <td style="padding:.6rem .5rem">{{ line.description|default:line.raw_description|truncatechars:80 }}</td>
+          <td style="padding:.6rem .5rem;text-align:right">{{ line.quantity|default:"—" }}</td>
+          <td style="padding:.6rem .5rem;text-align:right">{{ line.unit_price|default:"—" }}</td>
+          {% if has_line_tax %}<td style="padding:.6rem .5rem;text-align:right">{{ line.tax_amount|default:"—" }}</td>{% endif %}
+          <td style="padding:.6rem 0 .6rem .5rem;text-align:right;font-weight:500">{{ line.line_amount|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="{% if has_line_tax %}6{% else %}5{% endif %}" style="padding:1.5rem;text-align:center;color:var(--ap-text-muted)">
+            <i class="bi bi-list-ul d-block mb-1" style="font-size:1.25rem"></i>No line items extracted
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {# ── Totals ── #}
+    <div class="d-flex justify-content-end">
+      <div style="min-width:220px">
+        {% if invoice.subtotal %}
+        <div class="d-flex justify-content-between" style="padding:.35rem 0;font-size:var(--ap-font-size-sm)">
+          <span style="color:var(--ap-text-muted)">Subtotal</span>
+          <span>{{ invoice.currency }} {{ invoice.subtotal }}</span>
+        </div>
+        {% endif %}
+        {% if invoice.tax_amount %}
+        <div class="d-flex justify-content-between" style="padding:.35rem 0;font-size:var(--ap-font-size-sm)">
+          <span style="color:var(--ap-text-muted)">Tax</span>
+          <span>{{ invoice.currency }} {{ invoice.tax_amount }}</span>
+        </div>
+        {% endif %}
+        <div class="d-flex justify-content-between" style="padding:.5rem 0;font-size:1rem;font-weight:700;border-top:2px solid var(--ap-text-primary);margin-top:.25rem">
+          <span>Total</span>
+          <span>{{ invoice.currency }} {{ invoice.total_amount|default:"—" }}</span>
+        </div>
+      </div>
+    </div>
+
+  </div>{# /ap-card-body #}
+</div>{# /ap-card #}
+
+{# ── Reconciliation Results ── #}
 {% if recon_results %}
-<div class="ap-card mt-3">
-  <div class="ap-card-header"><i class="bi bi-arrow-left-right"></i> Reconciliation Results</div>
+<div class="ap-card mt-3" style="max-width:860px;margin:0 auto">
+  <div class="ap-card-header"><i class="bi bi-arrow-left-right me-1"></i>Reconciliation Results</div>
   <div class="ap-card-body p-0">
     <table class="ap-table">
       <thead>

@@ -1,5 +1,10 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Invoices – AP Operations{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/case-inbox.css' %}?v=2" rel="stylesheet">
+{% endblock %}
 
 {% block breadcrumb %}
 <nav aria-label="breadcrumb" class="mb-0">
@@ -20,18 +25,87 @@
     <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
       <i class="bi bi-cloud-arrow-up me-1"></i>Upload Invoice
     </button>
-    <form class="d-inline-flex gap-2" method="get">
-      <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
-        <option value="">All Statuses</option>
-        {% for val, label in status_choices %}
-          <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-      <input type="text" name="q" class="form-control form-control-sm" placeholder="Search…"
-             value="{{ request.GET.q }}">
-    </form>
   </div>
 </div>
+
+{# ── KPI Strip ── #}
+<div style="display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">
+  <div class="ci-kpi"><span class="ci-kpi-num">{{ stats.total }}</span> Total</div>
+  <div class="ci-kpi"><span class="ci-kpi-num" style="color:var(--ap-text-muted)">{{ stats.uploaded }}</span> Uploaded</div>
+  <div class="ci-kpi"><span class="ci-kpi-num" style="color:var(--ap-info,#2563eb)">{{ stats.extracted }}</span> Extracted</div>
+  <div class="ci-kpi"><span class="ci-kpi-num" style="color:var(--ap-success,#16a34a)">{{ stats.reconciled }}</span> Reconciled</div>
+  <div class="ci-kpi"><span class="ci-kpi-num" style="color:var(--ap-danger,#dc2626)">{{ stats.failed }}</span> Failed</div>
+  <div class="ci-kpi"><span class="ci-kpi-num" style="color:var(--ap-primary,#4f46e5)">{{ stats.with_case }}</span> With Case</div>
+  <div class="ci-kpi"><span class="ci-kpi-num" style="color:var(--ap-warning,#d97706)">{{ stats.low_confidence }}</span> Low Confidence</div>
+</div>
+
+{# ── Filter Toolbar ── #}
+<form class="ap-filter-bar" method="get" id="invoiceFilterForm">
+  <div class="position-relative" style="width:240px">
+    <i class="bi bi-search position-absolute" style="left:.75rem;top:50%;transform:translateY(-50%);color:var(--ap-text-muted);font-size:.8rem"></i>
+    <input type="text" name="q" class="form-control form-control-sm" placeholder="Search invoices, vendors, PO#…"
+           value="{{ request.GET.q|default:'' }}" style="padding-left:2.25rem">
+  </div>
+  <select name="status" class="form-select form-select-sm" style="width:160px" onchange="this.form.submit()">
+    <option value="">All Statuses</option>
+    {% for val, label in status_choices %}
+      <option value="{{ val }}" {% if request.GET.status == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="has_case" class="form-select form-select-sm" style="width:130px" onchange="this.form.submit()">
+    <option value="">Case: Any</option>
+    <option value="yes" {% if request.GET.has_case == "yes" %}selected{% endif %}>Has Case</option>
+    <option value="no" {% if request.GET.has_case == "no" %}selected{% endif %}>No Case</option>
+  </select>
+  <select name="has_po" class="form-select form-select-sm" style="width:120px" onchange="this.form.submit()">
+    <option value="">PO: Any</option>
+    <option value="yes" {% if request.GET.has_po == "yes" %}selected{% endif %}>Has PO</option>
+    <option value="no" {% if request.GET.has_po == "no" %}selected{% endif %}>No PO</option>
+  </select>
+  <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleInvFilters" title="More filters">
+    <i class="bi bi-funnel me-1"></i>Filters
+  </button>
+  <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
+  {% if request.GET.q or request.GET.status or request.GET.has_case or request.GET.has_po or request.GET.confidence or request.GET.duplicate or request.GET.date_from or request.GET.date_to %}
+  <a href="{% url 'documents:invoice_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-lg me-1"></i>Clear</a>
+  {% endif %}
+</form>
+
+{# ── Advanced Filters ── #}
+<form class="ap-filter-bar ci-advanced-row {% if not request.GET.confidence and not request.GET.duplicate and not request.GET.date_from and not request.GET.date_to %}d-none{% endif %}" method="get" id="invAdvancedFilters">
+  {# Carry forward primary filters #}
+  {% if request.GET.q %}<input type="hidden" name="q" value="{{ request.GET.q }}">{% endif %}
+  {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+  {% if request.GET.has_case %}<input type="hidden" name="has_case" value="{{ request.GET.has_case }}">{% endif %}
+  {% if request.GET.has_po %}<input type="hidden" name="has_po" value="{{ request.GET.has_po }}">{% endif %}
+  <select name="confidence" class="form-select form-select-sm" style="width:155px" onchange="this.form.submit()">
+    <option value="">All Confidence</option>
+    <option value="high" {% if request.GET.confidence == "high" %}selected{% endif %}>High (≥75%)</option>
+    <option value="low" {% if request.GET.confidence == "low" %}selected{% endif %}>Low (&lt;75%)</option>
+  </select>
+  <select name="duplicate" class="form-select form-select-sm" style="width:145px" onchange="this.form.submit()">
+    <option value="">Duplicates: Any</option>
+    <option value="yes" {% if request.GET.duplicate == "yes" %}selected{% endif %}>Duplicates Only</option>
+    <option value="no" {% if request.GET.duplicate == "no" %}selected{% endif %}>Non-Duplicates</option>
+  </select>
+  <span class="text-muted" style="font-size:.75rem">From</span>
+  <input type="date" name="date_from" class="form-control form-control-sm" style="width:150px" value="{{ request.GET.date_from|default:'' }}" onchange="this.form.submit()">
+  <span class="text-muted" style="font-size:.75rem">To</span>
+  <input type="date" name="date_to" class="form-control form-control-sm" style="width:150px" value="{{ request.GET.date_to|default:'' }}" onchange="this.form.submit()">
+</form>
+
+{# Active filter chips #}
+{% if request.GET.status or request.GET.has_case or request.GET.has_po or request.GET.confidence or request.GET.duplicate or request.GET.date_from or request.GET.date_to %}
+<div class="d-flex gap-2 mb-3 flex-wrap">
+  {% if request.GET.status %}<span class="ap-filter-chip">Status: {{ request.GET.status }}<a href="javascript:void(0)" onclick="removeInvFilter('status')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>{% endif %}
+  {% if request.GET.has_case %}<span class="ap-filter-chip">Case: {{ request.GET.has_case }}<a href="javascript:void(0)" onclick="removeInvFilter('has_case')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>{% endif %}
+  {% if request.GET.has_po %}<span class="ap-filter-chip">PO: {{ request.GET.has_po }}<a href="javascript:void(0)" onclick="removeInvFilter('has_po')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>{% endif %}
+  {% if request.GET.confidence %}<span class="ap-filter-chip">Confidence: {{ request.GET.confidence }}<a href="javascript:void(0)" onclick="removeInvFilter('confidence')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>{% endif %}
+  {% if request.GET.duplicate %}<span class="ap-filter-chip">Duplicate: {{ request.GET.duplicate }}<a href="javascript:void(0)" onclick="removeInvFilter('duplicate')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>{% endif %}
+  {% if request.GET.date_from %}<span class="ap-filter-chip">From: {{ request.GET.date_from }}<a href="javascript:void(0)" onclick="removeInvFilter('date_from')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>{% endif %}
+  {% if request.GET.date_to %}<span class="ap-filter-chip">To: {{ request.GET.date_to }}<a href="javascript:void(0)" onclick="removeInvFilter('date_to')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>{% endif %}
+</div>
+{% endif %}
 
 {% if pending_uploads %}
 <div class="ap-card mb-3" style="border-left:3px solid var(--ap-warning)">
@@ -113,11 +187,12 @@
           </td>
           <td>
             {% if inv.ap_case %}
-            <a href="{% url 'cases:case_console' inv.ap_case.pk %}" class="text-decoration-none" style="font-size:var(--ap-font-size-sm)">
-              <span class="ap-badge {% if inv.ap_case.status == 'CLOSED' or inv.ap_case.status == 'APPROVED' %}ap-badge-success{% elif inv.ap_case.status == 'FAILED' %}ap-badge-danger{% elif inv.ap_case.status == 'IN_REVIEW' or inv.ap_case.status == 'PENDING_REVIEW' %}ap-badge-warning{% else %}ap-badge-primary{% endif %}">
+            <a href="{% url 'cases:case_agent_view' inv.ap_case.pk %}" class="text-decoration-none" style="font-size:var(--ap-font-size-sm)">
+              <span class="ap-badge {% if inv.ap_case.status == 'CLOSED' or inv.ap_case.status == 'APPROVED' %}ap-badge-success{% elif inv.ap_case.status == 'FAILED' %}ap-badge-danger{% elif inv.ap_case.status == 'IN_REVIEW' or inv.ap_case.status == 'PENDING_REVIEW' or inv.ap_case.status == 'READY_FOR_REVIEW' %}ap-badge-warning{% else %}ap-badge-primary{% endif %}">
                 {{ inv.ap_case.case_number }}
               </span>
             </a>
+            <div style="font-size:.65rem;color:var(--ap-text-muted);margin-top:2px">{{ inv.ap_case.get_status_display }}</div>
             {% else %}
             <form method="post" action="{% url 'cases:create_case_for_invoice' inv.pk %}" class="d-inline">
               {% csrf_token %}
@@ -154,4 +229,16 @@
 </div>
 {% include "partials/pagination.html" %}
 {% include "partials/upload_modal.html" %}
+
+<script>
+document.getElementById('toggleInvFilters')?.addEventListener('click', function() {
+  const adv = document.getElementById('invAdvancedFilters');
+  adv.classList.toggle('d-none');
+});
+function removeInvFilter(name) {
+  const url = new URL(window.location);
+  url.searchParams.delete(name);
+  window.location = url.toString();
+}
+</script>
 {% endblock %}

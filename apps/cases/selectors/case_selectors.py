@@ -4,7 +4,7 @@ Case selectors — query helpers for AP Cases.
 Provides filtered querysets used by views, APIs, and services.
 """
 
-from django.db.models import Count, F, Q, QuerySet
+from django.db.models import Count, Exists, F, OuterRef, Q, QuerySet, Subquery
 from django.utils import timezone
 
 from apps.cases.models import APCase
@@ -21,11 +21,28 @@ class CaseSelectors:
         assigned_to_id: int = None,
         vendor_id: int = None,
         search: str = "",
+        match_status: str = "",
+        reconciliation_mode: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        processing_type: str = "",
     ) -> QuerySet:
         """Filtered inbox queryset for the AP Case list view."""
+        from apps.agents.models import AgentRun
+
         qs = APCase.objects.select_related(
             "invoice", "vendor", "assigned_to", "purchase_order",
+            "reconciliation_result", "review_assignment",
         ).filter(is_active=True)
+
+        # Annotate with has_agent_runs for processing type display
+        qs = qs.annotate(
+            has_agent_runs=Exists(
+                AgentRun.objects.filter(
+                    reconciliation_result_id=OuterRef("reconciliation_result_id"),
+                ).exclude(status="SKIPPED")
+            ),
+        )
 
         if processing_path:
             qs = qs.filter(processing_path=processing_path)
@@ -37,11 +54,26 @@ class CaseSelectors:
             qs = qs.filter(assigned_to_id=assigned_to_id)
         if vendor_id:
             qs = qs.filter(vendor_id=vendor_id)
+        if match_status:
+            qs = qs.filter(reconciliation_result__match_status=match_status)
+        if reconciliation_mode:
+            qs = qs.filter(reconciliation_mode=reconciliation_mode)
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+        if processing_type == "agent_only":
+            qs = qs.filter(has_agent_runs=True, requires_human_review=False)
+        elif processing_type == "human_involved":
+            qs = qs.filter(requires_human_review=True)
+        elif processing_type == "mixed":
+            qs = qs.filter(has_agent_runs=True, requires_human_review=True)
         if search:
             qs = qs.filter(
                 Q(case_number__icontains=search)
                 | Q(invoice__invoice_number__icontains=search)
                 | Q(vendor__name__icontains=search)
+                | Q(invoice__raw_vendor_name__icontains=search)
             )
 
         return qs.order_by("-created_at")
@@ -81,11 +113,20 @@ class CaseSelectors:
             created_at__lt=timezone.now() - timezone.timedelta(hours=48),
         ).count()
 
+        agent_processed = APCase.objects.filter(
+            is_active=True, requires_human_review=False,
+        ).exclude(status=CaseStatus.NEW).count()
+        human_involved = APCase.objects.filter(
+            is_active=True, requires_human_review=True,
+        ).count()
+
         return {
             "total": total,
             "by_status": by_status,
             "by_path": by_path,
             "overdue": overdue,
+            "agent_processed": agent_processed,
+            "human_involved": human_involved,
         }
 
     @staticmethod
