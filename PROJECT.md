@@ -484,16 +484,19 @@ InvoiceUploadService
 process_invoice_upload_task (Celery)
 ```
 
-### 7.2 Extraction Pipeline (7 Services)
+### 7.2 Extraction Pipeline (Two-Agent Architecture)
 
-The extraction runs as a Celery task (`process_invoice_upload_task`) and executes sequentially:
+The extraction runs as a Celery task (`process_invoice_upload_task`) using a **two-agent architecture**:
 
 **Step 1 — OCR (`InvoiceExtractionAdapter`)**
 - Sends document to Azure Document Intelligence
 - Returns raw text content from PDF/image
 
-**Step 2 — LLM Extraction (`InvoiceExtractionAdapter`)**
-- Sends OCR text to Azure OpenAI GPT-4o with structured extraction prompt
+**Step 2 — Invoice Extraction Agent (`InvoiceExtractionAgent`)**
+- Replaces direct GPT-4o call with a traced AI agent
+- Uses `response_format=json_object` and `temperature=0` for deterministic JSON output
+- Single-shot extraction (no tool-calling / ReAct loop)
+- Full agent traceability: AgentRun + AgentStep records created
 - Returns JSON with invoice header fields + line items
 - Output: `ExtractionResponse` (raw_json, confidence, duration_ms)
 
@@ -722,11 +725,12 @@ AgentFeedbackService (re-reconcile if PO found by agent)
 Final Recommendation + Auto-Close / Escalation
 ```
 
-### 9.2 Seven Agent Types
+### 9.2 Eight Agent Types
 
 | Agent | Type | Purpose | Tools |
 |---|---|---|---|
-| **InvoiceUnderstandingAgent** | INVOICE_UNDERSTANDING | Deep-dives into low-confidence extractions | invoice_details |
+| **InvoiceExtractionAgent** | INVOICE_EXTRACTION | Extracts structured invoice data from OCR text (always runs, replaces direct GPT call) | None (single-shot, json_object mode) |
+| **InvoiceUnderstandingAgent** | INVOICE_UNDERSTANDING | Validates low-confidence extractions within case orchestrator (conditional: confidence < 75%) | invoice_details, vendor_search |
 | **PORetrievalAgent** | PO_RETRIEVAL | Finds correct PO when deterministic lookup failed | po_lookup, vendor_search, invoice_details |
 | **GRNRetrievalAgent** | GRN_RETRIEVAL | Investigates GRN issues (3-way only) | grn_lookup, po_lookup, invoice_details |
 | **ReconciliationAssistAgent** | RECONCILIATION_ASSIST | General-purpose for partial match investigation | All 6 tools |
@@ -792,6 +796,7 @@ Creates synthetic AgentRun records for auditability.
 - Configurable via environment variables (`AZURE_OPENAI_*` or `OPENAI_API_KEY`)
 - Supports tool-calling in OpenAI-compliant format
 - Tool calls: `tool_calls` array on assistant messages, `tool_call_id` + `name` on responses
+- `response_format` parameter: supports `{"type": "json_object"}` for deterministic JSON output (used by InvoiceExtractionAgent)
 - Returns: `LLMResponse` (content, tool_calls, finish_reason, token counts)
 
 ### 9.7 Orchestration Flow
@@ -850,8 +855,9 @@ The case management system (`apps/cases/`) provides a structured AP case lifecyc
 
 `CaseStateMachine` enforces **30+ valid transitions** with trigger validation:
 - Trigger types: SYSTEM, DETERMINISTIC, AGENT, HUMAN
-- Terminal states: CLOSED, REJECTED
+- Terminal states: CLOSED, REJECTED, ESCALATED, FAILED
 - Methods: `can_transition()`, `get_allowed_transitions()`, `is_terminal()`, `transition()`
+- **Audit logging**: Terminal state transitions automatically create AuditEvents (CASE_CLOSED, CASE_REJECTED, CASE_ESCALATED, CASE_FAILED) with invoice_id, case_id, status_before/status_after, and trigger_type metadata
 
 ### 10.5 Stage Executor
 
@@ -860,7 +866,7 @@ The case management system (`apps/cases/`) provides a structured AP case lifecyc
 | Stage | Handler |
 |---|---|
 | INTAKE | Validate upload, classify document |
-| EXTRACTION | Monitor completion, validate quality |
+| EXTRACTION | Monitor completion, validate quality; invoke Invoice Understanding Agent if confidence < 75% |
 | PATH_RESOLUTION | CaseRoutingService → determine path |
 | PO_RETRIEVAL | Deterministic lookup + agent fallback |
 | TWO_WAY_MATCHING | ReconciliationRunnerService |
@@ -1024,7 +1030,8 @@ Query helpers: `fetch_case_history()`, `fetch_access_history()`, `fetch_permissi
 | **Reconciliation** | RECONCILIATION_STARTED, RECONCILIATION_COMPLETED, RECONCILIATION_RERUN |
 | **Mode** | RECONCILIATION_MODE_RESOLVED, POLICY_APPLIED, MANUAL_MODE_OVERRIDE |
 | **Agent** | AGENT_RUN_STARTED, AGENT_RUN_COMPLETED, AGENT_RUN_FAILED, AGENT_RECOMMENDATION_CREATED |
-| **Review** | REVIEW_ASSIGNED, REVIEW_APPROVED, REVIEW_REJECTED, FIELD_CORRECTED |
+| **Review** | REVIEW_ASSIGNED, REVIEW_APPROVED, REVIEW_REJECTED, FIELD_CORRECTED, REVIEWER_ASSIGNED, REVIEW_STARTED |
+| **Case Management** | CASE_ASSIGNED, CASE_CLOSED, CASE_REJECTED, CASE_REPROCESSED, CASE_ESCALATED, CASE_FAILED, CASE_STATUS_CHANGED, COMMENT_ADDED |
 
 ### 13.4 Enhanced Case Timeline
 
@@ -1804,12 +1811,13 @@ celery -A config worker -l info
 
 ### Implemented
 
-- All data models, migrations, enums (24 enum classes), permissions, middleware
+- All data models, migrations, enums (25 enum classes), permissions, middleware
+- Two-agent extraction architecture: InvoiceExtractionAgent (always, single-shot, json_object) + InvoiceUnderstandingAgent (conditional: confidence < 75%)
 - Extraction pipeline (Azure DI OCR + GPT-4o, 7 services)
 - Reconciliation engine (14 services; 2-way/3-way matching with mode resolver)
 - ReconciliationPolicy model with priority-ordered mode rules
 - Tiered tolerance (strict + auto-close bands)
-- AI agent orchestration (7 agents, policy engine, tool registry, LLM client)
+- AI agent orchestration (8 agents, policy engine, tool registry, LLM client with response_format support)
 - Agent feedback loop (PO re-reconciliation)
 - Deterministic resolver (cost-saving LLM replacement)
 - Agent tracing and governance
@@ -1817,7 +1825,9 @@ celery -A config worker -l info
 - Non-PO validation (9 checks)
 - Review workflow with decision tracking
 - Dashboard analytics (7 API endpoints)
-- Audit logging (17 event types)
+- Audit logging (~38 event types including case lifecycle: CASE_CLOSED, CASE_REJECTED, CASE_REPROCESSED, CASE_ESCALATED, CASE_FAILED, CASE_STATUS_CHANGED)
+- CaseStateMachine audit trail: automatic AuditEvent logging for terminal state transitions (CLOSED, REJECTED, ESCALATED, FAILED)
+- Review lifecycle audit: REVIEWER_ASSIGNED, REVIEW_STARTED events tracked
 - Unified case timeline
 - Observability infrastructure: `TraceContext` (distributed tracing), structured JSON logging with PII redaction, in-process metrics service
 - Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
@@ -1833,6 +1843,7 @@ celery -A config worker -l info
 - RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own invoices (configurable via `ap_processor_sees_all_cases` toggle)
 - RBAC permissions for vendors (`vendors.view`), purchase orders (`purchase_orders.view`), and GRNs (`grns.view`) — all roles granted, AP_PROCESSOR scoped
 - Sidebar navigation gated by RBAC permissions for all document pages (POs, GRNs, Vendors, Governance, Admin Console)
+- Agent reference page redesigned with 8 tabs: Invoice Pipeline, Case Lifecycle, Agents, Tools & Recommendations, Prompts, Audit & Governance, Observability, RBAC
 - Bootstrap 5 templates (34 templates including RBAC admin console, vendor pages)
 - Enterprise RBAC: Role, Permission, RolePermission, UserRole, UserPermissionOverride models
 - RBAC permission engine: code-level checks, middleware cache, template tags, DRF classes, CBV mixins, FBV decorators

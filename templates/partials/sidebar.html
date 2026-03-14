@@ -3,8 +3,8 @@
   <div class="p-3">
     <ul class="nav flex-column">
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'dashboard' %}active fw-bold{% endif %}" href="{% url 'dashboard:index' %}">
-          <i class="bi bi-speedometer2 me-2"></i>Dashboard
+        <a class="nav-link {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}active fw-bold{% endif %}" href="{% url 'dashboard:index' %}">
+          <i class="bi bi-cpu me-2"></i>Command Center
         </a>
       </li>
 
@@ -54,13 +54,13 @@
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Operations</li>
       <li class="nav-item">
-        <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
-          <i class="bi bi-activity me-2"></i>Case Operations
+        <a class="nav-link {% if request.resolver_match.url_name == 'analytics' %}active fw-bold{% endif %}" href="{% url 'dashboard:analytics' %}">
+          <i class="bi bi-speedometer2 me-2"></i>Analytics
         </a>
       </li>
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'command_center' %}active fw-bold{% endif %}" href="{% url 'dashboard:command_center' %}">
-          <i class="bi bi-cpu me-2"></i>Command Center
+        <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
+          <i class="bi bi-activity me-2"></i>Case Operations
         </a>
       </li>
       <li class="nav-item">
