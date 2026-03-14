@@ -11,6 +11,7 @@ from apps.agents.models import AgentRecommendation, AgentRun
 from apps.auditlog.timeline_service import CaseTimelineService
 from apps.core.enums import InvoiceStatus, MatchStatus, ReconciliationMode, UserRole
 from apps.core.decorators import observed_action
+from apps.core.permissions import permission_required_code
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy, ReconciliationResult
 from apps.reviews.models import ReviewAssignment
@@ -52,6 +53,14 @@ def result_list(request):
 
 @login_required
 def result_detail(request, pk):
+    result = get_object_or_404(ReconciliationResult, pk=pk)
+
+    # Redirect to new case agent view if an AP case exists for this result
+    from apps.cases.models import APCase
+    ap_case = APCase.objects.filter(reconciliation_result=result, is_active=True).first()
+    if ap_case:
+        return redirect("cases:case_agent_view", pk=ap_case.pk)
+
     result = get_object_or_404(
         ReconciliationResult.objects
         .select_related("invoice", "invoice__vendor", "purchase_order")
@@ -96,6 +105,7 @@ def result_detail(request, pk):
 
 
 @login_required
+@permission_required_code("reconciliation.run")
 @observed_action("reconciliation.start_reconciliation", permission="reconciliation.run", entity_type="Invoice", audit_event="RECONCILIATION_STARTED")
 def start_reconciliation(request):
     """
@@ -117,6 +127,12 @@ def start_reconciliation(request):
 @login_required
 def case_console(request, pk):
     """Investigation console — single-page deep dive into one reconciliation case."""
+    # Redirect to new case agent view if an AP case exists for this result
+    from apps.cases.models import APCase
+    ap_case = APCase.objects.filter(reconciliation_result_id=pk, is_active=True).first()
+    if ap_case:
+        return redirect("cases:case_agent_view", pk=ap_case.pk)
+
     result = get_object_or_404(
         ReconciliationResult.objects
         .select_related("invoice", "invoice__vendor", "invoice__document_upload", "purchase_order", "purchase_order__vendor")
@@ -415,6 +431,7 @@ def recon_settings(request):
         config.enable_mode_resolver = request.POST.get("enable_mode_resolver") == "on"
         config.enable_grn_for_stock_items = request.POST.get("enable_grn_for_stock_items") == "on"
         config.enable_two_way_for_services = request.POST.get("enable_two_way_for_services") == "on"
+        config.ap_processor_sees_all_cases = request.POST.get("ap_processor_sees_all_cases") == "on"
 
         config.save()
         verb = "updated" if config_id else "created"

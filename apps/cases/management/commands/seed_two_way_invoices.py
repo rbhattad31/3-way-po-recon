@@ -51,12 +51,17 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.accounts.rbac_models import Role, UserRole as RBACUserRole
+from apps.auditlog.models import AuditEvent
+from apps.auditlog.services import AuditService
 from apps.core.enums import (
+    AuditEventType,
     DocumentType,
     FileProcessingState,
     InvoiceStatus,
     UserRole,
 )
+from apps.core.utils import normalize_po_number
 from apps.documents.models import (
     DocumentUpload,
     Invoice,
@@ -64,6 +69,7 @@ from apps.documents.models import (
     PurchaseOrder,
     PurchaseOrderLineItem,
 )
+from apps.extraction.models import ExtractionResult
 from apps.vendors.models import Vendor, VendorAlias
 
 logger = logging.getLogger(__name__)
@@ -635,7 +641,7 @@ def _build_raw_extraction_json(
 # Core creation helpers
 # ============================================================================
 
-def create_vendors(admin: User) -> dict[str, Vendor]:
+def create_vendors(actor: User) -> dict[str, Vendor]:
     """Create or reuse TWO_WAY service vendors."""
     vendors: dict[str, Vendor] = {}
     for v in TWO_WAY_VENDORS:
@@ -650,14 +656,15 @@ def create_vendors(admin: User) -> dict[str, Vendor]:
                 "payment_terms": v.get("payment_terms", ""),
                 "contact_email": v.get("contact_email", ""),
                 "address": f"{v['category']} supplier, Saudi Arabia",
-                "created_by": admin,
+                "created_by": actor,
+                "updated_by": actor,
             },
         )
         vendors[v["code"]] = vendor
     return vendors
 
 
-def create_vendor_aliases(vendors: dict[str, Vendor], admin: User) -> int:
+def create_vendor_aliases(vendors: dict[str, Vendor], actor: User) -> int:
     """Create vendor aliases for all TWO_WAY vendors."""
     total = 0
     for v_data in TWO_WAY_VENDORS:
@@ -671,7 +678,8 @@ def create_vendor_aliases(vendors: dict[str, Vendor], admin: User) -> int:
                 defaults={
                     "alias_name": alias_name,
                     "source": "manual",
-                    "created_by": admin,
+                    "created_by": actor,
+                    "updated_by": actor,
                 },
             )
             if created:
@@ -682,7 +690,7 @@ def create_vendor_aliases(vendors: dict[str, Vendor], admin: User) -> int:
 def create_po_for_scenario(
     scenario: dict,
     vendor: Vendor,
-    admin: User,
+    actor: User,
     line_items: list[dict],
     quantities: list[int],
 ) -> tuple[PurchaseOrder, list[PurchaseOrderLineItem]]:
@@ -700,7 +708,7 @@ def create_po_for_scenario(
     po, _ = PurchaseOrder.objects.get_or_create(
         po_number=po_num,
         defaults={
-            "normalized_po_number": po_num.upper(),
+            "normalized_po_number": normalize_po_number(po_num),
             "po_date": po_date,
             "vendor": vendor,
             "currency": "SAR",
@@ -709,7 +717,8 @@ def create_po_for_scenario(
             "status": "OPEN",
             "buyer_name": "Procurement – McDonald's KSA",
             "department": scenario.get("category", ""),
-            "created_by": admin,
+            "created_by": actor,
+            "updated_by": actor,
         },
     )
 
@@ -741,7 +750,7 @@ def create_po_for_scenario(
 def create_invoice_for_scenario(
     scenario: dict,
     vendor: Vendor,
-    admin: User,
+    actor: User,
     po: PurchaseOrder | None,
     po_lines: list[PurchaseOrderLineItem],
     line_items: list[dict],
@@ -749,8 +758,9 @@ def create_invoice_for_scenario(
     duplicate_of_invoice: Invoice | None = None,
 ) -> tuple[Invoice, list[InvoiceLineItem]]:
     """
-    Create an Invoice + line items + DocumentUpload stub for a scenario.
-    Applies amount deltas, tax overrides, PO noise, and missing fields.
+    Create an Invoice + line items + DocumentUpload stub + ExtractionResult
+    for a scenario. Applies amount deltas, tax overrides, PO noise, and
+    missing fields. All records are attributed to the actor (AP_PROCESSOR).
     """
     sc_num = scenario["num"]
     inv_num = f"INV-2W-{sc_num:04d}"
@@ -835,8 +845,9 @@ def create_invoice_for_scenario(
             "content_type": "application/pdf",
             "processing_state": FileProcessingState.COMPLETED,
             "processing_message": "Extraction completed",
-            "uploaded_by": admin,
-            "created_by": admin,
+            "uploaded_by": actor,
+            "created_by": actor,
+            "updated_by": actor,
         },
     )
 
@@ -873,7 +884,7 @@ def create_invoice_for_scenario(
             "raw_total_amount": str(total_amount),
             "invoice_date": inv_date,
             "po_number": po_number_on_invoice if "po_number" not in missing else "",
-            "normalized_po_number": po_number_on_invoice.upper() if (
+            "normalized_po_number": normalize_po_number(po_number_on_invoice) if (
                 po_number_on_invoice and "po_number" not in missing
             ) else "",
             "currency": invoice_currency,
@@ -885,9 +896,27 @@ def create_invoice_for_scenario(
             "extraction_raw_json": raw_json,
             "is_duplicate": scenario.get("is_duplicate", False),
             "duplicate_of": duplicate_of_invoice,
-            "created_by": admin,
+            "created_by": actor,
+            "updated_by": actor,
         },
     )
+
+    # ── Extraction Result (traceability) ─────────────────────
+    if created:
+        ExtractionResult.objects.get_or_create(
+            document_upload=doc_upload,
+            invoice=invoice,
+            defaults={
+                "engine_name": "azure_document_intelligence",
+                "engine_version": "2024-02-29-preview",
+                "raw_response": raw_json,
+                "confidence": confidence,
+                "duration_ms": _rng.randint(1200, 4500),
+                "success": True,
+                "created_by": actor,
+                "updated_by": actor,
+            },
+        )
 
     # ── Invoice line items ───────────────────────────────────
     # If invoice already existed but has no line items (e.g. after partial reset),
@@ -929,7 +958,7 @@ def _generate_random_scenarios(
     start_num: int,
     count: int,
     vendors: dict[str, Vendor],
-    admin: User,
+    actor: User,
     rand_seed: int,
 ) -> dict:
     """Generate additional random TWO_WAY scenarios for QA/large modes."""
@@ -1005,11 +1034,11 @@ def _generate_random_scenarios(
 
         po, po_lines = None, []
         if po_noise != "missing":
-            po, po_lines = create_po_for_scenario(scenario, vendor, admin, items, quantities)
+            po, po_lines = create_po_for_scenario(scenario, vendor, actor, items, quantities)
             stats["pos"] += 1
 
         invoice, _ = create_invoice_for_scenario(
-            scenario, vendor, admin, po, po_lines, items, quantities,
+            scenario, vendor, actor, po, po_lines, items, quantities,
         )
         stats["invoices"] += 1
         if is_dup:
@@ -1092,20 +1121,91 @@ class Command(BaseCommand):
     def _reset_data(self):
         self.stdout.write(self.style.WARNING("  Resetting seeded TWO_WAY data..."))
 
-        # Invoices & lines
         inv_qs = Invoice.objects.filter(invoice_number__startswith="INV-2W-")
+        inv_ids = list(inv_qs.values_list("id", flat=True))
+
+        if inv_ids:
+            # ── AP Cases and dependents ──────────────────────────
+            from apps.cases.models import APCase, APCaseStage, APCaseArtifact
+            case_qs = APCase.objects.filter(invoice_id__in=inv_ids)
+            case_ids = list(case_qs.values_list("id", flat=True))
+            if case_ids:
+                APCaseArtifact.objects.filter(case_id__in=case_ids).delete()
+                APCaseStage.objects.filter(case_id__in=case_ids).delete()
+
+            # ── Reconciliation results and dependents ────────────
+            from apps.reconciliation.models import (
+                ReconciliationException,
+                ReconciliationResult,
+                ReconciliationResultLine,
+                ReconciliationRun,
+            )
+            result_qs = ReconciliationResult.objects.filter(invoice_id__in=inv_ids)
+            result_ids = list(result_qs.values_list("id", flat=True))
+            if result_ids:
+                ReconciliationException.objects.filter(result_id__in=result_ids).delete()
+                ReconciliationResultLine.objects.filter(result_id__in=result_ids).delete()
+
+                # ── Agent runs and dependents ────────────────────
+                from apps.agents.models import (
+                    AgentMessage, AgentRecommendation, AgentRun,
+                    AgentStep, DecisionLog, AgentEscalation,
+                )
+                from apps.tools.models import ToolCall
+                run_qs = AgentRun.objects.filter(reconciliation_result_id__in=result_ids)
+                run_ids = list(run_qs.values_list("id", flat=True))
+                if run_ids:
+                    ToolCall.objects.filter(agent_run_id__in=run_ids).delete()
+                    AgentMessage.objects.filter(agent_run_id__in=run_ids).delete()
+                    AgentStep.objects.filter(agent_run_id__in=run_ids).delete()
+                    DecisionLog.objects.filter(agent_run_id__in=run_ids).delete()
+                    AgentEscalation.objects.filter(agent_run_id__in=run_ids).delete()
+                    AgentRecommendation.objects.filter(agent_run_id__in=run_ids).delete()
+                    run_qs.delete()
+
+                AgentRecommendation.objects.filter(invoice_id__in=inv_ids).delete()
+
+                # ── Review assignments ───────────────────────────
+                from apps.reviews.models import (
+                    ManualReviewAction, ReviewAssignment,
+                    ReviewComment, ReviewDecision,
+                )
+                review_qs = ReviewAssignment.objects.filter(reconciliation_result_id__in=result_ids)
+                review_ids = list(review_qs.values_list("id", flat=True))
+                if review_ids:
+                    ReviewComment.objects.filter(assignment_id__in=review_ids).delete()
+                    ManualReviewAction.objects.filter(assignment_id__in=review_ids).delete()
+                    ReviewDecision.objects.filter(assignment_id__in=review_ids).delete()
+                    review_qs.delete()
+
+                # Delete recon results, then runs with no results
+                result_qs.delete()
+
+            case_qs.delete()
+
+            # Delete orphaned recon runs (runs that only had 2W invoices)
+            ReconciliationRun.objects.filter(
+                results__isnull=True
+            ).delete()
+
+            # ── Audit events linked to invoices ──────────────────
+            AuditEvent.objects.filter(invoice_id__in=inv_ids).delete()
+
+        # ── Extraction results ───────────────────────────────────
+        ExtractionResult.objects.filter(invoice__in=inv_qs).delete()
+
+        # ── Invoices & lines ─────────────────────────────────────
         InvoiceLineItem.objects.filter(invoice__in=inv_qs).delete()
-        # DocumentUploads linked to these invoices
         upload_ids = list(inv_qs.values_list("document_upload_id", flat=True))
         inv_qs.delete()
         DocumentUpload.objects.filter(id__in=[uid for uid in upload_ids if uid]).delete()
 
-        # POs & lines
+        # ── POs & lines ─────────────────────────────────────────
         po_qs = PurchaseOrder.objects.filter(po_number__startswith="PO-2W-")
         PurchaseOrderLineItem.objects.filter(purchase_order__in=po_qs).delete()
         po_qs.delete()
 
-        # Vendors & aliases (only 2W-prefixed)
+        # ── Vendors & aliases (only 2W-prefixed) ────────────────
         v_qs = Vendor.objects.filter(code__startswith="V2W-")
         VendorAlias.objects.filter(vendor__in=v_qs).delete()
         v_qs.delete()
@@ -1117,42 +1217,37 @@ class Command(BaseCommand):
     # ----------------------------------------------------------------
 
     def _seed(self, mode: str, rand_seed: int):
-        # 1. Get or create admin user
-        admin = User.objects.filter(role=UserRole.ADMIN).first()
-        if not admin:
-            admin, _ = User.objects.get_or_create(
-                email="admin@mcd-ksa.com",
-                defaults={
-                    "first_name": "System",
-                    "last_name": "Admin",
-                    "role": UserRole.ADMIN,
-                    "is_staff": True,
-                    "is_superuser": True,
-                },
-            )
-            admin.set_password("SeedPass123!")
-            admin.save(update_fields=["password"])
+        # 1. Get or create AP_PROCESSOR seed user with RBAC role
+        actor = self._get_or_create_ap_processor()
+        self.stdout.write(self.style.SUCCESS(
+            f"        Audit actor: {actor.get_full_name()} ({actor.email})\n"
+            f"        Legacy role: {actor.role}\n"
+            f"        RBAC roles:  {', '.join(actor.get_role_codes())}"
+        ))
 
         # 2. Vendors & aliases
-        self.stdout.write("  [1/4] Creating TWO_WAY service vendors...")
-        vendors = create_vendors(admin)
-        n_aliases = create_vendor_aliases(vendors, admin)
+        self.stdout.write("  [1/5] Creating TWO_WAY service vendors...")
+        vendors = create_vendors(actor)
+        n_aliases = create_vendor_aliases(vendors, actor)
         self.stdout.write(self.style.SUCCESS(
             f"        {len(vendors)} vendors, {n_aliases} aliases"
         ))
 
         # 3. Deterministic scenarios
-        self.stdout.write("  [2/4] Creating POs & Invoices (15 scenarios)...")
+        self.stdout.write("  [2/5] Creating POs & Invoices (15 scenarios)...")
         invoices_created = {}
         stats = {
             "vendors": len(vendors),
             "aliases": n_aliases,
             "invoices": 0,
             "pos": 0,
+            "extraction_results": 0,
             "duplicates": 0,
             "malformed_po": 0,
             "high_value": 0,
             "incomplete": 0,
+            "audit_user": actor.email,
+            "audit_role": "AP_PROCESSOR",
         }
 
         for sc in SCENARIOS:
@@ -1164,7 +1259,7 @@ class Command(BaseCommand):
             # Create PO (unless PO is intentionally missing)
             po, po_lines = None, []
             if sc.get("po_noise") != "missing":
-                po, po_lines = create_po_for_scenario(sc, vendor, admin, items, quantities)
+                po, po_lines = create_po_for_scenario(sc, vendor, actor, items, quantities)
                 stats["pos"] += 1
 
             # Handle duplicate linkage
@@ -1173,11 +1268,12 @@ class Command(BaseCommand):
                 dup_invoice = invoices_created.get(sc["duplicate_of_num"])
 
             invoice, inv_lines = create_invoice_for_scenario(
-                sc, vendor, admin, po, po_lines, items, quantities,
+                sc, vendor, actor, po, po_lines, items, quantities,
                 duplicate_of_invoice=dup_invoice,
             )
             invoices_created[sc["num"]] = invoice
             stats["invoices"] += 1
+            stats["extraction_results"] += 1
 
             if sc.get("is_duplicate"):
                 stats["duplicates"] += 1
@@ -1195,27 +1291,82 @@ class Command(BaseCommand):
         # 4. Bulk generated scenarios for qa/large
         if mode in ("qa", "large"):
             extra = 10 if mode == "qa" else 30
-            self.stdout.write(f"  [3/4] Generating {extra} additional random scenarios...")
+            self.stdout.write(f"  [3/5] Generating {extra} additional random scenarios...")
             bulk_stats = _generate_random_scenarios(
                 start_num=16,
                 count=extra,
                 vendors=vendors,
-                admin=admin,
+                actor=actor,
                 rand_seed=rand_seed,
             )
             stats["invoices"] += bulk_stats["invoices"]
             stats["pos"] += bulk_stats["pos"]
+            stats["extraction_results"] += bulk_stats["invoices"]
             stats["duplicates"] += bulk_stats["duplicates"]
             stats["malformed_po"] += bulk_stats["malformed_po"]
             self.stdout.write(self.style.SUCCESS(
                 f"        {bulk_stats['invoices']} additional invoices created"
             ))
         else:
-            self.stdout.write("  [3/4] Skipping bulk generation (demo mode)")
+            self.stdout.write("  [3/5] Skipping bulk generation (demo mode)")
 
-        # 4. Summary stats
-        self.stdout.write("  [4/4] Seed statistics:")
+        # 5. Audit trail events for the governance page
+        all_invoices = list(
+            Invoice.objects.filter(invoice_number__startswith="INV-2W-")
+            .select_related("vendor", "document_upload")
+            .order_by("invoice_number")
+        )
+        self.stdout.write("  [4/5] Creating audit trail events...")
+        n_events = self._create_audit_trail(all_invoices, actor)
+        stats["audit_events"] = n_events
+        self.stdout.write(self.style.SUCCESS(
+            f"        {n_events} audit events created"
+        ))
+
+        # 6. Summary stats
+        self.stdout.write("  [5/5] Seed statistics:")
         self._print_stats(stats)
+
+    def _get_or_create_ap_processor(self) -> User:
+        """Get or create the AP Processor seed user with RBAC role assignment."""
+        self.stdout.write("  [0/5] Setting up AP_PROCESSOR seed user...")
+
+        actor, created = User.objects.get_or_create(
+            email="ap.processor@mcd-ksa.com",
+            defaults={
+                "first_name": "Fatima",
+                "last_name": "Al-Rashid",
+                "role": UserRole.AP_PROCESSOR,
+                "is_staff": False,
+                "is_superuser": False,
+                "department": "Accounts Payable",
+            },
+        )
+        if created:
+            actor.set_password("SeedPass123!")
+            actor.save(update_fields=["password"])
+
+        # Ensure RBAC Role exists and is assigned
+        role, _ = Role.objects.get_or_create(
+            code="AP_PROCESSOR",
+            defaults={
+                "name": "AP Processor",
+                "description": "Accounts Payable Processor",
+                "rank": 20,
+                "is_system_role": True,
+                "is_active": True,
+            },
+        )
+        RBACUserRole.objects.get_or_create(
+            user=actor,
+            role=role,
+            defaults={
+                "is_primary": True,
+                "is_active": True,
+                "assigned_by": actor,
+            },
+        )
+        return actor
 
     # ----------------------------------------------------------------
     # Stats
@@ -1231,10 +1382,81 @@ class Command(BaseCommand):
         self.stdout.write(f"  Vendor aliases:               {stats['aliases']}")
         self.stdout.write(f"  Purchase Orders:              {stats['pos']}")
         self.stdout.write(f"  Invoices created:             {stats['invoices']}")
+        self.stdout.write(f"  Extraction results:           {stats['extraction_results']}")
+        self.stdout.write(f"  Audit events:                 {stats.get('audit_events', 0)}")
         self.stdout.write(f"  ├─ Duplicate-prone:           {stats['duplicates']}")
         self.stdout.write(f"  ├─ Malformed PO refs:         {stats['malformed_po']}")
         self.stdout.write(f"  ├─ High-value (>50k SAR):     {stats['high_value']}")
         self.stdout.write(f"  └─ Incomplete fields:         {stats['incomplete']}")
+        self.stdout.write(f"  {'─'*50}")
+        self.stdout.write(f"  Audit user:                   {stats['audit_user']}")
+        self.stdout.write(f"  Audit role:                   {stats['audit_role']}")
+
+    # ----------------------------------------------------------------
+    # Invoice summary table
+    # ----------------------------------------------------------------
+
+    # ----------------------------------------------------------------
+    # Audit trail — creates governance events for each invoice
+    # ----------------------------------------------------------------
+
+    def _create_audit_trail(self, invoices, actor: User) -> int:
+        """Create INVOICE_UPLOADED + EXTRACTION_COMPLETED AuditEvents.
+
+        These populate the /governance/ page with realistic lifecycle
+        events for the seeded invoices.
+        """
+        count = 0
+        for inv in invoices:
+            # INVOICE_UPLOADED
+            AuditService.log_event(
+                entity_type="Invoice",
+                entity_id=inv.id,
+                event_type=AuditEventType.INVOICE_UPLOADED,
+                description=(
+                    f"Invoice {inv.invoice_number} uploaded from "
+                    f"{inv.document_upload.original_filename if inv.document_upload else 'unknown'} "
+                    f"(vendor: {inv.vendor.name if inv.vendor else inv.raw_vendor_name})"
+                ),
+                user=actor,
+                invoice_id=inv.id,
+                status_before="",
+                status_after=InvoiceStatus.UPLOADED,
+                metadata={
+                    "source": "seed_two_way_invoices",
+                    "vendor_code": inv.vendor.code if inv.vendor else "",
+                    "file_name": inv.document_upload.original_filename if inv.document_upload else "",
+                },
+            )
+            count += 1
+
+            # EXTRACTION_COMPLETED
+            AuditService.log_event(
+                entity_type="Invoice",
+                entity_id=inv.id,
+                event_type=AuditEventType.EXTRACTION_COMPLETED,
+                description=(
+                    f"Extraction completed for {inv.invoice_number} — "
+                    f"confidence {inv.extraction_confidence:.0%}, "
+                    f"PO ref: {inv.po_number or '(none)'}, "
+                    f"total: SAR {inv.total_amount:,.2f}"
+                ),
+                user=actor,
+                invoice_id=inv.id,
+                status_before=InvoiceStatus.UPLOADED,
+                status_after=inv.status,
+                duration_ms=_rng.randint(1200, 4500),
+                metadata={
+                    "source": "seed_two_way_invoices",
+                    "engine": "azure_document_intelligence",
+                    "confidence": float(inv.extraction_confidence) if inv.extraction_confidence else 0,
+                    "po_detected": bool(inv.po_number),
+                    "line_count": inv.line_items.count(),
+                },
+            )
+            count += 1
+
+        return count
 
     # ----------------------------------------------------------------
     # Invoice summary table

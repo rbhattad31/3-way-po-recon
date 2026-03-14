@@ -8,9 +8,52 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from apps.core.enums import DocumentType, InvoiceStatus
+from apps.core.enums import DocumentType, InvoiceStatus, UserRole
 from apps.core.decorators import observed_action
+from apps.core.permissions import permission_required_code
 from apps.documents.models import DocumentUpload, GoodsReceiptNote, Invoice, PurchaseOrder
+
+
+def _is_scoped_ap_processor(user):
+    """Return True if user is AP_PROCESSOR and config restricts their view."""
+    if getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+        return False
+    from apps.reconciliation.models import ReconciliationConfig
+    config = ReconciliationConfig.objects.filter(is_default=True).first()
+    if config and config.ap_processor_sees_all_cases:
+        return False
+    return True
+
+
+def _scope_invoices_for_user(qs, user):
+    """Restrict invoice queryset for AP_PROCESSOR based on config toggle."""
+    if not _is_scoped_ap_processor(user):
+        return qs
+    return qs.filter(document_upload__uploaded_by=user)
+
+
+def _scope_pos_for_user(qs, user):
+    """Restrict PO queryset — AP_PROCESSOR sees only POs linked to their invoices."""
+    if not _is_scoped_ap_processor(user):
+        return qs
+    user_po_numbers = (
+        Invoice.objects.filter(document_upload__uploaded_by=user)
+        .exclude(po_number="")
+        .values_list("po_number", flat=True)
+    )
+    return qs.filter(po_number__in=user_po_numbers)
+
+
+def _scope_grns_for_user(qs, user):
+    """Restrict GRN queryset — AP_PROCESSOR sees only GRNs linked to their POs."""
+    if not _is_scoped_ap_processor(user):
+        return qs
+    user_po_numbers = (
+        Invoice.objects.filter(document_upload__uploaded_by=user)
+        .exclude(po_number="")
+        .values_list("po_number", flat=True)
+    )
+    return qs.filter(purchase_order__po_number__in=user_po_numbers)
 
 
 ALLOWED_CONTENT_TYPES = {
@@ -25,6 +68,7 @@ MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
 
 @login_required
 @require_POST
+@permission_required_code("invoices.create")
 @observed_action("documents.upload_invoice", permission="documents.upload", entity_type="DocumentUpload", audit_event="DOCUMENT_UPLOADED")
 def upload_invoice(request):
     """Handle invoice file upload from the modal form."""
@@ -123,13 +167,56 @@ def upload_invoice(request):
 
 @login_required
 def invoice_list(request):
+    from django.db.models import Count, Sum, Q
+
     qs = Invoice.objects.select_related("vendor").prefetch_related("ap_case").order_by("-created_at")
+    qs = _scope_invoices_for_user(qs, request.user)
+
+    # --- Primary filters ---
     status_filter = request.GET.get("status")
     if status_filter:
         qs = qs.filter(status=status_filter)
     q = request.GET.get("q")
     if q:
-        qs = qs.filter(invoice_number__icontains=q) | qs.filter(raw_vendor_name__icontains=q)
+        qs = qs.filter(
+            Q(invoice_number__icontains=q)
+            | Q(raw_vendor_name__icontains=q)
+            | Q(vendor__name__icontains=q)
+            | Q(po_number__icontains=q)
+        )
+
+    # --- Advanced filters ---
+    has_case = request.GET.get("has_case")
+    if has_case == "yes":
+        qs = qs.filter(ap_case__isnull=False)
+    elif has_case == "no":
+        qs = qs.filter(ap_case__isnull=True)
+
+    confidence = request.GET.get("confidence")
+    if confidence == "low":
+        qs = qs.filter(extraction_confidence__lt=0.75, extraction_confidence__isnull=False)
+    elif confidence == "high":
+        qs = qs.filter(extraction_confidence__gte=0.75)
+
+    is_dup = request.GET.get("duplicate")
+    if is_dup == "yes":
+        qs = qs.filter(is_duplicate=True)
+    elif is_dup == "no":
+        qs = qs.filter(is_duplicate=False)
+
+    has_po = request.GET.get("has_po")
+    if has_po == "yes":
+        qs = qs.exclude(po_number="")
+    elif has_po == "no":
+        qs = qs.filter(Q(po_number="") | Q(po_number__isnull=True))
+
+    date_from = request.GET.get("date_from")
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    date_to = request.GET.get("date_to")
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -139,18 +226,41 @@ def invoice_list(request):
         processing_state__in=[FileProcessingState.QUEUED, FileProcessingState.PROCESSING],
     ).select_related("uploaded_by").order_by("-created_at")[:10]
 
+    # KPI stats (scoped to same visibility as the listing)
+    from django.db.models import Count, Sum, Q
+    base_inv = _scope_invoices_for_user(Invoice.objects.all(), request.user)
+    total_invoices = base_inv.count()
+    by_status = dict(
+        base_inv.values_list("status").annotate(c=Count("id")).values_list("status", "c")
+    )
+    total_amount = base_inv.aggregate(s=Sum("total_amount"))["s"] or 0
+    with_case = base_inv.filter(ap_case__isnull=False).count()
+    low_confidence = base_inv.filter(extraction_confidence__lt=0.75, extraction_confidence__isnull=False).count()
+
+    invoice_stats = {
+        "total": total_invoices,
+        "uploaded": by_status.get("UPLOADED", 0),
+        "extracted": by_status.get("EXTRACTED", 0) + by_status.get("VALIDATED", 0),
+        "reconciled": by_status.get("RECONCILED", 0),
+        "failed": by_status.get("FAILED", 0) + by_status.get("INVALID", 0),
+        "with_case": with_case,
+        "low_confidence": low_confidence,
+        "total_amount": f"{total_amount:,.2f}",
+    }
+
     return render(request, "documents/invoice_list.html", {
         "invoices": page_obj,
         "page_obj": page_obj,
         "status_choices": InvoiceStatus.choices,
         "pending_uploads": pending_uploads,
+        "stats": invoice_stats,
     })
 
 
 @login_required
 def invoice_detail(request, pk):
     invoice = get_object_or_404(
-        Invoice.objects.select_related("vendor", "document_upload").prefetch_related("line_items"),
+        Invoice.objects.select_related("vendor", "document_upload", "document_upload__uploaded_by", "duplicate_of", "reprocessed_from").prefetch_related("line_items"),
         pk=pk,
     )
     recon_results = invoice.recon_results.select_related("purchase_order").prefetch_related("exceptions").order_by("-created_at")
@@ -162,16 +272,22 @@ def invoice_detail(request, pk):
     except Exception:
         pass
 
+    # Check if any line items have tax amounts (to conditionally show tax column)
+    has_line_tax = invoice.line_items.filter(tax_amount__isnull=False).exclude(tax_amount=0).exists()
+
     return render(request, "documents/invoice_detail.html", {
         "invoice": invoice,
         "recon_results": recon_results,
         "ap_case": ap_case,
+        "has_line_tax": has_line_tax,
     })
 
 
 @login_required
+@permission_required_code("purchase_orders.view")
 def po_list(request):
     qs = PurchaseOrder.objects.select_related("vendor").order_by("-po_date")
+    qs = _scope_pos_for_user(qs, request.user)
 
     status_filter = request.GET.get("status")
     if status_filter:
@@ -217,6 +333,7 @@ def po_list(request):
 
 
 @login_required
+@permission_required_code("purchase_orders.view")
 def po_detail(request, pk):
     po = get_object_or_404(
         PurchaseOrder.objects.select_related("vendor").prefetch_related(
@@ -232,8 +349,10 @@ def po_detail(request, pk):
 
 
 @login_required
+@permission_required_code("grns.view")
 def grn_list(request):
     qs = GoodsReceiptNote.objects.select_related("purchase_order", "vendor").order_by("-receipt_date")
+    qs = _scope_grns_for_user(qs, request.user)
 
     status_filter = request.GET.get("status")
     if status_filter:
@@ -278,6 +397,7 @@ def grn_list(request):
 
 
 @login_required
+@permission_required_code("grns.view")
 def grn_detail(request, pk):
     grn = get_object_or_404(
         GoodsReceiptNote.objects.select_related(

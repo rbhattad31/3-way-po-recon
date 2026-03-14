@@ -8,25 +8,6 @@
         </a>
       </li>
 
-      {# ── Documents ── #}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documents</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'documents' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
-          <i class="bi bi-file-earmark-text me-2"></i>Invoices
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link" href="{% url 'documents:po_list' %}">
-          <i class="bi bi-cart-check me-2"></i>Purchase Orders
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link" href="{% url 'documents:grn_list' %}">
-          <i class="bi bi-box-seam me-2"></i>GRNs
-        </a>
-      </li>
-
       {# ── Processing ── #}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Processing</li>
@@ -35,12 +16,39 @@
           <i class="bi bi-briefcase me-2"></i>AP Cases
         </a>
       </li>
+
+      {# ── Documents ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documents</li>
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'reviews' %}active fw-bold{% endif %}" href="{% url 'reviews:assignment_list' %}">
-          <i class="bi bi-clipboard-check me-2"></i>Reviews
-          {% if pending_review_count %}<span class="badge bg-warning text-dark ms-1">{{ pending_review_count }}</span>{% endif %}
+        <a class="nav-link {% if request.resolver_match.app_name == 'documents' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
+          <i class="bi bi-file-earmark-text me-2"></i>Invoices
         </a>
       </li>
+      {% has_permission "purchase_orders.view" as can_view_pos %}
+      {% if can_view_pos %}
+      <li class="nav-item">
+        <a class="nav-link" href="{% url 'documents:po_list' %}">
+          <i class="bi bi-cart-check me-2"></i>Purchase Orders
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "grns.view" as can_view_grns %}
+      {% if can_view_grns %}
+      <li class="nav-item">
+        <a class="nav-link" href="{% url 'documents:grn_list' %}">
+          <i class="bi bi-box-seam me-2"></i>GRNs
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "vendors.view" as can_view_vendors %}
+      {% if can_view_vendors %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'vendors' %}active fw-bold{% endif %}" href="{% url 'vendors:vendor_list' %}">
+          <i class="bi bi-building me-2"></i>Vendors
+        </a>
+      </li>
+      {% endif %}
 
       {# ── Operations ── #}
       <li class="hr my-2 border-bottom"></li>
@@ -51,12 +59,19 @@
         </a>
       </li>
       <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'command_center' %}active fw-bold{% endif %}" href="{% url 'dashboard:command_center' %}">
+          <i class="bi bi-cpu me-2"></i>Command Center
+        </a>
+      </li>
+      <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.url_name == 'agent_reference' %}active fw-bold{% endif %}" href="{% url 'agents:agent_reference' %}">
           <i class="bi bi-book me-2"></i>Agent Reference
         </a>
       </li>
 
       {# ── Governance ── #}
+      {% has_permission "governance.view" as can_view_governance %}
+      {% if can_view_governance %}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Governance</li>
       <li class="nav-item">
@@ -64,6 +79,7 @@
           <i class="bi bi-shield-lock me-2"></i>Audit Log
         </a>
       </li>
+      {% endif %}
 
       {# ── Admin Console (RBAC) ── #}
       {% has_permission "users.manage" as can_manage_users %}

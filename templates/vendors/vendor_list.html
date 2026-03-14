@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Vendors – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item active">Vendors</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# ── KPI Row ── #}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="ap-card text-center py-3">
+      <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{{ stats.total }}</div>
+      <small style="color:var(--ap-text-muted)">Total Vendors</small>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="ap-card text-center py-3">
+      <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ stats.with_po }}</div>
+      <small style="color:var(--ap-text-muted)">With POs</small>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="ap-card text-center py-3">
+      <div style="font-size:1.5rem;font-weight:700;color:var(--ap-info)">{{ stats.with_invoice }}</div>
+      <small style="color:var(--ap-text-muted)">With Invoices</small>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="ap-card text-center py-3">
+      <div style="font-size:1.5rem;font-weight:700;color:var(--ap-text-secondary)">{{ stats.total_aliases }}</div>
+      <small style="color:var(--ap-text-muted)">Aliases</small>
+    </div>
+  </div>
+</div>
+
+{# ── Header + Filters ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0 fw-semibold">Vendors</h4>
+    <small style="color:var(--ap-text-muted)">Master vendor directory</small>
+  </div>
+  <form class="d-inline-flex gap-2" method="get">
+    <select name="country" class="form-select form-select-sm" style="min-width:120px" onchange="this.form.submit()">
+      <option value="">All Countries</option>
+      {% for c in country_choices %}
+        <option value="{{ c }}" {% if request.GET.country == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <select name="currency" class="form-select form-select-sm" style="min-width:100px" onchange="this.form.submit()">
+      <option value="">All Currencies</option>
+      {% for c in currency_choices %}
+        <option value="{{ c }}" {% if request.GET.currency == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="q" class="form-control form-control-sm" style="min-width:200px"
+           placeholder="Search code, name, tax ID…" value="{{ request.GET.q|default:'' }}">
+    {% if request.GET.country or request.GET.currency or request.GET.q %}
+      <a href="{% url 'vendors:vendor_list' %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">
+        <i class="bi bi-x-circle"></i>
+      </a>
+    {% endif %}
+  </form>
+</div>
+
+{# ── Vendor Table ── #}
+<div class="ap-card">
+  <div class="ap-card-body p-0">
+    <table class="ap-table">
+      <thead>
+        <tr>
+          <th>Code</th><th>Name</th><th>Country</th>
+          <th>Currency</th><th>Tax ID</th><th>Payment Terms</th>
+          <th class="text-center">POs</th><th class="text-center">Invoices</th><th class="text-center">Aliases</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in vendors %}
+        <tr>
+          <td>
+            <a href="{% url 'vendors:vendor_detail' v.pk %}" class="text-decoration-none" style="color:var(--ap-primary);font-weight:500">
+              {{ v.code }}
+            </a>
+          </td>
+          <td>
+            <a href="{% url 'vendors:vendor_detail' v.pk %}" class="text-decoration-none" style="color:var(--ap-text-primary)">
+              {{ v.name|truncatechars:45 }}
+            </a>
+          </td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ v.country|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ v.currency|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ v.tax_id|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ v.payment_terms|default:"—" }}</td>
+          <td class="text-center">
+            {% if v.po_count %}<span class="ap-badge ap-badge-info">{{ v.po_count }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-center">
+            {% if v.invoice_count %}<span class="ap-badge ap-badge-primary">{{ v.invoice_count }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-center">
+            {% if v.alias_count %}<span class="text-muted">{{ v.alias_count }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9">
+          <div class="ap-empty-state">
+            <i class="bi bi-building"></i>
+            <div class="ap-empty-state-label">No vendors found</div>
+          </div>
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}
