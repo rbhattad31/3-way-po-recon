@@ -92,6 +92,7 @@ class LLMClient:
         messages: List[LLMMessage],
         tools: Optional[List[ToolSpec]] = None,
         tool_choice: str = "auto",
+        response_format: Optional[Dict[str, Any]] = None,
     ) -> LLMResponse:
         """Send a chat-completion request and return a structured response."""
         api_messages = self._build_messages(messages)
@@ -101,6 +102,9 @@ class LLMClient:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+
+        if response_format:
+            kwargs["response_format"] = response_format
 
         if tools:
             kwargs["tools"] = [self._tool_to_dict(t) for t in tools]

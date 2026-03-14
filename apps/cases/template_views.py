@@ -640,6 +640,7 @@ def case_decide(request, pk):
             return redirect("cases:case_agent_view", pk=pk)
 
     # If there's a review assignment, delegate to the review workflow
+    assignment = None
     recon_result = case.reconciliation_result
     if recon_result:
         assignment = (

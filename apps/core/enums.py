@@ -65,6 +65,7 @@ class AgentRunStatus(models.TextChoices):
 
 
 class AgentType(models.TextChoices):
+    INVOICE_EXTRACTION = "INVOICE_EXTRACTION", "Invoice Extraction"
     INVOICE_UNDERSTANDING = "INVOICE_UNDERSTANDING", "Invoice Understanding"
     PO_RETRIEVAL = "PO_RETRIEVAL", "PO Retrieval"
     GRN_RETRIEVAL = "GRN_RETRIEVAL", "GRN Retrieval"
@@ -177,6 +178,9 @@ class AuditEventType(models.TextChoices):
     CASE_CLOSED = "CASE_CLOSED", "Case Closed"
     CASE_REJECTED = "CASE_REJECTED", "Case Rejected"
     CASE_REPROCESSED = "CASE_REPROCESSED", "Case Reprocessed"
+    CASE_ESCALATED = "CASE_ESCALATED", "Case Escalated"
+    CASE_FAILED = "CASE_FAILED", "Case Failed"
+    CASE_STATUS_CHANGED = "CASE_STATUS_CHANGED", "Case Status Changed"
     COMMENT_ADDED = "COMMENT_ADDED", "Comment Added"
     # Review lifecycle events
     REVIEWER_ASSIGNED = "REVIEWER_ASSIGNED", "Reviewer Assigned"
