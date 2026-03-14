@@ -1,0 +1,58 @@
+{# ═══════════ Agent Trace Explorer — Dedicated Governance Component ═══════════ #}
+{# Included from agent_performance.html when is_extended is true #}
+
+<div class="ap-section-card mb-4" id="traceExplorerSection">
+  <div class="ap-section-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-diagram-3-fill text-primary me-2"></i>Agent Trace Explorer</span>
+    <div class="d-flex gap-2 align-items-center">
+      <input type="text" id="traceExplorerSearch" class="form-control form-control-sm"
+             placeholder="Search by trace ID, agent, invoice…" style="width:240px">
+      <select id="traceExplorerStatusFilter" class="form-select form-select-sm" style="width:130px">
+        <option value="">All Statuses</option>
+        {% for val, label in agent_statuses %}
+        <option value="{{ val }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-sm btn-outline-primary" onclick="window.TraceExplorer.refresh()">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
+  </div>
+  <div class="ap-section-body p-0">
+    <div class="row g-0" style="min-height:520px">
+      {# Left panel: run list #}
+      <div class="col-md-4 border-end">
+        {# Governance indicator badges #}
+        <div class="d-flex flex-wrap gap-1 p-2 border-bottom" id="traceListBadges">
+          <span class="badge bg-primary bg-opacity-10 text-primary te-count-badge">
+            <i class="bi bi-list-ul me-1"></i><span id="teRunCount">0</span> runs
+          </span>
+          <span class="badge bg-success bg-opacity-10 text-success te-count-badge">
+            <i class="bi bi-diagram-3 me-1"></i><span id="teTracedCount">0</span> traced
+          </span>
+          <span class="badge bg-warning bg-opacity-10 text-warning te-count-badge">
+            <i class="bi bi-exclamation-triangle me-1"></i><span id="teNoTraceCount">0</span> untraced
+          </span>
+        </div>
+        <div id="traceExplorerRunList" class="te-run-list">
+          <div class="text-center text-muted py-4" style="font-size:.82rem">
+            <i class="bi bi-arrow-clockwise d-block mb-1" style="font-size:1.2rem;opacity:.3"></i>
+            Loading trace runs…
+          </div>
+        </div>
+      </div>
+      {# Right panel: detail #}
+      <div class="col-md-8">
+        <div id="traceExplorerDetail" class="p-3">
+          <div class="text-center text-muted py-5">
+            <i class="bi bi-diagram-3 d-block mb-2" style="font-size:2rem;opacity:.3"></i>
+            <span style="font-size:.85rem">Select an agent run to explore its execution trace</span>
+            <div class="mt-2" style="font-size:.75rem;color:var(--bs-secondary-color)">
+              View full timeline, tool calls, decisions, span tree, and governance metadata
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

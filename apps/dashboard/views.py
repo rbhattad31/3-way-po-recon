@@ -13,6 +13,7 @@ from apps.core.enums import (
     CaseStatus,
     ProcessingPath,
     StageStatus,
+    UserRole,
 )
 from apps.dashboard.services import DashboardService
 
@@ -20,11 +21,14 @@ from apps.dashboard.services import DashboardService
 @login_required
 def command_center(request):
     """Agentic AP Command Center — AI Operations dashboard."""
-    return render(request, "dashboard/agentic_command_center.html")
+    user_role = getattr(request.user, "role", "")
+    return render(request, "dashboard/agentic_command_center.html", {
+        "user_role": user_role,
+    })
 
 
 @login_required
-def index(request):
+def analytics(request):
     summary = DashboardService.get_summary(user=request.user)
     recent_activity = DashboardService.get_recent_activity(limit=15, user=request.user)
     return render(request, "dashboard/index.html", {
@@ -171,4 +175,20 @@ def agent_monitor(request):
         "selected_path": path_filter or "",
         "selected_status": status_filter or "",
         "selected_priority": priority_filter or "",
+    })
+
+
+@login_required
+def agent_performance(request):
+    """Agent Performance Command Center — AI observability & governance dashboard."""
+    user_role = getattr(request.user, "role", "")
+    is_governance = user_role in (UserRole.ADMIN, UserRole.AUDITOR)
+    is_extended = user_role in (UserRole.ADMIN, UserRole.AUDITOR, UserRole.FINANCE_MANAGER)
+
+    return render(request, "dashboard/agent_performance.html", {
+        "user_role": user_role,
+        "is_governance": is_governance,
+        "is_extended": is_extended,
+        "agent_types": AgentType.choices,
+        "agent_statuses": AgentRunStatus.choices,
     })

@@ -1,0 +1,188 @@
+{# ═══════════ Governance Widgets — Dedicated Observability Panel ═══════════ #}
+{# Included from agent_performance.html when is_governance is true #}
+
+<div class="ap-governance-section mb-4" id="governanceWidgetsSection">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div class="d-flex align-items-center">
+      <i class="bi bi-shield-lock-fill text-primary me-2" style="font-size:1.2rem"></i>
+      <h5 class="fw-bold mb-0">Governance &amp; Access Observability</h5>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+      <select id="govRoleFilter" class="form-select form-select-sm" style="width:150px">
+        <option value="">All Roles</option>
+        <option value="ADMIN">Admin</option>
+        <option value="AP_PROCESSOR">AP Processor</option>
+        <option value="REVIEWER">Reviewer</option>
+        <option value="FINANCE_MANAGER">Finance Manager</option>
+        <option value="AUDITOR">Auditor</option>
+      </select>
+      <input type="text" id="govPermFilter" class="form-control form-control-sm"
+             placeholder="Filter permission…" style="width:170px">
+      <button class="btn btn-sm btn-outline-primary" onclick="window.GovWidgets.refresh()">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
+  </div>
+
+  {# ── Governance KPI Strip ── #}
+  <div class="row g-3 mb-4" id="govKpiStrip">
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ap-gov-stat">
+        <span class="ap-gov-val text-primary" id="govTraceCoverage">—</span>
+        <span class="ap-gov-label">Trace Coverage</span>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ap-gov-stat">
+        <span class="ap-gov-val text-info" id="govPermCompliance">—</span>
+        <span class="ap-gov-label">Perm Compliance</span>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ap-gov-stat">
+        <span class="ap-gov-val text-success" id="govAccessGranted">—</span>
+        <span class="ap-gov-label">Access Granted</span>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ap-gov-stat">
+        <span class="ap-gov-val text-danger" id="govAccessDenied">—</span>
+        <span class="ap-gov-label">Access Denied</span>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ap-gov-stat">
+        <span class="ap-gov-val text-purple" id="govDecisionCov">—</span>
+        <span class="ap-gov-label">Decision Coverage</span>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ap-gov-stat">
+        <span class="ap-gov-val text-cyan" id="govRecCov">—</span>
+        <span class="ap-gov-label">Rec Coverage</span>
+      </div>
+    </div>
+  </div>
+
+  {# ── Row 2: Permission Activity Chart + Access by Role ── #}
+  <div class="row g-4 mb-4">
+    <div class="col-lg-7">
+      <div class="ap-section-card h-100">
+        <div class="ap-section-header">
+          <i class="bi bi-graph-up text-primary me-2"></i>Permission Activity Over Time
+        </div>
+        <div class="ap-section-body">
+          <canvas id="chartPermActivity" height="260"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="ap-section-card h-100">
+        <div class="ap-section-header">
+          <i class="bi bi-people-fill text-primary me-2"></i>Access by Role
+        </div>
+        <div class="ap-section-body">
+          <canvas id="chartAccessByRole" height="260"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Row 3: Top Permissions + Permission Source ── #}
+  <div class="row g-4 mb-4">
+    <div class="col-lg-7">
+      <div class="ap-section-card h-100">
+        <div class="ap-section-header">
+          <i class="bi bi-key-fill text-primary me-2"></i>Top Permissions Checked
+        </div>
+        <div class="ap-section-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 ap-dense-table">
+              <thead>
+                <tr>
+                  <th>Permission</th>
+                  <th class="text-center">Checks</th>
+                  <th class="text-center">Denied</th>
+                  <th class="text-center">Denial %</th>
+                </tr>
+              </thead>
+              <tbody id="govTopPermsBody">
+                <tr><td colspan="4" class="text-center text-muted py-3">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="ap-section-card h-100">
+        <div class="ap-section-header">
+          <i class="bi bi-shield-fill-check text-primary me-2"></i>Permission Sources
+        </div>
+        <div class="ap-section-body">
+          <canvas id="chartPermSource" height="240"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Row 4: Access Events Table ── #}
+  <div class="ap-section-card mb-4">
+    <div class="ap-section-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-shield-exclamation text-danger me-2"></i>Access Events Log</span>
+      <span class="badge bg-secondary bg-opacity-25 text-secondary" style="font-size:.65rem" id="govAccessTotal">—</span>
+    </div>
+    <div class="ap-section-body p-0">
+      <div class="table-responsive" style="max-height:340px;overflow-y:auto">
+        <table class="table table-sm table-hover mb-0 ap-dense-table">
+          <thead class="sticky-top bg-white">
+            <tr>
+              <th>Time</th>
+              <th>Actor</th>
+              <th>Role</th>
+              <th>Permission</th>
+              <th>Source</th>
+              <th class="text-center">Access</th>
+              <th>Trace</th>
+              <th>Entity</th>
+            </tr>
+          </thead>
+          <tbody id="govAccessEventsBody">
+            <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── Row 5: Governance Health Table ── #}
+  <div class="ap-section-card mb-4">
+    <div class="ap-section-header">
+      <i class="bi bi-heart-pulse text-primary me-2"></i>Run Governance Health
+    </div>
+    <div class="ap-section-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 ap-dense-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th class="text-center">Total</th>
+              <th class="text-center">Trace %</th>
+              <th class="text-center">Decision %</th>
+              <th class="text-center">Rec %</th>
+              <th class="text-center">Perm %</th>
+              <th class="text-center">Missing Trace</th>
+              <th class="text-center">Missing Decision</th>
+              <th class="text-center">Failed</th>
+              <th class="text-center">Escalated</th>
+              <th class="text-center">Health</th>
+            </tr>
+          </thead>
+          <tbody id="govHealthBody">
+            <tr><td colspan="11" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

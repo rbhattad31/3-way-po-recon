@@ -113,15 +113,30 @@ def create_users():
 def create_agent_definitions(admin):
     agents = [
         {
+            "agent_type": AgentType.INVOICE_EXTRACTION,
+            "name": "Invoice Extraction Agent",
+            "description": (
+                "Extracts structured invoice data from OCR text using GPT-4o. "
+                "Runs immediately after Azure Document Intelligence OCR as step 2 "
+                "of the extraction pipeline. Returns structured JSON with header "
+                "fields and line items."
+            ),
+            "config_json": {
+                "allowed_tools": [],
+                "temperature": 0.0,
+                "response_format": "json_object",
+            },
+        },
+        {
             "agent_type": AgentType.INVOICE_UNDERSTANDING,
             "name": "Invoice Understanding Agent",
             "description": (
-                "Deep-dives into low-confidence extractions. Validates "
-                "extracted fields, checks for OCR errors, and confirms "
-                "vendor identity and line item accuracy."
+                "Validates extraction quality post-persistence. Uses tools to "
+                "cross-check extracted fields against PO/vendor data, identifies "
+                "OCR errors, and confirms field accuracy."
             ),
             "config_json": {
-                "allowed_tools": ["invoice_details"],
+                "allowed_tools": ["invoice_details", "po_lookup", "vendor_search"],
                 "confidence_threshold": 0.75,
             },
         },

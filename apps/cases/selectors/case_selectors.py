@@ -89,8 +89,13 @@ class CaseSelectors:
         if not user or not user.is_authenticated:
             return qs.none()
         user_role = getattr(user, "role", None)
+
+        # REVIEWER sees only cases assigned to them
+        if user_role == UserRole.REVIEWER:
+            return qs.filter(assigned_to=user)
+
         if user_role != UserRole.AP_PROCESSOR:
-            return qs  # Other roles see everything
+            return qs  # ADMIN, FINANCE_MANAGER, AUDITOR see everything
 
         from apps.reconciliation.models import ReconciliationConfig
         config = ReconciliationConfig.objects.filter(is_default=True).first()

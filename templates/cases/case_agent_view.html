@@ -75,7 +75,27 @@
       <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
       {% endif %}
     {% endif %}
+    {% has_permission "cases.assign" as can_assign_case %}
+    {% if can_assign_case %}
+    <form method="post" action="{% url 'cases:case_assign' case.pk %}" class="d-inline-flex align-items-center" style="gap:4px">
+      {% csrf_token %}
+      <select name="assigned_to" class="form-select form-select-sm" style="width:160px;font-size:.72rem;padding:2px 24px 2px 6px" onchange="this.form.submit()">
+        <option value="">— Unassigned —</option>
+        {% for rid, fname, lname, email in reviewers %}
+        <option value="{{ rid }}" {% if case.assigned_to_id == rid %}selected{% endif %}>{{ fname }} {{ lname }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% elif case.assigned_to %}
+    <span class="ap-badge ap-badge-muted" style="font-size:.68rem"><i class="bi bi-person-check me-1"></i>{{ case.assigned_to.get_full_name }}</span>
+    {% endif %}
     {% if invoice %}
+    {% has_permission "invoices.view" as can_view_invoice %}
+    {% if can_view_invoice and invoice.document_upload %}
+    <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" class="btn btn-sm btn-outline-info" title="View Invoice Document" target="_blank">
+      <i class="bi bi-file-earmark-pdf"></i>
+    </a>
+    {% endif %}
     <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Governance">
       <i class="bi bi-shield-lock"></i>
     </a>
@@ -143,6 +163,30 @@
         <div class="av-empty">
           <i class="bi bi-robot"></i>
           <div class="av-empty__text">No summary available yet. Use the chat below to ask about this case, or switch to a tab to explore details.</div>
+        </div>
+        {% endif %}
+
+        {# ── Comment History ── #}
+        {% if review_comments %}
+        <div class="av-msg" data-category="overview">
+          <div class="av-avatar av-avatar--human"><i class="bi bi-chat-left-text"></i></div>
+          <div class="av-body">
+            <div class="av-header">
+              <span class="av-sender">Comment History</span>
+              <span class="ap-badge ap-badge-muted" style="font-size:.55rem">{{ review_comments|length }}</span>
+            </div>
+            <div class="av-text">
+              {% for rc in review_comments %}
+              <div class="d-flex justify-content-between align-items-start {% if not forloop.last %}mb-2 pb-2 border-bottom{% endif %}" style="font-size:var(--ap-font-size-sm)">
+                <div>
+                  <strong style="font-size:var(--ap-font-size-xs)">{{ rc.author.get_full_name|default:"System" }}</strong>
+                  <div style="margin-top:2px">{% firstof rc.body rc.content "" %}</div>
+                </div>
+                <span class="text-muted flex-shrink-0 ms-3" style="font-size:.6rem;white-space:nowrap">{{ rc.created_at|timesince }} ago</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
         </div>
         {% endif %}
 
@@ -495,9 +539,10 @@
       {% endif %}
       {% endfor %}
 
-      {# ── System Activity (audit, mode_resolution, case events only) ── #}
+      {# ── System Activity (audit, mode_resolution, case events only — exclude human actions) ── #}
       {% for event in timeline %}
       {% if event.event_category == 'audit' or event.event_category == 'mode_resolution' or event.event_category == 'case' %}
+      {% if event.event_type != 'CASE_ASSIGNED' and event.event_type != 'COMMENT_ADDED' %}
       <div class="av-msg" data-category="system">
         <div class="av-avatar av-avatar--system">
           {% if event.event_category == "mode_resolution" %}<i class="bi bi-diagram-3"></i>
@@ -524,6 +569,7 @@
           {% endif %}
         </div>
       </div>
+      {% endif %}
       {% elif event.event_category == 'review' or event.event_category == 'review_action' or event.event_category == 'review_decision' %}
       <div class="av-msg" data-category="human">
         <div class="av-avatar av-avatar--human"><i class="bi bi-person-check"></i></div>
@@ -533,6 +579,34 @@
             <span class="av-label av-label--human" style="font-size:.55rem">review</span>
             <span class="av-time">{{ event.timestamp|timesince }} ago</span>
           </div>
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
+
+      {# ── Human Actions from timeline (assignment, comments) ── #}
+      {% for event in timeline %}
+      {% if event.event_type == 'CASE_ASSIGNED' or event.event_type == 'COMMENT_ADDED' %}
+      <div class="av-msg" data-category="human">
+        <div class="av-avatar av-avatar--human">
+          {% if event.event_type == 'CASE_ASSIGNED' %}<i class="bi bi-person-plus"></i>
+          {% else %}<i class="bi bi-chat-left-text"></i>{% endif %}
+        </div>
+        <div class="av-body">
+          <div class="av-header">
+            <span class="av-sender">{{ event.description|default:event.event_type }}</span>
+            <span class="av-label av-label--human" style="font-size:.55rem">
+              {% if event.event_type == 'CASE_ASSIGNED' %}assign{% else %}comment{% endif %}
+            </span>
+            <span class="av-time">{{ event.timestamp|timesince }} ago</span>
+          </div>
+          {% if event.status_change %}
+          <div style="font-size:var(--ap-font-size-xs);margin-top:.15rem">
+            <span class="text-muted">{{ event.status_change.before }}</span>
+            <i class="bi bi-arrow-right" style="font-size:.5rem;margin:0 .25rem"></i>
+            <span style="font-weight:600">{{ event.status_change.after }}</span>
+          </div>
+          {% endif %}
         </div>
       </div>
       {% endif %}
@@ -790,7 +864,7 @@
       {% endif %}
 
       {# Comment form #}
-      {% has_permission "cases.edit" as can_comment_case %}
+      {% has_permission "cases.add_comment" as can_comment_case %}
       {% if can_comment_case %}
       {% if show_actions or case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" or case.status == "NEW" or case.status == "IN_PROGRESS" or case.status == "FAILED" %}
       <form method="post" action="{% url 'cases:case_add_comment' case.pk %}" class="av-review-panel__form">
@@ -819,30 +893,6 @@
         {% endfor %}
       </div>
       {% endif %}
-    </div>
-
-    {# Right: comment history #}
-    <div class="av-review-panel__right">
-      <div class="av-review-panel__right-header">
-        <i class="bi bi-chat-left-text me-1"></i>Comment History
-        {% if review_comments %}<span class="ap-badge ap-badge-muted" style="font-size:.55rem">{{ review_comments|length }}</span>{% endif %}
-      </div>
-      <div class="av-review-comments">
-        {% for rc in review_comments %}
-        <div class="av-review-comment">
-          <div class="d-flex justify-content-between align-items-center">
-            <strong style="font-size:var(--ap-font-size-xs)">{{ rc.author.get_full_name|default:"System" }}</strong>
-            <span style="font-size:.6rem;color:var(--ap-text-muted)">{{ rc.created_at|timesince }} ago</span>
-          </div>
-          <div class="av-review-comment__body">{% firstof rc.body rc.content "" %}</div>
-        </div>
-        {% empty %}
-        <div class="av-review-comments__empty">
-          <i class="bi bi-chat-dots"></i>
-          <span>No comments yet</span>
-        </div>
-        {% endfor %}
-      </div>
     </div>
   </div>
 </div>

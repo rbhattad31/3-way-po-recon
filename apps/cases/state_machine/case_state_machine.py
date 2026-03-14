@@ -6,7 +6,11 @@ Each transition specifies:
 - trigger_type: who/what can trigger it (SYSTEM, DETERMINISTIC, AGENT, HUMAN)
 """
 
+import logging
+
 from apps.core.enums import CaseStatus, PerformedByType
+
+logger = logging.getLogger(__name__)
 
 # (from_status, to_status, allowed_trigger_types)
 CASE_TRANSITIONS = [
@@ -116,12 +120,16 @@ class CaseStateMachine:
     def transition(case, to_status: str, trigger_type: str = "") -> None:
         """
         Transition case to new status. Raises ValueError if transition is not allowed.
+        Logs an AuditEvent for significant transitions (terminal states + key milestones).
 
         Args:
             case: APCase instance
             to_status: Target CaseStatus value
             trigger_type: PerformedByType value (optional validation)
         """
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+
         from_status = case.status
         if not CaseStateMachine.can_transition(from_status, to_status, trigger_type):
             raise ValueError(
@@ -130,3 +138,31 @@ class CaseStateMachine:
             )
         case.status = to_status
         case.save(update_fields=["status", "updated_at"])
+
+        # Map terminal / significant statuses to audit event types
+        _EVENT_MAP = {
+            CaseStatus.CLOSED: AuditEventType.CASE_CLOSED,
+            CaseStatus.REJECTED: AuditEventType.CASE_REJECTED,
+            CaseStatus.ESCALATED: AuditEventType.CASE_ESCALATED,
+            CaseStatus.FAILED: AuditEventType.CASE_FAILED,
+        }
+
+        event_type = _EVENT_MAP.get(to_status)
+        if event_type:
+            try:
+                AuditService.log_event(
+                    entity_type="APCase",
+                    entity_id=case.pk,
+                    event_type=event_type,
+                    description=(
+                        f"Case {case.pk} transitioned {from_status} → {to_status} "
+                        f"(trigger: {trigger_type or 'unspecified'})"
+                    ),
+                    invoice_id=case.invoice_id,
+                    case_id=case.pk,
+                    status_before=from_status,
+                    status_after=to_status,
+                    metadata={"trigger_type": trigger_type},
+                )
+            except Exception:
+                logger.exception("Failed to log audit event for case %s transition", case.pk)

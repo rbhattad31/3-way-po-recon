@@ -1,4 +1,5 @@
 """Agent template views — reference pages for end users."""
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 
@@ -29,8 +30,8 @@ _STAGE_META = {
     CaseStageType.EXTRACTION: {
         "icon": "bi-file-earmark-text",
         "color": "primary",
-        "performer": "System (Azure DI + GPT-4o)",
-        "description": "Azure Document Intelligence OCR followed by GPT-4o structured extraction.",
+        "performer": "Invoice Extraction Agent (OCR + GPT-4o) + Invoice Understanding Agent (low confidence)",
+        "description": "Azure Document Intelligence OCR followed by the Invoice Extraction Agent for structured field extraction. If confidence is below threshold, the Invoice Understanding Agent validates the output.",
     },
     CaseStageType.PATH_RESOLUTION: {
         "icon": "bi-signpost-split",
@@ -361,6 +362,89 @@ def agent_reference(request):
         {"step": "5", "rule": "Default Deny", "description": "If no rule above matched, the action is denied.", "icon": "bi-slash-circle", "color": "secondary"},
     ]
 
+    # ---- Invoice extraction pipeline ----
+    confidence_threshold_raw = getattr(settings, "EXTRACTION_CONFIDENCE_THRESHOLD", 0.75)
+    confidence_threshold = int(confidence_threshold_raw * 100)  # Display as percentage
+    extraction_pipeline = [
+        {
+            "step": 1,
+            "name": "Document Upload",
+            "icon": "bi-cloud-arrow-up",
+            "color": "secondary",
+            "performer": "User / System",
+            "description": "Invoice PDF uploaded via the Documents UI or API. A DocumentUpload record is created and the file is stored.",
+        },
+        {
+            "step": 2,
+            "name": "OCR (Azure Document Intelligence)",
+            "icon": "bi-eye",
+            "color": "info",
+            "performer": "Azure Document Intelligence",
+            "description": "The uploaded PDF is sent to Azure Document Intelligence for optical character recognition. Raw text and layout data are returned.",
+        },
+        {
+            "step": 3,
+            "name": "Invoice Extraction Agent",
+            "icon": "bi-robot",
+            "color": "primary",
+            "performer": "Invoice Extraction Agent (GPT-4o)",
+            "description": "The OCR text is passed to the Invoice Extraction Agent which uses GPT-4o with response_format=json_object and temperature=0 to extract structured fields (invoice number, date, vendor, line items, totals). Full agent traceability is recorded.",
+        },
+        {
+            "step": 4,
+            "name": "Parse & Normalize",
+            "icon": "bi-funnel",
+            "color": "success",
+            "performer": "System (extraction_adapter)",
+            "description": "The agent's JSON output is parsed into a structured dict. Dates, amounts, and currency codes are normalized. Line items are mapped to a standard schema.",
+        },
+        {
+            "step": 5,
+            "name": "Validation & Persistence",
+            "icon": "bi-check2-square",
+            "color": "warning",
+            "performer": "System (extraction tasks)",
+            "description": "Extracted data is validated (required fields, amount consistency). An Invoice record and InvoiceLineItems are created in the database. Extraction confidence score is computed.",
+        },
+        {
+            "step": 6,
+            "name": "AP Case Creation",
+            "icon": "bi-briefcase",
+            "color": "dark",
+            "performer": "System (CaseCreationService)",
+            "description": "An AP Case is created linking the invoice. The case orchestrator begins driving the invoice through its processing path.",
+        },
+        {
+            "step": 7,
+            "name": "Invoice Understanding Agent",
+            "icon": "bi-lightbulb",
+            "color": "purple",
+            "performer": "Invoice Understanding Agent (conditional)",
+            "description": f"Only triggered when extraction confidence is below {confidence_threshold}%. Uses tools (invoice_details, vendor_search) to validate and cross-check the extracted data. Runs within the case orchestrator's EXTRACTION stage.",
+        },
+    ]
+
+    # ---- Governance API endpoints ----
+    governance_endpoints = [
+        {"method": "GET", "path": "/api/v1/governance/invoices/<id>/audit-history/", "description": "Full audit trail for an invoice — every event from upload to close.", "access": "ADMIN, AUDITOR, FINANCE_MANAGER"},
+        {"method": "GET", "path": "/api/v1/governance/invoices/<id>/agent-trace/", "description": "All agent runs, steps, tool calls, and decisions for an invoice.", "access": "ADMIN, AUDITOR"},
+        {"method": "GET", "path": "/api/v1/governance/invoices/<id>/recommendations/", "description": "Agent recommendations with acceptance tracking.", "access": "ADMIN, AUDITOR, FINANCE_MANAGER"},
+        {"method": "GET", "path": "/api/v1/governance/invoices/<id>/timeline/", "description": "Unified chronological timeline with 8 event categories and RBAC badges.", "access": "ADMIN, AUDITOR, FINANCE_MANAGER"},
+        {"method": "GET", "path": "/api/v1/governance/invoices/<id>/access-history/", "description": "Who accessed this invoice, when, and what permission was checked.", "access": "ADMIN, AUDITOR"},
+        {"method": "GET", "path": "/api/v1/governance/cases/<id>/stage-timeline/", "description": "Case stage-by-stage timeline with durations and performers.", "access": "ADMIN, AUDITOR, FINANCE_MANAGER"},
+        {"method": "GET", "path": "/api/v1/governance/permission-denials/", "description": "Platform-wide list of permission denials for security monitoring.", "access": "ADMIN, AUDITOR"},
+        {"method": "GET", "path": "/api/v1/governance/rbac-activity/", "description": "All role/permission changes: assignments, removals, overrides.", "access": "ADMIN, AUDITOR"},
+        {"method": "GET", "path": "/api/v1/governance/agent-performance/", "description": "Aggregate agent performance: run counts, success rates, avg duration.", "access": "ADMIN, AUDITOR"},
+    ]
+
+    # ---- Case management audit events ----
+    case_event_values = {
+        "CASE_ASSIGNED", "CASE_CLOSED", "CASE_REJECTED", "CASE_REPROCESSED",
+        "CASE_ESCALATED", "CASE_FAILED", "CASE_STATUS_CHANGED",
+        "COMMENT_ADDED", "REVIEWER_ASSIGNED", "REVIEW_STARTED",
+    }
+    case_events = [e for e in audit_event_types if e["value"] in case_event_values]
+
     return render(request, "agents/reference.html", {
         "agents_info": agents_info,
         "tools_info": tools_info,
@@ -371,6 +455,9 @@ def agent_reference(request):
         "terminal_states": terminal_states,
         "non_po_checks": _NON_PO_CHECKS,
         "max_tool_rounds": 6,
+        # Invoice pipeline
+        "extraction_pipeline": extraction_pipeline,
+        "confidence_threshold": confidence_threshold,
         # Traceability
         "trace_field_groups": trace_field_groups,
         "trace_propagation": trace_propagation,
@@ -379,6 +466,9 @@ def agent_reference(request):
         "metrics_categories": metrics_categories,
         "business_events": business_events,
         "rbac_events": rbac_events,
+        "case_events": case_events,
+        # Governance
+        "governance_endpoints": governance_endpoints,
         # RBAC
         "rbac_permission_classes": rbac_permission_classes,
         "rbac_cbv_mixins": rbac_cbv_mixins,
