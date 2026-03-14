@@ -3,9 +3,26 @@
  * Handles feed filtering, copilot chat (reuses copilot-panel logic), context panel toggles.
  * Uses window.CASE_CONTEXT injected by the template.
  */
+
+// ── Chat Panel Toggle (outside DOMContentLoaded so template onclick can call it) ──
+function toggleChatPanel() {
+  var panel = document.getElementById('avChatPanel');
+  var overlay = document.getElementById('avChatOverlay');
+  var btn = document.getElementById('avChatToggle');
+  if (!panel) return;
+  var isOpen = panel.classList.toggle('open');
+  if (overlay) overlay.classList.toggle('open', isOpen);
+  if (btn) btn.classList.toggle('active', isOpen);
+  if (isOpen) {
+    var input = document.getElementById('avInput');
+    if (input) setTimeout(function() { input.focus(); }, 350);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function () {
 
   var feedScroll = document.getElementById('feedScroll');
+  var chatMessages = document.getElementById('avChatMessages');
   var inputEl = document.getElementById('avInput');
   var sendBtn = document.getElementById('avSend');
   var promptChips = document.querySelectorAll('.av-prompt-chip');
@@ -23,18 +40,24 @@ document.addEventListener('DOMContentLoaded', function () {
     var shown = 0;
 
     if (filter === 'overview') {
-      // Show overview block, hide all feed messages
+      // Show overview block, hide feed messages but NOT overview's own children
       if (overviewEl) overviewEl.style.display = '';
-      msgs.forEach(function (msg) { msg.style.display = 'none'; });
+      msgs.forEach(function (msg) {
+        if (!overviewEl || !overviewEl.contains(msg)) {
+          msg.style.display = 'none';
+        }
+      });
       if (eventCountEl) eventCountEl.textContent = '';
       return;
     }
 
-    // Hide overview, show feed messages
+    // Hide overview, show matching feed messages
     if (overviewEl) overviewEl.style.display = 'none';
     msgs.forEach(function (msg) {
+      if (overviewEl && overviewEl.contains(msg)) return;
       var cat = msg.dataset.category || '';
-      if (filter === 'all' || cat === filter) {
+      var cats = cat.split(/\s+/);
+      if (filter === 'all' || cats.indexOf(filter) !== -1) {
         msg.style.display = '';
         shown++;
       } else {
@@ -90,7 +113,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var text = inputEl.value.trim();
     if (!text) return;
 
-    appendFeedMessage('user', 'You', text);
+    appendChatMessage('user', 'You', text);
     inputEl.value = '';
     inputEl.style.height = 'auto';
 
@@ -104,36 +127,31 @@ document.addEventListener('DOMContentLoaded', function () {
     setTimeout(function () {
       removeEl(typingEl);
       var response = generateResponse(text);
-      appendFeedMessage('assistant', 'Copilot', response, true);
+      appendChatMessage('assistant', 'Copilot', response, true);
     }, 300 + Math.random() * 500);
   }
 
   // ---------------------------------------------------------------
-  // 4. Append Message to Feed
+  // 4. Append Message to Chat
   // ---------------------------------------------------------------
-  function appendFeedMessage(role, sender, content, isHtml) {
+  function appendChatMessage(role, sender, content, isHtml) {
+    // Hide welcome message on first interaction
+    var welcome = chatMessages ? chatMessages.querySelector('.av-chat__welcome') : null;
+    if (welcome) welcome.style.display = 'none';
+
     var msg = document.createElement('div');
-    msg.className = 'av-msg';
-    msg.dataset.category = role === 'user' ? 'human' : 'agent';
+    msg.className = 'av-chat-msg av-chat-msg--' + role;
 
-    var avatarClass = role === 'user' ? 'av-avatar--human' : 'av-avatar--agent';
-    var avatarIcon = role === 'user' ? 'bi-person' : 'bi-stars';
-    var labelClass = role === 'user' ? 'av-label--human' : 'av-label--agent';
-    var labelText = role === 'user' ? 'You' : 'AI';
+    if (role === 'user') {
+      msg.innerHTML = '<div class="av-chat-msg__text">' + escapeHtml(content) + '</div>';
+    } else {
+      msg.innerHTML =
+        '<div class="av-chat-msg__icon"><i class="bi bi-stars"></i></div>' +
+        '<div class="av-chat-msg__text">' + (isHtml ? content : escapeHtml(content)) + '</div>';
+    }
 
-    var html = '<div class="av-avatar ' + avatarClass + '"><i class="bi ' + avatarIcon + '"></i></div>' +
-      '<div class="av-body">' +
-      '<div class="av-header">' +
-      '<span class="av-sender">' + escapeHtml(sender) + '</span>' +
-      '<span class="av-label ' + labelClass + '">' + labelText + '</span>' +
-      '<span class="av-time">just now</span>' +
-      '</div>' +
-      '<div class="av-text">' + (isHtml ? content : escapeHtml(content)) + '</div>' +
-      '</div>';
-
-    msg.innerHTML = html;
-    feedScroll.appendChild(msg);
-    feedScroll.scrollTop = feedScroll.scrollHeight;
+    chatMessages.appendChild(msg);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
   // ---------------------------------------------------------------
@@ -141,11 +159,11 @@ document.addEventListener('DOMContentLoaded', function () {
   // ---------------------------------------------------------------
   function showTyping() {
     var div = document.createElement('div');
-    div.className = 'av-msg';
-    div.innerHTML = '<div class="av-avatar av-avatar--agent"><i class="bi bi-stars"></i></div>' +
-      '<div class="av-body"><div class="av-typing"><span></span><span></span><span></span></div></div>';
-    feedScroll.appendChild(div);
-    feedScroll.scrollTop = feedScroll.scrollHeight;
+    div.className = 'av-chat-msg av-chat-msg--assistant';
+    div.innerHTML = '<div class="av-chat-msg__icon"><i class="bi bi-stars"></i></div>' +
+      '<div class="av-chat-msg__text"><div class="av-typing"><span></span><span></span><span></span></div></div>';
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
     return div;
   }
 
@@ -161,24 +179,14 @@ document.addEventListener('DOMContentLoaded', function () {
     var inv = ctx.invoice || {};
     var po = ctx.purchase_order;
 
-    if (match(q, ['invoice number', 'invoice no', 'invoice #'])) return field('Invoice Number', inv.invoice_number);
-    if (match(q, ['invoice date'])) return field('Invoice Date', inv.invoice_date);
-    if (match(q, ['total amount', 'invoice amount', 'how much', 'amount'])) {
-      return field('Total Amount', inv.total_amount ? (inv.currency + ' ' + inv.total_amount) : 'N/A');
-    }
-    if (match(q, ['vendor', 'supplier'])) return field('Vendor', inv.vendor_name);
-    if (match(q, ['po number', 'purchase order number'])) {
-      return field('PO Number', po ? po.po_number : (inv.po_number || 'No PO linked'));
-    }
-    if (match(q, ['status', 'case status'])) return field('Status', ctx.status);
-    if (match(q, ['path', 'processing path'])) return field('Path', ctx.processing_path);
-    if (match(q, ['priority'])) return field('Priority', ctx.priority);
-    if (match(q, ['assigned'])) return field('Assigned To', ctx.assigned_to || 'Unassigned');
-    if (match(q, ['confidence'])) {
-      return field('Confidence', inv.extraction_confidence ? (Math.round(inv.extraction_confidence * 100) + '%') : 'N/A');
-    }
-
-    if (match(q, ['line item', 'items'])) {
+    // Broad keyword matching — check each topic with multiple synonyms/partial words
+    if (match(q, ['exception', 'issue', 'problem', 'error', 'discrepan', 'mismatch', 'variance', 'wrong', 'flag', 'why flag', 'what went'])) return buildExceptions();
+    if (match(q, ['risk', 'concern', 'worry', 'danger'])) return buildRisks();
+    if (match(q, ['stage', 'pipeline', 'step', 'process', 'workflow'])) return buildStages();
+    if (match(q, ['decision', 'rationale', 'reasoning', 'why did', 'how was'])) return buildDecisions();
+    if (match(q, ['verify', 'check', 'what should', 'what do i', 'next step', 'action', 'to do', 'recommend'])) return buildVerify();
+    if (match(q, ['missing', 'not found', 'absent', 'lack'])) return buildMissing();
+    if (match(q, ['line item', 'items', 'line detail'])) {
       var items = inv.line_items || [];
       if (!items.length) return 'No line items found.';
       var rows = items.map(function (li, i) {
@@ -191,27 +199,46 @@ document.addEventListener('DOMContentLoaded', function () {
       });
       return '<strong>Line Items (' + items.length + '):</strong><br>' + rows.join('<br>');
     }
-
-    if (match(q, ['grn', 'goods receipt'])) {
+    if (match(q, ['invoice number', 'invoice no', 'invoice #'])) return field('Invoice Number', inv.invoice_number);
+    if (match(q, ['invoice date'])) return field('Invoice Date', inv.invoice_date);
+    if (match(q, ['total amount', 'invoice amount', 'how much', 'amount', 'value', 'worth'])) {
+      return field('Total Amount', inv.total_amount ? (inv.currency + ' ' + inv.total_amount) : 'N/A');
+    }
+    if (match(q, ['vendor', 'supplier', 'company', 'who sent', 'from whom'])) return field('Vendor', inv.vendor_name);
+    if (match(q, ['po number', 'purchase order'])) {
+      return field('PO Number', po ? po.po_number : (inv.po_number || 'No PO linked'));
+    }
+    if (match(q, ['status', 'case status', 'current state'])) return field('Status', ctx.status);
+    if (match(q, ['path', 'processing path', 'match type', 'matching'])) return field('Path', ctx.processing_path);
+    if (match(q, ['priority'])) return field('Priority', ctx.priority);
+    if (match(q, ['assigned', 'who is'])) return field('Assigned To', ctx.assigned_to || 'Unassigned');
+    if (match(q, ['confidence', 'accuracy', 'extraction'])) {
+      return field('Confidence', inv.extraction_confidence ? (Math.round(inv.extraction_confidence * 100) + '%') : 'N/A');
+    }
+    if (match(q, ['grn', 'goods receipt', 'delivery'])) {
       var grns = ctx.grns || [];
       if (!grns.length) return 'No GRNs linked.';
       return '<strong>GRNs (' + grns.length + '):</strong><br>' +
         grns.map(function (g) { return g.grn_number + (g.receipt_date ? ' (' + g.receipt_date + ')' : ''); }).join('<br>');
     }
+    if (match(q, ['agent', 'ai', 'bot'])) {
+      var runs = ctx.agent_runs || [];
+      if (!runs.length) return 'No agent runs recorded.';
+      return '<strong>Agent Runs (' + runs.length + '):</strong><br>' + runs.map(function (r) {
+        var icon = r.status === 'COMPLETED' ? '&#9989;' : r.status === 'FAILED' ? '&#10060;' : '&#9203;';
+        var line = icon + ' <strong>' + escapeHtml(r.agent) + '</strong>: ' + r.status;
+        if (r.confidence) line += ' (' + Math.round(r.confidence * 100) + '% conf.)';
+        if (r.reasoning) line += '<br><em style="color:var(--ap-text-muted)">' + escapeHtml(r.reasoning) + '</em>';
+        return line;
+      }).join('<br><br>');
+    }
+    if (match(q, ['audit', 'history', 'log', 'trail', 'track'])) return buildAuditHistory();
+    if (match(q, ['system action', 'system decision', 'mode', 'resolution', 'what did system', 'automated'])) return buildSystemActions();
+    if (match(q, ['timeline', 'chronolog', 'sequence', 'what happened'])) return buildTimeline();
+    if (match(q, ['summar', 'overview', 'tell me', 'explain', 'describe', 'about this'])) return buildFullSummary();
 
-    if (match(q, ['exception', 'issue', 'problem', 'error', 'discrepanc'])) return buildExceptions();
-    if (match(q, ['stage', 'pipeline', 'step'])) return buildStages();
-    if (match(q, ['decision', 'rationale', 'reasoning'])) return buildDecisions();
-    if (match(q, ['risk'])) return buildRisks();
-    if (match(q, ['summar'])) return ctx.summary ? escapeHtml(ctx.summary) : buildSummary();
-    if (match(q, ['flag', 'why was'])) return buildFlagged();
-    if (match(q, ['verify', 'check', 'what should'])) return buildVerify();
-    if (match(q, ['missing'])) return buildMissing();
-    if (match(q, ['overview', 'tell me', 'explain', 'describe'])) return buildSummary();
-
-    return buildSummary() +
-      '<br><br><em style="color:var(--ap-text-muted)">Ask about: invoice, vendor, amount, line items, PO, GRN, ' +
-      'status, stages, decisions, exceptions, risks, or what to verify.</em>';
+    // Default: full summary with exceptions inline
+    return buildFullSummary();
   }
 
   // ---------------------------------------------------------------
@@ -229,6 +256,31 @@ document.addEventListener('DOMContentLoaded', function () {
     var issues = (ctx.exceptions || []).length + (ctx.validation_issues || []).length;
     if (issues > 0) parts.push(issues + ' issue(s) found');
     return parts.join('. ') + '.';
+  }
+
+  function buildFullSummary() {
+    var out = buildSummary();
+    var exc = ctx.exceptions || [];
+    var val = ctx.validation_issues || [];
+    if (exc.length || val.length) {
+      out += '<br><br><strong>Issues:</strong>';
+      exc.forEach(function (e) {
+        out += '<br>&#9888; <strong>[' + escapeHtml(e.severity) + ']</strong> ' +
+          escapeHtml(e.type) + (e.description ? ': ' + escapeHtml(e.description) : '');
+      });
+      val.forEach(function (v) {
+        var icon = v.status === 'FAIL' ? '&#10060;' : '&#9888;';
+        out += '<br>' + icon + ' ' + escapeHtml(v.check_name) + ': ' + escapeHtml(v.message);
+      });
+    }
+    var decs = ctx.decisions || [];
+    if (decs.length) {
+      out += '<br><br><strong>Key Decisions:</strong>';
+      decs.forEach(function (d) {
+        out += '<br>&#8226; ' + escapeHtml(d.type) + ': ' + escapeHtml(d.value);
+      });
+    }
+    return out;
   }
 
   function buildExceptions() {
@@ -316,6 +368,64 @@ document.addEventListener('DOMContentLoaded', function () {
     return '<strong>Missing:</strong><br>' + missing.map(function (m, i) { return (i + 1) + '. ' + m; }).join('<br>');
   }
 
+  function buildAuditHistory() {
+    var events = ctx.audit_events || [];
+    if (!events.length) return 'No audit history available for this case.';
+    var lines = ['<strong>Audit History</strong> (' + events.length + ' events)<br>'];
+    events.forEach(function (ev, i) {
+      var ts = ev.timestamp ? ' <span class="text-muted" style="font-size:.85em">' + escapeHtml(ev.timestamp) + '</span>' : '';
+      var actor = ev.actor && ev.actor !== 'system' ? ' by <em>' + escapeHtml(ev.actor) + '</em>' : '';
+      var sc = ev.status_change ? ' &mdash; ' + escapeHtml(ev.status_change.from || '') + ' &rarr; ' + escapeHtml(ev.status_change.to || '') : '';
+      lines.push((i + 1) + '. <strong>' + escapeHtml(ev.type || 'event') + '</strong>: ' + escapeHtml(ev.description) + actor + sc + ts);
+    });
+    return lines.join('<br>');
+  }
+
+  function buildSystemActions() {
+    var actions = ctx.system_actions || [];
+    if (!actions.length) return 'No system actions recorded for this case.';
+    var lines = ['<strong>System Actions</strong> (' + actions.length + ' actions)<br>'];
+    actions.forEach(function (ev, i) {
+      var label = ev.category === 'mode_resolution' ? 'Mode Resolution'
+                : ev.category === 'case' ? 'Case Action'
+                : ev.category === 'stage' ? 'Stage Transition'
+                : escapeHtml(ev.category);
+      var ts = ev.timestamp ? ' <span class="text-muted" style="font-size:.85em">' + escapeHtml(ev.timestamp) + '</span>' : '';
+      var sc = ev.status_change ? ' &mdash; ' + escapeHtml(ev.status_change.from || '') + ' &rarr; ' + escapeHtml(ev.status_change.to || '') : '';
+      lines.push((i + 1) + '. <strong>[' + label + ']</strong> ' + escapeHtml(ev.description) + sc + ts);
+    });
+    return lines.join('<br>');
+  }
+
+  function buildTimeline() {
+    var all = (ctx.audit_events || []).concat(ctx.system_actions || []);
+    // Also include stages and decisions
+    (ctx.stages || []).forEach(function (s) {
+      all.push({ category: 'stage', type: s.stage || s.name || '', description: s.status || '', timestamp: s.entered_at || s.timestamp || '' });
+    });
+    (ctx.decisions || []).forEach(function (d) {
+      all.push({ category: 'decision', type: d.decision_type || '', description: d.rationale || d.summary || '', timestamp: d.created_at || d.timestamp || '' });
+    });
+    if (!all.length) return 'No timeline events available for this case.';
+    // Sort chronologically
+    all.sort(function (a, b) {
+      var ta = a.timestamp || '', tb = b.timestamp || '';
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
+    var lines = ['<strong>Case Timeline</strong> (' + all.length + ' events)<br>'];
+    all.forEach(function (ev, i) {
+      var cat = ev.category === 'audit' ? 'Audit'
+              : ev.category === 'mode_resolution' ? 'Mode'
+              : ev.category === 'case' ? 'Case'
+              : ev.category === 'stage' ? 'Stage'
+              : ev.category === 'decision' ? 'Decision'
+              : escapeHtml(ev.category || 'Event');
+      var ts = ev.timestamp ? ' <span class="text-muted" style="font-size:.85em">' + escapeHtml(ev.timestamp) + '</span>' : '';
+      lines.push((i + 1) + '. <span class="badge bg-secondary">' + cat + '</span> ' + escapeHtml(ev.type || '') + (ev.description ? ' &mdash; ' + escapeHtml(ev.description) : '') + ts);
+    });
+    return lines.join('<br>');
+  }
+
   // ---------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------
@@ -377,10 +487,28 @@ function toggleContextCard(headerEl) {
 // Case Actions (reprocess etc.)
 // ---------------------------------------------------------------
 function caseAction(action) {
+  var actionsEl = document.querySelector('.av-identity__actions');
+
+  // Block approval if open exceptions / failed validations / failed stages exist
+  if (action === 'approve' && actionsEl) {
+    var openExc = parseInt(actionsEl.dataset.openExceptions || '0', 10);
+    var failedVal = parseInt(actionsEl.dataset.failedValidations || '0', 10);
+    var failedStg = parseInt(actionsEl.dataset.failedStages || '0', 10);
+    var total = openExc + failedVal + failedStg;
+    if (total > 0) {
+      var parts = [];
+      if (openExc) parts.push(openExc + ' unresolved exception(s)');
+      if (failedVal) parts.push(failedVal + ' failed validation(s)');
+      if (failedStg) parts.push(failedStg + ' failed stage(s)');
+      alert('Cannot approve this case.\n\nOpen issues:\n\u2022 ' + parts.join('\n\u2022 ') + '\n\nPlease resolve all issues before approving.');
+      return;
+    }
+  }
+
   var labels = {
     'approve': 'Approve this case',
     'reject': 'Reject this case',
-    'escalate': 'Escalate this case',
+    'reprocess': 'Reprocess this case from start',
   };
   if (!confirm('Are you sure you want to: ' + (labels[action] || action) + '?')) return;
 
@@ -392,20 +520,16 @@ function caseAction(action) {
   form.method = 'POST';
   form.style.display = 'none';
 
-  // Route approve/reject to review decide endpoint, escalate to reprocess
-  var decisionMap = { 'approve': 'APPROVED', 'reject': 'REJECTED' };
-  if (decisionMap[action] && actionsEl && actionsEl.dataset.decideUrl) {
-    form.action = actionsEl.dataset.decideUrl;
+  // All actions route to case decide endpoint
+  var decisionMap = { 'approve': 'APPROVED', 'reject': 'REJECTED', 'reprocess': 'REPROCESSED' };
+  var decideUrl = actionsEl ? actionsEl.dataset.decideUrl : '';
+  if (decisionMap[action] && decideUrl) {
+    form.action = decideUrl;
     var dec = document.createElement('input');
     dec.type = 'hidden'; dec.name = 'decision'; dec.value = decisionMap[action];
     form.appendChild(dec);
   } else {
-    var reprocessUrl = actionsEl ? actionsEl.dataset.reprocessUrl : '';
-    if (!reprocessUrl) return;
-    form.action = reprocessUrl;
-    var stg = document.createElement('input');
-    stg.type = 'hidden'; stg.name = 'stage'; stg.value = 'INTAKE';
-    form.appendChild(stg);
+    return;
   }
 
   var csrf = document.createElement('input');

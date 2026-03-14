@@ -217,6 +217,7 @@ class ReconciliationRunnerService:
             extraction_confidence=invoice.extraction_confidence,
             confidence_threshold=self.config.extraction_confidence_threshold,
             reconciliation_mode=reconciliation_mode,
+            invoice=invoice,
         )
 
         # 5. Save result with mode metadata

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load rbac_tags %}
 {% block title %}Review Workbench – AP Operations{% endblock %}
 
 {% block extra_css %}
@@ -33,7 +34,8 @@
 </div>
 
 {# UNASSIGNED RESULTS — Awaiting Assignment #}
-{% if unassigned_results %}
+{% has_permission "reviews.assign" as can_assign_reviews %}
+{% if unassigned_results and can_assign_reviews %}
 <div class="ap-card mb-3" style="border-left:3px solid var(--ap-warning)">
   <div class="ap-card-header" style="color:var(--ap-warning)">
     <i class="bi bi-exclamation-triangle"></i>

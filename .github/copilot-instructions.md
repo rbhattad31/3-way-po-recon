@@ -103,7 +103,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Seed Commands | `apps/core/management/commands/seed_config.py`, `seed_prompts.py`; `apps/cases/management/commands/seed_ap_data.py` |
 | Seed Helpers | `apps/cases/management/commands/seed_helpers/` (constants, master_data, transactional_data, case_builder, agent_review_data, observability_data, bulk_generator) |
 | Admin | `apps/<app>/admin.py` |
-| Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views) |
+| Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views, `templates/vendors/` for vendor UI) |
 | Static files | `static/css/`, `static/js/` |
 | Config | `config/settings.py`, `config/urls.py`, `config/celery.py` |
 
@@ -242,7 +242,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **RBAC Audit**: `RBACEventService` logs 9 event types (ROLE_ASSIGNED, ROLE_REMOVED, ROLE_PERMISSION_CHANGED, USER_PERMISSION_OVERRIDE, USER_ACTIVATED, USER_DEACTIVATED, ROLE_CREATED, ROLE_UPDATED, PRIMARY_ROLE_CHANGED)
 - **RBAC Admin Console**: 8 Bootstrap 5 UI screens — User list/create/detail, Role list/create/detail, Permission catalog, Role-Permission matrix
 - **RBAC API**: `/api/v1/accounts/` — UserViewSet (CRUD + roles/overrides), RoleViewSet (CRUD + clone), PermissionViewSet, RolePermissionMatrixView
-- **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 5 roles, 20 permissions, full matrix, legacy user sync
+- **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 5 roles, 23 permissions, full matrix, legacy user sync
 - Extraction pipeline (8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction)
 - Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
 - `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
@@ -265,7 +265,11 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Reconciliation settings viewer (tolerance configuration)
 - Dashboard analytics (service + 7 API endpoints incl. mode-breakdown)
 - DRF APIs (all ViewSets, serializers, routing) + Governance API (`/api/v1/governance/`) + Reconciliation Policies API (`/api/v1/reconciliation/policies/`)
-- Bootstrap 5 templates (32 templates incl. partials, governance views, RBAC admin console)
+- Bootstrap 5 templates (34 templates incl. partials, governance views, RBAC admin console, vendor pages)
+- Vendor UI: list page (KPIs, country/currency/search filters, PO/invoice/alias counts) + detail page (aliases, recent POs/invoices/GRNs)
+- RBAC permissions for document pages: `vendors.view`, `purchase_orders.view`, `grns.view` — all roles granted, AP_PROCESSOR scoped to own invoices
+- RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own uploaded invoices (via `_scope_pos_for_user`, `_scope_grns_for_user`, `_scope_vendors_for_user`)
+- Sidebar navigation gated by RBAC `{% has_permission %}` tags for POs, GRNs, Vendors, Governance, Admin Console
 - Admin panel registration
 - Audit logging & governance: ProcessingLog, AuditEvent (17 event types, 20+ RBAC/trace fields), FileProcessingStatus, CaseTimelineService (8 event categories with RBAC badges, status changes, field corrections, duration tracking), governance views (audit event list with RBAC columns + invoice governance dashboard with access history tab)
 - Observability infrastructure: TraceContext (distributed tracing), structured JSON logging with PII redaction, in-process MetricsService, RequestTraceMiddleware
@@ -335,4 +339,5 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/accounts/rbac_models.py` | RBAC data models (Role, Permission, UserRole, etc.) |
 | `apps/accounts/rbac_services.py` | RBAC audit service |
 | `apps/accounts/template_views.py` | Admin console UI views (user/role/perm management) |
+| `apps/vendors/template_views.py` | Vendor list/detail views with RBAC + AP_PROCESSOR scoping |
 | `apps/core/templatetags/rbac_tags.py` | RBAC template tags for permission-aware rendering |
