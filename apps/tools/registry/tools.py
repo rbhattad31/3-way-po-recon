@@ -23,6 +23,7 @@ def _decimal_serialise(obj):
 @register_tool
 class POLookupTool(BaseTool):
     name = "po_lookup"
+    required_permission = "purchase_orders.view"
     description = (
         "Look up a Purchase Order by PO number. Returns PO header and line items. "
         "Use when the agent needs PO details for reconciliation."
@@ -74,6 +75,7 @@ class POLookupTool(BaseTool):
 @register_tool
 class GRNLookupTool(BaseTool):
     name = "grn_lookup"
+    required_permission = "grns.view"
     description = (
         "Look up Goods Receipt Notes for a given PO number. "
         "Returns GRN headers and received quantities."
@@ -125,6 +127,7 @@ class GRNLookupTool(BaseTool):
 @register_tool
 class VendorSearchTool(BaseTool):
     name = "vendor_search"
+    required_permission = "vendors.view"
     description = (
         "Search for a vendor by name, code, or alias. "
         "Use when the invoice vendor doesn't match the PO vendor."
@@ -198,6 +201,7 @@ def models_q_name_code(raw: str, normalized: str):
 @register_tool
 class InvoiceDetailsTool(BaseTool):
     name = "invoice_details"
+    required_permission = "invoices.view"
     description = (
         "Get full details of an invoice including header, line items, and extraction metadata."
     )
@@ -246,6 +250,7 @@ class InvoiceDetailsTool(BaseTool):
 @register_tool
 class ExceptionListTool(BaseTool):
     name = "exception_list"
+    required_permission = "reconciliation.view"
     description = (
         "Retrieve all reconciliation exceptions for a given ReconciliationResult. "
         "Use to understand what mismatches were found."
@@ -281,6 +286,7 @@ class ExceptionListTool(BaseTool):
 @register_tool
 class ReconciliationSummaryTool(BaseTool):
     name = "reconciliation_summary"
+    required_permission = "reconciliation.view"
     description = (
         "Get the reconciliation result summary for a given ReconciliationResult, "
         "including match status, confidence, and header-level evidence."

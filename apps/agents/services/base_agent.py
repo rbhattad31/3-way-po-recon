@@ -45,6 +45,15 @@ class AgentContext:
     exceptions: List[Dict[str, Any]] = field(default_factory=list)
     extra: Dict[str, Any] = field(default_factory=dict)
     reconciliation_mode: str = ""  # ReconciliationMode value (TWO_WAY / THREE_WAY)
+    # RBAC context (populated by orchestrator via guardrails service)
+    actor_user_id: Optional[int] = None
+    actor_primary_role: str = ""
+    actor_roles_snapshot: List[str] = field(default_factory=list)
+    permission_checked: str = ""
+    permission_source: str = ""
+    access_granted: bool = False
+    trace_id: str = ""
+    span_id: str = ""
 
 
 @dataclass
@@ -100,8 +109,19 @@ class BaseAgent(ABC):
             input_payload=self._serialise_context(ctx),
             started_at=timezone.now(),
             llm_model_used=self.llm.model,
+            # RBAC metadata from context
+            actor_user_id=ctx.actor_user_id,
+            actor_primary_role=ctx.actor_primary_role,
+            actor_roles_snapshot_json=ctx.actor_roles_snapshot or None,
+            permission_checked=ctx.permission_checked,
+            permission_source=ctx.permission_source,
+            access_granted=ctx.access_granted,
+            trace_id=ctx.trace_id,
+            span_id=ctx.span_id,
         )
 
+        # Resolve actor for tool-level authorization
+        self._actor_user = self._resolve_actor(ctx)
         start = time.monotonic()
         step_counter = 0
 
@@ -199,6 +219,35 @@ class BaseAgent(ABC):
         if not tool:
             result = ToolResult(success=False, error=f"Unknown tool: {tool_name}")
         else:
+            # RBAC check: authorize tool invocation via guardrails
+            actor = getattr(self, "_actor_user", None)
+            if actor:
+                from apps.agents.services.guardrails_service import AgentGuardrailsService
+                if not AgentGuardrailsService.authorize_tool(actor, tool_name):
+                    perm = tool.required_permission or "unknown"
+                    AgentGuardrailsService.log_guardrail_decision(
+                        user=actor,
+                        action=f"tool_call:{tool_name}",
+                        permission_code=perm,
+                        granted=False,
+                        entity_type="AgentRun",
+                        entity_id=agent_run.pk,
+                    )
+                    result = ToolResult(
+                        success=False,
+                        error=f"Permission denied for tool '{tool_name}' (requires {perm})",
+                    )
+                    ToolCallLogger.log(agent_run, tool_name, arguments, result)
+                    AgentStep.objects.create(
+                        agent_run=agent_run,
+                        step_number=step,
+                        action=f"tool_call:{tool_name}:denied",
+                        input_data=arguments,
+                        output_data={"error": result.error, "permission_denied": True},
+                        success=False,
+                    )
+                    return result
+
             result = tool.execute(**arguments)
 
         # Audit log
@@ -257,4 +306,15 @@ class BaseAgent(ABC):
             "po_number": ctx.po_number,
             "exception_count": len(ctx.exceptions),
             "reconciliation_mode": ctx.reconciliation_mode,
+            "actor_user_id": ctx.actor_user_id,
+            "actor_primary_role": ctx.actor_primary_role,
+            "permission_checked": ctx.permission_checked,
         }
+
+    @staticmethod
+    def _resolve_actor(ctx: AgentContext):
+        """Resolve actor user from context for tool authorization."""
+        if ctx.actor_user_id:
+            from apps.accounts.models import User
+            return User.objects.filter(pk=ctx.actor_user_id).first()
+        return None
