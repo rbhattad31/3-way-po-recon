@@ -1,0 +1,350 @@
+/* =====================================================================
+   Agent Performance Command Center — Stylesheet
+   Enterprise AI observability dashboard
+   ===================================================================== */
+
+/* ── KPI Cards ── */
+.ap-kpi-card {
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,.06);
+  border-radius: .65rem;
+  padding: .9rem 1rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+  transition: transform .15s ease, box-shadow .15s ease;
+  cursor: default;
+}
+.ap-kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.08);
+}
+.ap-kpi-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: .5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  flex-shrink: 0;
+}
+.ap-kpi-body {
+  min-width: 0;
+}
+.ap-kpi-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--bs-body-color);
+}
+.ap-kpi-label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  margin-top: 1px;
+}
+
+/* ── Section Cards ── */
+.ap-section-card {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,.06);
+  border-radius: .65rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+  overflow: hidden;
+}
+.ap-section-header {
+  padding: .65rem 1rem;
+  font-weight: 600;
+  font-size: .85rem;
+  border-bottom: 1px solid rgba(0,0,0,.06);
+  background: rgba(0,0,0,.01);
+}
+.ap-section-body {
+  padding: 1rem;
+}
+
+/* ── Dense table ── */
+.ap-dense-table {
+  font-size: .78rem;
+}
+.ap-dense-table th {
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom-width: 2px;
+}
+.ap-dense-table td {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* ── Health badges ── */
+.ap-health-badge {
+  font-size: .68rem;
+  font-weight: 600;
+  padding: .2em .55em;
+  border-radius: .3rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.ap-health-healthy { background: rgba(25,135,84,.12); color: #198754; }
+.ap-health-warning { background: rgba(255,193,7,.15); color: #946500; }
+.ap-health-critical { background: rgba(220,53,69,.12); color: #dc3545; }
+
+/* ── Status badges ── */
+.ap-status-badge {
+  font-size: .68rem;
+  font-weight: 600;
+  padding: .18em .5em;
+  border-radius: .25rem;
+}
+.ap-status-COMPLETED { background: rgba(25,135,84,.12); color: #198754; }
+.ap-status-RUNNING   { background: rgba(13,110,253,.12); color: #0d6efd; }
+.ap-status-PENDING   { background: rgba(108,117,125,.12); color: #6c757d; }
+.ap-status-FAILED    { background: rgba(220,53,69,.12); color: #dc3545; }
+.ap-status-SKIPPED   { background: rgba(108,117,125,.08); color: #adb5bd; }
+
+/* ── Severity badges ── */
+.ap-sev-LOW      { background: rgba(25,135,84,.1); color: #198754; }
+.ap-sev-MEDIUM   { background: rgba(255,193,7,.15); color: #946500; }
+.ap-sev-HIGH     { background: rgba(253,126,20,.12); color: #d97000; }
+.ap-sev-CRITICAL { background: rgba(220,53,69,.12); color: #dc3545; }
+
+/* ── Mini stat ── */
+.ap-mini-stat {
+  text-align: center;
+  padding: .5rem;
+  background: rgba(0,0,0,.02);
+  border-radius: .4rem;
+}
+.ap-mini-val {
+  display: block;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--bs-body-color);
+}
+.ap-mini-label {
+  display: block;
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  margin-top: 2px;
+}
+
+/* ── Live Feed ── */
+.ap-live-feed {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.ap-feed-item {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: .55rem 1rem;
+  border-bottom: 1px solid rgba(0,0,0,.04);
+  font-size: .79rem;
+  cursor: pointer;
+  transition: background .12s;
+}
+.ap-feed-item:hover {
+  background: rgba(13,110,253,.04);
+}
+.ap-feed-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .85rem;
+  flex-shrink: 0;
+  background: rgba(13,110,253,.1);
+  color: #0d6efd;
+}
+.ap-feed-body {
+  flex: 1;
+  min-width: 0;
+}
+.ap-feed-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ap-feed-sub {
+  font-size: .7rem;
+  color: var(--bs-secondary-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ap-feed-meta {
+  flex-shrink: 0;
+  text-align: right;
+}
+.ap-feed-time {
+  font-size: .68rem;
+  color: var(--bs-secondary-color);
+}
+
+/* ── Governance section ── */
+.ap-governance-section {
+  border: 2px solid rgba(13,110,253,.15);
+  border-radius: .75rem;
+  padding: 1.25rem;
+  background: rgba(13,110,253,.02);
+}
+.ap-gov-stat {
+  text-align: center;
+  padding: .6rem;
+  background: #fff;
+  border-radius: .5rem;
+  border: 1px solid rgba(0,0,0,.06);
+}
+.ap-gov-val {
+  display: block;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+.ap-gov-label {
+  display: block;
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  margin-top: 2px;
+}
+
+/* ── Trace Explorer ── */
+.ap-trace-run-list {
+  max-height: 370px;
+  overflow-y: auto;
+}
+.ap-trace-run-item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .45rem .75rem;
+  border-bottom: 1px solid rgba(0,0,0,.04);
+  cursor: pointer;
+  font-size: .78rem;
+  transition: background .1s;
+}
+.ap-trace-run-item:hover,
+.ap-trace-run-item.active {
+  background: rgba(13,110,253,.08);
+}
+.ap-trace-run-item .bi {
+  font-size: .85rem;
+  color: var(--bs-primary);
+}
+
+/* Trace timeline */
+.ap-trace-timeline {
+  position: relative;
+  padding-left: 22px;
+}
+.ap-trace-timeline::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(0,0,0,.1);
+  border-radius: 1px;
+}
+.ap-trace-event {
+  position: relative;
+  padding: .4rem 0 .6rem .75rem;
+  font-size: .78rem;
+}
+.ap-trace-event::before {
+  content: '';
+  position: absolute;
+  left: -18px;
+  top: .55rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #0d6efd;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(13,110,253,.3);
+}
+.ap-trace-event.event-tool_called::before { background: #6f42c1; box-shadow: 0 0 0 1px rgba(111,66,193,.3); }
+.ap-trace-event.event-decision_created::before { background: #198754; box-shadow: 0 0 0 1px rgba(25,135,84,.3); }
+.ap-trace-event.event-recommendation_created::before { background: #0dcaf0; box-shadow: 0 0 0 1px rgba(13,202,240,.3); }
+.ap-trace-event.event-escalation_created::before { background: #dc3545; box-shadow: 0 0 0 1px rgba(220,53,69,.3); }
+.ap-trace-event.event-agent_failed::before { background: #dc3545; box-shadow: 0 0 0 1px rgba(220,53,69,.3); }
+
+.ap-trace-event-time {
+  font-size: .66rem;
+  color: var(--bs-secondary-color);
+}
+.ap-trace-event-label {
+  font-weight: 600;
+}
+.ap-trace-event-meta {
+  font-size: .7rem;
+  color: var(--bs-secondary-color);
+}
+
+/* Trace metadata */
+.ap-trace-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: .5rem;
+  margin-bottom: 1rem;
+}
+.ap-trace-meta-item {
+  padding: .4rem .6rem;
+  background: rgba(0,0,0,.02);
+  border-radius: .35rem;
+  font-size: .76rem;
+}
+.ap-trace-meta-key {
+  font-size: .64rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  display: block;
+}
+.ap-trace-meta-val {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+/* ── Filter bar ── */
+.ap-filter-bar {
+  position: sticky;
+  top: 56px;
+  z-index: 1020;
+}
+
+/* ── Scrollbar ── */
+.ap-live-feed::-webkit-scrollbar,
+.ap-trace-run-list::-webkit-scrollbar {
+  width: 5px;
+}
+.ap-live-feed::-webkit-scrollbar-thumb,
+.ap-trace-run-list::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,.15);
+  border-radius: 3px;
+}
+
+/* ── Access badges ── */
+.ap-access-granted { color: #198754; }
+.ap-access-denied  { color: #dc3545; }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .ap-kpi-value { font-size: 1.15rem; }
+  .ap-filter-bar { position: static; }
+}
