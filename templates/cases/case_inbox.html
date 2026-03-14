@@ -72,13 +72,13 @@
     <i class="bi bi-funnel me-1"></i>Filters
   </button>
   <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
-  {% if request.GET.q or request.GET.status or request.GET.processing_path or request.GET.priority or request.GET.match_status or request.GET.reconciliation_mode or request.GET.processing_type or request.GET.date_from or request.GET.date_to %}
+  {% if request.GET.q or request.GET.status or request.GET.processing_path or request.GET.priority or request.GET.match_status or request.GET.reconciliation_mode or request.GET.processing_type or request.GET.date_from or request.GET.date_to or request.GET.vendor or request.GET.assigned_to %}
   <a href="{% url 'cases:case_inbox' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-lg me-1"></i>Clear</a>
   {% endif %}
 </form>
 
 {# ── Advanced Filters (toggleable) ── #}
-<form method="get" class="ap-filter-bar ci-advanced-row {% if not request.GET.match_status and not request.GET.reconciliation_mode and not request.GET.processing_type and not request.GET.date_from and not request.GET.date_to %}d-none{% endif %}" id="advancedFilters">
+<form method="get" class="ap-filter-bar ci-advanced-row {% if not request.GET.match_status and not request.GET.reconciliation_mode and not request.GET.processing_type and not request.GET.date_from and not request.GET.date_to and not request.GET.vendor and not request.GET.assigned_to %}d-none{% endif %}" id="advancedFilters">
   {# Carry forward primary filter values as hidden inputs #}
   {% if request.GET.q %}<input type="hidden" name="q" value="{{ request.GET.q }}">{% endif %}
   {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
@@ -96,6 +96,12 @@
       <option value="{{ val }}" {% if request.GET.reconciliation_mode == val %}selected{% endif %}>{{ label }}</option>
     {% endfor %}
   </select>
+  <select name="vendor" class="form-select form-select-sm" style="width:180px" onchange="this.form.submit()">
+    <option value="">All Vendors</option>
+    {% for vid, vname in vendor_choices %}
+      <option value="{{ vid }}" {% if request.GET.vendor == vid|stringformat:"d" %}selected{% endif %}>{{ vname }}</option>
+    {% endfor %}
+  </select>
   <select name="processing_type" class="form-select form-select-sm" style="width:175px" onchange="this.form.submit()">
     <option value="">All Processing Types</option>
     <option value="agent_only" {% if request.GET.processing_type == "agent_only" %}selected{% endif %}>Agent Only</option>
@@ -106,10 +112,19 @@
   <input type="date" name="date_from" class="form-control form-control-sm" style="width:150px" value="{{ request.GET.date_from|default:'' }}" onchange="this.form.submit()">
   <span class="text-muted" style="font-size:.75rem">To</span>
   <input type="date" name="date_to" class="form-control form-control-sm" style="width:150px" value="{{ request.GET.date_to|default:'' }}" onchange="this.form.submit()">
+  {% if reviewer_choices %}
+  <select name="assigned_to" class="form-select form-select-sm" style="width:170px" onchange="this.form.submit()">
+    <option value="">All Assignees</option>
+    <option value="unassigned" {% if request.GET.assigned_to == "unassigned" %}selected{% endif %}>Unassigned</option>
+    {% for rid, fname, lname in reviewer_choices %}
+      <option value="{{ rid }}" {% if request.GET.assigned_to == rid|stringformat:"d" %}selected{% endif %}>{{ fname }} {{ lname }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
 </form>
 
 {# Active filter chips #}
-{% if request.GET.status or request.GET.processing_path or request.GET.priority or request.GET.match_status or request.GET.reconciliation_mode or request.GET.processing_type or request.GET.date_from or request.GET.date_to %}
+{% if request.GET.status or request.GET.processing_path or request.GET.priority or request.GET.match_status or request.GET.reconciliation_mode or request.GET.processing_type or request.GET.date_from or request.GET.date_to or request.GET.vendor or request.GET.assigned_to %}
 <div class="d-flex gap-2 mb-3 flex-wrap">
   {% if request.GET.status %}
   <span class="ap-filter-chip">Status: {{ request.GET.status }}<a href="javascript:void(0)" onclick="removeFilter('status')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
@@ -134,6 +149,12 @@
   {% endif %}
   {% if request.GET.date_to %}
   <span class="ap-filter-chip">To: {{ request.GET.date_to }}<a href="javascript:void(0)" onclick="removeFilter('date_to')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
+  {% endif %}
+  {% if request.GET.vendor %}
+  <span class="ap-filter-chip">Vendor: {{ selected_vendor_name|default:request.GET.vendor }}<a href="javascript:void(0)" onclick="removeFilter('vendor')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
+  {% endif %}
+  {% if request.GET.assigned_to %}
+  <span class="ap-filter-chip">Assigned: {{ selected_assignee_name|default:request.GET.assigned_to }}<a href="javascript:void(0)" onclick="removeFilter('assigned_to')" class="text-decoration-none"><i class="bi bi-x"></i></a></span>
   {% endif %}
 </div>
 {% endif %}

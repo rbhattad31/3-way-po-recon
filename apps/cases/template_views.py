@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.cases.models import APCase
 from apps.cases.selectors.case_selectors import CaseSelectors
-from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode
+from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode, UserRole
 from apps.core.permissions import permission_required_code, _has_permission_code
 
 logger = logging.getLogger(__name__)
@@ -252,6 +252,8 @@ def _build_copilot_context(case, invoice, po, grns, stages, decisions,
 @login_required
 def case_inbox(request):
     """AP Cases inbox — main listing of all cases with filters."""
+    vendor_id = request.GET.get("vendor", "")
+    assigned_to_id = request.GET.get("assigned_to", "")
     qs = CaseSelectors.inbox(
         processing_path=request.GET.get("processing_path", ""),
         status=request.GET.get("status", ""),
@@ -262,13 +264,49 @@ def case_inbox(request):
         date_from=request.GET.get("date_from", ""),
         date_to=request.GET.get("date_to", ""),
         processing_type=request.GET.get("processing_type", ""),
+        vendor_id=int(vendor_id) if vendor_id else None,
+        assigned_to_id=int(assigned_to_id) if assigned_to_id and assigned_to_id != "unassigned" else None,
     )
+    # Handle "unassigned" filter
+    if assigned_to_id == "unassigned":
+        qs = qs.filter(assigned_to__isnull=True)
     qs = CaseSelectors.scope_for_user(qs, request.user)
 
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
     stats = CaseSelectors.stats(user=request.user)
+
+    # Build vendor choices scoped for user
+    from apps.vendors.models import Vendor
+    vendor_qs = Vendor.objects.filter(is_active=True).order_by("name")
+    from apps.vendors.template_views import _scope_vendors_for_user
+    vendor_qs = _scope_vendors_for_user(vendor_qs, request.user)
+    vendor_choices = list(vendor_qs.values_list("id", "name"))
+
+    # Resolve selected vendor name for filter chip display
+    selected_vendor_name = ""
+    if vendor_id:
+        selected_vendor_name = next(
+            (name for vid, name in vendor_choices if vid == int(vendor_id)), ""
+        )
+
+    # Reviewer choices for assignment filter (visible to users with cases.assign)
+    reviewer_choices = []
+    selected_assignee_name = ""
+    if _has_permission_code(request.user, "cases.assign"):
+        from apps.accounts.models import User
+        reviewer_choices = list(
+            User.objects.filter(role=UserRole.REVIEWER, is_active=True)
+            .order_by("first_name", "last_name")
+            .values_list("id", "first_name", "last_name")
+        )
+        if assigned_to_id and assigned_to_id != "unassigned":
+            selected_assignee_name = next(
+                (f"{fn} {ln}" for rid, fn, ln in reviewer_choices if rid == int(assigned_to_id)), ""
+            )
+        elif assigned_to_id == "unassigned":
+            selected_assignee_name = "Unassigned"
 
     return render(request, "cases/case_inbox.html", {
         "cases": page_obj,
@@ -279,6 +317,10 @@ def case_inbox(request):
         "priority_choices": CasePriority.choices,
         "match_status_choices": MatchStatus.choices,
         "reconciliation_mode_choices": ReconciliationMode.choices,
+        "vendor_choices": vendor_choices,
+        "selected_vendor_name": selected_vendor_name,
+        "reviewer_choices": reviewer_choices,
+        "selected_assignee_name": selected_assignee_name,
     })
 
 
@@ -500,6 +542,16 @@ def case_agent_view(request, pk):
     failed_stages_count = sum(1 for s in stages if s.stage_status == 'FAILED')
     has_open_issues = (open_exceptions_count + failed_validations_count + failed_stages_count) > 0
 
+    # Reviewers list for assignment dropdown (only for users with cases.assign)
+    reviewers = []
+    if _has_permission_code(request.user, "cases.assign"):
+        from apps.accounts.models import User
+        reviewers = list(
+            User.objects.filter(
+                role=UserRole.REVIEWER, is_active=True,
+            ).order_by("first_name", "last_name").values_list("id", "first_name", "last_name", "email")
+        )
+
     return render(request, "cases/case_agent_view.html", {
         "case": case,
         "invoice": invoice,
@@ -526,6 +578,7 @@ def case_agent_view(request, pk):
         "failed_validations_count": failed_validations_count,
         "failed_stages_count": failed_stages_count,
         "copilot_context_json": json.dumps(copilot_context, default=str),
+        "reviewers": reviewers,
     })
 
 
@@ -613,6 +666,24 @@ def case_decide(request, pk):
             messages.success(request, f"Case {case.case_number} submitted for reprocessing.")
         except Exception as exc:
             messages.error(request, f"Reprocessing failed: {exc}")
+
+        # Audit: case reprocessed
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+        AuditService.log_event(
+            entity_type="APCase",
+            entity_id=case.pk,
+            event_type=AuditEventType.CASE_REPROCESSED,
+            description=f"Case {case.case_number} submitted for reprocessing by {request.user}",
+            user=request.user,
+            case_id=case.pk,
+            invoice_id=case.invoice_id,
+            metadata={
+                "reason": request.POST.get("reason", "")[:300],
+                "review_assignment_id": assignment.pk if assignment else None,
+            },
+        )
+
         return redirect("cases:case_agent_view", pk=pk)
 
     # Update case status
@@ -622,9 +693,34 @@ def case_decide(request, pk):
     }
     new_status = status_map.get(decision)
     if new_status:
+        old_status = case.status
         case.status = new_status
         case.save(update_fields=["status", "updated_at"])
         messages.success(request, f"Case {case.case_number} marked as {case.get_status_display()}.")
+
+        # Audit: case status change from decision
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+        event_map = {
+            CaseStatus.CLOSED: AuditEventType.CASE_CLOSED,
+            CaseStatus.REJECTED: AuditEventType.CASE_REJECTED,
+        }
+        AuditService.log_event(
+            entity_type="APCase",
+            entity_id=case.pk,
+            event_type=event_map.get(new_status, decision),
+            description=f"Case {case.case_number} {old_status} -> {new_status} via case decision",
+            user=request.user,
+            case_id=case.pk,
+            invoice_id=case.invoice_id,
+            status_before=old_status,
+            status_after=new_status,
+            metadata={
+                "decision": decision,
+                "reason": request.POST.get("reason", "")[:300],
+                "review_assignment_id": assignment.pk if assignment else None,
+            },
+        )
     else:
         messages.warning(request, f"Unknown decision: {decision}")
 
@@ -632,7 +728,7 @@ def case_decide(request, pk):
 
 
 @login_required
-@permission_required_code("cases.edit")
+@permission_required_code("cases.add_comment")
 def case_add_comment(request, pk):
     """Add a review comment from the agent view."""
     if request.method != "POST":
@@ -665,8 +761,74 @@ def case_add_comment(request, pk):
         APCaseComment.objects.create(
             case=case,
             author=request.user,
-            content=body,
+            body=body,
         )
 
     messages.success(request, "Comment added.")
+
+    # Audit: track comment
+    from apps.auditlog.services import AuditService
+    from apps.core.enums import AuditEventType
+    AuditService.log_event(
+        entity_type="APCase",
+        entity_id=case.pk,
+        event_type=AuditEventType.COMMENT_ADDED,
+        description=f"Comment added on case {case.case_number} by {request.user.get_full_name()}",
+        user=request.user,
+        case_id=case.pk,
+        invoice_id=case.invoice_id,
+        metadata={
+            "case_number": case.case_number,
+            "comment_preview": body[:100],
+            "via_review_assignment": assignment.pk if assignment else None,
+        },
+    )
+
+    return redirect("cases:case_agent_view", pk=pk)
+
+
+@login_required
+@permission_required_code("cases.assign")
+def case_assign(request, pk):
+    """Assign or unassign a case to a reviewer."""
+    if request.method != "POST":
+        return redirect("cases:case_agent_view", pk=pk)
+
+    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    assignee_id = request.POST.get("assigned_to", "").strip()
+    previous_assignee = case.assigned_to
+
+    if assignee_id:
+        from apps.accounts.models import User
+        assignee = get_object_or_404(User, pk=int(assignee_id), is_active=True)
+        case.assigned_to = assignee
+        case.save(update_fields=["assigned_to", "updated_at"])
+        messages.success(request, f"Case {case.case_number} assigned to {assignee.get_full_name()}.")
+    else:
+        case.assigned_to = None
+        case.save(update_fields=["assigned_to", "updated_at"])
+        messages.success(request, f"Case {case.case_number} unassigned.")
+
+    # Audit: track assignment change
+    from apps.auditlog.services import AuditService
+    from apps.core.enums import AuditEventType
+    prev_name = previous_assignee.get_full_name() if previous_assignee else "Unassigned"
+    new_name = case.assigned_to.get_full_name() if case.assigned_to else "Unassigned"
+    AuditService.log_event(
+        entity_type="APCase",
+        entity_id=case.pk,
+        event_type=AuditEventType.CASE_ASSIGNED,
+        description=f"Case {case.case_number} assignment changed: {prev_name} -> {new_name}",
+        user=request.user,
+        case_id=case.pk,
+        invoice_id=case.invoice_id,
+        status_before=prev_name,
+        status_after=new_name,
+        metadata={
+            "previous_assignee_id": previous_assignee.pk if previous_assignee else None,
+            "new_assignee_id": case.assigned_to_id,
+            "case_number": case.case_number,
+        },
+    )
+
     return redirect("cases:case_agent_view", pk=pk)

@@ -172,6 +172,15 @@ class AuditEventType(models.TextChoices):
     ROLE_CREATED = "ROLE_CREATED", "Role Created"
     ROLE_UPDATED = "ROLE_UPDATED", "Role Updated"
     PRIMARY_ROLE_CHANGED = "PRIMARY_ROLE_CHANGED", "Primary Role Changed"
+    # Case management events
+    CASE_ASSIGNED = "CASE_ASSIGNED", "Case Assigned"
+    CASE_CLOSED = "CASE_CLOSED", "Case Closed"
+    CASE_REJECTED = "CASE_REJECTED", "Case Rejected"
+    CASE_REPROCESSED = "CASE_REPROCESSED", "Case Reprocessed"
+    COMMENT_ADDED = "COMMENT_ADDED", "Comment Added"
+    # Review lifecycle events
+    REVIEWER_ASSIGNED = "REVIEWER_ASSIGNED", "Reviewer Assigned"
+    REVIEW_STARTED = "REVIEW_STARTED", "Review Started"
 
 
 class PermissionOverrideType(models.TextChoices):

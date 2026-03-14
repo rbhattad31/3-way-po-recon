@@ -24,49 +24,87 @@ class DashboardService:
     # ------------------------------------------------------------------
     @staticmethod
     def _scope_invoices(qs, user=None):
-        """Restrict invoice queryset for AP_PROCESSOR based on config."""
-        if user is None or getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+        """Restrict invoice queryset based on user role."""
+        if user is None:
             return qs
-        from apps.reconciliation.models import ReconciliationConfig
-        config = ReconciliationConfig.objects.filter(is_default=True).first()
-        if config and config.ap_processor_sees_all_cases:
-            return qs
-        return qs.filter(document_upload__uploaded_by=user)
+        user_role = getattr(user, "role", None)
+
+        if user_role == UserRole.AP_PROCESSOR:
+            from apps.reconciliation.models import ReconciliationConfig
+            config = ReconciliationConfig.objects.filter(is_default=True).first()
+            if config and config.ap_processor_sees_all_cases:
+                return qs
+            return qs.filter(document_upload__uploaded_by=user)
+
+        if user_role == UserRole.REVIEWER:
+            return qs.filter(
+                recon_results__review_assignments__assigned_to=user
+            ).distinct()
+
+        return qs
 
     @staticmethod
     def _scope_recon_results(qs, user=None):
-        """Restrict reconciliation results to invoices visible to user."""
-        if user is None or getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+        """Restrict reconciliation results based on user role."""
+        if user is None:
             return qs
-        from apps.reconciliation.models import ReconciliationConfig
-        config = ReconciliationConfig.objects.filter(is_default=True).first()
-        if config and config.ap_processor_sees_all_cases:
-            return qs
-        return qs.filter(invoice__document_upload__uploaded_by=user)
+        user_role = getattr(user, "role", None)
+
+        if user_role == UserRole.AP_PROCESSOR:
+            from apps.reconciliation.models import ReconciliationConfig
+            config = ReconciliationConfig.objects.filter(is_default=True).first()
+            if config and config.ap_processor_sees_all_cases:
+                return qs
+            return qs.filter(invoice__document_upload__uploaded_by=user)
+
+        if user_role == UserRole.REVIEWER:
+            return qs.filter(
+                review_assignments__assigned_to=user
+            ).distinct()
+
+        return qs
 
     @staticmethod
     def _scope_exceptions(qs, user=None):
-        """Restrict exceptions to reconciliation results visible to user."""
-        if user is None or getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+        """Restrict exceptions based on user role."""
+        if user is None:
             return qs
-        from apps.reconciliation.models import ReconciliationConfig
-        config = ReconciliationConfig.objects.filter(is_default=True).first()
-        if config and config.ap_processor_sees_all_cases:
-            return qs
-        return qs.filter(result__invoice__document_upload__uploaded_by=user)
+        user_role = getattr(user, "role", None)
+
+        if user_role == UserRole.AP_PROCESSOR:
+            from apps.reconciliation.models import ReconciliationConfig
+            config = ReconciliationConfig.objects.filter(is_default=True).first()
+            if config and config.ap_processor_sees_all_cases:
+                return qs
+            return qs.filter(result__invoice__document_upload__uploaded_by=user)
+
+        if user_role == UserRole.REVIEWER:
+            return qs.filter(
+                result__review_assignments__assigned_to=user
+            ).distinct()
+
+        return qs
 
     @staticmethod
     def _scope_reviews(qs, user=None):
-        """Restrict review assignments to invoices visible to user."""
-        if user is None or getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+        """Restrict review assignments based on user role."""
+        if user is None:
             return qs
-        from apps.reconciliation.models import ReconciliationConfig
-        config = ReconciliationConfig.objects.filter(is_default=True).first()
-        if config and config.ap_processor_sees_all_cases:
-            return qs
-        return qs.filter(
-            reconciliation_result__invoice__document_upload__uploaded_by=user
-        )
+        user_role = getattr(user, "role", None)
+
+        if user_role == UserRole.AP_PROCESSOR:
+            from apps.reconciliation.models import ReconciliationConfig
+            config = ReconciliationConfig.objects.filter(is_default=True).first()
+            if config and config.ap_processor_sees_all_cases:
+                return qs
+            return qs.filter(
+                reconciliation_result__invoice__document_upload__uploaded_by=user
+            )
+
+        if user_role == UserRole.REVIEWER:
+            return qs.filter(assigned_to=user)
+
+        return qs
 
     # ------------------------------------------------------------------
     # Public methods
@@ -169,15 +207,31 @@ class DashboardService:
         ]
 
     @staticmethod
-    def get_agent_performance(user=None) -> List[Dict[str, Any]]:
-        qs = AgentRun.objects.all()
-        if user is not None and getattr(user, "role", None) == UserRole.AP_PROCESSOR:
+    def _scope_agent_runs(qs, user=None):
+        """Restrict agent runs based on user role."""
+        if user is None:
+            return qs
+        user_role = getattr(user, "role", None)
+
+        if user_role == UserRole.AP_PROCESSOR:
             from apps.reconciliation.models import ReconciliationConfig
             config = ReconciliationConfig.objects.filter(is_default=True).first()
-            if not (config and config.ap_processor_sees_all_cases):
-                qs = qs.filter(
-                    reconciliation_result__invoice__document_upload__uploaded_by=user
-                )
+            if config and config.ap_processor_sees_all_cases:
+                return qs
+            return qs.filter(
+                reconciliation_result__invoice__document_upload__uploaded_by=user
+            )
+
+        if user_role == UserRole.REVIEWER:
+            return qs.filter(
+                reconciliation_result__review_assignments__assigned_to=user
+            ).distinct()
+
+        return qs
+
+    @staticmethod
+    def get_agent_performance(user=None) -> List[Dict[str, Any]]:
+        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user)
         return list(
             qs.values("agent_type")
             .annotate(
