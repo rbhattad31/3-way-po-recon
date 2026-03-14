@@ -20,11 +20,14 @@ from apps.dashboard.services import DashboardService
 @login_required
 def command_center(request):
     """Agentic AP Command Center — AI Operations dashboard."""
-    return render(request, "dashboard/agentic_command_center.html")
+    user_role = getattr(request.user, "role", "")
+    return render(request, "dashboard/agentic_command_center.html", {
+        "user_role": user_role,
+    })
 
 
 @login_required
-def index(request):
+def analytics(request):
     summary = DashboardService.get_summary(user=request.user)
     recent_activity = DashboardService.get_recent_activity(limit=15, user=request.user)
     return render(request, "dashboard/index.html", {

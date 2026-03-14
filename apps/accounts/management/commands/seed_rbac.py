@@ -40,6 +40,7 @@ PERMISSIONS = [
     # Cases
     {"code": "cases.view", "name": "View Cases", "module": "cases", "action": "view", "description": "View AP cases"},
     {"code": "cases.edit", "name": "Edit Cases", "module": "cases", "action": "edit", "description": "Edit AP case data"},
+    {"code": "cases.add_comment", "name": "Add Case Comment", "module": "cases", "action": "add_comment", "description": "Add comments to AP cases"},
     {"code": "cases.assign", "name": "Assign Cases", "module": "cases", "action": "assign", "description": "Assign AP cases to users"},
     # Reviews
     {"code": "reviews.view", "name": "View Reviews", "module": "reviews", "action": "view", "description": "View review assignments and decisions"},
@@ -70,6 +71,7 @@ ROLE_MATRIX = {
         "invoices.trigger_reconciliation",
         "reconciliation.view", "reconciliation.run",
         "cases.view", "cases.edit",
+        "cases.add_comment",
         "reviews.view",
         "agents.view", "agents.use_copilot",
     ],
@@ -77,6 +79,7 @@ ROLE_MATRIX = {
         "invoices.view",
         "reconciliation.view",
         "cases.view",
+        "cases.add_comment",
         "reviews.view", "reviews.decide",
         "agents.view", "agents.use_copilot",
         "governance.view",
@@ -85,6 +88,7 @@ ROLE_MATRIX = {
         "invoices.view",
         "reconciliation.view", "reconciliation.override",
         "cases.view", "cases.assign",
+        "cases.add_comment",
         "reviews.view", "reviews.assign", "reviews.decide",
         "governance.view",
         "agents.view",

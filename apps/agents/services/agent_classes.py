@@ -9,8 +9,9 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from apps.agents.services.base_agent import AgentOutput, BaseAgent, AgentContext
-from apps.core.enums import AgentType, RecommendationType
+from apps.core.enums import AgentRunStatus, AgentType, RecommendationType
 from apps.core.prompt_registry import PromptRegistry
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,103 @@ class ExceptionAnalysisAgent(BaseAgent):
 
 
 # ============================================================================
-# 2. Invoice Understanding Agent
+# 2. Invoice Extraction Agent
+# ============================================================================
+class InvoiceExtractionAgent(BaseAgent):
+    """Extracts structured data from OCR text using GPT-4o.
+
+    Runs right after Azure Document Intelligence OCR.  No tools — single-shot
+    extraction with ``response_format=json_object`` and ``temperature=0``.
+    Provides full agent traceability (AgentRun, AgentMessage, AgentStep).
+    """
+
+    agent_type = AgentType.INVOICE_EXTRACTION
+
+    def __init__(self):
+        from apps.agents.services.llm_client import LLMClient
+        super().__init__()
+        # Override LLM settings for deterministic extraction
+        self.llm = LLMClient(temperature=0.0, max_tokens=4096)
+
+    @property
+    def system_prompt(self) -> str:
+        return PromptRegistry.get("extraction.invoice_system")
+
+    def build_user_message(self, ctx: AgentContext) -> str:
+        ocr_text = ctx.extra.get("ocr_text", "")
+        return f"Extract invoice data from the following OCR text:\n\n{ocr_text}"
+
+    @property
+    def allowed_tools(self) -> List[str]:
+        return []  # Single-shot extraction — no tools needed
+
+    def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
+        data = _parse_agent_json(content)
+        # Store the raw extracted JSON in evidence for downstream consumption
+        return AgentOutput(
+            reasoning=f"Extracted {len(data.get('line_items', []))} line items with confidence {data.get('confidence', 0)}",
+            recommendation_type=None,
+            confidence=float(data.get("confidence", 0.0)),
+            evidence=data,  # The full extraction JSON
+            decisions=[],
+            raw_content=content,
+        )
+
+    def run(self, ctx: AgentContext):
+        """Override to pass response_format=json_object for structured output."""
+        from apps.agents.models import AgentDefinition, AgentRun
+        from apps.agents.services.llm_client import LLMMessage
+
+        agent_def = AgentDefinition.objects.filter(
+            agent_type=self.agent_type, enabled=True
+        ).first()
+
+        agent_run = AgentRun.objects.create(
+            agent_definition=agent_def,
+            agent_type=self.agent_type,
+            reconciliation_result=ctx.reconciliation_result,
+            status=AgentRunStatus.RUNNING,
+            input_payload=self._serialise_context(ctx),
+            started_at=timezone.now(),
+            llm_model_used=self.llm.model,
+        )
+
+        import time as _time
+        start = _time.monotonic()
+
+        try:
+            messages = self._init_messages(ctx, agent_run)
+
+            llm_resp = self.llm.chat(
+                messages=[
+                    LLMMessage(role=m["role"], content=m["content"])
+                    for m in messages
+                ],
+                response_format={"type": "json_object"},
+            )
+
+            agent_run.prompt_tokens = llm_resp.prompt_tokens
+            agent_run.completion_tokens = llm_resp.completion_tokens
+            agent_run.total_tokens = llm_resp.total_tokens
+
+            self._save_message(agent_run, "assistant", llm_resp.content or "", len(messages))
+
+            output = self.interpret_response(llm_resp.content or "", ctx)
+            self._finalise_run(agent_run, output, start)
+
+        except Exception as exc:
+            logger.exception("InvoiceExtractionAgent failed")
+            agent_run.status = AgentRunStatus.FAILED
+            agent_run.error_message = str(exc)[:2000]
+            agent_run.duration_ms = int((_time.monotonic() - start) * 1000)
+            agent_run.completed_at = timezone.now()
+            agent_run.save()
+
+        return agent_run
+
+
+# ============================================================================
+# 3. Invoice Understanding Agent
 # ============================================================================
 class InvoiceUnderstandingAgent(BaseAgent):
     """Deep-dives into invoice data to resolve ambiguity or extraction issues."""
@@ -114,13 +211,19 @@ class InvoiceUnderstandingAgent(BaseAgent):
         return PromptRegistry.get("agent.invoice_understanding")
 
     def build_user_message(self, ctx: AgentContext) -> str:
-        return (
-            f"Invoice ID: {ctx.invoice_id}\n"
-            f"PO Number: {ctx.po_number or 'N/A'}\n"
-            f"Extraction Confidence: {ctx.reconciliation_result.extraction_confidence}\n"
-            f"Match Status: {ctx.reconciliation_result.match_status}\n"
-            "\nRetrieve invoice details using the invoice_details tool, then analyse quality."
-        )
+        rr = ctx.reconciliation_result
+        extraction_conf = rr.extraction_confidence if rr else ctx.extra.get("extraction_confidence", "N/A")
+        match_status = rr.match_status if rr else ctx.extra.get("match_status", "PRE_RECONCILIATION")
+        lines = [
+            f"Invoice ID: {ctx.invoice_id}",
+            f"PO Number: {ctx.po_number or 'N/A'}",
+            f"Extraction Confidence: {extraction_conf}",
+            f"Match Status: {match_status}",
+        ]
+        if ctx.extra.get("validation_warnings"):
+            lines.append(f"Validation Warnings: {ctx.extra['validation_warnings']}")
+        lines.append("\nRetrieve invoice details using the invoice_details tool, then analyse quality.")
+        return "\n".join(lines)
 
     @property
     def allowed_tools(self) -> List[str]:
@@ -302,6 +405,7 @@ class ReconciliationAssistAgent(BaseAgent):
 # Agent class registry
 # ============================================================================
 AGENT_CLASS_REGISTRY: Dict[str, type] = {
+    AgentType.INVOICE_EXTRACTION: InvoiceExtractionAgent,
     AgentType.EXCEPTION_ANALYSIS: ExceptionAnalysisAgent,
     AgentType.INVOICE_UNDERSTANDING: InvoiceUnderstandingAgent,
     AgentType.PO_RETRIEVAL: PORetrievalAgent,

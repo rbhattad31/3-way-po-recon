@@ -69,15 +69,45 @@ class ReviewWorkflowService:
     # ------------------------------------------------------------------
     @staticmethod
     def assign_reviewer(assignment: ReviewAssignment, user) -> ReviewAssignment:
+        previous_assignee = assignment.assigned_to
         assignment.assigned_to = user
         assignment.status = ReviewStatus.ASSIGNED
         assignment.save(update_fields=["assigned_to", "status", "updated_at"])
+
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+        AuditService.log_event(
+            entity_type="ReviewAssignment",
+            entity_id=assignment.pk,
+            event_type=AuditEventType.REVIEWER_ASSIGNED,
+            description=f"Reviewer {user} assigned to review #{assignment.pk}",
+            user=user,
+            metadata={
+                "assignment_id": assignment.pk,
+                "invoice_id": assignment.reconciliation_result.invoice_id,
+                "previous_assignee_id": previous_assignee.pk if previous_assignee else None,
+            },
+        )
         return assignment
 
     @staticmethod
     def start_review(assignment: ReviewAssignment) -> ReviewAssignment:
         assignment.status = ReviewStatus.IN_REVIEW
         assignment.save(update_fields=["status", "updated_at"])
+
+        from apps.auditlog.services import AuditService
+        from apps.core.enums import AuditEventType
+        AuditService.log_event(
+            entity_type="ReviewAssignment",
+            entity_id=assignment.pk,
+            event_type=AuditEventType.REVIEW_STARTED,
+            description=f"Review #{assignment.pk} started by {assignment.assigned_to}",
+            user=assignment.assigned_to,
+            metadata={
+                "assignment_id": assignment.pk,
+                "invoice_id": assignment.reconciliation_result.invoice_id,
+            },
+        )
         return assignment
 
     # ------------------------------------------------------------------
