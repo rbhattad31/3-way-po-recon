@@ -17,6 +17,9 @@
     agentRuns:        "/api/v1/agents/runs/",
   };
 
+  var CC_ROLE = window.CC_ROLE || "";
+  var IS_ORG_WIDE = (CC_ROLE === "ADMIN" || CC_ROLE === "FINANCE_MANAGER" || CC_ROLE === "AUDITOR");
+
   // ── CSRF helper ──
   function getCookie(name) {
     const v = document.cookie.match("(^|;)\\s*" + name + "\\s*=\\s*([^;]+)");
@@ -61,22 +64,64 @@
     return "cc-agent-entry--analysis";
   }
 
-  // ── KPI Rendering ──
+  // ── KPI Rendering (org-wide: ADMIN / FINANCE_MANAGER / AUDITOR) ──
   function renderKPIs(data) {
     setKPI("kpi-total-invoices", data.total_invoices || 0);
     var matchPct = data.matched_pct != null ? data.matched_pct : 0;
     setKPI("kpi-auto-reconciled", matchPct + "%");
     setKPI("kpi-pending-reviews", data.pending_reviews || 0);
     setKPI("kpi-exceptions", data.open_exceptions || 0);
-    setKPI("kpi-avg-confidence", ((data.avg_confidence || 0) * 100).toFixed(1) + "%");
-    // Active agents — count from agent runs or show static
+    setKPI("kpi-avg-confidence", (data.avg_confidence || 0).toFixed(1) + "%");
     setKPI("kpi-active-agents", data.active_agents || 7);
+  }
+
+  // ── REVIEWER header KPIs: review workload from Cases API + Summary API ──
+  function renderReviewerKPIs(summary, casesData) {
+    var cases = (casesData.results || casesData) || [];
+    var total = cases.length;
+    var review = 0, closed = 0, escalated = 0;
+
+    cases.forEach(function (c) {
+      var s = (c.status || "").toUpperCase();
+      if (s === "CLOSED") { closed++; }
+      else if (s === "ESCALATED" || s === "FAILED" || s === "REJECTED") { escalated++; }
+      else if (s.indexOf("REVIEW") !== -1 || s.indexOf("APPROVAL") !== -1) { review++; }
+    });
+
+    setKPI("kpi-my-cases", total);
+    setKPI("kpi-in-review", review);
+    setKPI("kpi-pending-reviews", summary.pending_reviews || 0);
+    setKPI("kpi-closed-cases", closed);
+    setKPI("kpi-avg-confidence", (summary.avg_confidence || 0).toFixed(1) + "%");
+    setKPI("kpi-escalated", escalated);
+  }
+
+  // ── AP_PROCESSOR header KPIs: personal invoice metrics + case count ──
+  function renderProcessorKPIs(summary, casesData) {
+    setKPI("kpi-total-invoices", summary.total_invoices || 0);
+    var matchPct = summary.matched_pct != null ? summary.matched_pct : 0;
+    setKPI("kpi-auto-reconciled", matchPct + "%");
+    setKPI("kpi-pending-reviews", summary.pending_reviews || 0);
+    setKPI("kpi-exceptions", summary.open_exceptions || 0);
+    setKPI("kpi-avg-confidence", (summary.avg_confidence || 0).toFixed(1) + "%");
+    var cases = (casesData.results || casesData) || [];
+    setKPI("kpi-my-cases", cases.length);
   }
 
   function setKPI(id, value) {
     var el = document.getElementById(id);
     if (el) {
-      el.textContent = value;
+      // Preserve the <i> icon — only update the text node
+      var icon = el.querySelector("i");
+      if (icon) {
+        // Remove existing text nodes, keep the icon
+        Array.from(el.childNodes).forEach(function (node) {
+          if (node.nodeType === 3) el.removeChild(node);
+        });
+        el.appendChild(document.createTextNode(" " + value));
+      } else {
+        el.textContent = value;
+      }
       el.closest(".cc-kpi").classList.add("cc-fade-in");
     }
   }
@@ -304,26 +349,48 @@
   var refreshInterval = null;
 
   function loadAll() {
-    // Parallel fetch all endpoints
-    Promise.all([
-      apiFetch(API.summary).catch(function () { return {}; }),
-      apiFetch(API.agentPerformance).catch(function () { return []; }),
-      apiFetch(API.matchStatus).catch(function () { return []; }),
-      apiFetch(API.exceptions).catch(function () { return []; }),
-      apiFetch(API.cases + "?ordering=-created_at&page_size=20").catch(function () { return []; }),
-    ]).then(function (results) {
+    // Build promise list based on role — skip APIs the role doesn't need
+    var promises = [
+      apiFetch(API.summary).catch(function () { return {}; }),                                  // [0] summary
+      IS_ORG_WIDE ? apiFetch(API.agentPerformance).catch(function () { return []; })            // [1] agentPerf
+                  : Promise.resolve([]),
+      apiFetch(API.matchStatus).catch(function () { return []; }),                              // [2] matchStatus
+      apiFetch(API.exceptions).catch(function () { return []; }),                               // [3] exceptions
+      apiFetch(API.cases + "?ordering=-created_at&page_size=100").catch(function () { return []; }), // [4] cases
+    ];
+
+    Promise.all(promises).then(function (results) {
       var summary = results[0];
       var agentPerf = results[1];
       var matchStatus = results[2];
       var exceptions = results[3];
       var cases = results[4];
 
-      renderKPIs(summary);
-      renderPipeline(summary, matchStatus);
+      // ── Header KPIs (role-aware) ──
+      if (CC_ROLE === "REVIEWER") {
+        renderReviewerKPIs(summary, cases);
+      } else if (CC_ROLE === "AP_PROCESSOR") {
+        renderProcessorKPIs(summary, cases);
+      } else {
+        renderKPIs(summary);
+      }
+
+      // ── Pipeline (not shown for REVIEWER — hidden in template) ──
+      if (CC_ROLE !== "REVIEWER") {
+        renderPipeline(summary, matchStatus);
+      }
+
+      // ── Case Intelligence (all roles — backend scoped) ──
       renderCases(cases);
+
+      // ── Charts (all roles — backend scoped) ──
       renderExceptionChart(exceptions);
       renderReconChart(matchStatus);
-      renderAgentPerformance(agentPerf);
+
+      // ── Agent Performance (org-wide roles only — hidden in template) ──
+      if (IS_ORG_WIDE) {
+        renderAgentPerformance(agentPerf);
+      }
 
       // Update last-refreshed timestamp
       var ts = document.getElementById("last-refresh");

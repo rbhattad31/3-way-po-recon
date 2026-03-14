@@ -37,6 +37,20 @@ class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["created_at", "confidence", "total_tokens"]
     ordering = ["-created_at"]
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        from apps.core.enums import UserRole
+        user = self.request.user
+        user_role = getattr(user, "role", None)
+        if user_role == UserRole.AP_PROCESSOR:
+            from apps.reconciliation.models import ReconciliationConfig
+            config = ReconciliationConfig.objects.filter(is_default=True).first()
+            if not (config and config.ap_processor_sees_all_cases):
+                return qs.filter(
+                    reconciliation_result__invoice__document_upload__uploaded_by=user
+                )
+        return qs
+
     def get_serializer_class(self):
         if self.action == "list":
             return AgentRunListSerializer

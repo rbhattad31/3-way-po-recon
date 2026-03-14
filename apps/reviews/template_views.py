@@ -125,12 +125,32 @@ def decide(request, pk):
         reconciliation_result=assignment.reconciliation_result, is_active=True
     ).first()
     if ap_case:
+        old_status = ap_case.status
         if decision == "APPROVED":
             ap_case.status = "CLOSED"
             ap_case.save(update_fields=["status", "updated_at"])
         elif decision == "REJECTED":
             ap_case.status = "REJECTED"
             ap_case.save(update_fields=["status", "updated_at"])
+
+        # Audit: case status change
+        if ap_case.status != old_status:
+            from apps.auditlog.services import AuditService
+            from apps.core.enums import AuditEventType
+            event_map = {"CLOSED": AuditEventType.CASE_CLOSED, "REJECTED": AuditEventType.CASE_REJECTED}
+            AuditService.log_event(
+                entity_type="APCase",
+                entity_id=ap_case.pk,
+                event_type=event_map.get(ap_case.status, decision),
+                description=f"Case {ap_case.case_number} {old_status} -> {ap_case.status} via review decision",
+                user=request.user,
+                case_id=ap_case.pk,
+                invoice_id=ap_case.invoice_id,
+                status_before=old_status,
+                status_after=ap_case.status,
+                metadata={"review_assignment_id": assignment.pk, "decision": decision, "reason": reason[:300]},
+            )
+
         return redirect("cases:case_agent_view", pk=ap_case.pk)
 
     return redirect("reviews:assignment_detail", pk=pk)

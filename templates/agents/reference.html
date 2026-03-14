@@ -1,46 +1,57 @@
 {% extends "base.html" %}
-{% block title %}Agent &amp; Tool Reference – PO Reconciliation{% endblock %}
+{% block title %}Platform Reference – PO Reconciliation{% endblock %}
+
+{% block extra_css %}
+<style>
+  .ref-step-card { transition: transform .15s; }
+  .ref-step-card:hover { transform: translateY(-2px); box-shadow: 0 .25rem .75rem rgba(0,0,0,.08); }
+  .pipeline-connector { width: 2px; height: 24px; background: #dee2e6; margin: 0 auto; }
+  .tab-count { font-size: .7rem; vertical-align: super; }
+  .governance-method { font-family: 'Courier New', monospace; font-weight: 600; font-size: .8rem; }
+</style>
+{% endblock %}
 
 {% block breadcrumb %}
 <nav aria-label="breadcrumb">
   <ol class="breadcrumb">
     <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
-    <li class="breadcrumb-item active">Agent &amp; Tool Reference</li>
+    <li class="breadcrumb-item active">Platform Reference</li>
   </ol>
 </nav>
 {% endblock %}
 
 {% block content %}
 <!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- INTRO — Case-Centric Flow Overview                            -->
+<!-- INTRO — End-to-End Flow Overview                              -->
 <!-- ═══════════════════════════════════════════════════════════════ -->
 <div class="card mb-4">
   <div class="card-body">
-    <h4 class="card-title mb-2"><i class="bi bi-diagram-3"></i> Case-Centric Processing Flow</h4>
+    <h4 class="card-title mb-2"><i class="bi bi-diagram-3"></i> End-to-End Processing Flow</h4>
     <p class="text-muted mb-3">
-      Every invoice creates an <strong>AP Case</strong> that is driven through a sequence of
-      <strong>stages</strong> by the <strong>Case Orchestrator</strong>. The processing path
-      (2-Way, 3-Way, or Non-PO) is resolved automatically after extraction
+      Every invoice creates an <strong>AP Case</strong> driven through a sequence of
+      <strong>stages</strong> by the <strong>Case Orchestrator</strong>. The extraction pipeline
+      uses a <strong>two-agent architecture</strong> (Extraction Agent + Understanding Agent for
+      low confidence). The processing path (2-Way, 3-Way, or Non-PO) is resolved automatically
       and determines which stages run. LLM-powered agents use a
-      <strong>ReAct loop</strong> (Reason&nbsp;→ Act&nbsp;→ Observe) with up to
-      <strong>{{ max_tool_rounds }} tool-calling rounds</strong> for investigation stages.
+      <strong>ReAct loop</strong> (Reason &rarr; Act &rarr; Observe) with up to
+      <strong>{{ max_tool_rounds }} tool-calling rounds</strong>.
     </p>
 
-    <!-- Three-path visual -->
+    <!-- Flow visual -->
     <div class="row text-center g-2 mb-3">
       <div class="col-md-2">
         <div class="border rounded p-2 bg-light">
           <i class="bi bi-upload fs-3 text-secondary"></i>
-          <div class="small mt-1 fw-semibold">Upload &amp;<br>Intake</div>
+          <div class="small mt-1 fw-semibold">Upload</div>
         </div>
       </div>
       <div class="col-md-1 d-flex align-items-center justify-content-center">
         <i class="bi bi-arrow-right fs-4 text-muted"></i>
       </div>
       <div class="col-md-2">
-        <div class="border rounded p-2 bg-light">
-          <i class="bi bi-file-earmark-text fs-3 text-primary"></i>
-          <div class="small mt-1 fw-semibold">Extraction<br>(OCR + LLM)</div>
+        <div class="border rounded p-2" style="background:#e8f0fe">
+          <i class="bi bi-robot fs-3 text-primary"></i>
+          <div class="small mt-1 fw-semibold">Extraction<br><span class="text-muted" style="font-size:.7rem">OCR &rarr; Agent</span></div>
         </div>
       </div>
       <div class="col-md-1 d-flex align-items-center justify-content-center">
@@ -62,44 +73,7 @@
             <div><span class="badge bg-warning text-dark">3-Way</span></div>
             <div><span class="badge bg-info text-dark">Non-PO</span></div>
           </div>
-          <div class="small mt-1 fw-semibold">Path-Specific<br>Processing</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Second row: post-path -->
-    <div class="row text-center g-2">
-      <div class="col-md-3">
-        <div class="border rounded p-2" style="background:#fff8e6">
-          <i class="bi bi-exclamation-triangle fs-3 text-warning"></i>
-          <div class="small mt-1 fw-semibold">Exception<br>Analysis (AI)</div>
-        </div>
-      </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center">
-        <i class="bi bi-arrow-right fs-4 text-muted"></i>
-      </div>
-      <div class="col-md-2">
-        <div class="border rounded p-2" style="background:#fce4ec">
-          <i class="bi bi-people fs-3 text-danger"></i>
-          <div class="small mt-1 fw-semibold">Review<br>Routing</div>
-        </div>
-      </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center">
-        <i class="bi bi-arrow-right fs-4 text-muted"></i>
-      </div>
-      <div class="col-md-2">
-        <div class="border rounded p-2" style="background:#e8f5e9">
-          <i class="bi bi-journal-text fs-3 text-success"></i>
-          <div class="small mt-1 fw-semibold">Case<br>Summary</div>
-        </div>
-      </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center">
-        <i class="bi bi-arrow-right fs-4 text-muted"></i>
-      </div>
-      <div class="col-md-2">
-        <div class="border rounded p-2 bg-light">
-          <i class="bi bi-check-circle fs-3 text-success"></i>
-          <div class="small mt-1 fw-semibold">Closed /<br>Rejected</div>
+          <div class="small mt-1 fw-semibold">Matching &rarr; Agents &rarr; Review</div>
         </div>
       </div>
     </div>
@@ -111,33 +85,33 @@
 <!-- ═══════════════════════════════════════════════════════════════ -->
 <ul class="nav nav-tabs mb-4" role="tablist">
   <li class="nav-item">
-    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-lifecycle" type="button">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-pipeline" type="button">
+      <i class="bi bi-file-earmark-text me-1"></i> Invoice Pipeline
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-lifecycle" type="button">
       <i class="bi bi-diagram-3 me-1"></i> Case Lifecycle
     </button>
   </li>
   <li class="nav-item">
     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-agents" type="button">
-      <i class="bi bi-robot me-1"></i> Agents ({{ agents_info|length }})
+      <i class="bi bi-robot me-1"></i> Agents <span class="tab-count">{{ agents_info|length }}</span>
     </button>
   </li>
   <li class="nav-item">
     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tools" type="button">
-      <i class="bi bi-tools me-1"></i> Tools ({{ tools_info|length }})
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-recommendations" type="button">
-      <i class="bi bi-lightbulb me-1"></i> Recommendations
+      <i class="bi bi-tools me-1"></i> Tools &amp; Recommendations
     </button>
   </li>
   <li class="nav-item">
     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-prompts" type="button">
-      <i class="bi bi-chat-left-text me-1"></i> Prompts ({{ prompts|length }})
+      <i class="bi bi-chat-left-text me-1"></i> Prompts <span class="tab-count">{{ prompts|length }}</span>
     </button>
   </li>
   <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-traceability" type="button">
-      <i class="bi bi-bezier2 me-1"></i> Traceability
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">
+      <i class="bi bi-journal-check me-1"></i> Audit &amp; Governance
     </button>
   </li>
   <li class="nav-item">
@@ -153,10 +127,123 @@
 </ul>
 
 <div class="tab-content">
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- INVOICE PIPELINE TAB (NEW)                                     -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade show active" id="tab-pipeline" role="tabpanel">
+
+    <div class="alert alert-primary border-0 mb-4">
+      <i class="bi bi-info-circle me-1"></i>
+      The extraction pipeline uses a <strong>two-agent architecture</strong>:
+      the <strong>Invoice Extraction Agent</strong> always runs after OCR to extract structured data,
+      and the <strong>Invoice Understanding Agent</strong> conditionally validates
+      when extraction confidence falls below <strong>{{ confidence_threshold }}%</strong>.
+    </div>
+
+    <!-- Step-by-step pipeline -->
+    <h5 class="mb-3"><i class="bi bi-arrow-down-circle me-1"></i> Extraction Pipeline Steps</h5>
+    {% for step in extraction_pipeline %}
+    <div class="card ref-step-card mb-2 {% if step.step == 3 or step.step == 7 %}border-start border-4 border-primary{% endif %}">
+      <div class="card-body py-3">
+        <div class="row align-items-center">
+          <div class="col-auto">
+            <div class="rounded-circle d-flex align-items-center justify-content-center {% if step.step == 3 or step.step == 7 %}bg-primary text-white{% else %}bg-light{% endif %}" style="width:40px;height:40px">
+              <i class="bi {{ step.icon }}"></i>
+            </div>
+          </div>
+          <div class="col">
+            <div class="d-flex align-items-center mb-1">
+              <strong>{{ step.step }}. {{ step.name }}</strong>
+              {% if step.step == 3 %}<span class="badge bg-primary ms-2">AI Agent</span>{% endif %}
+              {% if step.step == 7 %}<span class="badge bg-warning text-dark ms-2">Conditional</span>{% endif %}
+            </div>
+            <div class="text-muted small mb-1">{{ step.description }}</div>
+            <div class="small"><span class="text-secondary"><i class="bi bi-person-gear me-1"></i>{{ step.performer }}</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% if not forloop.last %}
+    <div class="pipeline-connector"></div>
+    {% endif %}
+    {% endfor %}
+
+    <!-- Two-agent comparison -->
+    <h5 class="mt-4 mb-3"><i class="bi bi-robot me-1"></i> Two-Agent Architecture Comparison</h5>
+    <div class="row g-3 mb-4">
+      <div class="col-md-6">
+        <div class="card h-100 border-primary">
+          <div class="card-header bg-primary text-white">
+            <i class="bi bi-robot me-1"></i> Invoice Extraction Agent
+          </div>
+          <div class="card-body">
+            <table class="table table-sm table-borderless mb-0">
+              <tbody>
+                <tr><td class="fw-semibold" style="width:35%">When</td><td>Always — runs for every invoice after OCR</td></tr>
+                <tr><td class="fw-semibold">Purpose</td><td>Extract structured fields from raw OCR text</td></tr>
+                <tr><td class="fw-semibold">Model</td><td>GPT-4o (temperature: 0.0)</td></tr>
+                <tr><td class="fw-semibold">Response</td><td><code>response_format=json_object</code> — deterministic JSON output</td></tr>
+                <tr><td class="fw-semibold">Tools</td><td>None — single-shot extraction, no tool-calling</td></tr>
+                <tr><td class="fw-semibold">Runs in</td><td>Extraction task (Celery) — before case creation</td></tr>
+                <tr><td class="fw-semibold">Tracing</td><td>Full AgentRun / AgentStep — auditable</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card h-100 border-warning">
+          <div class="card-header bg-warning text-dark">
+            <i class="bi bi-lightbulb me-1"></i> Invoice Understanding Agent
+          </div>
+          <div class="card-body">
+            <table class="table table-sm table-borderless mb-0">
+              <tbody>
+                <tr><td class="fw-semibold" style="width:35%">When</td><td>Conditional — only when confidence &lt; {{ confidence_threshold }}%</td></tr>
+                <tr><td class="fw-semibold">Purpose</td><td>Validate and cross-check extracted data</td></tr>
+                <tr><td class="fw-semibold">Model</td><td>GPT-4o (temperature: 0.1)</td></tr>
+                <tr><td class="fw-semibold">Response</td><td>Free-form reasoning with tool calls</td></tr>
+                <tr><td class="fw-semibold">Tools</td><td><code>invoice_details</code>, <code>vendor_search</code></td></tr>
+                <tr><td class="fw-semibold">Runs in</td><td>Case Orchestrator (EXTRACTION stage) — after case creation</td></tr>
+                <tr><td class="fw-semibold">Tracing</td><td>Full AgentRun / AgentStep / ToolCall — auditable</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Invoice status flow -->
+    <h5 class="mb-3"><i class="bi bi-arrow-right-circle me-1"></i> Invoice Status Flow</h5>
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <span class="badge bg-secondary py-2 px-3">UPLOADED</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-info text-dark py-2 px-3">EXTRACTION_IN_PROGRESS</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-primary py-2 px-3">EXTRACTED</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-warning text-dark py-2 px-3">VALIDATED</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-dark py-2 px-3">READY_FOR_RECON</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-success py-2 px-3">RECONCILED</span>
+        </div>
+        <div class="mt-2 small text-muted">
+          <i class="bi bi-exclamation-triangle me-1"></i>
+          Failure paths: EXTRACTION_IN_PROGRESS &rarr; <span class="badge bg-danger">INVALID</span> |
+          READY_FOR_RECON &rarr; <span class="badge bg-danger">FAILED</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══════════════════════════════════════════════════════════════ -->
   <!-- CASE LIFECYCLE TAB                                             -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade show active" id="tab-lifecycle" role="tabpanel">
+  <div class="tab-pane fade" id="tab-lifecycle" role="tabpanel">
 
     <!-- Processing paths -->
     <h5 class="mb-3"><i class="bi bi-signpost-split me-1"></i> Processing Paths</h5>
@@ -269,7 +356,8 @@
           The case state machine enforces <strong>{{ transitions|length }} transitions</strong>
           between statuses. Terminal states:
           {% for ts in terminal_states %}<span class="badge bg-dark ms-1">{{ ts }}</span>{% endfor %}.
-          Each transition specifies who can trigger it (System, Deterministic Engine, Agent, or Human).
+          Each transition is <strong>audited</strong> — terminal state transitions automatically
+          create AuditEvents (CASE_CLOSED, CASE_REJECTED, CASE_ESCALATED, CASE_FAILED).
         </p>
         <div class="table-responsive" style="max-height:420px;overflow-y:auto">
           <table class="table table-sm table-bordered table-hover mb-0">
@@ -300,6 +388,22 @@
         </div>
       </div>
     </div>
+
+    <!-- Case status flow -->
+    <h5 class="mb-3"><i class="bi bi-arrow-right-circle me-1"></i> Case Status Flow</h5>
+    <div class="card mb-3">
+      <div class="card-body">
+        <pre class="mb-0 small" style="line-height:1.8">
+<strong>NEW</strong> → INTAKE → EXTRACTING → EXTRACTED → PATH_RESOLVED
+  │
+  ├─ <span class="text-primary">TWO_WAY path:</span>  PO_LOOKUP → MATCHING → MATCHED / EXCEPTIONS
+  ├─ <span class="text-warning">THREE_WAY path:</span> PO_LOOKUP → MATCHING → GRN_ANALYSIS → MATCHED / EXCEPTIONS
+  └─ <span class="text-info">NON_PO path:</span>   VALIDATING → VALIDATED / EXCEPTIONS
+  │
+  ├─ EXCEPTIONS → AGENT_ANALYSIS → REVIEW_PENDING → IN_REVIEW
+  └─ Terminal: <span class="badge bg-dark">CLOSED</span> <span class="badge bg-dark">REJECTED</span> <span class="badge bg-warning text-dark">ESCALATED</span> <span class="badge bg-danger">FAILED</span></pre>
+      </div>
+    </div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -311,14 +415,32 @@
     <div class="alert alert-light border mb-4">
       <strong><i class="bi bi-info-circle me-1"></i> When do agents run?</strong>
       <ul class="mb-0 mt-1 small">
-        <li><strong>Intake / Extraction</strong> — <em>Invoice Understanding</em> agent classifies and validates the uploaded document.</li>
+        <li><strong>Extraction (always)</strong> — <em>Invoice Extraction</em> agent extracts structured data from OCR output using GPT-4o with JSON mode.</li>
+        <li><strong>Extraction (low confidence)</strong> — <em>Invoice Understanding</em> agent validates and cross-checks when confidence &lt; {{ confidence_threshold }}%.</li>
         <li><strong>PO Retrieval</strong> — <em>PO Retrieval</em> agent is the fallback when deterministic lookup fails.</li>
         <li><strong>GRN Analysis</strong> — <em>GRN Retrieval</em> agent investigates receipt discrepancies (3-Way only, conditional).</li>
         <li><strong>Exception Analysis</strong> — <em>Exception Analysis</em> + <em>Reconciliation Assist</em> agents reason over exceptions.</li>
         <li><strong>Review Routing</strong> — <em>Review Routing</em> agent assigns the case to the right reviewer queue.</li>
         <li><strong>Case Summary</strong> — <em>Case Summary</em> agent produces the final narrative for reviewers.</li>
-        <li><strong>Reviewer Copilot</strong> — Interactive advisory assistant during human review (prompt-based, no autonomous run).</li>
       </ul>
+    </div>
+
+    <!-- Agent run status flow -->
+    <div class="card mb-4">
+      <div class="card-header bg-white"><strong><i class="bi bi-arrow-right-circle me-1"></i> Agent Run Status Flow</strong></div>
+      <div class="card-body py-2">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <span class="badge bg-secondary py-2 px-3">PENDING</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-primary py-2 px-3">RUNNING</span>
+          <i class="bi bi-arrow-right text-muted"></i>
+          <span class="badge bg-success py-2 px-3">COMPLETED</span>
+          <span class="text-muted mx-1">|</span>
+          <span class="badge bg-danger py-2 px-3">FAILED</span>
+          <span class="text-muted mx-1">|</span>
+          <span class="badge bg-warning text-dark py-2 px-3">SKIPPED</span>
+        </div>
+      </div>
     </div>
 
     <div class="accordion" id="agentAccordion">
@@ -329,18 +451,20 @@
                   type="button" data-bs-toggle="collapse"
                   data-bs-target="#agent-{{ forloop.counter }}">
             <span class="me-2">
-              {% if agent.type == "EXCEPTION_ANALYSIS" %}<i class="bi bi-exclamation-triangle text-warning"></i>
-              {% elif agent.type == "INVOICE_UNDERSTANDING" %}<i class="bi bi-file-earmark-text text-primary"></i>
+              {% if agent.type == "INVOICE_EXTRACTION" %}<i class="bi bi-file-earmark-code text-primary"></i>
+              {% elif agent.type == "INVOICE_UNDERSTANDING" %}<i class="bi bi-file-earmark-text text-info"></i>
               {% elif agent.type == "PO_RETRIEVAL" %}<i class="bi bi-search text-info"></i>
               {% elif agent.type == "GRN_RETRIEVAL" %}<i class="bi bi-box-seam text-success"></i>
+              {% elif agent.type == "EXCEPTION_ANALYSIS" %}<i class="bi bi-exclamation-triangle text-warning"></i>
+              {% elif agent.type == "RECONCILIATION_ASSIST" %}<i class="bi bi-arrow-left-right text-primary"></i>
               {% elif agent.type == "REVIEW_ROUTING" %}<i class="bi bi-signpost-split text-danger"></i>
               {% elif agent.type == "CASE_SUMMARY" %}<i class="bi bi-journal-text text-secondary"></i>
-              {% elif agent.type == "RECONCILIATION_ASSIST" %}<i class="bi bi-arrow-left-right text-primary"></i>
               {% else %}<i class="bi bi-robot"></i>
               {% endif %}
             </span>
             <strong>{{ agent.label }}</strong>
             <span class="text-muted ms-3 small">{{ agent.type }}</span>
+            {% if agent.type == "INVOICE_EXTRACTION" %}<span class="badge bg-primary ms-2">New</span>{% endif %}
           </button>
         </h2>
         <div id="agent-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
@@ -355,7 +479,7 @@
                 <i class="bi bi-wrench me-1"></i>{{ tool_name }}
               </span>
               {% empty %}
-              <span class="text-muted small">No tools — prompt-only agent</span>
+              <span class="text-muted small">No tools — prompt-only / single-shot agent</span>
               {% endfor %}
             </div>
 
@@ -371,10 +495,12 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- TOOLS TAB                                                      -->
+  <!-- TOOLS & RECOMMENDATIONS TAB                                    -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
   <div class="tab-pane fade" id="tab-tools" role="tabpanel">
-    <div class="row g-3">
+
+    <h5 class="mb-3"><i class="bi bi-tools me-1"></i> Registered Tools ({{ tools_info|length }})</h5>
+    <div class="row g-3 mb-4">
       {% for tool in tools_info %}
       <div class="col-lg-6">
         <div class="card h-100">
@@ -410,14 +536,12 @@
       </div>
       {% endfor %}
     </div>
-  </div>
 
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- RECOMMENDATION TYPES TAB                                       -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-recommendations" role="tabpanel">
-    <div class="card">
-      <div class="card-header bg-white"><strong>Possible Recommendation Types</strong></div>
+    <hr class="my-4">
+
+    <!-- Recommendations section -->
+    <h5 class="mb-3"><i class="bi bi-lightbulb me-1"></i> Recommendation Types</h5>
+    <div class="card mb-4">
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
           <thead class="table-light">
@@ -452,15 +576,15 @@
       </div>
     </div>
 
-    <div class="card mt-3">
-      <div class="card-header bg-white"><strong>How Agents Choose a Recommendation</strong></div>
+    <h5 class="mb-3"><i class="bi bi-gear me-1"></i> How Agents Choose a Recommendation</h5>
+    <div class="card mb-3">
       <div class="card-body">
         <ul class="mb-0">
           <li>Each agent receives the reconciliation exceptions and uses tools to gather context.</li>
           <li>The agent reasons through the exceptions and picks the most appropriate recommendation type.</li>
           <li>A <strong>confidence score (0–100%)</strong> indicates how certain the agent is about its recommendation.</li>
           <li>If confidence is below the threshold, the case is <strong>escalated</strong> for human review.</li>
-          <li>Multiple agents may run in sequence (e.g., Exception Analysis → Review Routing → Case Summary).</li>
+          <li>Multiple agents may run in sequence (e.g., Exception Analysis &rarr; Review Routing &rarr; Case Summary).</li>
           <li>The <strong>Policy Engine</strong> may <strong>auto-close</strong> cases that fall within auto-close tolerance bands (qty: 5%, price: 3%, amount: 3%).</li>
         </ul>
       </div>
@@ -556,51 +680,150 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- TRACEABILITY TAB                                               -->
+  <!-- AUDIT & GOVERNANCE TAB (NEW)                                   -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-traceability" role="tabpanel">
+  <div class="tab-pane fade" id="tab-audit" role="tabpanel">
 
     <div class="alert alert-light border mb-4">
       <i class="bi bi-info-circle me-1"></i>
-      Every HTTP request, Celery task, service call, and agent step is wrapped in a
-      <strong>TraceContext</strong> — a structured envelope that carries correlation IDs,
-      business entity references, and an RBAC snapshot. This lets you follow any invoice
-      from upload to close across all layers.
+      Every action — from invoice upload to case closure — is recorded in the audit trail.
+      The governance layer provides <strong>full traceability</strong> across HTTP requests,
+      service calls, agent runs, and human decisions.
     </div>
 
-    <!-- Trace propagation -->
-    <h5 class="mb-3"><i class="bi bi-arrow-repeat me-1"></i> How Traces Propagate</h5>
+    <!-- Audit event types -->
+    <h5 class="mb-3"><i class="bi bi-journal-check me-1"></i> Audit Event Types ({{ business_events|length|add:rbac_events|length|add:case_events|length }})</h5>
     <div class="row g-3 mb-4">
-      {% for prop in trace_propagation %}
-      <div class="col-md-6 col-lg-3">
-        <div class="card h-100 border-0 shadow-sm">
-          <div class="card-body">
-            <div class="fw-semibold mb-2">
-              <i class="bi {{ prop.icon }} text-primary me-1"></i> {{ prop.method }}
+      <div class="col-lg-5">
+        <div class="card h-100">
+          <div class="card-header bg-white"><strong>Business Events</strong> <span class="badge bg-primary">{{ business_events|length }}</span></div>
+          <div class="card-body p-0">
+            <div class="d-flex flex-wrap p-3 gap-1">
+              {% for evt in business_events %}
+              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
+              {% endfor %}
             </div>
-            <div class="text-muted small">{{ prop.how }}</div>
           </div>
         </div>
       </div>
-      {% endfor %}
+      <div class="col-lg-4">
+        <div class="card h-100">
+          <div class="card-header bg-white"><strong>Case & Review Events</strong> <span class="badge bg-info">{{ case_events|length }}</span></div>
+          <div class="card-body p-0">
+            <div class="d-flex flex-wrap p-3 gap-1">
+              {% for evt in case_events %}
+              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-3">
+        <div class="card h-100">
+          <div class="card-header bg-white"><strong>RBAC Events</strong> <span class="badge bg-warning text-dark">{{ rbac_events|length }}</span></div>
+          <div class="card-body p-0">
+            <div class="d-flex flex-wrap p-3 gap-1">
+              {% for evt in rbac_events %}
+              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Span hierarchy diagram -->
-    <h5 class="mb-3"><i class="bi bi-diagram-3 me-1"></i> Span Hierarchy Example</h5>
+    <!-- AuditEvent record structure -->
+    <h5 class="mb-3"><i class="bi bi-card-list me-1"></i> AuditEvent Record Structure</h5>
     <div class="card mb-4">
       <div class="card-body">
-        <pre class="mb-0 small" style="line-height:1.8">
+        <div class="row">
+          <div class="col-md-4">
+            <h6 class="text-muted mb-2">Identification</h6>
+            <ul class="list-unstyled small">
+              <li><code>trace_id</code>, <code>span_id</code>, <code>request_id</code></li>
+              <li><code>event_type</code>, <code>event_name</code></li>
+              <li><code>source_service</code>, <code>source_layer</code></li>
+            </ul>
+          </div>
+          <div class="col-md-4">
+            <h6 class="text-muted mb-2">RBAC Snapshot</h6>
+            <ul class="list-unstyled small">
+              <li><code>actor_email</code>, <code>actor_primary_role</code></li>
+              <li><code>actor_roles_snapshot</code></li>
+              <li><code>permission_checked</code>, <code>access_granted</code></li>
+              <li><code>permission_source</code></li>
+            </ul>
+          </div>
+          <div class="col-md-4">
+            <h6 class="text-muted mb-2">Cross-References</h6>
+            <ul class="list-unstyled small">
+              <li><code>invoice_id</code>, <code>case_id</code></li>
+              <li><code>reconciliation_result_id</code></li>
+              <li><code>status_before</code>, <code>status_after</code></li>
+              <li><code>duration_ms</code>, <code>error_code</code></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Governance API endpoints -->
+    <h5 class="mb-3"><i class="bi bi-hdd-network me-1"></i> Governance API Endpoints ({{ governance_endpoints|length }})</h5>
+    <div class="card mb-4">
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr><th style="width:8%">Method</th><th style="width:40%">Endpoint</th><th>Description</th><th style="width:20%">Access</th></tr>
+          </thead>
+          <tbody>
+            {% for ep in governance_endpoints %}
+            <tr>
+              <td><span class="governance-method text-success">{{ ep.method }}</span></td>
+              <td><code class="small">{{ ep.path }}</code></td>
+              <td class="small text-muted">{{ ep.description }}</td>
+              <td class="small">{{ ep.access }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Traceability section -->
+    <h5 class="mb-3"><i class="bi bi-bezier2 me-1"></i> Distributed Traceability</h5>
+    <div class="card mb-4">
+      <div class="card-body">
+        <p class="text-muted mb-3">
+          Every HTTP request, Celery task, service call, and agent step is wrapped in a
+          <strong>TraceContext</strong> — a structured envelope carrying correlation IDs,
+          business entity references, and an RBAC snapshot.
+        </p>
+
+        <!-- Trace propagation -->
+        <h6 class="mb-2">How Traces Propagate</h6>
+        <div class="row g-2 mb-3">
+          {% for prop in trace_propagation %}
+          <div class="col-md-6 col-lg-3">
+            <div class="border rounded p-2">
+              <div class="fw-semibold small">
+                <i class="bi {{ prop.icon }} text-primary me-1"></i> {{ prop.method }}
+              </div>
+              <div class="text-muted" style="font-size:.78rem">{{ prop.how }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+
+        <!-- Span hierarchy -->
+        <h6 class="mb-2">Span Hierarchy Example</h6>
+        <pre class="mb-0 small bg-light border rounded p-3" style="line-height:1.8">
 <strong>HTTP POST /reconciliation/start/</strong>                      ← Root span (RequestTraceMiddleware)
   └─ <span class="text-primary">@observed_action</span> start_reconciliation             ← Child span (source_layer=UI)
        └─ <span class="text-success">@observed_service</span> reconciliation.runner.run      ← Child span (source_layer=SERVICE)
-            ├─ ProcessingLog  ✓                               ← Written on completion
-            └─ AuditEvent  RECONCILIATION_STARTED             ← Written if audit_event is set
-       └─ <span class="text-warning">@observed_task</span> extraction.process_invoice_upload ← Reconstructed from Celery headers (source_layer=TASK)
+            └─ AuditEvent  RECONCILIATION_STARTED             ← Compliance audit record
+       └─ <span class="text-warning">@observed_task</span> extraction.process_invoice_upload ← Celery headers propagation
             └─ <span class="text-success">@observed_service</span> agents.orchestrator.execute  ← Child span (source_layer=SERVICE)
-                 └─ AgentTraceService.start_agent_run()       ← Agent-level tracing
-                      ├─ AgentStep #1                         ← log_agent_step()
-                      ├─ ToolCall: po_lookup                  ← log_tool_call()
-                      └─ DecisionLog: AUTO_CLOSE              ← log_agent_decision()</pre>
+                 └─ AgentTraceService.start_agent_run()       ← Agent-level tracing</pre>
       </div>
     </div>
 
@@ -631,11 +854,11 @@
 
     <!-- Agent tracing -->
     <h5 class="mb-3"><i class="bi bi-robot me-1"></i> Agent-Level Tracing</h5>
-    <div class="card mb-3">
+    <div class="card mb-4">
       <div class="card-body">
         <p class="text-muted mb-3">
           <strong>AgentTraceService</strong> records every AI-agent activity for full auditability.
-          Each agent run produces a hierarchy: <strong>AgentRun → AgentStep → ToolCall / DecisionLog</strong>.
+          Each agent run produces: <strong>AgentRun &rarr; AgentStep &rarr; ToolCall / DecisionLog</strong>.
         </p>
         <table class="table table-sm table-bordered mb-0">
           <thead class="table-light">
@@ -650,12 +873,12 @@
             <tr>
               <td><code>log_agent_step()</code></td>
               <td><span class="badge bg-info text-dark">AgentStep</span></td>
-              <td class="small">Step name, description, output, success flag, duration_ms, auto-incremented step_number</td>
+              <td class="small">Step name, description, output, success flag, duration_ms</td>
             </tr>
             <tr>
               <td><code>log_tool_call()</code></td>
               <td><span class="badge bg-success">ToolCall</span></td>
-              <td class="small">Tool name, input/output JSON, success flag, duration_ms, linked ToolDefinition</td>
+              <td class="small">Tool name, input/output JSON, success flag, duration_ms</td>
             </tr>
             <tr>
               <td><code>log_agent_decision()</code></td>
@@ -665,7 +888,7 @@
             <tr>
               <td><code>finish_agent_run()</code></td>
               <td><span class="badge bg-primary">AgentRun</span></td>
-              <td class="small">Sets status=COMPLETED/FAILED, confidence_score, summarized_reasoning, duration_ms</td>
+              <td class="small">Sets status=COMPLETED/FAILED, confidence_score, summarized_reasoning</td>
             </tr>
           </tbody>
         </table>
@@ -673,32 +896,41 @@
     </div>
 
     <!-- Where to see traces -->
-    <h5 class="mb-3"><i class="bi bi-eye me-1"></i> Where Traces Are Visible</h5>
+    <h5 class="mb-3"><i class="bi bi-eye me-1"></i> Where Governance Data Is Visible</h5>
     <div class="row g-3 mb-3">
-      <div class="col-md-4">
+      <div class="col-md-3">
         <div class="card h-100 border-0 shadow-sm">
           <div class="card-body text-center py-3">
             <i class="bi bi-journal-text fs-3 text-secondary"></i>
             <div class="fw-semibold mt-1">Case Agent View</div>
-            <div class="text-muted small">Feed shows agent steps, tool calls, and decisions with timestamps</div>
+            <div class="text-muted small">Agent steps, tool calls, decisions with timestamps</div>
           </div>
         </div>
       </div>
-      <div class="col-md-4">
+      <div class="col-md-3">
         <div class="card h-100 border-0 shadow-sm">
           <div class="card-body text-center py-3">
             <i class="bi bi-clock-history fs-3 text-info"></i>
             <div class="fw-semibold mt-1">Governance Timeline</div>
-            <div class="text-muted small">8 event categories with RBAC badges, status changes, durations</div>
+            <div class="text-muted small">8 event categories with RBAC badges</div>
           </div>
         </div>
       </div>
-      <div class="col-md-4">
+      <div class="col-md-3">
+        <div class="card h-100 border-0 shadow-sm">
+          <div class="card-body text-center py-3">
+            <i class="bi bi-list-ul fs-3 text-warning"></i>
+            <div class="fw-semibold mt-1">Audit Event Log</div>
+            <div class="text-muted small">Filterable by role, trace_id, denied-only</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
         <div class="card h-100 border-0 shadow-sm">
           <div class="card-body text-center py-3">
             <i class="bi bi-code-slash fs-3 text-success"></i>
             <div class="fw-semibold mt-1">Governance API</div>
-            <div class="text-muted small">/api/v1/governance/ — 9 endpoints for audit trail, agent trace, timeline</div>
+            <div class="text-muted small">9 REST endpoints for programmatic access</div>
           </div>
         </div>
       </div>
@@ -839,55 +1071,9 @@
       </div>
     </div>
 
-    <!-- Metrics categories -->
-    <h5 class="mb-3"><i class="bi bi-speedometer2 me-1"></i> In-Process Metrics</h5>
-    <div class="row g-3 mb-4">
-      {% for cat in metrics_categories %}
-      <div class="col-md-6 col-lg-4">
-        <div class="card h-100 border-0 shadow-sm">
-          <div class="card-body">
-            <div class="fw-semibold mb-2">
-              <i class="bi {{ cat.icon }} me-1"></i> {{ cat.category }}
-            </div>
-            <div class="text-muted small" style="word-break:break-word">{{ cat.counters }}</div>
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-
-    <!-- Audit event types -->
-    <h5 class="mb-3"><i class="bi bi-journal-check me-1"></i> Audit Event Types ({{ business_events|length|add:rbac_events|length }})</h5>
-    <div class="row g-3 mb-3">
-      <div class="col-md-7">
-        <div class="card h-100">
-          <div class="card-header bg-white"><strong>Business Events</strong> <span class="badge bg-primary">{{ business_events|length }}</span></div>
-          <div class="card-body p-0">
-            <div class="d-flex flex-wrap p-3 gap-1">
-              {% for evt in business_events %}
-              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-5">
-        <div class="card h-100">
-          <div class="card-header bg-white"><strong>RBAC Events</strong> <span class="badge bg-warning text-dark">{{ rbac_events|length }}</span></div>
-          <div class="card-body p-0">
-            <div class="d-flex flex-wrap p-3 gap-1">
-              {% for evt in rbac_events %}
-              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- What gets written when -->
     <h5 class="mb-3"><i class="bi bi-database me-1"></i> What Gets Written &amp; When</h5>
-    <div class="card mb-3">
+    <div class="card mb-4">
       <div class="card-body">
         <table class="table table-sm table-bordered mb-0">
           <thead class="table-light">
@@ -922,6 +1108,23 @@
           </tbody>
         </table>
       </div>
+    </div>
+
+    <!-- Metrics categories -->
+    <h5 class="mb-3"><i class="bi bi-speedometer2 me-1"></i> In-Process Metrics</h5>
+    <div class="row g-3 mb-3">
+      {% for cat in metrics_categories %}
+      <div class="col-md-6 col-lg-4">
+        <div class="card h-100 border-0 shadow-sm">
+          <div class="card-body">
+            <div class="fw-semibold mb-2">
+              <i class="bi {{ cat.icon }} me-1"></i> {{ cat.category }}
+            </div>
+            <div class="text-muted small" style="word-break:break-word">{{ cat.counters }}</div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
     </div>
   </div>
 

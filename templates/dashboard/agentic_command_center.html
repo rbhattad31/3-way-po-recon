@@ -4,7 +4,7 @@
 {% block title %}Command Center — AP Operations{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/agentic-dashboard.css' %}" rel="stylesheet">
+<link href="{% static 'css/agentic-dashboard.css' %}?v=20260314b" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -36,65 +36,114 @@
 
 
   <!-- ═══════════════════════════════════════════════════════════════
-       SECTION 1: KPI HEADER
+       SECTION 1: KPI HEADER (role-specific)
        ═══════════════════════════════════════════════════════════════ -->
+
+  {% if user_role == "REVIEWER" %}
+  {# ── REVIEWER: review-workload KPIs ── #}
   <div class="cc-kpi-grid">
-
     <div class="cc-kpi cc-kpi--primary">
-      <div class="cc-kpi-icon cc-kpi-icon--primary"><i class="bi bi-receipt"></i></div>
-      <div class="cc-kpi-body">
-        <div class="cc-kpi-value" id="kpi-total-invoices">—</div>
-        <div class="cc-kpi-label">Total Invoices</div>
-        <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> today</div>
-      </div>
+      <div class="cc-kpi-label">My Cases</div>
+      <div class="cc-kpi-value" id="kpi-my-cases"><i class="bi bi-folder2-open"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-briefcase"></i> assigned</div>
     </div>
-
-    <div class="cc-kpi cc-kpi--success">
-      <div class="cc-kpi-icon cc-kpi-icon--success"><i class="bi bi-check-circle"></i></div>
-      <div class="cc-kpi-body">
-        <div class="cc-kpi-value" id="kpi-auto-reconciled">—</div>
-        <div class="cc-kpi-label">Auto Match Rate</div>
-        <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> reconciled</div>
-      </div>
-    </div>
-
-    <div class="cc-kpi cc-kpi--warning">
-      <div class="cc-kpi-icon cc-kpi-icon--warning"><i class="bi bi-hourglass-split"></i></div>
-      <div class="cc-kpi-body">
-        <div class="cc-kpi-value" id="kpi-pending-reviews">—</div>
-        <div class="cc-kpi-label">Pending Reviews</div>
-        <div class="cc-kpi-trend"><i class="bi bi-dash"></i> awaiting</div>
-      </div>
-    </div>
-
-    <div class="cc-kpi cc-kpi--danger">
-      <div class="cc-kpi-icon cc-kpi-icon--danger"><i class="bi bi-exclamation-triangle"></i></div>
-      <div class="cc-kpi-body">
-        <div class="cc-kpi-value" id="kpi-exceptions">—</div>
-        <div class="cc-kpi-label">Open Exceptions</div>
-        <div class="cc-kpi-trend cc-kpi-trend--down"><i class="bi bi-arrow-down-short"></i> flagged</div>
-      </div>
-    </div>
-
-    <div class="cc-kpi cc-kpi--info">
-      <div class="cc-kpi-icon cc-kpi-icon--info"><i class="bi bi-speedometer"></i></div>
-      <div class="cc-kpi-body">
-        <div class="cc-kpi-value" id="kpi-avg-confidence">—</div>
-        <div class="cc-kpi-label">Avg Confidence</div>
-        <div class="cc-kpi-trend"><i class="bi bi-graph-up"></i> model</div>
-      </div>
-    </div>
-
     <div class="cc-kpi cc-kpi--purple">
-      <div class="cc-kpi-icon cc-kpi-icon--purple"><i class="bi bi-robot"></i></div>
-      <div class="cc-kpi-body">
-        <div class="cc-kpi-value" id="kpi-active-agents">—</div>
-        <div class="cc-kpi-label">Active Agents</div>
-        <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-lightning"></i> running</div>
-      </div>
+      <div class="cc-kpi-label">In Review</div>
+      <div class="cc-kpi-value" id="kpi-in-review"><i class="bi bi-eye"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-arrow-right"></i> active</div>
     </div>
-
+    <div class="cc-kpi cc-kpi--warning">
+      <div class="cc-kpi-label">Pending Reviews</div>
+      <div class="cc-kpi-value" id="kpi-pending-reviews"><i class="bi bi-hourglass-split"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-dash"></i> awaiting</div>
+    </div>
+    <div class="cc-kpi cc-kpi--success">
+      <div class="cc-kpi-label">Closed</div>
+      <div class="cc-kpi-value" id="kpi-closed-cases"><i class="bi bi-check-circle"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> completed</div>
+    </div>
+    <div class="cc-kpi cc-kpi--info">
+      <div class="cc-kpi-label">Avg Confidence</div>
+      <div class="cc-kpi-value" id="kpi-avg-confidence"><i class="bi bi-speedometer"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-graph-up"></i> model</div>
+    </div>
+    <div class="cc-kpi cc-kpi--danger">
+      <div class="cc-kpi-label">Escalated</div>
+      <div class="cc-kpi-value" id="kpi-escalated"><i class="bi bi-exclamation-octagon"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--down"><i class="bi bi-flag"></i> flagged</div>
+    </div>
   </div>
+
+  {% elif user_role == "AP_PROCESSOR" %}
+  {# ── AP_PROCESSOR: personal invoice KPIs (scoped by backend) ── #}
+  <div class="cc-kpi-grid">
+    <div class="cc-kpi cc-kpi--primary">
+      <div class="cc-kpi-label">My Invoices</div>
+      <div class="cc-kpi-value" id="kpi-total-invoices"><i class="bi bi-receipt"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> uploaded</div>
+    </div>
+    <div class="cc-kpi cc-kpi--success">
+      <div class="cc-kpi-label">Auto Match Rate</div>
+      <div class="cc-kpi-value" id="kpi-auto-reconciled"><i class="bi bi-check-circle"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> reconciled</div>
+    </div>
+    <div class="cc-kpi cc-kpi--warning">
+      <div class="cc-kpi-label">Pending Reviews</div>
+      <div class="cc-kpi-value" id="kpi-pending-reviews"><i class="bi bi-hourglass-split"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-dash"></i> awaiting</div>
+    </div>
+    <div class="cc-kpi cc-kpi--danger">
+      <div class="cc-kpi-label">Open Exceptions</div>
+      <div class="cc-kpi-value" id="kpi-exceptions"><i class="bi bi-exclamation-triangle"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--down"><i class="bi bi-arrow-down-short"></i> flagged</div>
+    </div>
+    <div class="cc-kpi cc-kpi--info">
+      <div class="cc-kpi-label">Avg Confidence</div>
+      <div class="cc-kpi-value" id="kpi-avg-confidence"><i class="bi bi-speedometer"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-graph-up"></i> model</div>
+    </div>
+    <div class="cc-kpi cc-kpi--purple">
+      <div class="cc-kpi-label">My Cases</div>
+      <div class="cc-kpi-value" id="kpi-my-cases"><i class="bi bi-folder2-open"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-briefcase"></i> active</div>
+    </div>
+  </div>
+
+  {% else %}
+  {# ── ADMIN / FINANCE_MANAGER / AUDITOR: full org-wide KPIs ── #}
+  <div class="cc-kpi-grid">
+    <div class="cc-kpi cc-kpi--primary">
+      <div class="cc-kpi-label">Total Invoices</div>
+      <div class="cc-kpi-value" id="kpi-total-invoices"><i class="bi bi-receipt"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> today</div>
+    </div>
+    <div class="cc-kpi cc-kpi--success">
+      <div class="cc-kpi-label">Auto Match Rate</div>
+      <div class="cc-kpi-value" id="kpi-auto-reconciled"><i class="bi bi-check-circle"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-arrow-up-short"></i> reconciled</div>
+    </div>
+    <div class="cc-kpi cc-kpi--warning">
+      <div class="cc-kpi-label">Pending Reviews</div>
+      <div class="cc-kpi-value" id="kpi-pending-reviews"><i class="bi bi-hourglass-split"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-dash"></i> awaiting</div>
+    </div>
+    <div class="cc-kpi cc-kpi--danger">
+      <div class="cc-kpi-label">Open Exceptions</div>
+      <div class="cc-kpi-value" id="kpi-exceptions"><i class="bi bi-exclamation-triangle"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--down"><i class="bi bi-arrow-down-short"></i> flagged</div>
+    </div>
+    <div class="cc-kpi cc-kpi--info">
+      <div class="cc-kpi-label">Avg Confidence</div>
+      <div class="cc-kpi-value" id="kpi-avg-confidence"><i class="bi bi-speedometer"></i> —</div>
+      <div class="cc-kpi-trend"><i class="bi bi-graph-up"></i> model</div>
+    </div>
+    <div class="cc-kpi cc-kpi--purple">
+      <div class="cc-kpi-label">Active Agents</div>
+      <div class="cc-kpi-value" id="kpi-active-agents"><i class="bi bi-robot"></i> —</div>
+      <div class="cc-kpi-trend cc-kpi-trend--up"><i class="bi bi-lightning"></i> running</div>
+    </div>
+  </div>
+  {% endif %}
 
 
   <!-- ═══════════════════════════════════════════════════════════════
@@ -106,7 +155,8 @@
     <!-- ────────────────── LEFT: Pipeline + Charts ────────────────── -->
     <div class="d-flex flex-column gap-3">
 
-      <!-- SECTION 3: Processing Pipeline -->
+      {% if user_role != "REVIEWER" %}
+      <!-- SECTION 3: Processing Pipeline (hidden for REVIEWER) -->
       <div class="cc-pipeline-card">
         <div class="cc-panel-header">
           <span class="cc-panel-title"><i class="bi bi-diagram-3"></i> Processing Pipeline</span>
@@ -169,6 +219,7 @@
 
         </div>
       </div>
+      {% endif %}
 
       <!-- SECTION 5: Exception Intelligence Charts -->
       <div class="cc-charts-grid">
@@ -212,19 +263,20 @@
       </a>
     </div>
     <div class="cc-kpi-grid" id="case-kpi-grid">
-      <div class="cc-kpi cc-kpi--primary"><div class="cc-kpi-icon cc-kpi-icon--primary"><i class="bi bi-folder2-open"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-total">—</div><div class="cc-kpi-label">Total Cases</div></div></div>
-      <div class="cc-kpi cc-kpi--info"><div class="cc-kpi-icon cc-kpi-icon--info"><i class="bi bi-play-circle"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-inflight">—</div><div class="cc-kpi-label">In Flight</div></div></div>
-      <div class="cc-kpi cc-kpi--purple"><div class="cc-kpi-icon cc-kpi-icon--purple"><i class="bi bi-eye"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-review">—</div><div class="cc-kpi-label">In Review</div></div></div>
-      <div class="cc-kpi cc-kpi--success"><div class="cc-kpi-icon cc-kpi-icon--success"><i class="bi bi-check-circle"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-closed">—</div><div class="cc-kpi-label">Closed</div></div></div>
-      <div class="cc-kpi cc-kpi--danger"><div class="cc-kpi-icon cc-kpi-icon--danger"><i class="bi bi-exclamation-octagon"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-escalated">—</div><div class="cc-kpi-label">Escalated / Failed</div></div></div>
-      <div class="cc-kpi cc-kpi--warning"><div class="cc-kpi-icon cc-kpi-icon--warning"><i class="bi bi-person-exclamation"></i></div><div class="cc-kpi-body"><div class="cc-kpi-value" id="case-human">—</div><div class="cc-kpi-label">Needs Human</div></div></div>
+      <div class="cc-kpi cc-kpi--primary"><div class="cc-kpi-label">Total Cases</div><div class="cc-kpi-value" id="case-total"><i class="bi bi-folder2-open"></i> —</div></div>
+      <div class="cc-kpi cc-kpi--info"><div class="cc-kpi-label">In Flight</div><div class="cc-kpi-value" id="case-inflight"><i class="bi bi-play-circle"></i> —</div></div>
+      <div class="cc-kpi cc-kpi--purple"><div class="cc-kpi-label">In Review</div><div class="cc-kpi-value" id="case-review"><i class="bi bi-eye"></i> —</div></div>
+      <div class="cc-kpi cc-kpi--success"><div class="cc-kpi-label">Closed</div><div class="cc-kpi-value" id="case-closed"><i class="bi bi-check-circle"></i> —</div></div>
+      <div class="cc-kpi cc-kpi--danger"><div class="cc-kpi-label">Escalated / Failed</div><div class="cc-kpi-value" id="case-escalated"><i class="bi bi-exclamation-octagon"></i> —</div></div>
+      <div class="cc-kpi cc-kpi--warning"><div class="cc-kpi-label">Needs Human</div><div class="cc-kpi-value" id="case-human"><i class="bi bi-person-exclamation"></i> —</div></div>
     </div>
   </div>
 
 
   <!-- ═══════════════════════════════════════════════════════════════
-       AGENT PERFORMANCE CARDS
+       AGENT PERFORMANCE CARDS (ADMIN / FINANCE_MANAGER / AUDITOR only)
        ═══════════════════════════════════════════════════════════════ -->
+  {% if user_role == "ADMIN" or user_role == "FINANCE_MANAGER" or user_role == "AUDITOR" %}
   <div>
     <div class="cc-panel-header" style="border:none;padding-left:0">
       <span class="cc-panel-title"><i class="bi bi-graph-up-arrow"></i> Agent Performance</span>
@@ -237,6 +289,7 @@
       <div class="cc-agent-card"><div class="cc-shimmer" style="height:100%;border-radius:var(--ap-radius)"></div></div>
     </div>
   </div>
+  {% endif %}
 
 
   <!-- ═══════════════════════════════════════════════════════════════
@@ -333,5 +386,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/agentic-dashboard.js' %}"></script>
+<script>window.CC_ROLE = "{{ user_role|escapejs }}";</script>
+<script src="{% static 'js/agentic-dashboard.js' %}?v=20260314b"></script>
 {% endblock %}
