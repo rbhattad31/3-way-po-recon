@@ -8,7 +8,7 @@ from django.db.models import Count, Exists, F, OuterRef, Q, QuerySet, Subquery
 from django.utils import timezone
 
 from apps.cases.models import APCase
-from apps.core.enums import CaseStatus, ProcessingPath
+from apps.core.enums import CaseStatus, ProcessingPath, UserRole
 
 
 class CaseSelectors:
@@ -79,6 +79,31 @@ class CaseSelectors:
         return qs.order_by("-created_at")
 
     @staticmethod
+    def scope_for_user(qs: QuerySet, user) -> QuerySet:
+        """Apply ownership scoping based on user role and config.
+
+        AP_PROCESSOR users only see cases for invoices they uploaded,
+        unless ``ap_processor_sees_all_cases`` is enabled in the default
+        ReconciliationConfig.
+        """
+        if not user or not user.is_authenticated:
+            return qs.none()
+        user_role = getattr(user, "role", None)
+        if user_role != UserRole.AP_PROCESSOR:
+            return qs  # Other roles see everything
+
+        from apps.reconciliation.models import ReconciliationConfig
+        config = ReconciliationConfig.objects.filter(is_default=True).first()
+        if config and config.ap_processor_sees_all_cases:
+            return qs
+
+        # AP_PROCESSOR sees only their own cases
+        return qs.filter(
+            Q(invoice__document_upload__uploaded_by=user)
+            | Q(assigned_to=user)
+        )
+
+    @staticmethod
     def for_review(user=None) -> QuerySet:
         """Cases assigned to a user (or unassigned) that need review."""
         qs = APCase.objects.filter(
@@ -92,32 +117,39 @@ class CaseSelectors:
         return qs.order_by("priority", "created_at")
 
     @staticmethod
-    def stats() -> dict:
-        """Aggregate case statistics for dashboard."""
-        total = APCase.objects.filter(is_active=True).count()
+    def stats(user=None) -> dict:
+        """Aggregate case statistics for dashboard.
+
+        When *user* is provided the counts are scoped via
+        ``scope_for_user`` so AP_PROCESSOR only sees their own numbers.
+        """
+        base = APCase.objects.filter(is_active=True)
+        if user:
+            base = CaseSelectors.scope_for_user(base, user)
+
+        total = base.count()
         by_status = dict(
-            APCase.objects.filter(is_active=True)
+            base
             .values_list("status")
             .annotate(count=Count("id"))
             .values_list("status", "count")
         )
         by_path = dict(
-            APCase.objects.filter(is_active=True)
+            base
             .values_list("processing_path")
             .annotate(count=Count("id"))
             .values_list("processing_path", "count")
         )
-        overdue = APCase.objects.filter(
-            is_active=True,
+        overdue = base.filter(
             status__in=[CaseStatus.READY_FOR_REVIEW, CaseStatus.IN_REVIEW],
             created_at__lt=timezone.now() - timezone.timedelta(hours=48),
         ).count()
 
-        agent_processed = APCase.objects.filter(
-            is_active=True, requires_human_review=False,
+        agent_processed = base.filter(
+            requires_human_review=False,
         ).exclude(status=CaseStatus.NEW).count()
-        human_involved = APCase.objects.filter(
-            is_active=True, requires_human_review=True,
+        human_involved = base.filter(
+            requires_human_review=True,
         ).count()
 
         return {

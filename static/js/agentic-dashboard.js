@@ -151,16 +151,21 @@
 
   // ── Pipeline Rendering ──
   function renderPipeline(summary, matchData) {
-    // We'll update pipeline counts from summary
-    setPipelineStage("pipeline-upload", summary.total_invoices || 0, "100%");
-    // The rest we derive from available data
-    var total = summary.total_invoices || 1;
+    var total = summary.total_invoices || 0;
+    var extracted = summary.extracted_count || 0;
+    var reconciled = summary.reconciled_count || 0;
+    var posted = summary.posted_count || 0;
     var matchedPct = summary.matched_pct || 0;
-    setPipelineStage("pipeline-extraction", Math.round(total * 0.95), "95%");
-    setPipelineStage("pipeline-recon", Math.round(total * 0.90), matchedPct + "%");
-    setPipelineStage("pipeline-agent", summary.open_exceptions || 0, "");
-    setPipelineStage("pipeline-review", summary.pending_reviews || 0, "");
-    setPipelineStage("pipeline-posting", Math.round(total * matchedPct / 100), matchedPct + "%");
+
+    var extractPct = total ? Math.round(extracted / total * 100) : 0;
+    var reconPct = total ? Math.round(reconciled / total * 100) : 0;
+
+    setPipelineStage("pipeline-upload", total, total + " invoices");
+    setPipelineStage("pipeline-extraction", extracted, extractPct + "% done");
+    setPipelineStage("pipeline-recon", reconciled, matchedPct + "% matched");
+    setPipelineStage("pipeline-agent", summary.open_exceptions || 0, "exceptions");
+    setPipelineStage("pipeline-review", summary.pending_reviews || 0, "pending");
+    setPipelineStage("pipeline-posting", posted, posted + " complete");
   }
 
   function setPipelineStage(id, count, meta) {

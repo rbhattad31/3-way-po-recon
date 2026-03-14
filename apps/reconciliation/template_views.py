@@ -11,6 +11,7 @@ from apps.agents.models import AgentRecommendation, AgentRun
 from apps.auditlog.timeline_service import CaseTimelineService
 from apps.core.enums import InvoiceStatus, MatchStatus, ReconciliationMode, UserRole
 from apps.core.decorators import observed_action
+from apps.core.permissions import permission_required_code
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy, ReconciliationResult
 from apps.reviews.models import ReviewAssignment
@@ -104,6 +105,7 @@ def result_detail(request, pk):
 
 
 @login_required
+@permission_required_code("reconciliation.run")
 @observed_action("reconciliation.start_reconciliation", permission="reconciliation.run", entity_type="Invoice", audit_event="RECONCILIATION_STARTED")
 def start_reconciliation(request):
     """
@@ -429,6 +431,7 @@ def recon_settings(request):
         config.enable_mode_resolver = request.POST.get("enable_mode_resolver") == "on"
         config.enable_grn_for_stock_items = request.POST.get("enable_grn_for_stock_items") == "on"
         config.enable_two_way_for_services = request.POST.get("enable_two_way_for_services") == "on"
+        config.ap_processor_sees_all_cases = request.POST.get("ap_processor_sees_all_cases") == "on"
 
         config.save()
         verb = "updated" if config_id else "created"

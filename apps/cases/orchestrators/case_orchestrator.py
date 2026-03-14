@@ -96,6 +96,9 @@ class CaseOrchestrator:
         logger.info("Orchestrating case %s (status=%s, path=%s)",
                      self.case.case_number, self.case.status, self.case.processing_path)
 
+        # Sync vendor/PO from invoice in case they were linked after case creation
+        self._sync_from_invoice()
+
         try:
             # Stage 1: Intake (if not yet started)
             if self.case.status == CaseStatus.NEW:
@@ -337,3 +340,21 @@ class CaseOrchestrator:
         if last and last.stage_status == StageStatus.COMPLETED:
             return last.retry_count  # reuse completed count for re-run
         return 0
+
+    def _sync_from_invoice(self):
+        """Sync vendor and PO from the invoice if they were linked after case creation."""
+        invoice = self.case.invoice
+        changed = []
+        if invoice.vendor_id and self.case.vendor_id != invoice.vendor_id:
+            self.case.vendor_id = invoice.vendor_id
+            changed.append("vendor_id")
+        if invoice.po_number and not self.case.purchase_order_id:
+            from apps.documents.models import PurchaseOrder
+            po = PurchaseOrder.objects.filter(po_number=invoice.po_number).first()
+            if po and self.case.purchase_order_id != po.pk:
+                self.case.purchase_order = po
+                changed.append("purchase_order_id")
+        if changed:
+            changed.append("updated_at")
+            self.case.save(update_fields=changed)
+            logger.info("Synced %s from invoice for case %s", changed, self.case.case_number)

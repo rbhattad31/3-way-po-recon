@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load rbac_tags %}
 {% block title %}{{ case.case_number }} – Agent View{% endblock %}
 
 {% block extra_css %}
@@ -63,12 +64,16 @@
        data-failed-validations="{{ failed_validations_count|default:'0' }}"
        data-failed-stages="{{ failed_stages_count|default:'0' }}">
     {% csrf_token %}
+    {% has_permission "reviews.decide" as can_decide %}
+    {% has_permission "cases.edit" as can_edit_case %}
     {% if show_actions or case.status == "FAILED" %}
-      {% if show_actions %}
+      {% if show_actions and can_decide %}
       <button class="btn btn-success btn-sm" onclick="caseAction('approve')" title="Approve"><i class="bi bi-check-circle me-1"></i>Approve</button>
       <button class="btn btn-danger btn-sm" onclick="caseAction('reject')" title="Reject"><i class="bi bi-x-circle me-1"></i>Reject</button>
       {% endif %}
+      {% if can_edit_case %}
       <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+      {% endif %}
     {% endif %}
     {% if invoice %}
     <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Governance">
@@ -785,6 +790,8 @@
       {% endif %}
 
       {# Comment form #}
+      {% has_permission "cases.edit" as can_comment_case %}
+      {% if can_comment_case %}
       {% if show_actions or case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" or case.status == "NEW" or case.status == "IN_PROGRESS" or case.status == "FAILED" %}
       <form method="post" action="{% url 'cases:case_add_comment' case.pk %}" class="av-review-panel__form">
         {% csrf_token %}
@@ -793,6 +800,7 @@
           <i class="bi bi-send me-1"></i>Post Comment
         </button>
       </form>
+      {% endif %}
       {% endif %}
 
       {# Action history (below form) #}

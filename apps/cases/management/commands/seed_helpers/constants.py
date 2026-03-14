@@ -322,6 +322,15 @@ VENDORS_DATA = [
         "contact_email": "corporate@bayan.edu.sa",
         "aliases": ["معهد بيان للتدريب", "Bayan Institute"],
     },
+    # --- Utilities (India) ---
+    {
+        "code": "V-031", "name": "Telangana State Southern Power Distribution Company Ltd",
+        "category": "Utilities", "country": "India",
+        "currency": "INR", "tax_id": "36AADCT6559E1ZC",
+        "payment_terms": "Net 15", "path_tendency": "TWO_WAY",
+        "contact_email": "billing@tsspdcl.in",
+        "aliases": ["TSSPDCL", "TS Southern Power", "Telangana Southern Power"],
+    },
 ]
 
 # ============================================================

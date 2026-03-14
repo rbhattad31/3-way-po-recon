@@ -11,6 +11,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from apps.cases.models import APCase
 from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode
+from apps.core.permissions import permission_required_code, _has_permission_code
 
 logger = logging.getLogger(__name__)
 
@@ -262,11 +263,12 @@ def case_inbox(request):
         date_to=request.GET.get("date_to", ""),
         processing_type=request.GET.get("processing_type", ""),
     )
+    qs = CaseSelectors.scope_for_user(qs, request.user)
 
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
-    stats = CaseSelectors.stats()
+    stats = CaseSelectors.stats(user=request.user)
 
     return render(request, "cases/case_inbox.html", {
         "cases": page_obj,
@@ -287,12 +289,14 @@ def case_console(request, pk):
 
 
 @login_required
+@permission_required_code("cases.edit")
 def reprocess_case(request, pk):
     """Reprocess a case from a specific stage."""
     if request.method != "POST":
         return redirect("cases:case_console", pk=pk)
 
-    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    scoped_qs = CaseSelectors.scope_for_user(APCase.objects.filter(is_active=True), request.user)
+    case = get_object_or_404(scoped_qs, pk=pk)
     stage = request.POST.get("stage", "")
 
     redirect_view = "cases:case_agent_view" if request.POST.get("next") == "agent" else "cases:case_console"
@@ -314,6 +318,7 @@ def reprocess_case(request, pk):
 
 
 @login_required
+@permission_required_code("cases.edit")
 def create_case_for_invoice(request, invoice_pk):
     """Create an AP Case for an invoice that doesn't have one yet, then start processing."""
     if request.method != "POST":
@@ -346,17 +351,16 @@ def create_case_for_invoice(request, invoice_pk):
 @login_required
 def case_agent_view(request, pk):
     """Agentic case view — ChatGPT-style conversation feed for case investigation."""
-    case = get_object_or_404(
-        APCase.objects.select_related(
-            "invoice", "invoice__vendor", "invoice__document_upload",
-            "vendor", "purchase_order", "reconciliation_result",
-            "assigned_to",
-        ).prefetch_related(
-            "stages", "artifacts", "decisions",
-            "assignments", "comments", "activities",
-        ),
-        pk=pk, is_active=True,
-    )
+    base_qs = APCase.objects.select_related(
+        "invoice", "invoice__vendor", "invoice__document_upload",
+        "vendor", "purchase_order", "reconciliation_result",
+        "assigned_to",
+    ).prefetch_related(
+        "stages", "artifacts", "decisions",
+        "assignments", "comments", "activities",
+    ).filter(is_active=True)
+    base_qs = CaseSelectors.scope_for_user(base_qs, request.user)
+    case = get_object_or_404(base_qs, pk=pk)
 
     invoice = case.invoice
     po = case.purchase_order
@@ -527,16 +531,28 @@ def case_agent_view(request, pk):
 
 @login_required
 def case_decide(request, pk):
-    """Handle approve/reject/escalate directly on a case.
+    """Handle approve/reject/reprocess directly on a case.
 
-    Works for both PO cases (delegates to ReviewAssignment workflow) and
-    Non-PO cases (updates case status directly).
+    Approve/reject require `reviews.decide`.
+    Reprocess requires `cases.edit`.
     """
     if request.method != "POST":
         return redirect("cases:case_agent_view", pk=pk)
 
-    case = get_object_or_404(APCase, pk=pk, is_active=True)
     decision = request.POST.get("decision", "").upper()
+
+    # Permission gate: reprocess needs cases.edit, approve/reject needs reviews.decide
+    if decision == "REPROCESSED":
+        if not _has_permission_code(request.user, "cases.edit"):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied
+    else:
+        if not _has_permission_code(request.user, "reviews.decide"):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied
+
+    scoped_qs = CaseSelectors.scope_for_user(APCase.objects.filter(is_active=True), request.user)
+    case = get_object_or_404(scoped_qs, pk=pk)
 
     # Block approval if there are open exceptions or failed validations
     if decision == "APPROVED":
@@ -616,6 +632,7 @@ def case_decide(request, pk):
 
 
 @login_required
+@permission_required_code("cases.edit")
 def case_add_comment(request, pk):
     """Add a review comment from the agent view."""
     if request.method != "POST":

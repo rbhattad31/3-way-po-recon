@@ -8,10 +8,12 @@ from apps.auditlog.timeline_service import CaseTimelineService
 from apps.agents.models import AgentRecommendation, AgentRun
 from apps.agents.services.agent_trace_service import AgentTraceService
 from apps.core.enums import UserRole
+from apps.core.permissions import permission_required_code
 from apps.documents.models import Invoice
 
 
 @login_required
+@permission_required_code("governance.view")
 def audit_event_list(request):
     """Browsable audit event log with filtering (including RBAC filters)."""
     qs = AuditEvent.objects.select_related("performed_by").order_by("-created_at")
@@ -75,6 +77,7 @@ def audit_event_list(request):
 
 
 @login_required
+@permission_required_code("governance.view")
 def invoice_governance(request, invoice_id):
     """Full governance view for a single invoice — audit trail, agent trace, timeline."""
     invoice = get_object_or_404(

@@ -113,7 +113,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/dashboard/"
-LOGOUT_REDIRECT_URL = "/admin/login/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 # ---------------------------------------------------------------------------
 # Internationalization
