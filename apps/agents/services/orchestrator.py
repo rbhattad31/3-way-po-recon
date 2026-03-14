@@ -6,6 +6,13 @@ Flow:
   3. Execute agents in sequence, passing context forward
   4. Record recommendations and decisions
   5. Return aggregated orchestration result
+
+RBAC enforcement:
+  - Every execution resolves an actor (user or system-agent)
+  - Orchestration requires ``agents.orchestrate`` permission
+  - Each agent requires its per-type permission
+  - Auto-close and escalation are protected actions
+  - All guardrail decisions are audited
 """
 from __future__ import annotations
 
@@ -20,6 +27,12 @@ from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
 from apps.agents.services.base_agent import AgentContext, BaseAgent
 from apps.agents.services.decision_log_service import DecisionLogService
 from apps.agents.services.deterministic_resolver import DeterministicResolver
+from apps.agents.services.guardrails_service import (
+    ACTION_PERMISSIONS,
+    AGENT_PERMISSIONS,
+    ORCHESTRATE_PERMISSION,
+    AgentGuardrailsService,
+)
 from apps.agents.services.policy_engine import PolicyEngine
 from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
 from apps.core.decorators import observed_service
@@ -60,9 +73,47 @@ class AgentOrchestrator:
         self.resolver = DeterministicResolver()
 
     @observed_service("agents.orchestrator.execute", audit_event="AGENT_PIPELINE_STARTED", entity_type="ReconciliationResult")
-    def execute(self, result: ReconciliationResult) -> OrchestrationResult:
-        """Run the full agentic pipeline for one reconciliation result."""
+    def execute(self, result: ReconciliationResult, request_user=None) -> OrchestrationResult:
+        """Run the full agentic pipeline for one reconciliation result.
+
+        Args:
+            result: The ReconciliationResult to process.
+            request_user: The Django User who triggered the pipeline, or None
+                          for system-initiated (Celery, auto-trigger).
+        """
         orch_result = OrchestrationResult(reconciliation_result_id=result.pk)
+
+        # --- RBAC: resolve actor and validate orchestration permission ---
+        actor = AgentGuardrailsService.resolve_actor(request_user)
+        rbac_snapshot = AgentGuardrailsService.build_rbac_snapshot(actor)
+
+        if not AgentGuardrailsService.authorize_orchestration(actor):
+            AgentGuardrailsService.log_guardrail_decision(
+                user=actor,
+                action="orchestrate_pipeline",
+                permission_code=ORCHESTRATE_PERMISSION,
+                granted=False,
+                entity_type="ReconciliationResult",
+                entity_id=result.pk,
+            )
+            orch_result.error = f"Permission denied: {ORCHESTRATE_PERMISSION}"
+            return orch_result
+
+        AgentGuardrailsService.log_guardrail_decision(
+            user=actor,
+            action="orchestrate_pipeline",
+            permission_code=ORCHESTRATE_PERMISSION,
+            granted=True,
+            entity_type="ReconciliationResult",
+            entity_id=result.pk,
+        )
+
+        # Set trace context with RBAC metadata for downstream audit events
+        trace_ctx = AgentGuardrailsService.build_trace_context_for_agent(
+            actor, permission_checked=ORCHESTRATE_PERMISSION, access_granted=True,
+        )
+        from apps.core.trace import TraceContext
+        TraceContext.set_current(trace_ctx)
 
         # 1. Build the plan
         plan = self.policy.plan(result)
@@ -125,7 +176,19 @@ class AgentOrchestrator:
                 "reconciliation_mode": recon_mode,
                 "is_two_way": recon_mode == "TWO_WAY",
             },
+            # RBAC context
+            actor_user_id=actor.pk,
+            actor_primary_role=rbac_snapshot.get("actor_primary_role", ""),
+            actor_roles_snapshot=rbac_snapshot.get("actor_roles_snapshot", []),
+            permission_checked=ORCHESTRATE_PERMISSION,
+            permission_source=rbac_snapshot.get("permission_source", ""),
+            access_granted=True,
+            trace_id=trace_ctx.trace_id,
+            span_id=trace_ctx.span_id,
         )
+
+        # Store actor on instance for use by helper methods
+        self._actor = actor
 
         # 4. Execute LLM agents in sequence
         last_output = None
@@ -144,6 +207,23 @@ class AgentOrchestrator:
 
             agent: BaseAgent = agent_cls()
             try:
+                # --- RBAC: check per-agent permission ---
+                if not AgentGuardrailsService.authorize_agent(actor, agent_type):
+                    perm = AGENT_PERMISSIONS.get(agent_type, "?")
+                    AgentGuardrailsService.log_guardrail_decision(
+                        user=actor,
+                        action=f"run_agent_{agent_type}",
+                        permission_code=perm,
+                        granted=False,
+                        entity_type="ReconciliationResult",
+                        entity_id=result.pk,
+                    )
+                    logger.warning(
+                        "Agent %s denied for actor %s (missing %s)",
+                        agent_type, actor.pk, perm,
+                    )
+                    continue
+
                 agent_run = agent.run(ctx)
                 orch_result.agents_executed.append(agent_type)
                 orch_result.agent_runs.append(agent_run)
@@ -244,15 +324,50 @@ class AgentOrchestrator:
         self, orch: OrchestrationResult, result: ReconciliationResult
     ) -> None:
         """Apply PolicyEngine post-run checks (auto-close, escalation)."""
+        actor = getattr(self, "_actor", None)
+
         if self.policy.should_auto_close(orch.final_recommendation, orch.final_confidence):
-            result.match_status = MatchStatus.MATCHED
-            result.requires_review = False
-            result.save(update_fields=["match_status", "requires_review", "updated_at"])
-            logger.info("Auto-closed result %s (confidence=%.2f)", result.pk, orch.final_confidence)
+            # RBAC: check auto-close permission
+            if actor and not AgentGuardrailsService.authorize_action(actor, "auto_close_result"):
+                AgentGuardrailsService.log_guardrail_decision(
+                    user=actor,
+                    action="auto_close_result",
+                    permission_code=ACTION_PERMISSIONS.get("auto_close_result", ""),
+                    granted=False,
+                    entity_type="ReconciliationResult",
+                    entity_id=result.pk,
+                )
+                logger.warning("Auto-close denied for result %s — actor lacks permission", result.pk)
+            else:
+                if actor:
+                    AgentGuardrailsService.log_guardrail_decision(
+                        user=actor,
+                        action="auto_close_result",
+                        permission_code=ACTION_PERMISSIONS.get("auto_close_result", ""),
+                        granted=True,
+                        entity_type="ReconciliationResult",
+                        entity_id=result.pk,
+                    )
+                result.match_status = MatchStatus.MATCHED
+                result.requires_review = False
+                result.save(update_fields=["match_status", "requires_review", "updated_at"])
+                logger.info("Auto-closed result %s (confidence=%.2f)", result.pk, orch.final_confidence)
             return
 
         if self.policy.should_escalate(orch.final_recommendation, orch.final_confidence):
-            # Create escalation
+            # RBAC: check escalation permission
+            if actor and not AgentGuardrailsService.authorize_action(actor, "escalate_case"):
+                AgentGuardrailsService.log_guardrail_decision(
+                    user=actor,
+                    action="escalate_case",
+                    permission_code=ACTION_PERMISSIONS.get("escalate_case", ""),
+                    granted=False,
+                    entity_type="ReconciliationResult",
+                    entity_id=result.pk,
+                )
+                logger.warning("Escalation denied for result %s — actor lacks permission", result.pk)
+                return
+
             last_run = orch.agent_runs[-1] if orch.agent_runs else None
             if last_run:
                 AgentEscalation.objects.create(
@@ -297,6 +412,8 @@ class AgentOrchestrator:
         )
 
         now = timezone.now()
+        actor = getattr(self, "_actor", None)
+        actor_rbac = AgentGuardrailsService.build_rbac_snapshot(actor) if actor else {}
         for det_agent_type in deterministic_agents:
             det_run = AgentRun.objects.create(
                 agent_type=det_agent_type,
@@ -327,6 +444,12 @@ class AgentOrchestrator:
                 prompt_tokens=0,
                 completion_tokens=0,
                 total_tokens=0,
+                # RBAC fields
+                actor_user_id=actor.pk if actor else None,
+                actor_primary_role=actor_rbac.get("actor_primary_role", ""),
+                actor_roles_snapshot_json=actor_rbac.get("actor_roles_snapshot", []),
+                permission_source=actor_rbac.get("permission_source", ""),
+                access_granted=True,
             )
             orch.agents_executed.append(det_agent_type)
             orch.agent_runs.append(det_run)

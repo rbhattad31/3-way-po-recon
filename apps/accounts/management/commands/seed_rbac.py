@@ -21,6 +21,7 @@ ROLES = [
     {"code": "REVIEWER", "name": "Reviewer", "description": "Review reconciliation results and make decisions", "is_system_role": True, "rank": 40},
     {"code": "FINANCE_MANAGER", "name": "Finance Manager", "description": "Manage reviews, override reconciliation, supervise AP operations", "is_system_role": True, "rank": 20},
     {"code": "AUDITOR", "name": "Auditor", "description": "Read-only access for audit and compliance review", "is_system_role": True, "rank": 30},
+    {"code": "SYSTEM_AGENT", "name": "System Agent", "description": "Dedicated least-privilege identity for autonomous agent operations", "is_system_role": True, "rank": 100},
 ]
 
 # ---------------------------------------------------------------------------
@@ -51,6 +52,28 @@ PERMISSIONS = [
     # Agents
     {"code": "agents.view", "name": "View Agents", "module": "agents", "action": "view", "description": "View agent definitions and monitoring"},
     {"code": "agents.use_copilot", "name": "Use Copilot", "module": "agents", "action": "use_copilot", "description": "Interact with AI copilot agents"},
+    {"code": "agents.orchestrate", "name": "Orchestrate Agents", "module": "agents", "action": "orchestrate", "description": "Trigger the agent pipeline for reconciliation results"},
+    {"code": "agents.run_extraction", "name": "Run Extraction Agent", "module": "agents", "action": "run_extraction", "description": "Execute invoice extraction / understanding agents"},
+    {"code": "agents.run_po_retrieval", "name": "Run PO Retrieval Agent", "module": "agents", "action": "run_po_retrieval", "description": "Execute PO retrieval agent"},
+    {"code": "agents.run_grn_retrieval", "name": "Run GRN Retrieval Agent", "module": "agents", "action": "run_grn_retrieval", "description": "Execute GRN retrieval agent"},
+    {"code": "agents.run_reconciliation_assist", "name": "Run Reconciliation Assist Agent", "module": "agents", "action": "run_reconciliation_assist", "description": "Execute reconciliation assist agent"},
+    {"code": "agents.run_exception_analysis", "name": "Run Exception Analysis Agent", "module": "agents", "action": "run_exception_analysis", "description": "Execute exception analysis agent"},
+    {"code": "agents.run_review_routing", "name": "Run Review Routing Agent", "module": "agents", "action": "run_review_routing", "description": "Execute review routing agent"},
+    {"code": "agents.run_case_summary", "name": "Run Case Summary Agent", "module": "agents", "action": "run_case_summary", "description": "Execute case summary agent"},
+    # Recommendations
+    {"code": "recommendations.auto_close", "name": "Accept Auto-Close", "module": "recommendations", "action": "auto_close", "description": "Accept or trigger auto-close recommendations"},
+    {"code": "recommendations.route_review", "name": "Route to Review", "module": "recommendations", "action": "route_review", "description": "Accept send-to-review recommendations"},
+    {"code": "recommendations.escalate", "name": "Escalate", "module": "recommendations", "action": "escalate", "description": "Accept escalation recommendations"},
+    {"code": "recommendations.reprocess", "name": "Reprocess Extraction", "module": "recommendations", "action": "reprocess", "description": "Accept reprocess-extraction recommendations"},
+    {"code": "recommendations.route_procurement", "name": "Route to Procurement", "module": "recommendations", "action": "route_procurement", "description": "Accept send-to-procurement recommendations"},
+    {"code": "recommendations.vendor_clarification", "name": "Vendor Clarification", "module": "recommendations", "action": "vendor_clarification", "description": "Accept vendor clarification recommendations"},
+    # Protected actions
+    {"code": "cases.escalate", "name": "Escalate Cases", "module": "cases", "action": "escalate", "description": "Escalate AP cases to higher authority"},
+    {"code": "extraction.reprocess", "name": "Reprocess Extraction", "module": "extraction", "action": "reprocess", "description": "Re-trigger invoice extraction"},
+    # Document scoping
+    {"code": "purchase_orders.view", "name": "View Purchase Orders", "module": "purchase_orders", "action": "view", "description": "View purchase order data"},
+    {"code": "grns.view", "name": "View GRNs", "module": "grns", "action": "view", "description": "View goods receipt note data"},
+    {"code": "vendors.view", "name": "View Vendors", "module": "vendors", "action": "view", "description": "View vendor data"},
     # Configuration
     {"code": "config.manage", "name": "Manage Configuration", "module": "config", "action": "manage", "description": "Manage system configuration and settings"},
     # User management
@@ -74,6 +97,7 @@ ROLE_MATRIX = {
         "cases.add_comment",
         "reviews.view",
         "agents.view", "agents.use_copilot",
+        "purchase_orders.view", "grns.view", "vendors.view",
     ],
     "REVIEWER": [
         "invoices.view",
@@ -83,16 +107,22 @@ ROLE_MATRIX = {
         "reviews.view", "reviews.decide",
         "agents.view", "agents.use_copilot",
         "governance.view",
+        "purchase_orders.view", "grns.view", "vendors.view",
+        "recommendations.route_review",
     ],
     "FINANCE_MANAGER": [
         "invoices.view",
         "reconciliation.view", "reconciliation.override",
-        "cases.view", "cases.assign",
+        "cases.view", "cases.assign", "cases.escalate",
         "cases.add_comment",
         "reviews.view", "reviews.assign", "reviews.decide",
         "governance.view",
-        "agents.view",
+        "agents.view", "agents.orchestrate",
         "users.manage", "roles.manage",
+        "purchase_orders.view", "grns.view", "vendors.view",
+        "recommendations.auto_close", "recommendations.route_review",
+        "recommendations.escalate", "recommendations.reprocess",
+        "recommendations.route_procurement", "recommendations.vendor_clarification",
     ],
     "AUDITOR": [
         "invoices.view",
@@ -101,6 +131,24 @@ ROLE_MATRIX = {
         "reviews.view",
         "governance.view",
         "agents.view",
+        "purchase_orders.view", "grns.view", "vendors.view",
+    ],
+    "SYSTEM_AGENT": [
+        # Scoped agent orchestration + execution
+        "agents.orchestrate",
+        "agents.run_extraction", "agents.run_po_retrieval",
+        "agents.run_grn_retrieval", "agents.run_reconciliation_assist",
+        "agents.run_exception_analysis", "agents.run_review_routing",
+        "agents.run_case_summary",
+        # Read access for tools
+        "invoices.view", "reconciliation.view",
+        "purchase_orders.view", "grns.view", "vendors.view",
+        # Protected actions agents are allowed to take
+        "recommendations.auto_close", "recommendations.route_review",
+        "recommendations.escalate", "recommendations.reprocess",
+        "recommendations.route_procurement", "recommendations.vendor_clarification",
+        "cases.escalate", "extraction.reprocess",
+        "reviews.assign",
     ],
 }
 

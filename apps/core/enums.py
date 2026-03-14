@@ -185,6 +185,16 @@ class AuditEventType(models.TextChoices):
     # Review lifecycle events
     REVIEWER_ASSIGNED = "REVIEWER_ASSIGNED", "Reviewer Assigned"
     REVIEW_STARTED = "REVIEW_STARTED", "Review Started"
+    # Agent guardrail events
+    GUARDRAIL_GRANTED = "GUARDRAIL_GRANTED", "Guardrail Granted"
+    GUARDRAIL_DENIED = "GUARDRAIL_DENIED", "Guardrail Denied"
+    TOOL_CALL_AUTHORIZED = "TOOL_CALL_AUTHORIZED", "Tool Call Authorized"
+    TOOL_CALL_DENIED = "TOOL_CALL_DENIED", "Tool Call Denied"
+    RECOMMENDATION_ACCEPTED = "RECOMMENDATION_ACCEPTED", "Recommendation Accepted"
+    RECOMMENDATION_DENIED = "RECOMMENDATION_DENIED", "Recommendation Denied"
+    AUTO_CLOSE_AUTHORIZED = "AUTO_CLOSE_AUTHORIZED", "Auto-Close Authorized"
+    AUTO_CLOSE_DENIED = "AUTO_CLOSE_DENIED", "Auto-Close Denied"
+    SYSTEM_AGENT_USED = "SYSTEM_AGENT_USED", "System Agent Used"
 
 
 class PermissionOverrideType(models.TextChoices):

@@ -396,6 +396,8 @@ class StageExecutor:
 
             orchestrator = AgentOrchestrator()
             orch_result = orchestrator.execute(case.reconciliation_result)
+            # Note: request_user omitted — stage executor runs inside Celery
+            # or system context, so the orchestrator resolves to system-agent.
 
             if orch_result.final_recommendation == "AUTO_CLOSE":
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.AGENT)
