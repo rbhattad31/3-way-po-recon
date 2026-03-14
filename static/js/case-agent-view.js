@@ -487,10 +487,28 @@ function toggleContextCard(headerEl) {
 // Case Actions (reprocess etc.)
 // ---------------------------------------------------------------
 function caseAction(action) {
+  var actionsEl = document.querySelector('.av-identity__actions');
+
+  // Block approval if open exceptions / failed validations / failed stages exist
+  if (action === 'approve' && actionsEl) {
+    var openExc = parseInt(actionsEl.dataset.openExceptions || '0', 10);
+    var failedVal = parseInt(actionsEl.dataset.failedValidations || '0', 10);
+    var failedStg = parseInt(actionsEl.dataset.failedStages || '0', 10);
+    var total = openExc + failedVal + failedStg;
+    if (total > 0) {
+      var parts = [];
+      if (openExc) parts.push(openExc + ' unresolved exception(s)');
+      if (failedVal) parts.push(failedVal + ' failed validation(s)');
+      if (failedStg) parts.push(failedStg + ' failed stage(s)');
+      alert('Cannot approve this case.\n\nOpen issues:\n\u2022 ' + parts.join('\n\u2022 ') + '\n\nPlease resolve all issues before approving.');
+      return;
+    }
+  }
+
   var labels = {
     'approve': 'Approve this case',
     'reject': 'Reject this case',
-    'escalate': 'Escalate this case',
+    'reprocess': 'Reprocess this case from start',
   };
   if (!confirm('Are you sure you want to: ' + (labels[action] || action) + '?')) return;
 
@@ -502,23 +520,16 @@ function caseAction(action) {
   form.method = 'POST';
   form.style.display = 'none';
 
-  // Route approve/reject to review decide endpoint, escalate to reprocess
-  var decisionMap = { 'approve': 'APPROVED', 'reject': 'REJECTED' };
-  if (decisionMap[action] && actionsEl && actionsEl.dataset.decideUrl) {
-    form.action = actionsEl.dataset.decideUrl;
+  // All actions route to case decide endpoint
+  var decisionMap = { 'approve': 'APPROVED', 'reject': 'REJECTED', 'reprocess': 'REPROCESSED' };
+  var decideUrl = actionsEl ? actionsEl.dataset.decideUrl : '';
+  if (decisionMap[action] && decideUrl) {
+    form.action = decideUrl;
     var dec = document.createElement('input');
     dec.type = 'hidden'; dec.name = 'decision'; dec.value = decisionMap[action];
     form.appendChild(dec);
   } else {
-    var reprocessUrl = actionsEl ? actionsEl.dataset.reprocessUrl : '';
-    if (!reprocessUrl) return;
-    form.action = reprocessUrl;
-    var stg = document.createElement('input');
-    stg.type = 'hidden'; stg.name = 'stage'; stg.value = 'INTAKE';
-    form.appendChild(stg);
-    var nxt = document.createElement('input');
-    nxt.type = 'hidden'; nxt.name = 'next'; nxt.value = 'agent';
-    form.appendChild(nxt);
+    return;
   }
 
   var csrf = document.createElement('input');

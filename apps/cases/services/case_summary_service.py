@@ -94,7 +94,7 @@ class CaseSummaryService:
             if exc_count:
                 parts.append(f"Exceptions: {exc_count}")
 
-        validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").last()
+        validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version", "-created_at").first()
         if validation_artifact:
             payload = validation_artifact.payload
             parts.append(f"Non-PO validation: {payload.get('overall_status', 'N/A')}")

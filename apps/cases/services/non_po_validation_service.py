@@ -392,6 +392,11 @@ class NonPOValidationService:
             case=case,
             artifact_type=ArtifactType.VALIDATION_RESULT,
             payload=payload,
+            version=(
+                APCaseArtifact.objects.filter(
+                    case=case, artifact_type=ArtifactType.VALIDATION_RESULT
+                ).order_by("-version").values_list("version", flat=True).first() or 0
+            ) + 1,
         )
 
         # Record decision

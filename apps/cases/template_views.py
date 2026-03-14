@@ -11,6 +11,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from apps.cases.models import APCase
 from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode
+from apps.core.permissions import permission_required_code, _has_permission_code
 
 logger = logging.getLogger(__name__)
 
@@ -262,11 +263,12 @@ def case_inbox(request):
         date_to=request.GET.get("date_to", ""),
         processing_type=request.GET.get("processing_type", ""),
     )
+    qs = CaseSelectors.scope_for_user(qs, request.user)
 
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
-    stats = CaseSelectors.stats()
+    stats = CaseSelectors.stats(user=request.user)
 
     return render(request, "cases/case_inbox.html", {
         "cases": page_obj,
@@ -287,12 +289,14 @@ def case_console(request, pk):
 
 
 @login_required
+@permission_required_code("cases.edit")
 def reprocess_case(request, pk):
     """Reprocess a case from a specific stage."""
     if request.method != "POST":
         return redirect("cases:case_console", pk=pk)
 
-    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    scoped_qs = CaseSelectors.scope_for_user(APCase.objects.filter(is_active=True), request.user)
+    case = get_object_or_404(scoped_qs, pk=pk)
     stage = request.POST.get("stage", "")
 
     redirect_view = "cases:case_agent_view" if request.POST.get("next") == "agent" else "cases:case_console"
@@ -314,6 +318,7 @@ def reprocess_case(request, pk):
 
 
 @login_required
+@permission_required_code("cases.edit")
 def create_case_for_invoice(request, invoice_pk):
     """Create an AP Case for an invoice that doesn't have one yet, then start processing."""
     if request.method != "POST":
@@ -346,17 +351,16 @@ def create_case_for_invoice(request, invoice_pk):
 @login_required
 def case_agent_view(request, pk):
     """Agentic case view — ChatGPT-style conversation feed for case investigation."""
-    case = get_object_or_404(
-        APCase.objects.select_related(
-            "invoice", "invoice__vendor", "invoice__document_upload",
-            "vendor", "purchase_order", "reconciliation_result",
-            "assigned_to",
-        ).prefetch_related(
-            "stages", "artifacts", "decisions",
-            "assignments", "comments", "activities",
-        ),
-        pk=pk, is_active=True,
-    )
+    base_qs = APCase.objects.select_related(
+        "invoice", "invoice__vendor", "invoice__document_upload",
+        "vendor", "purchase_order", "reconciliation_result",
+        "assigned_to",
+    ).prefetch_related(
+        "stages", "artifacts", "decisions",
+        "assignments", "comments", "activities",
+    ).filter(is_active=True)
+    base_qs = CaseSelectors.scope_for_user(base_qs, request.user)
+    case = get_object_or_404(base_qs, pk=pk)
 
     invoice = case.invoice
     po = case.purchase_order
@@ -382,7 +386,7 @@ def case_agent_view(request, pk):
 
     # Non-PO validation issues
     validation_issues = []
-    validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version").first()
+    validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version", "-created_at").first()
     if validation_artifact and isinstance(validation_artifact.payload, dict):
         checks = validation_artifact.payload.get("checks", {})
         for check_name, check_data in checks.items():
@@ -447,6 +451,54 @@ def case_agent_view(request, pk):
                 status="IN_REVIEW",
                 priority=5,
             )
+        # Fall back to the most recent completed/decided assignment for history
+        if not review_assignment:
+            review_assignment = (
+                recon_result.review_assignments
+                .order_by("-created_at")
+                .first()
+            )
+
+    # Review comments and actions for the embedded review panel
+    review_comments = []
+    review_actions = []
+    review_decision = None
+    if review_assignment:
+        review_comments = list(
+            review_assignment.comments
+            .select_related("author")
+            .order_by("created_at")
+        )
+        review_actions = list(
+            review_assignment.actions
+            .select_related("performed_by")
+            .order_by("-created_at")
+        )
+        try:
+            review_decision = review_assignment.decision
+        except Exception:
+            review_decision = None
+
+    # For Non-PO cases (or cases without review assignment), use case comments
+    # Merge them into review_comments so the panel always has content
+    case_comments = list(
+        case.comments.select_related("author").order_by("created_at")
+    )
+    if not review_assignment:
+        # No review assignment — show case comments in the review panel
+        review_comments = case_comments
+
+    # Determine if actions should be shown (for both PO and Non-PO paths)
+    show_actions = case.status in (
+        "READY_FOR_REVIEW", "IN_REVIEW", "REVIEW_COMPLETED",
+        "READY_FOR_APPROVAL", "APPROVAL_IN_PROGRESS",
+    )
+
+    # Count open (unresolved) exceptions and failed validations
+    open_exceptions_count = sum(1 for e in exceptions if not getattr(e, 'resolved', False))
+    failed_validations_count = sum(1 for v in validation_issues if v.get('status') == 'FAIL')
+    failed_stages_count = sum(1 for s in stages if s.stage_status == 'FAILED')
+    has_open_issues = (open_exceptions_count + failed_validations_count + failed_stages_count) > 0
 
     return render(request, "cases/case_agent_view.html", {
         "case": case,
@@ -465,5 +517,156 @@ def case_agent_view(request, pk):
         "timeline": timeline,
         "show_full_trace": show_full_trace,
         "review_assignment": review_assignment,
+        "review_comments": review_comments,
+        "review_actions": review_actions,
+        "review_decision": review_decision,
+        "show_actions": show_actions,
+        "has_open_issues": has_open_issues,
+        "open_exceptions_count": open_exceptions_count,
+        "failed_validations_count": failed_validations_count,
+        "failed_stages_count": failed_stages_count,
         "copilot_context_json": json.dumps(copilot_context, default=str),
     })
+
+
+@login_required
+def case_decide(request, pk):
+    """Handle approve/reject/reprocess directly on a case.
+
+    Approve/reject require `reviews.decide`.
+    Reprocess requires `cases.edit`.
+    """
+    if request.method != "POST":
+        return redirect("cases:case_agent_view", pk=pk)
+
+    decision = request.POST.get("decision", "").upper()
+
+    # Permission gate: reprocess needs cases.edit, approve/reject needs reviews.decide
+    if decision == "REPROCESSED":
+        if not _has_permission_code(request.user, "cases.edit"):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied
+    else:
+        if not _has_permission_code(request.user, "reviews.decide"):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied
+
+    scoped_qs = CaseSelectors.scope_for_user(APCase.objects.filter(is_active=True), request.user)
+    case = get_object_or_404(scoped_qs, pk=pk)
+
+    # Block approval if there are open exceptions or failed validations
+    if decision == "APPROVED":
+        open_exc = 0
+        recon_res = case.reconciliation_result
+        if recon_res:
+            open_exc = recon_res.exceptions.filter(resolved=False).count()
+
+        failed_val = 0
+        val_artifact = case.artifacts.filter(
+            artifact_type="VALIDATION_RESULT"
+        ).order_by("-version", "-created_at").first()
+        if val_artifact and isinstance(val_artifact.payload, dict):
+            for cd in val_artifact.payload.get("checks", {}).values():
+                if cd.get("status") == "FAIL":
+                    failed_val += 1
+
+        failed_stg = case.stages.filter(stage_status="FAILED").count()
+
+        if open_exc + failed_val + failed_stg > 0:
+            parts = []
+            if open_exc:
+                parts.append(f"{open_exc} unresolved exception(s)")
+            if failed_val:
+                parts.append(f"{failed_val} failed validation(s)")
+            if failed_stg:
+                parts.append(f"{failed_stg} failed stage(s)")
+            messages.error(
+                request,
+                f"Cannot approve: {', '.join(parts)}. Resolve all issues before approving.",
+            )
+            return redirect("cases:case_agent_view", pk=pk)
+
+    # If there's a review assignment, delegate to the review workflow
+    recon_result = case.reconciliation_result
+    if recon_result:
+        assignment = (
+            recon_result.review_assignments
+            .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
+            .first()
+        )
+        if assignment:
+            from apps.reviews.services import ReviewWorkflowService
+            reason = request.POST.get("reason", "")
+            if decision == "APPROVED":
+                ReviewWorkflowService.approve(assignment, request.user, reason)
+            elif decision == "REJECTED":
+                ReviewWorkflowService.reject(assignment, request.user, reason)
+            elif decision == "REPROCESSED":
+                ReviewWorkflowService.request_reprocess(assignment, request.user, reason)
+
+    # Handle reprocessing
+    if decision == "REPROCESSED":
+        from apps.cases.tasks import reprocess_case_from_stage_task
+        from apps.core.utils import dispatch_task
+        try:
+            dispatch_task(reprocess_case_from_stage_task, case_id=case.pk, stage="INTAKE")
+            messages.success(request, f"Case {case.case_number} submitted for reprocessing.")
+        except Exception as exc:
+            messages.error(request, f"Reprocessing failed: {exc}")
+        return redirect("cases:case_agent_view", pk=pk)
+
+    # Update case status
+    status_map = {
+        "APPROVED": CaseStatus.CLOSED,
+        "REJECTED": CaseStatus.REJECTED,
+    }
+    new_status = status_map.get(decision)
+    if new_status:
+        case.status = new_status
+        case.save(update_fields=["status", "updated_at"])
+        messages.success(request, f"Case {case.case_number} marked as {case.get_status_display()}.")
+    else:
+        messages.warning(request, f"Unknown decision: {decision}")
+
+    return redirect("cases:case_agent_view", pk=pk)
+
+
+@login_required
+@permission_required_code("cases.edit")
+def case_add_comment(request, pk):
+    """Add a review comment from the agent view."""
+    if request.method != "POST":
+        return redirect("cases:case_agent_view", pk=pk)
+
+    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    body = request.POST.get("body", "").strip()
+    if not body:
+        messages.warning(request, "Comment cannot be empty.")
+        return redirect("cases:case_agent_view", pk=pk)
+
+    # Find or create review assignment
+    recon_result = case.reconciliation_result
+    assignment = None
+    if recon_result:
+        assignment = (
+            recon_result.review_assignments
+            .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
+            .first()
+        )
+        if not assignment:
+            assignment = recon_result.review_assignments.order_by("-created_at").first()
+
+    if assignment:
+        from apps.reviews.services import ReviewWorkflowService
+        ReviewWorkflowService.add_comment(assignment, request.user, body)
+    else:
+        # For Non-PO cases without review assignment, store as case comment
+        from apps.cases.models import APCaseComment
+        APCaseComment.objects.create(
+            case=case,
+            author=request.user,
+            content=body,
+        )
+
+    messages.success(request, "Comment added.")
+    return redirect("cases:case_agent_view", pk=pk)

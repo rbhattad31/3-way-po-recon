@@ -5,6 +5,7 @@ from django.shortcuts import render
 
 from apps.agents.models import AgentRun
 from apps.cases.models import APCase, APCaseStage
+from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import (
     AgentRunStatus,
     AgentType,
@@ -24,8 +25,8 @@ def command_center(request):
 
 @login_required
 def index(request):
-    summary = DashboardService.get_summary()
-    recent_activity = DashboardService.get_recent_activity(limit=15)
+    summary = DashboardService.get_summary(user=request.user)
+    recent_activity = DashboardService.get_recent_activity(limit=15, user=request.user)
     return render(request, "dashboard/index.html", {
         "summary": summary,
         "recent_activity": recent_activity,
@@ -76,6 +77,7 @@ def agent_monitor(request):
     case_qs = APCase.objects.select_related(
         "invoice", "vendor", "purchase_order", "assigned_to",
     )
+    case_qs = CaseSelectors.scope_for_user(case_qs, request.user)
 
     if path_filter:
         case_qs = case_qs.filter(processing_path=path_filter)

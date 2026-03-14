@@ -1003,6 +1003,166 @@
 .av-empty .bi { font-size: 2rem; opacity: 0.3; }
 .av-empty__text { margin-top: var(--ap-space-sm); font-size: var(--ap-font-size-sm); }
 
+
+/* =================================================================
+   Review & Notes Panel (full-width, below two-column layout)
+   ================================================================= */
+.av-review-panel {
+  margin: .75rem 0 0;
+  background: var(--ap-surface, #fff);
+  border: 1px solid var(--ap-border-light);
+  border-radius: var(--ap-radius, 8px);
+  overflow: hidden;
+}
+.av-review-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .625rem 1rem;
+  background: var(--ap-bg-subtle);
+  border-bottom: 1px solid var(--ap-border-light);
+  font-size: var(--ap-font-size-sm);
+  font-weight: 600;
+  color: var(--ap-primary);
+}
+.av-review-panel__title { font-weight: 600; }
+.av-review-panel__meta {
+  display: flex;
+  gap: .75rem;
+  font-size: var(--ap-font-size-xs);
+  font-weight: 400;
+  color: var(--ap-text-muted);
+}
+
+/* Two-column content: form left, comment history right */
+.av-review-panel__content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 140px;
+}
+.av-review-panel__left {
+  padding: .75rem 1rem;
+  border-right: 1px solid var(--ap-border-light);
+}
+.av-review-panel__right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.av-review-panel__right-header {
+  padding: .5rem 1rem;
+  font-size: var(--ap-font-size-xs);
+  font-weight: 600;
+  color: var(--ap-text-muted);
+  border-bottom: 1px solid var(--ap-border-light);
+  display: flex;
+  align-items: center;
+  gap: .375rem;
+}
+@media (max-width: 768px) {
+  .av-review-panel__content {
+    grid-template-columns: 1fr;
+  }
+  .av-review-panel__left {
+    border-right: none;
+    border-bottom: 1px solid var(--ap-border-light);
+  }
+}
+
+/* Comment form */
+.av-review-panel__form {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  margin-bottom: .625rem;
+}
+.av-review-panel__form .btn {
+  align-self: flex-end;
+}
+.av-review-textarea {
+  font-size: var(--ap-font-size-sm);
+  resize: vertical;
+  min-height: 5rem;
+  border-color: var(--ap-border);
+  line-height: 1.5;
+}
+.av-review-textarea:focus {
+  border-color: var(--ap-primary);
+  box-shadow: 0 0 0 2px rgba(var(--ap-primary-rgb, 99,102,241), .12);
+}
+
+/* Comment thread */
+.av-review-comments {
+  flex: 1;
+  max-height: 280px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: .5rem 1rem;
+}
+.av-review-comments::-webkit-scrollbar { width: 4px; }
+.av-review-comments::-webkit-scrollbar-thumb { background: var(--ap-border); border-radius: 4px; }
+.av-review-comments__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .25rem;
+  padding: 1.5rem 0;
+  font-size: var(--ap-font-size-xs);
+  color: var(--ap-text-muted);
+  opacity: .6;
+}
+.av-review-comments__empty i { font-size: 1rem; }
+
+.av-review-comment {
+  padding: .375rem .5rem;
+  margin-bottom: .375rem;
+  background: var(--ap-bg-subtle);
+  border-radius: var(--ap-radius-sm, 4px);
+  font-size: var(--ap-font-size-xs);
+}
+.av-review-comment__body {
+  margin-top: .125rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+/* Decision display */
+.av-review-decision {
+  padding: .5rem .625rem;
+  background: var(--ap-bg-subtle);
+  border-left: 3px solid var(--ap-primary);
+  border-radius: var(--ap-radius-sm, 4px);
+}
+.av-review-reason {
+  font-size: var(--ap-font-size-xs);
+  color: var(--ap-text-secondary);
+  line-height: 1.35;
+}
+
+/* Action history */
+.av-review-actions {
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.av-review-actions__header {
+  font-size: var(--ap-font-size-xs);
+  font-weight: 600;
+  color: var(--ap-text-muted);
+  margin-bottom: .375rem;
+}
+.av-review-action {
+  display: flex;
+  align-items: center;
+  gap: .375rem;
+  padding: .25rem 0;
+  font-size: var(--ap-font-size-xs);
+  flex-wrap: wrap;
+}
+.av-review-action + .av-review-action {
+  border-top: 1px solid var(--ap-border-light);
+}
+
 /* ── Typing Animation ── */
 .av-typing {
   display: inline-flex;

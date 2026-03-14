@@ -92,7 +92,7 @@
           <div class="d-flex flex-wrap gap-1 justify-content-lg-end">
             <button class="btn btn-sm btn-success cc-action-btn" data-action="approve" title="Approve"><i class="bi bi-check-lg me-1"></i>Approve</button>
             <button class="btn btn-sm btn-danger cc-action-btn" data-action="reject" title="Reject"><i class="bi bi-x-lg me-1"></i>Reject</button>
-            <button class="btn btn-sm btn-warning cc-action-btn" data-action="escalate" title="Escalate"><i class="bi bi-arrow-up-circle me-1"></i>Escalate</button>
+            <a href="{% url 'reconciliation:start_reconciliation' %}" class="btn btn-sm btn-outline-warning" title="Reprocess"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</a>
             <a href="{% url 'reconciliation:start_reconciliation' %}" class="btn btn-sm btn-outline-primary" title="Re-run"><i class="bi bi-arrow-clockwise me-1"></i>Re-run</a>
             <a href="{% url 'reconciliation:case_export_csv' result.pk %}" class="btn btn-sm btn-outline-secondary" title="Download Report"><i class="bi bi-download me-1"></i>Report</a>
           </div>
@@ -866,7 +866,6 @@
             <div class="d-grid gap-2">
               <button type="button" class="btn btn-success btn-sm cc-action-btn" data-action="approve"><i class="bi bi-check-lg me-1"></i>Approve</button>
               <button type="button" class="btn btn-danger btn-sm cc-action-btn" data-action="reject"><i class="bi bi-x-lg me-1"></i>Reject</button>
-              <button type="button" class="btn btn-warning btn-sm cc-action-btn" data-action="escalate"><i class="bi bi-arrow-up-circle me-1"></i>Escalate</button>
               <button type="button" class="btn btn-outline-secondary btn-sm cc-action-btn" data-action="request-info"><i class="bi bi-envelope me-1"></i>Request Vendor Clarification</button>
             </div>
           </form>
