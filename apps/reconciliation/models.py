@@ -47,6 +47,12 @@ class ReconciliationConfig(BaseModel):
         default=True, help_text="Auto-select 2-way mode for service invoices",
     )
 
+    # Access control
+    ap_processor_sees_all_cases = models.BooleanField(
+        default=False,
+        help_text="When False, AP Processors only see cases for documents they uploaded",
+    )
+
     class Meta:
         db_table = "reconciliation_config"
         ordering = ["name"]

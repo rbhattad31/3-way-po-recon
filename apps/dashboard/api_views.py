@@ -19,7 +19,7 @@ class DashboardSummaryAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_summary()
+        data = DashboardService.get_summary(user=request.user)
         return Response(DashboardSummarySerializer(data).data)
 
 
@@ -27,7 +27,7 @@ class MatchStatusBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_match_status_breakdown()
+        data = DashboardService.get_match_status_breakdown(user=request.user)
         return Response(MatchStatusBreakdownSerializer(data, many=True).data)
 
 
@@ -35,7 +35,7 @@ class ExceptionBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_exception_breakdown()
+        data = DashboardService.get_exception_breakdown(user=request.user)
         return Response(ExceptionBreakdownSerializer(data, many=True).data)
 
 
@@ -43,7 +43,7 @@ class AgentPerformanceAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_agent_performance()
+        data = DashboardService.get_agent_performance(user=request.user)
         return Response(AgentPerformanceSerializer(data, many=True).data)
 
 
@@ -52,7 +52,7 @@ class DailyVolumeAPIView(APIView):
 
     def get(self, request):
         days = int(request.query_params.get("days", 30))
-        data = DashboardService.get_daily_volume(days=min(days, 90))
+        data = DashboardService.get_daily_volume(days=min(days, 90), user=request.user)
         return Response(DailyVolumeSerializer(data, many=True).data)
 
 
@@ -61,7 +61,7 @@ class RecentActivityAPIView(APIView):
 
     def get(self, request):
         limit = int(request.query_params.get("limit", 20))
-        data = DashboardService.get_recent_activity(limit=min(limit, 50))
+        data = DashboardService.get_recent_activity(limit=min(limit, 50), user=request.user)
         return Response(RecentActivitySerializer(data, many=True).data)
 
 
@@ -69,5 +69,5 @@ class ModeBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_mode_breakdown()
+        data = DashboardService.get_mode_breakdown(user=request.user)
         return Response(ModeBreakdownSerializer(data, many=True).data)

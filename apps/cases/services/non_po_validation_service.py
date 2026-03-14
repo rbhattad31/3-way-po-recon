@@ -51,7 +51,7 @@ class NonPOValidationService:
         checks["spend_category"] = NonPOValidationService._classify_spend_category(invoice)
         checks["policy"] = NonPOValidationService._check_policies(invoice, case)
         checks["cost_center"] = NonPOValidationService._infer_cost_center(invoice)
-        checks["tax"] = NonPOValidationService._check_tax_reasonability(invoice)
+        checks["tax"] = NonPOValidationService._check_tax_reasonability(invoice, case)
         checks["budget"] = NonPOValidationService._check_budget(invoice, case)
 
         # Compute overall status
@@ -280,8 +280,8 @@ class NonPOValidationService:
         )
 
     @staticmethod
-    def _check_tax_reasonability(invoice) -> CheckResult:
-        """Validate tax amount against expected rate."""
+    def _check_tax_reasonability(invoice, case=None) -> CheckResult:
+        """Validate tax at line-item level against PO lines if available."""
         subtotal = invoice.subtotal or Decimal("0")
         tax = invoice.tax_amount or Decimal("0")
 
@@ -289,31 +289,76 @@ class NonPOValidationService:
             return CheckResult(
                 check_name="tax",
                 status="WARNING",
-                message="Cannot verify tax — subtotal is zero",
+                message="Cannot verify tax \u2014 subtotal is zero",
             )
 
-        actual_rate = (tax / subtotal * 100) if subtotal else Decimal("0")
+        header_rate = (tax / subtotal * 100) if subtotal else Decimal("0")
 
-        # Default expected rate (e.g. 15% for Saudi VAT)
-        expected_rate = Decimal("15.0")
-        variance = abs(actual_rate - expected_rate)
+        # Try line-level comparison against the linked Purchase Order
+        po = getattr(case, "purchase_order", None) if case else None
+        if po:
+            inv_lines = list(invoice.line_items.order_by("line_number"))
+            po_lines = list(po.line_items.order_by("line_number"))
 
-        if variance > Decimal("3.0"):
-            return CheckResult(
-                check_name="tax",
-                status="WARNING",
-                message=f"Tax rate {actual_rate:.1f}% deviates from expected {expected_rate}% by {variance:.1f}%",
-                details={
-                    "actual_rate": str(actual_rate),
-                    "expected_rate": str(expected_rate),
-                    "variance": str(variance),
-                },
-            )
+            if inv_lines and po_lines:
+                # Build a map of PO lines by line_number for quick lookup
+                po_line_map = {pl.line_number: pl for pl in po_lines}
+                mismatches = []
+
+                for inv_line in inv_lines:
+                    inv_tax = inv_line.tax_amount
+                    inv_amt = inv_line.line_amount
+                    if inv_amt is None or inv_amt == 0:
+                        continue
+
+                    inv_rate = ((inv_tax or Decimal("0")) / inv_amt * 100)
+
+                    # Match PO line by line_number
+                    po_line = po_line_map.get(inv_line.line_number)
+                    if po_line is None:
+                        continue
+
+                    po_tax = po_line.tax_amount
+                    po_amt = po_line.line_amount
+                    if po_amt is None or po_amt == 0:
+                        continue
+
+                    po_rate = ((po_tax or Decimal("0")) / po_amt * 100)
+                    variance = abs(inv_rate - po_rate)
+
+                    if variance > Decimal("3.0"):
+                        mismatches.append({
+                            "line": inv_line.line_number,
+                            "inv_rate": str(inv_rate.quantize(Decimal("0.1"))),
+                            "po_rate": str(po_rate.quantize(Decimal("0.1"))),
+                            "variance": str(variance.quantize(Decimal("0.1"))),
+                        })
+
+                if mismatches:
+                    lines_str = ", ".join(
+                        f"Line {m['line']}: {m['inv_rate']}% vs PO {m['po_rate']}%"
+                        for m in mismatches
+                    )
+                    return CheckResult(
+                        check_name="tax",
+                        status="WARNING",
+                        message=f"Tax rate mismatch on {len(mismatches)} line(s): {lines_str}",
+                        details={"mismatches": mismatches},
+                    )
+
+                return CheckResult(
+                    check_name="tax",
+                    status="PASS",
+                    message=f"Tax rates match PO at line level (header rate {header_rate:.1f}%)",
+                    details={"header_rate": str(header_rate)},
+                )
+
+        # No PO available — any tax rate is acceptable
         return CheckResult(
             check_name="tax",
             status="PASS",
-            message=f"Tax rate {actual_rate:.1f}% is within expected range",
-            details={"actual_rate": str(actual_rate)},
+            message=f"Tax rate {header_rate:.1f}% (no PO to compare against)",
+            details={"header_rate": str(header_rate)},
         )
 
     @staticmethod
@@ -347,6 +392,11 @@ class NonPOValidationService:
             case=case,
             artifact_type=ArtifactType.VALIDATION_RESULT,
             payload=payload,
+            version=(
+                APCaseArtifact.objects.filter(
+                    case=case, artifact_type=ArtifactType.VALIDATION_RESULT
+                ).order_by("-version").values_list("version", flat=True).first() or 0
+            ) + 1,
         )
 
         # Record decision

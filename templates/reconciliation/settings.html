@@ -108,7 +108,7 @@
             <td class="text-center text-nowrap">
               <button class="btn btn-sm btn-outline-primary py-0 px-1 me-1" title="Edit"
                 data-bs-toggle="modal" data-bs-target="#configModal"
-                onclick="editConfig({{ config.pk }}, '{{ config.name }}', {{ config.quantity_tolerance_pct }}, {{ config.price_tolerance_pct }}, {{ config.amount_tolerance_pct }}, {{ config.auto_close_qty_tolerance_pct }}, {{ config.auto_close_price_tolerance_pct }}, {{ config.auto_close_amount_tolerance_pct }}, {{ config.extraction_confidence_threshold }}, {{ config.auto_close_on_match|yesno:'true,false' }}, {{ config.enable_agents|yesno:'true,false' }}, '{{ config.default_reconciliation_mode }}', {{ config.enable_mode_resolver|yesno:'true,false' }}, {{ config.enable_grn_for_stock_items|yesno:'true,false' }}, {{ config.enable_two_way_for_services|yesno:'true,false' }})">
+                onclick="editConfig({{ config.pk }}, '{{ config.name }}', {{ config.quantity_tolerance_pct }}, {{ config.price_tolerance_pct }}, {{ config.amount_tolerance_pct }}, {{ config.auto_close_qty_tolerance_pct }}, {{ config.auto_close_price_tolerance_pct }}, {{ config.auto_close_amount_tolerance_pct }}, {{ config.extraction_confidence_threshold }}, {{ config.auto_close_on_match|yesno:'true,false' }}, {{ config.enable_agents|yesno:'true,false' }}, '{{ config.default_reconciliation_mode }}', {{ config.enable_mode_resolver|yesno:'true,false' }}, {{ config.enable_grn_for_stock_items|yesno:'true,false' }}, {{ config.enable_two_way_for_services|yesno:'true,false' }}, {{ config.ap_processor_sees_all_cases|yesno:'true,false' }})">
                 <i class="bi bi-pencil"></i>
               </button>
               {% if not config.is_default %}
@@ -335,6 +335,17 @@
             </div>
           </div>
         </div>
+
+        <h6 class="text-muted mt-4 mb-3"><i class="bi bi-shield-lock me-2"></i>Access Control</h6>
+        <div class="row g-3">
+          <div class="col-md-6 d-flex align-items-end">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="ap_processor_sees_all_cases" id="formApAllCases">
+              <label class="form-check-label" for="formApAllCases">AP Processors see all cases</label>
+              <div class="form-text">When off, AP Processors only see cases for documents they uploaded.</div>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -364,9 +375,10 @@ function resetForm() {
   document.getElementById('formModeResolver').checked = true;
   document.getElementById('formGrnStock').checked = true;
   document.getElementById('formTwoWayServices').checked = true;
+  document.getElementById('formApAllCases').checked = false;
   document.getElementById('modalTitle').innerHTML = '<i class="bi bi-gear me-2"></i>New Config Profile';
 }
-function editConfig(id, name, qtyTol, priceTol, amtTol, acQty, acPrice, acAmt, conf, autoClose, agents, defaultMode, modeResolver, grnStock, twoWayServices) {
+function editConfig(id, name, qtyTol, priceTol, amtTol, acQty, acPrice, acAmt, conf, autoClose, agents, defaultMode, modeResolver, grnStock, twoWayServices, apAllCases) {
   document.getElementById('formConfigId').value = id;
   document.getElementById('formName').value = name;
   document.getElementById('formQtyTol').value = qtyTol;
@@ -382,6 +394,7 @@ function editConfig(id, name, qtyTol, priceTol, amtTol, acQty, acPrice, acAmt, c
   document.getElementById('formModeResolver').checked = modeResolver;
   document.getElementById('formGrnStock').checked = grnStock;
   document.getElementById('formTwoWayServices').checked = twoWayServices;
+  document.getElementById('formApAllCases').checked = apAllCases;
   document.getElementById('modalTitle').innerHTML = '<i class="bi bi-gear me-2"></i>Edit: ' + name;
 }
 </script>

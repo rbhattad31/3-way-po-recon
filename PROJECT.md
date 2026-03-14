@@ -194,7 +194,7 @@ The project contains **13 Django apps** under `apps/`:
 | **reports** | Report generation tracking | `models.py` |
 | **reviews** | Review assignment, decisions, comments | `models.py`, `services.py` |
 | **tools** | Agent tool registry (6 tools) | `registry/base.py`, `registry/tools.py` |
-| **vendors** | Vendor master data, aliases | `models.py` |
+| **vendors** | Vendor master data, aliases, vendor list/detail UI | `models.py`, `template_views.py` |
 
 ### File Organization Convention
 
@@ -1244,6 +1244,9 @@ templates/
 │   ├── po_detail.html
 │   ├── grn_list.html
 │   └── grn_detail.html
+├── vendors/
+│   ├── vendor_list.html             # Vendor directory with KPIs, filters
+│   └── vendor_detail.html           # Vendor detail + related POs/invoices/GRNs
 ├── governance/
 │   ├── audit_event_list.html          # Filterable audit log
 │   └── invoice_governance.html        # Full governance dashboard
@@ -1283,6 +1286,8 @@ templates/
 | `/reviews/<id>/` | `assignment_detail` | Review detail with decision |
 | `/governance/` | `audit_event_list` | Audit log |
 | `/governance/invoice/<id>/` | `invoice_governance` | Full governance dashboard |
+| `/vendors/` | `vendor_list` | Vendor directory with filters |
+| `/vendors/<id>/` | `vendor_detail` | Vendor detail + related documents |
 | `/agents/reference/` | `agent_reference` | Agent/stage reference page |
 | `/accounts/login/` | Django LoginView | Authentication |
 | `/accounts/admin-console/users/` | `UserListView` | User management list |
@@ -1562,13 +1567,15 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 
 | Role | Rank | Key Permissions |
 |---|---|---|
-| **ADMIN** | 10 | All 20 permissions |
-| **FINANCE_MANAGER** | 20 | invoices.view/approve, reconciliation.view/run, reviews.view/assign, governance.view, agents.view, config.view |
-| **AUDITOR** | 30 | *.view (read-only across all modules), governance.view |
-| **REVIEWER** | 40 | invoices.view, reconciliation.view, reviews.view/decide, agents.view |
-| **AP_PROCESSOR** | 50 | invoices.view/create/edit, reconciliation.view/run, reviews.view, cases.view/edit/assign |
+| **ADMIN** | 10 | All 23 permissions |
+| **FINANCE_MANAGER** | 20 | invoices.view/approve, reconciliation.view/run, reviews.view/assign, governance.view, agents.view, config.view, vendors.view, purchase_orders.view, grns.view |
+| **AUDITOR** | 30 | *.view (read-only across all modules), governance.view, vendors.view, purchase_orders.view, grns.view |
+| **REVIEWER** | 40 | invoices.view, reconciliation.view, reviews.view/decide, agents.view, vendors.view, purchase_orders.view, grns.view |
+| **AP_PROCESSOR** | 50 | invoices.view/create/edit, reconciliation.view/run, reviews.view, cases.view/edit/assign, vendors.view*, purchase_orders.view*, grns.view* |
 
-#### Permission Codes (20 total, 7 modules)
+*\* AP_PROCESSOR: POs, GRNs, and Vendors are **scoped** to data linked to their own uploaded invoices (unless `ap_processor_sees_all_cases` is enabled in ReconciliationConfig).*
+
+#### Permission Codes (23 total, 10 modules)
 
 | Module | Permissions |
 |---|---|
@@ -1581,6 +1588,23 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 | config | `view`, `edit` |
 | users | `manage` |
 | roles | `manage` |
+| vendors | `view` |
+| purchase_orders | `view` |
+| grns | `view` |
+
+#### Data Scoping (AP_PROCESSOR)
+
+When `ReconciliationConfig.ap_processor_sees_all_cases` is **off** (default), AP_PROCESSOR users see only data related to their own uploaded invoices:
+
+| Entity | Scoping Logic |
+|---|---|
+| **Invoices** | `document_upload__uploaded_by=user` |
+| **Purchase Orders** | POs matching `po_number` values from user's invoices |
+| **GRNs** | GRNs linked to POs from user's invoices |
+| **Vendors** | Vendors linked to user's invoices (`vendor_id`) |
+| **Dashboard KPIs** | All aggregations scoped through the above filters |
+
+All other roles (ADMIN, FINANCE_MANAGER, AUDITOR, REVIEWER) see the full unscoped data.
 
 ### 20.3 DRF Permission Classes (Backward-Compatible)
 
@@ -1805,7 +1829,11 @@ celery -A config worker -l info
 - `AgentRun` traceability: trace_id, span_id, invocation reason, prompt version, actor/permission tracking, cost estimate
 - `ProcessingLog` traceability: trace fields, service/task name tracking, duration, success/error tracking
 - DRF APIs with filtering, search, pagination
-- Bootstrap 5 templates (32 templates including RBAC admin console)
+- Vendor UI: list page (KPIs, country/currency/search filters, PO/invoice/alias counts) + detail page (aliases, recent POs/invoices/GRNs)
+- RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own invoices (configurable via `ap_processor_sees_all_cases` toggle)
+- RBAC permissions for vendors (`vendors.view`), purchase orders (`purchase_orders.view`), and GRNs (`grns.view`) — all roles granted, AP_PROCESSOR scoped
+- Sidebar navigation gated by RBAC permissions for all document pages (POs, GRNs, Vendors, Governance, Admin Console)
+- Bootstrap 5 templates (34 templates including RBAC admin console, vendor pages)
 - Enterprise RBAC: Role, Permission, RolePermission, UserRole, UserPermissionOverride models
 - RBAC permission engine: code-level checks, middleware cache, template tags, DRF classes, CBV mixins, FBV decorators
 - RBAC admin console: 8 Bootstrap 5 screens (user CRUD, role CRUD, permission catalog, role-permission matrix)

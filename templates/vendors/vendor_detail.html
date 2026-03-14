@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}{{ vendor.code }} – {{ vendor.name }} – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'vendors:vendor_list' %}" class="text-decoration-none">Vendors</a></li>
+  <li class="breadcrumb-item active">{{ vendor.code }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-building me-2 text-primary"></i>{{ vendor.name }}</h4>
+  {% if vendor.is_active %}
+    <span class="ap-badge ap-badge-success">Active</span>
+  {% else %}
+    <span class="ap-badge ap-badge-muted">Inactive</span>
+  {% endif %}
+</div>
+
+<div class="row g-3">
+  {# ── Vendor Details ── #}
+  <div class="col-md-6">
+    <div class="ap-card">
+      <div class="ap-card-header">
+        <i class="bi bi-info-circle me-2"></i>Vendor Details
+      </div>
+      <div class="ap-card-body p-0">
+        <table class="ap-table mb-0">
+          <tr><th style="width:35%">Code</th><td class="fw-semibold">{{ vendor.code }}</td></tr>
+          <tr><th>Name</th><td>{{ vendor.name }}</td></tr>
+          {% if vendor.normalized_name %}<tr><th>Normalized Name</th><td style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">{{ vendor.normalized_name }}</td></tr>{% endif %}
+          <tr><th>Tax ID</th><td>{{ vendor.tax_id|default:"—" }}</td></tr>
+          <tr><th>Country</th><td>{{ vendor.country|default:"—" }}</td></tr>
+          <tr><th>Currency</th><td>{{ vendor.currency|default:"—" }}</td></tr>
+          <tr><th>Payment Terms</th><td>{{ vendor.payment_terms|default:"—" }}</td></tr>
+          <tr><th>Contact Email</th><td>{% if vendor.contact_email %}<a href="mailto:{{ vendor.contact_email }}">{{ vendor.contact_email }}</a>{% else %}—{% endif %}</td></tr>
+          {% if vendor.address %}<tr><th>Address</th><td>{{ vendor.address }}</td></tr>{% endif %}
+          <tr><th>Created</th><td class="text-muted">{{ vendor.created_at|date:"d M Y H:i" }}</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── Aliases ── #}
+  <div class="col-md-6">
+    <div class="ap-card">
+      <div class="ap-card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-tags me-2"></i>Aliases</span>
+        <span class="ap-badge ap-badge-info">{{ vendor.aliases.count }} aliases</span>
+      </div>
+      <div class="ap-card-body p-0">
+        <table class="ap-table mb-0">
+          <thead>
+            <tr><th>Alias Name</th><th>Source</th></tr>
+          </thead>
+          <tbody>
+            {% for alias in vendor.aliases.all %}
+            <tr>
+              <td>{{ alias.alias_name }}</td>
+              <td><span class="ap-badge ap-badge-muted">{{ alias.source|default:"manual" }}</span></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="2" class="text-center text-muted py-3">No aliases registered</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Purchase Orders ── #}
+{% if purchase_orders %}
+<div class="ap-card mt-3">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-cart-check me-2"></i>Purchase Orders</span>
+    <span class="ap-badge ap-badge-info">{{ purchase_orders|length }} recent</span>
+  </div>
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead>
+        <tr><th>PO #</th><th>Date</th><th>Amount</th><th>Status</th><th>Buyer</th><th>Dept</th></tr>
+      </thead>
+      <tbody>
+        {% for po in purchase_orders %}
+        <tr>
+          <td><a href="{% url 'documents:po_detail' po.pk %}" class="text-decoration-none" style="color:var(--ap-primary);font-weight:500">{{ po.po_number }}</a></td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ po.po_date|date:"d M Y"|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-sm);font-weight:500">{{ po.currency }} {{ po.total_amount|default:"—" }}</td>
+          <td>
+            <span class="ap-badge {% if po.status == 'OPEN' %}ap-badge-success{% elif po.status == 'CLOSED' %}ap-badge-muted{% else %}ap-badge-primary{% endif %}">
+              {{ po.status }}
+            </span>
+          </td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ po.buyer_name|default:"—"|truncatechars:20 }}</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ po.department|default:"—"|truncatechars:20 }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Invoices ── #}
+{% if invoices %}
+<div class="ap-card mt-3">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-file-earmark-text me-2"></i>Invoices</span>
+    <span class="ap-badge ap-badge-info">{{ invoices|length }} recent</span>
+  </div>
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead>
+        <tr><th>Invoice #</th><th>Date</th><th>Amount</th><th>Status</th><th>PO #</th></tr>
+      </thead>
+      <tbody>
+        {% for inv in invoices %}
+        <tr>
+          <td><a href="{% url 'documents:invoice_detail' inv.pk %}" class="text-decoration-none" style="color:var(--ap-primary);font-weight:500">{{ inv.invoice_number|default:"—" }}</a></td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ inv.invoice_date|date:"d M Y"|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-sm);font-weight:500">{{ inv.currency|default:"" }} {{ inv.total_amount|default:"—" }}</td>
+          <td>
+            {% if inv.status == "RECONCILED" %}<span class="ap-badge ap-badge-matched">{{ inv.status }}</span>
+            {% elif inv.status == "EXTRACTED" or inv.status == "VALIDATED" %}<span class="ap-badge ap-badge-info">{{ inv.status }}</span>
+            {% elif inv.status == "FAILED" or inv.status == "INVALID" %}<span class="ap-badge ap-badge-unmatched">{{ inv.status }}</span>
+            {% else %}<span class="ap-badge ap-badge-muted">{{ inv.status }}</span>{% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ inv.po_number|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── GRNs ── #}
+{% if grns %}
+<div class="ap-card mt-3">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-box-seam me-2"></i>Goods Receipt Notes</span>
+    <span class="ap-badge ap-badge-info">{{ grns|length }} recent</span>
+  </div>
+  <div class="ap-card-body p-0">
+    <table class="ap-table mb-0">
+      <thead>
+        <tr><th>GRN #</th><th>PO #</th><th>Receipt Date</th><th>Warehouse</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for grn in grns %}
+        <tr>
+          <td><a href="{% url 'documents:grn_detail' grn.pk %}" class="text-decoration-none" style="color:var(--ap-primary);font-weight:500">{{ grn.grn_number }}</a></td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ grn.purchase_order.po_number|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ grn.receipt_date|date:"d M Y"|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ grn.warehouse|default:"—" }}</td>
+          <td>
+            <span class="ap-badge {% if grn.status == 'RECEIVED' %}ap-badge-matched{% else %}ap-badge-partial{% endif %}">{{ grn.status }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

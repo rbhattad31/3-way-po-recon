@@ -6,9 +6,9 @@ Generates a unique case number and initializes the case in NEW status.
 """
 
 import logging
-from datetime import datetime
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.cases.models import APCase, APCaseStage
 from apps.core.enums import (
@@ -78,7 +78,7 @@ class CaseCreationService:
     @staticmethod
     def _generate_case_number() -> str:
         """Generate a unique case number: AP-YYMMDD-NNNN."""
-        today = datetime.now()
+        today = timezone.now()
         prefix = f"AP-{today.strftime('%y%m%d')}-"
         last_case = (
             APCase.objects.filter(case_number__startswith=prefix)

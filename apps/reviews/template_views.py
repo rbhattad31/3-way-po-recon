@@ -4,10 +4,24 @@ from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 
-from apps.core.enums import MatchStatus, ReviewStatus
+from apps.core.enums import MatchStatus, ReviewStatus, UserRole
+from apps.core.permissions import permission_required_code
 from apps.reconciliation.models import ReconciliationResult
 from apps.reviews.models import ReviewAssignment
 from apps.reviews.services import ReviewWorkflowService
+
+
+def _scope_for_ap_processor(user, qs):
+    """Filter review assignments so AP_PROCESSOR only sees own invoices."""
+    if getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+        return qs
+    from apps.reconciliation.models import ReconciliationConfig
+    config = ReconciliationConfig.objects.filter(is_default=True).first()
+    if config and config.ap_processor_sees_all_cases:
+        return qs
+    return qs.filter(
+        reconciliation_result__invoice__document_upload__uploaded_by=user
+    )
 
 
 @login_required
@@ -17,6 +31,7 @@ def assignment_list(request):
         .select_related("reconciliation_result", "reconciliation_result__invoice", "assigned_to")
         .order_by("priority", "-created_at")
     )
+    qs = _scope_for_ap_processor(request.user, qs)
     status_filter = request.GET.get("status")
     if status_filter:
         qs = qs.filter(status=status_filter)
@@ -42,6 +57,7 @@ def assignment_list(request):
 
 
 @login_required
+@permission_required_code("reviews.assign")
 def create_assignments(request):
     """Create review assignments for selected reconciliation results."""
     if request.method != "POST":
@@ -87,6 +103,7 @@ def assignment_detail(request, pk):
 
 
 @login_required
+@permission_required_code("reviews.decide")
 def decide(request, pk):
     if request.method != "POST":
         return redirect("reviews:assignment_detail", pk=pk)
@@ -120,6 +137,7 @@ def decide(request, pk):
 
 
 @login_required
+@permission_required_code("reviews.decide")
 def add_comment(request, pk):
     if request.method != "POST":
         return redirect("reviews:assignment_detail", pk=pk)

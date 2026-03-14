@@ -30,7 +30,11 @@
     </div>
 
     {# Actions #}
-    <div class="ap-case-header__actions">
+    <div class="ap-case-header__actions"
+         data-decide-url="{% url 'cases:case_decide' case.pk %}"
+         data-open-exceptions="{{ open_exceptions_count|default:'0' }}"
+         data-failed-validations="{{ failed_validations_count|default:'0' }}"
+         data-failed-stages="{{ failed_stages_count|default:'0' }}">
       {% if case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
         <button class="btn btn-success btn-sm" onclick="caseAction('approve')" type="button" title="Approve">
           <i class="bi bi-check-circle me-1"></i>Approve
@@ -38,18 +42,13 @@
         <button class="btn btn-danger btn-sm" onclick="caseAction('reject')" type="button" title="Reject">
           <i class="bi bi-x-circle me-1"></i>Reject
         </button>
-        <button class="btn btn-outline-warning btn-sm" onclick="caseAction('escalate')" type="button" title="Escalate">
-          <i class="bi bi-arrow-up-right-circle"></i>
-        </button>
-        <button class="btn btn-outline-secondary btn-sm" onclick="caseAction('request_info')" type="button" title="Request Info">
-          <i class="bi bi-chat-left-dots"></i>
+        <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" type="button" title="Reprocess">
+          <i class="bi bi-arrow-clockwise me-1"></i>Reprocess
         </button>
       {% elif case.status == "FAILED" %}
-        <form method="post" action="{% url 'cases:reprocess_case' case.pk %}" class="d-inline">
-          {% csrf_token %}
-          <input type="hidden" name="stage" value="INTAKE">
-          <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
-        </form>
+        <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" type="button" title="Reprocess">
+          <i class="bi bi-arrow-clockwise me-1"></i>Retry
+        </button>
       {% endif %}
       <a href="{% url 'cases:case_agent_view' case.pk %}" class="btn btn-sm btn-outline-primary" title="Agent View">
         <i class="bi bi-robot me-1"></i>Agent View

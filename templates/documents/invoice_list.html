@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load rbac_tags %}
 {% block title %}Invoices – AP Operations{% endblock %}
 
 {% block extra_css %}
@@ -22,9 +23,12 @@
     <small style="color:var(--ap-text-muted)">All uploaded invoice documents</small>
   </div>
   <div class="d-flex gap-2">
+    {% has_permission "invoices.create" as can_upload %}
+    {% if can_upload %}
     <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
       <i class="bi bi-cloud-arrow-up me-1"></i>Upload Invoice
     </button>
+    {% endif %}
   </div>
 </div>
 
@@ -194,12 +198,15 @@
             </a>
             <div style="font-size:.65rem;color:var(--ap-text-muted);margin-top:2px">{{ inv.ap_case.get_status_display }}</div>
             {% else %}
+            {% has_permission "cases.edit" as can_create_case %}
+            {% if can_create_case %}
             <form method="post" action="{% url 'cases:create_case_for_invoice' inv.pk %}" class="d-inline">
               {% csrf_token %}
               <button type="submit" class="btn btn-sm btn-outline-primary" style="font-size:var(--ap-font-size-xs);padding:.15rem .5rem" title="Create case for this invoice">
                 <i class="bi bi-plus-circle me-1"></i>Create
               </button>
             </form>
+            {% endif %}
             {% endif %}
           </td>
           <td>
@@ -240,5 +247,21 @@ function removeInvFilter(name) {
   url.searchParams.delete(name);
   window.location = url.toString();
 }
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const input = document.getElementById('invoiceSearchInput');
+  if (!input) return;
+  let timer = null;
+  input.addEventListener('input', function () {
+    clearTimeout(timer);
+    var trimmed = input.value.replace(/^\s+/, '');
+    if (trimmed !== input.value) input.value = trimmed;
+    timer = setTimeout(function () { input.form.submit(); }, 400);
+  });
+})();
 </script>
 {% endblock %}

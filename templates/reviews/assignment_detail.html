@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load rbac_tags %}
 {% block title %}Review #{{ assignment.pk }} – AP Operations{% endblock %}
 
 {% block breadcrumb %}
@@ -65,7 +66,8 @@
     </div>
 
     {# Decision Actions or Decision Display #}
-    {% if assignment.status != "APPROVED" and assignment.status != "REJECTED" and assignment.status != "REPROCESSED" %}
+    {% has_permission "reviews.decide" as can_decide %}
+    {% if assignment.status != "APPROVED" and assignment.status != "REJECTED" and assignment.status != "REPROCESSED" and can_decide %}
     <div class="ap-card mb-3">
       <div class="ap-card-header" style="color:var(--ap-primary)">
         <i class="bi bi-hand-index-thumb"></i> Take Action
@@ -115,6 +117,8 @@
   {# ── RIGHT COLUMN: Comments + Audit ── #}
   <div class="col-lg-5">
     {# Add Comment #}
+    {% has_permission "reviews.decide" as can_comment %}
+    {% if can_comment %}
     <div class="ap-card mb-3">
       <div class="ap-card-header">
         <i class="bi bi-chat-left-text"></i> Add Comment
@@ -128,6 +132,7 @@
         </form>
       </div>
     </div>
+    {% endif %}
 
     {# Comment History #}
     <div class="ap-card mb-3">

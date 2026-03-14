@@ -73,11 +73,28 @@ document.addEventListener('DOMContentLoaded', function () {
 // 5. Review actions (called from _review_action_panel.html)
 // ---------------------------------------------------------------
 function caseAction(action) {
+  var actionsEl = document.querySelector('.ap-case-header__actions');
+
+  // Block approval if open exceptions / failed validations / failed stages exist
+  if (action === 'approve' && actionsEl) {
+    var openExc = parseInt(actionsEl.dataset.openExceptions || '0', 10);
+    var failedVal = parseInt(actionsEl.dataset.failedValidations || '0', 10);
+    var failedStg = parseInt(actionsEl.dataset.failedStages || '0', 10);
+    var total = openExc + failedVal + failedStg;
+    if (total > 0) {
+      var parts = [];
+      if (openExc) parts.push(openExc + ' unresolved exception(s)');
+      if (failedVal) parts.push(failedVal + ' failed validation(s)');
+      if (failedStg) parts.push(failedStg + ' failed stage(s)');
+      alert('Cannot approve this case.\n\nOpen issues:\n\u2022 ' + parts.join('\n\u2022 ') + '\n\nPlease resolve all issues before approving.');
+      return;
+    }
+  }
+
   var labels = {
     'approve': 'Approve this case',
     'reject': 'Reject this case',
-    'escalate': 'Escalate this case',
-    'request_info': 'Request additional information',
+    'reprocess': 'Reprocess this case from start',
   };
   var label = labels[action] || action;
 
@@ -93,20 +110,27 @@ function caseAction(action) {
   // Build the form data
   var form = document.createElement('form');
   form.method = 'POST';
-  form.action = window.location.pathname + 'reprocess/';
   form.style.display = 'none';
+
+  // All actions route to case decide endpoint
+  var decisionMap = { 'approve': 'APPROVED', 'reject': 'REJECTED', 'reprocess': 'REPROCESSED' };
+  var actionsEl = document.querySelector('.ap-case-header__actions');
+  var decideUrl = actionsEl ? actionsEl.dataset.decideUrl : '';
+
+  if (decisionMap[action] && decideUrl) {
+    form.action = decideUrl;
+    var dec = document.createElement('input');
+    dec.type = 'hidden'; dec.name = 'decision'; dec.value = decisionMap[action];
+    form.appendChild(dec);
+  } else {
+    return;
+  }
 
   var csrfInput = document.createElement('input');
   csrfInput.type = 'hidden';
   csrfInput.name = 'csrfmiddlewaretoken';
   csrfInput.value = token;
   form.appendChild(csrfInput);
-
-  var actionInput = document.createElement('input');
-  actionInput.type = 'hidden';
-  actionInput.name = 'action';
-  actionInput.value = action;
-  form.appendChild(actionInput);
 
   // Show feedback toast
   var toastHtml = '<div class="position-fixed bottom-0 end-0 p-3" style="z-index:1090">' +
