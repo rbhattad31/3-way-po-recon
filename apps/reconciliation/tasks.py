@@ -72,8 +72,9 @@ def run_reconciliation_task(
         .values_list("pk", flat=True)
     )
     from apps.core.utils import dispatch_task
+    actor_id = triggered_by.pk if triggered_by else None
     for result_id in agent_result_ids:
-        dispatch_task(run_agent_pipeline_task, result_id)
+        dispatch_task(run_agent_pipeline_task, result_id, actor_id)
 
     return {
         "status": "ok",

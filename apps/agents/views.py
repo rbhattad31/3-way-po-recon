@@ -60,6 +60,14 @@ class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
     def trigger_pipeline(self, request):
         """Trigger the agentic pipeline for a reconciliation result."""
         from apps.agents.tasks import run_agent_pipeline_task
+        from apps.core.permissions import HasPermissionCode
+
+        # Enforce agents.orchestrate permission explicitly
+        perm_check = HasPermissionCode("agents.orchestrate")
+        if not perm_check.has_permission(request, self):
+            return Response(
+                {"error": "Permission denied: agents.orchestrate"}, status=403,
+            )
 
         result_id = request.data.get("reconciliation_result_id")
         if not result_id:
@@ -67,7 +75,11 @@ class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
                 {"error": "reconciliation_result_id is required"}, status=400
             )
         from apps.core.utils import dispatch_task
-        result = dispatch_task(run_agent_pipeline_task, int(result_id))
+        result = dispatch_task(
+            run_agent_pipeline_task,
+            int(result_id),
+            request.user.pk,
+        )
         task_id = getattr(result, 'id', None)
         return Response(
             {"task_id": task_id, "reconciliation_result_id": result_id},
