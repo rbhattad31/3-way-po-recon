@@ -61,9 +61,11 @@ class InvoiceExtractionAdapter:
                 )
 
             logger.info("OCR completed: %d characters extracted from %s", len(ocr_text), file_path)
+            print("Document extraction results:", ocr_text)
 
             # Step 2: LLM structured extraction
             raw_json = self._llm_extract(ocr_text)
+            print("Azure OpenAI results:", raw_json)
             elapsed = int((time.time() - start) * 1000)
 
             return ExtractionResponse(

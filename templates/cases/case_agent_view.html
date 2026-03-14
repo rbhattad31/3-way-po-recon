@@ -76,6 +76,12 @@
       {% endif %}
     {% endif %}
     {% if invoice %}
+    {% has_permission "invoices.view" as can_view_invoice %}
+    {% if can_view_invoice and invoice.document_upload %}
+    <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" class="btn btn-sm btn-outline-info" title="View Invoice Document" target="_blank">
+      <i class="bi bi-file-earmark-pdf"></i>
+    </a>
+    {% endif %}
     <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Governance">
       <i class="bi bi-shield-lock"></i>
     </a>
