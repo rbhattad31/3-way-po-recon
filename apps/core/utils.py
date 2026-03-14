@@ -53,7 +53,12 @@ def to_decimal(value, default: Decimal = Decimal("0.00")) -> Decimal:
     if isinstance(value, Decimal):
         return value
     try:
-        return Decimal(str(value)).quantize(Decimal("0.01"))
+        cleaned = str(value).strip()
+        if cleaned.startswith("(") and cleaned.endswith(")"):
+            cleaned = f"-{cleaned[1:-1]}"
+        cleaned = cleaned.replace(",", "")
+        cleaned = re.sub(r"[^0-9.\-]", "", cleaned)
+        return Decimal(cleaned).quantize(Decimal("0.01"))
     except (InvalidOperation, TypeError, ValueError):
         return default
 
