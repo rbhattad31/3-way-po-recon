@@ -6,6 +6,15 @@ from django.shortcuts import render
 from apps.core.prompt_registry import PromptRegistry
 
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
+from apps.agents.services.guardrails_service import (
+    AGENT_PERMISSIONS,
+    TOOL_PERMISSIONS,
+    RECOMMENDATION_PERMISSIONS,
+    ACTION_PERMISSIONS,
+    ORCHESTRATE_PERMISSION,
+    SYSTEM_AGENT_EMAIL,
+    SYSTEM_AGENT_ROLE_CODE,
+)
 from apps.cases.orchestrators.case_orchestrator import PATH_STAGES, STAGE_TO_STATUS
 from apps.cases.state_machine.case_state_machine import CASE_TRANSITIONS, TERMINAL_STATES
 from apps.core.enums import (
@@ -116,6 +125,7 @@ def agent_reference(request):
             "description": agent_cls.__doc__ or "",
             "system_prompt": instance.system_prompt,
             "allowed_tools": instance.allowed_tools,
+            "required_permission": AGENT_PERMISSIONS.get(agent_type_val, ""),
         })
 
     # Build tool info from the live registry
@@ -128,6 +138,7 @@ def agent_reference(request):
             "description": tool.description,
             "parameters": tool.parameters_schema.get("properties", {}),
             "required": tool.parameters_schema.get("required", []),
+            "required_permission": TOOL_PERMISSIONS.get(tool.name, ""),
         })
 
     recommendation_types = [
@@ -445,6 +456,73 @@ def agent_reference(request):
     }
     case_events = [e for e in audit_event_types if e["value"] in case_event_values]
 
+    # ---- Agent RBAC Guardrails ----
+    guardrail_flow = [
+        {
+            "step": 1, "name": "Actor Resolution",
+            "icon": "bi-person-badge", "color": "primary",
+            "description": "Identify the actor: human user from request context, or SYSTEM_AGENT service account for Celery/autonomous runs.",
+        },
+        {
+            "step": 2, "name": "Orchestration Authorization",
+            "icon": "bi-play-circle", "color": "info",
+            "description": f"Check the actor holds the '{ORCHESTRATE_PERMISSION}' permission before starting the agent pipeline.",
+        },
+        {
+            "step": 3, "name": "Per-Agent Authorization",
+            "icon": "bi-robot", "color": "success",
+            "description": "Before each agent runs, verify the actor has the agent-specific permission (e.g. agents.run_extraction).",
+        },
+        {
+            "step": 4, "name": "Per-Tool Authorization",
+            "icon": "bi-wrench", "color": "warning",
+            "description": "When an agent invokes a tool, verify the actor has the tool's required permission (e.g. purchase_orders.view).",
+        },
+        {
+            "step": 5, "name": "Recommendation Authorization",
+            "icon": "bi-lightbulb", "color": "danger",
+            "description": "When an agent produces a recommendation, verify the actor may issue that recommendation type.",
+        },
+        {
+            "step": 6, "name": "Post-Policy Authorization",
+            "icon": "bi-shield-check", "color": "dark",
+            "description": "Auto-close and escalation actions are authorized separately after the policy engine decides.",
+        },
+    ]
+
+    guardrail_events = [
+        {"value": "GUARDRAIL_GRANTED", "label": "Guardrail Granted", "description": "Permission check passed — agent/tool/action authorized."},
+        {"value": "GUARDRAIL_DENIED", "label": "Guardrail Denied", "description": "Permission check failed — agent/tool/action blocked."},
+        {"value": "TOOL_CALL_AUTHORIZED", "label": "Tool Call Authorized", "description": "Agent tool invocation passed RBAC check."},
+        {"value": "TOOL_CALL_DENIED", "label": "Tool Call Denied", "description": "Agent tool invocation blocked by RBAC."},
+        {"value": "RECOMMENDATION_ACCEPTED", "label": "Recommendation Accepted", "description": "Agent recommendation passed RBAC authorization."},
+        {"value": "RECOMMENDATION_DENIED", "label": "Recommendation Denied", "description": "Agent recommendation blocked by RBAC."},
+        {"value": "AUTO_CLOSE_AUTHORIZED", "label": "Auto-Close Authorized", "description": "Policy engine auto-close action authorized."},
+        {"value": "AUTO_CLOSE_DENIED", "label": "Auto-Close Denied", "description": "Policy engine auto-close action blocked."},
+        {"value": "SYSTEM_AGENT_USED", "label": "System Agent Used", "description": "No human context — SYSTEM_AGENT identity was resolved."},
+    ]
+
+    system_agent_info = {
+        "email": SYSTEM_AGENT_EMAIL,
+        "role_code": SYSTEM_AGENT_ROLE_CODE,
+        "rank": 100,
+        "description": (
+            "A dedicated service account used when no human user context is available "
+            "(e.g. Celery async tasks, system-triggered pipelines). The SYSTEM_AGENT role "
+            "carries 22 permissions covering all agent, tool, and recommendation operations."
+        ),
+    }
+
+    recommendation_perms = [
+        {"type": rec_type, "permission": perm_code}
+        for rec_type, perm_code in RECOMMENDATION_PERMISSIONS.items()
+    ]
+
+    action_perms = [
+        {"action": action, "permission": perm_code}
+        for action, perm_code in ACTION_PERMISSIONS.items()
+    ]
+
     return render(request, "agents/reference.html", {
         "agents_info": agents_info,
         "tools_info": tools_info,
@@ -474,4 +552,11 @@ def agent_reference(request):
         "rbac_cbv_mixins": rbac_cbv_mixins,
         "rbac_template_tags": rbac_template_tags,
         "rbac_precedence": rbac_precedence,
+        # Agent RBAC Guardrails
+        "guardrail_flow": guardrail_flow,
+        "guardrail_events": guardrail_events,
+        "system_agent_info": system_agent_info,
+        "recommendation_perms": recommendation_perms,
+        "action_perms": action_perms,
+        "orchestrate_permission": ORCHESTRATE_PERMISSION,
     })

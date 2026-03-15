@@ -10,6 +10,8 @@ urlpatterns = [
     path("v1/agents/", include("apps.agents.api_urls")),
     path("v1/dashboard/", include("apps.dashboard.api_urls")),
     path("v1/dashboard/governance/", include("apps.dashboard.api_urls_governance")),
+    path("v1/dashboard/agents/performance/", include("apps.dashboard.api_urls_performance")),
+    path("v1/dashboard/agents/governance/", include("apps.dashboard.api_urls_agent_governance")),
     path("v1/reports/", include("apps.reports.api_urls")),
     path("v1/vendors/", include("apps.vendors.api_urls")),
 ]
