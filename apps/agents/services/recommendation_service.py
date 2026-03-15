@@ -87,12 +87,52 @@ class RecommendationService:
         user,
         accepted: bool = True,
     ) -> AgentRecommendation:
-        """Mark a recommendation as accepted or rejected by a user."""
+        """Mark a recommendation as accepted or rejected by a user.
+
+        Checks that the user has the matching recommendation-type permission
+        before allowing the action.
+        """
+        from apps.agents.services.guardrails_service import (
+            AgentGuardrailsService,
+            RECOMMENDATION_PERMISSIONS,
+        )
+
         rec = AgentRecommendation.objects.get(pk=recommendation_id)
+
+        # RBAC: verify the user may accept/reject this recommendation type
+        if not AgentGuardrailsService.authorize_recommendation(user, rec.recommendation_type):
+            AgentGuardrailsService.log_guardrail_decision(
+                user=user,
+                action=f"{'accept' if accepted else 'reject'}_recommendation",
+                permission_code=RECOMMENDATION_PERMISSIONS.get(
+                    rec.recommendation_type, "?",
+                ),
+                granted=False,
+                entity_type="AgentRecommendation",
+                entity_id=rec.pk,
+            )
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied(
+                f"Permission denied: cannot {'accept' if accepted else 'reject'} "
+                f"{rec.recommendation_type} recommendation"
+            )
+
         rec.accepted = accepted
         rec.accepted_by = user
         rec.accepted_at = timezone.now()
         rec.save(update_fields=["accepted", "accepted_by", "accepted_at", "updated_at"])
+
+        AgentGuardrailsService.log_guardrail_decision(
+            user=user,
+            action=f"{'accept' if accepted else 'reject'}_recommendation",
+            permission_code=RECOMMENDATION_PERMISSIONS.get(
+                rec.recommendation_type, "",
+            ),
+            granted=True,
+            entity_type="AgentRecommendation",
+            entity_id=rec.pk,
+        )
+
         logger.info(
             "Recommendation %s %s by %s",
             recommendation_id, "accepted" if accepted else "rejected", user,

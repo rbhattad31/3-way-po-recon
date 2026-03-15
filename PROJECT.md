@@ -208,6 +208,7 @@ The project contains **13 Django apps** under `apps/`:
 | Template URL routes | `apps/<app>/urls.py` → top-level |
 | Celery Tasks | `apps/<app>/tasks.py` |
 | Business Logic | `apps/<app>/services/` or `apps/<app>/services.py` |
+| Agent Guardrails | `apps/agents/services/guardrails_service.py` |
 | Enums | `apps/core/enums.py` |
 | Permissions | `apps/core/permissions.py` |
 | Utilities | `apps/core/utils.py` |
@@ -241,8 +242,8 @@ Additional mixins:
 | Model | Fields | Notes |
 |---|---|---|
 | **User** | email (login), first_name, last_name, role (legacy), is_active, is_staff, department | Custom model; RBAC helpers: `get_primary_role()`, `get_all_roles()`, `has_permission()`, `get_effective_permissions()`, `clear_permission_cache()`, `sync_legacy_role_field()` |
-| **Role** | code, name, description, is_system_role, is_active, rank | 5 system roles seeded; supports custom roles |
-| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 20 permissions across 7 modules |
+| **Role** | code, name, description, is_system_role, is_active, rank | 6 system roles seeded; supports custom roles |
+| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 40 permissions across 14 modules |
 | **RolePermission** | role FK, permission FK, is_allowed | Many-to-many with explicit allow flag; unique_together |
 | **UserRole** | user FK, role FK, is_primary, assigned_by, expires_at, is_active | Multi-role with expiry; `is_expired`/`is_effective` properties |
 | **UserPermissionOverride** | user FK, permission FK, override_type (ALLOW/DENY), reason, assigned_by, expires_at | Per-user overrides with audit trail |
@@ -704,23 +705,36 @@ Each exception is tagged with severity (LOW/MEDIUM/HIGH/CRITICAL) and `applies_t
 The agent system uses a **ReAct (Reasoning + Acting)** pattern where LLM agents iteratively reason about problems and call tools to gather information.
 
 ```
-AgentOrchestrator
+AgentOrchestrator.execute(result, request_user=...)
+    ↓
+AgentGuardrailsService.resolve_actor(request_user)       ← Actor resolution (user or SYSTEM_AGENT)
+    ↓
+AgentGuardrailsService.authorize_orchestration(actor)     ← "agents.orchestrate" permission check
+    ↓
+Build RBAC snapshot (actor_primary_role, roles, permission_source)
     ↓
 PolicyEngine.plan()  →  AgentPlan (which agents, in what order)
     ↓
 For each planned agent:
-    BaseAgent.run()
+    AgentGuardrailsService.authorize_agent(actor, agent_type)  ← Per-agent permission check
+    ↓
+    BaseAgent.run(ctx)                                         ← ctx includes full RBAC context
     ├── Build system prompt + user message (with mode context)
     ├── ReAct Loop (max 6 iterations):
     │   ├── LLM chat (with tool definitions)
-    │   ├── If tool_calls → execute tools → add results → loop
+    │   ├── If tool_calls:
+    │   │   ├── AgentGuardrailsService.authorize_tool(actor, tool) ← Per-tool permission check
+    │   │   ├── tool.execute(**arguments)
+    │   │   └── ToolCallLogger.log(...) → loop
     │   └── If no tool_calls → interpret response → return
     ├── Log: AgentMessages, AgentSteps, DecisionLog
-    └── Return: AgentRun (status, confidence, reasoning, output)
+    └── Return: AgentRun (status, confidence, reasoning, RBAC fields)
     ↓
 DeterministicResolver (replaces EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY)
     ↓
 AgentFeedbackService (re-reconcile if PO found by agent)
+    ↓
+authorize_action("auto_close_result") / authorize_action("escalate_case")
     ↓
 Final Recommendation + Auto-Close / Escalation
 ```
@@ -740,18 +754,18 @@ Final Recommendation + Auto-Close / Escalation
 
 ### 9.3 Tool Registry (6 Tools)
 
-All tools extend `BaseTool` and are registered via the `@register_tool` decorator:
+All tools extend `BaseTool` and are registered via the `@register_tool` decorator. Each tool declares a `required_permission` enforced by `AgentGuardrailsService.authorize_tool()` before execution:
 
-| Tool | Input | Output |
-|---|---|---|
-| **po_lookup** | po_number | PO header + line items |
-| **grn_lookup** | po_number | GRN list, receipt quantities per line |
-| **vendor_search** | query (name/code/alias) | Matching vendors (direct + alias matches) |
-| **invoice_details** | invoice_id | Full invoice details + line items |
-| **exception_list** | reconciliation_result_id | All exceptions with metadata |
-| **reconciliation_summary** | reconciliation_result_id | Match status, confidence, header evidence |
+| Tool | Input | Output | Required Permission |
+|---|---|---|---|
+| **po_lookup** | po_number | PO header + line items | `purchase_orders.view` |
+| **grn_lookup** | po_number | GRN list, receipt quantities per line | `grns.view` |
+| **vendor_search** | query (name/code/alias) | Matching vendors (direct + alias matches) | `vendors.view` |
+| **invoice_details** | invoice_id | Full invoice details + line items | `invoices.view` |
+| **exception_list** | reconciliation_result_id | All exceptions with metadata | `reconciliation.view` |
+| **reconciliation_summary** | reconciliation_result_id | Match status, confidence, header evidence | `reconciliation.view` |
 
-Tool calls are logged via `ToolCallLogger` with status (REQUESTED/SUCCESS/FAILED), duration, and input/output.
+Tool calls are logged via `ToolCallLogger` with status (REQUESTED/SUCCESS/FAILED), duration, and input/output. Authorization denials are logged as `TOOL_CALL_DENIED` audit events.
 
 ### 9.4 Policy Engine
 
@@ -801,21 +815,70 @@ Creates synthetic AgentRun records for auditability.
 
 ### 9.7 Orchestration Flow
 
-`AgentOrchestrator.run()`:
+`AgentOrchestrator.execute(result, request_user=None)`:
 
-1. Load ReconciliationResult + exceptions
-2. Ask PolicyEngine for agent plan
-3. Partition agents: LLM-required vs deterministic-replaceable
-4. Build `AgentContext` with reconciliation mode awareness
-5. Execute LLM agents sequentially
-6. Execute deterministic agents (cheaper alternatives)
-7. Apply feedback loop for PO_RETRIEVAL agents
-8. Resolve final recommendation
-9. Apply post-policies (auto-close, escalation)
+1. **Resolve actor** — `AgentGuardrailsService.resolve_actor(request_user)` returns the triggering user or the `SYSTEM_AGENT` service account
+2. **Authorize orchestration** — `authorize_orchestration(actor)` validates `agents.orchestrate` permission
+3. **Build RBAC snapshot** — captures `actor_primary_role`, `actor_roles_snapshot`, `permission_source` at execution time
+4. Load ReconciliationResult + exceptions
+5. Ask PolicyEngine for agent plan
+6. Partition agents: LLM-required vs deterministic-replaceable
+7. Build `AgentContext` with reconciliation mode awareness **+ full RBAC context** (actor_user_id, actor_primary_role, actor_roles_snapshot, permission_checked, permission_source, access_granted, trace_id, span_id)
+8. **Per-agent authorization** — `authorize_agent(actor, agent_type)` before each `agent.run(ctx)`; unauthorized agents are skipped with a logged denial
+9. Execute LLM agents sequentially (with per-tool authorization inside BaseAgent)
+10. Execute deterministic agents (cheaper alternatives) — RBAC fields populated on synthetic AgentRun records
+11. Apply feedback loop for PO_RETRIEVAL agents
+12. Resolve final recommendation
+13. **Authorize post-policies** — `authorize_action(actor, "auto_close_result")` for auto-close; `authorize_action(actor, "escalate_case")` for escalation
 
 Output: `OrchestrationResult` (agents_executed, agent_runs, final_recommendation, confidence)
 
-### 9.8 Tracing & Governance
+### 9.8 RBAC Guardrails
+
+**AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`) is the central RBAC enforcement point for the entire agent subsystem. All agent operations flow through this service before execution.
+
+#### Authorization Checks
+
+| Method | Permission | Purpose |
+|---|---|---|
+| `authorize_orchestration()` | `agents.orchestrate` | Gate entry to pipeline |
+| `authorize_agent()` | `agents.run_*` (8 per-type) | Gate each agent type |
+| `authorize_tool()` | Tool's `required_permission` | Gate each tool call |
+| `authorize_recommendation()` | `recommendations.*` (6 types) | Gate recommendation acceptance |
+| `authorize_action()` | `recommendations.auto_close`, `cases.escalate`, etc. | Gate post-pipeline actions |
+
+#### Actor Resolution
+
+When `request_user` is provided (sync UI path), that user's permissions govern the pipeline. When no user is available (Celery async, system-triggered), `resolve_actor()` returns the **SYSTEM_AGENT** service account — a dedicated `User` record (`system-agent@internal`) with the `SYSTEM_AGENT` role and a scoped permission set.
+
+#### RBAC Snapshot
+
+`build_rbac_snapshot(actor)` captures the actor's RBAC state at execution time and stores it on every `AgentRun`:
+
+| Field | Source |
+|---|---|
+| `actor_primary_role` | `user.get_primary_role().code` |
+| `actor_roles_snapshot_json` | `list(user.get_role_codes())` |
+| `permission_source` | `"SYSTEM_AGENT"` or `"USER"` |
+| `access_granted` | Boolean result of permission check |
+
+#### Guardrail Audit Events
+
+All authorization decisions are logged as `AuditEvent` records:
+
+| Event Type | When |
+|---|---|
+| `GUARDRAIL_GRANTED` | Permission check passed |
+| `GUARDRAIL_DENIED` | Permission check failed (agent/action skipped) |
+| `TOOL_CALL_AUTHORIZED` | Tool execution permitted |
+| `TOOL_CALL_DENIED` | Tool execution blocked |
+| `RECOMMENDATION_ACCEPTED` | Recommendation acceptance authorized |
+| `RECOMMENDATION_DENIED` | Recommendation acceptance blocked |
+| `AUTO_CLOSE_AUTHORIZED` | Auto-close action permitted |
+| `AUTO_CLOSE_DENIED` | Auto-close action blocked |
+| `SYSTEM_AGENT_USED` | SYSTEM_AGENT identity resolved for autonomous run |
+
+### 9.9 Tracing & Governance
 
 **AgentTraceService** provides unified tracing:
 - `start_agent_run()` / `finish_agent_run()`
@@ -1054,7 +1117,7 @@ Each timeline entry includes an `rbac_badge` dict (`{role, permission, granted}`
 
 ### 13.5 Agent Run Traceability
 
-`AgentRun` model now carries trace and RBAC fields:
+`AgentRun` model carries trace and RBAC fields:
 
 | Field | Purpose |
 |---|---|
@@ -1062,7 +1125,13 @@ Each timeline entry includes an `rbac_badge` dict (`{role, permission, granted}`
 | `invocation_reason` | Why the agent was triggered (e.g., "PARTIAL_MATCH exception") |
 | `prompt_version` | Version of the prompt template used |
 | `actor_user_id` / `permission_checked` | Who initiated and what permission was checked |
+| `actor_primary_role` | Primary role of the actor at execution time (e.g., `ADMIN`, `SYSTEM_AGENT`) |
+| `actor_roles_snapshot_json` | JSON snapshot of all active roles at execution time |
+| `permission_source` | How permission was resolved: `USER` or `SYSTEM_AGENT` |
+| `access_granted` | Boolean result of the authorization check |
 | `cost_estimate` | Estimated LLM cost for the run |
+
+All RBAC fields are populated by `AgentGuardrailsService.build_rbac_snapshot()` at orchestration time and propagated via `AgentContext`.
 
 `DecisionLog` entries now include `decision_type`, rule/policy references, and RBAC context fields.
 
@@ -1331,7 +1400,7 @@ templates/
 | `process_invoice_upload_task` | extraction | Full extraction pipeline (OCR → parse → validate → persist) | bind=True, max_retries=3, acks_late=True |
 | `run_reconciliation_task` | reconciliation | Batch reconciliation run (2-way/3-way matching) | bind=True, max_retries=2 |
 | `reconcile_single_invoice_task` | reconciliation | Single invoice convenience wrapper | bind=True |
-| `run_agent_pipeline_task` | agents | Execute agent pipeline for non-MATCHED results | bind=True, max_retries=2 |
+| `run_agent_pipeline_task` | agents | Execute agent pipeline for non-MATCHED results; accepts optional `actor_user_id` for RBAC propagation | bind=True, max_retries=2 |
 | `process_case_task` | cases | Run CaseOrchestrator for APCase lifecycle | bind=True, max_retries=3, acks_late=True |
 | `reprocess_case_from_stage_task` | cases | Reprocess case from specific stage | bind=True |
 
@@ -1346,7 +1415,7 @@ templates/
 | Command | Flags | Purpose |
 |---|---|---|
 | `python manage.py seed_config` | `--flush` | Foundation data: 6 users, 7 agent definitions, 6 tool definitions, reconciliation config, 7 policies |
-| `python manage.py seed_rbac` | `--sync-users` | 5 RBAC roles, 25 permissions, role-permission matrix; `--sync-users` maps existing users to RBAC roles |
+| `python manage.py seed_rbac` | `--sync-users` | 6 RBAC roles (incl. SYSTEM_AGENT), 40 permissions, role-permission matrix; `--sync-users` maps existing users to RBAC roles |
 | `python manage.py seed_prompts` | `--force` | 12 PromptTemplate records from registry defaults; `--force` overwrites existing |
 | `python manage.py seed_ap_data` | `--reset --mode demo\|qa\|large --summary --seed N` | Realistic Saudi McDonald's AP case data (30 demo / +50 qa / +200 large scenarios) |
 | `python manage.py create_cases_for_existing_invoices` | `--process` | Backfill APCase records for existing invoices; `--process` auto-runs pipeline |
@@ -1574,30 +1643,35 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 
 | Role | Rank | Key Permissions |
 |---|---|---|
-| **ADMIN** | 10 | All 23 permissions |
-| **FINANCE_MANAGER** | 20 | invoices.view/approve, reconciliation.view/run, reviews.view/assign, governance.view, agents.view, config.view, vendors.view, purchase_orders.view, grns.view |
+| **ADMIN** | 10 | All 40 permissions |
+| **FINANCE_MANAGER** | 20 | invoices.view, reconciliation.view/override, cases.view/assign/escalate/add_comment, reviews.view/assign/decide, governance.view, agents.view/orchestrate, users.manage, roles.manage, purchase_orders.view, grns.view, vendors.view, recommendations.auto_close/route_review/escalate/reprocess/route_procurement/vendor_clarification |
 | **AUDITOR** | 30 | *.view (read-only across all modules), governance.view, vendors.view, purchase_orders.view, grns.view |
-| **REVIEWER** | 40 | invoices.view, reconciliation.view, reviews.view/decide, agents.view, vendors.view, purchase_orders.view, grns.view |
-| **AP_PROCESSOR** | 50 | invoices.view/create/edit, reconciliation.view/run, reviews.view, cases.view/edit/assign, vendors.view*, purchase_orders.view*, grns.view* |
+| **REVIEWER** | 40 | invoices.view, reconciliation.view, cases.view/add_comment, reviews.view/decide, agents.view/use_copilot, governance.view, purchase_orders.view, grns.view, vendors.view, recommendations.route_review |
+| **AP_PROCESSOR** | 50 | invoices.view/create/edit/trigger_reconciliation, reconciliation.view/run, reviews.view, cases.view/edit/add_comment, agents.view/use_copilot, purchase_orders.view*, grns.view*, vendors.view* |
+| **SYSTEM_AGENT** | 100 | agents.orchestrate + all agents.run_* + purchase_orders.view, grns.view, vendors.view, invoices.view, reconciliation.view + recommendations.auto_close/route_review/escalate/reprocess + cases.escalate |
 
 *\* AP_PROCESSOR: POs, GRNs, and Vendors are **scoped** to data linked to their own uploaded invoices (unless `ap_processor_sees_all_cases` is enabled in ReconciliationConfig).*
 
-#### Permission Codes (23 total, 10 modules)
+*\*\* SYSTEM_AGENT: Dedicated service account (`system-agent@internal`) for autonomous agent operations. `is_system_role=True`, rank 100. Used by `AgentGuardrailsService.resolve_actor()` when no human user context is available.*
+
+#### Permission Codes (40 total, 14 modules)
 
 | Module | Permissions |
 |---|---|
-| invoices | `view`, `create`, `edit`, `approve` |
-| reconciliation | `view`, `run` |
-| cases | `view`, `edit`, `assign`, `copilot` |
+| invoices | `view`, `create`, `edit`, `delete`, `trigger_reconciliation` |
+| reconciliation | `view`, `run`, `override` |
+| cases | `view`, `edit`, `add_comment`, `assign`, `escalate` |
 | reviews | `view`, `assign`, `decide` |
 | governance | `view` |
-| agents | `view`, `configure` |
-| config | `view`, `edit` |
+| agents | `view`, `use_copilot`, `orchestrate`, `run_extraction`, `run_po_retrieval`, `run_grn_retrieval`, `run_exception_analysis`, `run_reconciliation_assist`, `run_review_routing`, `run_case_summary` |
+| config | `manage` |
 | users | `manage` |
 | roles | `manage` |
 | vendors | `view` |
 | purchase_orders | `view` |
 | grns | `view` |
+| recommendations | `auto_close`, `route_review`, `escalate`, `reprocess`, `route_procurement`, `vendor_clarification` |
+| extraction | `reprocess` |
 
 #### Data Scoping (AP_PROCESSOR)
 
@@ -1677,6 +1751,20 @@ All other roles (ADMIN, FINANCE_MANAGER, AUDITOR, REVIEWER) see the full unscope
 | `ROLE_CREATED` | New role created |
 | `ROLE_UPDATED` | Role metadata updated |
 | `PRIMARY_ROLE_CHANGED` | User's primary role changed |
+
+#### Agent Guardrail Audit Events
+
+| Event Type | Trigger |
+|---|---|
+| `GUARDRAIL_GRANTED` | Agent operation authorized by guardrails service |
+| `GUARDRAIL_DENIED` | Agent operation denied by guardrails service |
+| `TOOL_CALL_AUTHORIZED` | Tool execution authorized for actor |
+| `TOOL_CALL_DENIED` | Tool execution denied for actor |
+| `RECOMMENDATION_ACCEPTED` | Recommendation acceptance authorized |
+| `RECOMMENDATION_DENIED` | Recommendation acceptance denied |
+| `AUTO_CLOSE_AUTHORIZED` | Auto-close action authorized |
+| `AUTO_CLOSE_DENIED` | Auto-close action denied |
+| `SYSTEM_AGENT_USED` | SYSTEM_AGENT identity resolved for autonomous run |
 
 ### 20.8 Admin Console UI
 
@@ -1778,13 +1866,17 @@ celery -A config worker -l info
 3. Register in `AGENT_CLASS_REGISTRY`
 4. Add to `PolicyEngine` decision logic
 5. Create `AgentDefinition` record
+6. Add `agents.run_<type>` permission to `seed_rbac.py` PERMISSIONS list
+7. Map permission to appropriate roles in `ROLE_MATRIX` and to `SYSTEM_AGENT`
+8. Add entry to `AGENT_PERMISSIONS` dict in `guardrails_service.py`
 
 **New Tool:**
 1. Create tool class in `apps/tools/registry/tools.py`, extend `BaseTool`
 2. Decorate with `@register_tool`
-3. Implement `execute()` method
-4. Add `ToolDefinition` record
-5. Reference in agent's `allowed_tools`
+3. Set `required_permission` (e.g., `"purchase_orders.view"`) — enforced by `AgentGuardrailsService.authorize_tool()`
+4. Implement `execute()` method
+5. Add `ToolDefinition` record
+6. Reference in agent's `allowed_tools`
 
 **New Template View:**
 1. Create view in `apps/<app>/template_views.py`
@@ -1818,6 +1910,15 @@ celery -A config worker -l info
 - ReconciliationPolicy model with priority-ordered mode rules
 - Tiered tolerance (strict + auto-close bands)
 - AI agent orchestration (8 agents, policy engine, tool registry, LLM client with response_format support)
+- Agent RBAC guardrails: `AgentGuardrailsService` — central RBAC enforcement for all agent operations (orchestration, per-agent, per-tool, recommendation, post-policy authorization)
+- SYSTEM_AGENT role (rank 100, `is_system_role=True`) with `system-agent@internal` service account for autonomous operations
+- Per-agent permission enforcement: `agents.run_*` (8 permissions) checked before each agent execution
+- Per-tool permission enforcement: `required_permission` on all 6 tools, checked via `authorize_tool()` before execution
+- Recommendation authorization: `recommendations.*` (6 permissions) checked before acceptance/rejection
+- Post-policy authorization: auto-close requires `recommendations.auto_close`, escalation requires `cases.escalate`
+- Agent RBAC audit: 9 new `AuditEventType` values (GUARDRAIL_GRANTED/DENIED, TOOL_CALL_AUTHORIZED/DENIED, RECOMMENDATION_ACCEPTED/DENIED, AUTO_CLOSE_AUTHORIZED/DENIED, SYSTEM_AGENT_USED)
+- `AgentRun` RBAC fields: `actor_primary_role`, `actor_roles_snapshot_json`, `permission_source`, `access_granted` — populated on every agent run
+- Governance dashboard: 4 new guardrail-specific metrics (agent RBAC compliance, guardrail decisions, tool authorization metrics, recommendation authorization audit)
 - Agent feedback loop (PO re-reconciliation)
 - Deterministic resolver (cost-saving LLM replacement)
 - Agent tracing and governance
@@ -1848,8 +1949,9 @@ celery -A config worker -l info
 - Enterprise RBAC: Role, Permission, RolePermission, UserRole, UserPermissionOverride models
 - RBAC permission engine: code-level checks, middleware cache, template tags, DRF classes, CBV mixins, FBV decorators
 - RBAC admin console: 8 Bootstrap 5 screens (user CRUD, role CRUD, permission catalog, role-permission matrix)
-- RBAC audit: 9 event types logged via RBACEventService to AuditEvent
+- RBAC audit: 9 event types logged via RBACEventService to AuditEvent + 9 agent guardrail event types
 - RBAC API: full REST endpoints for users, roles, permissions, matrix
+- RBAC seed: 6 roles (incl. SYSTEM_AGENT), 40 permissions (incl. 16 agent/recommendation/cases/extraction), full role-permission matrix
 - Prompt registry with 13 defaults
 - Seed data commands (4 commands including Saudi McD scenarios)
 - Azure Blob Storage integration

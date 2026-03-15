@@ -427,3 +427,149 @@ class GovernanceDashboardService:
             row["missing_recommendation"] = row["total"] - row["with_recommendation"]
 
         return {"per_agent": per_agent}
+
+    # ------------------------------------------------------------------
+    # 7. Agent RBAC Compliance — RBAC field population metrics
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_agent_rbac_compliance(filters=None) -> Dict[str, Any]:
+        """Measure how many agent runs have full RBAC metadata populated."""
+        run_qs = GovernanceDashboardService._base_runs_qs(filters)
+        total = run_qs.count() or 1
+
+        with_actor = run_qs.exclude(Q(actor_user_id__isnull=True)).count()
+        with_role = run_qs.exclude(Q(actor_primary_role="") | Q(actor_primary_role__isnull=True)).count()
+        with_perm = run_qs.exclude(Q(permission_checked="") | Q(permission_checked__isnull=True)).count()
+        with_perm_source = run_qs.exclude(Q(permission_source="") | Q(permission_source__isnull=True)).count()
+        with_access = run_qs.exclude(Q(access_granted__isnull=True)).count()
+
+        return {
+            "total_runs": total if total > 1 else run_qs.count(),
+            "with_actor_pct": round(with_actor / total * 100, 1),
+            "with_role_pct": round(with_role / total * 100, 1),
+            "with_permission_pct": round(with_perm / total * 100, 1),
+            "with_permission_source_pct": round(with_perm_source / total * 100, 1),
+            "with_access_granted_pct": round(with_access / total * 100, 1),
+            "missing_actor": total - with_actor if total > 1 else run_qs.filter(actor_user_id__isnull=True).count(),
+            "missing_role": total - with_role if total > 1 else run_qs.filter(Q(actor_primary_role="") | Q(actor_primary_role__isnull=True)).count(),
+            # Breakdown by permission source (USER vs SYSTEM_AGENT)
+            "by_source": list(
+                run_qs.exclude(Q(permission_source="") | Q(permission_source__isnull=True))
+                .values("permission_source")
+                .annotate(count=Count("id"))
+                .order_by("-count")
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # 8. Guardrail Decisions — agent-specific grant/deny audit
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_guardrail_decisions(filters=None, limit=50) -> Dict[str, Any]:
+        """Return guardrail-specific audit events (GUARDRAIL_GRANTED / DENIED)."""
+        from apps.auditlog.models import AuditEvent
+        from apps.core.enums import AuditEventType
+
+        audit_qs = GovernanceDashboardService._audit_qs(filters)
+        guardrail_events = audit_qs.filter(
+            event_type__in=[
+                AuditEventType.GUARDRAIL_GRANTED,
+                AuditEventType.GUARDRAIL_DENIED,
+            ]
+        )
+
+        events = list(
+            guardrail_events.order_by("-created_at")[:limit].values(
+                "id", "created_at", "event_type", "entity_type", "entity_id",
+                "description", "actor_email", "actor_primary_role",
+                "permission_checked", "access_granted", "trace_id", "metadata",
+            )
+        )
+
+        summary = {
+            "total": guardrail_events.count(),
+            "granted": guardrail_events.filter(access_granted=True).count(),
+            "denied": guardrail_events.filter(access_granted=False).count(),
+            "by_action": list(
+                guardrail_events.values("permission_checked")
+                .annotate(
+                    granted=Count("id", filter=Q(access_granted=True)),
+                    denied=Count("id", filter=Q(access_granted=False)),
+                    total=Count("id"),
+                )
+                .order_by("-total")
+            ),
+        }
+
+        return {"events": events, "summary": summary}
+
+    # ------------------------------------------------------------------
+    # 9. Tool Authorization Metrics
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_tool_authorization_metrics(filters=None) -> Dict[str, Any]:
+        """Aggregate tool invocation metrics with auth grant/deny breakdown."""
+        from apps.auditlog.models import AuditEvent
+        from apps.core.enums import AuditEventType
+
+        audit_qs = GovernanceDashboardService._audit_qs(filters)
+        tool_events = audit_qs.filter(
+            event_type__in=[
+                AuditEventType.TOOL_CALL_AUTHORIZED,
+                AuditEventType.TOOL_CALL_DENIED,
+            ]
+        )
+
+        by_tool = list(
+            tool_events.values("permission_checked")
+            .annotate(
+                authorized=Count("id", filter=Q(access_granted=True)),
+                denied=Count("id", filter=Q(access_granted=False)),
+                total=Count("id"),
+            )
+            .order_by("-total")
+        )
+
+        return {
+            "total_tool_auth_events": tool_events.count(),
+            "authorized": tool_events.filter(access_granted=True).count(),
+            "denied": tool_events.filter(access_granted=False).count(),
+            "by_tool": by_tool,
+        }
+
+    # ------------------------------------------------------------------
+    # 10. Recommendation Authorization Audit
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_recommendation_authorization_audit(filters=None, limit=50) -> Dict[str, Any]:
+        """Track recommendation accept/reject authorization decisions."""
+        from apps.auditlog.models import AuditEvent
+        from apps.core.enums import AuditEventType
+
+        audit_qs = GovernanceDashboardService._audit_qs(filters)
+        rec_events = audit_qs.filter(
+            event_type__in=[
+                AuditEventType.RECOMMENDATION_ACCEPTED,
+                AuditEventType.RECOMMENDATION_DENIED,
+            ]
+        )
+
+        events = list(
+            rec_events.order_by("-created_at")[:limit].values(
+                "id", "created_at", "event_type", "entity_type", "entity_id",
+                "description", "actor_email", "actor_primary_role",
+                "permission_checked", "access_granted", "trace_id",
+            )
+        )
+
+        summary = {
+            "total": rec_events.count(),
+            "accepted": rec_events.filter(
+                event_type=AuditEventType.RECOMMENDATION_ACCEPTED,
+            ).count(),
+            "denied": rec_events.filter(
+                event_type=AuditEventType.RECOMMENDATION_DENIED,
+            ).count(),
+        }
+
+        return {"events": events, "summary": summary}

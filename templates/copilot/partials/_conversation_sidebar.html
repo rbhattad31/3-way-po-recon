@@ -1,0 +1,16 @@
+{# Conversation sidebar list (AJAX-refreshable) #}
+{% for s in sessions %}
+<a href="{% url 'copilot:session' session_id=s.id %}"
+   class="copilot-conv-item {% if session_id == s.id|stringformat:'s' %}active{% endif %}"
+   data-session-id="{{ s.id }}">
+  <div class="copilot-conv-title">{{ s.title|default:"Untitled" }}</div>
+  <div class="copilot-conv-meta">
+    {% if s.linked_case %}
+      <span class="badge bg-info-subtle text-info-emphasis">{{ s.linked_case.case_number }}</span>
+    {% endif %}
+    <span class="text-muted">{% if s.last_message_at %}{{ s.last_message_at|timesince }}{% else %}{{ s.created_at|timesince }}{% endif %} ago</span>
+  </div>
+</a>
+{% empty %}
+<div class="text-muted small p-3">No conversations yet.</div>
+{% endfor %}

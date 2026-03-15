@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}AP Copilot{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/ap-copilot.css' %}?v=20260315i" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="copilot-workspace" id="copilotWorkspace">
+  {# ── LEFT SIDEBAR: Chat History & Cases (always visible) ── #}
+  <aside class="copilot-sidebar" id="copilotSidebar">
+    <div class="copilot-sidebar-header">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-stars text-primary"></i>
+        <h6 class="mb-0">AP Copilot</h6>
+      </div>
+      <button class="btn btn-sm btn-primary rounded-pill" id="btnNewConversation" title="New conversation">
+        <i class="bi bi-plus-lg me-1"></i>New
+      </button>
+    </div>
+
+    {# Search #}
+    <div class="copilot-sidebar-search">
+      <input type="text" class="form-control form-control-sm" placeholder="Search conversations…" id="sidebarSearch">
+    </div>
+
+    {# Scrollable list area #}
+    <div class="copilot-sidebar-body">
+      {# Pinned sessions #}
+      <div class="copilot-sidebar-section" id="pinnedSessions">
+        <div class="copilot-sidebar-label">Pinned</div>
+        <div class="copilot-sidebar-list" id="pinnedList"></div>
+      </div>
+
+      {# Recent sessions #}
+      <div class="copilot-sidebar-section">
+        <div class="copilot-sidebar-label">Recent</div>
+        <div class="copilot-sidebar-list" id="recentList">
+          {% for s in sessions %}
+          <a href="{% url 'copilot:session' session_id=s.id %}"
+             class="copilot-conv-item {% if session_id == s.id|stringformat:'s' %}active{% endif %}"
+             data-session-id="{{ s.id }}">
+            <div class="copilot-conv-title">{{ s.title|default:"Untitled" }}</div>
+            <div class="copilot-conv-meta">
+              {% if s.linked_case %}
+                <span class="badge bg-info-subtle text-info-emphasis">
+                  <i class="bi bi-briefcase-fill me-1"></i>{{ s.linked_case.case_number }}
+                </span>
+              {% endif %}
+              <span class="text-muted">
+                {% if s.last_message_at %}{{ s.last_message_at|timesince }}{% else %}{{ s.created_at|timesince }}{% endif %} ago
+              </span>
+            </div>
+          </a>
+          {% empty %}
+          <div class="copilot-sidebar-empty">
+            <i class="bi bi-chat-dots"></i>
+            <p class="mb-0">No conversations yet</p>
+            <small class="text-muted">Start a new chat to begin</small>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  {# ── CENTER PANEL: Chat ── #}
+  <section class="copilot-chat" id="copilotChat">
+    {# Chat header #}
+    <div class="copilot-chat-header">
+      <div class="d-flex align-items-center gap-2">
+        <h6 class="mb-0" id="chatTitle">
+          {% if active_session %}{{ active_session.title|default:"New Conversation" }}{% else %}AP Copilot{% endif %}
+        </h6>
+        {% if case_id %}
+          <span class="badge bg-primary-subtle text-primary-emphasis">Case #{{ case_id }}</span>
+        {% endif %}
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        {% if session_id %}
+        <button class="btn btn-sm btn-outline-secondary" title="Pin conversation" onclick="togglePin('{{ session_id }}')">
+          <i class="bi bi-pin"></i>
+        </button>
+        {% endif %}
+        <button class="btn btn-sm btn-outline-secondary" title="Toggle context panel" id="btnToggleContext">
+          <i class="bi bi-layout-sidebar-reverse"></i>
+        </button>
+      </div>
+    </div>
+
+    {# Chat messages area #}
+    <div class="copilot-chat-messages" id="chatMessages">
+      {% if chat_messages %}
+        {% for msg in chat_messages %}
+          {% include "copilot/partials/_chat_message.html" with message=msg %}
+        {% endfor %}
+      {% else %}
+        {# Welcome state #}
+        <div class="copilot-welcome" id="welcomeState">
+          <div class="copilot-welcome-icon">
+            <i class="bi bi-stars"></i>
+          </div>
+          <h4>AP Copilot</h4>
+          <p class="text-muted">Your AI assistant for AP case investigation.<br>Ask questions about cases, invoices, mismatches, and more.</p>
+          {% include "copilot/partials/_suggested_prompts.html" %}
+        </div>
+      {% endif %}
+    </div>
+
+    {# Input bar #}
+    <div class="copilot-input-bar" id="chatInputBar">
+      <form id="chatForm" autocomplete="off">
+        <div class="copilot-input-wrapper">
+          <textarea
+            id="chatInput"
+            class="form-control"
+            placeholder="Ask about a case, mismatch, recommendation…"
+            rows="1"
+            maxlength="4000"
+          ></textarea>
+          <button type="submit" class="btn btn-primary copilot-send-btn" id="btnSend" disabled>
+            <i class="bi bi-send-fill"></i>
+          </button>
+        </div>
+        <div class="copilot-input-footer">
+          <span class="text-muted small">Read-only guidance · Copilot does not modify data</span>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  {# ── RIGHT PANEL: Case Context ── #}
+  <aside class="copilot-context {% if not case_id %}collapsed{% endif %}" id="copilotContext">
+    {% if case_context %}
+      {% include "copilot/partials/_case_context_panel.html" with ctx=case_context %}
+    {% else %}
+      <div class="copilot-context-empty">
+        <i class="bi bi-info-circle"></i>
+        <p>No case selected. Link a case to see context here.</p>
+      </div>
+    {% endif %}
+  </aside>
+</div>
+
+{# Hidden data for JS #}
+<script type="application/json" id="copilotConfig">
+{
+  "sessionId": {% if session_id %}"{{ session_id }}"{% else %}null{% endif %},
+  "caseId": {% if case_id %}{{ case_id }}{% else %}null{% endif %},
+  "csrfToken": "{{ csrf_token }}",
+  "urls": {
+    "sessionStart": "{% url 'copilot_api:session_start' %}",
+    "sessions": "{% url 'copilot_api:session_list' %}",
+    "chat": "{% url 'copilot_api:chat' %}",
+    "suggestions": "{% url 'copilot_api:suggestions' %}",
+    "workspaceBase": "{% url 'copilot:workspace' %}",
+    "caseBase": "/copilot/case/",
+    "sessionBase": "/copilot/session/"
+  }{% if session_id %},
+  "sessionDetailUrl": "{% url 'copilot_api:session_detail' session_id=session_id %}",
+  "sessionMessagesUrl": "{% url 'copilot_api:session_messages' session_id=session_id %}"
+  {% endif %}
+}
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/ap-copilot.js' %}?v=20260315i"></script>
+{% endblock %}

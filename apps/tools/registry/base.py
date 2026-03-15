@@ -34,6 +34,7 @@ class BaseTool(ABC):
     name: str = ""
     description: str = ""
     parameters_schema: Dict[str, Any] = {}
+    required_permission: str = ""  # RBAC permission code for governance metadata
 
     def get_spec(self) -> ToolSpec:
         """Return the JSON-Schema tool spec for the LLM."""

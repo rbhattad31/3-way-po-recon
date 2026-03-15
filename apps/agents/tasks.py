@@ -12,15 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=1, default_retry_delay=30)
-def run_agent_pipeline_task(self, reconciliation_result_id: int) -> dict:
+def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: int | None = None) -> dict:
     """Execute the full agentic pipeline for a single ReconciliationResult.
 
-    Meant to be chained after ``run_reconciliation_task``::
-
-        chain(
-            run_reconciliation_task.s(invoice_id),
-            run_agent_pipeline_task.s(),
-        ).apply_async()
+    Args:
+        reconciliation_result_id: PK of the ReconciliationResult to process.
+        actor_user_id: PK of the user who triggered the pipeline.
+            When ``None`` the system-agent identity is used.
     """
     from apps.agents.services.orchestrator import AgentOrchestrator
     from apps.reconciliation.models import ReconciliationResult
@@ -33,10 +31,16 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int) -> dict:
         logger.error("ReconciliationResult %s not found", reconciliation_result_id)
         return {"error": f"ReconciliationResult {reconciliation_result_id} not found"}
 
+    # Resolve requesting user (or fall back to system-agent)
+    request_user = None
+    if actor_user_id:
+        from apps.accounts.models import User
+        request_user = User.objects.filter(pk=actor_user_id).first()
+
     orchestrator = AgentOrchestrator()
 
     try:
-        outcome = orchestrator.execute(result)
+        outcome = orchestrator.execute(result, request_user=request_user)
     except Exception as exc:
         logger.exception("Agent pipeline failed for result %s", reconciliation_result_id)
         from apps.core.utils import safe_retry

@@ -44,13 +44,30 @@ class UserViewSet(viewsets.ModelViewSet):
             return UserUpdateSerializer
         return UserDetailSerializer
 
+    def perform_create(self, serializer):
+        user = serializer.save()
+        RBACEventService.log_user_created(user, self.request.user)
+
     def perform_update(self, serializer):
-        old_active = serializer.instance.is_active
+        instance = serializer.instance
+        old_active = instance.is_active
+        old_values = {
+            "first_name": instance.first_name,
+            "last_name": instance.last_name,
+            "department": getattr(instance, "department", ""),
+        }
         user = serializer.save()
         if old_active != user.is_active:
             RBACEventService.log_user_status_change(
                 user, user.is_active, self.request.user,
             )
+        new_values = {
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "department": getattr(user, "department", ""),
+        }
+        if old_values != new_values:
+            RBACEventService.log_user_updated(user, old_values, self.request.user)
 
     def destroy(self, request, *args, **kwargs):
         return Response(
@@ -199,9 +216,11 @@ class UserViewSet(viewsets.ModelViewSet):
         if not override_id:
             return Response({"detail": "override_id is required."}, status=status.HTTP_400_BAD_REQUEST)
         override = get_object_or_404(UserPermissionOverride, id=override_id, user=user)
+        perm_code = override.permission.code
         override.is_active = False
         override.save(update_fields=["is_active", "updated_at"])
         user.clear_permission_cache()
+        RBACEventService.log_override_removed(user, perm_code, self.request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -244,6 +263,7 @@ class RoleViewSet(viewsets.ModelViewSet):
         # Soft-deactivate instead of hard delete
         role.is_active = False
         role.save(update_fields=["is_active", "updated_at"])
+        RBACEventService.log_role_deactivated(role, request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["post"], url_path="clone")
