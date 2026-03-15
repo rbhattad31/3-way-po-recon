@@ -446,13 +446,13 @@ class APCopilotService:
             from apps.documents.models import GoodsReceiptNote
             grns = GoodsReceiptNote.objects.filter(
                 purchase_order=case.purchase_order,
-            ).values("grn_number", "receipt_date", "total_amount")[:5]
+            ).values("grn_number", "receipt_date", "status")[:5]
             for g in grns:
                 evidence.append({
                     "type": "grn",
                     "label": f"GRN {g['grn_number']}",
                     "data": {
-                        "amount": str(g["total_amount"]) if g["total_amount"] else None,
+                        "status": g["status"] or None,
                         "date": g["receipt_date"].isoformat() if g["receipt_date"] else None,
                     },
                 })
@@ -608,21 +608,24 @@ class APCopilotService:
                     "read_only": True,
                 }
 
-            # Build case-specific summary
+            # Build case-specific summary (question-aware)
             summary = APCopilotService._build_summary(
                 message, context_data, evidence_data, primary_role,
             )
+            topic = APCopilotService._classify_case_question(message)
             follow_ups = APCopilotService.build_follow_up_prompts(
-                user, context_data,
+                user, context_data, topic=topic,
             )
         else:
             # System-wide / general query (no case linked)
-            system_data = APCopilotService._build_system_context(user)
-            summary = APCopilotService._build_system_summary(
-                message, system_data, primary_role,
+            # Classify the question and route to the appropriate handler
+            topic = APCopilotService._classify_question(message)
+            topic_result = APCopilotService._handle_system_topic(
+                topic, message, user, primary_role,
             )
-            evidence_data = system_data.get("evidence", [])
-            follow_ups = system_data.get("follow_ups", [])
+            summary = topic_result["summary"]
+            evidence_data = topic_result["evidence"]
+            follow_ups = topic_result["follow_ups"]
 
         return {
             "summary": summary,
@@ -644,23 +647,68 @@ class APCopilotService:
     def build_follow_up_prompts(
         user,
         context_data: Dict[str, Any],
+        topic: str = "overview",
     ) -> List[str]:
         role = getattr(user, "role", "")
         prompts: List[str] = []
 
         case = context_data.get("case", {})
-        if case:
-            if context_data.get("exceptions"):
-                prompts.append("Explain the exceptions on this case.")
-            if context_data.get("recommendation"):
-                prompts.append("Why was this recommendation made?")
-            if context_data.get("reconciliation"):
-                prompts.append("Break down the reconciliation result line by line.")
-            if role in GOVERNANCE_ROLES:
-                prompts.append("Show the governance audit trail.")
-            prompts.append("What should happen next?")
-        else:
-            prompts = APCopilotService.get_suggestions(user)
+        if not case:
+            return APCopilotService.get_suggestions(user)
+
+        # Topic-aware follow-ups: suggest areas the user hasn't asked about
+        topic_follow_ups = {
+            "overview": [
+                "Tell me about the invoice details.",
+                "What exceptions were found?",
+                "Show the reconciliation result.",
+                "What should happen next?",
+            ],
+            "invoice": [
+                "Show the reconciliation result.",
+                "What exceptions were found?",
+                "What do the agents recommend?",
+            ],
+            "reconciliation": [
+                "Explain the exceptions on this case.",
+                "What do the agents recommend?",
+                "What should happen next?",
+            ],
+            "exceptions": [
+                "Break down the reconciliation result line by line.",
+                "What do the agents recommend?",
+                "What should happen next?",
+            ],
+            "recommendation": [
+                "Explain the exceptions on this case.",
+                "What's the current review status?",
+                "What should happen next?",
+            ],
+            "review": [
+                "What do the agents recommend?",
+                "Explain the exceptions on this case.",
+                "Give me a case overview.",
+            ],
+            "agents": [
+                "What do the agents recommend?",
+                "Show the reconciliation result.",
+                "Explain the exceptions on this case.",
+            ],
+            "governance": [
+                "Give me a case overview.",
+                "What should happen next?",
+                "What's the current review status?",
+            ],
+            "next_steps": [
+                "Give me a case overview.",
+                "Explain the exceptions on this case.",
+                "What do the agents recommend?",
+            ],
+        }
+        prompts = list(topic_follow_ups.get(topic, topic_follow_ups["overview"]))
+
+        if role in GOVERNANCE_ROLES and topic != "governance":
+            prompts.append("Show the governance audit trail.")
 
         return prompts[:5]
 
@@ -675,11 +723,7 @@ class APCopilotService:
         evidence: List[Dict[str, Any]],
         role: str,
     ) -> str:
-        """Build a human-readable summary based on available data.
-
-        This deterministic summariser will be replaced by LLM calls in a
-        future release.
-        """
+        """Build a question-aware summary based on available case data."""
         case = context.get("case", {})
         if not case:
             return (
@@ -687,49 +731,322 @@ class APCopilotService:
                 "You can ask general questions or link a case from the sidebar."
             )
 
-        parts: List[str] = []
-        parts.append(
-            f"**Case {case.get('case_number', 'N/A')}** is currently "
-            f"**{case.get('status', 'unknown')}** "
+        case_ref = f"**Case {case.get('case_number', 'N/A')}**"
+        topic = APCopilotService._classify_case_question(question)
+
+        if topic == "overview":
+            return APCopilotService._case_summary_overview(case_ref, context)
+        elif topic == "invoice":
+            return APCopilotService._case_summary_invoice(case_ref, context)
+        elif topic == "reconciliation":
+            return APCopilotService._case_summary_reconciliation(case_ref, context)
+        elif topic == "exceptions":
+            return APCopilotService._case_summary_exceptions(case_ref, context)
+        elif topic == "recommendation":
+            return APCopilotService._case_summary_recommendation(case_ref, context)
+        elif topic == "review":
+            return APCopilotService._case_summary_review(case_ref, context)
+        elif topic == "agents":
+            return APCopilotService._case_summary_agents(case_ref, context)
+        elif topic == "governance":
+            return APCopilotService._case_summary_governance(case_ref, context, role)
+        elif topic == "next_steps":
+            return APCopilotService._case_summary_next_steps(case_ref, context, role)
+        else:
+            return APCopilotService._case_summary_overview(case_ref, context)
+
+    # Case-question classifier keywords
+    _CASE_TOPIC_PATTERNS = [
+        ("invoice", [
+            "invoice", "amount", "vendor", "supplier", "extraction",
+            "confidence", "currency",
+        ]),
+        ("reconciliation", [
+            "reconciliation", "recon", "match", "mismatch", "tolerance",
+            "two-way", "three-way", "2-way", "3-way", "match status",
+            "line by line", "line item",
+        ]),
+        ("exceptions", [
+            "exception", "error", "discrepancy", "difference",
+            "price mismatch", "quantity mismatch", "why",
+        ]),
+        ("recommendation", [
+            "recommendation", "suggest", "what should",
+            "agent recommend", "advice", "guidance",
+        ]),
+        ("review", [
+            "review", "reviewer", "assigned", "approval",
+            "approved", "rejected", "decision",
+        ]),
+        ("agents", [
+            "agent", "agent run", "which agent", "agent performance",
+            "tool call", "agent type",
+        ]),
+        ("governance", [
+            "governance", "audit", "trace", "rbac", "permission",
+            "compliance", "who accessed",
+        ]),
+        ("next_steps", [
+            "next step", "what next", "what should happen",
+            "action needed", "todo", "to do",
+        ]),
+    ]
+
+    @staticmethod
+    def _classify_case_question(question: str) -> str:
+        """Classify a case-specific question into a sub-topic."""
+        q = question.lower()
+        for topic, keywords in APCopilotService._CASE_TOPIC_PATTERNS:
+            if any(kw in q for kw in keywords):
+                return topic
+        return "overview"
+
+    @staticmethod
+    def _case_summary_overview(case_ref: str, ctx: Dict) -> str:
+        case = ctx.get("case", {})
+        parts = [
+            f"{case_ref} is currently **{case.get('status', 'unknown')}** "
             f"(priority: {case.get('priority', 'N/A')}, "
             f"path: {case.get('processing_path', 'N/A')})."
-        )
-
-        inv = context.get("invoice")
+        ]
+        inv = ctx.get("invoice")
         if inv:
             parts.append(
                 f"Invoice **{inv.get('invoice_number', 'N/A')}** "
-                f"for {inv.get('currency', '')} {inv.get('amount', 'N/A')} "
-                f"(confidence: {APCopilotService._pct(inv.get('extraction_confidence'))})."
+                f"for {inv.get('currency', '')} {inv.get('amount', 'N/A')}."
             )
-
-        recon = context.get("reconciliation")
+        recon = ctx.get("reconciliation")
         if recon:
             parts.append(
-                f"Reconciliation result: **{recon.get('match_status', 'N/A')}** "
-                f"(mode: {recon.get('reconciliation_mode', 'N/A')}, "
-                f"confidence: {APCopilotService._pct(recon.get('overall_confidence'))})."
+                f"Reconciliation: **{recon.get('match_status', 'N/A')}** "
+                f"({recon.get('reconciliation_mode', 'N/A')})."
             )
+        exc = ctx.get("exceptions", [])
+        if exc:
+            parts.append(f"Exceptions: {len(exc)} found.")
+        rec = ctx.get("recommendation")
+        if rec:
+            parts.append(f"Recommendation: *{rec.get('text', 'N/A')}*")
+        review = ctx.get("review")
+        if review:
+            parts.append(f"Review: **{review.get('status', 'N/A')}**.")
+        return "\n\n".join(parts)
 
-        exceptions = context.get("exceptions", [])
-        if exceptions:
-            types = ", ".join(e["exception_type"] for e in exceptions[:4])
-            parts.append(f"Exceptions: {types}.")
+    @staticmethod
+    def _case_summary_invoice(case_ref: str, ctx: Dict) -> str:
+        inv = ctx.get("invoice")
+        if not inv:
+            return f"{case_ref} has no invoice data available."
+        parts = [f"**Invoice Details** for {case_ref}"]
+        parts.append(
+            f"Invoice **{inv.get('invoice_number', 'N/A')}** was submitted by "
+            f"**{inv.get('vendor_name', 'Unknown Vendor')}**."
+        )
+        parts.append(
+            f"- **Amount**: {inv.get('currency', '')} {inv.get('amount', 'N/A')}\n"
+            f"- **Date**: {inv.get('invoice_date', 'N/A')}\n"
+            f"- **PO Reference**: {inv.get('po_number', 'N/A')}\n"
+            f"- **Status**: {inv.get('status', 'N/A')}\n"
+            f"- **Extraction Confidence**: {APCopilotService._pct(inv.get('extraction_confidence'))}"
+        )
+        return "\n\n".join(parts)
 
-        rec = context.get("recommendation")
+    @staticmethod
+    def _case_summary_reconciliation(case_ref: str, ctx: Dict) -> str:
+        recon = ctx.get("reconciliation")
+        if not recon:
+            return f"{case_ref} has no reconciliation results yet."
+        parts = [f"**Reconciliation Details** for {case_ref}"]
+        parts.append(
+            f"- **Match Status**: {recon.get('match_status', 'N/A')}\n"
+            f"- **Mode**: {recon.get('reconciliation_mode', 'N/A')}\n"
+            f"- **Overall Confidence**: {APCopilotService._pct(recon.get('overall_confidence'))}\n"
+            f"- **Mode Resolved By**: {recon.get('mode_resolved_by', 'N/A')}"
+        )
+        # Line-level details if available
+        lines = recon.get("line_results", [])
+        if lines:
+            line_parts = []
+            for ln in lines[:10]:
+                status = ln.get("match_status", "N/A")
+                desc = ln.get("description", ln.get("item_description", ""))
+                line_parts.append(f"- Line: {desc[:40]} — **{status}**")
+            parts.append("**Line Results:**\n" + "\n".join(line_parts))
+        exc = ctx.get("exceptions", [])
+        if exc:
+            parts.append(f"This reconciliation raised **{len(exc)}** exception(s).")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _case_summary_exceptions(case_ref: str, ctx: Dict) -> str:
+        exceptions = ctx.get("exceptions", [])
+        if not exceptions:
+            return f"{case_ref} has no exceptions recorded."
+        parts = [f"**Exception Analysis** for {case_ref}"]
+        parts.append(f"There are **{len(exceptions)}** exception(s) on this case:")
+        for e in exceptions:
+            severity = e.get("severity", "N/A")
+            etype = e.get("exception_type", "N/A")
+            desc = e.get("description", "")
+            field = e.get("field_name", "")
+            expected = e.get("expected_value", "")
+            actual = e.get("actual_value", "")
+            line = f"- **{etype}** ({severity})"
+            if field:
+                line += f": field `{field}`"
+            if expected and actual:
+                line += f" — expected **{expected}**, got **{actual}**"
+            if desc:
+                line += f"\n  {desc}"
+            parts.append(line)
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _case_summary_recommendation(case_ref: str, ctx: Dict) -> str:
+        rec = ctx.get("recommendation")
+        if not rec:
+            return f"{case_ref} has no agent recommendation yet."
+        parts = [f"**Agent Recommendation** for {case_ref}"]
+        parts.append(
+            f"*{rec.get('text', 'N/A')}*\n\n"
+            f"- **Confidence**: {APCopilotService._pct(rec.get('confidence'))}\n"
+            f"- **Type**: {rec.get('recommendation_type', 'N/A')}\n"
+            f"- **Status**: {rec.get('status', 'N/A')}"
+        )
+        parts.append("This is read-only guidance — the copilot does not take action.")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _case_summary_review(case_ref: str, ctx: Dict) -> str:
+        review = ctx.get("review")
+        if not review:
+            return f"{case_ref} has no review assignment."
+        parts = [f"**Review Status** for {case_ref}"]
+        parts.append(
+            f"- **Status**: {review.get('status', 'N/A')}\n"
+            f"- **Assigned To**: {review.get('assigned_to', 'Unassigned')}\n"
+            f"- **Priority**: {review.get('priority', 'N/A')}"
+        )
+        decision = review.get("decision")
+        if decision:
+            parts.append(
+                f"Decision: **{decision.get('outcome', 'N/A')}** "
+                f"by {decision.get('decided_by', 'N/A')}."
+            )
+        comments = review.get("comments", [])
+        if comments:
+            comment_lines = [f"- {c.get('user', '?')}: {c.get('text', '')}" for c in comments[:5]]
+            parts.append("**Review Comments:**\n" + "\n".join(comment_lines))
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _case_summary_agents(case_ref: str, ctx: Dict) -> str:
+        from apps.agents.models import AgentRun
+        from apps.cases.models import APCase
+
+        case_data = ctx.get("case", {})
+        case_id = case_data.get("id")
+        if not case_id:
+            return f"{case_ref} — no agent data available."
+
+        case_obj = APCase.objects.filter(pk=case_id).first()
+        if not case_obj or not case_obj.reconciliation_result_id:
+            return f"{case_ref} has no agent runs linked."
+
+        runs = list(
+            AgentRun.objects.filter(
+                reconciliation_result_id=case_obj.reconciliation_result_id,
+            ).values("agent_type", "status", "duration_ms", "total_tokens")
+            .order_by("created_at")
+        )
+        if not runs:
+            return f"{case_ref} has no agent runs."
+
+        parts = [f"**Agent Activity** for {case_ref}"]
+        parts.append(f"**{len(runs)}** agent run(s) were executed for this case:")
+        for r in runs:
+            dur = f"{r['duration_ms']}ms" if r.get("duration_ms") else "N/A"
+            tokens = r.get("total_tokens") or "N/A"
+            parts.append(
+                f"- **{r['agent_type']}**: {r['status']} "
+                f"(duration: {dur}, tokens: {tokens})"
+            )
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _case_summary_governance(case_ref: str, ctx: Dict, role: str) -> str:
+        if role not in GOVERNANCE_ROLES:
+            return f"Governance details for {case_ref} require ADMIN or AUDITOR role."
+        # Pull from timeline if available
+        case_data = ctx.get("case", {})
+        parts = [f"**Governance & Audit Trail** for {case_ref}"]
+        parts.append(
+            f"Case status: **{case_data.get('status', 'N/A')}**, "
+            f"processing path: **{case_data.get('processing_path', 'N/A')}**."
+        )
+        recon = ctx.get("reconciliation")
+        if recon:
+            parts.append(
+                f"Reconciliation mode **{recon.get('reconciliation_mode', 'N/A')}** "
+                f"resolved by: {recon.get('mode_resolved_by', 'N/A')}."
+            )
+        rec = ctx.get("recommendation")
         if rec:
             parts.append(
-                f"Agent recommendation: *{rec.get('text', 'N/A')}* "
-                f"(confidence: {APCopilotService._pct(rec.get('confidence'))}).  "
-                f"This is read-only guidance."
+                f"Recommendation status: **{rec.get('status', 'N/A')}** "
+                f"(type: {rec.get('recommendation_type', 'N/A')})."
             )
-
-        review = context.get("review")
+        review = ctx.get("review")
         if review:
-            parts.append(
-                f"Review status: **{review.get('status', 'N/A')}** "
-                f"(assigned to {review.get('assigned_to', 'unassigned')})."
-            )
+            parts.append(f"Review: **{review.get('status', 'N/A')}** — assigned to {review.get('assigned_to', 'N/A')}.")
+        parts.append("Use the governance dashboard for full audit event details and RBAC trace.")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _case_summary_next_steps(case_ref: str, ctx: Dict, role: str) -> str:
+        case = ctx.get("case", {})
+        status = case.get("status", "")
+        parts = [f"**Recommended Next Steps** for {case_ref}"]
+
+        recon = ctx.get("reconciliation", {})
+        match_status = recon.get("match_status", "")
+        review = ctx.get("review")
+        exceptions = ctx.get("exceptions", [])
+        rec = ctx.get("recommendation")
+
+        steps = []
+        if match_status == "MATCHED":
+            steps.append("This case is fully matched. No further action needed — it can be closed.")
+        elif match_status == "PARTIAL_MATCH":
+            steps.append("Review the partial match details and exceptions to determine if differences are within tolerance.")
+            if rec:
+                steps.append(f"Consider the agent recommendation: *{rec.get('text', '')}*")
+        elif match_status == "UNMATCHED":
+            steps.append("Investigate why the invoice could not be matched to a PO/GRN.")
+            if exceptions:
+                steps.append(f"Start by reviewing the {len(exceptions)} exception(s).")
+        elif match_status == "REQUIRES_REVIEW":
+            steps.append("This case requires manual review before it can proceed.")
+
+        if review:
+            rev_status = review.get("status", "")
+            if rev_status in ("PENDING", "ASSIGNED"):
+                steps.append("A reviewer needs to pick up and complete the review.")
+            elif rev_status == "IN_REVIEW":
+                steps.append("Review is in progress — await the reviewer's decision.")
+            elif rev_status == "APPROVED":
+                steps.append("Review was approved. Case can proceed to closure.")
+            elif rev_status == "REJECTED":
+                steps.append("Review was rejected. The invoice may need reprocessing or escalation.")
+
+        if status == "ESCALATED":
+            steps.append("This case has been escalated and needs attention from a senior reviewer or finance manager.")
+
+        if not steps:
+            steps.append("Review the case details and determine the appropriate action.")
+
+        for i, step in enumerate(steps, 1):
+            parts.append(f"{i}. {step}")
 
         return "\n\n".join(parts)
 
@@ -905,6 +1222,417 @@ class APCopilotService:
             parts.append("**Cases Needing Attention:**\n" + "\n".join(case_lines))
 
         return "\n\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Question classification & topic-specific handlers
+    # ------------------------------------------------------------------
+
+    # Keyword → topic mapping. Order matters: first match wins.
+    _TOPIC_PATTERNS = [
+        ("agent_performance", [
+            "agent performance", "agent metric", "agent stats",
+            "agent run", "agent success", "agent fail",
+            "how are agents", "agent overview",
+        ]),
+        ("exceptions", [
+            "exception", "mismatch type", "common exception",
+            "exception breakdown", "exception types",
+        ]),
+        ("reviews", [
+            "review", "pending review", "review status",
+            "awaiting review", "review assignment", "reviewer",
+        ]),
+        ("vendors", [
+            "vendor", "supplier", "vendor breakdown",
+            "vendor performance", "top vendor",
+        ]),
+        ("invoices", [
+            "invoice", "uploaded invoice", "invoice pipeline",
+            "invoice status", "extraction",
+        ]),
+        ("cases", [
+            "case", "escalated", "cases needing", "case status",
+            "case pipeline", "open case", "closed case",
+        ]),
+        ("reconciliation", [
+            "reconciliation", "recon", "match", "unmatched",
+            "partial match", "match rate", "match status",
+        ]),
+    ]
+
+    @staticmethod
+    def _classify_question(question: str) -> str:
+        """Classify a free-text question into a topic."""
+        q = question.lower()
+        for topic, keywords in APCopilotService._TOPIC_PATTERNS:
+            if any(kw in q for kw in keywords):
+                return topic
+        return "reconciliation"  # default topic
+
+    @staticmethod
+    def _handle_system_topic(
+        topic: str,
+        question: str,
+        user,
+        role: str,
+    ) -> Dict[str, Any]:
+        """Route to the correct topic handler and return structured result."""
+        handlers = {
+            "agent_performance": APCopilotService._topic_agent_performance,
+            "exceptions": APCopilotService._topic_exceptions,
+            "reviews": APCopilotService._topic_reviews,
+            "vendors": APCopilotService._topic_vendors,
+            "invoices": APCopilotService._topic_invoices,
+            "cases": APCopilotService._topic_cases,
+            "reconciliation": APCopilotService._topic_reconciliation,
+        }
+        handler = handlers.get(topic, APCopilotService._topic_reconciliation)
+        return handler(user, role)
+
+    # ── Topic: Agent Performance ──
+
+    @staticmethod
+    def _topic_agent_performance(user, role: str) -> Dict[str, Any]:
+        from django.db.models import Avg, Count
+
+        from apps.agents.models import AgentRun
+        from apps.tools.models import ToolCall
+
+        runs = AgentRun.objects.all()
+        total_runs = runs.count()
+        status_counts = dict(
+            runs.values_list("status").annotate(c=Count("id"))
+        )
+        type_counts = dict(
+            runs.values_list("agent_type").annotate(c=Count("id"))
+        )
+        avg_duration = runs.aggregate(avg=Avg("duration_ms"))["avg"]
+        total_tool_calls = ToolCall.objects.count()
+
+        completed = status_counts.get("COMPLETED", 0)
+        failed = status_counts.get("FAILED", 0)
+        success_rate = f"{completed / total_runs * 100:.0f}%" if total_runs else "N/A"
+
+        parts = ["**Agent Performance Metrics**"]
+        parts.append(
+            f"Across **{total_runs} agent runs**: "
+            f"**{completed}** completed, **{failed}** failed "
+            f"(success rate: {success_rate})."
+        )
+        if avg_duration:
+            parts.append(f"Average run duration: **{avg_duration:.0f}ms**.")
+        parts.append(f"Total tool calls executed: **{total_tool_calls}**.")
+
+        if type_counts:
+            lines = [f"- **{t}**: {c} runs" for t, c in sorted(type_counts.items(), key=lambda x: -x[1])]
+            parts.append("**Runs by Agent Type:**\n" + "\n".join(lines))
+
+        evidence = [
+            {
+                "type": "agent_performance",
+                "label": "Agent Runs",
+                "data": {
+                    "total_runs": total_runs,
+                    "completed": completed,
+                    "failed": failed,
+                    "success_rate": success_rate,
+                },
+            },
+            {
+                "type": "agent_performance",
+                "label": "Tool Calls",
+                "data": {
+                    "total_tool_calls": total_tool_calls,
+                    "avg_duration_ms": round(avg_duration) if avg_duration else "N/A",
+                },
+            },
+        ]
+        for agent_type, count in sorted(type_counts.items(), key=lambda x: -x[1])[:5]:
+            evidence.append({
+                "type": "agent_performance",
+                "label": agent_type.replace("_", " ").title(),
+                "data": {"runs": count},
+            })
+
+        return {
+            "summary": "\n\n".join(parts),
+            "evidence": evidence,
+            "follow_ups": [
+                "Which agents failed and why?",
+                "Show reconciliation summary.",
+                "What cases are escalated?",
+                "Show exception breakdown.",
+            ],
+        }
+
+    # ── Topic: Exceptions ──
+
+    @staticmethod
+    def _topic_exceptions(user, role: str) -> Dict[str, Any]:
+        from django.db.models import Count
+
+        from apps.reconciliation.models import ReconciliationException
+
+        exc_counts = dict(
+            ReconciliationException.objects.values_list("exception_type")
+            .annotate(c=Count("id"))
+        )
+        total_exc = sum(exc_counts.values())
+        sev_counts = dict(
+            ReconciliationException.objects.values_list("severity")
+            .annotate(c=Count("id"))
+        )
+
+        parts = ["**Exception Analysis**"]
+        parts.append(f"There are **{total_exc}** total exceptions across all reconciliations.")
+
+        if sev_counts:
+            sev_lines = [f"- **{s}**: {c}" for s, c in sorted(sev_counts.items(), key=lambda x: -x[1])]
+            parts.append("**By Severity:**\n" + "\n".join(sev_lines))
+
+        if exc_counts:
+            type_lines = [f"- **{t}**: {c}" for t, c in sorted(exc_counts.items(), key=lambda x: -x[1])]
+            parts.append("**By Type:**\n" + "\n".join(type_lines))
+
+        evidence = []
+        for exc_type, count in sorted(exc_counts.items(), key=lambda x: -x[1])[:6]:
+            evidence.append({
+                "type": "exception",
+                "label": exc_type.replace("_", " ").title(),
+                "data": {"count": count},
+            })
+
+        return {
+            "summary": "\n\n".join(parts),
+            "evidence": evidence,
+            "follow_ups": [
+                "Which cases have the most exceptions?",
+                "Show reconciliation summary.",
+                "Show agent performance metrics.",
+                "What cases are pending review?",
+            ],
+        }
+
+    # ── Topic: Reviews ──
+
+    @staticmethod
+    def _topic_reviews(user, role: str) -> Dict[str, Any]:
+        from django.db.models import Count
+
+        from apps.reviews.models import ReviewAssignment
+
+        status_counts = dict(
+            ReviewAssignment.objects.values_list("status")
+            .annotate(c=Count("id"))
+        )
+        total_reviews = sum(status_counts.values())
+        pending = status_counts.get("PENDING", 0) + status_counts.get("ASSIGNED", 0)
+        in_review = status_counts.get("IN_REVIEW", 0)
+        approved = status_counts.get("APPROVED", 0)
+        rejected = status_counts.get("REJECTED", 0)
+
+        parts = ["**Review Status Overview**"]
+        parts.append(
+            f"There are **{total_reviews}** review assignments total: "
+            f"**{pending}** pending, **{in_review}** in review, "
+            f"**{approved}** approved, **{rejected}** rejected."
+        )
+
+        if status_counts:
+            lines = [f"- **{s}**: {c}" for s, c in sorted(status_counts.items(), key=lambda x: -x[1])]
+            parts.append("**Status Breakdown:**\n" + "\n".join(lines))
+
+        evidence = [{
+            "type": "review",
+            "label": "Review Pipeline",
+            "data": {
+                "total": total_reviews,
+                "pending": pending,
+                "in_review": in_review,
+                "approved": approved,
+                "rejected": rejected,
+            },
+        }]
+
+        return {
+            "summary": "\n\n".join(parts),
+            "evidence": evidence,
+            "follow_ups": [
+                "Which cases are escalated?",
+                "Show reconciliation summary.",
+                "Show exception breakdown.",
+                "Show agent performance metrics.",
+            ],
+        }
+
+    # ── Topic: Vendors ──
+
+    @staticmethod
+    def _topic_vendors(user, role: str) -> Dict[str, Any]:
+        from django.db.models import Count
+
+        from apps.documents.models import Invoice, PurchaseOrder
+        from apps.vendors.models import Vendor
+
+        total_vendors = Vendor.objects.filter(is_active=True).count()
+        top_by_invoices = list(
+            Invoice.objects.exclude(vendor__isnull=True)
+            .values("vendor__name")
+            .annotate(inv_count=Count("id"))
+            .order_by("-inv_count")[:5]
+        )
+        top_by_pos = list(
+            PurchaseOrder.objects.exclude(vendor__isnull=True)
+            .values("vendor__name")
+            .annotate(po_count=Count("id"))
+            .order_by("-po_count")[:5]
+        )
+
+        parts = ["**Vendor Overview**"]
+        parts.append(f"There are **{total_vendors}** active vendors in the system.")
+
+        if top_by_invoices:
+            lines = [f"- **{v['vendor__name']}**: {v['inv_count']} invoices" for v in top_by_invoices]
+            parts.append("**Top Vendors by Invoice Count:**\n" + "\n".join(lines))
+
+        if top_by_pos:
+            lines = [f"- **{v['vendor__name']}**: {v['po_count']} POs" for v in top_by_pos]
+            parts.append("**Top Vendors by PO Count:**\n" + "\n".join(lines))
+
+        evidence = []
+        for v in top_by_invoices[:4]:
+            evidence.append({
+                "type": "vendor",
+                "label": v["vendor__name"] or "Unknown",
+                "data": {"invoices": v["inv_count"]},
+            })
+
+        return {
+            "summary": "\n\n".join(parts),
+            "evidence": evidence,
+            "follow_ups": [
+                "Show reconciliation summary.",
+                "Which vendor has the most exceptions?",
+                "Show invoice pipeline status.",
+                "Show agent performance metrics.",
+            ],
+        }
+
+    # ── Topic: Invoices ──
+
+    @staticmethod
+    def _topic_invoices(user, role: str) -> Dict[str, Any]:
+        from django.db.models import Count
+
+        from apps.documents.models import Invoice
+
+        status_counts = dict(
+            Invoice.objects.values_list("status")
+            .annotate(c=Count("id"))
+        )
+        total = sum(status_counts.values())
+
+        parts = ["**Invoice Pipeline Status**"]
+        parts.append(f"There are **{total}** invoices in the system.")
+
+        if status_counts:
+            lines = [f"- **{s}**: {c}" for s, c in sorted(status_counts.items(), key=lambda x: -x[1])]
+            parts.append("**By Status:**\n" + "\n".join(lines))
+
+        evidence = [{
+            "type": "invoice",
+            "label": "Invoice Pipeline",
+            "data": status_counts,
+        }]
+
+        return {
+            "summary": "\n\n".join(parts),
+            "evidence": evidence,
+            "follow_ups": [
+                "Show reconciliation summary.",
+                "Which invoices failed extraction?",
+                "Show vendor breakdown.",
+                "Show agent performance metrics.",
+            ],
+        }
+
+    # ── Topic: Cases ──
+
+    @staticmethod
+    def _topic_cases(user, role: str) -> Dict[str, Any]:
+        from django.db.models import Count
+
+        from apps.cases.models import APCase
+
+        status_counts = dict(
+            APCase.objects.values_list("status")
+            .annotate(c=Count("id"))
+        )
+        total = sum(status_counts.values())
+        priority_counts = dict(
+            APCase.objects.values_list("priority")
+            .annotate(c=Count("id"))
+        )
+
+        attention_cases = list(
+            APCase.objects.filter(
+                status__in=["ESCALATED", "READY_FOR_REVIEW", "EXCEPTION_ANALYSIS_IN_PROGRESS"],
+            ).order_by("-created_at")[:5]
+            .values("id", "case_number", "status", "priority")
+        )
+
+        parts = ["**Case Pipeline Overview**"]
+        parts.append(f"There are **{total}** cases total.")
+
+        if status_counts:
+            lines = [f"- **{s}**: {c}" for s, c in sorted(status_counts.items(), key=lambda x: -x[1])]
+            parts.append("**By Status:**\n" + "\n".join(lines))
+
+        if priority_counts:
+            lines = [f"- **{p}**: {c}" for p, c in sorted(priority_counts.items(), key=lambda x: -x[1])]
+            parts.append("**By Priority:**\n" + "\n".join(lines))
+
+        if attention_cases:
+            lines = [f"- {c['case_number']} — {c['status']} (priority: {c['priority']})" for c in attention_cases]
+            parts.append("**Cases Needing Attention:**\n" + "\n".join(lines))
+
+        evidence = [{
+            "type": "case_overview",
+            "label": "Case Pipeline",
+            "data": {"total": total, **{k: v for k, v in status_counts.items()}},
+        }]
+        for c in attention_cases[:3]:
+            evidence.append({
+                "type": "case",
+                "label": c["case_number"],
+                "data": {"status": c["status"], "priority": c["priority"]},
+            })
+
+        return {
+            "summary": "\n\n".join(parts),
+            "evidence": evidence,
+            "follow_ups": [
+                "Show reconciliation summary.",
+                "Which cases have the most exceptions?",
+                "Show pending reviews.",
+                "Show agent performance metrics.",
+            ],
+        }
+
+    # ── Topic: Reconciliation (default) ──
+
+    @staticmethod
+    def _topic_reconciliation(user, role: str) -> Dict[str, Any]:
+        """Default handler — system-wide reconciliation summary."""
+        system_data = APCopilotService._build_system_context(user)
+        summary = APCopilotService._build_system_summary(
+            "", system_data, role,
+        )
+        return {
+            "summary": summary,
+            "evidence": system_data.get("evidence", []),
+            "follow_ups": system_data.get("follow_ups", []),
+        }
 
     @staticmethod
     def _pct(value) -> str:

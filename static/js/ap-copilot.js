@@ -32,10 +32,10 @@
     }
 
     const btnNew = document.getElementById('btnNewConversation');
-    if (btnNew) btnNew.addEventListener('click', startSession);
-
-    const btnToggleSidebar = document.getElementById('btnToggleSidebar');
-    if (btnToggleSidebar) btnToggleSidebar.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
+    if (btnNew) btnNew.addEventListener('click', function(e) {
+      e.preventDefault();
+      window.location.href = CONFIG.urls.workspaceBase;
+    });
 
     const mainSidebar = document.getElementById('sidebar');
     const btnToggleMainMenu = document.getElementById('btnToggleMainMenu');
@@ -236,8 +236,13 @@
 
     return `
       <div class="copilot-evidence-section mt-3">
-        <div class="copilot-section-label"><i class="bi bi-card-list me-1"></i>Evidence</div>
-        <div class="copilot-evidence-cards">${cards}</div>
+        <button type="button" class="copilot-evidence-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
+          <i class="bi bi-chevron-right"></i>
+          <i class="bi bi-card-list me-1"></i>Evidence (${evidence.length})
+        </button>
+        <div class="copilot-evidence-cards-wrap">
+          <div class="copilot-evidence-cards">${cards}</div>
+        </div>
       </div>`;
   }
 

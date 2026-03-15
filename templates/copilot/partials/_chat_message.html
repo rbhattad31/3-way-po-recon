@@ -17,17 +17,22 @@
     {# Summary #}
     <div class="copilot-msg-content">{{ message.content|linebreaksbr }}</div>
 
-    {# Evidence cards #}
+    {# Evidence cards (collapsed by default) #}
     {% if message.evidence_payload_json %}
     <div class="copilot-evidence-section mt-3">
-      <div class="copilot-section-label"><i class="bi bi-card-list me-1"></i>Evidence</div>
-      <div class="copilot-evidence-cards">
-        {% for ev in message.evidence_payload_json %}
-        <div class="copilot-evidence-card copilot-evidence-{{ ev.type }}">
-          <div class="copilot-evidence-label">{{ ev.label }}</div>
-          <div class="copilot-evidence-type badge">{{ ev.type }}</div>
+      <button type="button" class="copilot-evidence-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
+        <i class="bi bi-chevron-right"></i>
+        <i class="bi bi-card-list me-1"></i>Evidence ({{ message.evidence_payload_json|length }})
+      </button>
+      <div class="copilot-evidence-cards-wrap">
+        <div class="copilot-evidence-cards">
+          {% for ev in message.evidence_payload_json %}
+          <div class="copilot-evidence-card copilot-evidence-{{ ev.type }}">
+            <div class="copilot-evidence-label">{{ ev.label }}</div>
+            <div class="copilot-evidence-type badge">{{ ev.type }}</div>
+          </div>
+          {% endfor %}
         </div>
-        {% endfor %}
       </div>
     </div>
     {% endif %}

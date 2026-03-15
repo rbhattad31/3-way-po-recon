@@ -4,16 +4,17 @@
 {% block title %}AP Copilot{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/ap-copilot.css' %}?v=20260315d" rel="stylesheet">
+<link href="{% static 'css/ap-copilot.css' %}?v=20260315i" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
 <div class="copilot-workspace" id="copilotWorkspace">
-  {# ── LEFT SIDEBAR: Conversations ── #}
+  {# ── LEFT SIDEBAR: Chat History & Cases (always visible) ── #}
   <aside class="copilot-sidebar" id="copilotSidebar">
     <div class="copilot-sidebar-header">
       <div class="d-flex align-items-center gap-2">
-        <h6 class="mb-0"><i class="bi bi-stars me-1"></i>AP Copilot</h6>
+        <i class="bi bi-stars text-primary"></i>
+        <h6 class="mb-0">AP Copilot</h6>
       </div>
       <button class="btn btn-sm btn-primary rounded-pill" id="btnNewConversation" title="New conversation">
         <i class="bi bi-plus-lg me-1"></i>New
@@ -25,31 +26,42 @@
       <input type="text" class="form-control form-control-sm" placeholder="Search conversations…" id="sidebarSearch">
     </div>
 
-    {# Pinned sessions #}
-    <div class="copilot-sidebar-section" id="pinnedSessions">
-      <div class="copilot-sidebar-label">Pinned</div>
-      <div class="copilot-sidebar-list" id="pinnedList"></div>
-    </div>
+    {# Scrollable list area #}
+    <div class="copilot-sidebar-body">
+      {# Pinned sessions #}
+      <div class="copilot-sidebar-section" id="pinnedSessions">
+        <div class="copilot-sidebar-label">Pinned</div>
+        <div class="copilot-sidebar-list" id="pinnedList"></div>
+      </div>
 
-    {# Recent sessions #}
-    <div class="copilot-sidebar-section">
-      <div class="copilot-sidebar-label">Recent</div>
-      <div class="copilot-sidebar-list" id="recentList">
-        {% for s in sessions %}
-        <a href="{% url 'copilot:session' session_id=s.id %}"
-           class="copilot-conv-item {% if session_id == s.id|stringformat:'s' %}active{% endif %}"
-           data-session-id="{{ s.id }}">
-          <div class="copilot-conv-title">{{ s.title|default:"Untitled" }}</div>
-          <div class="copilot-conv-meta">
-            {% if s.linked_case %}
-              <span class="badge bg-info-subtle text-info-emphasis">{{ s.linked_case.case_number }}</span>
-            {% endif %}
-            <span class="text-muted">{% if s.last_message_at %}{{ s.last_message_at|timesince }}{% else %}{{ s.created_at|timesince }}{% endif %} ago</span>
+      {# Recent sessions #}
+      <div class="copilot-sidebar-section">
+        <div class="copilot-sidebar-label">Recent</div>
+        <div class="copilot-sidebar-list" id="recentList">
+          {% for s in sessions %}
+          <a href="{% url 'copilot:session' session_id=s.id %}"
+             class="copilot-conv-item {% if session_id == s.id|stringformat:'s' %}active{% endif %}"
+             data-session-id="{{ s.id }}">
+            <div class="copilot-conv-title">{{ s.title|default:"Untitled" }}</div>
+            <div class="copilot-conv-meta">
+              {% if s.linked_case %}
+                <span class="badge bg-info-subtle text-info-emphasis">
+                  <i class="bi bi-briefcase-fill me-1"></i>{{ s.linked_case.case_number }}
+                </span>
+              {% endif %}
+              <span class="text-muted">
+                {% if s.last_message_at %}{{ s.last_message_at|timesince }}{% else %}{{ s.created_at|timesince }}{% endif %} ago
+              </span>
+            </div>
+          </a>
+          {% empty %}
+          <div class="copilot-sidebar-empty">
+            <i class="bi bi-chat-dots"></i>
+            <p class="mb-0">No conversations yet</p>
+            <small class="text-muted">Start a new chat to begin</small>
           </div>
-        </a>
-        {% empty %}
-        <div class="text-muted small p-3">No conversations yet.</div>
-        {% endfor %}
+          {% endfor %}
+        </div>
       </div>
     </div>
   </aside>
@@ -59,9 +71,6 @@
     {# Chat header #}
     <div class="copilot-chat-header">
       <div class="d-flex align-items-center gap-2">
-        <button class="btn btn-sm btn-outline-secondary" id="btnToggleSidebar" title="Toggle conversations">
-          <i class="bi bi-chat-left-text"></i>
-        </button>
         <h6 class="mb-0" id="chatTitle">
           {% if active_session %}{{ active_session.title|default:"New Conversation" }}{% else %}AP Copilot{% endif %}
         </h6>
@@ -74,10 +83,10 @@
         <button class="btn btn-sm btn-outline-secondary" title="Pin conversation" onclick="togglePin('{{ session_id }}')">
           <i class="bi bi-pin"></i>
         </button>
-        <button class="btn btn-sm btn-outline-secondary" title="Open context panel" id="btnToggleContext">
+        {% endif %}
+        <button class="btn btn-sm btn-outline-secondary" title="Toggle context panel" id="btnToggleContext">
           <i class="bi bi-layout-sidebar-reverse"></i>
         </button>
-        {% endif %}
       </div>
     </div>
 
@@ -158,5 +167,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/ap-copilot.js' %}?v=20260315d"></script>
+<script src="{% static 'js/ap-copilot.js' %}?v=20260315i"></script>
 {% endblock %}
