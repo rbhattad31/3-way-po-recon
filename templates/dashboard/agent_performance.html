@@ -1,11 +1,10 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Agent Performance Command Center{% endblock %}
+{% block title %}Agent Performance Dashboard{% endblock %}
 
 {% block extra_css %}
 <link href="{% static 'css/agent-performance-dashboard.css' %}" rel="stylesheet">
-<link href="{% static 'css/trace-explorer.css' %}" rel="stylesheet">
 {% endblock %}
 
 {% block breadcrumb %}
@@ -23,8 +22,8 @@
   {# ═══════════ Header ═══════════ #}
   <div class="d-flex align-items-center justify-content-between mb-4">
     <div>
-      <h4 class="fw-bold mb-1"><i class="bi bi-robot me-2 text-primary"></i>Agent Performance Command Center</h4>
-      <p class="text-muted mb-0" style="font-size:.82rem">AI agent health, governance &amp; observability</p>
+      <h4 class="fw-bold mb-1"><i class="bi bi-robot me-2 text-primary"></i>Agent Performance Dashboard</h4>
+      <p class="text-muted mb-0" style="font-size:.82rem">Operational metrics, throughput, latency &amp; cost</p>
     </div>
     <div class="d-flex align-items-center gap-2">
       <span id="lastRefreshed" class="text-muted" style="font-size:.75rem"></span>
@@ -64,10 +63,6 @@
             {% endfor %}
           </select>
         </div>
-        <div class="col-auto">
-          <label class="form-label mb-0" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em">Trace ID</label>
-          <input type="text" id="filterTraceId" class="form-control form-control-sm" placeholder="Search trace...">
-        </div>
         <div class="col-auto d-flex align-items-end gap-2">
           <button class="btn btn-sm btn-primary" onclick="window.APDashboard.applyFilters()">
             <i class="bi bi-funnel me-1"></i>Apply
@@ -80,7 +75,7 @@
 
   {# ═══════════ KPI Strip ═══════════ #}
   <div class="row g-3 mb-4" id="kpiStrip">
-    <div class="col-xl-3 col-lg-4 col-sm-6">
+    <div class="col-xl-2 col-lg-4 col-sm-6">
       <div class="ap-kpi-card" data-kpi="total_runs_today">
         <div class="ap-kpi-icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-lightning-charge-fill"></i></div>
         <div class="ap-kpi-body">
@@ -89,7 +84,7 @@
         </div>
       </div>
     </div>
-    <div class="col-xl-3 col-lg-4 col-sm-6">
+    <div class="col-xl-2 col-lg-4 col-sm-6">
       <div class="ap-kpi-card" data-kpi="active_agents">
         <div class="ap-kpi-icon bg-success bg-opacity-10 text-success"><i class="bi bi-cpu-fill"></i></div>
         <div class="ap-kpi-body">
@@ -98,7 +93,7 @@
         </div>
       </div>
     </div>
-    <div class="col-xl-3 col-lg-4 col-sm-6">
+    <div class="col-xl-2 col-lg-4 col-sm-6">
       <div class="ap-kpi-card" data-kpi="success_rate">
         <div class="ap-kpi-icon bg-info bg-opacity-10 text-info"><i class="bi bi-check-circle-fill"></i></div>
         <div class="ap-kpi-body">
@@ -107,7 +102,7 @@
         </div>
       </div>
     </div>
-    <div class="col-xl-3 col-lg-4 col-sm-6">
+    <div class="col-xl-2 col-lg-4 col-sm-6">
       <div class="ap-kpi-card" data-kpi="escalation_rate">
         <div class="ap-kpi-icon bg-warning bg-opacity-10 text-warning"><i class="bi bi-exclamation-triangle-fill"></i></div>
         <div class="ap-kpi-body">
@@ -116,7 +111,7 @@
         </div>
       </div>
     </div>
-    <div class="col-xl-3 col-lg-4 col-sm-6">
+    <div class="col-xl-2 col-lg-4 col-sm-6">
       <div class="ap-kpi-card" data-kpi="avg_runtime">
         <div class="ap-kpi-icon bg-secondary bg-opacity-10 text-secondary"><i class="bi bi-stopwatch-fill"></i></div>
         <div class="ap-kpi-body">
@@ -125,7 +120,7 @@
         </div>
       </div>
     </div>
-    <div class="col-xl-3 col-lg-4 col-sm-6">
+    <div class="col-xl-2 col-lg-4 col-sm-6">
       <div class="ap-kpi-card" data-kpi="cost">
         <div class="ap-kpi-icon bg-danger bg-opacity-10 text-danger"><i class="bi bi-currency-dollar"></i></div>
         <div class="ap-kpi-body">
@@ -134,29 +129,10 @@
         </div>
       </div>
     </div>
-    <div class="col-xl-3 col-lg-4 col-sm-6">
-      <div class="ap-kpi-card" data-kpi="denied">
-        <div class="ap-kpi-icon bg-danger bg-opacity-10 text-danger"><i class="bi bi-shield-x"></i></div>
-        <div class="ap-kpi-body">
-          <div class="ap-kpi-value" id="kpiDenied">—</div>
-          <div class="ap-kpi-label">Access Denied</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-xl-3 col-lg-4 col-sm-6">
-      <div class="ap-kpi-card" data-kpi="governed">
-        <div class="ap-kpi-icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-shield-check"></i></div>
-        <div class="ap-kpi-body">
-          <div class="ap-kpi-value" id="kpiGoverned">—</div>
-          <div class="ap-kpi-label">Governed Runs %</div>
-        </div>
-      </div>
-    </div>
   </div>
 
-  {# ═══════════ Section 1 & 2: Utilization + Success ═══════════ #}
+  {# ═══════════ Section 1 & 2: Utilization + Hourly ═══════════ #}
   <div class="row g-4 mb-4">
-    {# Utilization chart #}
     <div class="col-lg-6">
       <div class="ap-section-card h-100">
         <div class="ap-section-header">
@@ -167,7 +143,6 @@
         </div>
       </div>
     </div>
-    {# Hourly distribution #}
     <div class="col-lg-6">
       <div class="ap-section-card h-100">
         <div class="ap-section-header">
@@ -180,7 +155,7 @@
     </div>
   </div>
 
-  {# ═══════════ Section 2: Agent Success Table ═══════════ #}
+  {# ═══════════ Section 3: Agent Health Matrix ═══════════ #}
   <div class="ap-section-card mb-4">
     <div class="ap-section-header">
       <i class="bi bi-table text-primary me-2"></i>Agent Health Matrix
@@ -197,20 +172,18 @@
               <th class="text-center">Escalations</th>
               <th class="text-center">Avg Confidence</th>
               <th class="text-center">Avg Duration</th>
-              <th class="text-center">Governed %</th>
-              <th class="text-center">Trace %</th>
               <th class="text-center">Health</th>
             </tr>
           </thead>
-          <tbody id="successTableBody">
-            <tr><td colspan="10" class="text-center text-muted py-3">Loading…</td></tr>
+          <tbody id="reliabilityTableBody">
+            <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
           </tbody>
         </table>
       </div>
     </div>
   </div>
 
-  {# ═══════════ Section 3 & 4: Latency + Tokens ═══════════ #}
+  {# ═══════════ Section 4 & 5: Latency + Tokens ═══════════ #}
   <div class="row g-4 mb-4">
     <div class="col-lg-6">
       <div class="ap-section-card h-100">
@@ -240,7 +213,7 @@
     </div>
   </div>
 
-  {# ═══════════ Section 5: Tool Usage ═══════════ #}
+  {# ═══════════ Section 6: Tool Usage ═══════════ #}
   <div class="ap-section-card mb-4">
     <div class="ap-section-header">
       <i class="bi bi-wrench text-primary me-2"></i>Tool Usage Analytics
@@ -270,7 +243,7 @@
     </div>
   </div>
 
-  {# ═══════════ Section 6: Recommendations ═══════════ #}
+  {# ═══════════ Section 7: Recommendations ═══════════ #}
   <div class="row g-4 mb-4">
     <div class="col-lg-7">
       <div class="ap-section-card h-100">
@@ -308,7 +281,7 @@
     </div>
   </div>
 
-  {# ═══════════ Section 7: Live Feed ═══════════ #}
+  {# ═══════════ Section 8: Live Feed ═══════════ #}
   <div class="ap-section-card mb-4">
     <div class="ap-section-header d-flex justify-content-between align-items-center">
       <span><i class="bi bi-broadcast text-success me-2"></i>Live Agent Activity</span>
@@ -321,69 +294,9 @@
     </div>
   </div>
 
-  {# ═══════════ Section 8: Escalations & Failures ═══════════ #}
-  <div class="row g-4 mb-4">
-    <div class="col-lg-6">
-      <div class="ap-section-card h-100">
-        <div class="ap-section-header">
-          <i class="bi bi-exclamation-octagon text-danger me-2"></i>Recent Escalations
-        </div>
-        <div class="ap-section-body p-0">
-          <div class="table-responsive">
-            <table class="table table-sm table-hover mb-0 ap-dense-table">
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Reason</th>
-                  <th class="text-center">Severity</th>
-                  <th>Assignee Role</th>
-                  <th>Time</th>
-                </tr>
-              </thead>
-              <tbody id="escalationTableBody">
-                <tr><td colspan="5" class="text-center text-muted py-3">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-6">
-      <div class="ap-section-card h-100">
-        <div class="ap-section-header">
-          <i class="bi bi-bug text-warning me-2"></i>Failure Diagnostics
-        </div>
-        <div class="ap-section-body">
-          <canvas id="chartFailures" height="240"></canvas>
-          <div id="failureEmpty" class="text-center text-muted py-4 d-none">No failures recorded</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  {# ═══════════ Section 9: Governance Widgets (ADMIN/AUDITOR only) ═══════════ #}
-  {% if is_governance %}
-  {% include "dashboard/components/governance_widgets.html" %}
-  {% endif %}
-
-  {# ═══════════ Section 10: Trace Explorer (ADMIN/AUDITOR/FINANCE_MANAGER) ═══════════ #}
-  {% if is_extended %}
-  {% include "dashboard/components/trace_explorer.html" %}
-  {% endif %}
-
 </div>
-
-{# Pass role context to JS #}
-<script>
-  window.__AP_CTX = {
-    isGovernance: {{ is_governance|yesno:"true,false" }},
-    isExtended: {{ is_extended|yesno:"true,false" }},
-    userRole: "{{ user_role }}",
-  };
-</script>
 {% endblock %}
 
 {% block extra_js %}
 <script src="{% static 'js/agent-performance-dashboard.js' %}"></script>
-<script src="{% static 'js/trace-explorer.js' %}"></script>
 {% endblock %}

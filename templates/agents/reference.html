@@ -464,6 +464,9 @@
             </span>
             <strong>{{ agent.label }}</strong>
             <span class="text-muted ms-3 small">{{ agent.type }}</span>
+            {% if agent.required_permission %}
+            <span class="badge bg-warning text-dark ms-2" title="Required RBAC permission"><i class="bi bi-shield-lock me-1"></i>{{ agent.required_permission }}</span>
+            {% endif %}
             {% if agent.type == "INVOICE_EXTRACTION" %}<span class="badge bg-primary ms-2">New</span>{% endif %}
           </button>
         </h2>
@@ -482,6 +485,18 @@
               <span class="text-muted small">No tools — prompt-only / single-shot agent</span>
               {% endfor %}
             </div>
+
+            {% if agent.required_permission %}
+            <h6><i class="bi bi-shield-lock me-1"></i> RBAC Requirement</h6>
+            <div class="mb-3">
+              <span class="text-muted small">Permission required to run this agent:</span>
+              <code class="ms-1">{{ agent.required_permission }}</code>
+              <div class="text-muted small mt-1">
+                Orchestration also requires <code>{{ orchestrate_permission }}</code>.
+                Checked by <code>AgentGuardrailsService.authorize_agent()</code>.
+              </div>
+            </div>
+            {% endif %}
 
             <h6><i class="bi bi-chat-left-text me-1"></i> System Prompt</h6>
             <div class="bg-light border rounded p-3 mb-2" style="max-height:300px;overflow-y:auto">
@@ -506,6 +521,9 @@
         <div class="card h-100">
           <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <strong><i class="bi bi-wrench me-1"></i> {{ tool.name }}</strong>
+            {% if tool.required_permission %}
+            <span class="badge bg-warning text-dark" title="Required RBAC permission"><i class="bi bi-shield-lock me-1"></i>{{ tool.required_permission }}</span>
+            {% endif %}
           </div>
           <div class="card-body">
             <p class="text-muted mb-3">{{ tool.description }}</p>
@@ -1301,6 +1319,182 @@
               <div>
                 <div class="small fw-semibold">{{ evt.label }}</div>
                 <code class="small text-muted">{{ evt.value }}</code>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Agent RBAC Guardrails ── -->
+    <hr class="my-4">
+    <h4 class="mb-3"><i class="bi bi-shield-exclamation me-1"></i> Agent RBAC Guardrails</h4>
+    <div class="alert alert-warning border-0 mb-4">
+      <i class="bi bi-info-circle me-1"></i>
+      <strong>AgentGuardrailsService</strong> is the central RBAC enforcement layer for the entire AI agent subsystem.
+      Every agent run, tool call, recommendation, and post-policy action is authorized before execution.
+      Denied attempts are logged as <code>AuditEvent</code> records for governance visibility.
+    </div>
+
+    <!-- System Agent Identity -->
+    <h5 class="mb-3"><i class="bi bi-person-gear me-1"></i> System Agent Identity</h5>
+    <div class="card mb-4">
+      <div class="card-body">
+        <p class="mb-3">{{ system_agent_info.description }}</p>
+        <table class="table table-sm table-bordered mb-0">
+          <tbody>
+            <tr><td class="fw-semibold" style="width:180px">Service Account</td><td><code>{{ system_agent_info.email }}</code></td></tr>
+            <tr><td class="fw-semibold">Role Code</td><td><code>{{ system_agent_info.role_code }}</code></td></tr>
+            <tr><td class="fw-semibold">Role Rank</td><td>{{ system_agent_info.rank }} <span class="text-muted small">(highest — system-level)</span></td></tr>
+            <tr><td class="fw-semibold">Resolved By</td><td><code>AgentGuardrailsService.resolve_actor()</code></td></tr>
+            <tr><td class="fw-semibold">Audit Event</td><td><code>SYSTEM_AGENT_USED</code> — logged whenever this identity is resolved</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Guardrail Enforcement Flow -->
+    <h5 class="mb-3"><i class="bi bi-arrow-right-circle me-1"></i> Guardrail Enforcement Flow</h5>
+    <div class="row g-2 mb-4">
+      {% for step in guardrail_flow %}
+      <div class="col-12">
+        <div class="card border-start border-4 border-{{ step.color }}">
+          <div class="card-body py-2 d-flex align-items-center">
+            <div class="me-3">
+              <span class="badge bg-{{ step.color }} rounded-pill fs-6">{{ step.step }}</span>
+            </div>
+            <div class="me-3">
+              <i class="bi {{ step.icon }} text-{{ step.color }} fs-5"></i>
+            </div>
+            <div>
+              <strong>{{ step.name }}</strong>
+              <div class="small text-muted">{{ step.description }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Agent Permission Map -->
+    <h5 class="mb-3"><i class="bi bi-robot me-1"></i> Agent Permission Map</h5>
+    <div class="card mb-4">
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover table-bordered mb-0">
+          <thead class="table-light">
+            <tr><th>Agent Type</th><th>Required Permission</th></tr>
+          </thead>
+          <tbody>
+            {% for agent in agents_info %}
+            <tr>
+              <td><strong>{{ agent.label }}</strong> <span class="text-muted small">({{ agent.type }})</span></td>
+              <td><code>{{ agent.required_permission }}</code></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tool Permission Map -->
+    <h5 class="mb-3"><i class="bi bi-wrench me-1"></i> Tool Permission Map</h5>
+    <div class="card mb-4">
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover table-bordered mb-0">
+          <thead class="table-light">
+            <tr><th>Tool</th><th>Required Permission</th></tr>
+          </thead>
+          <tbody>
+            {% for tool in tools_info %}
+            <tr>
+              <td><strong>{{ tool.name }}</strong></td>
+              <td><code>{{ tool.required_permission|default:"—" }}</code></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Recommendation Permission Map -->
+    <h5 class="mb-3"><i class="bi bi-lightbulb me-1"></i> Recommendation Permission Map</h5>
+    <div class="card mb-4">
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover table-bordered mb-0">
+          <thead class="table-light">
+            <tr><th>Recommendation Type</th><th>Required Permission</th></tr>
+          </thead>
+          <tbody>
+            {% for rp in recommendation_perms %}
+            <tr>
+              <td><strong>{{ rp.type }}</strong></td>
+              <td><code>{{ rp.permission }}</code></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Post-Policy Action Permissions -->
+    <h5 class="mb-3"><i class="bi bi-gear me-1"></i> Post-Policy Action Permissions</h5>
+    <div class="card mb-4">
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover table-bordered mb-0">
+          <thead class="table-light">
+            <tr><th>Action</th><th>Required Permission</th></tr>
+          </thead>
+          <tbody>
+            {% for ap in action_perms %}
+            <tr>
+              <td><strong>{{ ap.action }}</strong></td>
+              <td><code>{{ ap.permission }}</code></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- AgentRun RBAC Snapshot -->
+    <h5 class="mb-3"><i class="bi bi-database me-1"></i> AgentRun RBAC Snapshot Fields</h5>
+    <div class="card mb-4">
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          Every <code>AgentRun</code> record captures the RBAC context at execution time for full auditability.
+        </p>
+        <table class="table table-sm table-bordered mb-0">
+          <thead class="table-light">
+            <tr><th>Field</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>actor_primary_role</code></td><td>The user's primary RBAC role at the time of the agent run</td></tr>
+            <tr><td><code>actor_roles_snapshot_json</code></td><td>JSON snapshot of all active roles the actor held</td></tr>
+            <tr><td><code>permission_source</code></td><td>How permission was resolved: ROLE, ADMIN_BYPASS, USER_OVERRIDE, SYSTEM_AGENT</td></tr>
+            <tr><td><code>access_granted</code></td><td>Boolean — whether the guardrail check granted access</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Guardrail Audit Events -->
+    <h5 class="mb-3"><i class="bi bi-journal-check me-1"></i> Guardrail Audit Events</h5>
+    <div class="card mb-3">
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          Every guardrail decision (grant or deny) is recorded as an <code>AuditEvent</code>.
+          These are queryable via the Governance API and visible in the Audit Event Log.
+        </p>
+        <div class="row g-2">
+          {% for evt in guardrail_events %}
+          <div class="col-md-4">
+            <div class="d-flex align-items-center p-2 border rounded">
+              <i class="bi bi-shield-{% if 'DENIED' in evt.value %}x text-danger{% elif 'SYSTEM' in evt.value %}gear text-info{% else %}check text-success{% endif %} me-2"></i>
+              <div>
+                <div class="small fw-semibold">{{ evt.label }}</div>
+                <code class="small text-muted">{{ evt.value }}</code>
+                <div class="small text-muted">{{ evt.description }}</div>
               </div>
             </div>
           </div>

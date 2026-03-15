@@ -242,8 +242,8 @@ Additional mixins:
 | Model | Fields | Notes |
 |---|---|---|
 | **User** | email (login), first_name, last_name, role (legacy), is_active, is_staff, department | Custom model; RBAC helpers: `get_primary_role()`, `get_all_roles()`, `has_permission()`, `get_effective_permissions()`, `clear_permission_cache()`, `sync_legacy_role_field()` |
-| **Role** | code, name, description, is_system_role, is_active, rank | 5 system roles seeded; supports custom roles |
-| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 20 permissions across 7 modules |
+| **Role** | code, name, description, is_system_role, is_active, rank | 6 system roles seeded; supports custom roles |
+| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 40 permissions across 14 modules |
 | **RolePermission** | role FK, permission FK, is_allowed | Many-to-many with explicit allow flag; unique_together |
 | **UserRole** | user FK, role FK, is_primary, assigned_by, expires_at, is_active | Multi-role with expiry; `is_expired`/`is_effective` properties |
 | **UserPermissionOverride** | user FK, permission FK, override_type (ALLOW/DENY), reason, assigned_by, expires_at | Per-user overrides with audit trail |
@@ -1415,7 +1415,7 @@ templates/
 | Command | Flags | Purpose |
 |---|---|---|
 | `python manage.py seed_config` | `--flush` | Foundation data: 6 users, 7 agent definitions, 6 tool definitions, reconciliation config, 7 policies |
-| `python manage.py seed_rbac` | `--sync-users` | 6 RBAC roles (incl. SYSTEM_AGENT), 42 permissions, role-permission matrix; `--sync-users` maps existing users to RBAC roles |
+| `python manage.py seed_rbac` | `--sync-users` | 6 RBAC roles (incl. SYSTEM_AGENT), 40 permissions, role-permission matrix; `--sync-users` maps existing users to RBAC roles |
 | `python manage.py seed_prompts` | `--force` | 12 PromptTemplate records from registry defaults; `--force` overwrites existing |
 | `python manage.py seed_ap_data` | `--reset --mode demo\|qa\|large --summary --seed N` | Realistic Saudi McDonald's AP case data (30 demo / +50 qa / +200 large scenarios) |
 | `python manage.py create_cases_for_existing_invoices` | `--process` | Backfill APCase records for existing invoices; `--process` auto-runs pipeline |
@@ -1643,35 +1643,35 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 
 | Role | Rank | Key Permissions |
 |---|---|---|
-| **ADMIN** | 10 | All 42 permissions |
-| **FINANCE_MANAGER** | 20 | invoices.view/approve, reconciliation.view/run, reviews.view/assign, governance.view, agents.view/orchestrate, config.view, vendors.view, purchase_orders.view, grns.view, recommendations.auto_close/route_review/escalate/reprocess/accept/reject |
+| **ADMIN** | 10 | All 40 permissions |
+| **FINANCE_MANAGER** | 20 | invoices.view, reconciliation.view/override, cases.view/assign/escalate/add_comment, reviews.view/assign/decide, governance.view, agents.view/orchestrate, users.manage, roles.manage, purchase_orders.view, grns.view, vendors.view, recommendations.auto_close/route_review/escalate/reprocess/route_procurement/vendor_clarification |
 | **AUDITOR** | 30 | *.view (read-only across all modules), governance.view, vendors.view, purchase_orders.view, grns.view |
-| **REVIEWER** | 40 | invoices.view, reconciliation.view, reviews.view/decide, agents.view, vendors.view, purchase_orders.view, grns.view, recommendations.accept/reject |
-| **AP_PROCESSOR** | 50 | invoices.view/create/edit, reconciliation.view/run, reviews.view, cases.view/edit/assign, vendors.view*, purchase_orders.view*, grns.view*, agents.orchestrate, recommendations.route_review/reprocess/accept/reject |
+| **REVIEWER** | 40 | invoices.view, reconciliation.view, cases.view/add_comment, reviews.view/decide, agents.view/use_copilot, governance.view, purchase_orders.view, grns.view, vendors.view, recommendations.route_review |
+| **AP_PROCESSOR** | 50 | invoices.view/create/edit/trigger_reconciliation, reconciliation.view/run, reviews.view, cases.view/edit/add_comment, agents.view/use_copilot, purchase_orders.view*, grns.view*, vendors.view* |
 | **SYSTEM_AGENT** | 100 | agents.orchestrate + all agents.run_* + purchase_orders.view, grns.view, vendors.view, invoices.view, reconciliation.view + recommendations.auto_close/route_review/escalate/reprocess + cases.escalate |
 
 *\* AP_PROCESSOR: POs, GRNs, and Vendors are **scoped** to data linked to their own uploaded invoices (unless `ap_processor_sees_all_cases` is enabled in ReconciliationConfig).*
 
 *\*\* SYSTEM_AGENT: Dedicated service account (`system-agent@internal`) for autonomous agent operations. `is_system_role=True`, rank 100. Used by `AgentGuardrailsService.resolve_actor()` when no human user context is available.*
 
-#### Permission Codes (42 total, 14 modules)
+#### Permission Codes (40 total, 14 modules)
 
 | Module | Permissions |
 |---|---|
-| invoices | `view`, `create`, `edit`, `approve` |
-| reconciliation | `view`, `run` |
-| cases | `view`, `edit`, `assign`, `copilot`, `escalate` |
+| invoices | `view`, `create`, `edit`, `delete`, `trigger_reconciliation` |
+| reconciliation | `view`, `run`, `override` |
+| cases | `view`, `edit`, `add_comment`, `assign`, `escalate` |
 | reviews | `view`, `assign`, `decide` |
 | governance | `view` |
-| agents | `view`, `configure`, `orchestrate`, `run_extraction`, `run_po_retrieval`, `run_grn_retrieval`, `run_exception_analysis`, `run_reconciliation_assist`, `run_review_routing`, `run_case_summary` |
-| config | `view`, `edit` |
+| agents | `view`, `use_copilot`, `orchestrate`, `run_extraction`, `run_po_retrieval`, `run_grn_retrieval`, `run_exception_analysis`, `run_reconciliation_assist`, `run_review_routing`, `run_case_summary` |
+| config | `manage` |
 | users | `manage` |
 | roles | `manage` |
 | vendors | `view` |
 | purchase_orders | `view` |
 | grns | `view` |
-| recommendations | `auto_close`, `route_review`, `escalate`, `reprocess`, `accept`, `reject` |
-| extraction | `run` |
+| recommendations | `auto_close`, `route_review`, `escalate`, `reprocess`, `route_procurement`, `vendor_clarification` |
+| extraction | `reprocess` |
 
 #### Data Scoping (AP_PROCESSOR)
 
@@ -1951,7 +1951,7 @@ celery -A config worker -l info
 - RBAC admin console: 8 Bootstrap 5 screens (user CRUD, role CRUD, permission catalog, role-permission matrix)
 - RBAC audit: 9 event types logged via RBACEventService to AuditEvent + 9 agent guardrail event types
 - RBAC API: full REST endpoints for users, roles, permissions, matrix
-- RBAC seed: 6 roles (incl. SYSTEM_AGENT), 42 permissions (incl. 19 agent/recommendation/cases/extraction), full role-permission matrix
+- RBAC seed: 6 roles (incl. SYSTEM_AGENT), 40 permissions (incl. 16 agent/recommendation/cases/extraction), full role-permission matrix
 - Prompt registry with 13 defaults
 - Seed data commands (4 commands including Saudi McD scenarios)
 - Azure Blob Storage integration
