@@ -180,15 +180,33 @@ def agent_monitor(request):
 
 @login_required
 def agent_performance(request):
-    """Agent Performance Command Center — AI observability & governance dashboard."""
+    """Agent Performance Dashboard — operational metrics & observability."""
     user_role = getattr(request.user, "role", "")
-    is_governance = user_role in (UserRole.ADMIN, UserRole.AUDITOR)
-    is_extended = user_role in (UserRole.ADMIN, UserRole.AUDITOR, UserRole.FINANCE_MANAGER)
 
     return render(request, "dashboard/agent_performance.html", {
         "user_role": user_role,
-        "is_governance": is_governance,
-        "is_extended": is_extended,
+        "agent_types": AgentType.choices,
+        "agent_statuses": AgentRunStatus.choices,
+    })
+
+
+@login_required
+def agent_governance(request):
+    """Agent Governance Dashboard — RBAC, authorization & compliance monitoring."""
+    user_role = getattr(request.user, "role", "")
+    is_full_governance = user_role in (UserRole.ADMIN, UserRole.AUDITOR)
+    is_summary_governance = user_role in (
+        UserRole.ADMIN, UserRole.AUDITOR, UserRole.FINANCE_MANAGER,
+    )
+
+    if not is_summary_governance:
+        from django.http import HttpResponseForbidden
+        return HttpResponseForbidden("Insufficient permissions.")
+
+    return render(request, "dashboard/agent_governance.html", {
+        "user_role": user_role,
+        "is_full_governance": is_full_governance,
+        "is_summary_governance": is_summary_governance,
         "agent_types": AgentType.choices,
         "agent_statuses": AgentRunStatus.choices,
     })

@@ -99,7 +99,7 @@ def create_users():
             },
         )
         if created:
-            user.set_password("SeedPass123!")
+            user.set_password("admin123")
             user.save()
         key = email.split("@")[0].replace(".", "_")
         users[key] = user

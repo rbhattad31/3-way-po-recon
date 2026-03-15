@@ -211,12 +211,19 @@ def seed_observability_data(
         # ---- Enrich AuditEvents with trace/RBAC fields ----
         _enrich_audit_events(case, case_trace_id, admin, invoice, recon_result)
 
+        # ---- Create RBAC guardrail AuditEvents ----
+        _create_guardrail_audit_events(
+            agent_runs, case, case_trace_id, admin, invoice, recon_result, stats,
+        )
+
     logger.info(
         "Observability data: %d steps, %d messages, %d tool_calls, "
-        "%d decisions, %d escalations, %d proc_logs, %d review_actions",
+        "%d decisions, %d escalations, %d proc_logs, %d review_actions, "
+        "%d guardrail_events",
         stats["agent_steps"], stats["agent_messages"], stats["tool_calls"],
         stats["decision_logs"], stats["escalations"],
         stats["processing_logs"], stats["review_actions"],
+        stats.get("guardrail_events", 0),
     )
     return stats
 
@@ -226,7 +233,7 @@ def seed_observability_data(
 # ============================================================
 
 def _enrich_agent_run(ar: AgentRun, trace_id: str, span_id: str, admin: User, idx: int):
-    """Add trace fields, token counts, cost estimate to an AgentRun."""
+    """Add trace fields, token counts, cost estimate, and RBAC fields to an AgentRun."""
     prompt_tokens = _rng.randint(400, 1800)
     completion_tokens = _rng.randint(100, 600)
     total_tokens = prompt_tokens + completion_tokens
@@ -244,11 +251,34 @@ def _enrich_agent_run(ar: AgentRun, trace_id: str, span_id: str, admin: User, id
     ar.invocation_reason = f"Auto-triggered by pipeline stage {idx + 1}"
     ar.actor_user_id = admin.pk
     ar.permission_checked = "agents.use_copilot"
+
+    # RBAC fields — ~20% system-agent, ~5% denied, rest user-initiated
+    roll = _rng.random()
+    if roll < 0.20:
+        ar.actor_primary_role = "SYSTEM_AGENT"
+        ar.actor_roles_snapshot_json = ["SYSTEM_AGENT"]
+        ar.permission_source = "SYSTEM_AGENT"
+        ar.access_granted = True
+    elif roll < 0.25:
+        role = _rng.choice(["AP_PROCESSOR", "REVIEWER"])
+        ar.actor_primary_role = role
+        ar.actor_roles_snapshot_json = [role]
+        ar.permission_source = "ROLE"
+        ar.access_granted = False
+    else:
+        role = _rng.choice(["ADMIN", "AP_PROCESSOR", "FINANCE_MANAGER", "REVIEWER"])
+        ar.actor_primary_role = role
+        ar.actor_roles_snapshot_json = [role]
+        ar.permission_source = "ROLE"
+        ar.access_granted = True
+
     ar.save(update_fields=[
         "trace_id", "span_id", "llm_model_used",
         "prompt_tokens", "completion_tokens", "total_tokens",
         "cost_estimate", "prompt_version", "invocation_reason",
         "actor_user_id", "permission_checked",
+        "actor_primary_role", "actor_roles_snapshot_json",
+        "permission_source", "access_granted",
     ])
 
 
@@ -869,3 +899,186 @@ def _enrich_audit_events(
             "access_granted", "invoice_id", "case_id", "reconciliation_result_id",
             "review_assignment_id", "status_before", "status_after", "duration_ms",
         ])
+
+
+# ============================================================
+# Helper: Create RBAC guardrail AuditEvents
+# ============================================================
+
+def _create_guardrail_audit_events(
+    agent_runs: list,
+    case: APCase,
+    trace_id: str,
+    admin: User,
+    invoice,
+    recon_result,
+    stats: dict,
+):
+    """Create RBAC guardrail AuditEvents for agent runs (granted/denied, tool auth, etc.)."""
+    if not agent_runs:
+        return
+
+    _ROLES = ["ADMIN", "AP_PROCESSOR", "FINANCE_MANAGER", "REVIEWER"]
+    _TOOL_PERMS = [
+        ("po_lookup", "purchase_orders.view"),
+        ("grn_lookup", "grns.view"),
+        ("vendor_search", "vendors.view"),
+        ("invoice_details", "invoices.view"),
+        ("exception_list", "reconciliation.view"),
+        ("reconciliation_summary", "reconciliation.view"),
+    ]
+
+    created = 0
+    for ar in agent_runs:
+        role = ar.actor_primary_role or _rng.choice(_ROLES)
+        granted = ar.access_granted if ar.access_granted is not None else True
+        source = ar.permission_source or "ROLE"
+
+        # Guardrail granted/denied event for agent execution
+        event_type = (
+            AuditEventType.GUARDRAIL_GRANTED if granted
+            else AuditEventType.GUARDRAIL_DENIED
+        )
+        AuditEvent.objects.create(
+            entity_type="AgentRun",
+            entity_id=ar.pk,
+            action="guardrail_check",
+            event_type=event_type,
+            event_description=f"Agent {ar.agent_type} guardrail {'granted' if granted else 'denied'}",
+            performed_by=admin,
+            performed_by_agent=ar.agent_type,
+            trace_id=trace_id,
+            span_id=_span_id(),
+            actor_email=admin.email,
+            actor_primary_role=role,
+            actor_roles_snapshot_json=[role],
+            permission_checked=f"agents.run_{ar.agent_type}".lower(),
+            permission_source=source,
+            access_granted=granted,
+            invoice_id=invoice.pk,
+            case_id=case.pk,
+            reconciliation_result_id=recon_result.pk if recon_result else None,
+            agent_run_id=ar.pk,
+            duration_ms=_rng.randint(1, 20),
+        )
+        created += 1
+
+        # Tool call authorized events (1-2 per run)
+        tools = _AGENT_TOOL_MAP.get(ar.agent_type, [])
+        for tool_name in tools[:2]:
+            tool_perm = next(
+                (p for t, p in _TOOL_PERMS if t == tool_name),
+                "tools.execute",
+            )
+            tool_granted = _rng.random() > 0.08  # ~8% denied
+            AuditEvent.objects.create(
+                entity_type="AgentRun",
+                entity_id=ar.pk,
+                action="tool_authorization",
+                event_type=(
+                    AuditEventType.TOOL_CALL_AUTHORIZED if tool_granted
+                    else AuditEventType.TOOL_CALL_DENIED
+                ),
+                event_description=f"Tool {tool_name} {'authorized' if tool_granted else 'denied'}",
+                performed_by=admin,
+                performed_by_agent=ar.agent_type,
+                trace_id=trace_id,
+                span_id=_span_id(),
+                actor_email=admin.email,
+                actor_primary_role=role,
+                actor_roles_snapshot_json=[role],
+                permission_checked=tool_perm,
+                permission_source=source,
+                access_granted=tool_granted,
+                invoice_id=invoice.pk,
+                case_id=case.pk,
+                agent_run_id=ar.pk,
+                duration_ms=_rng.randint(1, 10),
+            )
+            created += 1
+
+    # System agent event for ~20% of cases
+    if _rng.random() < 0.20 and agent_runs:
+        ar = agent_runs[0]
+        AuditEvent.objects.create(
+            entity_type="AgentRun",
+            entity_id=ar.pk,
+            action="system_agent_identity",
+            event_type=AuditEventType.SYSTEM_AGENT_USED,
+            event_description="System agent identity used for autonomous execution",
+            performed_by=None,
+            performed_by_agent=ar.agent_type,
+            trace_id=trace_id,
+            span_id=_span_id(),
+            actor_email="system-agent@internal",
+            actor_primary_role="SYSTEM_AGENT",
+            actor_roles_snapshot_json=["SYSTEM_AGENT"],
+            permission_checked="agents.orchestrate",
+            permission_source="SYSTEM_AGENT",
+            access_granted=True,
+            invoice_id=invoice.pk,
+            case_id=case.pk,
+            agent_run_id=ar.pk,
+            duration_ms=_rng.randint(1, 5),
+        )
+        created += 1
+
+    # Auto-close authorized/denied events for some cases
+    if _rng.random() < 0.30 and recon_result:
+        auto_granted = _rng.random() > 0.15
+        AuditEvent.objects.create(
+            entity_type="ReconciliationResult",
+            entity_id=recon_result.pk,
+            action="auto_close_check",
+            event_type=(
+                AuditEventType.AUTO_CLOSE_AUTHORIZED if auto_granted
+                else AuditEventType.AUTO_CLOSE_DENIED
+            ),
+            event_description=f"Auto-close {'authorized' if auto_granted else 'denied'} for result",
+            performed_by=admin,
+            trace_id=trace_id,
+            span_id=_span_id(),
+            actor_email=admin.email,
+            actor_primary_role="ADMIN",
+            actor_roles_snapshot_json=["ADMIN"],
+            permission_checked="reconciliation.auto_close",
+            permission_source="ROLE",
+            access_granted=auto_granted,
+            invoice_id=invoice.pk,
+            case_id=case.pk,
+            reconciliation_result_id=recon_result.pk,
+            duration_ms=_rng.randint(5, 50),
+        )
+        created += 1
+
+    # Recommendation accepted/denied events for some cases
+    if _rng.random() < 0.25 and agent_runs:
+        ar = _rng.choice(agent_runs)
+        rec_accepted = _rng.random() > 0.20
+        AuditEvent.objects.create(
+            entity_type="AgentRecommendation",
+            entity_id=ar.pk,
+            action="recommendation_review",
+            event_type=(
+                AuditEventType.RECOMMENDATION_ACCEPTED if rec_accepted
+                else AuditEventType.RECOMMENDATION_DENIED
+            ),
+            event_description=f"Recommendation {'accepted' if rec_accepted else 'denied'}",
+            performed_by=admin,
+            performed_by_agent=ar.agent_type,
+            trace_id=trace_id,
+            span_id=_span_id(),
+            actor_email=admin.email,
+            actor_primary_role="ADMIN",
+            actor_roles_snapshot_json=["ADMIN"],
+            permission_checked="recommendations.accept",
+            permission_source="ROLE",
+            access_granted=rec_accepted,
+            invoice_id=invoice.pk,
+            case_id=case.pk,
+            agent_run_id=ar.pk,
+            duration_ms=_rng.randint(5, 30),
+        )
+        created += 1
+
+    stats["guardrail_events"] = stats.get("guardrail_events", 0) + created

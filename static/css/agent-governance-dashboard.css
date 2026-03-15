@@ -1,0 +1,344 @@
+/* =====================================================================
+   Agent Governance Dashboard — Stylesheet
+   RBAC, authorization, compliance monitoring
+   ===================================================================== */
+
+/* ── KPI Cards ── */
+.ag-kpi-card {
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,.06);
+  border-radius: .65rem;
+  padding: .9rem 1rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+  transition: transform .15s ease, box-shadow .15s ease;
+  cursor: default;
+}
+.ag-kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.08);
+}
+.ag-kpi-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: .5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  flex-shrink: 0;
+}
+.ag-kpi-body { min-width: 0; }
+.ag-kpi-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--bs-body-color);
+}
+.ag-kpi-label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  margin-top: 1px;
+}
+
+/* ── Section Cards ── */
+.ag-section-card {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,.06);
+  border-radius: .65rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+  overflow: hidden;
+}
+.ag-section-header {
+  padding: .65rem 1rem;
+  font-weight: 600;
+  font-size: .85rem;
+  border-bottom: 1px solid rgba(0,0,0,.06);
+  background: rgba(0,0,0,.01);
+}
+.ag-section-body { padding: 1rem; }
+
+/* ── Dense table ── */
+.ag-dense-table { font-size: .78rem; }
+.ag-dense-table th {
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom-width: 2px;
+}
+.ag-dense-table td {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* ── Mini stat ── */
+.ag-mini-stat {
+  text-align: center;
+  padding: .5rem;
+  background: rgba(0,0,0,.02);
+  border-radius: .4rem;
+}
+.ag-mini-val {
+  display: block;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--bs-body-color);
+}
+.ag-mini-label {
+  display: block;
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  margin-top: 2px;
+}
+
+/* ── Access badges ── */
+.ag-access-badge {
+  font-size: .65rem;
+  font-weight: 600;
+  padding: .15em .45em;
+  border-radius: .25rem;
+  white-space: nowrap;
+}
+.ag-access-granted {
+  background: rgba(25,135,84,.1);
+  color: #198754;
+}
+.ag-access-denied {
+  background: rgba(220,53,69,.1);
+  color: #dc3545;
+}
+
+/* ── Status badges (shared) ── */
+.ag-status-badge {
+  font-size: .68rem;
+  font-weight: 600;
+  padding: .18em .5em;
+  border-radius: .25rem;
+}
+.ag-status-COMPLETED { background: rgba(25,135,84,.12); color: #198754; }
+.ag-status-RUNNING   { background: rgba(13,110,253,.12); color: #0d6efd; }
+.ag-status-PENDING   { background: rgba(108,117,125,.12); color: #6c757d; }
+.ag-status-FAILED    { background: rgba(220,53,69,.12); color: #dc3545; }
+.ag-status-SKIPPED   { background: rgba(108,117,125,.08); color: #adb5bd; }
+
+/* ── Health badges ── */
+.ag-health-badge {
+  font-size: .68rem;
+  font-weight: 600;
+  padding: .2em .55em;
+  border-radius: .3rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.ag-health-healthy { background: rgba(25,135,84,.12); color: #198754; }
+.ag-health-warning { background: rgba(255,193,7,.15); color: #946500; }
+.ag-health-critical { background: rgba(220,53,69,.12); color: #dc3545; }
+
+/* ── System Agent Section ── */
+.ag-system-agent-section {
+  border: 2px solid rgba(255,193,7,.2);
+  background: rgba(255,193,7,.02);
+}
+
+/* ── Filter bar ── */
+.ag-filter-bar {
+  position: sticky;
+  top: 56px;
+  z-index: 1020;
+}
+
+/* ── Trace Explorer (governance version) ── */
+.ag-gov-dashboard .te-run-list {
+  max-height: 460px;
+  overflow-y: auto;
+}
+.ag-gov-dashboard .te-run-item {
+  padding: .5rem .75rem;
+  border-bottom: 1px solid rgba(0,0,0,.04);
+  cursor: pointer;
+  transition: background .1s;
+}
+.ag-gov-dashboard .te-run-item:hover { background: rgba(13,110,253,.04); }
+.ag-gov-dashboard .te-run-item.active { background: rgba(13,110,253,.08); border-left: 3px solid #0d6efd; }
+
+.ag-gov-dashboard .te-run-main {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: .78rem;
+}
+.ag-gov-dashboard .te-run-sub {
+  display: flex;
+  gap: .75rem;
+  margin-top: 2px;
+  font-size: .68rem;
+  color: var(--bs-secondary-color);
+}
+
+/* ── Governance indicator dots ── */
+.ag-gov-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: .55rem;
+}
+.ag-gi-ok { background: rgba(25,135,84,.12); color: #198754; }
+.ag-gi-warn { background: rgba(255,193,7,.15); color: #946500; }
+
+/* ── Count badges ── */
+.te-count-badge {
+  font-size: .65rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
+/* ── Trace timeline ── */
+.ag-trace-timeline {
+  position: relative;
+  padding-left: 22px;
+}
+.ag-trace-timeline::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(0,0,0,.1);
+  border-radius: 1px;
+}
+.ag-trace-event {
+  position: relative;
+  padding: .4rem 0 .6rem .75rem;
+  font-size: .78rem;
+}
+.ag-trace-event::before {
+  content: '';
+  position: absolute;
+  left: -18px;
+  top: .55rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #0d6efd;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(13,110,253,.3);
+}
+.ag-trace-event.event-tool_called::before { background: #6f42c1; box-shadow: 0 0 0 1px rgba(111,66,193,.3); }
+.ag-trace-event.event-decision_created::before { background: #198754; box-shadow: 0 0 0 1px rgba(25,135,84,.3); }
+.ag-trace-event.event-recommendation_created::before { background: #0dcaf0; box-shadow: 0 0 0 1px rgba(13,202,240,.3); }
+.ag-trace-event.event-escalation_created::before { background: #dc3545; box-shadow: 0 0 0 1px rgba(220,53,69,.3); }
+.ag-trace-event.event-agent_failed::before { background: #dc3545; box-shadow: 0 0 0 1px rgba(220,53,69,.3); }
+
+.ag-trace-event-time { font-size: .66rem; color: var(--bs-secondary-color); }
+.ag-trace-event-label { font-weight: 600; }
+.ag-trace-event-meta { font-size: .7rem; color: var(--bs-secondary-color); }
+
+/* Trace metadata grid */
+.ag-trace-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: .5rem;
+  margin-bottom: 1rem;
+}
+.ag-trace-meta-item {
+  padding: .4rem .6rem;
+  background: rgba(0,0,0,.02);
+  border-radius: .35rem;
+  font-size: .76rem;
+}
+.ag-trace-meta-key {
+  font-size: .64rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--bs-secondary-color);
+  display: block;
+}
+.ag-trace-meta-val {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+/* ── Span tree ── */
+.ag-span-tree {
+  border-left: 2px solid rgba(13,110,253,.2);
+  padding-left: .75rem;
+  margin-left: .5rem;
+}
+.ag-span-item {
+  padding: .35rem .5rem;
+  border-bottom: 1px solid rgba(0,0,0,.03);
+  font-size: .76rem;
+  cursor: pointer;
+  display: flex;
+  gap: .5rem;
+  align-items: center;
+  transition: background .1s;
+}
+.ag-span-item:hover { background: rgba(13,110,253,.04); }
+
+/* ── Event detail blocks ── */
+.ag-event-detail {
+  font-size: .7rem;
+  color: var(--bs-secondary-color);
+  margin-top: 2px;
+  padding: .25rem .5rem;
+  background: rgba(0,0,0,.02);
+  border-radius: .25rem;
+  max-width: 500px;
+  word-break: break-word;
+}
+.ag-event-io {
+  font-size: .66rem;
+  color: var(--bs-secondary-color);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  margin-top: 2px;
+  padding: .2rem .4rem;
+  background: rgba(0,0,0,.03);
+  border-radius: .2rem;
+  max-width: 500px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Deterministic badge ── */
+.ag-det-badge {
+  font-size: .6rem;
+  font-weight: 600;
+  padding: .12em .4em;
+  border-radius: .2rem;
+  background: rgba(13,110,253,.08);
+  color: #0d6efd;
+}
+
+/* ── Purple & cyan utility ── */
+.text-purple { color: #6f42c1 !important; }
+.text-cyan   { color: #0dcaf0 !important; }
+
+/* ── Scrollbar ── */
+.ag-gov-dashboard .te-run-list::-webkit-scrollbar {
+  width: 5px;
+}
+.ag-gov-dashboard .te-run-list::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,.15);
+  border-radius: 3px;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .ag-gov-dashboard .te-run-list { max-height: 300px; }
+  .ag-event-io, .ag-event-detail { max-width: 280px; }
+}

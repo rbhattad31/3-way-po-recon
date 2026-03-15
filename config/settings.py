@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.auditlog",
     "apps.integrations",
     "apps.cases",
+    "apps.copilot",
 ]
 
 MIDDLEWARE = [
