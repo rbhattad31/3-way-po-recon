@@ -21,6 +21,7 @@ urlpatterns = [
     path("case/<int:case_id>/evidence/", views.case_evidence, name="case_evidence"),
     path("case/<int:case_id>/governance/", views.case_governance, name="case_governance"),
 
-    # Suggestions
+    # Suggestions & search
     path("suggestions/", views.suggestions, name="suggestions"),
+    path("cases/search/", views.case_search, name="case_search"),
 ]
