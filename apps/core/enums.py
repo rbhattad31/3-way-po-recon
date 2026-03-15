@@ -199,6 +199,17 @@ class AuditEventType(models.TextChoices):
     AUTO_CLOSE_AUTHORIZED = "AUTO_CLOSE_AUTHORIZED", "Auto-Close Authorized"
     AUTO_CLOSE_DENIED = "AUTO_CLOSE_DENIED", "Auto-Close Denied"
     SYSTEM_AGENT_USED = "SYSTEM_AGENT_USED", "System Agent Used"
+    # Copilot audit events
+    COPILOT_SESSION_CREATED = "COPILOT_SESSION_CREATED", "Copilot Session Created"
+    COPILOT_SESSION_VIEWED = "COPILOT_SESSION_VIEWED", "Copilot Session Viewed"
+    COPILOT_SESSION_RESUMED = "COPILOT_SESSION_RESUMED", "Copilot Session Resumed"
+    COPILOT_SESSION_ARCHIVED = "COPILOT_SESSION_ARCHIVED", "Copilot Session Archived"
+    COPILOT_MESSAGE_SENT = "COPILOT_MESSAGE_SENT", "Copilot Message Sent"
+    COPILOT_RESPONSE_GENERATED = "COPILOT_RESPONSE_GENERATED", "Copilot Response Generated"
+    COPILOT_CASE_CONTEXT_LOADED = "COPILOT_CASE_CONTEXT_LOADED", "Copilot Case Context Loaded"
+    COPILOT_GOVERNANCE_CONTEXT_VIEWED = "COPILOT_GOVERNANCE_CONTEXT_VIEWED", "Copilot Governance Context Viewed"
+    COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST = "COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST", "Copilot Unauthorized Governance Request"
+    COPILOT_SENSITIVE_FIELD_REDACTED = "COPILOT_SENSITIVE_FIELD_REDACTED", "Copilot Sensitive Field Redacted"
 
 
 class PermissionOverrideType(models.TextChoices):
@@ -361,3 +372,26 @@ class SourceChannel(models.TextChoices):
     API = "API", "API"
     ERP_IMPORT = "ERP_IMPORT", "ERP Import"
     SCAN = "SCAN", "Scan"
+
+
+# ---------------------------------------------------------------------------
+# Copilot enums
+# ---------------------------------------------------------------------------
+
+
+class CopilotSessionStatus(models.TextChoices):
+    ACTIVE = "ACTIVE", "Active"
+    ARCHIVED = "ARCHIVED", "Archived"
+
+
+class CopilotMessageType(models.TextChoices):
+    USER = "USER", "User"
+    ASSISTANT = "ASSISTANT", "Assistant"
+    SYSTEM = "SYSTEM", "System"
+
+
+class CopilotArtifactType(models.TextChoices):
+    CASE_SNAPSHOT = "CASE_SNAPSHOT", "Case Snapshot"
+    EVIDENCE_CARD = "EVIDENCE_CARD", "Evidence Card"
+    RECOMMENDATION = "RECOMMENDATION", "Recommendation"
+    GOVERNANCE_TRACE = "GOVERNANCE_TRACE", "Governance Trace"

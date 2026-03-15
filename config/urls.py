@@ -12,6 +12,8 @@ urlpatterns = [
     path("api/", include("apps.core.api_urls")),
     path("api/v1/governance/", include("apps.auditlog.api_urls")),
     path("api/v1/cases/", include("apps.cases.api_urls")),
+    path("api/v1/copilot/", include("apps.copilot.api_urls")),
+    path("copilot/", include("apps.copilot.urls")),
     path("cases/", include("apps.cases.urls")),
     path("dashboard/", include("apps.dashboard.urls")),
     path("invoices/", include("apps.documents.urls")),
