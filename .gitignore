@@ -206,3 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .venv
+fix_case_586.py
+preload_master_data.py
+seed_softnet.py
