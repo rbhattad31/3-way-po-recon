@@ -167,23 +167,21 @@
     const summary = payload.summary || 'No response generated.';
     parts.push(`<div class="copilot-msg-content">${formatMarkdown(summary)}</div>`);
 
+    // Collect detail sub-sections
+    const detailParts = [];
+
     // Evidence cards
     if (payload.evidence && payload.evidence.length) {
-      parts.push(renderEvidenceCards(payload.evidence));
+      detailParts.push(renderEvidenceCards(payload.evidence));
     }
 
     // Consulted agents
     if (payload.consulted_agents && payload.consulted_agents.length) {
       const chips = payload.consulted_agents.map(a => `<span class="copilot-agent-chip">${escapeHtml(a)}</span>`).join('');
-      parts.push(`
-        <div class="copilot-agents-section mt-2">
-          <button type="button" class="copilot-evidence-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
-            <i class="bi bi-chevron-right"></i>
-            <i class="bi bi-robot me-1"></i>Consulted Agents (${payload.consulted_agents.length})
-          </button>
-          <div class="copilot-evidence-cards-wrap">
-            <div class="copilot-agent-chips">${chips}</div>
-          </div>
+      detailParts.push(`
+        <div class="copilot-detail-sub">
+          <div class="copilot-detail-sub-label"><i class="bi bi-robot me-1"></i>Consulted Agents (${payload.consulted_agents.length})</div>
+          <div class="copilot-agent-chips">${chips}</div>
         </div>`);
     }
 
@@ -191,22 +189,30 @@
     if (payload.recommendation) {
       const rec = payload.recommendation;
       const conf = rec.confidence != null ? `${Math.round(rec.confidence * 100)}%` : '';
-      parts.push(`
-        <div class="copilot-recommendation-block mt-2">
-          <button type="button" class="copilot-evidence-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
-            <i class="bi bi-chevron-right"></i>
-            <i class="bi bi-lightbulb me-1"></i>Recommendation ${conf ? `(${conf})` : ''}
-          </button>
-          <div class="copilot-evidence-cards-wrap">
-            <div class="small copilot-recommendation-text">${escapeHtml(rec.text || '')}</div>
-            <div class="copilot-recommendation-readonly">Read-only guidance — no action taken</div>
-          </div>
+      detailParts.push(`
+        <div class="copilot-detail-sub copilot-recommendation-block">
+          <div class="copilot-detail-sub-label"><i class="bi bi-lightbulb me-1"></i>Recommendation ${conf ? `(${conf})` : ''}</div>
+          <div class="small copilot-recommendation-text">${escapeHtml(rec.text || '')}</div>
+          <div class="copilot-recommendation-readonly">Read-only guidance — no action taken</div>
         </div>`);
     }
 
     // Governance
     if (payload.governance && payload.governance.permitted) {
-      parts.push(renderGovernanceBlock(payload.governance));
+      detailParts.push(renderGovernanceBlock(payload.governance));
+    }
+
+    // Wrap all detail sections in one master collapsible panel
+    if (detailParts.length) {
+      parts.push(`
+        <div class="copilot-details-panel mt-3">
+          <button type="button" class="copilot-details-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
+            <i class="bi bi-chevron-right"></i>Details
+          </button>
+          <div class="copilot-details-body">
+            ${detailParts.join('\n')}
+          </div>
+        </div>`);
     }
 
     // Follow-up prompts
@@ -241,14 +247,9 @@
     }).join('');
 
     return `
-      <div class="copilot-evidence-section mt-3">
-        <button type="button" class="copilot-evidence-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
-          <i class="bi bi-chevron-right"></i>
-          <i class="bi bi-card-list me-1"></i>Evidence (${evidence.length})
-        </button>
-        <div class="copilot-evidence-cards-wrap">
-          <div class="copilot-evidence-cards">${cards}</div>
-        </div>
+      <div class="copilot-detail-sub">
+        <div class="copilot-detail-sub-label"><i class="bi bi-card-list me-1"></i>Evidence (${evidence.length})</div>
+        <div class="copilot-evidence-cards">${cards}</div>
       </div>`;
   }
 
@@ -262,14 +263,9 @@
       </div>`).join('');
 
     return `
-      <div class="copilot-governance-block mt-2">
-        <button type="button" class="copilot-evidence-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
-          <i class="bi bi-chevron-right"></i>
-          <i class="bi bi-shield-lock me-1"></i>Governance Trace (${gov.events.length})
-        </button>
-        <div class="copilot-evidence-cards-wrap">
-          ${rows}
-        </div>
+      <div class="copilot-detail-sub copilot-governance-block">
+        <div class="copilot-detail-sub-label"><i class="bi bi-shield-lock me-1"></i>Governance Trace (${gov.events.length})</div>
+        ${rows}
       </div>`;
   }
 

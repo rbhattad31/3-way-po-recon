@@ -307,37 +307,62 @@ body:has(.copilot-workspace) main.ap-main {
 }
 
 /* Evidence toggle */
-.copilot-evidence-toggle {
-  display: inline-flex;
+/* Master Details panel (one collapsible for all sub-sections) */
+.copilot-details-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+.copilot-details-toggle {
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  width: 100%;
   cursor: pointer;
   user-select: none;
   background: none;
   border: none;
-  padding: 0;
-  font-size: 0.72rem;
+  padding: 8px 14px;
+  font-size: 0.78rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #64748b;
-  margin-bottom: 6px;
+  color: #475569;
 }
-.copilot-evidence-toggle:hover {
-  color: #334155;
+.copilot-details-toggle:hover {
+  color: #0f172a;
+  background: #f1f5f9;
 }
-.copilot-evidence-toggle .bi {
+.copilot-details-toggle .bi {
   font-size: 0.7rem;
   transition: transform 0.2s ease;
 }
-.copilot-evidence-toggle.expanded .bi {
+.copilot-details-toggle.expanded .bi {
   transform: rotate(90deg);
 }
-.copilot-evidence-cards-wrap {
+.copilot-details-body {
   display: none;
+  padding: 4px 14px 14px;
 }
-.copilot-evidence-cards-wrap.show {
+.copilot-details-body.show {
   display: block;
+}
+
+/* Detail sub-sections */
+.copilot-detail-sub {
+  padding: 8px 0;
+}
+.copilot-detail-sub + .copilot-detail-sub {
+  border-top: 1px solid #e2e8f0;
+}
+.copilot-detail-sub-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin-bottom: 6px;
 }
 
 /* Evidence cards */
@@ -356,16 +381,16 @@ body:has(.copilot-workspace) main.ap-main {
   color: #1e293b;
 }
 .copilot-evidence-card.copilot-evidence-invoice {
-  border-left: 3px solid var(--ap-primary, #2563eb);
+  border-left: 3px solid #2563eb;
 }
 .copilot-evidence-card.copilot-evidence-purchase_order {
-  border-left: 3px solid var(--ap-success, #059669);
+  border-left: 3px solid #059669;
 }
 .copilot-evidence-card.copilot-evidence-grn {
-  border-left: 3px solid var(--ap-info, #0284c7);
+  border-left: 3px solid #0284c7;
 }
 .copilot-evidence-card.copilot-evidence-exception {
-  border-left: 3px solid var(--ap-warning, #d97706);
+  border-left: 3px solid #d97706;
 }
 .copilot-evidence-card.copilot-evidence-decision {
   border-left: 3px solid var(--ap-path-3way, #7c3aed);
