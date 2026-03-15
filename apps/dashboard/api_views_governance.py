@@ -112,3 +112,12 @@ class GovTraceDetailView(_GovBaseView):
         if data is None:
             return Response({"detail": "Not found."}, status=404)
         return Response(data)
+
+
+class GovTraceRunListView(_GovBaseView):
+    def get(self, request):
+        limit = min(int(request.query_params.get("limit", 50)), 100)
+        data = AgentGovernanceDashboardService.get_trace_run_list(
+            filters=_get_gov_filters(request), user=request.user, limit=limit,
+        )
+        return Response(data)

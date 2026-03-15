@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from apps.agents.models import AgentEscalation, AgentRecommendation, AgentRun
 from apps.core.enums import AgentRunStatus, AuditEventType, ToolCallStatus, UserRole
+from apps.agents.services.guardrails_service import AGENT_PERMISSIONS, TOOL_PERMISSIONS
 from apps.tools.models import ToolCall
 
 
@@ -165,10 +166,23 @@ class AgentGovernanceDashboardService:
             Q(permission_source="") | Q(permission_source__isnull=True)
         ).count()
 
+        # Trace coverage
+        with_trace = run_qs.exclude(
+            Q(trace_id="") | Q(trace_id__isnull=True)
+        ).count()
+        trace_coverage = round(with_trace / total * 100, 1)
+
+        # Total denied (guardrails + tools + recs + protected)
+        access_denied = denied_guardrails + denied_tools + blocked_recs + protected_denied
+
         return {
             "total_runs": total if total > 1 else run_qs.count(),
             "rbac_coverage_pct": rbac_coverage,
             "authorized_runs_pct": authorized_pct,
+            "access_granted": authorized,
+            "access_denied": access_denied,
+            "trace_coverage_pct": trace_coverage,
+            "permission_compliance_pct": authorized_pct,
             "denied_guardrails": denied_guardrails,
             "denied_tool_calls": denied_tools,
             "blocked_recommendations": blocked_recs,
@@ -196,15 +210,21 @@ class AgentGovernanceDashboardService:
             .order_by("-count")
         )
 
-        # By actor primary role
+        # By actor primary role (with granted/denied breakdown)
         by_role = list(
             run_qs.exclude(
                 Q(actor_primary_role="") | Q(actor_primary_role__isnull=True)
             )
             .values("actor_primary_role")
-            .annotate(count=Count("id"))
-            .order_by("-count")
+            .annotate(
+                total=Count("id"),
+                granted=Count("id", filter=Q(access_granted=True)),
+                denied=Count("id", filter=Q(access_granted=False)),
+            )
+            .order_by("-total")
         )
+        for row in by_role:
+            row["role"] = row["actor_primary_role"]
 
         # With vs without identity
         with_identity = run_qs.exclude(actor_user_id__isnull=True).count()
@@ -235,7 +255,7 @@ class AgentGovernanceDashboardService:
     # 3. Agent Authorization Matrix
     # ------------------------------------------------------------------
     @staticmethod
-    def get_authorization_matrix(filters=None, user=None) -> List[Dict[str, Any]]:
+    def get_authorization_matrix(filters=None, user=None) -> Dict[str, Any]:
         run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
         rows = (
             run_qs.values("agent_type")
@@ -252,34 +272,21 @@ class AgentGovernanceDashboardService:
         result = []
         for r in rows:
             total = r["total"] or 1
-            # Find top denied permission for this agent
-            denied_perms = (
-                run_qs.filter(
-                    agent_type=r["agent_type"],
-                    access_granted=False,
-                )
-                .exclude(
-                    Q(permission_checked="")
-                    | Q(permission_checked__isnull=True)
-                )
-                .values("permission_checked")
-                .annotate(cnt=Count("id"))
-                .order_by("-cnt")[:1]
-            )
-            top_denied = (
-                denied_perms[0]["permission_checked"] if denied_perms else ""
-            )
+            perm_code = AGENT_PERMISSIONS.get(r["agent_type"], "")
+            source = "SYSTEM_AGENT" if r["system_agent"] > r["total"] // 2 else "MIXED"
             result.append({
                 "agent_type": r["agent_type"],
+                "permission": perm_code or r["agent_type"],
+                "checks": r["total"],
                 "total": r["total"],
-                "permission_checked": "",  # Will be filled per-row
+                "granted": r["authorized"],
                 "authorized": r["authorized"],
                 "denied": r["denied"],
                 "authorized_pct": round(r["authorized"] / total * 100, 1),
+                "source": source,
                 "system_agent_runs": r["system_agent"],
-                "top_denied_permission": top_denied,
             })
-        return result
+        return {"permissions": result}
 
     # ------------------------------------------------------------------
     # 4. Tool Authorization Dashboard
@@ -294,6 +301,9 @@ class AgentGovernanceDashboardService:
             ]
         )
 
+        # Reverse-map permission code → tool name
+        perm_to_tool = {v: k for k, v in TOOL_PERMISSIONS.items()}
+
         by_tool = list(
             tool_events.values("permission_checked")
             .annotate(
@@ -303,9 +313,6 @@ class AgentGovernanceDashboardService:
             )
             .order_by("-total")
         )
-        for row in by_tool:
-            t = row["total"] or 1
-            row["authorization_rate"] = round(row["authorized"] / t * 100, 1)
 
         # Also get avg duration from ToolCall if possible
         run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
@@ -317,13 +324,17 @@ class AgentGovernanceDashboardService:
             .values_list("tool_name", "avg_dur")
         )
 
-        # Merge durations
         for row in by_tool:
             perm = row["permission_checked"]
-            # Try to match permission to tool name
+            row["tool_name"] = perm_to_tool.get(perm, perm or "unknown")
+            row["required_permission"] = perm
+            row["calls"] = row["total"]
+            row["authorization_rate"] = round(
+                row["authorized"] / (row["total"] or 1) * 100, 1
+            )
             row["avg_duration"] = None
             for tool_name, dur in tool_durations.items():
-                if tool_name in (perm or ""):
+                if tool_name == row["tool_name"]:
                     row["avg_duration"] = round(dur, 0) if dur else None
                     break
 
@@ -331,6 +342,7 @@ class AgentGovernanceDashboardService:
             "total_events": tool_events.count(),
             "authorized": tool_events.filter(access_granted=True).count(),
             "denied": tool_events.filter(access_granted=False).count(),
+            "tools": by_tool,
             "by_tool": by_tool,
         }
 
@@ -373,8 +385,10 @@ class AgentGovernanceDashboardService:
             decided = accepted + rejected
             by_type.append({
                 "recommendation_type": rec_type,
+                "type": rec_type,
                 "required_permission": perm_code,
                 "generated": gen_count,
+                "total": gen_count,
                 "accepted": accepted,
                 "rejected": rejected,
                 "pending": pending,
@@ -387,6 +401,7 @@ class AgentGovernanceDashboardService:
 
         return {
             "by_type": by_type,
+            "recommendations": by_type,
             "total_generated": rec_qs.count(),
             "total_auth_events": rec_events.count(),
         }
@@ -439,15 +454,17 @@ class AgentGovernanceDashboardService:
 
             result.append({
                 "action": action["action"],
+                "event_type": action["action"],
                 "total_attempts": total,
                 "authorized": granted,
+                "granted": granted,
                 "denied": denied,
                 "authorization_rate": (
                     round(granted / total * 100, 1) if total else None
                 ),
             })
 
-        return result
+        return {"actions": result}
 
     # ------------------------------------------------------------------
     # 7. Denied Operations
@@ -465,6 +482,12 @@ class AgentGovernanceDashboardService:
                 "invoice_id", "case_id", "reconciliation_result_id",
             )
         )
+
+        # Add JS-compatible aliases
+        for ev in events:
+            ev["actor_role"] = ev.get("actor_primary_role", "")
+            ev["permission"] = ev.get("permission_checked", "")
+            ev["source"] = ev.get("permission_source", "")
 
         # Scrub sensitives for non-full-access users
         if not AgentGovernanceDashboardService._has_full_access(user):
@@ -527,6 +550,9 @@ class AgentGovernanceDashboardService:
             row["access_granted_pct"] = round(
                 row["with_access_granted"] / t * 100, 1
             )
+            # JS-compatible aliases
+            row["rbac_pct"] = row["permission_pct"]
+            row["trace_pct"] = row["identity_pct"]
 
         # Daily denials
         daily_denials = list(
@@ -547,6 +573,7 @@ class AgentGovernanceDashboardService:
         )
 
         return {
+            "daily": daily_runs,
             "daily_runs": daily_runs,
             "daily_denials": daily_denials,
             "daily_blocked_recommendations": daily_blocked_recs,
@@ -564,15 +591,34 @@ class AgentGovernanceDashboardService:
         sys_total = sys_qs.count()
         sys_pct = round(sys_total / total_all * 100, 1)
 
-        # Top agents by SYSTEM_AGENT
-        by_agent = list(
+        # Status breakdown
+        completed = sys_qs.filter(status=AgentRunStatus.COMPLETED).count()
+        failed = sys_qs.filter(status=AgentRunStatus.FAILED).count()
+
+        # Auto-close actions from audit events
+        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
+        auto_close_actions = audit_qs.filter(
+            event_type=AuditEventType.AUTO_CLOSE_AUTHORIZED,
+            permission_source="SYSTEM_AGENT",
+        ).count()
+
+        # By agent type with status breakdown
+        by_type = list(
             sys_qs.values("agent_type")
-            .annotate(count=Count("id"))
-            .order_by("-count")
+            .annotate(
+                runs=Count("id"),
+                completed=Count("id", filter=Q(status=AgentRunStatus.COMPLETED)),
+                failed=Count("id", filter=Q(status=AgentRunStatus.FAILED)),
+                avg_duration_ms=Avg("duration_ms"),
+            )
+            .order_by("-runs")
         )
+        for row in by_type:
+            row["auto_close"] = 0
+            row["avg_duration_ms"] = round(row["avg_duration_ms"] or 0, 0)
+            row["count"] = row["runs"]
 
         # Top denied under SYSTEM_AGENT
-        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
         sys_denials = list(
             audit_qs.filter(
                 permission_source="SYSTEM_AGENT", access_granted=False
@@ -599,9 +645,14 @@ class AgentGovernanceDashboardService:
         )
 
         return {
+            "total_runs": sys_total,
             "total_system_runs": sys_total,
+            "completed": completed,
+            "failed": failed,
+            "auto_close_actions": auto_close_actions,
             "percentage_of_total": sys_pct,
-            "by_agent": by_agent,
+            "by_type": by_type,
+            "by_agent": by_type,
             "top_denied": sys_denials,
             "tool_calls": sys_tool_calls,
             "avg_cost": float(cost_agg["avg_cost"] or 0),
@@ -753,3 +804,36 @@ class AgentGovernanceDashboardService:
         data["span_tree"] = span_tree
 
         return data
+
+    # ------------------------------------------------------------------
+    # 11. Trace Run List (for trace explorer panel)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_trace_run_list(filters=None, user=None, limit=50) -> List[Dict[str, Any]]:
+        """Return recent agent runs with governance fields for the trace explorer."""
+        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
+        runs = (
+            run_qs.select_related("reconciliation_result__invoice")
+            .order_by("-created_at")[:limit]
+        )
+        result = []
+        for run in runs:
+            inv = (
+                getattr(run.reconciliation_result, "invoice", None)
+                if run.reconciliation_result
+                else None
+            )
+            result.append({
+                "id": run.pk,
+                "agent_type": run.agent_type,
+                "status": run.status,
+                "confidence": round((run.confidence or 0) * 100, 1),
+                "duration_ms": run.duration_ms,
+                "invoice_number": getattr(inv, "invoice_number", "") or "",
+                "created_at": run.created_at.isoformat() if run.created_at else "",
+                "has_trace": bool(run.trace_id),
+                "access_granted": run.access_granted,
+                "actor_primary_role": run.actor_primary_role or "",
+                "permission_source": run.permission_source or "",
+            })
+        return result

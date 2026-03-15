@@ -164,14 +164,18 @@ class AuditEventType(models.TextChoices):
     POLICY_APPLIED = "POLICY_APPLIED", "Policy Applied"
     MANUAL_MODE_OVERRIDE = "MANUAL_MODE_OVERRIDE", "Manual Mode Override"
     # RBAC audit events
+    USER_CREATED = "USER_CREATED", "User Created"
+    USER_UPDATED = "USER_UPDATED", "User Updated"
     ROLE_ASSIGNED = "ROLE_ASSIGNED", "Role Assigned"
     ROLE_REMOVED = "ROLE_REMOVED", "Role Removed"
     ROLE_PERMISSION_CHANGED = "ROLE_PERMISSION_CHANGED", "Role Permission Changed"
     USER_PERMISSION_OVERRIDE = "USER_PERMISSION_OVERRIDE", "User Permission Override"
+    OVERRIDE_REMOVED = "OVERRIDE_REMOVED", "Permission Override Removed"
     USER_ACTIVATED = "USER_ACTIVATED", "User Activated"
     USER_DEACTIVATED = "USER_DEACTIVATED", "User Deactivated"
     ROLE_CREATED = "ROLE_CREATED", "Role Created"
     ROLE_UPDATED = "ROLE_UPDATED", "Role Updated"
+    ROLE_DEACTIVATED = "ROLE_DEACTIVATED", "Role Deactivated"
     PRIMARY_ROLE_CHANGED = "PRIMARY_ROLE_CHANGED", "Primary Role Changed"
     # Case management events
     CASE_ASSIGNED = "CASE_ASSIGNED", "Case Assigned"
