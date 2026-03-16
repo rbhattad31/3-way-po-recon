@@ -320,8 +320,16 @@ class StageExecutor:
         """
         from apps.reconciliation.services.runner_service import ReconciliationRunnerService
 
+        # Sync invoice PO number if the case has a linked PO from PO_RETRIEVAL
+        # so the runner's own PO lookup can find it.
+        invoice = case.invoice
+        if case.purchase_order and invoice.po_number != case.purchase_order.po_number:
+            invoice.po_number = case.purchase_order.po_number
+            invoice.normalized_po_number = case.purchase_order.normalized_po_number
+            invoice.save(update_fields=["po_number", "normalized_po_number", "updated_at"])
+
         runner = ReconciliationRunnerService()
-        run = runner.run(invoices=[case.invoice], triggered_by=case.created_by)
+        run = runner.run(invoices=[invoice], triggered_by=case.created_by)
 
         # Link result to case
         result = run.results.filter(invoice=case.invoice).first()

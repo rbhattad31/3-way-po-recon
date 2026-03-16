@@ -215,3 +215,6 @@ __marimo__/
 fix_case_586.py
 preload_master_data.py
 seed_softnet.py
+
+pdfs/
+seed_three_way_pdfs.py

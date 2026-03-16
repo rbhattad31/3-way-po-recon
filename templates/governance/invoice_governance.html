@@ -181,9 +181,9 @@
     {% for recon_trace in trace.reconciliation_traces %}
       {% if recon_trace.agent_runs %}
       <div class="ap-card mb-3">
-        <div class="ap-card-header">Reconciliation Result #{{ recon_trace.reconciliation_result_id }}</div>
+        <div class="ap-card-header">{% if recon_trace.reconciliation_result_id %}Reconciliation Result #{{ recon_trace.reconciliation_result_id }}{% elif recon_trace.label %}{{ recon_trace.label }}{% else %}Pre-reconciliation Agent Runs{% endif %}</div>
         <div class="ap-card-body p-0">
-          <div class="accordion" id="traceAccordion{{ recon_trace.reconciliation_result_id }}">
+          <div class="accordion" id="traceAccordion{{ recon_trace.reconciliation_result_id|default:'pre' }}">
             {% for run in recon_trace.agent_runs %}
             <div class="accordion-item">
               <h2 class="accordion-header">
@@ -200,7 +200,7 @@
                   {% if run.duration_ms %}<small class="text-muted ms-2">{{ run.duration_ms }}ms</small>{% endif %}
                 </button>
               </h2>
-              <div id="traceRun{{ run.agent_run_id }}" class="accordion-collapse collapse" data-bs-parent="#traceAccordion{{ recon_trace.reconciliation_result_id }}">
+              <div id="traceRun{{ run.agent_run_id }}" class="accordion-collapse collapse" data-bs-parent="#traceAccordion{{ recon_trace.reconciliation_result_id|default:'pre' }}">
                 <div class="accordion-body">
                   {% if run.summarized_reasoning %}
                   <div class="mb-3">

@@ -44,6 +44,120 @@ from apps.core.enums import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Small-talk / greeting detection
+# ---------------------------------------------------------------------------
+import re as _re
+
+_SMALL_TALK_PATTERNS: List[_re.Pattern] = [
+    _re.compile(r"^(hi|hey|hello|howdy|yo|hola|greetings|good\s*(morning|afternoon|evening|day))\b", _re.I),
+    _re.compile(r"^(how are you|how's it going|what's up|whats up|sup|how do you do)\b", _re.I),
+    _re.compile(r"^(thanks|thank you|thx|cheers|ty|much appreciated)\b", _re.I),
+    _re.compile(r"^(bye|goodbye|see you|later|cya|take care|good night)\b", _re.I),
+    _re.compile(r"^(who are you|what are you|what can you do|what is your name|your name)\b", _re.I),
+    _re.compile(r"^(help|help me)$", _re.I),
+    _re.compile(r"^(ok|okay|cool|nice|great|awesome|got it|understood|sure)$", _re.I),
+    _re.compile(r"^(lol|haha|hehe)$", _re.I),
+    _re.compile(r"^(please|yes|no|yep|nope|yeah|nah)$", _re.I),
+]
+
+_SMALL_TALK_RESPONSES = {
+    "greeting": (
+        "Hello! I'm the AP Copilot \u2014 your assistant for investigating "
+        "invoices, purchase orders, reconciliation results, and cases.\n\n"
+        "You can ask me things like:\n"
+        "- *What's the status of case X?*\n"
+        "- *Show me pending reviews*\n"
+        "- *Summarise exceptions across all cases*\n\n"
+        "How can I help you today?"
+    ),
+    "how_are_you": (
+        "I'm running well, thanks for asking! "
+        "I'm here to help you with AP case investigation. "
+        "What would you like to know?"
+    ),
+    "thanks": (
+        "You're welcome! Let me know if there's anything else "
+        "I can help you with."
+    ),
+    "bye": (
+        "Goodbye! Feel free to come back any time you need help "
+        "with AP investigations."
+    ),
+    "identity": (
+        "I'm the **AP Copilot** \u2014 a read-only assistant for investigating "
+        "AP cases, invoices, purchase orders, reconciliation results, "
+        "exceptions, and agent activity.\n\n"
+        "I can help you understand case statuses, review evidence, "
+        "explore vendor data, and trace governance decisions. "
+        "Just ask me a question!"
+    ),
+    "help": (
+        "Here are some things I can help with:\n\n"
+        "**Case Investigation**\n"
+        "- *What is the status of this case?*\n"
+        "- *Summarise the exceptions on this case*\n\n"
+        "**System Overview**\n"
+        "- *Show me pending reviews*\n"
+        "- *How are agents performing?*\n"
+        "- *Which vendors have the most mismatches?*\n\n"
+        "**Reconciliation**\n"
+        "- *Give me a reconciliation summary*\n"
+        "- *What's the overall match rate?*\n\n"
+        "Just type your question and I'll do my best to help!"
+    ),
+    "acknowledgement": (
+        "Got it! Let me know if you have any questions about "
+        "invoices, cases, or reconciliation."
+    ),
+}
+
+
+def _detect_small_talk(message: str) -> Optional[str]:
+    """Return a small-talk category key if *message* is conversational, else None."""
+    text = message.strip()
+    if not text:
+        return "greeting"
+
+    # Only treat short messages as potential small talk (avoid false positives)
+    if len(text.split()) > 5:
+        return None
+
+    # If the message contains business-related keywords, it's not small talk
+    _biz_keywords = (
+        "case", "invoice", "vendor", "review", "recon", "match", "exception",
+        "agent", "po", "grn", "show", "status", "summary", "list", "report",
+        "pending", "approved", "rejected", "escalat",
+    )
+    low = text.lower()
+    if any(kw in low for kw in _biz_keywords):
+        return None
+
+    # Check against compiled patterns
+    for pattern in _SMALL_TALK_PATTERNS:
+        if pattern.search(text):
+            break
+    else:
+        return None  # not small talk
+
+    # Determine sub-category
+    if any(low.startswith(w) for w in ("how are", "how's it", "what's up", "whats up", "sup", "how do you do")):
+        return "how_are_you"
+    if any(low.startswith(w) for w in ("thank", "thx", "cheers", "ty", "much appreciated")):
+        return "thanks"
+    if any(low.startswith(w) for w in ("bye", "goodbye", "see you", "later", "cya", "take care", "good night")):
+        return "bye"
+    if any(low.startswith(w) for w in ("who are you", "what are you", "what can you do", "what is your name", "your name")):
+        return "identity"
+    if low in ("help", "help me"):
+        return "help"
+    if low in ("ok", "okay", "cool", "nice", "great", "awesome", "got it", "understood", "sure",
+               "yes", "no", "yep", "nope", "yeah", "nah", "please",
+               "lol", "haha", "hehe"):
+        return "acknowledgement"
+    return "greeting"
+
+
+# ---------------------------------------------------------------------------
 # Role-aware field visibility
 # ---------------------------------------------------------------------------
 GOVERNANCE_ROLES = {"ADMIN", "AUDITOR"}
@@ -661,6 +775,20 @@ class APCopilotService:
         """
         case_id = session.linked_case_id
         primary_role = getattr(user, "role", "")
+
+        # ── Small-talk short-circuit ─────────────────────────────
+        small_talk_key = _detect_small_talk(message)
+        if small_talk_key is not None:
+            response_text = _SMALL_TALK_RESPONSES.get(small_talk_key, _SMALL_TALK_RESPONSES["greeting"])
+            follow_ups = APCopilotService.get_suggestions(user)
+            return {
+                "summary": response_text,
+                "evidence": [],
+                "consulted_agents": [],
+                "recommendation": None,
+                "governance": {},
+                "follow_up_prompts": follow_ups,
+            }
 
         # Gather context
         context_data = {}

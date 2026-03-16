@@ -41,6 +41,96 @@ def _rbac_badge(event) -> Dict[str, Any]:
     return data
 
 
+def _append_orphan_agent_runs(
+    timeline: List[Dict[str, Any]],
+    invoice_id: int,
+    seen_run_ids: set,
+) -> None:
+    """Append agent runs not linked to a reconciliation result.
+
+    These are typically PO_RETRIEVAL or EXTRACTION agents that run during the
+    case pipeline before a ReconciliationResult is created.
+    """
+    from apps.cases.models import APCaseStage
+
+    orphan_runs = AgentRun.objects.filter(
+        reconciliation_result__isnull=True,
+        input_payload__invoice_id=invoice_id,
+    ).exclude(pk__in=seen_run_ids).select_related("agent_definition")
+
+    # Also pick up runs referenced by case stages
+    case = APCase.objects.filter(invoice_id=invoice_id).first()
+    if case:
+        stage_run_ids = list(
+            APCaseStage.objects.filter(
+                case=case, performed_by_agent__isnull=False,
+            ).values_list("performed_by_agent_id", flat=True)
+        )
+        if stage_run_ids:
+            stage_orphans = AgentRun.objects.filter(
+                pk__in=stage_run_ids,
+            ).exclude(pk__in=seen_run_ids).select_related("agent_definition")
+            orphan_runs = (orphan_runs | stage_orphans).distinct()
+
+    for run in orphan_runs.order_by("created_at"):
+        if run.pk in seen_run_ids:
+            continue
+        seen_run_ids.add(run.pk)
+        agent_name = run.agent_definition.name if run.agent_definition else run.agent_type
+        timeline.append({
+            "timestamp": run.started_at or run.created_at,
+            "event_category": "agent_run",
+            "event_type": f"AGENT_{run.status}",
+            "description": f"Agent '{agent_name}' {run.status.lower()} (pre-reconciliation)",
+            "actor": agent_name,
+            "trace_id": getattr(run, "trace_id", ""),
+            "duration_ms": run.duration_ms,
+            "metadata": {
+                "agent_run_id": run.pk,
+                "agent_type": run.agent_type,
+                "status": run.status,
+                "confidence": run.confidence,
+                "summarized_reasoning": run.summarized_reasoning[:300] if run.summarized_reasoning else "",
+                "duration_ms": run.duration_ms,
+                "llm_model": run.llm_model_used,
+                "total_tokens": run.total_tokens,
+            },
+        })
+
+        # Tool calls and decisions for orphan runs
+        tool_calls = ToolCall.objects.filter(agent_run=run).order_by("created_at")
+        for tc in tool_calls:
+            timeline.append({
+                "timestamp": tc.created_at,
+                "event_category": "tool_call",
+                "event_type": f"TOOL_{tc.status}",
+                "description": f"Tool '{tc.tool_name}' called ({tc.status.lower()})",
+                "actor": agent_name,
+                "duration_ms": tc.duration_ms,
+                "metadata": {
+                    "tool_call_id": tc.pk,
+                    "tool_name": tc.tool_name,
+                    "status": tc.status,
+                    "duration_ms": tc.duration_ms,
+                },
+            })
+
+        decisions = DecisionLog.objects.filter(agent_run=run).order_by("created_at")
+        for dl in decisions:
+            timeline.append({
+                "timestamp": dl.created_at,
+                "event_category": "decision",
+                "event_type": f"DECISION_{dl.decision_type}" if dl.decision_type else "DECISION",
+                "description": dl.decision[:300],
+                "actor": agent_name,
+                "metadata": {
+                    "decision_type": dl.decision_type,
+                    "rationale": dl.rationale[:300] if dl.rationale else "",
+                    "confidence": dl.confidence,
+                },
+            })
+
+
 class CaseTimelineService:
     """Builds a unified, chronologically-ordered timeline for an invoice case.
 
@@ -122,11 +212,13 @@ class CaseTimelineService:
                 "rbac": _rbac_badge(ev),
             })
 
-        # 4. Agent runs
+        # 4. Agent runs (linked to reconciliation results)
+        seen_run_ids: set = set()
         agent_runs = AgentRun.objects.filter(
             reconciliation_result_id__in=result_ids,
         ).select_related("agent_definition").order_by("created_at")
         for run in agent_runs:
+            seen_run_ids.add(run.pk)
             agent_name = run.agent_definition.name if run.agent_definition else run.agent_type
             timeline.append({
                 "timestamp": run.started_at or run.created_at,
@@ -187,6 +279,9 @@ class CaseTimelineService:
                         "recommendation_type": dl.recommendation_type,
                     },
                 })
+
+        # 4c. Orphaned agent runs (e.g., PO_RETRIEVAL before reconciliation)
+        _append_orphan_agent_runs(timeline, invoice_id, seen_run_ids)
 
         # 5. Agent recommendations
         recommendations = AgentRecommendation.objects.filter(
