@@ -11,6 +11,7 @@ from apps.dashboard.api_views_governance import (
     GovSystemAgentView,
     GovToolAuthorizationView,
     GovTraceDetailView,
+    GovTraceRunListView,
 )
 
 app_name = "dashboard_agents_governance_api"
@@ -25,5 +26,6 @@ urlpatterns = [
     path("denials/", GovDenialsView.as_view(), name="gov-denials"),
     path("coverage-trend/", GovCoverageTrendView.as_view(), name="gov-coverage-trend"),
     path("system-agent/", GovSystemAgentView.as_view(), name="gov-system-agent"),
+    path("runs/", GovTraceRunListView.as_view(), name="gov-trace-runs"),
     path("trace/<int:run_id>/", GovTraceDetailView.as_view(), name="gov-trace-detail"),
 ]

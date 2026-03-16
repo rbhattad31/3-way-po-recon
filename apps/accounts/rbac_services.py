@@ -18,6 +18,21 @@ class RBACEventService:
         description: str = "",
         metadata: dict = None,
     ):
+        # Build RBAC context from the acting user
+        actor_email = ""
+        actor_primary_role = ""
+        actor_roles_snapshot = None
+        if performed_by and hasattr(performed_by, "email"):
+            actor_email = performed_by.email
+            actor_primary_role = getattr(performed_by, "role", "") or ""
+            if hasattr(performed_by, "get_active_role_codes"):
+                try:
+                    actor_roles_snapshot = list(performed_by.get_active_role_codes())
+                except Exception:
+                    actor_roles_snapshot = [actor_primary_role] if actor_primary_role else None
+            elif actor_primary_role:
+                actor_roles_snapshot = [actor_primary_role]
+
         AuditEvent.objects.create(
             entity_type=entity_type,
             entity_id=entity_id,
@@ -28,6 +43,70 @@ class RBACEventService:
             new_values=new_values,
             performed_by=performed_by,
             metadata_json=metadata or {},
+            actor_email=actor_email,
+            actor_primary_role=actor_primary_role,
+            actor_roles_snapshot_json=actor_roles_snapshot,
+            permission_checked="users.manage" if entity_type == "User" else "roles.manage",
+            permission_source="ROLE",
+            access_granted=True,
+        )
+
+    @classmethod
+    def log_user_created(cls, user, performed_by):
+        cls.log(
+            event_type="USER_CREATED",
+            entity_type="User",
+            entity_id=user.pk,
+            performed_by=performed_by,
+            new_values={
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "role": user.role,
+                "department": getattr(user, "department", ""),
+                "is_active": user.is_active,
+            },
+            description=f"User '{user.email}' created",
+        )
+
+    @classmethod
+    def log_user_updated(cls, user, old_values, performed_by):
+        new_values = {
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "department": getattr(user, "department", ""),
+        }
+        cls.log(
+            event_type="USER_UPDATED",
+            entity_type="User",
+            entity_id=user.pk,
+            performed_by=performed_by,
+            old_values=old_values,
+            new_values=new_values,
+            description=f"User '{user.email}' profile updated",
+        )
+
+    @classmethod
+    def log_override_removed(cls, user, permission_code, performed_by):
+        cls.log(
+            event_type="OVERRIDE_REMOVED",
+            entity_type="User",
+            entity_id=user.pk,
+            performed_by=performed_by,
+            old_values={"permission": permission_code},
+            description=f"Permission override for '{permission_code}' removed from {user.email}",
+        )
+
+    @classmethod
+    def log_role_deactivated(cls, role, performed_by):
+        cls.log(
+            event_type="ROLE_DEACTIVATED",
+            entity_type="Role",
+            entity_id=role.pk,
+            performed_by=performed_by,
+            old_values={"code": role.code, "name": role.name, "is_active": True},
+            new_values={"is_active": False},
+            description=f"Role '{role.code}' deactivated",
         )
 
     @classmethod

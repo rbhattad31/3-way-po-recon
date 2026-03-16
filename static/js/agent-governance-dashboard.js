@@ -385,10 +385,7 @@
   }
 
   async function loadTraceRunList() {
-    var runs = await apiFetch(BASE + "/denials/" + qs(Object.assign({}, getTeFilters(), { limit: 50 })));
-    // Actually we need a list of agent runs, not denials. Use the live-feed from performance as a fallback
-    // We'll use the governance summary to get runs with governance data
-    runs = await apiFetch("/api/v1/dashboard/agents/performance/live-feed/?limit=50");
+    var runs = await apiFetch(BASE + "/runs/" + qs(Object.assign({}, getTeFilters(), { limit: 50 })));
 
     var el = document.getElementById("govTraceRunList");
     if (!el || !runs) return;

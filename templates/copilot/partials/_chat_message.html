@@ -1,0 +1,74 @@
+{# Single chat message — user or assistant #}
+{% load static %}
+
+{% if message.message_type == "USER" %}
+<div class="copilot-msg copilot-msg-user">
+  <div class="copilot-msg-avatar"><i class="bi bi-person-fill"></i></div>
+  <div class="copilot-msg-body">
+    <div class="copilot-msg-content">{{ message.content }}</div>
+    <div class="copilot-msg-time text-muted small">{{ message.created_at|timesince }} ago</div>
+  </div>
+</div>
+
+{% elif message.message_type == "ASSISTANT" %}
+<div class="copilot-msg copilot-msg-assistant">
+  <div class="copilot-msg-avatar copilot-msg-avatar-ai"><i class="bi bi-stars"></i></div>
+  <div class="copilot-msg-body">
+    {# Summary #}
+    <div class="copilot-msg-content">{{ message.content|linebreaksbr }}</div>
+
+    {# All detail sections inside one collapsible panel #}
+    {% if message.evidence_payload_json or message.consulted_agents_json or message.governance_payload_json.permitted %}
+    <div class="copilot-details-panel mt-3">
+      <button type="button" class="copilot-details-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
+        <i class="bi bi-chevron-right"></i>Details
+      </button>
+      <div class="copilot-details-body">
+
+        {% if message.evidence_payload_json %}
+        <div class="copilot-detail-sub">
+          <div class="copilot-detail-sub-label"><i class="bi bi-card-list me-1"></i>Evidence ({{ message.evidence_payload_json|length }})</div>
+          <div class="copilot-evidence-cards">
+            {% for ev in message.evidence_payload_json %}
+            <div class="copilot-evidence-card copilot-evidence-{{ ev.type }}">
+              <div class="copilot-evidence-label">{{ ev.label }}</div>
+              <div class="copilot-evidence-type badge">{{ ev.type }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if message.consulted_agents_json %}
+        <div class="copilot-detail-sub">
+          <div class="copilot-detail-sub-label"><i class="bi bi-robot me-1"></i>Consulted Agents ({{ message.consulted_agents_json|length }})</div>
+          <div class="copilot-agent-chips">
+            {% for agent in message.consulted_agents_json %}
+            <span class="copilot-agent-chip">{{ agent }}</span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if message.governance_payload_json.permitted %}
+        <div class="copilot-detail-sub copilot-governance-block">
+          <div class="copilot-detail-sub-label"><i class="bi bi-shield-lock me-1"></i>Governance Trace</div>
+          <div class="copilot-governance-badge">
+            <span class="badge bg-dark">Trace: {{ message.trace_id|truncatechars:12 }}</span>
+          </div>
+        </div>
+        {% endif %}
+
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="copilot-msg-time text-muted small">{{ message.created_at|timesince }} ago</div>
+  </div>
+</div>
+
+{% elif message.message_type == "SYSTEM" %}
+<div class="copilot-msg copilot-msg-system">
+  <div class="copilot-msg-content text-muted small text-center">{{ message.content }}</div>
+</div>
+{% endif %}

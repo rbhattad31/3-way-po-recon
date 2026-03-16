@@ -33,7 +33,7 @@ def seed_users() -> dict[str, User]:
             },
         )
         if was_created:
-            user.set_password("SeedPass123!")
+            user.set_password("admin123")
             user.save(update_fields=["password"])
             created += 1
         # key like "ap_processor" from "ap.processor@mcd-ksa.com"
