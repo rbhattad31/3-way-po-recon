@@ -200,13 +200,18 @@ class ReconciliationModeResolver:
         # Service invoice flag
         if policy.is_service_invoice is not None:
             is_service = self._is_service_invoice(invoice)
-            if is_service is not None and is_service != policy.is_service_invoice:
+            if is_service is None:
+                # Can't confirm invoice matches the required flag — don't match
+                return False
+            if is_service != policy.is_service_invoice:
                 return False
 
         # Stock invoice flag
         if policy.is_stock_invoice is not None:
             is_stock = self._is_stock_invoice(invoice)
-            if is_stock is not None and is_stock != policy.is_stock_invoice:
+            if is_stock is None:
+                return False
+            if is_stock != policy.is_stock_invoice:
                 return False
 
         return True

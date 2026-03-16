@@ -163,6 +163,17 @@ class CaseOrchestrator:
     def _execute_path_stages(self):
         """Execute the path-specific stages based on resolved processing path."""
         path = self.case.processing_path
+
+        # On reprocess: if a PO was linked after original classification
+        # (e.g. PO seeded/imported since last run), re-resolve the path
+        # so the case moves from NON_PO/UNRESOLVED to TWO_WAY/THREE_WAY.
+        if path in (ProcessingPath.NON_PO, ProcessingPath.UNRESOLVED) and self.case.purchase_order:
+            path = self._resolve_path_from_linked_po()
+            CaseRoutingService.reroute_path(
+                self.case, path,
+                f"PO {self.case.purchase_order.po_number} now linked; re-resolved as {path}",
+            )
+
         if path == ProcessingPath.UNRESOLVED:
             # Try PO Retrieval Agent, then re-resolve
             self._execute_stage(CaseStageType.PO_RETRIEVAL)
@@ -308,6 +319,17 @@ class CaseOrchestrator:
         po = self.case.purchase_order
         resolver = ReconciliationModeResolver()
         mode_result = resolver.resolve(invoice, po)
+
+        # If GRNs exist for this PO, force THREE_WAY regardless of mode resolver
+        from apps.documents.models import GoodsReceiptNote
+        has_grn = GoodsReceiptNote.objects.filter(purchase_order=po).exists()
+        if has_grn and mode_result.mode == "TWO_WAY":
+            mode_result.mode = "THREE_WAY"
+            mode_result.grn_required = True
+            logger.info(
+                "Case %s: GRN exists for PO %s — overriding mode to THREE_WAY",
+                self.case.case_number, po.po_number,
+            )
 
         self.case.reconciliation_mode = mode_result.mode
         self.case.invoice_type = InvoiceType.PO_BACKED
