@@ -195,12 +195,24 @@ class CaseOrchestrator:
         elif path == ProcessingPath.NON_PO:
             self._run_non_po_path()
         else:
-            # Still unresolved after PO retrieval — reroute to NON_PO
-            CaseRoutingService.reroute_path(
-                self.case, ProcessingPath.NON_PO,
-                "PO retrieval failed; treating as non-PO",
-            )
-            self._run_non_po_path()
+            # Still unresolved after PO retrieval — decide based on whether
+            # the invoice references a PO number.  An invoice that *has* a PO
+            # number is PO-backed (TWO_WAY at minimum) even if the PO record
+            # doesn't exist in the system yet.
+            po_number = (self.case.invoice.po_number or "").strip()
+            if po_number:
+                CaseRoutingService.reroute_path(
+                    self.case, ProcessingPath.TWO_WAY,
+                    f"PO '{po_number}' not found in system but invoice references it; "
+                    "treating as TWO_WAY (PO-backed)",
+                )
+                self._run_two_way_path()
+            else:
+                CaseRoutingService.reroute_path(
+                    self.case, ProcessingPath.NON_PO,
+                    "No PO reference on invoice and PO retrieval failed",
+                )
+                self._run_non_po_path()
 
     def _run_two_way_path(self):
         """Execute 2-way matching stages."""

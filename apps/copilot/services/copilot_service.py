@@ -8,6 +8,7 @@ respects RBAC and emits audit events.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -39,6 +40,7 @@ from apps.core.enums import (
     AuditEventType,
     CopilotMessageType,
     CopilotSessionStatus,
+    UserRole,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,108 @@ ROLE_PROMPTS: Dict[str, List[str]] = {
 
 class APCopilotService:
     """Read-only copilot service for AP case investigation and insight."""
+
+    # ------------------------------------------------------------------
+    # RBAC data-scoping helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_scoped_role(user) -> bool:
+        """Return True if user requires data scoping (AP_PROCESSOR with restricted view)."""
+        if getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+            return False
+        from apps.reconciliation.models import ReconciliationConfig
+        config = ReconciliationConfig.objects.filter(is_default=True).first()
+        if config and config.ap_processor_sees_all_cases:
+            return False
+        return True
+
+    @staticmethod
+    def _is_reviewer(user) -> bool:
+        return getattr(user, "role", None) == UserRole.REVIEWER
+
+    @staticmethod
+    def _scoped_cases(user):
+        """Return APCase queryset scoped to what *user* may see."""
+        from apps.cases.selectors.case_selectors import CaseSelectors
+        return CaseSelectors.scope_for_user(
+            __import__("apps.cases.models", fromlist=["APCase"]).APCase.objects.filter(is_active=True),
+            user,
+        )
+
+    @staticmethod
+    def _scoped_invoices(user):
+        """Return Invoice queryset scoped to what *user* may see."""
+        from apps.documents.models import Invoice
+        qs = Invoice.objects.all()
+        if APCopilotService._is_scoped_role(user):
+            qs = qs.filter(document_upload__uploaded_by=user)
+        return qs
+
+    @staticmethod
+    def _scoped_recon_results(user):
+        """Return ReconciliationResult queryset scoped to user's invoices."""
+        from apps.reconciliation.models import ReconciliationResult
+        qs = ReconciliationResult.objects.all()
+        if APCopilotService._is_scoped_role(user):
+            qs = qs.filter(invoice__document_upload__uploaded_by=user)
+        elif APCopilotService._is_reviewer(user):
+            qs = qs.filter(invoice__ap_case__assigned_to=user)
+        return qs
+
+    @staticmethod
+    def _scoped_exceptions(user):
+        """Return ReconciliationException queryset scoped to user's results."""
+        from apps.reconciliation.models import ReconciliationException
+        qs = ReconciliationException.objects.all()
+        if APCopilotService._is_scoped_role(user):
+            qs = qs.filter(result__invoice__document_upload__uploaded_by=user)
+        elif APCopilotService._is_reviewer(user):
+            qs = qs.filter(result__invoice__ap_case__assigned_to=user)
+        return qs
+
+    @staticmethod
+    def _scoped_reviews(user):
+        """Return ReviewAssignment queryset scoped to user."""
+        from apps.reviews.models import ReviewAssignment
+        qs = ReviewAssignment.objects.all()
+        if APCopilotService._is_scoped_role(user):
+            qs = qs.filter(reconciliation_result__invoice__document_upload__uploaded_by=user)
+        elif APCopilotService._is_reviewer(user):
+            qs = qs.filter(assigned_to=user)
+        return qs
+
+    @staticmethod
+    def _scoped_vendors(user):
+        """Return Vendor queryset scoped to user's invoices."""
+        from apps.vendors.models import Vendor
+        qs = Vendor.objects.filter(is_active=True)
+        if APCopilotService._is_scoped_role(user):
+            from apps.documents.models import Invoice
+            vendor_ids = (
+                Invoice.objects.filter(document_upload__uploaded_by=user)
+                .exclude(vendor__isnull=True)
+                .values_list("vendor_id", flat=True)
+                .distinct()
+            )
+            qs = qs.filter(pk__in=vendor_ids)
+        return qs
+
+    @staticmethod
+    def _scoped_agent_runs(user):
+        """Return AgentRun queryset scoped to user's recon results."""
+        from apps.agents.models import AgentRun
+        qs = AgentRun.objects.all()
+        if APCopilotService._is_scoped_role(user):
+            qs = qs.filter(reconciliation_result__invoice__document_upload__uploaded_by=user)
+        elif APCopilotService._is_reviewer(user):
+            qs = qs.filter(reconciliation_result__invoice__ap_case__assigned_to=user)
+        return qs
+
+    @staticmethod
+    def _user_can_access_case(user, case_id: int) -> bool:
+        """Return True if user is allowed to access the given case."""
+        return APCopilotService._scoped_cases(user).filter(pk=case_id).exists()
 
     # ------------------------------------------------------------------
     # Session management
@@ -164,11 +268,9 @@ class APCopilotService:
         """Search AP cases for linking to a copilot session.
 
         Searches by case_number, invoice number, vendor name, or PO number.
-        Returns at most 15 lightweight results.
+        Returns at most 15 lightweight results, scoped to user access.
         """
-        from apps.cases.models import APCase
-
-        qs = APCase.objects.filter(is_active=True).select_related(
+        qs = APCopilotService._scoped_cases(user).select_related(
             "invoice", "vendor",
         )
         if query:
@@ -197,12 +299,14 @@ class APCopilotService:
         user, session_id: str, case_id: int,
     ) -> Dict[str, Any]:
         """Link an AP case to an existing copilot session."""
-        from apps.cases.models import APCase
-
         session = CopilotSession.objects.filter(pk=session_id, user=user).first()
         if not session:
             return {"error": "Session not found"}
 
+        if not APCopilotService._user_can_access_case(user, case_id):
+            return {"error": "Case not found"}
+
+        from apps.cases.models import APCase
         case = APCase.objects.filter(pk=case_id, is_active=True).select_related("invoice").first()
         if not case:
             return {"error": "Case not found"}
@@ -385,6 +489,10 @@ class APCopilotService:
         from apps.cases.models import APCase
         from apps.reconciliation.models import ReconciliationException
 
+        # Ownership check — user must have access to this case
+        if not APCopilotService._user_can_access_case(user, case_id):
+            return {"error": "Case not found"}
+
         case = (
             APCase.objects
             .filter(pk=case_id)
@@ -432,10 +540,17 @@ class APCopilotService:
             }
 
         if case.vendor:
+            v = case.vendor
             ctx["vendor"] = {
-                "id": case.vendor.pk,
-                "name": case.vendor.name,
-                "vendor_code": case.vendor.code,
+                "id": v.pk,
+                "name": v.name,
+                "vendor_code": v.code,
+                "tax_id": v.tax_id or None,
+                "address": v.address or None,
+                "country": v.country or None,
+                "currency": v.currency or None,
+                "payment_terms": v.payment_terms or None,
+                "contact_email": v.contact_email or None,
             }
 
         if case.purchase_order:
@@ -474,6 +589,27 @@ class APCopilotService:
                     "accepted": rec.accepted,
                 }
 
+        # Validation issues (from VALIDATION_RESULT artifact, e.g. NON_PO cases)
+        from apps.cases.models import APCaseArtifact
+        val_artifact = (
+            APCaseArtifact.objects
+            .filter(case=case, artifact_type="VALIDATION_RESULT")
+            .order_by("-version", "-created_at")
+            .first()
+        )
+        if val_artifact and isinstance(val_artifact.payload, dict):
+            checks = val_artifact.payload.get("checks", {})
+            validation_issues = []
+            for check_name, check_data in checks.items():
+                status = check_data.get("status", "")
+                if status in ("FAIL", "WARNING"):
+                    validation_issues.append({
+                        "check_name": check_name.replace("_", " ").title(),
+                        "status": status,
+                        "message": check_data.get("message", ""),
+                    })
+            ctx["validation_issues"] = validation_issues
+
         if case.review_assignment:
             ra = case.review_assignment
             ctx["review"] = {
@@ -494,6 +630,10 @@ class APCopilotService:
     def build_case_evidence(case_id: int, user) -> Dict[str, Any]:
         """Build evidence cards for a case."""
         from apps.cases.models import APCase, APCaseArtifact, APCaseDecision
+
+        # Ownership check
+        if not APCopilotService._user_can_access_case(user, case_id):
+            return {"error": "Case not found"}
 
         case = APCase.objects.filter(pk=case_id).select_related(
             "invoice", "purchase_order", "reconciliation_result",
@@ -584,6 +724,9 @@ class APCopilotService:
         Only ADMIN and AUDITOR see the full governance block;
         other roles receive a filtered subset.
         """
+        if not APCopilotService._user_can_access_case(user, case_id):
+            return {"case_id": case_id, "permitted": False, "message": "Case not found."}
+
         primary_role = getattr(user, "role", "")
         has_governance = primary_role in GOVERNANCE_ROLES
         if hasattr(user, "has_permission"):
@@ -628,6 +771,8 @@ class APCopilotService:
     @staticmethod
     def build_case_timeline(case_id: int, user) -> Dict[str, Any]:
         """Delegate to existing CaseTimelineService."""
+        if not APCopilotService._user_can_access_case(user, case_id):
+            return {"case_id": case_id, "timeline": []}
         try:
             from apps.auditlog.timeline_service import CaseTimelineService
             from apps.cases.models import APCase
@@ -824,6 +969,8 @@ class APCopilotService:
 
         if topic == "overview":
             return APCopilotService._case_summary_overview(case_ref, context)
+        elif topic == "vendor":
+            return APCopilotService._case_summary_vendor(case_ref, context)
         elif topic == "invoice":
             return APCopilotService._case_summary_invoice(case_ref, context)
         elif topic == "reconciliation":
@@ -845,8 +992,12 @@ class APCopilotService:
 
     # Case-question classifier keywords
     _CASE_TOPIC_PATTERNS = [
+        ("vendor", [
+            "vendor", "supplier", "payment terms", "tax id",
+            "contact email", "vendor code", "vendor detail",
+        ]),
         ("invoice", [
-            "invoice", "amount", "vendor", "supplier", "extraction",
+            "invoice", "amount", "extraction",
             "confidence", "currency",
         ]),
         ("reconciliation", [
@@ -857,6 +1008,7 @@ class APCopilotService:
         ("exceptions", [
             "exception", "error", "discrepancy", "difference",
             "price mismatch", "quantity mismatch", "why",
+            "validation", "issue", "fail", "warning",
         ]),
         ("recommendation", [
             "recommendation", "suggest", "what should",
@@ -912,6 +1064,9 @@ class APCopilotService:
         exc = ctx.get("exceptions", [])
         if exc:
             parts.append(f"Exceptions: {len(exc)} found.")
+        val = ctx.get("validation_issues", [])
+        if val:
+            parts.append(f"Validation issues: {len(val)} found.")
         rec = ctx.get("recommendation")
         if rec:
             parts.append(f"Recommendation: *{rec.get('text', 'N/A')}*")
@@ -921,14 +1076,34 @@ class APCopilotService:
         return "\n\n".join(parts)
 
     @staticmethod
+    def _case_summary_vendor(case_ref: str, ctx: Dict) -> str:
+        vendor = ctx.get("vendor")
+        if not vendor:
+            return f"{case_ref} has no vendor linked yet."
+        parts = [f"**Vendor Details** for {case_ref}"]
+        parts.append(
+            f"- **Name**: {vendor.get('name', 'N/A')}\n"
+            f"- **Code**: {vendor.get('vendor_code', 'N/A')}\n"
+            f"- **Country**: {vendor.get('country', 'N/A')}\n"
+            f"- **Currency**: {vendor.get('currency', 'N/A')}\n"
+            f"- **Payment Terms**: {vendor.get('payment_terms', 'N/A')}\n"
+            f"- **Tax ID**: {vendor.get('tax_id', 'N/A')}\n"
+            f"- **Contact**: {vendor.get('contact_email', 'N/A')}\n"
+            f"- **Address**: {vendor.get('address', 'N/A')}"
+        )
+        return "\n\n".join(parts)
+
+    @staticmethod
     def _case_summary_invoice(case_ref: str, ctx: Dict) -> str:
         inv = ctx.get("invoice")
         if not inv:
             return f"{case_ref} has no invoice data available."
+        vendor = ctx.get("vendor", {})
+        vendor_name = vendor.get("name") or inv.get("vendor_name") or "Unknown Vendor"
         parts = [f"**Invoice Details** for {case_ref}"]
         parts.append(
             f"Invoice **{inv.get('invoice_number', 'N/A')}** was submitted by "
-            f"**{inv.get('vendor_name', 'Unknown Vendor')}**."
+            f"**{vendor_name}**."
         )
         parts.append(
             f"- **Amount**: {inv.get('currency', '')} {inv.get('amount', 'N/A')}\n"
@@ -968,25 +1143,41 @@ class APCopilotService:
     @staticmethod
     def _case_summary_exceptions(case_ref: str, ctx: Dict) -> str:
         exceptions = ctx.get("exceptions", [])
-        if not exceptions:
+        validation_issues = ctx.get("validation_issues", [])
+        if not exceptions and not validation_issues:
             return f"{case_ref} has no exceptions recorded."
+
         parts = [f"**Exception Analysis** for {case_ref}"]
-        parts.append(f"There are **{len(exceptions)}** exception(s) on this case:")
-        for e in exceptions:
-            severity = e.get("severity", "N/A")
-            etype = e.get("exception_type", "N/A")
-            desc = e.get("description", "")
-            field = e.get("field_name", "")
-            expected = e.get("expected_value", "")
-            actual = e.get("actual_value", "")
-            line = f"- **{etype}** ({severity})"
-            if field:
-                line += f": field `{field}`"
-            if expected and actual:
-                line += f" — expected **{expected}**, got **{actual}**"
-            if desc:
-                line += f"\n  {desc}"
-            parts.append(line)
+
+        if exceptions:
+            parts.append(f"There are **{len(exceptions)}** reconciliation exception(s):")
+            for e in exceptions:
+                severity = e.get("severity", "N/A")
+                etype = e.get("exception_type", "N/A")
+                msg = e.get("message", "") or e.get("description", "")
+                field = e.get("field_name", "")
+                expected = e.get("expected_value", "")
+                actual = e.get("actual_value", "")
+                line = f"- **{etype}** ({severity})"
+                if field:
+                    line += f": field `{field}`"
+                if expected and actual:
+                    line += f" — expected **{expected}**, got **{actual}**"
+                if msg:
+                    line += f"\n  {msg}"
+                parts.append(line)
+
+        if validation_issues:
+            parts.append(f"There are **{len(validation_issues)}** validation issue(s):")
+            for v in validation_issues:
+                status = v.get("status", "N/A")
+                name = v.get("check_name", "N/A")
+                msg = v.get("message", "")
+                line = f"- **{name}** ({status})"
+                if msg:
+                    line += f": {msg}"
+                parts.append(line)
+
         return "\n\n".join(parts)
 
     @staticmethod
@@ -1140,36 +1331,37 @@ class APCopilotService:
 
     @staticmethod
     def _build_system_context(user) -> Dict[str, Any]:
-        """Gather system-wide aggregate data for general queries."""
+        """Gather system-wide aggregate data for general queries (scoped to user access)."""
         from django.db.models import Count, Q, Sum
 
-        from apps.cases.models import APCase
-        from apps.documents.models import Invoice
-        from apps.reconciliation.models import ReconciliationResult
-        from apps.reviews.models import ReviewAssignment
+        # Use scoped querysets
+        recon_qs = APCopilotService._scoped_recon_results(user)
+        case_qs = APCopilotService._scoped_cases(user)
+        invoice_qs = APCopilotService._scoped_invoices(user)
+        review_qs = APCopilotService._scoped_reviews(user)
 
         # Reconciliation breakdown
         match_counts = dict(
-            ReconciliationResult.objects.values_list("match_status")
+            recon_qs.values_list("match_status")
             .annotate(c=Count("id"))
         )
         total_results = sum(match_counts.values())
 
         # Case status breakdown
         case_counts = dict(
-            APCase.objects.values_list("status")
+            case_qs.values_list("status")
             .annotate(c=Count("id"))
         )
         total_cases = sum(case_counts.values())
 
         # Invoice stats
-        total_invoices = Invoice.objects.count()
-        pending_invoices = Invoice.objects.filter(
+        total_invoices = invoice_qs.count()
+        pending_invoices = invoice_qs.filter(
             status__in=["UPLOADED", "EXTRACTION_IN_PROGRESS", "EXTRACTED"],
         ).count()
 
         # Review stats
-        pending_reviews = ReviewAssignment.objects.filter(
+        pending_reviews = review_qs.filter(
             status__in=["PENDING", "ASSIGNED", "IN_REVIEW"],
         ).count()
 
@@ -1177,13 +1369,13 @@ class APCopilotService:
         action_statuses = [
             "READY_FOR_REVIEW", "ESCALATED", "EXCEPTION_ANALYSIS_IN_PROGRESS",
         ]
-        cases_needing_action = APCase.objects.filter(
+        cases_needing_action = case_qs.filter(
             status__in=action_statuses,
         ).count()
 
         # Recent high-priority cases
         recent_cases = list(
-            APCase.objects.filter(status__in=action_statuses)
+            case_qs.filter(status__in=action_statuses)
             .order_by("-created_at")[:5]
             .values("id", "case_number", "status", "priority")
         )
@@ -1317,6 +1509,20 @@ class APCopilotService:
 
     # Keyword → topic mapping. Order matters: first match wins.
     _TOPIC_PATTERNS = [
+        ("greeting", [
+            "hi", "hello", "hey", "good morning", "good afternoon",
+            "good evening", "howdy", "greetings", "yo", "sup",
+            "what's up", "whats up",
+        ]),
+        ("thanks", [
+            "thank", "thanks", "thank you", "thx", "cheers",
+            "appreciate", "great job", "well done", "nice",
+        ]),
+        ("help", [
+            "help", "what can you do", "how do i", "how to",
+            "what do you", "capabilities", "features",
+            "guide me", "assist", "support",
+        ]),
         ("agent_performance", [
             "agent performance", "agent metric", "agent stats",
             "agent run", "agent success", "agent fail",
@@ -1348,13 +1554,23 @@ class APCopilotService:
         ]),
     ]
 
+    # Topics where short keywords need word-boundary matching to avoid
+    # false positives (e.g. "hi" matching inside "think").
+    _WORD_BOUNDARY_TOPICS = {"greeting", "thanks", "help"}
+
     @staticmethod
     def _classify_question(question: str) -> str:
         """Classify a free-text question into a topic."""
-        q = question.lower()
+        q = question.lower().strip()
         for topic, keywords in APCopilotService._TOPIC_PATTERNS:
-            if any(kw in q for kw in keywords):
-                return topic
+            use_boundary = topic in APCopilotService._WORD_BOUNDARY_TOPICS
+            for kw in keywords:
+                if use_boundary:
+                    if re.search(r'\b' + re.escape(kw) + r'\b', q):
+                        return topic
+                else:
+                    if kw in q:
+                        return topic
         return "reconciliation"  # default topic
 
     @staticmethod
@@ -1366,6 +1582,9 @@ class APCopilotService:
     ) -> Dict[str, Any]:
         """Route to the correct topic handler and return structured result."""
         handlers = {
+            "greeting": APCopilotService._topic_greeting,
+            "thanks": APCopilotService._topic_thanks,
+            "help": APCopilotService._topic_help,
             "agent_performance": APCopilotService._topic_agent_performance,
             "exceptions": APCopilotService._topic_exceptions,
             "reviews": APCopilotService._topic_reviews,
@@ -1377,16 +1596,84 @@ class APCopilotService:
         handler = handlers.get(topic, APCopilotService._topic_reconciliation)
         return handler(user, role)
 
+    # ── Topic: Greeting / Thanks / Help ──
+
+    @staticmethod
+    def _topic_greeting(user, role: str) -> Dict[str, Any]:
+        """Respond to greetings with a friendly welcome."""
+        first_name = getattr(user, "first_name", "") or "there"
+        role_label = (role or "user").replace("_", " ").title()
+        prompts = ROLE_PROMPTS.get(role, ROLE_PROMPTS.get("AP_PROCESSOR", []))
+        summary = (
+            f"**Hello, {first_name}!** 👋\n\n"
+            f"I'm your AP Copilot — here to help you investigate invoices, "
+            f"cases, reconciliation results, and more.\n\n"
+            f"You can ask me about:\n"
+            f"- 📄 **Invoices** — status, pipeline, extraction details\n"
+            f"- 🔄 **Reconciliation** — match rates, exceptions, results\n"
+            f"- 📋 **Cases** — open cases, escalations, priorities\n"
+            f"- 👥 **Reviews** — pending reviews, assignments\n"
+            f"- 🏢 **Vendors** — vendor performance, breakdowns\n"
+            f"- 🤖 **Agents** — agent performance, tool usage\n\n"
+            f"Try one of the suggested prompts below, or just ask a question!"
+        )
+        return {
+            "summary": summary,
+            "evidence": [],
+            "follow_ups": prompts,
+        }
+
+    @staticmethod
+    def _topic_thanks(user, role: str) -> Dict[str, Any]:
+        """Respond to thank-you messages."""
+        first_name = getattr(user, "first_name", "") or "there"
+        prompts = ROLE_PROMPTS.get(role, ROLE_PROMPTS.get("AP_PROCESSOR", []))
+        summary = (
+            f"You're welcome, {first_name}! 😊\n\n"
+            f"Let me know if there's anything else I can help with. "
+            f"Here are some things you can ask about:"
+        )
+        return {
+            "summary": summary,
+            "evidence": [],
+            "follow_ups": prompts,
+        }
+
+    @staticmethod
+    def _topic_help(user, role: str) -> Dict[str, Any]:
+        """Respond to help/capability questions."""
+        prompts = ROLE_PROMPTS.get(role, ROLE_PROMPTS.get("AP_PROCESSOR", []))
+        summary = (
+            "**What I can help you with:**\n\n"
+            "🔍 **Case Investigation** — Link a case to get deep analysis including "
+            "invoice details, reconciliation results, exceptions, agent recommendations, "
+            "and governance audit trails.\n\n"
+            "📊 **System Insights** (no case needed) — Ask me about:\n"
+            "- **Reconciliation overview** — match rates, status breakdown\n"
+            "- **Exception analysis** — common mismatches, trends\n"
+            "- **Invoice pipeline** — upload status, extraction progress\n"
+            "- **Case workload** — open/escalated cases, priorities\n"
+            "- **Review queue** — pending reviews, assignments\n"
+            "- **Vendor analytics** — vendor-level performance\n"
+            "- **Agent performance** — AI agent metrics, success rates\n\n"
+            "💡 **Tip:** Link a case using the search button above for the most "
+            "detailed analysis. Without a case, I'll give you system-wide summaries."
+        )
+        return {
+            "summary": summary,
+            "evidence": [],
+            "follow_ups": prompts,
+        }
+
     # ── Topic: Agent Performance ──
 
     @staticmethod
     def _topic_agent_performance(user, role: str) -> Dict[str, Any]:
         from django.db.models import Avg, Count
 
-        from apps.agents.models import AgentRun
         from apps.tools.models import ToolCall
 
-        runs = AgentRun.objects.all()
+        runs = APCopilotService._scoped_agent_runs(user)
         total_runs = runs.count()
         status_counts = dict(
             runs.values_list("status").annotate(c=Count("id"))
@@ -1395,7 +1682,9 @@ class APCopilotService:
             runs.values_list("agent_type").annotate(c=Count("id"))
         )
         avg_duration = runs.aggregate(avg=Avg("duration_ms"))["avg"]
-        total_tool_calls = ToolCall.objects.count()
+        total_tool_calls = ToolCall.objects.filter(
+            agent_run__in=runs,
+        ).count() if APCopilotService._is_scoped_role(user) or APCopilotService._is_reviewer(user) else ToolCall.objects.count()
 
         completed = status_counts.get("COMPLETED", 0)
         failed = status_counts.get("FAILED", 0)
@@ -1459,15 +1748,14 @@ class APCopilotService:
     def _topic_exceptions(user, role: str) -> Dict[str, Any]:
         from django.db.models import Count
 
-        from apps.reconciliation.models import ReconciliationException
-
+        exc_qs = APCopilotService._scoped_exceptions(user)
         exc_counts = dict(
-            ReconciliationException.objects.values_list("exception_type")
+            exc_qs.values_list("exception_type")
             .annotate(c=Count("id"))
         )
         total_exc = sum(exc_counts.values())
         sev_counts = dict(
-            ReconciliationException.objects.values_list("severity")
+            exc_qs.values_list("severity")
             .annotate(c=Count("id"))
         )
 
@@ -1507,10 +1795,9 @@ class APCopilotService:
     def _topic_reviews(user, role: str) -> Dict[str, Any]:
         from django.db.models import Count
 
-        from apps.reviews.models import ReviewAssignment
-
+        review_qs = APCopilotService._scoped_reviews(user)
         status_counts = dict(
-            ReviewAssignment.objects.values_list("status")
+            review_qs.values_list("status")
             .annotate(c=Count("id"))
         )
         total_reviews = sum(status_counts.values())
@@ -1560,17 +1847,26 @@ class APCopilotService:
         from django.db.models import Count
 
         from apps.documents.models import Invoice, PurchaseOrder
-        from apps.vendors.models import Vendor
 
-        total_vendors = Vendor.objects.filter(is_active=True).count()
+        vendor_qs = APCopilotService._scoped_vendors(user)
+        invoice_qs = APCopilotService._scoped_invoices(user)
+        total_vendors = vendor_qs.count()
         top_by_invoices = list(
-            Invoice.objects.exclude(vendor__isnull=True)
+            invoice_qs.exclude(vendor__isnull=True)
             .values("vendor__name")
             .annotate(inv_count=Count("id"))
             .order_by("-inv_count")[:5]
         )
+        # POs scoped via user's invoices
+        po_qs = PurchaseOrder.objects.all()
+        if APCopilotService._is_scoped_role(user):
+            user_po_numbers = (
+                invoice_qs.exclude(po_number="")
+                .values_list("po_number", flat=True)
+            )
+            po_qs = po_qs.filter(po_number__in=user_po_numbers)
         top_by_pos = list(
-            PurchaseOrder.objects.exclude(vendor__isnull=True)
+            po_qs.exclude(vendor__isnull=True)
             .values("vendor__name")
             .annotate(po_count=Count("id"))
             .order_by("-po_count")[:5]
@@ -1612,10 +1908,9 @@ class APCopilotService:
     def _topic_invoices(user, role: str) -> Dict[str, Any]:
         from django.db.models import Count
 
-        from apps.documents.models import Invoice
-
+        invoice_qs = APCopilotService._scoped_invoices(user)
         status_counts = dict(
-            Invoice.objects.values_list("status")
+            invoice_qs.values_list("status")
             .annotate(c=Count("id"))
         )
         total = sum(status_counts.values())
@@ -1650,20 +1945,19 @@ class APCopilotService:
     def _topic_cases(user, role: str) -> Dict[str, Any]:
         from django.db.models import Count
 
-        from apps.cases.models import APCase
-
+        case_qs = APCopilotService._scoped_cases(user)
         status_counts = dict(
-            APCase.objects.values_list("status")
+            case_qs.values_list("status")
             .annotate(c=Count("id"))
         )
         total = sum(status_counts.values())
         priority_counts = dict(
-            APCase.objects.values_list("priority")
+            case_qs.values_list("priority")
             .annotate(c=Count("id"))
         )
 
         attention_cases = list(
-            APCase.objects.filter(
+            case_qs.filter(
                 status__in=["ESCALATED", "READY_FOR_REVIEW", "EXCEPTION_ANALYSIS_IN_PROGRESS"],
             ).order_by("-created_at")[:5]
             .values("id", "case_number", "status", "priority")

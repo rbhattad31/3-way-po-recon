@@ -12,12 +12,25 @@ from apps.copilot.serializers import (
     StartSessionRequestSerializer,
 )
 from apps.copilot.services.copilot_service import APCopilotService
+from apps.core.permissions import _has_permission_code
+
+
+def _check_copilot_access(user) -> bool:
+    """Return True if user has copilot access."""
+    return _has_permission_code(user, "agents.use_copilot")
+
+
+def _check_case_access(user) -> bool:
+    """Return True if user has cases.view permission."""
+    return _has_permission_code(user, "cases.view")
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def session_start(request):
     """POST /api/v1/copilot/session/start/ — start or resume a session."""
+    if not _check_copilot_access(request.user):
+        return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
     ser = StartSessionRequestSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
     session = APCopilotService.start_session(
@@ -87,6 +100,8 @@ def session_messages(request, session_id):
 @permission_classes([IsAuthenticated])
 def chat(request):
     """POST /api/v1/copilot/chat/ — send a message and receive a structured response."""
+    if not _check_copilot_access(request.user):
+        return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
     ser = ChatRequestSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
 
@@ -120,7 +135,11 @@ def chat(request):
 @permission_classes([IsAuthenticated])
 def case_context(request, case_id):
     """GET /api/v1/copilot/case/<case_id>/context/"""
+    if not _check_case_access(request.user):
+        return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
     data = APCopilotService.build_case_context(case_id, request.user)
+    if data.get("error"):
+        return Response(data, status=status.HTTP_404_NOT_FOUND)
     return Response(data)
 
 
@@ -128,6 +147,8 @@ def case_context(request, case_id):
 @permission_classes([IsAuthenticated])
 def case_timeline(request, case_id):
     """GET /api/v1/copilot/case/<case_id>/timeline/"""
+    if not _check_case_access(request.user):
+        return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
     data = APCopilotService.build_case_timeline(case_id, request.user)
     return Response(data)
 
@@ -136,7 +157,11 @@ def case_timeline(request, case_id):
 @permission_classes([IsAuthenticated])
 def case_evidence(request, case_id):
     """GET /api/v1/copilot/case/<case_id>/evidence/"""
+    if not _check_case_access(request.user):
+        return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
     data = APCopilotService.build_case_evidence(case_id, request.user)
+    if data.get("error"):
+        return Response(data, status=status.HTTP_404_NOT_FOUND)
     return Response(data)
 
 
@@ -144,6 +169,8 @@ def case_evidence(request, case_id):
 @permission_classes([IsAuthenticated])
 def case_governance(request, case_id):
     """GET /api/v1/copilot/case/<case_id>/governance/"""
+    if not _check_case_access(request.user):
+        return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
     data = APCopilotService.build_case_governance(case_id, request.user)
     return Response(data)
 
@@ -160,6 +187,8 @@ def suggestions(request):
 @permission_classes([IsAuthenticated])
 def case_search(request):
     """GET /api/v1/copilot/cases/search/?q=<query> — search cases for linking."""
+    if not _check_case_access(request.user):
+        return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
     q = request.query_params.get("q", "").strip()
     results = APCopilotService.search_cases(request.user, q)
     return Response({"results": results})
