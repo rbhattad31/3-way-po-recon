@@ -354,10 +354,15 @@ class APCopilotService:
     @staticmethod
     def list_sessions(user, include_archived: bool = False) -> models.QuerySet:
         """Return sessions for this user, newest first."""
+        from django.db.models.functions import Coalesce
+
         qs = CopilotSession.objects.filter(user=user)
         if not include_archived:
             qs = qs.filter(is_archived=False)
-        return qs.select_related("linked_case", "linked_invoice")
+        return qs.select_related("linked_case", "linked_invoice").order_by(
+            "-is_pinned",
+            Coalesce("last_message_at", "created_at").desc(),
+        )
 
     @staticmethod
     def get_session_detail(user, session_id: str) -> Optional[CopilotSession]:
