@@ -218,3 +218,4 @@ seed_softnet.py
 
 pdfs/
 seed_three_way_pdfs.py
+fix_nadec_auto_close.py
