@@ -406,9 +406,9 @@ def case_agent_view(request, pk):
 
     invoice = case.invoice
     po = case.purchase_order
-    stages = list(case.stages.order_by("created_at"))
-    decisions = list(case.decisions.order_by("created_at"))
-    comments = list(case.comments.select_related("author").order_by("created_at"))
+    stages = list(case.stages.order_by("-created_at"))
+    decisions = list(case.decisions.order_by("-created_at"))
+    comments = list(case.comments.select_related("author").order_by("-created_at"))
 
     # GRNs linked to PO
     grns = []

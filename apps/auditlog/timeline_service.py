@@ -371,8 +371,8 @@ class CaseTimelineService:
                 },
             })
 
-        # Sort by timestamp
-        timeline.sort(key=lambda x: x["timestamp"])
+        # Sort by timestamp (latest first)
+        timeline.sort(key=lambda x: x["timestamp"], reverse=True)
         return timeline
 
     @staticmethod
