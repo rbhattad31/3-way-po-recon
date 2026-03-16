@@ -99,6 +99,7 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
                         assigned_by=request.user,
                     )
                     RBACEventService.log_role_assigned(user, initial_role, request.user, is_primary=True)
+                RBACEventService.log_user_created(user, request.user)
             messages.success(request, f"User '{user.email}' created.")
             return redirect("accounts:user_detail", pk=user.pk)
         return self.render_to_response({"form": form})
@@ -165,12 +166,25 @@ class UserDetailView(PermissionRequiredMixin, DetailView):
 
     def _handle_profile_update(self, request):
         user = self.object
+        old_values = {
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "department": getattr(user, "department", ""),
+        }
+        old_active = user.is_active
         form = UserProfileForm(request.POST, instance=user)
         if form.is_valid():
-            old_active = user.is_active
             form.save()
             if old_active != user.is_active:
                 RBACEventService.log_user_status_change(user, user.is_active, request.user)
+            # Log profile field changes
+            new_values = {
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "department": getattr(user, "department", ""),
+            }
+            if old_values != new_values:
+                RBACEventService.log_user_updated(user, old_values, request.user)
             messages.success(request, "Profile updated.")
         else:
             for err in form.errors.values():
@@ -291,9 +305,11 @@ class UserDetailView(PermissionRequiredMixin, DetailView):
         user = self.object
         ov_id = request.POST.get("override_id")
         ov = get_object_or_404(UserPermissionOverride, id=ov_id, user=user)
+        perm_code = ov.permission.code
         ov.is_active = False
         ov.save(update_fields=["is_active", "updated_at"])
         user.clear_permission_cache()
+        RBACEventService.log_override_removed(user, perm_code, request.user)
         messages.success(request, "Override removed.")
         return redirect("accounts:user_detail", pk=user.pk)
 

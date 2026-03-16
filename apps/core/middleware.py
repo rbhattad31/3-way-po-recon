@@ -13,6 +13,7 @@ class LoginRequiredMiddleware:
         "/accounts/login/",
         "/accounts/logout/",
         "/api/",
+        "/health/",
     ]
 
     def __init__(self, get_response):

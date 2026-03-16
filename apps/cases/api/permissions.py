@@ -35,10 +35,10 @@ class CanAssignCase(BasePermission):
 
 
 class CanUseCopilot(BasePermission):
-    """Reviewers, Finance Managers, Admins, and Auditors can use copilot."""
+    """AP Processors, Reviewers, Finance Managers, Admins, and Auditors can use copilot."""
 
     ALLOWED_ROLES = {
-        UserRole.REVIEWER, UserRole.FINANCE_MANAGER,
+        UserRole.AP_PROCESSOR, UserRole.REVIEWER, UserRole.FINANCE_MANAGER,
         UserRole.ADMIN, UserRole.AUDITOR,
     }
 

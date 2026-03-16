@@ -1,0 +1,147 @@
+{# Right panel — case context summary #}
+{% load static %}
+
+<div class="copilot-context-inner">
+  <div class="copilot-context-header">
+    <h6 class="mb-0"><i class="bi bi-briefcase me-2"></i>Case Context</h6>
+    <button class="btn btn-sm btn-outline-secondary" id="btnCloseContext" title="Close panel">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+
+  {% if ctx.case %}
+  {# Case summary card #}
+  <div class="copilot-ctx-card">
+    <div class="copilot-ctx-card-title">Case Summary</div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Case</span>
+      <span class="copilot-ctx-value fw-semibold">{{ ctx.case.case_number }}</span>
+    </div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Status</span>
+      <span class="badge bg-primary-subtle text-primary-emphasis">{{ ctx.case.status }}</span>
+    </div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Priority</span>
+      <span>{{ ctx.case.priority }}</span>
+    </div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Path</span>
+      <span>{{ ctx.case.processing_path }}</span>
+    </div>
+  </div>
+
+  {# Invoice snapshot #}
+  {% if ctx.invoice %}
+  <div class="copilot-ctx-card">
+    <div class="copilot-ctx-card-title"><i class="bi bi-file-earmark-text me-1"></i>Invoice</div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Number</span>
+      <span>{{ ctx.invoice.invoice_number }}</span>
+    </div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Amount</span>
+      <span>{{ ctx.invoice.currency }} {{ ctx.invoice.amount }}</span>
+    </div>
+    {% if ctx.invoice.extraction_confidence %}
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Confidence</span>
+      <div class="progress copilot-confidence-bar" style="width:80px;height:6px;">
+        <div class="progress-bar" style="width:{% widthratio ctx.invoice.extraction_confidence 1 100 %}%"></div>
+      </div>
+      <span class="small text-muted">{% widthratio ctx.invoice.extraction_confidence 1 100 %}%</span>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# PO snapshot #}
+  {% if ctx.purchase_order %}
+  <div class="copilot-ctx-card">
+    <div class="copilot-ctx-card-title"><i class="bi bi-cart-check me-1"></i>Purchase Order</div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">PO</span>
+      <span>{{ ctx.purchase_order.po_number }}</span>
+    </div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Amount</span>
+      <span>{{ ctx.purchase_order.total_amount }}</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {# Reconciliation #}
+  {% if ctx.reconciliation %}
+  <div class="copilot-ctx-card">
+    <div class="copilot-ctx-card-title"><i class="bi bi-check2-square me-1"></i>Reconciliation</div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Match</span>
+      <span class="badge
+        {% if ctx.reconciliation.match_status_code == 'MATCHED' %}bg-success-subtle text-success-emphasis
+        {% elif ctx.reconciliation.match_status_code == 'PARTIAL_MATCH' %}bg-warning-subtle text-warning-emphasis
+        {% elif ctx.reconciliation.match_status_code == 'UNMATCHED' %}bg-danger-subtle text-danger-emphasis
+        {% else %}bg-secondary-subtle text-secondary-emphasis{% endif %}">
+        {{ ctx.reconciliation.match_status }}
+      </span>
+    </div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Mode</span>
+      <span>{{ ctx.reconciliation.reconciliation_mode }}</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {# Exceptions #}
+  {% if ctx.exceptions %}
+  <div class="copilot-ctx-card">
+    <div class="copilot-ctx-card-title"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions ({{ ctx.exceptions|length }})</div>
+    {% for exc in ctx.exceptions %}
+    <div class="copilot-exception-item">
+      <span class="badge
+        {% if exc.severity == 'CRITICAL' %}bg-danger
+        {% elif exc.severity == 'HIGH' %}bg-warning text-dark
+        {% elif exc.severity == 'MEDIUM' %}bg-info
+        {% else %}bg-secondary{% endif %}">{{ exc.severity }}</span>
+      <span class="small">{{ exc.exception_type }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# Recommendation #}
+  {% if ctx.recommendation %}
+  <div class="copilot-ctx-card copilot-ctx-recommendation">
+    <div class="copilot-ctx-card-title"><i class="bi bi-lightbulb me-1"></i>Recommendation</div>
+    <p class="small mb-1">{{ ctx.recommendation.text }}</p>
+    {% if ctx.recommendation.confidence %}
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Confidence</span>
+      <span>{% widthratio ctx.recommendation.confidence 1 100 %}%</span>
+    </div>
+    {% endif %}
+    <div class="text-muted small fst-italic">Read-only guidance</div>
+  </div>
+  {% endif %}
+
+  {# Review #}
+  {% if ctx.review %}
+  <div class="copilot-ctx-card">
+    <div class="copilot-ctx-card-title"><i class="bi bi-person-check me-1"></i>Review</div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Status</span>
+      <span>{{ ctx.review.status }}</span>
+    </div>
+    <div class="copilot-ctx-row">
+      <span class="copilot-ctx-label">Reviewer</span>
+      <span>{{ ctx.review.assigned_to|default:"Unassigned" }}</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="copilot-context-empty">
+    <i class="bi bi-info-circle"></i>
+    <p>No case data available.</p>
+  </div>
+  {% endif %}
+</div>

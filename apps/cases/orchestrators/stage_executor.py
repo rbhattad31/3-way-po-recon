@@ -81,26 +81,98 @@ class StageExecutor:
     @staticmethod
     def _execute_extraction(case: APCase) -> Dict:
         """
-        Extraction stage: delegates to existing extraction pipeline.
+        Extraction stage: records quality and runs Invoice Understanding Agent
+        for low-confidence extractions.
 
-        The actual extraction (Azure DI + GPT-4o) is triggered via the existing
-        extraction task. This stage monitors completion and validates quality.
+        The Invoice Extraction Agent (OCR + GPT-4o) has already run in the
+        extraction task.  Here we capture confidence and, if it is below
+        threshold, invoke the Invoice Understanding Agent to validate.
         """
-        # Extraction is typically already done by the time orchestrator runs
-        # (triggered separately by upload task). We validate the output here.
+        from apps.core.constants import EXTRACTION_CONFIDENCE_THRESHOLD
+
         invoice = case.invoice
+        confidence = float(invoice.extraction_confidence or 0)
 
         output = {
             "invoice_id": invoice.id,
-            "extraction_confidence": invoice.extraction_confidence,
+            "extraction_confidence": confidence,
             "status": invoice.status,
         }
 
-        case.extraction_confidence = invoice.extraction_confidence
+        case.extraction_confidence = confidence
         case.save(update_fields=["extraction_confidence", "updated_at"])
+
+        # Low confidence → run Invoice Understanding Agent to validate
+        if confidence < EXTRACTION_CONFIDENCE_THRESHOLD:
+            agent_output = StageExecutor._run_invoice_understanding_agent(case)
+            output["agent_analysis"] = agent_output
 
         CaseStateMachine.transition(case, CaseStatus.EXTRACTION_COMPLETED, PerformedByType.SYSTEM)
         return output
+
+    @staticmethod
+    def _run_invoice_understanding_agent(case: APCase) -> Dict:
+        """Invoke the Invoice Understanding Agent to validate low-confidence extraction."""
+        try:
+            from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
+            from apps.agents.services.base_agent import AgentContext
+            from apps.core.enums import AgentRunStatus, AgentType
+            from apps.reconciliation.models import ReconciliationConfig
+
+            # Respect the enable_agents config flag
+            config = ReconciliationConfig.objects.filter(is_default=True).first()
+            if config and not config.enable_agents:
+                logger.info("Agents disabled — skipping Invoice Understanding for case %s", case.case_number)
+                return {"skipped": True, "reason": "agents_disabled"}
+
+            agent_cls = AGENT_CLASS_REGISTRY.get(AgentType.INVOICE_UNDERSTANDING)
+            if not agent_cls:
+                logger.warning("Invoice Understanding Agent class not found in registry")
+                return {"skipped": True, "reason": "agent_not_registered"}
+
+            invoice = case.invoice
+            ctx = AgentContext(
+                reconciliation_result=None,
+                invoice_id=invoice.pk,
+                po_number=invoice.po_number,
+                extra={
+                    "extraction_confidence": float(invoice.extraction_confidence or 0),
+                    "vendor_name": invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name,
+                    "total_amount": str(invoice.total_amount) if invoice.total_amount else "unknown",
+                    "case_number": case.case_number,
+                    "stage": "extraction_validation",
+                },
+            )
+
+            agent = agent_cls()
+            agent_run = agent.run(ctx)
+
+            if agent_run.status != AgentRunStatus.COMPLETED:
+                logger.warning(
+                    "Invoice Understanding Agent did not complete for case %s: status=%s",
+                    case.case_number, agent_run.status,
+                )
+                return {"completed": False, "agent_run_id": agent_run.pk}
+
+            output = agent_run.output_payload or {}
+            recommendation = output.get("recommendation_type", "")
+            confidence = output.get("confidence", 0)
+
+            logger.info(
+                "Invoice Understanding Agent for case %s: recommendation=%s confidence=%.2f",
+                case.case_number, recommendation, confidence,
+            )
+            return {
+                "completed": True,
+                "agent_run_id": agent_run.pk,
+                "recommendation": recommendation,
+                "confidence": confidence,
+                "reasoning": output.get("reasoning", ""),
+            }
+
+        except Exception:
+            logger.exception("Invoice Understanding Agent error for case %s", case.case_number)
+            return {"completed": False, "error": True}
 
     @staticmethod
     def _execute_path_resolution(case: APCase) -> Dict:
@@ -324,6 +396,8 @@ class StageExecutor:
 
             orchestrator = AgentOrchestrator()
             orch_result = orchestrator.execute(case.reconciliation_result)
+            # Note: request_user omitted — stage executor runs inside Celery
+            # or system context, so the orchestrator resolves to system-agent.
 
             if orch_result.final_recommendation == "AUTO_CLOSE":
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.AGENT)

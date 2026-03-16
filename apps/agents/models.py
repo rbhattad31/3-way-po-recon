@@ -70,6 +70,12 @@ class AgentRun(BaseModel):
     permission_checked = models.CharField(max_length=100, blank=True, default="")
     cost_estimate = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
 
+    # RBAC context (populated by guardrails layer)
+    actor_primary_role = models.CharField(max_length=50, blank=True, default="")
+    actor_roles_snapshot_json = models.JSONField(null=True, blank=True, help_text="Role codes at execution time")
+    permission_source = models.CharField(max_length=50, blank=True, default="", help_text="ROLE | SYSTEM_AGENT | USER | ADMIN_BYPASS")
+    access_granted = models.BooleanField(null=True, blank=True, help_text="Whether guardrail granted access")
+
     # LLM usage tracking
     llm_model_used = models.CharField(max_length=100, blank=True, default="")
     prompt_tokens = models.PositiveIntegerField(null=True, blank=True)

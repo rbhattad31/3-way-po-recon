@@ -49,8 +49,13 @@ class POLookupService:
                 logger.info("PO found (normalized) for invoice %s: PO %s", invoice.pk, po.po_number)
                 return POLookupResult(found=True, purchase_order=po, lookup_method="normalized")
 
-        # Fallback: deterministic vendor + amount discovery
-        if not skip_vendor_amount:
+        # Fallback: deterministic vendor + amount discovery.
+        # Only attempt this when the invoice has NO extracted PO number at all.
+        # If the invoice *has* a PO number but it didn't match (OCR noise,
+        # transposed digits, etc.), we deliberately return not_found so the
+        # PO_RETRIEVAL agent can handle the fuzzy matching.
+        has_po_reference = bool(invoice.po_number or invoice.raw_po_number)
+        if not skip_vendor_amount and not has_po_reference:
             result = self._discover_by_vendor_amount(invoice)
             if result.found:
                 return result

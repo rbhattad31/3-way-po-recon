@@ -1,0 +1,423 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Agent Governance Dashboard{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/agent-governance-dashboard.css' %}" rel="stylesheet">
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.82rem">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active">Agent Governance</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="ag-gov-dashboard">
+
+  {# ═══════════ Header ═══════════ #}
+  <div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+      <h4 class="fw-bold mb-1"><i class="bi bi-shield-lock me-2 text-primary"></i>Agent Governance Dashboard</h4>
+      <p class="text-muted mb-0" style="font-size:.82rem">RBAC coverage, authorization monitoring &amp; compliance</p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <span id="govLastRefreshed" class="text-muted" style="font-size:.75rem"></span>
+      <button class="btn btn-sm btn-outline-primary" onclick="window.AGDashboard.refreshAll()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+      </button>
+    </div>
+  </div>
+
+  {# ═══════════ Filter Bar ═══════════ #}
+  <div class="ag-filter-bar card border-0 shadow-sm mb-4">
+    <div class="card-body py-2 px-3">
+      <div class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label mb-0" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em">From</label>
+          <input type="date" id="govFilterDateFrom" class="form-control form-control-sm">
+        </div>
+        <div class="col-auto">
+          <label class="form-label mb-0" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em">To</label>
+          <input type="date" id="govFilterDateTo" class="form-control form-control-sm">
+        </div>
+        <div class="col-auto">
+          <label class="form-label mb-0" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em">Agent</label>
+          <select id="govFilterAgentType" class="form-select form-select-sm">
+            <option value="">All Agents</option>
+            {% for value, label in agent_types %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label mb-0" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em">Role</label>
+          <select id="govFilterRole" class="form-select form-select-sm">
+            <option value="">All Roles</option>
+            <option value="ADMIN">Admin</option>
+            <option value="AP_PROCESSOR">AP Processor</option>
+            <option value="REVIEWER">Reviewer</option>
+            <option value="FINANCE_MANAGER">Finance Manager</option>
+            <option value="AUDITOR">Auditor</option>
+            <option value="SYSTEM_AGENT">System Agent</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label mb-0" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em">Permission</label>
+          <input type="text" id="govFilterPermission" class="form-control form-control-sm" placeholder="e.g. agents.run_*">
+        </div>
+        <div class="col-auto">
+          <label class="form-label mb-0" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em">Trace ID</label>
+          <input type="text" id="govFilterTraceId" class="form-control form-control-sm" placeholder="Search trace…">
+        </div>
+        <div class="col-auto d-flex align-items-end gap-2">
+          <button class="btn btn-sm btn-primary" onclick="window.AGDashboard.applyFilters()">
+            <i class="bi bi-funnel me-1"></i>Apply
+          </button>
+          <button class="btn btn-sm btn-outline-secondary" onclick="window.AGDashboard.clearFilters()">Clear</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ═══════════ A. Governance KPI Strip ═══════════ #}
+  <div class="row g-3 mb-4" id="govKpiStrip">
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ag-kpi-card">
+        <div class="ag-kpi-icon bg-primary bg-opacity-10 text-primary"><i class="bi bi-shield-check"></i></div>
+        <div class="ag-kpi-body">
+          <div class="ag-kpi-value" id="govKpiRbacCoverage">—</div>
+          <div class="ag-kpi-label">RBAC Coverage</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ag-kpi-card">
+        <div class="ag-kpi-icon bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle-fill"></i></div>
+        <div class="ag-kpi-body">
+          <div class="ag-kpi-value" id="govKpiGranted">—</div>
+          <div class="ag-kpi-label">Access Granted</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ag-kpi-card">
+        <div class="ag-kpi-icon bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle-fill"></i></div>
+        <div class="ag-kpi-body">
+          <div class="ag-kpi-value" id="govKpiDenied">—</div>
+          <div class="ag-kpi-label">Access Denied</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ag-kpi-card">
+        <div class="ag-kpi-icon bg-info bg-opacity-10 text-info"><i class="bi bi-diagram-3-fill"></i></div>
+        <div class="ag-kpi-body">
+          <div class="ag-kpi-value" id="govKpiTraceCoverage">—</div>
+          <div class="ag-kpi-label">Trace Coverage</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ag-kpi-card">
+        <div class="ag-kpi-icon bg-warning bg-opacity-10 text-warning"><i class="bi bi-robot"></i></div>
+        <div class="ag-kpi-body">
+          <div class="ag-kpi-value" id="govKpiSystemAgent">—</div>
+          <div class="ag-kpi-label">System Agent Runs</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-3 col-sm-6">
+      <div class="ag-kpi-card">
+        <div class="ag-kpi-icon bg-secondary bg-opacity-10 text-secondary"><i class="bi bi-key-fill"></i></div>
+        <div class="ag-kpi-body">
+          <div class="ag-kpi-value" id="govKpiPermCompliance">—</div>
+          <div class="ag-kpi-label">Perm Compliance</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ═══════════ B. Execution Identity ═══════════ #}
+  <div class="row g-4 mb-4">
+    <div class="col-lg-7">
+      <div class="ag-section-card h-100">
+        <div class="ag-section-header">
+          <i class="bi bi-people-fill text-primary me-2"></i>Execution Identity — Access by Role
+        </div>
+        <div class="ag-section-body">
+          <canvas id="govChartAccessByRole" height="260"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="ag-section-card h-100">
+        <div class="ag-section-header">
+          <i class="bi bi-person-badge text-primary me-2"></i>Identity Attribution
+        </div>
+        <div class="ag-section-body p-0">
+          <div class="table-responsive" style="max-height:300px;overflow-y:auto">
+            <table class="table table-sm table-hover mb-0 ag-dense-table">
+              <thead class="sticky-top bg-white">
+                <tr>
+                  <th>Role</th>
+                  <th class="text-center">Runs</th>
+                  <th class="text-center">Granted</th>
+                  <th class="text-center">Denied</th>
+                  <th class="text-center">Grant %</th>
+                </tr>
+              </thead>
+              <tbody id="govIdentityTableBody">
+                <tr><td colspan="5" class="text-center text-muted py-3">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ═══════════ C. Authorization Matrix ═══════════ #}
+  <div class="ag-section-card mb-4">
+    <div class="ag-section-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-grid-3x3 text-primary me-2"></i>Authorization Matrix — Permission × Role</span>
+      <span class="badge bg-secondary bg-opacity-25 text-secondary" style="font-size:.65rem" id="govAuthTotal">—</span>
+    </div>
+    <div class="ag-section-body p-0">
+      <div class="table-responsive" style="max-height:360px;overflow-y:auto">
+        <table class="table table-sm table-hover mb-0 ag-dense-table">
+          <thead class="sticky-top bg-white">
+            <tr>
+              <th>Permission</th>
+              <th class="text-center">Checks</th>
+              <th class="text-center">Granted</th>
+              <th class="text-center">Denied</th>
+              <th class="text-center">Denial %</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody id="govAuthMatrixBody">
+            <tr><td colspan="6" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ═══════════ D. Tool Authorization ═══════════ #}
+  {% if is_full_governance %}
+  <div class="ag-section-card mb-4">
+    <div class="ag-section-header">
+      <i class="bi bi-wrench text-primary me-2"></i>Tool Authorization
+    </div>
+    <div class="ag-section-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 ag-dense-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Required Permission</th>
+              <th class="text-center">Calls</th>
+              <th class="text-center">Authorized</th>
+              <th class="text-center">Denied</th>
+              <th class="text-center">Auth Rate</th>
+            </tr>
+          </thead>
+          <tbody id="govToolAuthBody">
+            <tr><td colspan="6" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ═══════════ E. Recommendation Governance ═══════════ #}
+  {% if is_full_governance %}
+  <div class="ag-section-card mb-4">
+    <div class="ag-section-header">
+      <i class="bi bi-lightbulb text-primary me-2"></i>Recommendation Governance
+    </div>
+    <div class="ag-section-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 ag-dense-table">
+          <thead>
+            <tr>
+              <th>Recommendation Type</th>
+              <th>Required Permission</th>
+              <th class="text-center">Total</th>
+              <th class="text-center">Accepted</th>
+              <th class="text-center">Rejected</th>
+              <th class="text-center">Auth Rate</th>
+            </tr>
+          </thead>
+          <tbody id="govRecGovBody">
+            <tr><td colspan="6" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ═══════════ F. Protected Action Outcomes ═══════════ #}
+  <div class="row g-4 mb-4">
+    <div class="col-lg-6">
+      <div class="ag-section-card h-100">
+        <div class="ag-section-header">
+          <i class="bi bi-shield-exclamation text-primary me-2"></i>Protected Action Outcomes
+        </div>
+        <div class="ag-section-body">
+          <canvas id="govChartProtectedActions" height="260"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="ag-section-card h-100">
+        <div class="ag-section-header">
+          <i class="bi bi-graph-up text-primary me-2"></i>RBAC Coverage Trend
+        </div>
+        <div class="ag-section-body">
+          <canvas id="govChartCoverageTrend" height="260"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ═══════════ G. Recent Denials Feed ═══════════ #}
+  <div class="ag-section-card mb-4">
+    <div class="ag-section-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-shield-x text-danger me-2"></i>Recent Denials</span>
+      <span class="badge bg-danger bg-opacity-25 text-danger" style="font-size:.65rem" id="govDenialCount">—</span>
+    </div>
+    <div class="ag-section-body p-0">
+      <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+        <table class="table table-sm table-hover mb-0 ag-dense-table">
+          <thead class="sticky-top bg-white">
+            <tr>
+              <th>Time</th>
+              <th>Actor</th>
+              <th>Role</th>
+              <th>Event Type</th>
+              <th>Permission</th>
+              <th>Source</th>
+              <th>Trace ID</th>
+            </tr>
+          </thead>
+          <tbody id="govDenialsBody">
+            <tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ═══════════ H. System Agent Oversight (ADMIN/AUDITOR only) ═══════════ #}
+  {% if is_full_governance %}
+  <div class="ag-section-card ag-system-agent-section mb-4">
+    <div class="ag-section-header">
+      <i class="bi bi-gear-wide-connected text-warning me-2"></i>System Agent Oversight
+    </div>
+    <div class="ag-section-body">
+      <div class="row g-3 mb-3" id="govSysAgentKpis">
+        <div class="col-md-3"><div class="ag-mini-stat"><span class="ag-mini-val" id="govSysTotal">—</span><span class="ag-mini-label">Total Runs</span></div></div>
+        <div class="col-md-3"><div class="ag-mini-stat"><span class="ag-mini-val" id="govSysCompleted">—</span><span class="ag-mini-label">Completed</span></div></div>
+        <div class="col-md-3"><div class="ag-mini-stat"><span class="ag-mini-val" id="govSysFailed">—</span><span class="ag-mini-label">Failed</span></div></div>
+        <div class="col-md-3"><div class="ag-mini-stat"><span class="ag-mini-val" id="govSysAutoClose">—</span><span class="ag-mini-label">Auto-Close Actions</span></div></div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 ag-dense-table">
+          <thead>
+            <tr>
+              <th>Agent Type</th>
+              <th class="text-center">Runs</th>
+              <th class="text-center">Completed</th>
+              <th class="text-center">Failed</th>
+              <th class="text-center">Auto-Close</th>
+              <th class="text-center">Avg Duration</th>
+            </tr>
+          </thead>
+          <tbody id="govSysAgentBody">
+            <tr><td colspan="6" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ═══════════ I. Trace Explorer ═══════════ #}
+  <div class="ag-section-card mb-4" id="govTraceExplorerSection">
+    <div class="ag-section-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-diagram-3-fill text-primary me-2"></i>Agent Trace Explorer</span>
+      <div class="d-flex gap-2 align-items-center">
+        <input type="text" id="govTraceSearch" class="form-control form-control-sm"
+               placeholder="Search by trace ID, agent, invoice…" style="width:240px">
+        <select id="govTraceStatusFilter" class="form-select form-select-sm" style="width:130px">
+          <option value="">All Statuses</option>
+          {% for val, label in agent_statuses %}
+          <option value="{{ val }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn btn-sm btn-outline-primary" onclick="window.AGDashboard.refreshTrace()">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+    </div>
+    <div class="ag-section-body p-0">
+      <div class="row g-0" style="min-height:520px">
+        {# Left panel: run list #}
+        <div class="col-md-4 border-end">
+          <div class="d-flex flex-wrap gap-1 p-2 border-bottom" id="govTraceListBadges">
+            <span class="badge bg-primary bg-opacity-10 text-primary te-count-badge">
+              <i class="bi bi-list-ul me-1"></i><span id="govTeRunCount">0</span> runs
+            </span>
+            <span class="badge bg-success bg-opacity-10 text-success te-count-badge">
+              <i class="bi bi-diagram-3 me-1"></i><span id="govTeTracedCount">0</span> traced
+            </span>
+            <span class="badge bg-warning bg-opacity-10 text-warning te-count-badge">
+              <i class="bi bi-exclamation-triangle me-1"></i><span id="govTeNoTraceCount">0</span> untraced
+            </span>
+          </div>
+          <div id="govTraceRunList" class="te-run-list">
+            <div class="text-center text-muted py-4" style="font-size:.82rem">
+              <i class="bi bi-arrow-clockwise d-block mb-1" style="font-size:1.2rem;opacity:.3"></i>
+              Loading trace runs…
+            </div>
+          </div>
+        </div>
+        {# Right panel: detail #}
+        <div class="col-md-8">
+          <div id="govTraceDetail" class="p-3">
+            <div class="text-center text-muted py-5">
+              <i class="bi bi-diagram-3 d-block mb-2" style="font-size:2rem;opacity:.3"></i>
+              <span style="font-size:.85rem">Select an agent run to explore its execution trace</span>
+              <div class="mt-2" style="font-size:.75rem;color:var(--bs-secondary-color)">
+                View full timeline, tool calls, decisions, span tree, and governance metadata
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{# Pass context to JS #}
+<script>
+  window.__AG_CTX = {
+    isFullGovernance: {{ is_full_governance|yesno:"true,false" }},
+    isSummaryGovernance: {{ is_summary_governance|yesno:"true,false" }},
+    userRole: "{{ user_role }}",
+  };
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/agent-governance-dashboard.js' %}"></script>
+{% endblock %}

@@ -65,6 +65,7 @@ class AgentRunStatus(models.TextChoices):
 
 
 class AgentType(models.TextChoices):
+    INVOICE_EXTRACTION = "INVOICE_EXTRACTION", "Invoice Extraction"
     INVOICE_UNDERSTANDING = "INVOICE_UNDERSTANDING", "Invoice Understanding"
     PO_RETRIEVAL = "PO_RETRIEVAL", "PO Retrieval"
     GRN_RETRIEVAL = "GRN_RETRIEVAL", "GRN Retrieval"
@@ -163,15 +164,52 @@ class AuditEventType(models.TextChoices):
     POLICY_APPLIED = "POLICY_APPLIED", "Policy Applied"
     MANUAL_MODE_OVERRIDE = "MANUAL_MODE_OVERRIDE", "Manual Mode Override"
     # RBAC audit events
+    USER_CREATED = "USER_CREATED", "User Created"
+    USER_UPDATED = "USER_UPDATED", "User Updated"
     ROLE_ASSIGNED = "ROLE_ASSIGNED", "Role Assigned"
     ROLE_REMOVED = "ROLE_REMOVED", "Role Removed"
     ROLE_PERMISSION_CHANGED = "ROLE_PERMISSION_CHANGED", "Role Permission Changed"
     USER_PERMISSION_OVERRIDE = "USER_PERMISSION_OVERRIDE", "User Permission Override"
+    OVERRIDE_REMOVED = "OVERRIDE_REMOVED", "Permission Override Removed"
     USER_ACTIVATED = "USER_ACTIVATED", "User Activated"
     USER_DEACTIVATED = "USER_DEACTIVATED", "User Deactivated"
     ROLE_CREATED = "ROLE_CREATED", "Role Created"
     ROLE_UPDATED = "ROLE_UPDATED", "Role Updated"
+    ROLE_DEACTIVATED = "ROLE_DEACTIVATED", "Role Deactivated"
     PRIMARY_ROLE_CHANGED = "PRIMARY_ROLE_CHANGED", "Primary Role Changed"
+    # Case management events
+    CASE_ASSIGNED = "CASE_ASSIGNED", "Case Assigned"
+    CASE_CLOSED = "CASE_CLOSED", "Case Closed"
+    CASE_REJECTED = "CASE_REJECTED", "Case Rejected"
+    CASE_REPROCESSED = "CASE_REPROCESSED", "Case Reprocessed"
+    CASE_ESCALATED = "CASE_ESCALATED", "Case Escalated"
+    CASE_FAILED = "CASE_FAILED", "Case Failed"
+    CASE_STATUS_CHANGED = "CASE_STATUS_CHANGED", "Case Status Changed"
+    COMMENT_ADDED = "COMMENT_ADDED", "Comment Added"
+    # Review lifecycle events
+    REVIEWER_ASSIGNED = "REVIEWER_ASSIGNED", "Reviewer Assigned"
+    REVIEW_STARTED = "REVIEW_STARTED", "Review Started"
+    # Agent guardrail events
+    GUARDRAIL_GRANTED = "GUARDRAIL_GRANTED", "Guardrail Granted"
+    GUARDRAIL_DENIED = "GUARDRAIL_DENIED", "Guardrail Denied"
+    TOOL_CALL_AUTHORIZED = "TOOL_CALL_AUTHORIZED", "Tool Call Authorized"
+    TOOL_CALL_DENIED = "TOOL_CALL_DENIED", "Tool Call Denied"
+    RECOMMENDATION_ACCEPTED = "RECOMMENDATION_ACCEPTED", "Recommendation Accepted"
+    RECOMMENDATION_DENIED = "RECOMMENDATION_DENIED", "Recommendation Denied"
+    AUTO_CLOSE_AUTHORIZED = "AUTO_CLOSE_AUTHORIZED", "Auto-Close Authorized"
+    AUTO_CLOSE_DENIED = "AUTO_CLOSE_DENIED", "Auto-Close Denied"
+    SYSTEM_AGENT_USED = "SYSTEM_AGENT_USED", "System Agent Used"
+    # Copilot audit events
+    COPILOT_SESSION_CREATED = "COPILOT_SESSION_CREATED", "Copilot Session Created"
+    COPILOT_SESSION_VIEWED = "COPILOT_SESSION_VIEWED", "Copilot Session Viewed"
+    COPILOT_SESSION_RESUMED = "COPILOT_SESSION_RESUMED", "Copilot Session Resumed"
+    COPILOT_SESSION_ARCHIVED = "COPILOT_SESSION_ARCHIVED", "Copilot Session Archived"
+    COPILOT_MESSAGE_SENT = "COPILOT_MESSAGE_SENT", "Copilot Message Sent"
+    COPILOT_RESPONSE_GENERATED = "COPILOT_RESPONSE_GENERATED", "Copilot Response Generated"
+    COPILOT_CASE_CONTEXT_LOADED = "COPILOT_CASE_CONTEXT_LOADED", "Copilot Case Context Loaded"
+    COPILOT_GOVERNANCE_CONTEXT_VIEWED = "COPILOT_GOVERNANCE_CONTEXT_VIEWED", "Copilot Governance Context Viewed"
+    COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST = "COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST", "Copilot Unauthorized Governance Request"
+    COPILOT_SENSITIVE_FIELD_REDACTED = "COPILOT_SENSITIVE_FIELD_REDACTED", "Copilot Sensitive Field Redacted"
 
 
 class PermissionOverrideType(models.TextChoices):
@@ -334,3 +372,26 @@ class SourceChannel(models.TextChoices):
     API = "API", "API"
     ERP_IMPORT = "ERP_IMPORT", "ERP Import"
     SCAN = "SCAN", "Scan"
+
+
+# ---------------------------------------------------------------------------
+# Copilot enums
+# ---------------------------------------------------------------------------
+
+
+class CopilotSessionStatus(models.TextChoices):
+    ACTIVE = "ACTIVE", "Active"
+    ARCHIVED = "ARCHIVED", "Archived"
+
+
+class CopilotMessageType(models.TextChoices):
+    USER = "USER", "User"
+    ASSISTANT = "ASSISTANT", "Assistant"
+    SYSTEM = "SYSTEM", "System"
+
+
+class CopilotArtifactType(models.TextChoices):
+    CASE_SNAPSHOT = "CASE_SNAPSHOT", "Case Snapshot"
+    EVIDENCE_CARD = "EVIDENCE_CARD", "Evidence Card"
+    RECOMMENDATION = "RECOMMENDATION", "Recommendation"
+    GOVERNANCE_TRACE = "GOVERNANCE_TRACE", "Governance Trace"

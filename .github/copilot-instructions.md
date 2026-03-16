@@ -46,12 +46,16 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - All agents extend `BaseAgent` (in `apps/agents/services/`).
 - Agents use **ReAct loop**: LLM → parse tool calls → execute tools → loop (max 6 iterations).
 - Tool-calling uses **OpenAI-compliant format**: `tool_calls` array on assistant messages, `tool_call_id` + `name` on tool response messages.
-- Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`.
+- Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`. Each tool declares `required_permission` (e.g., `"purchase_orders.view"`).
 - `AgentOrchestrator` is the entry point; `PolicyEngine` decides which agents to run based on match status + exception types.
 - `PolicyEngine` also handles **auto-close logic**: `should_auto_close()` and `_within_auto_close_band()` check if PARTIAL_MATCH falls within wider auto-close thresholds (qty: 5%, price: 3%, amount: 3%).
 - Agent pipeline is **wired to run automatically** after reconciliation for non-MATCHED results (sync via `start_reconciliation` view, async via `run_agent_pipeline_task`).
+- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations — orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` × 8), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` × 6), and post-policy authorization (auto-close, escalation).
+- **SYSTEM_AGENT** identity: When no human user context is available (Celery async, system-triggered), `AgentGuardrailsService.resolve_actor()` returns a dedicated service account (`system-agent@internal`) with the `SYSTEM_AGENT` role (rank 100, `is_system_role=True`).
 - Every agent run, message, tool call, and decision is persisted for auditability via `AgentTraceService`.
-- `RecommendationService` manages agent recommendations (`AgentRecommendation` model) with acceptance tracking.
+- `AgentRun` carries RBAC fields: `actor_primary_role`, `actor_roles_snapshot_json`, `permission_source`, `access_granted` — populated on every run.
+- All guardrail decisions (grant/deny) are logged as `AuditEvent` records (9 event types: `GUARDRAIL_GRANTED/DENIED`, `TOOL_CALL_AUTHORIZED/DENIED`, `RECOMMENDATION_ACCEPTED/DENIED`, `AUTO_CLOSE_AUTHORIZED/DENIED`, `SYSTEM_AGENT_USED`).
+- `RecommendationService` manages agent recommendations (`AgentRecommendation` model) with acceptance tracking; `mark_recommendation_accepted()` checks `authorize_recommendation()` before allowing accept/reject.
 - `AgentFeedbackService` handles PO/GRN re-reconciliation when an agent recovers a missing document (atomic re-linking + re-matching).
 - LLM client supports both OpenAI and Azure OpenAI (configurable via env vars).
 - Agent definitions include `config_json` with `allowed_tools` per agent type.
@@ -98,12 +102,13 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | RBAC Services | `apps/accounts/rbac_services.py` |
 | RBAC Template Tags | `apps/core/templatetags/rbac_tags.py` |
 | Permissions | `apps/core/permissions.py` |
+| Agent Guardrails | `apps/agents/services/guardrails_service.py` |
 | Observability | `apps/core/trace.py`, `apps/core/logging_utils.py`, `apps/core/metrics.py`, `apps/core/decorators.py` |
 | Utilities | `apps/core/utils.py` |
 | Seed Commands | `apps/core/management/commands/seed_config.py`, `seed_prompts.py`; `apps/cases/management/commands/seed_ap_data.py` |
 | Seed Helpers | `apps/cases/management/commands/seed_helpers/` (constants, master_data, transactional_data, case_builder, agent_review_data, observability_data, bulk_generator) |
 | Admin | `apps/<app>/admin.py` |
-| Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views) |
+| Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views, `templates/vendors/` for vendor UI) |
 | Static files | `static/css/`, `static/js/` |
 | Config | `config/settings.py`, `config/urls.py`, `config/celery.py` |
 
@@ -147,6 +152,7 @@ AgentRun ──< AgentStep, AgentMessage, DecisionLog
 AgentRun ──< AgentRecommendation (with acceptance tracking)
 AgentRun ──< AgentEscalation (severity-based, suggested assignee)
 AgentRun ── linked to ReconciliationResult
+AgentRun ── RBAC fields: actor_primary_role, actor_roles_snapshot_json, permission_source, access_granted
 ToolCall (tools) ── linked to AgentRun + ToolDefinition
 
 ReviewAssignment (reviews) ──< ReviewComment, ManualReviewAction
@@ -207,13 +213,17 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 3. Register in `AGENT_CLASS_REGISTRY`.
 4. Add to `PolicyEngine` decision logic.
 5. Create `AgentDefinition` record (via admin or migration).
+6. Add `agents.run_<type>` permission to `seed_rbac.py` PERMISSIONS list.
+7. Map permission to appropriate roles in `ROLE_MATRIX` and to `SYSTEM_AGENT`.
+8. Add entry to `AGENT_PERMISSIONS` dict in `apps/agents/services/guardrails_service.py`.
 
 ### When adding a new tool
 1. Create tool class in `apps/tools/registry/tools.py` extending `BaseTool`.
 2. Decorate with `@register_tool`.
-3. Implement `execute()` method.
-4. Add `ToolDefinition` record.
-5. Reference in relevant agent's `allowed_tools`.
+3. Set `required_permission` (e.g., `"purchase_orders.view"`) — enforced by `AgentGuardrailsService.authorize_tool()`.
+4. Implement `execute()` method.
+5. Add `ToolDefinition` record.
+6. Reference in relevant agent's `allowed_tools`.
 
 ### When adding a new permission
 1. Add `Permission` record via `seed_rbac` command or Django admin.
@@ -234,7 +244,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 ## What's Implemented vs. What's Next
 
 ### ✅ Fully implemented
-- All models, migrations, enums (17 enum classes incl. `ReconciliationMode`, `ReconciliationModeApplicability`), permissions, middleware
+- All models, migrations, enums (25 enum classes incl. `ReconciliationMode`, `ReconciliationModeApplicability`), permissions, middleware
 - **Enterprise RBAC**: Role, Permission, RolePermission, UserRole, UserPermissionOverride models (`apps/accounts/rbac_models.py`)
 - **RBAC Permission Engine**: `HasPermissionCode`, `HasAnyPermission`, `HasRole` (DRF); `PermissionRequiredMixin`, `AnyPermissionRequiredMixin`, `RoleRequiredMixin` (CBV); `@permission_required_code`, `@role_required` (FBV)
 - **RBAC Middleware**: `RBACMiddleware` pre-loads permission cache per request; `rbac_context` processor injects `user_permissions`, `user_role_codes`, `is_admin`
@@ -242,14 +252,15 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **RBAC Audit**: `RBACEventService` logs 9 event types (ROLE_ASSIGNED, ROLE_REMOVED, ROLE_PERMISSION_CHANGED, USER_PERMISSION_OVERRIDE, USER_ACTIVATED, USER_DEACTIVATED, ROLE_CREATED, ROLE_UPDATED, PRIMARY_ROLE_CHANGED)
 - **RBAC Admin Console**: 8 Bootstrap 5 UI screens — User list/create/detail, Role list/create/detail, Permission catalog, Role-Permission matrix
 - **RBAC API**: `/api/v1/accounts/` — UserViewSet (CRUD + roles/overrides), RoleViewSet (CRUD + clone), PermissionViewSet, RolePermissionMatrixView
-- **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 5 roles, 20 permissions, full matrix, legacy user sync
-- Extraction pipeline (8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o extraction)
+- **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 6 roles (incl. SYSTEM_AGENT), 40 permissions, full matrix, legacy user sync
+- Extraction pipeline (two-agent architecture: InvoiceExtractionAgent always + InvoiceUnderstandingAgent for low confidence; 8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o)
 - Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
 - `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
 - `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
 - `ReconciliationPolicy` model: vendor, item_category, location_code, business_unit, is_service_invoice, is_stock_invoice, priority-ordered matching
 - Mode-aware classification, exception building (applies_to_mode tagging), result persistence (mode metadata + confidence weights)
-- Agent orchestration (7 agents, policy engine with auto-close logic + mode-aware GRN suppression, tool registry, LLM client, decision log service)
+- Agent orchestration (8 agents, policy engine with auto-close logic + mode-aware GRN suppression, tool registry, LLM client, decision log service)
+- Agent RBAC guardrails: `AgentGuardrailsService` — central RBAC enforcement (orchestration, per-agent, per-tool, recommendation, post-policy authorization); SYSTEM_AGENT identity for autonomous runs; 9 guardrail audit event types; AgentRun RBAC fields populated on every run
 - Mode-aware agents: `AgentContext.reconciliation_mode`, `_mode_context()` helper on all agent types, PolicyEngine suppresses GRN_RETRIEVAL in 2-way
 - Agent feedback loop: `AgentFeedbackService` re-reconciles when PO/GRN agent recovers missing document (atomic)
 - Agent recommendation service: `AgentRecommendation` model with acceptance tracking + `AgentEscalation` model
@@ -265,13 +276,17 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Reconciliation settings viewer (tolerance configuration)
 - Dashboard analytics (service + 7 API endpoints incl. mode-breakdown)
 - DRF APIs (all ViewSets, serializers, routing) + Governance API (`/api/v1/governance/`) + Reconciliation Policies API (`/api/v1/reconciliation/policies/`)
-- Bootstrap 5 templates (32 templates incl. partials, governance views, RBAC admin console)
+- Bootstrap 5 templates (34 templates incl. partials, governance views, RBAC admin console, vendor pages)
+- Vendor UI: list page (KPIs, country/currency/search filters, PO/invoice/alias counts) + detail page (aliases, recent POs/invoices/GRNs)
+- RBAC permissions for document pages: `vendors.view`, `purchase_orders.view`, `grns.view` — all roles granted, AP_PROCESSOR scoped to own invoices
+- RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own uploaded invoices (via `_scope_pos_for_user`, `_scope_grns_for_user`, `_scope_vendors_for_user`)
+- Sidebar navigation gated by RBAC `{% has_permission %}` tags for POs, GRNs, Vendors, Governance, Admin Console
 - Admin panel registration
-- Audit logging & governance: ProcessingLog, AuditEvent (17 event types, 20+ RBAC/trace fields), FileProcessingStatus, CaseTimelineService (8 event categories with RBAC badges, status changes, field corrections, duration tracking), governance views (audit event list with RBAC columns + invoice governance dashboard with access history tab)
+- Audit logging & governance: ProcessingLog, AuditEvent (~38 event types, 20+ RBAC/trace fields), FileProcessingStatus, CaseTimelineService (8 event categories with RBAC badges, status changes, field corrections, duration tracking), governance views (audit event list with RBAC columns + invoice governance dashboard with access history tab)
 - Observability infrastructure: TraceContext (distributed tracing), structured JSON logging with PII redaction, in-process MetricsService, RequestTraceMiddleware
 - Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
 - Enhanced governance API: 9 endpoints (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance)
-- Seed data: `seed_config` (6 users, 7 agent defs, 6 tool defs, recon config, 7 policies), `seed_rbac` (5 roles, 25 permissions, matrix, user sync), `seed_prompts` (12 prompt templates), `seed_ap_data` (30 deterministic scenarios: TWO_WAY/THREE_WAY/NON_PO + cross-cutting, with 6-stage pipeline: users → vendors → transactional → cases/recon → agent/review → observability)
+- Seed data: `seed_config` (6 users, 7 agent defs, 6 tool defs, recon config, 7 policies), `seed_rbac` (6 roles incl. SYSTEM_AGENT, 40 permissions, matrix, user sync), `seed_prompts` (12 prompt templates), `seed_ap_data` (30 deterministic scenarios: TWO_WAY/THREE_WAY/NON_PO + cross-cutting, with 6-stage pipeline: users → vendors → transactional → cases/recon → agent/review → observability)
 - Seed observability data (stage 6 of `seed_ap_data`): AgentStep (~280), AgentMessage (~568), ToolCall (~137), DecisionLog (~78), AgentEscalation (~2), ProcessingLog (~193), ManualReviewAction (~9); enriches AgentRun with trace_id/tokens/cost and AuditEvent with RBAC/cross-refs
 - Seed helpers architecture in `apps/cases/management/commands/seed_helpers/`: constants.py, master_data.py, transactional_data.py, case_builder.py, agent_review_data.py, observability_data.py, bulk_generator.py
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
@@ -318,7 +333,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/reconciliation/services/agent_feedback_service.py` | Agent PO/GRN re-reconciliation loop |
 | `apps/agents/services/orchestrator.py` | Agent pipeline orchestration |
 | `apps/agents/services/base_agent.py` | Base agent with ReAct loop |
-| `apps/agents/services/agent_classes.py` | All 7 agent implementations |
+| `apps/agents/services/agent_classes.py` | All 8 agent implementations |
 | `apps/tools/registry/tools.py` | All 6 tool classes |
 | `apps/tools/registry/base.py` | BaseTool, ToolRegistry, @register_tool |
 | `apps/core/trace.py` | TraceContext for distributed tracing |
@@ -330,9 +345,11 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/agents/services/recommendation_service.py` | Agent recommendation lifecycle (create, query, accept) |
 | `apps/agents/services/agent_trace_service.py` | Unified agent governance tracing |
 | `apps/agents/services/policy_engine.py` | Agent plan + auto-close band logic |
+| `apps/agents/services/guardrails_service.py` | Central RBAC enforcement for all agent operations |
 | `apps/auditlog/timeline_service.py` | Unified case timeline service |
 | `apps/auditlog/template_views.py` | Governance views (audit log + invoice governance) |
 | `apps/accounts/rbac_models.py` | RBAC data models (Role, Permission, UserRole, etc.) |
 | `apps/accounts/rbac_services.py` | RBAC audit service |
 | `apps/accounts/template_views.py` | Admin console UI views (user/role/perm management) |
+| `apps/vendors/template_views.py` | Vendor list/detail views with RBAC + AP_PROCESSOR scoping |
 | `apps/core/templatetags/rbac_tags.py` | RBAC template tags for permission-aware rendering |

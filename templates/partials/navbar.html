@@ -1,5 +1,10 @@
 {# ── AP Operations Topbar ── #}
 <nav class="ap-topbar">
+  {# Sidebar toggle (visible only in copilot) #}
+  <button class="btn btn-sm btn-light me-2 d-none" id="btnToggleMainMenu" title="Main menu">
+    <i class="bi bi-list"></i>
+  </button>
+
   {# Brand #}
   <a class="ap-topbar-brand" href="{% url 'dashboard:index' %}">
     <span class="ap-topbar-brand-icon"><i class="bi bi-layers"></i></span>
@@ -33,7 +38,12 @@
       <ul class="dropdown-menu dropdown-menu-end shadow-sm">
         <li><span class="dropdown-item-text small text-muted">{{ user.email }}</span></li>
         <li><hr class="dropdown-divider"></li>
-        <li><a class="dropdown-item" href="{% url 'accounts:logout' %}"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+        <li>
+          <form method="post" action="{% url 'accounts:logout' %}">
+            {% csrf_token %}
+            <button type="submit" class="dropdown-item"><i class="bi bi-box-arrow-right me-2"></i>Logout</button>
+          </form>
+        </li>
       </ul>
     </div>
     {% endif %}

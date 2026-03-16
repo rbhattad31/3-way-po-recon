@@ -61,17 +61,19 @@ class InvoiceExtractionAdapter:
                 )
 
             logger.info("OCR completed: %d characters extracted from %s", len(ocr_text), file_path)
+            print("Document extraction results:", ocr_text)
 
-            # Step 2: LLM structured extraction
-            raw_json = self._llm_extract(ocr_text)
+            # Step 2: LLM structured extraction via Invoice Extraction Agent
+            raw_json, agent_run_id = self._agent_extract(ocr_text)
+            logger.info("Agent extraction completed (agent_run_id=%s)", agent_run_id)
             elapsed = int((time.time() - start) * 1000)
 
             return ExtractionResponse(
                 success=True,
                 raw_json=raw_json,
                 confidence=float(raw_json.get("confidence", 0.0)),
-                engine_name="azure_di_gpt4o",
-                engine_version="1.0",
+                engine_name="azure_di_gpt4o_agent",
+                engine_version="2.0",
                 duration_ms=elapsed,
                 ocr_text=ocr_text,
             )
@@ -121,8 +123,47 @@ class InvoiceExtractionAdapter:
     # Step 2: Azure OpenAI LLM structured extraction
     # ------------------------------------------------------------------
     @staticmethod
+    def _agent_extract(ocr_text: str) -> tuple:
+        """Run the Invoice Extraction Agent on OCR text.
+
+        Returns:
+            (raw_json_dict, agent_run_id) — extracted data and the AgentRun PK
+            for traceability.
+        """
+        from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
+        from apps.agents.services.base_agent import AgentContext
+        from apps.core.enums import AgentRunStatus, AgentType
+
+        agent_cls = AGENT_CLASS_REGISTRY.get(AgentType.INVOICE_EXTRACTION)
+        if not agent_cls:
+            raise RuntimeError("Invoice Extraction Agent not found in registry")
+
+        ctx = AgentContext(
+            reconciliation_result=None,
+            invoice_id=0,  # Invoice not yet created
+            extra={"ocr_text": ocr_text},
+        )
+
+        agent = agent_cls()
+        agent_run = agent.run(ctx)
+
+        if agent_run.status != AgentRunStatus.COMPLETED:
+            raise RuntimeError(
+                f"Invoice Extraction Agent failed: {agent_run.error_message or agent_run.status}"
+            )
+
+        # The extracted JSON is in output_payload.evidence
+        output = agent_run.output_payload or {}
+        raw_json = output.get("evidence", {})
+
+        if not raw_json:
+            raise RuntimeError("Invoice Extraction Agent returned empty extraction data")
+
+        return raw_json, agent_run.pk
+
+    @staticmethod
     def _llm_extract(ocr_text: str) -> Dict[str, Any]:
-        """Send OCR text to Azure OpenAI GPT-4o for structured field extraction."""
+        """Direct LLM extraction fallback (without agent framework)."""
         from openai import AzureOpenAI
 
         client = AzureOpenAI(

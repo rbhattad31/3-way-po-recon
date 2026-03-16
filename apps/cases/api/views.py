@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.cases.api.permissions import CanAssignCase, CanEditCase, CanUseCopilot, CanViewCase
+from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.cases.api.serializers import (
     APCaseArtifactSerializer,
     APCaseCommentSerializer,
@@ -20,7 +21,6 @@ from apps.cases.api.serializers import (
     RunStageSerializer,
 )
 from apps.cases.models import APCase
-from apps.cases.selectors.case_selectors import CaseSelectors
 
 
 class APCaseViewSet(viewsets.ModelViewSet):
@@ -38,12 +38,13 @@ class APCaseViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return CaseSelectors.inbox(
+        qs = CaseSelectors.inbox(
             processing_path=self.request.query_params.get("processing_path", ""),
             status=self.request.query_params.get("status", ""),
             priority=self.request.query_params.get("priority", ""),
             search=self.request.query_params.get("search", ""),
         )
+        return CaseSelectors.scope_for_user(qs, self.request.user)
 
     def get_serializer_class(self):
         if self.action == "list":

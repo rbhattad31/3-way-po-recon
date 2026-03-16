@@ -5,6 +5,7 @@ from django.shortcuts import render
 
 from apps.agents.models import AgentRun
 from apps.cases.models import APCase, APCaseStage
+from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import (
     AgentRunStatus,
     AgentType,
@@ -12,14 +13,24 @@ from apps.core.enums import (
     CaseStatus,
     ProcessingPath,
     StageStatus,
+    UserRole,
 )
 from apps.dashboard.services import DashboardService
 
 
 @login_required
-def index(request):
-    summary = DashboardService.get_summary()
-    recent_activity = DashboardService.get_recent_activity(limit=15)
+def command_center(request):
+    """Agentic AP Command Center — AI Operations dashboard."""
+    user_role = getattr(request.user, "role", "")
+    return render(request, "dashboard/agentic_command_center.html", {
+        "user_role": user_role,
+    })
+
+
+@login_required
+def analytics(request):
+    summary = DashboardService.get_summary(user=request.user)
+    recent_activity = DashboardService.get_recent_activity(limit=15, user=request.user)
     return render(request, "dashboard/index.html", {
         "summary": summary,
         "recent_activity": recent_activity,
@@ -70,6 +81,7 @@ def agent_monitor(request):
     case_qs = APCase.objects.select_related(
         "invoice", "vendor", "purchase_order", "assigned_to",
     )
+    case_qs = CaseSelectors.scope_for_user(case_qs, request.user)
 
     if path_filter:
         case_qs = case_qs.filter(processing_path=path_filter)
@@ -163,4 +175,38 @@ def agent_monitor(request):
         "selected_path": path_filter or "",
         "selected_status": status_filter or "",
         "selected_priority": priority_filter or "",
+    })
+
+
+@login_required
+def agent_performance(request):
+    """Agent Performance Dashboard — operational metrics & observability."""
+    user_role = getattr(request.user, "role", "")
+
+    return render(request, "dashboard/agent_performance.html", {
+        "user_role": user_role,
+        "agent_types": AgentType.choices,
+        "agent_statuses": AgentRunStatus.choices,
+    })
+
+
+@login_required
+def agent_governance(request):
+    """Agent Governance Dashboard — RBAC, authorization & compliance monitoring."""
+    user_role = getattr(request.user, "role", "")
+    is_full_governance = user_role in (UserRole.ADMIN, UserRole.AUDITOR)
+    is_summary_governance = user_role in (
+        UserRole.ADMIN, UserRole.AUDITOR, UserRole.FINANCE_MANAGER,
+    )
+
+    if not is_summary_governance:
+        from django.http import HttpResponseForbidden
+        return HttpResponseForbidden("Insufficient permissions.")
+
+    return render(request, "dashboard/agent_governance.html", {
+        "user_role": user_role,
+        "is_full_governance": is_full_governance,
+        "is_summary_governance": is_summary_governance,
+        "agent_types": AgentType.choices,
+        "agent_statuses": AgentRunStatus.choices,
     })

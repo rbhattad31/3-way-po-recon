@@ -11,6 +11,9 @@ class DashboardSummarySerializer(serializers.Serializer):
     open_exceptions = serializers.IntegerField()
     matched_pct = serializers.FloatField()
     avg_confidence = serializers.FloatField()
+    extracted_count = serializers.IntegerField()
+    reconciled_count = serializers.IntegerField()
+    posted_count = serializers.IntegerField()
 
 
 class MatchStatusBreakdownSerializer(serializers.Serializer):

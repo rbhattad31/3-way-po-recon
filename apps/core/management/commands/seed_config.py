@@ -99,7 +99,7 @@ def create_users():
             },
         )
         if created:
-            user.set_password("SeedPass123!")
+            user.set_password("admin123")
             user.save()
         key = email.split("@")[0].replace(".", "_")
         users[key] = user
@@ -113,15 +113,30 @@ def create_users():
 def create_agent_definitions(admin):
     agents = [
         {
+            "agent_type": AgentType.INVOICE_EXTRACTION,
+            "name": "Invoice Extraction Agent",
+            "description": (
+                "Extracts structured invoice data from OCR text using GPT-4o. "
+                "Runs immediately after Azure Document Intelligence OCR as step 2 "
+                "of the extraction pipeline. Returns structured JSON with header "
+                "fields and line items."
+            ),
+            "config_json": {
+                "allowed_tools": [],
+                "temperature": 0.0,
+                "response_format": "json_object",
+            },
+        },
+        {
             "agent_type": AgentType.INVOICE_UNDERSTANDING,
             "name": "Invoice Understanding Agent",
             "description": (
-                "Deep-dives into low-confidence extractions. Validates "
-                "extracted fields, checks for OCR errors, and confirms "
-                "vendor identity and line item accuracy."
+                "Validates extraction quality post-persistence. Uses tools to "
+                "cross-check extracted fields against PO/vendor data, identifies "
+                "OCR errors, and confirms field accuracy."
             ),
             "config_json": {
-                "allowed_tools": ["invoice_details"],
+                "allowed_tools": ["invoice_details", "po_lookup", "vendor_search"],
                 "confidence_threshold": 0.75,
             },
         },
@@ -328,6 +343,7 @@ def create_recon_config():
     config.enable_two_way_for_services = True
     config.enable_grn_for_stock_items = True
     config.default_reconciliation_mode = ReconciliationMode.THREE_WAY
+    config.ap_processor_sees_all_cases = False
     config.save()
     return config
 

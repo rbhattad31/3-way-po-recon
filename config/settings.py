@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.auditlog",
     "apps.integrations",
     "apps.cases",
+    "apps.copilot",
 ]
 
 MIDDLEWARE = [
@@ -113,13 +114,13 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/dashboard/"
-LOGOUT_REDIRECT_URL = "/admin/login/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 # ---------------------------------------------------------------------------
 # Internationalization
 # ---------------------------------------------------------------------------
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+TIME_ZONE = "Asia/Kolkata"
 USE_I18N = True
 USE_TZ = True
 
@@ -162,7 +163,7 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
-    "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%SZ",
+    "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%S%z",
 }
 
 # ---------------------------------------------------------------------------
@@ -175,6 +176,7 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_DEFAULT_QUEUE = "default"
 # Run tasks synchronously when no Celery worker is available (e.g. Windows dev)
 CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "True").lower() in ("true", "1", "yes")
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER

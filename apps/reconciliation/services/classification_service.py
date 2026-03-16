@@ -35,6 +35,7 @@ class ClassificationService:
         extraction_confidence: Optional[float] = None,
         confidence_threshold: float = 0.75,
         reconciliation_mode: str = "",
+        invoice=None,
     ) -> MatchStatus:
         is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
 
@@ -43,7 +44,12 @@ class ClassificationService:
             logger.info("Classification: UNMATCHED (PO not found)")
             return MatchStatus.UNMATCHED
 
-        # Gate 2: Low extraction confidence → automatic review
+        # Gate 2: Duplicate invoice → automatic review
+        if invoice is not None and getattr(invoice, 'is_duplicate', False):
+            logger.info("Classification: REQUIRES_REVIEW (duplicate invoice)")
+            return MatchStatus.REQUIRES_REVIEW
+
+        # Gate 3: Low extraction confidence → automatic review
         if extraction_confidence is not None and extraction_confidence < confidence_threshold:
             logger.info(
                 "Classification: REQUIRES_REVIEW (low confidence %.2f < %.2f)",

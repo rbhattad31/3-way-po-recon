@@ -1,0 +1,39 @@
+# =============================================================================
+# Finance Agents Platform — Celery Beat systemd Service
+# =============================================================================
+# Install:
+#   sudo cp /opt/finance-agents/deploy/finance-agents-celerybeat.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable finance-agents-celerybeat
+#   sudo systemctl start finance-agents-celerybeat
+# =============================================================================
+
+[Unit]
+Description=Finance Agents Celery Beat Scheduler
+After=network.target redis-server.service finance-agents-celery.service
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=financeagents
+Group=financeagents
+WorkingDirectory=/opt/finance-agents
+EnvironmentFile=/opt/finance-agents/.env.production
+
+ExecStart=/opt/finance-agents/venv/bin/celery \
+    -A config \
+    beat \
+    --loglevel=info \
+    --pidfile=/opt/finance-agents/run/celerybeat.pid \
+    --schedule=/opt/finance-agents/run/celerybeat-schedule \
+    --logfile=/opt/finance-agents/logs/celerybeat.log
+
+Restart=always
+RestartSec=10
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
