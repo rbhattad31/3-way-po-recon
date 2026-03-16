@@ -160,6 +160,94 @@ class APCopilotService:
         return session
 
     @staticmethod
+    def search_cases(user, query: str) -> List[Dict[str, Any]]:
+        """Search AP cases for linking to a copilot session.
+
+        Searches by case_number, invoice number, vendor name, or PO number.
+        Returns at most 15 lightweight results.
+        """
+        from apps.cases.models import APCase
+
+        qs = APCase.objects.filter(is_active=True).select_related(
+            "invoice", "vendor",
+        )
+        if query:
+            qs = qs.filter(
+                models.Q(case_number__icontains=query)
+                | models.Q(invoice__invoice_number__icontains=query)
+                | models.Q(vendor__name__icontains=query)
+                | models.Q(invoice__po_number__icontains=query)
+            )
+        qs = qs.order_by("-created_at")[:15]
+
+        results = []
+        for c in qs:
+            results.append({
+                "id": c.pk,
+                "case_number": c.case_number,
+                "status": c.status,
+                "priority": c.priority,
+                "invoice_number": getattr(c.invoice, "invoice_number", None),
+                "vendor_name": getattr(c.vendor, "name", None),
+            })
+        return results
+
+    @staticmethod
+    def link_case_to_session(
+        user, session_id: str, case_id: int,
+    ) -> Dict[str, Any]:
+        """Link an AP case to an existing copilot session."""
+        from apps.cases.models import APCase
+
+        session = CopilotSession.objects.filter(pk=session_id, user=user).first()
+        if not session:
+            return {"error": "Session not found"}
+
+        case = APCase.objects.filter(pk=case_id, is_active=True).select_related("invoice").first()
+        if not case:
+            return {"error": "Case not found"}
+
+        session.linked_case = case
+        session.linked_invoice = case.invoice
+        if not session.title or session.title == "Untitled":
+            session.title = f"Investigation: {case.case_number}"
+        session.save(update_fields=["linked_case", "linked_invoice", "title", "updated_at"])
+
+        APCopilotService._audit(
+            AuditEventType.COPILOT_SESSION_RESUMED,
+            "CopilotSession", str(session.id),
+            f"Linked case {case.case_number} to copilot session",
+            user=user, case_id=case_id,
+            session_id=str(session.id),
+        )
+        return {
+            "linked": True,
+            "case_id": case.pk,
+            "case_number": case.case_number,
+            "title": session.title,
+        }
+
+    @staticmethod
+    def unlink_case_from_session(user, session_id: str) -> Dict[str, Any]:
+        """Remove the case link from a copilot session."""
+        session = CopilotSession.objects.filter(pk=session_id, user=user).first()
+        if not session:
+            return {"error": "Session not found"}
+
+        old_case_id = session.linked_case_id
+        session.linked_case = None
+        session.linked_invoice = None
+        session.save(update_fields=["linked_case", "linked_invoice", "updated_at"])
+
+        APCopilotService._audit(
+            AuditEventType.COPILOT_SESSION_RESUMED,
+            "CopilotSession", str(session.id),
+            f"Unlinked case {old_case_id} from copilot session",
+            user=user, session_id=str(session.id),
+        )
+        return {"unlinked": True}
+
+    @staticmethod
     def list_sessions(user, include_archived: bool = False) -> models.QuerySet:
         """Return sessions for this user, newest first."""
         qs = CopilotSession.objects.filter(user=user)

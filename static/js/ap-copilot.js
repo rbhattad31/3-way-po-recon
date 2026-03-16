@@ -167,19 +167,21 @@
     const summary = payload.summary || 'No response generated.';
     parts.push(`<div class="copilot-msg-content">${formatMarkdown(summary)}</div>`);
 
+    // Collect detail sub-sections
+    const detailParts = [];
+
     // Evidence cards
     if (payload.evidence && payload.evidence.length) {
-      parts.push(renderEvidenceCards(payload.evidence));
+      detailParts.push(renderEvidenceCards(payload.evidence));
     }
 
     // Consulted agents
     if (payload.consulted_agents && payload.consulted_agents.length) {
-      parts.push(`
-        <div class="copilot-agents-section mt-2">
-          <div class="copilot-section-label"><i class="bi bi-robot me-1"></i>Consulted Agents</div>
-          <div class="copilot-agent-chips">
-            ${payload.consulted_agents.map(a => `<span class="copilot-agent-chip">${escapeHtml(a)}</span>`).join('')}
-          </div>
+      const chips = payload.consulted_agents.map(a => `<span class="copilot-agent-chip">${escapeHtml(a)}</span>`).join('');
+      detailParts.push(`
+        <div class="copilot-detail-sub">
+          <div class="copilot-detail-sub-label"><i class="bi bi-robot me-1"></i>Consulted Agents (${payload.consulted_agents.length})</div>
+          <div class="copilot-agent-chips">${chips}</div>
         </div>`);
     }
 
@@ -187,20 +189,30 @@
     if (payload.recommendation) {
       const rec = payload.recommendation;
       const conf = rec.confidence != null ? `${Math.round(rec.confidence * 100)}%` : '';
-      parts.push(`
-        <div class="copilot-recommendation-block mt-2">
-          <div class="copilot-section-label">
-            <i class="bi bi-lightbulb me-1"></i>Recommendation
-            ${conf ? `<span class="copilot-recommendation-confidence">${conf}</span>` : ''}
-          </div>
-          <div class="small">${escapeHtml(rec.text || '')}</div>
+      detailParts.push(`
+        <div class="copilot-detail-sub copilot-recommendation-block">
+          <div class="copilot-detail-sub-label"><i class="bi bi-lightbulb me-1"></i>Recommendation ${conf ? `(${conf})` : ''}</div>
+          <div class="small copilot-recommendation-text">${escapeHtml(rec.text || '')}</div>
           <div class="copilot-recommendation-readonly">Read-only guidance — no action taken</div>
         </div>`);
     }
 
     // Governance
     if (payload.governance && payload.governance.permitted) {
-      parts.push(renderGovernanceBlock(payload.governance));
+      detailParts.push(renderGovernanceBlock(payload.governance));
+    }
+
+    // Wrap all detail sections in one master collapsible panel
+    if (detailParts.length) {
+      parts.push(`
+        <div class="copilot-details-panel mt-3">
+          <button type="button" class="copilot-details-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
+            <i class="bi bi-chevron-right"></i>Details
+          </button>
+          <div class="copilot-details-body">
+            ${detailParts.join('\n')}
+          </div>
+        </div>`);
     }
 
     // Follow-up prompts
@@ -235,14 +247,9 @@
     }).join('');
 
     return `
-      <div class="copilot-evidence-section mt-3">
-        <button type="button" class="copilot-evidence-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
-          <i class="bi bi-chevron-right"></i>
-          <i class="bi bi-card-list me-1"></i>Evidence (${evidence.length})
-        </button>
-        <div class="copilot-evidence-cards-wrap">
-          <div class="copilot-evidence-cards">${cards}</div>
-        </div>
+      <div class="copilot-detail-sub">
+        <div class="copilot-detail-sub-label"><i class="bi bi-card-list me-1"></i>Evidence (${evidence.length})</div>
+        <div class="copilot-evidence-cards">${cards}</div>
       </div>`;
   }
 
@@ -256,8 +263,8 @@
       </div>`).join('');
 
     return `
-      <div class="copilot-governance-block mt-2">
-        <div class="copilot-section-label"><i class="bi bi-shield-lock me-1"></i>Governance Trace</div>
+      <div class="copilot-detail-sub copilot-governance-block">
+        <div class="copilot-detail-sub-label"><i class="bi bi-shield-lock me-1"></i>Governance Trace (${gov.events.length})</div>
         ${rows}
       </div>`;
   }
@@ -489,6 +496,142 @@
       .replace(/\n\n/g, '</p><p>')
       .replace(/\n/g, '<br>');
   }
+
+  // ── Case Search Modal ──
+  const caseSearchBackdrop = document.getElementById('caseSearchBackdrop');
+  const caseSearchInput    = document.getElementById('caseSearchInput');
+  const caseSearchResults  = document.getElementById('caseSearchResults');
+  let searchDebounce = null;
+
+  function openCaseSearch() {
+    if (!caseSearchBackdrop) return;
+    caseSearchBackdrop.classList.remove('d-none');
+    setTimeout(() => { if (caseSearchInput) caseSearchInput.focus(); }, 100);
+  }
+
+  function closeCaseSearch() {
+    if (!caseSearchBackdrop) return;
+    caseSearchBackdrop.classList.add('d-none');
+    if (caseSearchInput) caseSearchInput.value = '';
+    if (caseSearchResults) {
+      caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><i class="bi bi-briefcase"></i><p class="mb-0">Type to search for a case</p></div>';
+    }
+  }
+
+  async function searchCases(query) {
+    if (!query.trim()) {
+      caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><i class="bi bi-briefcase"></i><p class="mb-0">Type to search for a case</p></div>';
+      return;
+    }
+    caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><div class="spinner-border spinner-border-sm text-primary"></div><p class="mb-0">Searching…</p></div>';
+    try {
+      const data = await apiFetch(CONFIG.urls.caseSearch + '?q=' + encodeURIComponent(query));
+      if (!data || !data.results || !data.results.length) {
+        caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><i class="bi bi-inbox"></i><p class="mb-0">No cases found</p></div>';
+        return;
+      }
+      const html = data.results.map(c => `
+        <button type="button" class="copilot-case-result" data-case-id="${c.id}">
+          <div class="copilot-case-result-main">
+            <strong>${escapeHtml(c.case_number)}</strong>
+            <span class="badge bg-${c.status === 'CLOSED' ? 'secondary' : c.status === 'ESCALATED' ? 'danger' : 'primary'}-subtle copilot-case-result-status">${escapeHtml(c.status)}</span>
+          </div>
+          <div class="copilot-case-result-meta">
+            ${c.invoice_number ? '<span><i class="bi bi-receipt me-1"></i>' + escapeHtml(c.invoice_number) + '</span>' : ''}
+            ${c.vendor_name ? '<span><i class="bi bi-building me-1"></i>' + escapeHtml(c.vendor_name) + '</span>' : ''}
+            ${c.priority ? '<span class="text-muted">' + escapeHtml(c.priority) + '</span>' : ''}
+          </div>
+        </button>
+      `).join('');
+      caseSearchResults.innerHTML = html;
+
+      // Attach click handlers
+      caseSearchResults.querySelectorAll('.copilot-case-result').forEach(btn => {
+        btn.addEventListener('click', () => linkCase(parseInt(btn.dataset.caseId, 10)));
+      });
+    } catch (err) {
+      caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><p class="mb-0 text-danger">Search failed</p></div>';
+      console.error('Case search error:', err);
+    }
+  }
+
+  async function linkCase(caseId) {
+    if (!currentSessionId) {
+      // No session yet — start one with this case
+      const body = { case_id: caseId };
+      try {
+        const session = await apiFetch(CONFIG.urls.sessionStart, { method: 'POST', body });
+        if (session && session.id) {
+          window.location.href = CONFIG.urls.sessionBase + session.id + '/';
+        }
+      } catch (err) {
+        console.error('Failed to start session with case:', err);
+      }
+      return;
+    }
+    const url = `/api/v1/copilot/session/${currentSessionId}/`;
+    try {
+      const res = await apiFetch(url, { method: 'PATCH', body: { action: 'link_case', case_id: caseId } });
+      if (res && res.linked) {
+        currentCaseId = res.case_id;
+        // Update header
+        const badge = document.getElementById('caseBadge');
+        if (badge) { badge.textContent = 'Case #' + res.case_id; badge.classList.remove('d-none'); }
+        const title = document.getElementById('chatTitle');
+        if (title && res.title) title.textContent = res.title;
+        const label = document.getElementById('linkCaseLabel');
+        if (label) label.textContent = 'Change Case';
+        // Load context
+        loadCaseContext(caseId);
+        if (contextPanel) contextPanel.classList.remove('collapsed');
+        closeCaseSearch();
+        loadRecentConversations();
+      }
+    } catch (err) {
+      console.error('Failed to link case:', err);
+    }
+  }
+
+  async function unlinkCase() {
+    if (!currentSessionId) return;
+    const url = `/api/v1/copilot/session/${currentSessionId}/`;
+    try {
+      const res = await apiFetch(url, { method: 'PATCH', body: { action: 'unlink_case' } });
+      if (res && res.unlinked) {
+        currentCaseId = null;
+        const badge = document.getElementById('caseBadge');
+        if (badge) badge.classList.add('d-none');
+        const label = document.getElementById('linkCaseLabel');
+        if (label) label.textContent = 'Link Case';
+        if (contextPanel) contextPanel.classList.add('collapsed');
+        closeCaseSearch();
+        loadRecentConversations();
+      }
+    } catch (err) {
+      console.error('Failed to unlink case:', err);
+    }
+  }
+
+  // Wire up case search UI
+  (function initCaseSearch() {
+    const btnLink = document.getElementById('btnLinkCase');
+    if (btnLink) btnLink.addEventListener('click', openCaseSearch);
+    const btnClose = document.getElementById('btnCloseCaseSearch');
+    if (btnClose) btnClose.addEventListener('click', closeCaseSearch);
+    if (caseSearchBackdrop) {
+      caseSearchBackdrop.addEventListener('click', (e) => {
+        if (e.target === caseSearchBackdrop) closeCaseSearch();
+      });
+    }
+    if (caseSearchInput) {
+      caseSearchInput.addEventListener('input', () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => searchCases(caseSearchInput.value), 300);
+      });
+    }
+    const btnUnlink = document.getElementById('btnUnlinkCase');
+    if (btnUnlink) btnUnlink.addEventListener('click', unlinkCase);
+  })();
 
   // ── Global functions (called from onclick in templates) ──
   window.useSuggestion = function(btn) {

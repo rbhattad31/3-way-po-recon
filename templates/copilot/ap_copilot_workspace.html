@@ -4,7 +4,7 @@
 {% block title %}AP Copilot{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/ap-copilot.css' %}?v=20260315i" rel="stylesheet">
+<link href="{% static 'css/ap-copilot.css' %}?v=20260315l" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -74,11 +74,17 @@
         <h6 class="mb-0" id="chatTitle">
           {% if active_session %}{{ active_session.title|default:"New Conversation" }}{% else %}AP Copilot{% endif %}
         </h6>
+        <span class="badge bg-primary-subtle text-primary-emphasis d-none" id="caseBadge">
+          {% if case_id %}Case #{{ case_id }}{% endif %}
+        </span>
         {% if case_id %}
-          <span class="badge bg-primary-subtle text-primary-emphasis">Case #{{ case_id }}</span>
+        <script>document.getElementById('caseBadge').classList.remove('d-none');</script>
         {% endif %}
       </div>
       <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-primary" title="Link or change case" id="btnLinkCase">
+          <i class="bi bi-briefcase me-1"></i><span id="linkCaseLabel">{% if case_id %}Change Case{% else %}Link Case{% endif %}</span>
+        </button>
         {% if session_id %}
         <button class="btn btn-sm btn-outline-secondary" title="Pin conversation" onclick="togglePin('{{ session_id }}')">
           <i class="bi bi-pin"></i>
@@ -144,6 +150,33 @@
   </aside>
 </div>
 
+{# ── Case Search Modal ── #}
+<div class="copilot-modal-backdrop d-none" id="caseSearchBackdrop">
+  <div class="copilot-case-search-modal">
+    <div class="copilot-case-search-header">
+      <h6 class="mb-0"><i class="bi bi-search me-2"></i>Search &amp; Link Case</h6>
+      <button type="button" class="btn-close btn-close-sm" id="btnCloseCaseSearch"></button>
+    </div>
+    <div class="copilot-case-search-body">
+      <input type="text" class="form-control form-control-sm" id="caseSearchInput"
+             placeholder="Search by case #, invoice #, vendor, or PO #&hellip;" autocomplete="off">
+      <div class="copilot-case-search-results" id="caseSearchResults">
+        <div class="copilot-case-search-empty">
+          <i class="bi bi-briefcase"></i>
+          <p class="mb-0">Type to search for a case</p>
+        </div>
+      </div>
+    </div>
+    {% if case_id %}
+    <div class="copilot-case-search-footer">
+      <button type="button" class="btn btn-sm btn-outline-danger" id="btnUnlinkCase">
+        <i class="bi bi-x-circle me-1"></i>Unlink Current Case
+      </button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
 {# Hidden data for JS #}
 <script type="application/json" id="copilotConfig">
 {
@@ -155,6 +188,7 @@
     "sessions": "{% url 'copilot_api:session_list' %}",
     "chat": "{% url 'copilot_api:chat' %}",
     "suggestions": "{% url 'copilot_api:suggestions' %}",
+    "caseSearch": "{% url 'copilot_api:case_search' %}",
     "workspaceBase": "{% url 'copilot:workspace' %}",
     "caseBase": "/copilot/case/",
     "sessionBase": "/copilot/session/"
@@ -167,5 +201,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/ap-copilot.js' %}?v=20260315i"></script>
+<script src="{% static 'js/ap-copilot.js' %}?v=20260315l"></script>
 {% endblock %}

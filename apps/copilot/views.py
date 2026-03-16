@@ -52,6 +52,21 @@ def session_detail(request, session_id):
         if action == "pin":
             pinned = APCopilotService.toggle_pin(request.user, str(session_id))
             return Response({"is_pinned": pinned})
+        if action == "link_case":
+            case_id = request.data.get("case_id")
+            if not case_id:
+                return Response({"error": "case_id required"}, status=status.HTTP_400_BAD_REQUEST)
+            result = APCopilotService.link_case_to_session(
+                request.user, str(session_id), int(case_id),
+            )
+            if result.get("error"):
+                return Response(result, status=status.HTTP_400_BAD_REQUEST)
+            return Response(result)
+        if action == "unlink_case":
+            result = APCopilotService.unlink_case_from_session(
+                request.user, str(session_id),
+            )
+            return Response(result)
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
     session = APCopilotService.get_session_detail(request.user, str(session_id))
@@ -139,3 +154,12 @@ def suggestions(request):
     """GET /api/v1/copilot/suggestions/"""
     prompts = APCopilotService.get_suggestions(request.user)
     return Response({"suggestions": prompts})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def case_search(request):
+    """GET /api/v1/copilot/cases/search/?q=<query> — search cases for linking."""
+    q = request.query_params.get("q", "").strip()
+    results = APCopilotService.search_cases(request.user, q)
+    return Response({"results": results})

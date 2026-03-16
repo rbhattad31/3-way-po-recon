@@ -307,37 +307,62 @@ body:has(.copilot-workspace) main.ap-main {
 }
 
 /* Evidence toggle */
-.copilot-evidence-toggle {
-  display: inline-flex;
+/* Master Details panel (one collapsible for all sub-sections) */
+.copilot-details-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+.copilot-details-toggle {
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  width: 100%;
   cursor: pointer;
   user-select: none;
   background: none;
   border: none;
-  padding: 0;
-  font-size: 0.72rem;
+  padding: 8px 14px;
+  font-size: 0.78rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #64748b;
-  margin-bottom: 6px;
+  color: #475569;
 }
-.copilot-evidence-toggle:hover {
-  color: #334155;
+.copilot-details-toggle:hover {
+  color: #0f172a;
+  background: #f1f5f9;
 }
-.copilot-evidence-toggle .bi {
+.copilot-details-toggle .bi {
   font-size: 0.7rem;
   transition: transform 0.2s ease;
 }
-.copilot-evidence-toggle.expanded .bi {
+.copilot-details-toggle.expanded .bi {
   transform: rotate(90deg);
 }
-.copilot-evidence-cards-wrap {
+.copilot-details-body {
   display: none;
+  padding: 4px 14px 14px;
 }
-.copilot-evidence-cards-wrap.show {
+.copilot-details-body.show {
   display: block;
+}
+
+/* Detail sub-sections */
+.copilot-detail-sub {
+  padding: 8px 0;
+}
+.copilot-detail-sub + .copilot-detail-sub {
+  border-top: 1px solid #e2e8f0;
+}
+.copilot-detail-sub-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin-bottom: 6px;
 }
 
 /* Evidence cards */
@@ -356,16 +381,16 @@ body:has(.copilot-workspace) main.ap-main {
   color: #1e293b;
 }
 .copilot-evidence-card.copilot-evidence-invoice {
-  border-left: 3px solid var(--ap-primary, #2563eb);
+  border-left: 3px solid #2563eb;
 }
 .copilot-evidence-card.copilot-evidence-purchase_order {
-  border-left: 3px solid var(--ap-success, #059669);
+  border-left: 3px solid #059669;
 }
 .copilot-evidence-card.copilot-evidence-grn {
-  border-left: 3px solid var(--ap-info, #0284c7);
+  border-left: 3px solid #0284c7;
 }
 .copilot-evidence-card.copilot-evidence-exception {
-  border-left: 3px solid var(--ap-warning, #d97706);
+  border-left: 3px solid #d97706;
 }
 .copilot-evidence-card.copilot-evidence-decision {
   border-left: 3px solid var(--ap-path-3way, #7c3aed);
@@ -386,6 +411,102 @@ body:has(.copilot-workspace) main.ap-main {
   margin-top: 4px;
 }
 
+/* ── Case Search Modal ── */
+.copilot-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 1050;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+}
+.copilot-case-search-modal {
+  background: #fff;
+  border-radius: 12px;
+  width: 480px;
+  max-width: 95vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0,0,0,.18);
+}
+.copilot-case-search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.copilot-case-search-header h6 {
+  color: #0f172a;
+}
+.copilot-case-search-body {
+  padding: 14px 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+.copilot-case-search-body input {
+  margin-bottom: 12px;
+}
+.copilot-case-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.copilot-case-search-empty {
+  text-align: center;
+  color: #94a3b8;
+  padding: 28px 12px;
+}
+.copilot-case-search-empty i {
+  font-size: 1.6rem;
+  display: block;
+  margin-bottom: 6px;
+}
+.copilot-case-search-empty p {
+  font-size: 0.85rem;
+}
+.copilot-case-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+  color: #0f172a;
+}
+.copilot-case-result:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+.copilot-case-result-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+}
+.copilot-case-result-status {
+  font-size: 0.68rem;
+}
+.copilot-case-result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.78rem;
+  color: #64748b;
+  margin-top: 4px;
+}
+.copilot-case-search-footer {
+  padding: 10px 18px;
+  border-top: 1px solid #e2e8f0;
+  text-align: right;
+}
+
 /* Agent chips */
 .copilot-agent-chips {
   display: flex;
@@ -403,32 +524,27 @@ body:has(.copilot-workspace) main.ap-main {
 
 /* Recommendation block */
 .copilot-recommendation-block {
-  background: var(--ap-warning-light, #fffbeb);
-  border: 1px solid #fde68a;
-  border-radius: 10px;
-  padding: 12px 16px;
+  border-left: 3px solid #eab308;
+  padding-left: 12px;
   margin-top: 8px;
 }
-.copilot-recommendation-block .copilot-section-label {
-  color: var(--ap-warning, #d97706);
+.copilot-recommendation-text {
+  color: #1e293b;
+  padding: 6px 0 2px;
 }
 .copilot-recommendation-confidence {
-  float: right;
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: 0.7rem;
+  color: #64748b;
 }
 .copilot-recommendation-readonly {
-  font-size: 0.72rem;
-  color: var(--ap-text-muted, #94a3b8);
+  font-size: 0.7rem;
+  color: #94a3b8;
   font-style: italic;
   margin-top: 4px;
 }
 
 /* Governance block */
 .copilot-governance-block {
-  background: var(--ap-bg-subtle, #f1f5f9);
-  border-radius: 10px;
-  padding: 12px 16px;
   margin-top: 8px;
 }
 .copilot-governance-row {
@@ -436,7 +552,8 @@ body:has(.copilot-workspace) main.ap-main {
   justify-content: space-between;
   font-size: 0.78rem;
   padding: 3px 0;
-  border-bottom: 1px solid var(--ap-bg-muted, #e2e8f0);
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
 }
 .copilot-governance-row:last-child {
   border-bottom: none;
