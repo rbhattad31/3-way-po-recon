@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 class ParsedLineItem:
     line_number: int = 1
     raw_description: str = ""
+    raw_item_category: str = ""
     raw_quantity: str = ""
     raw_unit_price: str = ""
     raw_tax_amount: str = ""
@@ -45,6 +46,7 @@ class ExtractionParserService:
             lines.append(ParsedLineItem(
                 line_number=idx,
                 raw_description=self._safe_str(item.get("item_description") or item.get("description")),
+                raw_item_category=self._safe_str(item.get("item_category") or item.get("category")),
                 raw_quantity=self._safe_str(item.get("quantity")),
                 raw_unit_price=self._safe_str(item.get("unit_price")),
                 raw_tax_amount=self._safe_str(item.get("tax_amount")),

@@ -170,7 +170,8 @@
         <div class="col-sm-4 mb-2"><span style="color:var(--ap-text-muted)">PO #:</span> <span style="font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_po_number|default:"—" }}</span></div>
         <div class="col-sm-4 mb-2"><span style="color:var(--ap-text-muted)">Currency:</span> <span style="font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_currency|default:"—" }}</span></div>
         <div class="col-sm-4 mb-2"><span style="color:var(--ap-text-muted)">Subtotal:</span> <span style="font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_subtotal|default:"—" }}</span></div>
-        <div class="col-sm-4 mb-2"><span style="color:var(--ap-text-muted)">Tax:</span> <span style="font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_tax_amount|default:"—" }}</span></div>
+        <div class="col-sm-4 mb-2"><span style="color:var(--ap-text-muted)">Tax %:</span> <span style="font-family:var(--ap-font-mono);font-size:.8rem">{% if raw_invoice_tax_percentage is not None %}{{ raw_invoice_tax_percentage }}%{% else %}—{% endif %}</span></div>
+        <div class="col-sm-4 mb-2"><span style="color:var(--ap-text-muted)">Tax Amount:</span> <span style="font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_tax_amount|default:"—" }}</span></div>
         <div class="col-sm-4 mb-2"><span style="color:var(--ap-text-muted)">Total:</span> <span style="font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_total_amount|default:"—" }}</span></div>
       </div>
     </div>
@@ -194,12 +195,13 @@
           <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;width:80px">Category</th>
           <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:70px">Qty</th>
           <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:110px">Unit Price</th>
-          {% if has_line_tax %}<th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:90px">Tax</th>{% endif %}
+          {% if has_line_tax %}<th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:80px">Tax (%)</th>{% endif %}
+          {% if has_line_tax %}<th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:90px">Tax Amount</th>{% endif %}
           <th style="padding:.5rem .0 .5rem .5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:110px">Amount</th>
         </tr>
       </thead>
       <tbody>
-        {% for line in invoice.line_items.all %}
+        {% for line in line_items_for_display %}
         <tr style="border-bottom:1px solid var(--ap-border)">
           <td style="padding:.6rem .5rem .6rem 0;color:var(--ap-text-muted)">{{ line.line_number }}</td>
           <td style="padding:.6rem .5rem">
@@ -207,15 +209,16 @@
             {% if line.is_service_item %}<span class="ap-badge ap-badge-info" style="font-size:.55rem;padding:.1rem .3rem;vertical-align:middle">SVC</span>{% endif %}
             {% if line.is_stock_item %}<span class="ap-badge ap-badge-primary" style="font-size:.55rem;padding:.1rem .3rem;vertical-align:middle">STK</span>{% endif %}
           </td>
-          <td style="padding:.6rem .5rem;font-size:.75rem;color:var(--ap-text-muted)">{{ line.item_category|default:"—" }}</td>
+          <td style="padding:.6rem .5rem;font-size:.75rem;color:var(--ap-text-muted)">{{ line.item_category }}</td>
           <td style="padding:.6rem .5rem;text-align:right">{{ line.quantity|default:"—" }}</td>
           <td style="padding:.6rem .5rem;text-align:right">{{ line.unit_price|default:"—" }}</td>
+          {% if has_line_tax %}<td style="padding:.6rem .5rem;text-align:right">{% if line.tax_percentage is not None %}{{ line.tax_percentage }}%{% else %}—{% endif %}</td>{% endif %}
           {% if has_line_tax %}<td style="padding:.6rem .5rem;text-align:right">{{ line.tax_amount|default:"—" }}</td>{% endif %}
           <td style="padding:.6rem 0 .6rem .5rem;text-align:right;font-weight:500">{{ line.line_amount|default:"—" }}</td>
         </tr>
         {% empty %}
         <tr>
-          <td colspan="{% if has_line_tax %}7{% else %}6{% endif %}" style="padding:1.5rem;text-align:center;color:var(--ap-text-muted)">
+          <td colspan="{% if has_line_tax %}8{% else %}6{% endif %}" style="padding:1.5rem;text-align:center;color:var(--ap-text-muted)">
             <i class="bi bi-list-ul d-block mb-1" style="font-size:1.25rem"></i>No line items extracted
           </td>
         </tr>
@@ -232,9 +235,15 @@
           <span>{{ invoice.currency }} {{ invoice.subtotal }}</span>
         </div>
         {% endif %}
+        {% if invoice_tax_percentage is not None %}
+        <div class="d-flex justify-content-between" style="padding:.35rem 0;font-size:var(--ap-font-size-sm)">
+          <span style="color:var(--ap-text-muted)">Tax (%)</span>
+          <span>{{ invoice_tax_percentage }}%</span>
+        </div>
+        {% endif %}
         {% if invoice.tax_amount %}
         <div class="d-flex justify-content-between" style="padding:.35rem 0;font-size:var(--ap-font-size-sm)">
-          <span style="color:var(--ap-text-muted)">Tax</span>
+          <span style="color:var(--ap-text-muted)">Tax Amount</span>
           <span>{{ invoice.currency }} {{ invoice.tax_amount }}</span>
         </div>
         {% endif %}

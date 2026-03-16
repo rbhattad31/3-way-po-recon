@@ -6,6 +6,7 @@ import logging
 from decimal import Decimal
 from typing import Any, Dict, List
 
+from apps.core.utils import normalize_category, resolve_line_tax_percentage, resolve_tax_percentage
 from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 logger = logging.getLogger(__name__)
@@ -221,10 +222,39 @@ class InvoiceDetailsTool(BaseTool):
         except Invoice.DoesNotExist:
             return ToolResult(success=False, error=f"Invoice {invoice_id} not found")
 
-        lines = list(inv.line_items.all().values(
-            "line_number", "description", "quantity", "unit_price",
-            "tax_amount", "line_amount",
-        ))
+        raw_line_items = ((inv.extraction_raw_json or {}).get("line_items") or [])
+        lines = []
+        for line in inv.line_items.all():
+            raw_line = raw_line_items[line.line_number - 1] if line.line_number - 1 < len(raw_line_items) and isinstance(raw_line_items[line.line_number - 1], dict) else {}
+            tax_percentage = resolve_line_tax_percentage(
+                raw_percentage=raw_line.get("tax_percentage"),
+                tax_amount=line.tax_amount,
+                quantity=line.quantity,
+                unit_price=line.unit_price,
+                line_amount=line.line_amount,
+            )
+            lines.append({
+                "line_number": line.line_number,
+                "description": line.description,
+                "item_category": (
+                    normalize_category(line.item_category)
+                    or normalize_category(raw_line.get("item_category") or raw_line.get("category"))
+                    or ("Service" if line.is_service_item else "")
+                    or ("Stock" if line.is_stock_item else "")
+                    or "Other"
+                ),
+                "quantity": line.quantity,
+                "unit_price": line.unit_price,
+                "tax_percentage": tax_percentage,
+                "tax_amount": line.tax_amount,
+                "line_amount": line.line_amount,
+            })
+
+        header_tax_percentage = resolve_tax_percentage(
+            raw_percentage=(inv.extraction_raw_json or {}).get("tax_percentage"),
+            tax_amount=inv.tax_amount,
+            base_amount=inv.subtotal,
+        )
 
         return ToolResult(success=True, data={
             "invoice_id": inv.pk,
@@ -235,6 +265,7 @@ class InvoiceDetailsTool(BaseTool):
             "invoice_date": str(inv.invoice_date) if inv.invoice_date else None,
             "currency": inv.currency,
             "subtotal": str(inv.subtotal),
+            "tax_percentage": str(header_tax_percentage) if header_tax_percentage is not None else None,
             "tax_amount": str(inv.tax_amount),
             "total_amount": str(inv.total_amount),
             "status": inv.status,
