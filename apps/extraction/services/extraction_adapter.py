@@ -65,6 +65,7 @@ class InvoiceExtractionAdapter:
 
             # Step 2: LLM structured extraction via Invoice Extraction Agent
             raw_json, agent_run_id = self._agent_extract(ocr_text)
+            print("Raw Json:",raw_json)
             logger.info("Agent extraction completed (agent_run_id=%s)", agent_run_id)
             elapsed = int((time.time() - start) * 1000)
 
@@ -107,7 +108,8 @@ class InvoiceExtractionAdapter:
         )
 
         with open(file_path, "rb") as f:
-            poller = client.begin_analyze_document("prebuilt-read", document=f)
+            #poller = client.begin_analyze_document("prebuilt-read", document=f)
+            poller = client.begin_analyze_document("prebuilt-invoice", document=f)
 
         result = poller.result()
 
