@@ -86,6 +86,10 @@ class CaseRoutingService:
         case.invoice_type = InvoiceType.PO_BACKED
         case.save(update_fields=["purchase_order", "reconciliation_mode", "invoice_type", "updated_at"])
 
+        # Enrich invoice line item flags from PO data
+        from apps.cases.orchestrators.stage_executor import StageExecutor
+        StageExecutor._enrich_invoice_lines_from_po(invoice, po_result.purchase_order)
+
         if mode_result.mode == "TWO_WAY":
             path = ProcessingPath.TWO_WAY
         else:

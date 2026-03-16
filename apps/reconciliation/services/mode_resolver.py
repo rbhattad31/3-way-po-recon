@@ -199,17 +199,18 @@ class ReconciliationModeResolver:
 
         # Service invoice flag
         if policy.is_service_invoice is not None:
-            is_service = self._is_service_invoice(invoice)
+            is_service = self._is_service_invoice(invoice, purchase_order)
             if is_service is None:
-                # Can't confirm invoice matches the required flag — don't match
+                # Can't determine — policy requires a definite flag, skip this policy
                 return False
             if is_service != policy.is_service_invoice:
                 return False
 
         # Stock invoice flag
         if policy.is_stock_invoice is not None:
-            is_stock = self._is_stock_invoice(invoice)
+            is_stock = self._is_stock_invoice(invoice, purchase_order)
             if is_stock is None:
+                # Can't determine — policy requires a definite flag, skip this policy
                 return False
             if is_stock != policy.is_stock_invoice:
                 return False
@@ -225,8 +226,8 @@ class ReconciliationModeResolver:
         purchase_order: Optional[PurchaseOrder],
     ) -> Optional[ModeResolutionResult]:
         """Apply config-driven heuristics based on line item classification."""
-        is_service = self._is_service_invoice(invoice)
-        is_stock = self._is_stock_invoice(invoice)
+        is_service = self._is_service_invoice(invoice, purchase_order)
+        is_stock = self._is_stock_invoice(invoice, purchase_order)
 
         # Heuristic 1: Service invoices → TWO_WAY (if enabled)
         if self.config.enable_two_way_for_services and is_service is True:
@@ -314,8 +315,14 @@ class ReconciliationModeResolver:
     # Invoice inspection helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _is_service_invoice(invoice: Invoice) -> Optional[bool]:
-        """Check if the invoice is a service invoice based on line item flags."""
+    def _is_service_invoice(
+        invoice: Invoice,
+        purchase_order: Optional[PurchaseOrder] = None,
+    ) -> Optional[bool]:
+        """Check if the invoice is a service invoice based on line item flags.
+
+        Falls back to PO line item flags when invoice lines have no flags.
+        """
         lines = list(
             InvoiceLineItem.objects
             .filter(invoice=invoice)
@@ -325,6 +332,17 @@ class ReconciliationModeResolver:
             return None
 
         flagged = [v for v in lines if v is not None]
+
+        # Fallback: check PO line items when invoice lines have no flags
+        if not flagged and purchase_order:
+            from apps.documents.models import PurchaseOrderLineItem
+            po_flags = list(
+                PurchaseOrderLineItem.objects
+                .filter(purchase_order=purchase_order)
+                .values_list("is_service_item", flat=True)
+            )
+            flagged = [v for v in po_flags if v is not None]
+
         if not flagged:
             return None
 
@@ -338,8 +356,14 @@ class ReconciliationModeResolver:
         return None
 
     @staticmethod
-    def _is_stock_invoice(invoice: Invoice) -> Optional[bool]:
-        """Check if the invoice is a stock invoice based on line item flags."""
+    def _is_stock_invoice(
+        invoice: Invoice,
+        purchase_order: Optional[PurchaseOrder] = None,
+    ) -> Optional[bool]:
+        """Check if the invoice is a stock invoice based on line item flags.
+
+        Falls back to PO line item flags when invoice lines have no flags.
+        """
         lines = list(
             InvoiceLineItem.objects
             .filter(invoice=invoice)
@@ -349,6 +373,17 @@ class ReconciliationModeResolver:
             return None
 
         flagged = [v for v in lines if v is not None]
+
+        # Fallback: check PO line items when invoice lines have no flags
+        if not flagged and purchase_order:
+            from apps.documents.models import PurchaseOrderLineItem
+            po_flags = list(
+                PurchaseOrderLineItem.objects
+                .filter(purchase_order=purchase_order)
+                .values_list("is_stock_item", flat=True)
+            )
+            flagged = [v for v in po_flags if v is not None]
+
         if not flagged:
             return None
 

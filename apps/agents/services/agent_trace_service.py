@@ -216,7 +216,12 @@ class AgentTraceService:
 
     @staticmethod
     def get_trace_for_invoice(invoice_id: int) -> Dict[str, Any]:
-        """Return the full agent trace for an invoice across all recon results."""
+        """Return the full agent trace for an invoice across all recon results.
+
+        Also includes agent runs that are not linked to a reconciliation result
+        (e.g., PO_RETRIEVAL runs created during the case pipeline before
+        reconciliation occurs).
+        """
         from apps.reconciliation.models import ReconciliationResult
 
         result_ids = list(
@@ -226,9 +231,85 @@ class AgentTraceService:
         )
 
         all_traces: List[Dict[str, Any]] = []
+        seen_run_ids: set = set()
+
+        # 1. Agent runs linked to reconciliation results (standard path)
         for result_id in result_ids:
             trace = AgentTraceService.get_trace_for_result(result_id)
             all_traces.append(trace)
+            for run_data in trace.get("agent_runs", []):
+                seen_run_ids.add(run_data["agent_run_id"])
+
+        # 2. Orphaned agent runs: linked to a case stage for this invoice,
+        #    or carrying invoice_id in input_payload, but not tied to a
+        #    reconciliation result.
+        orphan_runs = AgentRun.objects.filter(
+            reconciliation_result__isnull=True,
+            input_payload__invoice_id=invoice_id,
+        ).exclude(pk__in=seen_run_ids).order_by("created_at")
+
+        # Also find runs linked via APCaseStage.performed_by_agent
+        try:
+            from apps.cases.models import APCase, APCaseStage
+            case = APCase.objects.filter(invoice_id=invoice_id).first()
+            if case:
+                stage_run_ids = list(
+                    APCaseStage.objects.filter(
+                        case=case,
+                        performed_by_agent__isnull=False,
+                    ).values_list("performed_by_agent_id", flat=True)
+                )
+                stage_orphans = AgentRun.objects.filter(
+                    pk__in=stage_run_ids,
+                ).exclude(pk__in=seen_run_ids).order_by("created_at")
+                orphan_runs = orphan_runs | stage_orphans
+        except Exception:
+            pass
+
+        if orphan_runs.exists():
+            orphan_trace_data: List[Dict[str, Any]] = []
+            for run in orphan_runs.distinct():
+                if run.pk in seen_run_ids:
+                    continue
+                seen_run_ids.add(run.pk)
+                steps = list(
+                    AgentStep.objects.filter(agent_run=run).order_by("step_number").values(
+                        "id", "step_number", "action", "input_data",
+                        "output_data", "success", "duration_ms", "created_at",
+                    )
+                )
+                tool_calls = list(
+                    ToolCall.objects.filter(agent_run=run).order_by("created_at").values(
+                        "id", "tool_name", "status", "input_payload",
+                        "output_payload", "error_message", "duration_ms", "created_at",
+                    )
+                )
+                decisions = list(
+                    DecisionLog.objects.filter(agent_run=run).order_by("created_at").values(
+                        "id", "decision", "rationale", "confidence",
+                        "evidence_refs", "created_at",
+                    )
+                )
+                orphan_trace_data.append({
+                    "agent_run_id": run.pk,
+                    "agent_type": run.agent_type,
+                    "agent_name": run.agent_definition.name if run.agent_definition else run.agent_type,
+                    "status": run.status,
+                    "confidence": run.confidence,
+                    "summarized_reasoning": run.summarized_reasoning,
+                    "started_at": run.started_at,
+                    "completed_at": run.completed_at,
+                    "duration_ms": run.duration_ms,
+                    "steps": steps,
+                    "tool_calls": tool_calls,
+                    "decisions": decisions,
+                })
+            if orphan_trace_data:
+                all_traces.append({
+                    "reconciliation_result_id": None,
+                    "label": "Pre-reconciliation agent runs",
+                    "agent_runs": orphan_trace_data,
+                })
 
         return {
             "invoice_id": invoice_id,

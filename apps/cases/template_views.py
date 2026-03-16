@@ -441,15 +441,29 @@ def case_agent_view(request, pk):
                 })
 
     # Agent runs
-    agent_runs = []
+    from apps.agents.models import AgentRun
+    from django.db.models import Q
+
+    agent_run_q = Q()
     if recon_result:
-        from apps.agents.models import AgentRun
-        agent_runs = list(
-            AgentRun.objects.filter(reconciliation_result=recon_result)
-            .select_related("agent_definition")
-            .prefetch_related("steps", "tool_calls", "decisions", "recommendations")
-            .order_by("created_at")
-        )
+        agent_run_q |= Q(reconciliation_result=recon_result)
+    # Include orphaned runs (e.g. PO_RETRIEVAL before reconciliation)
+    agent_run_q |= Q(reconciliation_result__isnull=True, input_payload__invoice_id=invoice.pk)
+    # Include runs linked via case stages
+    stage_run_ids = list(
+        case.stages.filter(performed_by_agent__isnull=False)
+        .values_list("performed_by_agent_id", flat=True)
+    )
+    if stage_run_ids:
+        agent_run_q |= Q(pk__in=stage_run_ids)
+
+    agent_runs = list(
+        AgentRun.objects.filter(agent_run_q)
+        .select_related("agent_definition")
+        .prefetch_related("steps", "tool_calls", "decisions", "recommendations")
+        .distinct()
+        .order_by("created_at")
+    )
 
     # Summary
     summary = getattr(case, "summary", None)
