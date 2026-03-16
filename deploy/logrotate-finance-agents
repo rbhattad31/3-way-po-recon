@@ -1,0 +1,21 @@
+# =============================================================================
+# Finance Agents Platform — Logrotate Configuration
+# =============================================================================
+# Install:
+#   sudo cp /opt/finance-agents/deploy/logrotate-finance-agents /etc/logrotate.d/finance-agents
+# =============================================================================
+
+/opt/finance-agents/logs/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 financeagents financeagents
+    sharedscripts
+    postrotate
+        systemctl reload finance-agents-gunicorn 2>/dev/null || true
+        systemctl kill -s HUP --kill-who=main finance-agents-celery 2>/dev/null || true
+    endscript
+}
