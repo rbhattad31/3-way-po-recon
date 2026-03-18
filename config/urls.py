@@ -30,6 +30,8 @@ urlpatterns = [
     path("agents/", include("apps.agents.urls")),
     path("vendors/", include("apps.vendors.urls")),
     path("governance/", include("apps.auditlog.urls")),
+    path("procurement/", include("apps.procurement.urls")),
+    path("api/v1/procurement/", include("apps.procurement.api_urls")),
 ]
 
 

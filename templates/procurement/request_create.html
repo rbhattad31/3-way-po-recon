@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}New Procurement Request{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Home</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}">Procurement</a></li>
+    <li class="breadcrumb-item active">New Request</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Create Procurement Request</h5>
+      </div>
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+
+          {# Core Fields #}
+          <div class="row mb-3">
+            <div class="col-md-8">
+              <label class="form-label">Title <span class="text-danger">*</span></label>
+              <input type="text" name="title" class="form-control" required placeholder="e.g. Data Center Cooling System">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Priority</label>
+              <select name="priority" class="form-select">
+                {% for val, label in priority_choices %}
+                <option value="{{ val }}" {% if val == "MEDIUM" %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control" rows="3" placeholder="Describe the procurement need…"></textarea>
+          </div>
+
+          <div class="row mb-3">
+            <div class="col-md-4">
+              <label class="form-label">Domain Code <span class="text-danger">*</span></label>
+              <input type="text" name="domain_code" class="form-control" required placeholder="e.g. HVAC, IT, FACILITIES">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Schema Code</label>
+              <input type="text" name="schema_code" class="form-control" placeholder="Optional schema identifier">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Request Type <span class="text-danger">*</span></label>
+              <select name="request_type" class="form-select" required>
+                {% for val, label in type_choices %}
+                <option value="{{ val }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <div class="col-md-4">
+              <label class="form-label">Country</label>
+              <input type="text" name="geography_country" class="form-control" placeholder="e.g. USA">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">City</label>
+              <input type="text" name="geography_city" class="form-control" placeholder="e.g. Dallas">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Currency</label>
+              <input type="text" name="currency" class="form-control" value="USD" maxlength="3">
+            </div>
+          </div>
+
+          {# Dynamic Attributes #}
+          <hr>
+          <h6 class="mb-3"><i class="bi bi-list-ul me-1"></i>Requirements / Attributes</h6>
+          <div id="attributes-container">
+            <div class="row g-2 mb-2 attribute-row">
+              <div class="col-md-3">
+                <input type="text" name="attr_code[]" class="form-control form-control-sm" placeholder="Attribute code">
+              </div>
+              <div class="col-md-3">
+                <input type="text" name="attr_label[]" class="form-control form-control-sm" placeholder="Label">
+              </div>
+              <div class="col-md-2">
+                <select name="attr_type[]" class="form-select form-select-sm">
+                  <option value="TEXT">Text</option>
+                  <option value="NUMBER">Number</option>
+                  <option value="BOOLEAN">Boolean</option>
+                  <option value="JSON">JSON</option>
+                  <option value="SELECT">Select</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <input type="text" name="attr_value[]" class="form-control form-control-sm" placeholder="Value">
+              </div>
+              <div class="col-md-1">
+                <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('.attribute-row').remove()">
+                  <i class="bi bi-x"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <button type="button" class="btn btn-outline-secondary btn-sm mb-4" onclick="addAttributeRow()">
+            <i class="bi bi-plus me-1"></i>Add Attribute
+          </button>
+
+          <div class="d-flex justify-content-end gap-2">
+            <a href="{% url 'procurement:request_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-check-lg me-1"></i>Create Request
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function addAttributeRow() {
+  const container = document.getElementById('attributes-container');
+  const row = document.createElement('div');
+  row.className = 'row g-2 mb-2 attribute-row';
+  row.innerHTML = `
+    <div class="col-md-3">
+      <input type="text" name="attr_code[]" class="form-control form-control-sm" placeholder="Attribute code">
+    </div>
+    <div class="col-md-3">
+      <input type="text" name="attr_label[]" class="form-control form-control-sm" placeholder="Label">
+    </div>
+    <div class="col-md-2">
+      <select name="attr_type[]" class="form-select form-select-sm">
+        <option value="TEXT">Text</option>
+        <option value="NUMBER">Number</option>
+        <option value="BOOLEAN">Boolean</option>
+        <option value="JSON">JSON</option>
+        <option value="SELECT">Select</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <input type="text" name="attr_value[]" class="form-control form-control-sm" placeholder="Value">
+    </div>
+    <div class="col-md-1">
+      <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('.attribute-row').remove()">
+        <i class="bi bi-x"></i>
+      </button>
+    </div>
+  `;
+  container.appendChild(row);
+}
+</script>
+{% endblock %}
