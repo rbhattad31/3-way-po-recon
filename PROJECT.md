@@ -970,6 +970,95 @@ Output: `NonPOValidationResult` (checks, overall_status: PASS/FAIL/NEEDS_REVIEW,
 
 `CaseSummaryService` builds deterministic template summaries from case data, aggregating invoice facts, processing path, reconciliation result, validation results, and current status.
 
+### 10.9 Orchestrator Terminal-State Behaviour
+
+`CaseOrchestrator._run_common_tail()` always executes `CASE_SUMMARY` — even when `CaseStateMachine.is_terminal()` returns `True` after `EXCEPTION_ANALYSIS` (e.g. auto-close sets status → CLOSED). This ensures that:
+
+- The case summary is **regenerated on every reprocess**, reflecting the latest reconciliation outcome.
+- `REVIEW_ROUTING` is still **skipped** for terminal cases (no new assignment needed).
+
+```
+EXCEPTION_ANALYSIS
+    ↓
+is_terminal()?
+├── Yes → CASE_SUMMARY (always) → return   # auto-closed, rejected, etc.
+└── No  → REVIEW_ROUTING → CASE_SUMMARY
+```
+
+---
+
+## 10.10 AP Copilot
+
+The `apps/copilot/` app provides a **read-only conversational assistant** that lets AP users investigate cases, invoices, reconciliation results, exceptions, and governance metadata through natural-language questions. It never modifies records.
+
+### Models
+
+| Model | Purpose |
+|---|---|
+| `CopilotSession` | A conversation session linked (optionally) to an `APCase` and/or `Invoice`. Stores pin/archive status, RBAC snapshot at creation, `last_message_at`, and a `trace_id`. Uses UUID PK. |
+| `CopilotMessage` | A single turn (USER / ASSISTANT / SYSTEM) within a session. Assistant messages carry `structured_payload_json` (summary, evidence, recommendation, follow-up prompts), `consulted_agents_json`, `evidence_payload_json`, `governance_payload_json`, and `token_count`. |
+| `CopilotSessionArtifact` | References to business objects surfaced during a session (invoice, case, PO, GRN, etc.) — typed by `CopilotArtifactType`. |
+
+### `APCopilotService`
+
+Stateless service class in `apps/copilot/services/copilot_service.py`:
+
+| Method | Purpose |
+|---|---|
+| `start_session(user, case_id=None)` | Create (or resume active) session; links case/invoice when `case_id` is provided. |
+| `list_sessions(user, include_archived)` | Return user's sessions ordered by `last_message_at`. |
+| `archive_session(user, session_id)` | Soft-archive a session. |
+| `toggle_pin(user, session_id)` | Flip `is_pinned` flag. |
+| `link_case_to_session(user, session_id, case_id)` | Attach a case to an existing session. |
+| `save_user_message(session, text)` | Persist user turn. |
+| `answer_question(user, message, session)` | **Core chat handler** — detects small-talk, assembles case context + evidence, looks up agent runs, returns structured `{summary, evidence, consulted_agents, recommendation, governance, follow_up_prompts}` dict. Currently deterministic; designed for future LLM routing. |
+| `save_assistant_message(session, payload)` | Persist structured assistant response. |
+| `build_case_context(case_id, user)` | Aggregates invoice, PO, GRN, recon result, exceptions, agents, recommendation into one dict. |
+| `build_case_evidence(case_id, user)` | Evidence cards for invoice, PO lines, GRN lines, exceptions. |
+| `build_case_governance(case_id, user)` | Audit trail, RBAC events, agent trace (privileged roles only). |
+| `build_case_timeline(case_id, user)` | Delegates to `CaseTimelineService`. |
+| `get_suggestions(user)` | Returns 4 role-aware suggested prompts from `ROLE_PROMPTS`. |
+| `get_session_detail(user, session_id)` | Fetch single session (ownership-checked). |
+| `load_session_messages(user, session_id)` | Fetch ordered messages for a session. |
+
+### Small-Talk Handling
+
+`_detect_small_talk(message)` short-circuits business processing for greetings, thanks, identity questions, and acknowledgements. Business keywords (case, invoice, PO, vendor, etc.) override detection regardless of message length.
+
+### Role-Aware Visibility
+
+| Visibility Level | Roles | Extra data |
+|---|---|---|
+| Governance | ADMIN, AUDITOR | Full audit trail, RBAC events, permission-denial trace in responses |
+| Extended | FINANCE_MANAGER, REVIEWER | Recommendations, review history |
+| Operational | AP_PROCESSOR | Case status, exceptions, extraction confidence |
+
+### API Endpoints (`/api/v1/copilot/`)
+
+| Endpoint | Method | Description | Permission |
+|---|---|---|---|
+| `session/start/` | POST | Start or resume a session | `agents.use_copilot` |
+| `sessions/` | GET | List user's sessions | `agents.use_copilot` |
+| `session/<session_id>/` | GET, PATCH | Session detail; PATCH actions: `archive`, `pin`, `link_case`, `unlink_case` | `agents.use_copilot` |
+| `session/<session_id>/messages/` | GET | Paginated message history | `agents.use_copilot` |
+| `chat/` | POST | Send message → structured response | `agents.use_copilot` |
+| `case/<case_id>/context/` | GET | Full case context bundle | `cases.view` |
+| `case/<case_id>/timeline/` | GET | Case timeline (delegates to `CaseTimelineService`) | `cases.view` |
+| `case/<case_id>/evidence/` | GET | Evidence cards | `cases.view` |
+| `case/<case_id>/governance/` | GET | Governance data (audit, RBAC, agent trace) | `cases.view` |
+| `suggestions/` | GET | Role-aware suggested prompts | `agents.use_copilot` |
+| `cases/search/` | GET | Case search by keyword/status | `cases.view` |
+
+### Template Views (`/copilot/`)
+
+| URL | View | Description |
+|---|---|---|
+| `/copilot/` | `copilot_workspace` | Main copilot workspace with session list and suggestions |
+| `/copilot/case/<case_id>/` | `copilot_case` | Case-linked workspace — auto-starts/resumes session for the case |
+| `/copilot/session/<session_id>/` | `copilot_session` | Resume a specific session |
+
+Template: `templates/copilot/ap_copilot_workspace.html`. JS panel: `static/js/copilot-panel.js`.
+
 ---
 
 ## 11. Review Workflow
@@ -1112,6 +1201,8 @@ Query helpers: `fetch_case_history()`, `fetch_access_history()`, `fetch_permissi
 | `case` / `stage` | APCase / APCaseStage | Stage durations, trace IDs |
 
 Each timeline entry includes an `rbac_badge` dict (`{role, permission, granted}`) when RBAC context is available, plus `status_change`, `field_changes`, and `duration_ms` when applicable.
+
+**Ordering**: `get_case_timeline()` returns entries sorted **latest-first** (`reverse=True` on the `timestamp` key). The case agent view (`/cases/<pk>/agent/`) likewise queries related querysets with `-created_at` (stages, decisions, comments) so the most recent activity appears at the top.
 
 `get_stage_timeline(case_id)` returns a stage-centric timeline for case governance views.
 
@@ -1496,6 +1587,27 @@ The observability seeder (`observability_data.py`) creates full traceability rec
 - **DecisionLog**: `trace_id`, `rule_name`, `rule_version`, `config_snapshot_json` (tolerance bands), `policy_code`, `actor_primary_role`
 
 All trace IDs are consistent per case lifecycle — a single `trace_id` links all records for one case across AgentRun → AuditEvent → DecisionLog → ProcessingLog.
+
+### 17.6 Production Seed Scripts
+
+One-off scripts created to seed PO and GRN data for specific production cases (execute via `python manage.py shell < scripts/<name>.py`):
+
+| Script | Purpose |
+|---|---|
+| `scripts/query_case.py` | Query any case by case_number — prints invoice, PO, vendor, line items |
+| `scripts/query_po.py` | Query invoice/case by PO number on any environment |
+| `scripts/seed_case_0012.py` | AP-260316-0012 — creates PO 2601017 (ID=5) + GRN GRN-2601017-001 (ID=6); Al-Safi Danone, 4 lines, SAR 212,400 |
+| `scripts/fix_po_amounts.py` | Corrects PO 2601017 line amounts to include tax: 85500→98325, 48000→55200, 19500→22425, 33000→37950 |
+| `scripts/fix_po_total.py` | Corrects PO 2601017 header total: 241800→212400 |
+| `scripts/seed_case_0013.py` | AP-260316-0013 — creates PO 2601015 (ID=6) + GRN GRN-2601015-001 (ID=7); NADEC, 2 lines, SAR 238,700 |
+| `scripts/seed_case_0016.py` | AP-260316-0016 — creates PO 2601006 (ID=7) + GRN GRN-2601006-001 (ID=8); 5 lines (cleaning/hygiene), SAR 146,512.50 |
+| `scripts/seed_case_0014.py` | AP-260316-0014 — creates PO 2601005 (ID=8) + GRN GRN-2601005-001 (ID=9); 5 lines (MCD packaging), SAR 197,355 |
+
+**Pattern for running on production:**
+```bash
+scp scripts/<name>.py finance-agents:/opt/finance-agents/scripts/<name>.py
+ssh finance-agents "cd /opt/finance-agents && source venv/bin/activate && python manage.py shell < scripts/<name>.py"
+```
 
 ---
 
