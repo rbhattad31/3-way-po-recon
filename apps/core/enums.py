@@ -395,3 +395,72 @@ class CopilotArtifactType(models.TextChoices):
     EVIDENCE_CARD = "EVIDENCE_CARD", "Evidence Card"
     RECOMMENDATION = "RECOMMENDATION", "Recommendation"
     GOVERNANCE_TRACE = "GOVERNANCE_TRACE", "Governance Trace"
+
+
+# ---------------------------------------------------------------------------
+# Procurement Intelligence enums
+# ---------------------------------------------------------------------------
+
+
+class ProcurementRequestType(models.TextChoices):
+    RECOMMENDATION = "RECOMMENDATION", "Product / Solution Recommendation"
+    BENCHMARK = "BENCHMARK", "Should-Cost Benchmarking"
+    BOTH = "BOTH", "Recommendation + Benchmarking"
+
+
+class ProcurementRequestStatus(models.TextChoices):
+    DRAFT = "DRAFT", "Draft"
+    READY = "READY", "Ready"
+    PROCESSING = "PROCESSING", "Processing"
+    COMPLETED = "COMPLETED", "Completed"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED", "Review Required"
+    FAILED = "FAILED", "Failed"
+
+
+class AnalysisRunType(models.TextChoices):
+    RECOMMENDATION = "RECOMMENDATION", "Recommendation"
+    BENCHMARK = "BENCHMARK", "Benchmark"
+
+
+class AnalysisRunStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    RUNNING = "RUNNING", "Running"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+
+
+class ExtractionStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    IN_PROGRESS = "IN_PROGRESS", "In Progress"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+
+
+class ComplianceStatus(models.TextChoices):
+    PASS = "PASS", "Pass"
+    FAIL = "FAIL", "Fail"
+    PARTIAL = "PARTIAL", "Partial"
+    NOT_CHECKED = "NOT_CHECKED", "Not Checked"
+
+
+class VarianceStatus(models.TextChoices):
+    WITHIN_RANGE = "WITHIN_RANGE", "Within Range"
+    ABOVE_BENCHMARK = "ABOVE_BENCHMARK", "Above Benchmark"
+    BELOW_BENCHMARK = "BELOW_BENCHMARK", "Below Benchmark"
+    SIGNIFICANTLY_ABOVE = "SIGNIFICANTLY_ABOVE", "Significantly Above"
+
+
+class BenchmarkRiskLevel(models.TextChoices):
+    LOW = "LOW", "Low"
+    MEDIUM = "MEDIUM", "Medium"
+    HIGH = "HIGH", "High"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class AttributeDataType(models.TextChoices):
+    TEXT = "TEXT", "Text"
+    NUMBER = "NUMBER", "Number"
+    BOOLEAN = "BOOLEAN", "Boolean"
+    JSON = "JSON", "JSON"
+    DATE = "DATE", "Date"
+    SELECT = "SELECT", "Select"
