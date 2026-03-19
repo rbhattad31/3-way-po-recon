@@ -22,6 +22,10 @@ ROLES = [
     {"code": "FINANCE_MANAGER", "name": "Finance Manager", "description": "Manage reviews, override reconciliation, supervise AP operations", "is_system_role": True, "rank": 20},
     {"code": "AUDITOR", "name": "Auditor", "description": "Read-only access for audit and compliance review", "is_system_role": True, "rank": 30},
     {"code": "SYSTEM_AGENT", "name": "System Agent", "description": "Dedicated least-privilege identity for autonomous agent operations", "is_system_role": True, "rank": 100},
+    # Procurement roles
+    {"code": "PROCUREMENT_MANAGER", "name": "Procurement Manager", "description": "Supervise procurement operations, review high-risk results, full control", "is_system_role": True, "rank": 25},
+    {"code": "CATEGORY_MANAGER", "name": "Category Manager", "description": "Domain expert — manage category-specific rules, benchmarks, review results", "is_system_role": True, "rank": 35},
+    {"code": "PROCUREMENT_BUYER", "name": "Procurement Buyer", "description": "Create requests, upload quotations, trigger analysis — operational buyer", "is_system_role": True, "rank": 55},
 ]
 
 # ---------------------------------------------------------------------------
@@ -80,6 +84,14 @@ PERMISSIONS = [
     {"code": "users.manage", "name": "Manage Users", "module": "users", "action": "manage", "description": "Create, edit, and deactivate user accounts"},
     # Role management
     {"code": "roles.manage", "name": "Manage Roles", "module": "roles", "action": "manage", "description": "Create, edit roles and manage role-permission matrix"},
+    # Procurement
+    {"code": "procurement.view", "name": "View Procurement Requests", "module": "procurement", "action": "view", "description": "View procurement requests, attributes, and quotations"},
+    {"code": "procurement.create", "name": "Create Procurement Requests", "module": "procurement", "action": "create", "description": "Create new procurement requests"},
+    {"code": "procurement.edit", "name": "Edit Procurement Requests", "module": "procurement", "action": "edit", "description": "Edit requests and manage attributes"},
+    {"code": "procurement.delete", "name": "Delete Procurement Requests", "module": "procurement", "action": "delete", "description": "Delete procurement requests"},
+    {"code": "procurement.run_analysis", "name": "Run Procurement Analysis", "module": "procurement", "action": "run_analysis", "description": "Trigger recommendation and benchmark analysis runs"},
+    {"code": "procurement.manage_quotations", "name": "Manage Quotations", "module": "procurement", "action": "manage_quotations", "description": "Upload and manage supplier quotations"},
+    {"code": "procurement.view_results", "name": "View Analysis Results", "module": "procurement", "action": "view_results", "description": "View recommendation, benchmark, and compliance results"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -123,6 +135,8 @@ ROLE_MATRIX = {
         "recommendations.auto_close", "recommendations.route_review",
         "recommendations.escalate", "recommendations.reprocess",
         "recommendations.route_procurement", "recommendations.vendor_clarification",
+        # Procurement oversight
+        "procurement.view", "procurement.view_results",
     ],
     "AUDITOR": [
         "invoices.view",
@@ -132,6 +146,8 @@ ROLE_MATRIX = {
         "governance.view",
         "agents.view",
         "purchase_orders.view", "grns.view", "vendors.view",
+        # Procurement read-only
+        "procurement.view", "procurement.view_results",
     ],
     "SYSTEM_AGENT": [
         # Scoped agent orchestration + execution
@@ -149,6 +165,23 @@ ROLE_MATRIX = {
         "recommendations.route_procurement", "recommendations.vendor_clarification",
         "cases.escalate", "extraction.reprocess",
         "reviews.assign",
+        # Procurement (automated pipeline)
+        "procurement.view", "procurement.run_analysis", "procurement.view_results",
+    ],
+    # --- Procurement roles ---
+    "PROCUREMENT_MANAGER": [
+        "procurement.view", "procurement.create", "procurement.edit",
+        "procurement.delete", "procurement.run_analysis",
+        "procurement.manage_quotations", "procurement.view_results",
+    ],
+    "CATEGORY_MANAGER": [
+        "procurement.view", "procurement.create", "procurement.edit",
+        "procurement.run_analysis", "procurement.view_results",
+    ],
+    "PROCUREMENT_BUYER": [
+        "procurement.view", "procurement.create", "procurement.edit",
+        "procurement.run_analysis", "procurement.manage_quotations",
+        "procurement.view_results",
     ],
 }
 

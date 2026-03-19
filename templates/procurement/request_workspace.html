@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ proc_request.title }} — Workspace{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Home</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}">Procurement</a></li>
+    <li class="breadcrumb-item active">{{ proc_request.title|truncatechars:40 }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+
+{# ── Request Summary ── #}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h5 class="mb-0"><i class="bi bi-cart4 me-2"></i>{{ proc_request.title }}</h5>
+    <div class="d-flex gap-2">
+      {% if proc_request.status == "DRAFT" %}
+      <form method="post" action="{% url 'procurement:mark_ready' pk=proc_request.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-outline-success btn-sm"><i class="bi bi-check-circle me-1"></i>Mark Ready</button>
+      </form>
+      {% endif %}
+      {% if proc_request.status == "READY" or proc_request.status == "COMPLETED" or proc_request.status == "REVIEW_REQUIRED" %}
+      <form method="post" action="{% url 'procurement:trigger_analysis' pk=proc_request.pk %}" class="d-flex gap-1">
+        {% csrf_token %}
+        <select name="run_type" class="form-select form-select-sm" style="width:auto">
+          <option value="RECOMMENDATION">Recommendation</option>
+          <option value="BENCHMARK">Benchmark</option>
+          <option value="VALIDATION">Validation</option>
+        </select>
+        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-play-fill me-1"></i>Run Analysis</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-8">
+        <p class="text-muted mb-2">{{ proc_request.description|default:"No description" }}</p>
+      </div>
+      <div class="col-md-4">
+        <table class="table table-sm table-borderless mb-0" style="font-size:var(--ap-font-size-sm)">
+          <tr><td class="text-muted">Status</td><td>
+            {% if proc_request.status == "DRAFT" %}<span class="badge bg-secondary">Draft</span>
+            {% elif proc_request.status == "READY" %}<span class="badge bg-info text-dark">Ready</span>
+            {% elif proc_request.status == "PROCESSING" %}<span class="badge bg-primary">Processing</span>
+            {% elif proc_request.status == "COMPLETED" %}<span class="badge bg-success">Completed</span>
+            {% elif proc_request.status == "REVIEW_REQUIRED" %}<span class="badge bg-warning text-dark">Review Required</span>
+            {% elif proc_request.status == "FAILED" %}<span class="badge bg-danger">Failed</span>
+            {% endif %}
+          </td></tr>
+          <tr><td class="text-muted">Type</td><td>{{ proc_request.get_request_type_display }}</td></tr>
+          <tr><td class="text-muted">Domain</td><td><span class="badge bg-secondary">{{ proc_request.domain_code }}</span></td></tr>
+          <tr><td class="text-muted">Priority</td><td>{{ proc_request.priority }}</td></tr>
+          <tr><td class="text-muted">Geography</td><td>{{ proc_request.geography_city }}{% if proc_request.geography_city and proc_request.geography_country %}, {% endif %}{{ proc_request.geography_country }}</td></tr>
+          <tr><td class="text-muted">Currency</td><td>{{ proc_request.currency }}</td></tr>
+          <tr><td class="text-muted">Created</td><td>{{ proc_request.created_at|date:"M d, Y H:i" }}</td></tr>
+          {% if proc_request.created_by %}<tr><td class="text-muted">By</td><td>{{ proc_request.created_by.email }}</td></tr>{% endif %}
+          {% if proc_request.trace_id %}<tr><td class="text-muted">Trace</td><td><code style="font-size:0.7rem">{{ proc_request.trace_id|truncatechars:16 }}</code></td></tr>{% endif %}
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  {# ── Left Column ── #}
+  <div class="col-lg-8">
+
+    {# Attributes #}
+    <div class="card mb-4">
+      <div class="card-header"><h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Attributes</h6></div>
+      <div class="card-body p-0">
+        {% if attributes %}
+        <table class="table table-sm table-hover mb-0" style="font-size:var(--ap-font-size-sm)">
+          <thead class="table-light"><tr><th>Code</th><th>Label</th><th>Type</th><th>Value</th></tr></thead>
+          <tbody>
+          {% for attr in attributes %}
+          <tr>
+            <td><code>{{ attr.attribute_code }}</code></td>
+            <td>{{ attr.attribute_label }}</td>
+            <td><span class="badge bg-light text-dark">{{ attr.data_type }}</span></td>
+            <td>{% if attr.value_number is not None %}{{ attr.value_number }}{% elif attr.value_json %}{{ attr.value_json }}{% else %}{{ attr.value_text|truncatechars:60 }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted text-center py-3 mb-0">No attributes defined.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Validation Summary #}
+    {% include "procurement/partials/validation_summary.html" %}
+
+    {# Recommendation Result #}
+    {% if recommendation %}
+    <div class="card mb-4 border-info">
+      <div class="card-header bg-info bg-opacity-10"><h6 class="mb-0"><i class="bi bi-lightbulb me-2"></i>Recommendation</h6></div>
+      <div class="card-body">
+        <h6>{{ recommendation.recommended_option }}</h6>
+        <p class="text-muted">{{ recommendation.reasoning_summary }}</p>
+        <div class="d-flex gap-3">
+          <span class="badge bg-primary">Confidence: {% widthratio recommendation.confidence_score 1 100 %}%</span>
+          <span class="badge {% if recommendation.compliance_status == 'PASS' %}bg-success{% elif recommendation.compliance_status == 'FAIL' %}bg-danger{% else %}bg-secondary{% endif %}">
+            Compliance: {{ recommendation.compliance_status }}
+          </span>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Benchmark Results #}
+    {% if benchmarks %}
+    <div class="card mb-4 border-warning">
+      <div class="card-header bg-warning bg-opacity-10"><h6 class="mb-0"><i class="bi bi-bar-chart me-2"></i>Benchmark Results</h6></div>
+      <div class="card-body p-0">
+        {% for bm in benchmarks %}
+        <div class="p-3 {% if not forloop.last %}border-bottom{% endif %}">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <strong>{{ bm.quotation.vendor_name }}</strong>
+            <span class="badge {% if bm.risk_level == 'LOW' %}bg-success{% elif bm.risk_level == 'MEDIUM' %}bg-warning text-dark{% elif bm.risk_level == 'HIGH' %}bg-danger{% else %}bg-dark{% endif %}">
+              {{ bm.risk_level }} Risk
+            </span>
+          </div>
+          <div class="row text-center" style="font-size:var(--ap-font-size-sm)">
+            <div class="col-4">
+              <div class="text-muted">Quoted</div>
+              <div class="fw-bold">{{ bm.total_quoted_amount|floatformat:2 }}</div>
+            </div>
+            <div class="col-4">
+              <div class="text-muted">Benchmark</div>
+              <div class="fw-bold">{{ bm.total_benchmark_amount|floatformat:2 }}</div>
+            </div>
+            <div class="col-4">
+              <div class="text-muted">Variance</div>
+              <div class="fw-bold {% if bm.variance_pct > 15 %}text-danger{% elif bm.variance_pct > 5 %}text-warning{% else %}text-success{% endif %}">{{ bm.variance_pct|floatformat:1 }}%</div>
+            </div>
+          </div>
+          {% if bm.lines.all %}
+          <table class="table table-sm mt-3 mb-0" style="font-size:0.75rem">
+            <thead class="table-light"><tr><th>#</th><th>Item</th><th>Quoted</th><th>Avg</th><th>Var%</th><th>Status</th></tr></thead>
+            <tbody>
+            {% for line in bm.lines.all %}
+            <tr>
+              <td>{{ line.quotation_line.line_number }}</td>
+              <td>{{ line.quotation_line.description|truncatechars:40 }}</td>
+              <td>{{ line.quoted_value|floatformat:2 }}</td>
+              <td>{% if line.benchmark_avg is not None %}{{ line.benchmark_avg|floatformat:2 }}{% else %}—{% endif %}</td>
+              <td>{% if line.variance_pct is not None %}{{ line.variance_pct|floatformat:1 }}%{% else %}—{% endif %}</td>
+              <td>
+                {% if line.variance_status == "WITHIN_RANGE" %}<span class="badge bg-success">OK</span>
+                {% elif line.variance_status == "ABOVE_BENCHMARK" %}<span class="badge bg-warning text-dark">Above</span>
+                {% elif line.variance_status == "SIGNIFICANTLY_ABOVE" %}<span class="badge bg-danger">High</span>
+                {% elif line.variance_status == "BELOW_BENCHMARK" %}<span class="badge bg-info text-dark">Below</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# Compliance Insights #}
+    {% if compliance %}
+    <div class="card mb-4">
+      <div class="card-header"><h6 class="mb-0"><i class="bi bi-shield-check me-2"></i>Compliance</h6></div>
+      <div class="card-body">
+        <span class="badge {% if compliance.compliance_status == 'PASS' %}bg-success{% elif compliance.compliance_status == 'FAIL' %}bg-danger{% else %}bg-warning text-dark{% endif %} mb-2">
+          {{ compliance.compliance_status }}
+        </span>
+        {% if compliance.violations_json %}
+        <h6 class="mt-2">Violations</h6>
+        <ul class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
+          {% for v in compliance.violations_json %}
+          <li class="list-group-item py-1"><i class="bi bi-exclamation-triangle text-danger me-1"></i>{{ v.detail }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+
+  {# ── Right Column ── #}
+  <div class="col-lg-4">
+
+    {# Quotations #}
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-file-earmark-text me-2"></i>Quotations</h6>
+        <button class="btn btn-outline-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#quotation-form">
+          <i class="bi bi-plus"></i>
+        </button>
+      </div>
+      <div class="collapse" id="quotation-form">
+        <div class="card-body border-bottom">
+          <form method="post" action="{% url 'procurement:upload_quotation' pk=proc_request.pk %}">
+            {% csrf_token %}
+            <div class="mb-2">
+              <input type="text" name="vendor_name" class="form-control form-control-sm" placeholder="Vendor name" required>
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col-6"><input type="text" name="quotation_number" class="form-control form-control-sm" placeholder="Quote #"></div>
+              <div class="col-6"><input type="number" step="0.01" name="total_amount" class="form-control form-control-sm" placeholder="Amount"></div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm w-100">Add Quotation</button>
+          </form>
+        </div>
+      </div>
+      <div class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
+        {% for q in quotations %}
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between">
+            <strong>{{ q.vendor_name }}</strong>
+            <span class="badge {% if q.extraction_status == 'COMPLETED' %}bg-success{% elif q.extraction_status == 'FAILED' %}bg-danger{% else %}bg-secondary{% endif %}">{{ q.extraction_status }}</span>
+          </div>
+          {% if q.total_amount %}<small class="text-muted">{{ q.currency }} {{ q.total_amount|floatformat:2 }}</small>{% endif %}
+          {% if q.quotation_number %}<small class="text-muted d-block">#{{ q.quotation_number }}</small>{% endif %}
+        </div>
+        {% empty %}
+        <div class="list-group-item text-muted text-center py-3">No quotations yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {# Analysis Runs #}
+    <div class="card mb-4">
+      <div class="card-header"><h6 class="mb-0"><i class="bi bi-arrow-repeat me-2"></i>Analysis Runs</h6></div>
+      <div class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
+        {% for run in runs %}
+        <a href="{% url 'procurement:run_detail' pk=run.pk %}" class="list-group-item list-group-item-action">
+          <div class="d-flex justify-content-between">
+            <span>
+              {% if run.run_type == "RECOMMENDATION" %}<i class="bi bi-lightbulb text-info me-1"></i>
+              {% elif run.run_type == "VALIDATION" %}<i class="bi bi-check2-square text-primary me-1"></i>
+              {% else %}<i class="bi bi-bar-chart text-warning me-1"></i>{% endif %}
+              {{ run.run_type }}
+            </span>
+            <span class="badge {% if run.status == 'COMPLETED' %}bg-success{% elif run.status == 'FAILED' %}bg-danger{% elif run.status == 'RUNNING' %}bg-primary{% else %}bg-secondary{% endif %}">{{ run.status }}</span>
+          </div>
+          <small class="text-muted">{{ run.created_at|date:"M d, H:i" }}{% if run.confidence_score %} · {{ run.confidence_score|floatformat:0 }}% conf{% endif %}</small>
+        </a>
+        {% empty %}
+        <div class="list-group-item text-muted text-center py-3">No runs yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {# Activity Timeline #}
+    <div class="card mb-4">
+      <div class="card-header"><h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Activity</h6></div>
+      <div class="list-group list-group-flush" style="font-size:0.75rem">
+        {% for event in audit_events %}
+        <div class="list-group-item py-2">
+          <div class="d-flex justify-content-between">
+            <span class="fw-medium">{{ event.event_type }}</span>
+            <small class="text-muted">{{ event.created_at|date:"M d, H:i" }}</small>
+          </div>
+          <small class="text-muted">{{ event.description|truncatechars:80 }}</small>
+        </div>
+        {% empty %}
+        <div class="list-group-item text-muted text-center py-3">No activity yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

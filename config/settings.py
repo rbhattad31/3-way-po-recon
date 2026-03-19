@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.cases",
     "apps.copilot",
+    "apps.procurement",
 ]
 
 MIDDLEWARE = [

@@ -100,9 +100,9 @@
       <i class="bi bi-shield-lock"></i>
     </a>
     {% endif %}
-    <button class="btn btn-sm btn-outline-primary av-chat-toggle" id="avChatToggle" onclick="toggleChatPanel()" title="Case Copilot">
+    <a href="{% url 'copilot:case' case.pk %}" class="btn btn-sm btn-outline-primary av-chat-toggle" id="avChatToggle" title="Case Copilot">
       <i class="bi bi-chat-dots"></i>
-    </button>
+    </a>
   </div>
 </div>
 

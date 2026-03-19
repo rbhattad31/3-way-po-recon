@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Optional
 
 from django.db import transaction
@@ -102,8 +103,46 @@ class InvoicePersistenceService:
         if line_objs:
             InvoiceLineItem.objects.bulk_create(line_objs)
 
+        # Recalculate subtotal/total from line items when they disagree
+        self._reconcile_totals(invoice, line_objs)
+
         logger.info("Invoice saved: id=%s number=%s lines=%d status=%s", invoice.pk, invoice.invoice_number, len(line_objs), status)
         return invoice
+
+    @staticmethod
+    def _reconcile_totals(invoice: Invoice, line_objs: list) -> None:
+        """Recalculate subtotal/total from line items if they disagree.
+
+        OCR/LLM extraction sometimes misreads header totals while
+        extracting line items correctly.  When the sum of line_amount
+        values differs from the extracted subtotal, trust the line
+        items and recompute subtotal and total_amount.
+        """
+        if not line_objs:
+            return
+
+        computed_subtotal = sum(
+            (li.line_amount for li in line_objs if li.line_amount is not None),
+            Decimal("0.00"),
+        )
+        if computed_subtotal == Decimal("0.00"):
+            return
+
+        stored_subtotal = invoice.subtotal or Decimal("0.00")
+        if stored_subtotal == computed_subtotal:
+            return
+
+        tax = invoice.tax_amount or Decimal("0.00")
+        new_total = computed_subtotal + tax
+
+        logger.info(
+            "Invoice %s: recalculating subtotal from lines "
+            "(extracted=%s, computed=%s, new_total=%s)",
+            invoice.pk, stored_subtotal, computed_subtotal, new_total,
+        )
+        invoice.subtotal = computed_subtotal
+        invoice.total_amount = new_total
+        invoice.save(update_fields=["subtotal", "total_amount", "updated_at"])
 
     @staticmethod
     def _resolve_vendor(normalized_vendor_name: str) -> Optional[Vendor]:

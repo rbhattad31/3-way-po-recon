@@ -26,28 +26,57 @@ class POLookupTool(BaseTool):
     name = "po_lookup"
     required_permission = "purchase_orders.view"
     description = (
-        "Look up a Purchase Order by PO number. Returns PO header and line items. "
-        "Use when the agent needs PO details for reconciliation."
+        "Look up a Purchase Order by PO number, or list open POs for a vendor. "
+        "Supports exact, normalized, and partial/contains matching on PO numbers. "
+        "Pass vendor_id alone to list all open POs for that vendor."
     )
     parameters_schema = {
         "type": "object",
         "properties": {
-            "po_number": {"type": "string", "description": "The PO number to look up"},
+            "po_number": {"type": "string", "description": "The PO number to look up (supports partial match)"},
+            "vendor_id": {"type": "integer", "description": "Vendor PK — list open POs for this vendor"},
         },
-        "required": ["po_number"],
+        "required": [],
     }
 
-    def run(self, *, po_number: str = "", **kwargs) -> ToolResult:
+    def run(self, *, po_number: str = "", vendor_id: int = 0, **kwargs) -> ToolResult:
         from apps.core.utils import normalize_po_number
         from apps.documents.models import PurchaseOrder
 
+        # If vendor_id given without po_number, list POs for that vendor
+        if vendor_id and not po_number:
+            pos = PurchaseOrder.objects.filter(vendor_id=vendor_id, status="OPEN")[:10]
+            if not pos:
+                return ToolResult(success=True, data={
+                    "found": False, "vendor_id": vendor_id,
+                    "message": "No open POs found for this vendor",
+                })
+            po_list = []
+            for p in pos:
+                po_list.append({
+                    "po_number": p.po_number,
+                    "total_amount": str(p.total_amount),
+                    "po_date": str(p.po_date) if p.po_date else None,
+                })
+            return ToolResult(success=True, data={
+                "found": True, "vendor_id": vendor_id,
+                "po_count": len(po_list), "purchase_orders": po_list,
+            })
+
         if not po_number:
-            return ToolResult(success=False, error="po_number is required")
+            return ToolResult(success=False, error="po_number or vendor_id is required")
 
         po = PurchaseOrder.objects.filter(po_number=po_number).first()
         if not po:
             norm = normalize_po_number(po_number)
             po = PurchaseOrder.objects.filter(normalized_po_number=norm).first()
+
+        # Fallback: contains match (e.g., "2601001" matches "PO-MCD-2601001")
+        if not po:
+            candidates = PurchaseOrder.objects.filter(po_number__icontains=po_number)
+            if vendor_id:
+                candidates = candidates.filter(vendor_id=vendor_id)
+            po = candidates.first()
 
         if not po:
             return ToolResult(success=True, data={"found": False, "po_number": po_number})

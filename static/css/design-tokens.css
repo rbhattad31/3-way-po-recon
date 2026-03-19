@@ -496,6 +496,8 @@ body {
   padding: 0.625rem 0.75rem;
   border-bottom: 1px solid var(--ap-border-light);
   vertical-align: middle;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 .ap-table tbody tr:hover {
   background: var(--ap-bg-subtle);

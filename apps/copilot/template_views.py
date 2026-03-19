@@ -25,6 +25,7 @@ def copilot_case(request, case_id):
     sessions = APCopilotService.list_sessions(request.user)[:20]
     suggestions = APCopilotService.get_suggestions(request.user)
     context_data = APCopilotService.build_case_context(case_id, request.user)
+    messages_qs = list(APCopilotService.load_session_messages(request.user, str(session.id)))
     return render(request, "copilot/ap_copilot_workspace.html", {
         "sessions": sessions,
         "suggestions": suggestions,
@@ -32,6 +33,7 @@ def copilot_case(request, case_id):
         "session_id": str(session.id),
         "active_session": session,
         "case_context": context_data,
+        "chat_messages": messages_qs,
     })
 
 
