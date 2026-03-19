@@ -12,5 +12,6 @@ urlpatterns = [
     path("<int:pk>/trigger/", template_views.trigger_analysis, name="trigger_analysis"),
     path("<int:pk>/ready/", template_views.mark_ready, name="mark_ready"),
     path("<int:pk>/quotation/", template_views.upload_quotation, name="upload_quotation"),
+    path("<int:pk>/validate/", template_views.trigger_validation, name="trigger_validation"),
     path("run/<int:pk>/", template_views.run_detail, name="run_detail"),
 ]

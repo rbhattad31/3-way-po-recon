@@ -24,6 +24,7 @@ from apps.procurement.models import (
     ProcurementRequestAttribute,
     RecommendationResult,
     SupplierQuotation,
+    ValidationResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,17 @@ def request_workspace(request, pk):
     # Activity timeline from existing governance
     audit_events = AuditService.fetch_entity_history("ProcurementRequest", proc_request.pk)
 
+    # Latest validation result
+    validation_result = (
+        ValidationResult.objects
+        .filter(run__request=proc_request)
+        .select_related("run")
+        .prefetch_related("items")
+        .order_by("-created_at")
+        .first()
+    )
+    validation_items = validation_result.items.all() if validation_result else []
+
     return render(request, "procurement/request_workspace.html", {
         "proc_request": proc_request,
         "attributes": attributes,
@@ -172,6 +184,8 @@ def request_workspace(request, pk):
         "recommendation": recommendation,
         "benchmarks": benchmarks,
         "compliance": compliance,
+        "validation_result": validation_result,
+        "validation_items": validation_items,
         "audit_events": audit_events[:50],
         "status_choices": ProcurementRequestStatus.choices,
     })
@@ -192,11 +206,19 @@ def run_detail(request, pk):
     recommendation = None
     benchmarks = None
     compliance = None
+    validation = None
 
     if run.run_type == AnalysisRunType.RECOMMENDATION:
         recommendation = RecommendationResult.objects.filter(run=run).first()
     elif run.run_type == AnalysisRunType.BENCHMARK:
         benchmarks = BenchmarkResult.objects.filter(run=run).prefetch_related("lines", "quotation")
+
+    compliance = ComplianceResult.objects.filter(run=run).first()
+
+    # Check for validation result
+    from apps.core.enums import AnalysisRunType as ART
+    if run.run_type == ART.VALIDATION:
+        validation = ValidationResult.objects.filter(run=run).prefetch_related("items").first()
 
     compliance = ComplianceResult.objects.filter(run=run).first()
 
@@ -208,6 +230,7 @@ def run_detail(request, pk):
         "recommendation": recommendation,
         "benchmarks": benchmarks,
         "compliance": compliance,
+        "validation": validation,
         "audit_events": audit_events[:30],
     })
 
@@ -277,4 +300,30 @@ def upload_quotation(request, pk):
         messages.success(request, f"Quotation from '{quotation.vendor_name}' added.")
     except Exception as exc:
         messages.error(request, f"Failed to add quotation: {exc}")
+    return redirect("procurement:request_workspace", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Trigger Validation
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.validate")
+def trigger_validation(request, pk):
+    """Trigger a validation run from the workspace."""
+    if request.method != "POST":
+        return redirect("procurement:request_workspace", pk=pk)
+
+    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+
+    from apps.core.enums import AnalysisRunType
+    from apps.procurement.services.analysis_run_service import AnalysisRunService
+    from apps.procurement.tasks import run_validation_task
+
+    run = AnalysisRunService.create_run(
+        request=proc_request,
+        run_type=AnalysisRunType.VALIDATION,
+        triggered_by=request.user,
+    )
+    run_validation_task.delay(run.pk)
+    messages.success(request, f"Validation queued (Run {run.run_id}).")
     return redirect("procurement:request_workspace", pk=pk)

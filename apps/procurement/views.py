@@ -14,6 +14,8 @@ from apps.procurement.models import (
     ProcurementRequestAttribute,
     RecommendationResult,
     SupplierQuotation,
+    ValidationResult,
+    ValidationRuleSet,
 )
 from apps.procurement.serializers import (
     AnalysisRunSerializer,
@@ -27,6 +29,9 @@ from apps.procurement.serializers import (
     SupplierQuotationDetailSerializer,
     SupplierQuotationListSerializer,
     SupplierQuotationWriteSerializer,
+    ValidationResultSerializer,
+    ValidationRuleSetListSerializer,
+    ValidationRuleSetSerializer,
 )
 
 
@@ -58,8 +63,10 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
             if self.request and self.request.method == "POST":
                 return [HasPermissionCode("procurement.run_analysis")]
             return [HasPermissionCode("procurement.view")]
-        if self.action in ("recommendation", "benchmark"):
+        if self.action in ("recommendation", "benchmark", "validation"):
             return [HasPermissionCode("procurement.view_results")]
+        if self.action == "validate":
+            return [HasPermissionCode("procurement.validate")]
         return super().get_permissions()
 
     def get_serializer_class(self):
@@ -97,9 +104,9 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
 
         # POST — trigger a new analysis run
         run_type = request.data.get("run_type")
-        if run_type not in ("RECOMMENDATION", "BENCHMARK"):
+        if run_type not in ("RECOMMENDATION", "BENCHMARK", "VALIDATION"):
             return Response(
-                {"error": "run_type must be RECOMMENDATION or BENCHMARK"},
+                {"error": "run_type must be RECOMMENDATION, BENCHMARK, or VALIDATION"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -138,6 +145,49 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
             return Response({"detail": "No benchmark results yet."}, status=status.HTTP_404_NOT_FOUND)
         return Response(BenchmarkResultSerializer(results, many=True).data)
 
+    # ---------- trigger validation ----------
+    @action(detail=True, methods=["post"], url_path="validate")
+    def validate(self, request, pk=None):
+        """Trigger a validation run for this procurement request."""
+        from apps.core.enums import AnalysisRunType
+        from apps.procurement.services.analysis_run_service import AnalysisRunService
+        from apps.procurement.tasks import run_validation_task
+
+        proc_request = self.get_object()
+        agent_enabled = request.data.get("agent_enabled", False)
+
+        run = AnalysisRunService.create_run(
+            request=proc_request,
+            run_type=AnalysisRunType.VALIDATION,
+            triggered_by=request.user,
+        )
+        run_validation_task.delay(run.pk, agent_enabled=agent_enabled)
+
+        return Response(
+            {"run_id": str(run.run_id), "status": "queued", "message": "Validation run queued."},
+            status=status.HTTP_201_CREATED,
+        )
+
+    # ---------- fetch latest validation result ----------
+    @action(detail=True, methods=["get"], url_path="validation")
+    def validation(self, request, pk=None):
+        """Fetch the latest validation result for this request."""
+        proc_request = self.get_object()
+        result = (
+            ValidationResult.objects
+            .filter(run__request=proc_request)
+            .select_related("run")
+            .prefetch_related("items")
+            .order_by("-created_at")
+            .first()
+        )
+        if not result:
+            return Response(
+                {"detail": "No validation results yet."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(ValidationResultSerializer(result).data)
+
 
 class SupplierQuotationViewSet(viewsets.ModelViewSet):
     """CRUD for SupplierQuotation."""
@@ -160,3 +210,44 @@ class SupplierQuotationViewSet(viewsets.ModelViewSet):
         if self.action == "list":
             return SupplierQuotationListSerializer
         return SupplierQuotationDetailSerializer
+
+
+class ValidationRuleSetViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only access to validation rule sets — admin/internal use."""
+
+    queryset = ValidationRuleSet.objects.prefetch_related("rules")
+    permission_classes = [permissions.IsAuthenticated, HasPermissionCode]
+    required_permission = "procurement.view"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["domain_code", "schema_code", "validation_type", "is_active"]
+    search_fields = ["rule_set_code", "rule_set_name"]
+    ordering = ["priority", "rule_set_code"]
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return ValidationRuleSetListSerializer
+        return ValidationRuleSetSerializer
+
+
+class AnalysisRunValidationView(viewsets.ViewSet):
+    """Fetch validation result for a specific analysis run."""
+
+    permission_classes = [permissions.IsAuthenticated, HasPermissionCode]
+    required_permission = "procurement.view_results"
+
+    def retrieve(self, request, pk=None):
+        from django.shortcuts import get_object_or_404
+
+        run = get_object_or_404(AnalysisRun.objects.select_related("request"), pk=pk)
+        result = (
+            ValidationResult.objects
+            .filter(run=run)
+            .prefetch_related("items")
+            .first()
+        )
+        if not result:
+            return Response(
+                {"detail": "No validation result for this run."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(ValidationResultSerializer(result).data)

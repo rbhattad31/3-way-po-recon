@@ -420,6 +420,7 @@ class ProcurementRequestStatus(models.TextChoices):
 class AnalysisRunType(models.TextChoices):
     RECOMMENDATION = "RECOMMENDATION", "Recommendation"
     BENCHMARK = "BENCHMARK", "Benchmark"
+    VALIDATION = "VALIDATION", "Validation"
 
 
 class AnalysisRunStatus(models.TextChoices):
@@ -455,6 +456,72 @@ class BenchmarkRiskLevel(models.TextChoices):
     MEDIUM = "MEDIUM", "Medium"
     HIGH = "HIGH", "High"
     CRITICAL = "CRITICAL", "Critical"
+
+
+# ---------------------------------------------------------------------------
+# Validation Framework enums
+# ---------------------------------------------------------------------------
+
+
+class ValidationType(models.TextChoices):
+    ATTRIBUTE_COMPLETENESS = "ATTRIBUTE_COMPLETENESS", "Attribute Completeness"
+    DOCUMENT_COMPLETENESS = "DOCUMENT_COMPLETENESS", "Document Completeness"
+    SCOPE_COVERAGE = "SCOPE_COVERAGE", "Scope Coverage"
+    AMBIGUITY_CHECK = "AMBIGUITY_CHECK", "Ambiguity Check"
+    COMMERCIAL_COMPLETENESS = "COMMERCIAL_COMPLETENESS", "Commercial Completeness"
+    COMPLIANCE_READINESS = "COMPLIANCE_READINESS", "Compliance Readiness"
+
+
+class ValidationOverallStatus(models.TextChoices):
+    PASS = "PASS", "Pass"
+    PASS_WITH_WARNINGS = "PASS_WITH_WARNINGS", "Pass with Warnings"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED", "Review Required"
+    FAIL = "FAIL", "Fail"
+
+
+class ValidationRuleType(models.TextChoices):
+    REQUIRED_ATTRIBUTE = "REQUIRED_ATTRIBUTE", "Required Attribute"
+    REQUIRED_DOCUMENT = "REQUIRED_DOCUMENT", "Required Document"
+    REQUIRED_CATEGORY = "REQUIRED_CATEGORY", "Required Category"
+    AMBIGUITY_PATTERN = "AMBIGUITY_PATTERN", "Ambiguity Pattern"
+    COMMERCIAL_CHECK = "COMMERCIAL_CHECK", "Commercial Check"
+    COMPLIANCE_CHECK = "COMPLIANCE_CHECK", "Compliance Check"
+
+
+class ValidationSeverity(models.TextChoices):
+    INFO = "INFO", "Info"
+    WARNING = "WARNING", "Warning"
+    ERROR = "ERROR", "Error"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class ValidationEvaluationMode(models.TextChoices):
+    DETERMINISTIC = "DETERMINISTIC", "Deterministic"
+    AGENT_ASSISTED = "AGENT_ASSISTED", "Agent-Assisted"
+
+
+class ValidationItemStatus(models.TextChoices):
+    PRESENT = "PRESENT", "Present"
+    MISSING = "MISSING", "Missing"
+    WARNING = "WARNING", "Warning"
+    AMBIGUOUS = "AMBIGUOUS", "Ambiguous"
+    FAILED = "FAILED", "Failed"
+
+
+class ValidationSourceType(models.TextChoices):
+    ATTRIBUTE = "ATTRIBUTE", "Attribute"
+    DOCUMENT = "DOCUMENT", "Document"
+    LINE_ITEM = "LINE_ITEM", "Line Item"
+    RULE = "RULE", "Rule"
+    AGENT = "AGENT", "Agent"
+
+
+class ValidationNextAction(models.TextChoices):
+    READY_FOR_RECOMMENDATION = "READY_FOR_RECOMMENDATION", "Ready for Recommendation"
+    READY_FOR_BENCHMARKING = "READY_FOR_BENCHMARKING", "Ready for Benchmarking"
+    REQUEST_REFINEMENT = "REQUEST_REFINEMENT", "Request Refinement"
+    NEEDS_TECHNICAL_REVIEW = "NEEDS_TECHNICAL_REVIEW", "Needs Technical Review"
+    NEEDS_COMMERCIAL_REVIEW = "NEEDS_COMMERCIAL_REVIEW", "Needs Commercial Review"
 
 
 class AttributeDataType(models.TextChoices):

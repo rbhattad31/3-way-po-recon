@@ -10,6 +10,10 @@ from apps.procurement.models import (
     QuotationLineItem,
     RecommendationResult,
     SupplierQuotation,
+    ValidationResult,
+    ValidationResultItem,
+    ValidationRule,
+    ValidationRuleSet,
 )
 
 
@@ -74,3 +78,34 @@ class BenchmarkResultAdmin(admin.ModelAdmin):
 class ComplianceResultAdmin(admin.ModelAdmin):
     list_display = ("run", "compliance_status")
     list_filter = ("compliance_status",)
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+class ValidationRuleInline(admin.TabularInline):
+    model = ValidationRule
+    extra = 0
+    fields = ("rule_code", "rule_name", "rule_type", "severity", "evaluation_mode", "is_active", "display_order")
+
+
+@admin.register(ValidationRuleSet)
+class ValidationRuleSetAdmin(admin.ModelAdmin):
+    list_display = ("rule_set_code", "rule_set_name", "domain_code", "validation_type", "is_active", "priority")
+    list_filter = ("validation_type", "is_active", "domain_code")
+    search_fields = ("rule_set_code", "rule_set_name")
+    inlines = [ValidationRuleInline]
+
+
+class ValidationResultItemInline(admin.TabularInline):
+    model = ValidationResultItem
+    extra = 0
+    readonly_fields = ("item_code", "item_label", "category", "status", "severity", "source_type")
+
+
+@admin.register(ValidationResult)
+class ValidationResultAdmin(admin.ModelAdmin):
+    list_display = ("run", "overall_status", "completeness_score", "readiness_for_recommendation", "readiness_for_benchmarking", "created_at")
+    list_filter = ("overall_status",)
+    readonly_fields = ("created_at", "updated_at")
+    inlines = [ValidationResultItemInline]
