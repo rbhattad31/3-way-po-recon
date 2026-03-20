@@ -217,6 +217,13 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 7. Map permission to appropriate roles in `ROLE_MATRIX` and to `SYSTEM_AGENT`.
 8. Add entry to `AGENT_PERMISSIONS` dict in `apps/agents/services/guardrails_service.py`.
 
+### When modifying the quotation extraction pipeline
+1. OCR text limit is 60K chars (in `QuotationDocumentPrefillService._extract_quotation_data()` and `QuotationExtractionAgent.extract()`).
+2. LLM extraction uses `max_tokens=8192` for quotation extraction responses.
+3. Field synonym mapping is in `AttributeMappingService` (`_QUOTATION_FIELD_SYNONYMS`).
+4. Line items are NOT persisted to DB during extraction — only stored as JSON in `prefill_payload_json`. Persistence happens during user confirmation via `PrefillReviewService.confirm_quotation_prefill()`.
+5. Key files: `apps/procurement/services/prefill/quotation_prefill_service.py`, `apps/procurement/agents/quotation_extraction_agent.py`, `apps/procurement/services/prefill/attribute_mapping_service.py`.
+
 ### When adding a new tool
 1. Create tool class in `apps/tools/registry/tools.py` extending `BaseTool`.
 2. Decorate with `@register_tool`.
@@ -352,4 +359,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/accounts/rbac_services.py` | RBAC audit service |
 | `apps/accounts/template_views.py` | Admin console UI views (user/role/perm management) |
 | `apps/vendors/template_views.py` | Vendor list/detail views with RBAC + AP_PROCESSOR scoping |
+| `apps/procurement/services/prefill/quotation_prefill_service.py` | Quotation OCR → LLM extraction pipeline (60K char limit) |
+| `apps/procurement/agents/quotation_extraction_agent.py` | LLM-based quotation data extraction agent |
+| `apps/procurement/services/prefill/attribute_mapping_service.py` | Field synonym mapping for extracted quotation/request fields |
 | `apps/core/templatetags/rbac_tags.py` | RBAC template tags for permission-aware rendering |
