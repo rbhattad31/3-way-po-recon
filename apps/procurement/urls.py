@@ -13,5 +13,6 @@ urlpatterns = [
     path("<int:pk>/ready/", template_views.mark_ready, name="mark_ready"),
     path("<int:pk>/quotation/", template_views.upload_quotation, name="upload_quotation"),
     path("<int:pk>/validate/", template_views.trigger_validation, name="trigger_validation"),
+    path("quotation/<int:pk>/prefill-review/", template_views.quotation_prefill_review, name="quotation_prefill_review"),
     path("run/<int:pk>/", template_views.run_detail, name="run_detail"),
 ]

@@ -635,7 +635,86 @@ All services are in `apps/procurement/services/`. They follow existing project c
 | `normalize_line_items(quotation)` | Normalizes all line item descriptions (lowercase, strip, collapse whitespace). Returns count of items normalized. |
 | `_normalize_description(description)` | Internal: basic text normalization. Extension point for domain-specific normalization. |
 
-### 5.5 AnalysisRunService
+### 5.5 Quotation Document Prefill Pipeline
+
+The prefill pipeline extracts structured data from uploaded supplier proposals/quotation PDFs using OCR + LLM.
+
+#### Architecture
+
+```
+Quotation Upload (API: quotation_prefill)
+    │
+    ├─ Create DocumentUpload + SupplierQuotation (PENDING)
+    ├─ Queue run_quotation_prefill_task
+    │
+    ▼
+QuotationDocumentPrefillService.run_prefill(quotation)
+    │
+    ├─ Step 1: OCR (Azure Document Intelligence via InvoiceExtractionAdapter)
+    ├─ Step 2: LLM Extraction (GPT-4o, up to 60K chars of OCR text)
+    │          └─ System prompt requires JSON: header fields + line_items[] + commercial terms
+    ├─ Step 3: Field Mapping (AttributeMappingService.map_quotation_fields)
+    │          ├─ Header: vendor_name, quotation_number, quotation_date, total_amount, currency, subtotal
+    │          ├─ Commercial: warranty_terms, payment_terms, delivery_terms, lead_time, etc.
+    │          └─ Line Items: description, category_code, quantity, unit, unit_rate, total_amount, brand, model
+    ├─ Step 4: Confidence Classification (high/low per field)
+    ├─ Step 5: Store prefill_payload_json on quotation (status → REVIEW_PENDING)
+    │
+    ▼
+User reviews extracted data in UI
+    │
+    ▼
+PrefillReviewService.confirm_quotation_prefill(quotation, reviewed_data)
+    │
+    ├─ Persist header fields on SupplierQuotation
+    ├─ Bulk-create QuotationLineItem records from confirmed line items
+    └─ Set prefill_status → COMPLETED
+```
+
+#### Key Services
+
+**File**: `apps/procurement/services/prefill/quotation_prefill_service.py`
+
+| Method | Description |
+|---|---|
+| `run_prefill(quotation)` | Full pipeline: OCR → LLM → mapping → payload storage. Accepts up to 60K chars of OCR text to handle long proposals. |
+| `_ocr_document(file_path)` | Delegates to `InvoiceExtractionAdapter._ocr_document()` (Azure Document Intelligence). |
+| `_extract_quotation_data(ocr_text)` | LLM extraction with `max_tokens=8192`. Strips markdown code fences from response. |
+
+**File**: `apps/procurement/services/prefill/attribute_mapping_service.py`
+
+| Method | Description |
+|---|---|
+| `map_quotation_fields(extracted)` | Maps LLM output to canonical header fields, commercial terms, and line items via synonym dictionaries. |
+| `classify_confidence(fields)` | Separates fields into high_confidence (≥0.7) and low_confidence (<0.7) groups. |
+
+**File**: `apps/procurement/services/prefill/prefill_review_service.py`
+
+| Method | Description |
+|---|---|
+| `confirm_quotation_prefill(quotation, reviewed_data)` | Atomic: updates header fields + bulk-creates `QuotationLineItem` records from user-confirmed data. |
+
+**File**: `apps/procurement/services/prefill/prefill_status_service.py`
+
+| Method | Description |
+|---|---|
+| `mark_quotation_in_progress(quotation)` | Sets `prefill_status` → `IN_PROGRESS`. |
+| `mark_quotation_completed(quotation, confidence, payload)` | Sets `prefill_status` → `REVIEW_PENDING`, stores `prefill_payload_json`. |
+| `mark_quotation_failed(quotation)` | Sets `prefill_status` → `FAILED`. |
+
+**File**: `apps/procurement/agents/quotation_extraction_agent.py`
+
+| Method | Description |
+|---|---|
+| `extract(ocr_text)` | Single-shot LLM call with structured JSON prompt. Extracts header + line items from OCR text (up to 60K chars). |
+
+#### Important Notes
+
+- **OCR text limit**: 60,000 characters (sufficient for 40+ page proposals). Long technical proposals often have pricing/licensing tables deep in the document.
+- **Two-phase persistence**: Extraction stores data as JSON in `prefill_payload_json` (phase 1). Line items are NOT persisted to `QuotationLineItem` table until the user confirms (phase 2). This allows human review before commitment.
+- **Line item sources**: The LLM is instructed to find line items in pricing tables, BOQ sections, licensing tables, cost breakdowns, and commercial schedules anywhere in the document.
+
+### 5.6 AnalysisRunService
 
 **File**: `apps/procurement/services/analysis_run_service.py`
 
@@ -648,7 +727,7 @@ Manages the full lifecycle of an `AnalysisRun`.
 | `complete_run(run, output_summary, confidence_score)` | Sets status to `COMPLETED`, records `completed_at`, summary, confidence. Logs `ANALYSIS_RUN_COMPLETED` with output snapshot. |
 | `fail_run(run, error_message)` | Sets status to `FAILED`, records error. Logs `ANALYSIS_RUN_FAILED`. |
 
-### 5.6 RecommendationService
+### 5.7 RecommendationService
 
 **File**: `apps/procurement/services/recommendation_service.py`
 
@@ -668,7 +747,7 @@ Orchestrates the full recommendation flow. Decorated with `@observed_service`.
 
 **Extension point**: `_apply_rules()` is a static method that can be extended per domain with deterministic recommendation logic.
 
-### 5.7 BenchmarkService
+### 5.8 BenchmarkService
 
 **File**: `apps/procurement/services/benchmark_service.py`
 
@@ -699,7 +778,7 @@ RISK_THRESHOLDS = {
 }
 ```
 
-### 5.8 ComplianceService
+### 5.9 ComplianceService
 
 **File**: `apps/procurement/services/compliance_service.py`
 
@@ -715,7 +794,7 @@ Stateless rule-based compliance checking.
 - 1 violation → `PARTIAL`
 - 2+ violations → `FAIL`
 
-### 5.9 ValidationRuleResolverService
+### 5.10 ValidationRuleResolverService
 
 **File**: `apps/procurement/services/validation/rule_resolver_service.py`
 
@@ -727,7 +806,7 @@ Resolves applicable validation rules for a procurement request based on domain a
 | `resolve_rules(domain_code, schema_code, validation_type)` | Returns flat list of `ValidationRule` records from resolved rule sets. |
 | `resolve_rules_for_request(request)` | Resolves rules across all 6 validation types for a given request. |
 
-### 5.10 AttributeCompletenessValidationService
+### 5.11 AttributeCompletenessValidationService
 
 **File**: `apps/procurement/services/validation/attribute_completeness_service.py`
 
@@ -735,7 +814,7 @@ Resolves applicable validation rules for a procurement request based on domain a
 |---|---|
 | `validate(request, rules)` | Checks `REQUIRED_ATTRIBUTE` rules against request attributes. Validates presence and type for each required attribute. Returns list of finding dicts. |
 
-### 5.11 DocumentCompletenessValidationService
+### 5.12 DocumentCompletenessValidationService
 
 **File**: `apps/procurement/services/validation/document_completeness_service.py`
 
@@ -743,7 +822,7 @@ Resolves applicable validation rules for a procurement request based on domain a
 |---|---|
 | `validate(request, rules)` | Checks `REQUIRED_DOCUMENT` rules. Maps document types (`QUOTATION`, `BOQ`, `SPECIFICATION`, etc.) to presence checks via quotation data. Returns findings. |
 
-### 5.12 ScopeCoverageValidationService
+### 5.13 ScopeCoverageValidationService
 
 **File**: `apps/procurement/services/validation/scope_coverage_service.py`
 
@@ -751,7 +830,7 @@ Resolves applicable validation rules for a procurement request based on domain a
 |---|---|
 | `validate(request, rules)` | Compares expected categories from `REQUIRED_CATEGORY` rules and `config_json` against detected `category_code` values from `QuotationLineItem` records. Returns findings. |
 
-### 5.13 AmbiguityValidationService
+### 5.14 AmbiguityValidationService
 
 **File**: `apps/procurement/services/validation/ambiguity_service.py`
 
@@ -759,7 +838,7 @@ Resolves applicable validation rules for a procurement request based on domain a
 |---|---|
 | `validate(request, rules)` | Scans request description, line item descriptions, and attribute values against configurable regex patterns. 12 default patterns ("as required", "lumpsum", "complete system", etc.) plus rule-defined patterns from `AMBIGUITY_PATTERN` rules. Returns findings with `AMBIGUOUS` status. |
 
-### 5.14 CommercialCompletenessValidationService
+### 5.15 CommercialCompletenessValidationService
 
 **File**: `apps/procurement/services/validation/commercial_completeness_service.py`
 
@@ -767,7 +846,7 @@ Resolves applicable validation rules for a procurement request based on domain a
 |---|---|
 | `validate(request, rules)` | Keyword-based search for 8 default commercial terms (`WARRANTY`, `DELIVERY`, `PAYMENT_TERMS`, `TAXES`, `INSTALLATION`, `SUPPORT`, `LEAD_TIME`, `TESTING`) plus rule-defined checks from `COMMERCIAL_CHECK` rules. Returns findings. |
 
-### 5.15 ComplianceReadinessValidationService
+### 5.16 ComplianceReadinessValidationService
 
 **File**: `apps/procurement/services/validation/compliance_readiness_service.py`
 
@@ -775,7 +854,7 @@ Resolves applicable validation rules for a procurement request based on domain a
 |---|---|
 | `validate(request, rules)` | Evaluates `COMPLIANCE_CHECK` rules with check_types: `attribute`, `keyword`, `geography`. Returns findings. |
 
-### 5.16 ValidationOrchestratorService
+### 5.17 ValidationOrchestratorService
 
 **File**: `apps/procurement/services/validation/orchestrator_service.py`
 
@@ -1079,6 +1158,18 @@ A new "Procurement" section is added to the global sidebar (`templates/partials/
    - `REVIEW_REQUIRED` → `REVIEW_REQUIRED`
 4. Returns structured result dict with status, completeness_score, overall_status
 
+### `run_quotation_prefill_task(quotation_id: int) → dict`
+
+**Decorator**: `@shared_task(bind=True, max_retries=2, default_retry_delay=30)`  
+**Observability**: `@observed_task("procurement.quotation_prefill", audit_event="PREFILL_STARTED", entity_type="SupplierQuotation")`
+
+**Behavior**:
+1. Loads the `SupplierQuotation` with its related `uploaded_document` and `request`
+2. Calls `QuotationDocumentPrefillService.run_prefill(quotation)`
+3. Returns structured result dict with status, quotation_id, prefill_status, line_item_count
+
+**Error handling**: Catches exceptions and returns `{"status": "failed", "error": "..."}`. Quotation `extraction_status` set to `FAILED`.
+
 ---
 
 ## 10. Governance & Audit Integration
@@ -1280,9 +1371,11 @@ apps/procurement/
 ├── tasks.py                   # Celery tasks: run_analysis_task, run_validation_task
 ├── agents/
 │   ├── __init__.py
-│   ├── recommendation_agent.py # AI recommendation agent
-│   ├── benchmark_agent.py      # AI benchmark resolution agent
-│   └── compliance_agent.py     # AI compliance check agent
+│   ├── recommendation_agent.py      # AI recommendation agent
+│   ├── benchmark_agent.py           # AI benchmark resolution agent
+│   ├── compliance_agent.py          # AI compliance check agent
+│   ├── quotation_extraction_agent.py # AI quotation data extraction (OCR text → structured JSON)
+│   └── request_extraction_agent.py   # AI request/SOW data extraction
 ├── services/
 │   ├── __init__.py
 │   ├── request_service.py      # ProcurementRequestService + AttributeService
@@ -1291,6 +1384,13 @@ apps/procurement/
 │   ├── recommendation_service.py # RecommendationService (full flow)
 │   ├── benchmark_service.py    # BenchmarkService (full flow)
 │   ├── compliance_service.py   # ComplianceService (rule-based)
+│   ├── prefill/                # Quotation Prefill Extraction Pipeline
+│   │   ├── __init__.py
+│   │   ├── quotation_prefill_service.py  # QuotationDocumentPrefillService (OCR → LLM → mapping → payload)
+│   │   ├── attribute_mapping_service.py  # AttributeMappingService (field synonym resolution + line item mapping)
+│   │   ├── prefill_status_service.py     # PrefillStatusService (status transitions + payload persistence)
+│   │   ├── prefill_review_service.py     # PrefillReviewService (user confirmation → QuotationLineItem creation)
+│   │   └── request_prefill_service.py    # RequestDocumentPrefillService (SOW/RFQ attribute extraction)
 │   └── validation/             # Validation Framework services
 │       ├── __init__.py
 │       ├── rule_resolver_service.py        # Rule resolution by domain/schema
@@ -1607,15 +1707,35 @@ procurement.run_analysis → AP_PROCESSOR, ADMIN, FINANCE_MANAGER
 4. Create result model if needed
 5. Add UI section in workspace template
 
+**Example**: The `VALIDATION` run type was added following this pattern — see `ValidationOrchestratorService`, `run_validation_task`, and `validation_summary.html`.
+
+### Adding Validation Rules
+
+Validation rules are data-driven via the `ValidationRuleSet` + `ValidationRule` models:
+
+1. Create a `ValidationRuleSet` via Django admin or API with `domain_code`, `schema_code`, and `validation_type`
+2. Add `ValidationRule` records with `rule_type` matching the validation dimension:
+   - `REQUIRED_ATTRIBUTE` → checked by `AttributeCompletenessValidationService`
+   - `REQUIRED_DOCUMENT` → checked by `DocumentCompletenessValidationService`
+   - `REQUIRED_CATEGORY` → checked by `ScopeCoverageValidationService`
+   - `AMBIGUITY_PATTERN` → additional patterns for `AmbiguityValidationService`
+   - `COMMERCIAL_CHECK` → additional terms for `CommercialCompletenessValidationService`
+   - `COMPLIANCE_CHECK` → compliance checks for `ComplianceReadinessValidationService`
+3. Set `severity` (INFO/WARNING/ERROR/CRITICAL) to control scoring impact
+4. Set `condition_json` for rule-specific parameters (e.g. `{"attribute_code": "budget"}` for REQUIRED_ATTRIBUTE)
+5. Rules are automatically resolved for matching requests via `ValidationRuleResolverService`
+
 ### Integration with Existing Document Extraction
 
-`SupplierQuotation.uploaded_document` links to `apps.documents.DocumentUpload`. To enable automatic extraction:
+`SupplierQuotation.uploaded_document` links to `apps.documents.DocumentUpload`. The quotation extraction pipeline operates independently from the invoice extraction pipeline:
 
-1. Upload document via existing upload pipeline
-2. Link `DocumentUpload` to the quotation
-3. Trigger extraction via existing `process_invoice_upload_task`
-4. Parse extraction results into `QuotationLineItem` records
-5. Update `extraction_status` and `extraction_confidence`
+1. Upload quotation/proposal PDF via `quotation_prefill` API → creates `DocumentUpload` + `SupplierQuotation`
+2. Async `run_quotation_prefill_task` triggers `QuotationDocumentPrefillService.run_prefill()`
+3. OCR via Azure Document Intelligence (reuses `InvoiceExtractionAdapter._ocr_document()`)
+4. LLM extraction via `QuotationDocumentPrefillService._extract_quotation_data()` (GPT-4o, up to 60K chars)
+5. Field mapping via `AttributeMappingService.map_quotation_fields()` → stores `prefill_payload_json`
+6. User reviews and confirms → `PrefillReviewService.confirm_quotation_prefill()` persists `QuotationLineItem` records
+7. `extraction_status` and `extraction_confidence` updated at each stage
 
 ---
 

@@ -327,3 +327,23 @@ def trigger_validation(request, pk):
     run_validation_task.delay(run.pk)
     messages.success(request, f"Validation queued (Run {run.run_id}).")
     return redirect("procurement:request_workspace", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Quotation Prefill Review
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.manage_quotations")
+def quotation_prefill_review(request, pk):
+    """Review and confirm extracted quotation data from PDF prefill."""
+    import json
+    quotation = get_object_or_404(
+        SupplierQuotation.objects.select_related("request", "uploaded_document"),
+        pk=pk,
+    )
+    payload = quotation.prefill_payload_json or {}
+    return render(request, "procurement/quotation_prefill_review.html", {
+        "quotation": quotation,
+        "payload": payload,
+        "payload_json": json.dumps(payload),
+    })
