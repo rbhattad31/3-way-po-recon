@@ -58,7 +58,8 @@ class QuotationExtractionAgent:
         "- Extract vendor name in English characters (transliterate if non-English)\n"
         "- Parse all dates as YYYY-MM-DD\n"
         "- Monetary values should be numeric (no currency symbols)\n"
-        "- Extract ALL line items from tables, BOQ sections, pricing schedules\n"
+        "- Extract ALL line items from tables, BOQ sections, pricing schedules, licensing tables, and cost breakdowns — scan the ENTIRE document\n"
+        "- For service proposals, extract each service/license/resource as a separate line item with its rate and quantity\n"
         "- Detect brand and model from line item descriptions where possible\n"
         "- Extract commercial terms verbatim from term sections\n"
         "- Set confidence per field based on extraction certainty\n"
@@ -75,8 +76,9 @@ class QuotationExtractionAgent:
         llm = LLMClient()
 
         user_msg = (
-            "Extract complete structured quotation data from this supplier document.\n\n"
-            f"--- DOCUMENT TEXT ---\n{ocr_text[:12000]}\n--- END ---"
+            "Extract complete structured quotation data from this supplier document.\n"
+            "Pay special attention to pricing tables, licensing sections, BOQ, and cost breakdowns anywhere in the document.\n\n"
+            f"--- DOCUMENT TEXT ---\n{ocr_text[:60000]}\n--- END ---"
         )
 
         try:

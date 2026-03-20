@@ -165,6 +165,8 @@ class QuotationDocumentPrefillService:
             "- Extract vendor name EXACTLY as it appears (English transliteration if non-English)\n"
             "- Parse dates as YYYY-MM-DD format\n"
             "- Extract ALL line items with quantities, rates, and amounts\n"
+            "- Line items may appear in pricing tables, BOQ sections, licensing tables, cost breakdowns, or commercial schedules — scan the ENTIRE document\n"
+            "- For service proposals, extract each service/license/resource as a separate line item with its rate and quantity\n"
             "- Include brand/model if identifiable\n"
             "- Extract commercial terms (warranty, payment, delivery) when present\n"
             "- Set confidence 0.0-1.0 per field based on extraction certainty\n"
@@ -173,13 +175,14 @@ class QuotationDocumentPrefillService:
         )
 
         user_msg = (
-            "Extract structured quotation data from the following document text.\n\n"
-            f"--- DOCUMENT TEXT ---\n{ocr_text[:12000]}\n--- END ---"
+            "Extract structured quotation data from the following document text.\n"
+            "Pay special attention to pricing tables, licensing sections, BOQ, and cost breakdowns anywhere in the document.\n\n"
+            f"--- DOCUMENT TEXT ---\n{ocr_text[:60000]}\n--- END ---"
         )
 
         import json
         import re as _re
-        llm = LLMClient()
+        llm = LLMClient(max_tokens=8192)
         response = llm.chat(
             messages=[
                 LLMMessage(role="system", content=system_prompt),
