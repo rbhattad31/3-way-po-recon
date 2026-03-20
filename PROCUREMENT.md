@@ -1607,6 +1607,24 @@ procurement.run_analysis → AP_PROCESSOR, ADMIN, FINANCE_MANAGER
 4. Create result model if needed
 5. Add UI section in workspace template
 
+**Example**: The `VALIDATION` run type was added following this pattern — see `ValidationOrchestratorService`, `run_validation_task`, and `validation_summary.html`.
+
+### Adding Validation Rules
+
+Validation rules are data-driven via the `ValidationRuleSet` + `ValidationRule` models:
+
+1. Create a `ValidationRuleSet` via Django admin or API with `domain_code`, `schema_code`, and `validation_type`
+2. Add `ValidationRule` records with `rule_type` matching the validation dimension:
+   - `REQUIRED_ATTRIBUTE` → checked by `AttributeCompletenessValidationService`
+   - `REQUIRED_DOCUMENT` → checked by `DocumentCompletenessValidationService`
+   - `REQUIRED_CATEGORY` → checked by `ScopeCoverageValidationService`
+   - `AMBIGUITY_PATTERN` → additional patterns for `AmbiguityValidationService`
+   - `COMMERCIAL_CHECK` → additional terms for `CommercialCompletenessValidationService`
+   - `COMPLIANCE_CHECK` → compliance checks for `ComplianceReadinessValidationService`
+3. Set `severity` (INFO/WARNING/ERROR/CRITICAL) to control scoring impact
+4. Set `condition_json` for rule-specific parameters (e.g. `{"attribute_code": "budget"}` for REQUIRED_ATTRIBUTE)
+5. Rules are automatically resolved for matching requests via `ValidationRuleResolverService`
+
 ### Integration with Existing Document Extraction
 
 `SupplierQuotation.uploaded_document` links to `apps.documents.DocumentUpload`. To enable automatic extraction:

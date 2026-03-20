@@ -20,9 +20,12 @@ from apps.core.enums import (
     AttributeDataType,
     BenchmarkRiskLevel,
     ComplianceStatus,
+    ExtractionSourceType,
     ExtractionStatus,
+    PrefillStatus,
     ProcurementRequestStatus,
     ProcurementRequestType,
+    SourceDocumentType,
     ValidationEvaluationMode,
     ValidationItemStatus,
     ValidationNextAction,
@@ -80,6 +83,30 @@ class ProcurementRequest(BaseModel):
     )
     trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
+    # PDF-led prefill fields
+    uploaded_document = models.ForeignKey(
+        "documents.DocumentUpload",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="procurement_requests",
+    )
+    source_document_type = models.CharField(
+        max_length=30,
+        choices=SourceDocumentType.choices,
+        blank=True, default="",
+        help_text="Type of source document (RFQ, BOQ, etc.)",
+    )
+    prefill_status = models.CharField(
+        max_length=20,
+        choices=PrefillStatus.choices,
+        default=PrefillStatus.NOT_STARTED,
+    )
+    prefill_confidence = models.FloatField(null=True, blank=True)
+    prefill_payload_json = models.JSONField(
+        null=True, blank=True,
+        help_text="Raw extracted prefill payload before user confirmation",
+    )
+
     class Meta:
         db_table = "procurement_request"
         ordering = ["-created_at"]
@@ -115,6 +142,12 @@ class ProcurementRequestAttribute(TimestampMixin):
     value_json = models.JSONField(null=True, blank=True)
     is_required = models.BooleanField(default=False)
     normalized_value = models.TextField(blank=True, default="")
+    extraction_source = models.CharField(
+        max_length=20,
+        choices=ExtractionSourceType.choices,
+        default=ExtractionSourceType.MANUAL,
+    )
+    confidence_score = models.FloatField(null=True, blank=True)
 
     class Meta:
         db_table = "procurement_request_attribute"
@@ -154,6 +187,17 @@ class SupplierQuotation(BaseModel):
     )
     extraction_confidence = models.FloatField(null=True, blank=True)
 
+    # PDF-led prefill fields
+    prefill_status = models.CharField(
+        max_length=20,
+        choices=PrefillStatus.choices,
+        default=PrefillStatus.NOT_STARTED,
+    )
+    prefill_payload_json = models.JSONField(
+        null=True, blank=True,
+        help_text="Raw extracted prefill payload before user confirmation",
+    )
+
     class Meta:
         db_table = "procurement_supplier_quotation"
         ordering = ["-created_at"]
@@ -184,6 +228,11 @@ class QuotationLineItem(TimestampMixin):
     brand = models.CharField(max_length=200, blank=True, default="")
     model = models.CharField(max_length=200, blank=True, default="")
     extraction_confidence = models.FloatField(null=True, blank=True)
+    extraction_source = models.CharField(
+        max_length=20,
+        choices=ExtractionSourceType.choices,
+        default=ExtractionSourceType.MANUAL,
+    )
 
     class Meta:
         db_table = "procurement_quotation_line_item"

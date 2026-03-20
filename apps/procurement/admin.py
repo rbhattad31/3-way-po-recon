@@ -30,18 +30,19 @@ class SupplierQuotationInline(admin.TabularInline):
 
 @admin.register(ProcurementRequest)
 class ProcurementRequestAdmin(admin.ModelAdmin):
-    list_display = ("request_id", "title", "domain_code", "request_type", "status", "priority", "created_at")
-    list_filter = ("status", "request_type", "domain_code", "priority")
+    list_display = ("request_id", "title", "domain_code", "request_type", "status", "priority", "prefill_status", "created_at")
+    list_filter = ("status", "request_type", "domain_code", "priority", "prefill_status")
     search_fields = ("title", "description", "request_id")
-    readonly_fields = ("request_id", "created_at", "updated_at")
+    readonly_fields = ("request_id", "created_at", "updated_at", "prefill_confidence", "prefill_payload_json")
     inlines = [ProcurementRequestAttributeInline, SupplierQuotationInline]
 
 
 @admin.register(SupplierQuotation)
 class SupplierQuotationAdmin(admin.ModelAdmin):
-    list_display = ("vendor_name", "quotation_number", "total_amount", "currency", "extraction_status", "created_at")
-    list_filter = ("extraction_status", "currency")
+    list_display = ("vendor_name", "quotation_number", "total_amount", "currency", "extraction_status", "prefill_status", "created_at")
+    list_filter = ("extraction_status", "currency", "prefill_status")
     search_fields = ("vendor_name", "quotation_number")
+    readonly_fields = ("prefill_payload_json",)
 
 
 class QuotationLineItemInline(admin.TabularInline):

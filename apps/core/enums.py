@@ -125,6 +125,8 @@ class DocumentType(models.TextChoices):
     INVOICE = "INVOICE", "Invoice"
     PURCHASE_ORDER = "PO", "Purchase Order"
     GRN = "GRN", "Goods Receipt Note"
+    PROCUREMENT_RFQ = "PROCUREMENT_RFQ", "Procurement RFQ"
+    PROCUREMENT_QUOTATION = "PROCUREMENT_QUOTATION", "Procurement Quotation"
 
 
 class FileProcessingState(models.TextChoices):
@@ -531,3 +533,32 @@ class AttributeDataType(models.TextChoices):
     JSON = "JSON", "JSON"
     DATE = "DATE", "Date"
     SELECT = "SELECT", "Select"
+
+
+# ---------------------------------------------------------------------------
+# Prefill / PDF-led extraction enums
+# ---------------------------------------------------------------------------
+
+
+class PrefillStatus(models.TextChoices):
+    NOT_STARTED = "NOT_STARTED", "Not Started"
+    IN_PROGRESS = "IN_PROGRESS", "In Progress"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+    REVIEW_PENDING = "REVIEW_PENDING", "Review Pending"
+
+
+class SourceDocumentType(models.TextChoices):
+    RFQ = "RFQ", "RFQ"
+    REQUIREMENT_NOTE = "REQUIREMENT_NOTE", "Requirement Note"
+    SPECIFICATION = "SPECIFICATION", "Specification"
+    BOQ = "BOQ", "BOQ"
+    PROPOSAL = "PROPOSAL", "Proposal"
+    QUOTATION = "QUOTATION", "Quotation"
+    OTHER = "OTHER", "Other"
+
+
+class ExtractionSourceType(models.TextChoices):
+    MANUAL = "MANUAL", "Manual"
+    PREFILL = "PREFILL", "Prefill"
+    SYSTEM = "SYSTEM", "System"

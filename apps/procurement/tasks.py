@@ -127,3 +127,54 @@ def run_validation_task(self, run_id: int, *, agent_enabled: bool = False) -> di
     except Exception as exc:
         logger.exception("Validation run %s failed: %s", run_id, exc)
         return {"status": "failed", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Prefill Tasks
+# ---------------------------------------------------------------------------
+@shared_task(bind=True, max_retries=2, default_retry_delay=30)
+@observed_task("procurement.request_prefill", audit_event="PREFILL_STARTED", entity_type="ProcurementRequest")
+def run_request_prefill_task(self, request_id: int) -> dict:
+    """Run OCR + LLM extraction to prefill a ProcurementRequest from an uploaded document."""
+    from apps.procurement.models import ProcurementRequest
+    from apps.procurement.services.prefill.request_prefill_service import RequestDocumentPrefillService
+
+    proc_request = ProcurementRequest.objects.select_related("uploaded_document").get(pk=request_id)
+
+    try:
+        payload = RequestDocumentPrefillService.run_prefill(proc_request)
+        return {
+            "status": "completed",
+            "request_id": request_id,
+            "prefill_status": proc_request.prefill_status,
+            "field_count": len(payload.get("core_fields", {})) + len(payload.get("attributes", [])),
+        }
+    except Exception as exc:
+        logger.exception("Request prefill %s failed: %s", request_id, exc)
+        from apps.procurement.services.prefill.prefill_status_service import PrefillStatusService
+        PrefillStatusService.mark_request_failed(proc_request, str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=30)
+@observed_task("procurement.quotation_prefill", audit_event="PREFILL_STARTED", entity_type="SupplierQuotation")
+def run_quotation_prefill_task(self, quotation_id: int) -> dict:
+    """Run OCR + LLM extraction to prefill a SupplierQuotation from an uploaded document."""
+    from apps.procurement.models import SupplierQuotation
+    from apps.procurement.services.prefill.quotation_prefill_service import QuotationDocumentPrefillService
+
+    quotation = SupplierQuotation.objects.select_related("uploaded_document", "request").get(pk=quotation_id)
+
+    try:
+        payload = QuotationDocumentPrefillService.run_prefill(quotation)
+        return {
+            "status": "completed",
+            "quotation_id": quotation_id,
+            "prefill_status": quotation.prefill_status,
+            "line_item_count": len(payload.get("line_items", [])),
+        }
+    except Exception as exc:
+        logger.exception("Quotation prefill %s failed: %s", quotation_id, exc)
+        from apps.procurement.services.prefill.prefill_status_service import PrefillStatusService
+        PrefillStatusService.mark_quotation_failed(quotation, str(exc))
+        return {"status": "failed", "error": str(exc)}
