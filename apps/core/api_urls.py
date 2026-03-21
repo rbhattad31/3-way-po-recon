@@ -14,4 +14,7 @@ urlpatterns = [
     path("v1/dashboard/agents/governance/", include("apps.dashboard.api_urls_agent_governance")),
     path("v1/reports/", include("apps.reports.api_urls")),
     path("v1/vendors/", include("apps.vendors.api_urls")),
+    path("v1/extraction-core/", include("apps.extraction_core.api_urls")),
+    path("v1/extraction-configs/", include("apps.extraction_configs.api_urls")),
+    path("v1/extraction-documents/", include("apps.extraction_documents.api_urls")),
 ]

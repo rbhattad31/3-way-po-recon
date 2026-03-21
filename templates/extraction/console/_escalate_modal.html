@@ -1,0 +1,59 @@
+{# extraction/console/_escalate_modal.html — Escalation modal #}
+
+<div class="modal fade" id="escalateModal" tabindex="-1" aria-labelledby="escalateModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title" id="escalateModalLabel">
+          <i class="bi bi-arrow-up-circle text-danger me-2"></i>Escalate Extraction
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="escalateForm">
+          {% csrf_token %}
+          <input type="hidden" name="extraction_id" value="{{ extraction.id }}">
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Severity</label>
+            <select class="form-select form-select-sm" name="severity" required>
+              <option value="">Select severity...</option>
+              <option value="low">Low — Minor issues, not blocking</option>
+              <option value="medium">Medium — Requires attention</option>
+              <option value="high">High — Critical issues found</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Escalate To</label>
+            <select class="form-select form-select-sm" name="assignee" required>
+              <option value="">Select assignee...</option>
+              {% for user in assignable_users %}
+              <option value="{{ user.id }}">{{ user.get_full_name|default:user.email }} ({{ user.role }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Reason</label>
+            <textarea class="form-control form-control-sm" name="reason" rows="3" required
+                      placeholder="Describe why this needs escalation..."></textarea>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Flagged Fields</label>
+            <div class="exc-flagged-fields-list p-2 border rounded small" id="escalateFlaggedFields">
+              <span class="text-muted">No fields flagged</span>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-danger" id="confirmEscalateBtn">
+          <i class="bi bi-arrow-up-circle me-1"></i>Escalate
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

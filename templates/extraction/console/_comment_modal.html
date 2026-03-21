@@ -1,0 +1,46 @@
+{# extraction/console/_comment_modal.html — Add comment modal #}
+
+<div class="modal fade" id="commentModal" tabindex="-1" aria-labelledby="commentModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title" id="commentModalLabel">
+          <i class="bi bi-chat-dots text-info me-2"></i>Add Comment
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="commentForm">
+          {% csrf_token %}
+          <input type="hidden" name="extraction_id" value="{{ extraction.id }}">
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Comment</label>
+            <textarea class="form-control form-control-sm" name="comment_text" rows="4" required
+                      placeholder="Add your comment or observation..."></textarea>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Related Fields (optional)</label>
+            <input type="text" class="form-control form-control-sm" name="related_fields"
+                   placeholder="e.g. invoice_number, total_amount">
+            <div class="form-text">Comma-separated field names this comment relates to</div>
+          </div>
+
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="is_internal" id="internalCommentCheck" checked>
+            <label class="form-check-label small" for="internalCommentCheck">
+              Internal comment (visible only to reviewers)
+            </label>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-info" id="confirmCommentBtn">
+          <i class="bi bi-chat-dots me-1"></i>Add Comment
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

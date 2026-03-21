@@ -45,6 +45,9 @@ INSTALLED_APPS = [
     "apps.cases",
     "apps.copilot",
     "apps.procurement",
+    "apps.extraction_core",
+    "apps.extraction_configs",
+    "apps.extraction_documents",
 ]
 
 MIDDLEWARE = [

@@ -1,0 +1,108 @@
+{# extraction/console/_validation_panel.html — Validation issues tab #}
+
+<div class="p-3">
+  {# Summary bar #}
+  <div class="d-flex gap-3 mb-3">
+    <div class="exc-validation-stat">
+      <span class="badge bg-danger">{{ error_count|default:"0" }}</span>
+      <small class="ms-1">Errors</small>
+    </div>
+    <div class="exc-validation-stat">
+      <span class="badge bg-warning text-dark">{{ warning_count|default:"0" }}</span>
+      <small class="ms-1">Warnings</small>
+    </div>
+    <div class="exc-validation-stat">
+      <span class="badge bg-success">{{ passed_count|default:"0" }}</span>
+      <small class="ms-1">Passed</small>
+    </div>
+  </div>
+
+  {# ── Errors section ── #}
+  {% if errors %}
+  <div class="mb-3">
+    <h6 class="text-danger small fw-bold mb-2">
+      <i class="bi bi-x-circle me-1"></i>Errors ({{ errors|length }})
+    </h6>
+    {% for issue in errors %}
+    <div class="card exc-validation-card exc-validation-error mb-2">
+      <div class="card-body p-2">
+        <div class="d-flex align-items-start">
+          <i class="bi bi-x-circle-fill text-danger me-2 mt-1"></i>
+          <div class="flex-grow-1">
+            <div class="fw-semibold small">{{ issue.title }}</div>
+            <div class="text-muted small">{{ issue.message }}</div>
+            {% if issue.affected_fields %}
+            <div class="mt-1">
+              {% for f in issue.affected_fields %}
+              <button class="btn btn-link btn-sm p-0 exc-goto-field" data-field="{{ f }}" data-tab="extracted-data">
+                <i class="bi bi-arrow-right-short"></i>{{ f }}
+              </button>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          <span class="badge bg-danger-subtle text-danger ms-2">{{ issue.rule_code|default:"ERR" }}</span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ── Warnings section ── #}
+  {% if warnings %}
+  <div class="mb-3">
+    <h6 class="text-warning small fw-bold mb-2">
+      <i class="bi bi-exclamation-triangle me-1"></i>Warnings ({{ warnings|length }})
+    </h6>
+    {% for issue in warnings %}
+    <div class="card exc-validation-card exc-validation-warning mb-2">
+      <div class="card-body p-2">
+        <div class="d-flex align-items-start">
+          <i class="bi bi-exclamation-triangle-fill text-warning me-2 mt-1"></i>
+          <div class="flex-grow-1">
+            <div class="fw-semibold small">{{ issue.title }}</div>
+            <div class="text-muted small">{{ issue.message }}</div>
+            {% if issue.affected_fields %}
+            <div class="mt-1">
+              {% for f in issue.affected_fields %}
+              <button class="btn btn-link btn-sm p-0 exc-goto-field" data-field="{{ f }}" data-tab="extracted-data">
+                <i class="bi bi-arrow-right-short"></i>{{ f }}
+              </button>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          <span class="badge bg-warning-subtle text-warning ms-2">{{ issue.rule_code|default:"WARN" }}</span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ── Passed checks ── #}
+  {% if passed_checks %}
+  <div class="mb-3">
+    <h6 class="text-success small fw-bold mb-2">
+      <i class="bi bi-check-circle me-1"></i>Passed ({{ passed_checks|length }})
+    </h6>
+    <div class="exc-passed-list">
+      {% for check in passed_checks %}
+      <div class="d-flex align-items-center mb-1">
+        <i class="bi bi-check-circle-fill text-success me-2 small"></i>
+        <span class="small">{{ check.title }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# No issues state #}
+  {% if not errors and not warnings and not passed_checks %}
+  <div class="text-center py-4">
+    <i class="bi bi-check-circle text-success fs-1"></i>
+    <p class="text-muted mt-2 mb-0">No validation issues found</p>
+  </div>
+  {% endif %}
+</div>

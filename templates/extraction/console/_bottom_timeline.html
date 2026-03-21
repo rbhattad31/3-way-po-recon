@@ -1,0 +1,38 @@
+{# extraction/console/_bottom_timeline.html — Pipeline progress timeline #}
+
+<div class="exc-pipeline-timeline d-flex align-items-center justify-content-center gap-1 py-2 px-3">
+  {% for stage in pipeline_stages %}
+  <div class="exc-stage d-flex align-items-center">
+    {# Stage pill #}
+    <button class="btn btn-sm exc-stage-pill exc-stage-{{ stage.state|default:'pending' }}"
+            data-stage="{{ stage.key }}"
+            title="{{ stage.label }}{% if stage.duration_ms %} — {{ stage.duration_ms }}ms{% endif %}">
+      {% if stage.state == "completed" %}
+      <i class="bi bi-check-circle-fill me-1"></i>
+      {% elif stage.state == "active" %}
+      <i class="bi bi-arrow-right-circle-fill me-1"></i>
+      {% elif stage.state == "error" %}
+      <i class="bi bi-x-circle-fill me-1"></i>
+      {% elif stage.state == "skipped" %}
+      <i class="bi bi-skip-forward-fill me-1"></i>
+      {% else %}
+      <i class="bi bi-circle me-1"></i>
+      {% endif %}
+      <span class="small">{{ stage.label }}</span>
+    </button>
+
+    {# Connector arrow #}
+    {% if not forloop.last %}
+    <i class="bi bi-chevron-right text-muted mx-1 small"></i>
+    {% endif %}
+  </div>
+  {% empty %}
+  {# Default pipeline stages when no data #}
+  {% with stages="Upload,OCR,Jurisdiction,Schema,Extraction,Normalize,Validate,Enrich,Confidence,Review" %}
+  {% for label in stages|make_list %}
+  {# Static default — show as pending #}
+  {% endfor %}
+  {% endwith %}
+  <span class="text-muted small">Pipeline stage data not available</span>
+  {% endfor %}
+</div>

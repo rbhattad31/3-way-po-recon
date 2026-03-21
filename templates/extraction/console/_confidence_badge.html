@@ -1,0 +1,13 @@
+{# extraction/console/_confidence_badge.html — Reusable confidence indicator #}
+{% if confidence is not None %}
+  {% widthratio confidence 1 100 as conf_pct %}
+  {% if confidence >= 0.85 %}
+  <span class="badge exc-conf-high" title="{{ conf_pct }}%">{{ conf_pct }}%</span>
+  {% elif confidence >= 0.5 %}
+  <span class="badge exc-conf-med" title="{{ conf_pct }}%">{{ conf_pct }}%</span>
+  {% else %}
+  <span class="badge exc-conf-low" title="{{ conf_pct }}%">{{ conf_pct }}%</span>
+  {% endif %}
+{% else %}
+  <span class="badge bg-light text-muted border">—</span>
+{% endif %}

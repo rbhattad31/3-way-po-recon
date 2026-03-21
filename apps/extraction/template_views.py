@@ -991,3 +991,220 @@ def extraction_approval_analytics(request):
 
     analytics = ExtractionApprovalService.get_approval_analytics()
     return JsonResponse(analytics)
+
+
+# ────────────────────────────────────────────────────────────────
+# Extraction Review Console — agentic deep-dive UI
+# ────────────────────────────────────────────────────────────────
+@login_required
+@permission_required_code("invoices.view")
+def extraction_console(request, pk):
+    """Agentic extraction review console — full inspection UI."""
+    ext = get_object_or_404(
+        ExtractionResult.objects.select_related(
+            "document_upload", "document_upload__uploaded_by",
+            "invoice", "invoice__vendor",
+        ),
+        pk=pk,
+    )
+
+    invoice = ext.invoice
+    line_items = []
+    header_fields = {}
+    tax_fields = {}
+    parties = {}
+    enrichment = None
+    evidence_entries = []
+    reasoning_blocks = []
+    audit_events = []
+    validation_issues = []
+    errors = []
+    warnings = []
+    passed_checks = []
+    pipeline_stages = []
+
+    extracted_data = ext.raw_response or {}
+
+    # ── Header / tax / line items from invoice ──
+    if invoice:
+        line_items_qs = list(invoice.line_items.order_by("line_number"))
+
+        # Build header fields dict
+        _header_map = [
+            ("invoice_number", "Invoice Number", True),
+            ("po_number", "PO Number", False),
+            ("invoice_date", "Invoice Date", True),
+            ("currency", "Currency", True),
+            ("subtotal", "Subtotal", False),
+            ("tax_amount", "Tax Amount", False),
+            ("total_amount", "Total Amount", True),
+        ]
+        for attr, display, mandatory in _header_map:
+            val = getattr(invoice, attr, None)
+            raw_attr = f"raw_{attr}" if hasattr(invoice, f"raw_{attr}") else None
+            raw_val = getattr(invoice, raw_attr) if raw_attr else None
+            header_fields[attr] = {
+                "display_name": display,
+                "value": str(val) if val is not None else "",
+                "raw_value": str(raw_val) if raw_val else None,
+                "confidence": ext.confidence,
+                "method": "DET",
+                "is_mandatory": mandatory,
+                "evidence": None,
+            }
+
+        # Tax fields
+        _tax_map = [
+            ("tax_amount", "Tax Amount"),
+            ("currency", "Currency"),
+        ]
+        for attr, display in _tax_map:
+            val = getattr(invoice, attr, None)
+            tax_fields[f"tax_{attr}"] = {
+                "display_name": display,
+                "value": str(val) if val is not None else "",
+                "confidence": ext.confidence,
+                "method": "DET",
+                "is_mandatory": False,
+                "evidence": None,
+            }
+
+        # Build line items list for template
+        line_items = []
+        for li in line_items_qs:
+            line_items.append({
+                "description": li.description,
+                "quantity": li.quantity,
+                "unit_price": li.unit_price,
+                "tax_rate": getattr(li, "tax_rate", None),
+                "tax_amount": li.tax_amount,
+                "total": li.line_amount,
+                "confidence": ext.confidence,
+                "fields": {
+                    "HSN/SAC": getattr(li, "hsn_sac_code", ""),
+                    "UOM": getattr(li, "uom", ""),
+                    "Line Number": li.line_number,
+                },
+            })
+
+    # ── Enrichment data from raw_response ──
+    if isinstance(extracted_data, dict):
+        enrichment = extracted_data.get("enrichment")
+
+    # ── Parties from document intelligence ──
+    if isinstance(extracted_data, dict):
+        intelligence = extracted_data.get("document_intelligence", {})
+        if isinstance(intelligence, dict):
+            raw_parties = intelligence.get("parties", {})
+            if isinstance(raw_parties, dict):
+                parties = raw_parties
+
+    # ── Validation re-run ──
+    if ext.raw_response:
+        try:
+            from apps.extraction.services.parser_service import ExtractionParserService
+            from apps.extraction.services.normalization_service import NormalizationService
+            from apps.extraction.services.validation_service import ValidationService
+
+            parsed = ExtractionParserService().parse(ext.raw_response)
+            normalized = NormalizationService().normalize(parsed)
+            val_result = ValidationService().validate(normalized)
+
+            for v in val_result.issues:
+                issue = {
+                    "title": v.field or "General",
+                    "message": v.message,
+                    "rule_code": getattr(v, "rule_code", ""),
+                    "affected_fields": [v.field] if v.field else [],
+                }
+                if v.severity == "error":
+                    errors.append(issue)
+                else:
+                    warnings.append(issue)
+        except Exception:
+            pass
+
+    error_count = len(errors)
+    warning_count = len(warnings)
+
+    # ── Build validation field issues map ──
+    validation_field_issues = {}
+    for issue in errors + warnings:
+        for f in issue.get("affected_fields", []):
+            validation_field_issues[f] = True
+
+    # ── Pipeline stages ──
+    _stage_defs = [
+        ("upload", "Upload"),
+        ("ocr", "OCR"),
+        ("jurisdiction", "Jurisdiction"),
+        ("schema", "Schema"),
+        ("extraction", "Extraction"),
+        ("normalize", "Normalize"),
+        ("validate", "Validate"),
+        ("enrich", "Enrich"),
+        ("confidence", "Confidence"),
+        ("review", "Review"),
+    ]
+    for key, label in _stage_defs:
+        state = "completed" if ext.success else "pending"
+        if key == "review" and ext.success:
+            state = "active"
+        pipeline_stages.append({"key": key, "label": label, "state": state})
+
+    # ── Extraction context for template ──
+    extraction_ctx = {
+        "id": ext.pk,
+        "file_name": ext.document_upload.original_filename if ext.document_upload else "Unknown",
+        "file_url": ext.document_upload.blob_path if ext.document_upload else None,
+        "status": "EXTRACTED" if ext.success else "FAILED",
+        "confidence": ext.confidence,
+        "created_at": ext.created_at,
+        "resolved_jurisdiction": extracted_data.get("jurisdiction") if isinstance(extracted_data, dict) else None,
+        "jurisdiction_source": extracted_data.get("jurisdiction_source") if isinstance(extracted_data, dict) else None,
+        "jurisdiction_confidence": extracted_data.get("jurisdiction_confidence") if isinstance(extracted_data, dict) else None,
+        "jurisdiction_warning": extracted_data.get("jurisdiction_warning") if isinstance(extracted_data, dict) else None,
+    }
+
+    # Approval state
+    approval = None
+    if invoice:
+        from apps.extraction.models import ExtractionApproval
+        approval = ExtractionApproval.objects.filter(invoice=invoice).first()
+
+    # Permissions context
+    permissions = {
+        "can_approve": request.user.has_perm("extraction.approve") if hasattr(request.user, "has_perm") else True,
+        "can_reprocess": True,
+        "can_escalate": True,
+    }
+
+    # Assignable users for escalation
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    assignable_users = User.objects.filter(is_active=True).order_by("email")[:50]
+
+    return render(request, "extraction/console/console.html", {
+        "extraction": extraction_ctx,
+        "ext": ext,
+        "invoice": invoice,
+        "header_fields": header_fields,
+        "tax_fields": tax_fields,
+        "parties": parties,
+        "enrichment": enrichment,
+        "line_items": line_items,
+        "evidence_entries": evidence_entries,
+        "reasoning_blocks": reasoning_blocks,
+        "audit_events": audit_events,
+        "validation_issues": errors + warnings,
+        "errors": errors,
+        "warnings": warnings,
+        "passed_checks": passed_checks,
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "validation_field_issues": validation_field_issues,
+        "pipeline_stages": pipeline_stages,
+        "approval": approval,
+        "permissions": permissions,
+        "assignable_users": assignable_users,
+    })
