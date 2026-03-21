@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% block title %}Review Extraction – {{ invoice.invoice_number|default:"Pending" }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Extraction Agent</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:approval_queue' %}" class="text-decoration-none">Approvals</a></li>
+    <li class="breadcrumb-item active">{{ invoice.invoice_number|default:"Review" }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# ── Header ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-clipboard-check me-2"></i>Review Extraction
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      Invoice <strong>{{ invoice.invoice_number|default:"N/A" }}</strong> —
+      {% if approval.status == "PENDING" %}
+        <span class="badge bg-warning text-dark">Pending Approval</span>
+      {% elif approval.status == "APPROVED" %}
+        <span class="badge bg-success">Approved</span>
+      {% elif approval.status == "AUTO_APPROVED" %}
+        <span class="badge bg-info">Auto-Approved</span>
+      {% elif approval.status == "REJECTED" %}
+        <span class="badge bg-danger">Rejected</span>
+      {% endif %}
+    </p>
+  </div>
+  {% if is_pending %}
+  <div class="d-flex gap-2">
+    <button class="btn btn-success btn-sm" id="btnApprove">
+      <i class="bi bi-check-lg me-1"></i>Approve
+    </button>
+    <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#rejectModal">
+      <i class="bi bi-x-lg me-1"></i>Reject
+    </button>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Confidence & Meta ── #}
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.3rem;font-weight:700;color:{% if approval.confidence_at_review >= 0.8 %}var(--ap-success){% elif approval.confidence_at_review >= 0.5 %}var(--ap-warning){% else %}var(--ap-danger){% endif %}">
+          {% if approval.confidence_at_review is not None %}{% widthratio approval.confidence_at_review 1 100 %}%{% else %}—{% endif %}
+        </div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Extraction Confidence</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.3rem;font-weight:700;color:var(--ap-text-primary)">
+          {{ invoice.vendor.name|default:invoice.raw_vendor_name|default:"—" }}
+        </div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Vendor</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.3rem;font-weight:700;color:var(--ap-text-primary)">
+          {{ invoice.currency }} {{ invoice.total_amount|default:"—" }}
+        </div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Total Amount</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.3rem;font-weight:700;">{{ invoice.po_number|default:"—" }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">PO Number</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Validation Issues ── #}
+{% if validation_issues %}
+<div class="ap-card mb-4">
+  <div class="ap-card-header bg-warning bg-opacity-10">
+    <h6 class="mb-0"><i class="bi bi-exclamation-triangle me-1"></i>Validation Issues</h6>
+  </div>
+  <div class="ap-card-body p-0">
+    <table class="table table-sm mb-0" style="font-size:var(--ap-font-size-sm)">
+      <thead><tr><th>Field</th><th>Severity</th><th>Message</th></tr></thead>
+      <tbody>
+        {% for v in validation_issues %}
+        <tr>
+          <td><code>{{ v.field }}</code></td>
+          <td>
+            {% if v.severity == "error" %}<span class="badge bg-danger">Error</span>
+            {% else %}<span class="badge bg-warning text-dark">Warning</span>{% endif %}
+          </td>
+          <td>{{ v.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Editable Header Fields ── #}
+<div class="ap-card mb-4">
+  <div class="ap-card-header">
+    <h6 class="mb-0"><i class="bi bi-card-text me-1"></i>Extracted Invoice Header</h6>
+  </div>
+  <div class="ap-card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-xs)">Invoice Number</label>
+        <input type="text" class="form-control form-control-sm header-field" data-field="invoice_number"
+               value="{{ invoice.invoice_number }}" {% if not is_pending %}readonly{% endif %}>
+        <div class="form-text" style="font-size:10px">Raw: {{ invoice.raw_invoice_number|default:"—" }}</div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-xs)">PO Number</label>
+        <input type="text" class="form-control form-control-sm header-field" data-field="po_number"
+               value="{{ invoice.po_number }}" {% if not is_pending %}readonly{% endif %}>
+        <div class="form-text" style="font-size:10px">Raw: {{ invoice.raw_po_number|default:"—" }}</div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-xs)">Invoice Date</label>
+        <input type="date" class="form-control form-control-sm header-field" data-field="invoice_date"
+               value="{{ invoice.invoice_date|date:'Y-m-d' }}" {% if not is_pending %}readonly{% endif %}>
+        <div class="form-text" style="font-size:10px">Raw: {{ invoice.raw_invoice_date|default:"—" }}</div>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-xs)">Currency</label>
+        <input type="text" class="form-control form-control-sm header-field" data-field="currency"
+               value="{{ invoice.currency }}" {% if not is_pending %}readonly{% endif %}>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-xs)">Subtotal</label>
+        <input type="number" step="0.01" class="form-control form-control-sm header-field" data-field="subtotal"
+               value="{{ invoice.subtotal }}" {% if not is_pending %}readonly{% endif %}>
+        <div class="form-text" style="font-size:10px">Raw: {{ invoice.raw_subtotal|default:"—" }}</div>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-xs)">Tax Amount</label>
+        <input type="number" step="0.01" class="form-control form-control-sm header-field" data-field="tax_amount"
+               value="{{ invoice.tax_amount }}" {% if not is_pending %}readonly{% endif %}>
+        <div class="form-text" style="font-size:10px">Raw: {{ invoice.raw_tax_amount|default:"—" }}</div>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-xs)">Total Amount</label>
+        <input type="number" step="0.01" class="form-control form-control-sm header-field" data-field="total_amount"
+               value="{{ invoice.total_amount }}" {% if not is_pending %}readonly{% endif %}>
+        <div class="form-text" style="font-size:10px">Raw: {{ invoice.raw_total_amount|default:"—" }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Line Items ── #}
+{% if line_items %}
+<div class="ap-card mb-4">
+  <div class="ap-card-header">
+    <h6 class="mb-0"><i class="bi bi-list-ol me-1"></i>Line Items ({{ line_items|length }})</h6>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle" style="font-size:var(--ap-font-size-sm)">
+      <thead>
+        <tr>
+          <th style="width:40px">#</th>
+          <th>Description</th>
+          <th style="width:100px">Qty</th>
+          <th style="width:120px">Unit Price</th>
+          {% if has_line_tax %}<th style="width:100px">Tax</th>{% endif %}
+          <th style="width:120px">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for li in line_items %}
+        <tr data-line-pk="{{ li.pk }}">
+          <td>{{ li.line_number }}</td>
+          <td>
+            <input type="text" class="form-control form-control-sm line-field" data-field="description"
+                   value="{{ li.description }}" {% if not is_pending %}readonly{% endif %}>
+          </td>
+          <td>
+            <input type="number" step="0.0001" class="form-control form-control-sm line-field" data-field="quantity"
+                   value="{{ li.quantity }}" {% if not is_pending %}readonly{% endif %}>
+          </td>
+          <td>
+            <input type="number" step="0.0001" class="form-control form-control-sm line-field" data-field="unit_price"
+                   value="{{ li.unit_price }}" {% if not is_pending %}readonly{% endif %}>
+          </td>
+          {% if has_line_tax %}
+          <td>
+            <input type="number" step="0.01" class="form-control form-control-sm line-field" data-field="tax_amount"
+                   value="{{ li.tax_amount }}" {% if not is_pending %}readonly{% endif %}>
+          </td>
+          {% endif %}
+          <td>
+            <input type="number" step="0.01" class="form-control form-control-sm line-field" data-field="line_amount"
+                   value="{{ li.line_amount }}" {% if not is_pending %}readonly{% endif %}>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Previous Corrections (if already reviewed) ── #}
+{% if corrections %}
+<div class="ap-card mb-4">
+  <div class="ap-card-header">
+    <h6 class="mb-0"><i class="bi bi-pencil-square me-1"></i>Field Corrections Applied</h6>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0" style="font-size:var(--ap-font-size-sm)">
+      <thead>
+        <tr><th>Field</th><th>Type</th><th>Original</th><th>Corrected To</th><th>By</th></tr>
+      </thead>
+      <tbody>
+        {% for c in corrections %}
+        <tr>
+          <td><code>{{ c.field_name }}</code></td>
+          <td><span class="badge bg-secondary">{{ c.entity_type }}</span></td>
+          <td class="text-danger"><del>{{ c.original_value|default:"(empty)" }}</del></td>
+          <td class="text-success">{{ c.corrected_value|default:"(empty)" }}</td>
+          <td>{{ c.corrected_by.get_short_name|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Reject Modal ── #}
+{% if is_pending %}
+<div class="modal fade" id="rejectModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title">Reject Extraction</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label">Reason for rejection</label>
+        <textarea id="rejectReason" class="form-control" rows="3" placeholder="Describe why this extraction should be rejected…"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger btn-sm" id="btnRejectConfirm">Reject</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if is_pending %}
+<script>
+(function() {
+  const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+    || '{{ csrf_token }}';
+
+  function collectCorrections() {
+    const header = {};
+    document.querySelectorAll('.header-field').forEach(el => {
+      header[el.dataset.field] = el.value;
+    });
+    const lines = [];
+    document.querySelectorAll('tr[data-line-pk]').forEach(row => {
+      const lineData = { pk: parseInt(row.dataset.linePk) };
+      row.querySelectorAll('.line-field').forEach(el => {
+        lineData[el.dataset.field] = el.value;
+      });
+      lines.push(lineData);
+    });
+    return { header, lines };
+  }
+
+  document.getElementById('btnApprove')?.addEventListener('click', function() {
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Approving…';
+
+    const payload = collectCorrections();
+
+    fetch("{% url 'extraction:approve' approval.pk %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify(payload),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        window.location.href = "{% url 'extraction:approval_queue' %}";
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Approve';
+      }
+    })
+    .catch(err => {
+      alert('Request failed: ' + err);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Approve';
+    });
+  });
+
+  document.getElementById('btnRejectConfirm')?.addEventListener('click', function() {
+    const btn = this;
+    btn.disabled = true;
+    const reason = document.getElementById('rejectReason').value.trim();
+
+    fetch("{% url 'extraction:reject' approval.pk %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ reason }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        window.location.href = "{% url 'extraction:approval_queue' %}";
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+        btn.disabled = false;
+      }
+    })
+    .catch(err => {
+      alert('Request failed: ' + err);
+      btn.disabled = false;
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -213,6 +213,12 @@ DEFAULT_PRICE_TOLERANCE_PCT = float(os.getenv("DEFAULT_PRICE_TOLERANCE_PCT", "1.
 DEFAULT_AMOUNT_TOLERANCE_PCT = float(os.getenv("DEFAULT_AMOUNT_TOLERANCE_PCT", "1.0"))
 EXTRACTION_CONFIDENCE_THRESHOLD = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHOLD", "0.75"))
 
+# Extraction approval — human-in-the-loop gate
+# Set to 1.1 (above max confidence) to require human approval for ALL extractions.
+# Lower to e.g. 0.95 once confidence in the system grows, to auto-approve high-confidence results.
+EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "1.1"))
+EXTRACTION_AUTO_APPROVE_ENABLED = os.getenv("EXTRACTION_AUTO_APPROVE_ENABLED", "false").lower() == "true"
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------

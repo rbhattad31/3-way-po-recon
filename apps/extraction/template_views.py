@@ -25,6 +25,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.core.enums import (
     AuditEventType,
     DocumentType,
+    ExtractionApprovalStatus,
     FileProcessingState,
     InvoiceStatus,
 )
@@ -99,10 +100,51 @@ def extraction_workbench(request):
     paginator = Paginator(qs, 20)
     page_obj = paginator.get_page(request.GET.get("page"))
 
+    # Pre-load approval status for each result's invoice
+    from apps.extraction.models import ExtractionApproval
+    invoice_ids = [r.invoice_id for r in page_obj if r.invoice_id]
+    approval_map = {}
+    if invoice_ids:
+        for ea in ExtractionApproval.objects.filter(invoice_id__in=invoice_ids):
+            approval_map[ea.invoice_id] = ea
+
+    # ── Approval tab data ──
+    from apps.extraction.services.approval_service import ExtractionApprovalService
+
+    approval_status_filter = request.GET.get("approval_status", "ALL")
+    approval_qs = (
+        ExtractionApproval.objects
+        .select_related(
+            "invoice", "invoice__vendor", "invoice__document_upload",
+            "extraction_result", "reviewed_by",
+        )
+        .order_by("-created_at")
+    )
+    if approval_status_filter and approval_status_filter != "ALL":
+        approval_qs = approval_qs.filter(status=approval_status_filter)
+    approval_q = request.GET.get("approval_q", "").strip()
+    if approval_q:
+        from django.db.models import Q as Qa
+        approval_qs = approval_qs.filter(
+            Qa(invoice__invoice_number__icontains=approval_q)
+            | Qa(invoice__raw_vendor_name__icontains=approval_q)
+        )
+    approval_paginator = Paginator(approval_qs, 20)
+    approval_page = approval_paginator.get_page(request.GET.get("approval_page"))
+    approval_analytics = ExtractionApprovalService.get_approval_analytics()
+    active_tab = request.GET.get("tab", "runs")
+
     return render(request, "extraction/workbench.html", {
         "results": page_obj,
         "page_obj": page_obj,
         "stats": stats,
+        "approval_map": approval_map,
+        "approvals": approval_page,
+        "approval_page_obj": approval_page,
+        "approval_status_filter": approval_status_filter,
+        "approval_analytics": approval_analytics,
+        "approval_statuses": ExtractionApprovalStatus.choices,
+        "active_tab": active_tab,
     })
 
 
@@ -272,6 +314,16 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
         upload.processing_state = FileProcessingState.COMPLETED
         upload.save(update_fields=["processing_state", "updated_at"])
 
+        # 8. Gate through extraction approval
+        if validation_result.is_valid and not dup_result.is_duplicate:
+            from apps.extraction.services.approval_service import ExtractionApprovalService
+
+            auto_approval = ExtractionApprovalService.try_auto_approve(invoice, ext_result)
+            if not auto_approval:
+                invoice.status = InvoiceStatus.PENDING_APPROVAL
+                invoice.save(update_fields=["status", "updated_at"])
+                ExtractionApprovalService.create_pending_approval(invoice, ext_result)
+
         # Audit log
         from apps.auditlog.services import AuditService
         AuditService.log_event(
@@ -365,6 +417,12 @@ def extraction_result_detail(request, pk):
     if ext.raw_response:
         raw_json_pretty = json.dumps(ext.raw_response, indent=2, default=str)
 
+    # Load approval record for this invoice
+    approval = None
+    if invoice:
+        from apps.extraction.models import ExtractionApproval
+        approval = ExtractionApproval.objects.filter(invoice=invoice).first()
+
     return render(request, "extraction/result_detail.html", {
         "ext": ext,
         "invoice": invoice,
@@ -372,6 +430,7 @@ def extraction_result_detail(request, pk):
         "has_line_tax": has_line_tax,
         "validation_issues": validation_issues,
         "raw_json_pretty": raw_json_pretty,
+        "approval": approval,
     })
 
 
@@ -739,3 +798,196 @@ def extraction_edit_values(request, pk):
         "header_fields_changed": changed_fields,
         "lines_changed": lines_changed,
     })
+
+
+# ────────────────────────────────────────────────────────────────
+# Extraction Approval Queue
+# ────────────────────────────────────────────────────────────────
+@login_required
+@permission_required_code("invoices.view")
+def extraction_approval_queue(request):
+    """Redirect to workbench Approvals tab (backward-compatible URL)."""
+    from django.urls import reverse
+    from urllib.parse import urlencode
+
+    params = {"tab": "approvals"}
+    # Forward approval-specific query params
+    for key in ("approval_status", "approval_q", "approval_page"):
+        val = request.GET.get(key)
+        if val:
+            params[key] = val
+    # Also map old param names for backward compat
+    old_status = request.GET.get("status")
+    if old_status and "approval_status" not in params:
+        params["approval_status"] = old_status
+    old_q = request.GET.get("q")
+    if old_q and "approval_q" not in params:
+        params["approval_q"] = old_q
+
+    return redirect(f"{reverse('extraction:workbench')}?{urlencode(params)}")
+
+
+# ────────────────────────────────────────────────────────────────
+# Extraction Approval Detail — review + approve/reject
+# ────────────────────────────────────────────────────────────────
+@login_required
+@permission_required_code("invoices.view")
+def extraction_approval_detail(request, pk):
+    """Detail view for reviewing a single extraction before approval."""
+    from apps.extraction.models import ExtractionApproval
+
+    approval = get_object_or_404(
+        ExtractionApproval.objects.select_related(
+            "invoice", "invoice__vendor", "invoice__document_upload",
+            "extraction_result", "reviewed_by",
+        ),
+        pk=pk,
+    )
+    invoice = approval.invoice
+    line_items = list(invoice.line_items.order_by("line_number")) if invoice else []
+    corrections = list(approval.corrections.order_by("entity_type", "field_name"))
+
+    has_line_tax = any(
+        li.tax_amount and li.tax_amount != 0 for li in line_items
+    )
+
+    # Re-run validation for display
+    validation_issues = []
+    ext = approval.extraction_result
+    if ext and ext.raw_response:
+        try:
+            from apps.extraction.services.parser_service import ExtractionParserService
+            from apps.extraction.services.normalization_service import NormalizationService
+            from apps.extraction.services.validation_service import ValidationService
+
+            parsed = ExtractionParserService().parse(ext.raw_response)
+            normalized = NormalizationService().normalize(parsed)
+            val_result = ValidationService().validate(normalized)
+            validation_issues = [
+                {"field": v.field, "severity": v.severity, "message": v.message}
+                for v in val_result.issues
+            ]
+        except Exception:
+            pass
+
+    raw_json_pretty = ""
+    if ext and ext.raw_response:
+        raw_json_pretty = json.dumps(ext.raw_response, indent=2, default=str)
+
+    return render(request, "extraction/approval_detail.html", {
+        "approval": approval,
+        "invoice": invoice,
+        "line_items": line_items,
+        "has_line_tax": has_line_tax,
+        "corrections": corrections,
+        "validation_issues": validation_issues,
+        "raw_json_pretty": raw_json_pretty,
+        "is_pending": approval.status == ExtractionApprovalStatus.PENDING,
+    })
+
+
+# ────────────────────────────────────────────────────────────────
+# Approve extraction
+# ────────────────────────────────────────────────────────────────
+@login_required
+@require_POST
+@permission_required_code("invoices.create")
+@observed_action(
+    "extraction.approve_extraction",
+    permission="invoices.create",
+    entity_type="ExtractionApproval",
+)
+def extraction_approve(request, pk):
+    """Approve an extraction, optionally with field corrections."""
+    from apps.extraction.models import ExtractionApproval
+    from apps.extraction.services.approval_service import ExtractionApprovalService
+
+    approval = get_object_or_404(ExtractionApproval, pk=pk)
+
+    try:
+        payload = json.loads(request.body) if request.body else {}
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+
+    corrections = None
+    if payload.get("header") or payload.get("lines"):
+        corrections = payload
+
+    try:
+        ExtractionApprovalService.approve(approval, request.user, corrections)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    # If this came from the full pipeline, trigger case creation now
+    invoice = approval.invoice
+    if invoice.status == InvoiceStatus.READY_FOR_RECON:
+        try:
+            from apps.cases.services.case_creation_service import CaseCreationService
+            from apps.cases.tasks import process_case_task
+            from apps.core.utils import dispatch_task
+
+            case = CaseCreationService.create_from_upload(
+                invoice=invoice,
+                uploaded_by=invoice.document_upload.uploaded_by if invoice.document_upload else None,
+            )
+            dispatch_task(process_case_task, case_id=case.pk)
+            logger.info("Created AP Case %s after extraction approval for invoice %s", case.case_number, invoice.invoice_number)
+        except Exception as exc:
+            logger.exception("AP Case creation failed after approval for invoice %s: %s", invoice.pk, exc)
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": True, "status": "APPROVED"})
+
+    messages.success(request, f"Extraction approved for Invoice {invoice.invoice_number}.")
+    return redirect("extraction:approval_queue")
+
+
+# ────────────────────────────────────────────────────────────────
+# Reject extraction
+# ────────────────────────────────────────────────────────────────
+@login_required
+@require_POST
+@permission_required_code("invoices.create")
+@observed_action(
+    "extraction.reject_extraction",
+    permission="invoices.create",
+    entity_type="ExtractionApproval",
+)
+def extraction_reject(request, pk):
+    """Reject an extraction."""
+    from apps.extraction.models import ExtractionApproval
+    from apps.extraction.services.approval_service import ExtractionApprovalService
+
+    approval = get_object_or_404(ExtractionApproval, pk=pk)
+
+    try:
+        payload = json.loads(request.body) if request.body else {}
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+
+    reason = payload.get("reason", request.POST.get("reason", ""))
+
+    try:
+        ExtractionApprovalService.reject(approval, request.user, reason)
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": True, "status": "REJECTED"})
+
+    messages.info(request, f"Extraction rejected for Invoice {approval.invoice.invoice_number}.")
+    return redirect("extraction:approval_queue")
+
+
+# ────────────────────────────────────────────────────────────────
+# Extraction Approval Analytics API (JSON)
+# ────────────────────────────────────────────────────────────────
+@login_required
+@require_GET
+@permission_required_code("invoices.view")
+def extraction_approval_analytics(request):
+    """Return extraction approval analytics as JSON."""
+    from apps.extraction.services.approval_service import ExtractionApprovalService
+
+    analytics = ExtractionApprovalService.get_approval_analytics()
+    return JsonResponse(analytics)

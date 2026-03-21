@@ -8,9 +8,17 @@ class InvoiceStatus(models.TextChoices):
     EXTRACTED = "EXTRACTED", "Extracted"
     VALIDATED = "VALIDATED", "Validated"
     INVALID = "INVALID", "Invalid"
+    PENDING_APPROVAL = "PENDING_APPROVAL", "Pending Approval"
     READY_FOR_RECON = "READY_FOR_RECON", "Ready for Reconciliation"
     RECONCILED = "RECONCILED", "Reconciled"
     FAILED = "FAILED", "Failed"
+
+
+class ExtractionApprovalStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    APPROVED = "APPROVED", "Approved"
+    REJECTED = "REJECTED", "Rejected"
+    AUTO_APPROVED = "AUTO_APPROVED", "Auto-Approved"
 
 
 class ReconciliationMode(models.TextChoices):
@@ -212,6 +220,12 @@ class AuditEventType(models.TextChoices):
     COPILOT_GOVERNANCE_CONTEXT_VIEWED = "COPILOT_GOVERNANCE_CONTEXT_VIEWED", "Copilot Governance Context Viewed"
     COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST = "COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST", "Copilot Unauthorized Governance Request"
     COPILOT_SENSITIVE_FIELD_REDACTED = "COPILOT_SENSITIVE_FIELD_REDACTED", "Copilot Sensitive Field Redacted"
+    # Extraction approval events
+    EXTRACTION_APPROVAL_PENDING = "EXTRACTION_APPROVAL_PENDING", "Extraction Approval Pending"
+    EXTRACTION_APPROVED = "EXTRACTION_APPROVED", "Extraction Approved"
+    EXTRACTION_REJECTED = "EXTRACTION_REJECTED", "Extraction Rejected"
+    EXTRACTION_AUTO_APPROVED = "EXTRACTION_AUTO_APPROVED", "Extraction Auto-Approved"
+    EXTRACTION_FIELD_CORRECTED = "EXTRACTION_FIELD_CORRECTED", "Extraction Field Corrected"
 
 
 class PermissionOverrideType(models.TextChoices):

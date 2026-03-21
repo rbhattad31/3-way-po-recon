@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load rbac_tags %}
+{% load extraction_tags %}
 {% block title %}Invoice Extraction Agent – AP Operations{% endblock %}
 
 {% block breadcrumb %}
@@ -26,6 +27,33 @@
     <i class="bi bi-robot me-1"></i>Run Agent
   </button>
 </div>
+
+{# ══════════ Tabs ══════════ #}
+<ul class="nav nav-tabs mb-4" id="workbenchTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab != 'approvals' %}active{% endif %}" id="runs-tab" data-bs-toggle="tab"
+            data-bs-target="#runs-pane" type="button" role="tab" aria-controls="runs-pane"
+            aria-selected="{% if active_tab != 'approvals' %}true{% else %}false{% endif %}">
+      <i class="bi bi-robot me-1"></i>Agent Runs
+      <span class="badge bg-primary bg-opacity-75 ms-1">{{ stats.total }}</span>
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'approvals' %}active{% endif %}" id="approvals-tab" data-bs-toggle="tab"
+            data-bs-target="#approvals-pane" type="button" role="tab" aria-controls="approvals-pane"
+            aria-selected="{% if active_tab == 'approvals' %}true{% else %}false{% endif %}">
+      <i class="bi bi-clipboard-check me-1"></i>Approvals
+      {% if approval_analytics.pending %}
+      <span class="badge bg-warning text-dark ms-1">{{ approval_analytics.pending }}</span>
+      {% endif %}
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="workbenchTabContent">
+
+{# ══════════ TAB 1 — Agent Runs ══════════ #}
+<div class="tab-pane fade {% if active_tab != 'approvals' %}show active{% endif %}" id="runs-pane" role="tabpanel" aria-labelledby="runs-tab">
 
 {# ── KPI Strip ── #}
 <div class="row g-3 mb-4">
@@ -124,7 +152,7 @@
     </span>
   </div>
   <div class="ap-card-body p-0" style="overflow-x:auto">
-    <table class="ap-table w-100" style="min-width:700px" id="resultsTable">
+    <table class="ap-table w-100" style="min-width:800px" id="resultsTable">
       <thead>
         <tr>
           <th>File</th>
@@ -133,6 +161,7 @@
           <th style="text-align:right">Amount</th>
           <th style="width:110px">Confidence</th>
           <th style="width:80px">Status</th>
+          <th style="width:100px">Approval</th>
           <th style="width:130px">Processed</th>
           <th style="width:60px"></th>
         </tr>
@@ -181,6 +210,28 @@
             <span class="ap-badge ap-badge-danger">FAIL</span>
             {% endif %}
           </td>
+          <td>
+            {% if r.success and r.invoice_id %}
+              {% get_approval approval_map r.invoice_id as appr %}
+              {% if appr %}
+                {% if appr.status == 'PENDING' %}
+                <a href="{% url 'extraction:approval_detail' appr.pk %}" class="ap-badge ap-badge-warning text-decoration-none" title="Review & Approve">
+                  <i class="bi bi-clock me-1"></i>PENDING
+                </a>
+                {% elif appr.status == 'APPROVED' %}
+                <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle me-1"></i>APPROVED</span>
+                {% elif appr.status == 'AUTO_APPROVED' %}
+                <span class="ap-badge ap-badge-info"><i class="bi bi-lightning me-1"></i>AUTO</span>
+                {% elif appr.status == 'REJECTED' %}
+                <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle me-1"></i>REJECTED</span>
+                {% endif %}
+              {% else %}
+                <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span>
+              {% endif %}
+            {% else %}
+              <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span>
+            {% endif %}
+          </td>
           <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
             {{ r.created_at|date:"d M Y H:i" }}
           </td>
@@ -192,7 +243,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="8" class="text-center py-5" style="color:var(--ap-text-muted)">
+          <td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
             <i class="bi bi-robot d-block mb-2" style="font-size:2rem"></i>
             No agent runs yet. Upload an invoice to run the extraction agent.
           </td>
@@ -223,6 +274,210 @@
   </ul>
 </nav>
 {% endif %}
+
+</div>{# /runs-pane #}
+
+{# ══════════ TAB 2 — Approvals ══════════ #}
+<div class="tab-pane fade {% if active_tab == 'approvals' %}show active{% endif %}" id="approvals-pane" role="tabpanel" aria-labelledby="approvals-tab">
+
+{# ── Approval Analytics Strip ── #}
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-warning)">{{ approval_analytics.pending }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Pending</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ approval_analytics.approved }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Approved</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-info)">{{ approval_analytics.auto_approved }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Auto-Approved</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-danger)">{{ approval_analytics.rejected }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Rejected</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">
+          {% widthratio approval_analytics.touchless_rate 1 100 %}%
+        </div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Touchless Rate</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Approval Filters ── #}
+<div class="ap-card mb-4">
+  <div class="ap-card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <input type="hidden" name="tab" value="approvals">
+      <div class="col-auto">
+        <label class="form-label mb-0" style="font-size:var(--ap-font-size-xs)">Status</label>
+        <select name="approval_status" class="form-select form-select-sm" onchange="this.form.submit()">
+          <option value="ALL" {% if approval_status_filter == "ALL" %}selected{% endif %}>All</option>
+          <option value="PENDING" {% if approval_status_filter == "PENDING" %}selected{% endif %}>Pending</option>
+          <option value="APPROVED" {% if approval_status_filter == "APPROVED" %}selected{% endif %}>Approved</option>
+          <option value="AUTO_APPROVED" {% if approval_status_filter == "AUTO_APPROVED" %}selected{% endif %}>Auto-Approved</option>
+          <option value="REJECTED" {% if approval_status_filter == "REJECTED" %}selected{% endif %}>Rejected</option>
+        </select>
+      </div>
+      <div class="col">
+        <label class="form-label mb-0" style="font-size:var(--ap-font-size-xs)">Search</label>
+        <input type="text" name="approval_q" class="form-control form-control-sm" placeholder="Invoice # or vendor…" value="{{ request.GET.approval_q }}">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-outline-primary btn-sm"><i class="bi bi-search"></i></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Approvals Table ── #}
+<div class="ap-card">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle" style="font-size:var(--ap-font-size-sm)">
+      <thead>
+        <tr>
+          <th>Invoice</th>
+          <th>Vendor</th>
+          <th>Amount</th>
+          <th>Confidence</th>
+          <th>Status</th>
+          <th>Corrections</th>
+          <th>Reviewed By</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for appr in approvals %}
+        <tr>
+          <td>
+            <a href="{% url 'extraction:approval_detail' appr.pk %}" class="text-decoration-none fw-semibold">
+              {{ appr.invoice.invoice_number|default:"—" }}
+            </a>
+          </td>
+          <td>{{ appr.invoice.vendor.name|default:appr.invoice.raw_vendor_name|default:"—" }}</td>
+          <td>{{ appr.invoice.currency }} {{ appr.invoice.total_amount|default:"—" }}</td>
+          <td>
+            {% if appr.confidence_at_review is not None %}
+              {% widthratio appr.confidence_at_review 1 100 %}%
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            {% if appr.status == "PENDING" %}
+              <span class="badge bg-warning text-dark">Pending</span>
+            {% elif appr.status == "APPROVED" %}
+              <span class="badge bg-success">Approved</span>
+            {% elif appr.status == "AUTO_APPROVED" %}
+              <span class="badge bg-info">Auto</span>
+            {% elif appr.status == "REJECTED" %}
+              <span class="badge bg-danger">Rejected</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if appr.is_touchless %}
+              <span class="badge bg-success bg-opacity-10 text-success">Touchless</span>
+            {% elif appr.fields_corrected_count > 0 %}
+              <span class="badge bg-warning bg-opacity-10 text-warning">{{ appr.fields_corrected_count }} fix{{ appr.fields_corrected_count|pluralize:"es" }}</span>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>{{ appr.reviewed_by.get_short_name|default:"—" }}</td>
+          <td>{{ appr.created_at|date:"d M Y H:i" }}</td>
+          <td>
+            {% if appr.status == "PENDING" %}
+              <a href="{% url 'extraction:approval_detail' appr.pk %}" class="btn btn-outline-primary btn-sm py-0">
+                <i class="bi bi-eye me-1"></i>Review
+              </a>
+            {% else %}
+              <a href="{% url 'extraction:approval_detail' appr.pk %}" class="btn btn-outline-secondary btn-sm py-0">
+                View
+              </a>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="9" class="text-center text-muted py-4">No extraction approvals found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Approval Pagination ── #}
+{% if approval_page_obj.has_other_pages %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm justify-content-center">
+    {% if approval_page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?tab=approvals&approval_page={{ approval_page_obj.previous_page_number }}&approval_status={{ approval_status_filter }}&approval_q={{ request.GET.approval_q }}">&laquo;</a></li>
+    {% endif %}
+    {% for num in approval_page_obj.paginator.page_range %}
+      {% if approval_page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > approval_page_obj.number|add:"-3" and num < approval_page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?tab=approvals&approval_page={{ num }}&approval_status={{ approval_status_filter }}&approval_q={{ request.GET.approval_q }}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if approval_page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?tab=approvals&approval_page={{ approval_page_obj.next_page_number }}&approval_status={{ approval_status_filter }}&approval_q={{ request.GET.approval_q }}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+{# ── Most Corrected Fields ── #}
+{% if approval_analytics.most_corrected_fields %}
+<div class="ap-card mt-4">
+  <div class="ap-card-header">
+    <h6 class="mb-0"><i class="bi bi-bar-chart me-1"></i>Most Corrected Fields</h6>
+  </div>
+  <div class="ap-card-body">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" style="font-size:var(--ap-font-size-sm)">
+        <thead><tr><th>Field</th><th>Type</th><th>Corrections</th></tr></thead>
+        <tbody>
+          {% for f in approval_analytics.most_corrected_fields %}
+          <tr>
+            <td><code>{{ f.field_name }}</code></td>
+            <td>{{ f.entity_type }}</td>
+            <td><span class="badge bg-secondary">{{ f.count }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+</div>{# /approvals-pane #}
+</div>{# /tab-content #}
 
 {# ══════════ Upload Modal ══════════ #}
 <div class="modal fade" id="uploadModal" tabindex="-1" aria-labelledby="uploadModalLabel" aria-hidden="true">
@@ -297,7 +552,7 @@
   // ── Render table rows from JSON ──────────────────────────
   function renderRows(rows) {
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-5" style="color:var(--ap-text-muted)">
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
         <i class="bi bi-funnel d-block mb-2" style="font-size:2rem"></i>No results match your filters.</td></tr>`;
       return;
     }
@@ -329,6 +584,7 @@
         <td style="text-align:right">${amount}</td>
         <td>${confBar}</td>
         <td>${statusBadge}</td>
+        <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
         <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${escHtml(r.created_at)}</td>
         <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a></td>
       </tr>`;

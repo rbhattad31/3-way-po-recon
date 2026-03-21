@@ -97,7 +97,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             validation_result=validation_result,
             duplicate_result=dup_result,
         )
-        ExtractionResultPersistenceService.save(upload, invoice, extraction_resp)
+        ext_result = ExtractionResultPersistenceService.save(upload, invoice, extraction_resp)
 
         # 7. Finalise upload state
         upload.processing_state = FileProcessingState.COMPLETED
@@ -114,10 +114,27 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             except Exception as mv_err:
                 logger.warning("Blob move to processed/ failed: %s", mv_err)
 
-        # If valid and not duplicate, mark ready for reconciliation
+        # If valid and not duplicate, gate through extraction approval
         if validation_result.is_valid and not dup_result.is_duplicate:
-            invoice.status = InvoiceStatus.READY_FOR_RECON
-            invoice.save(update_fields=["status", "updated_at"])
+            from apps.extraction.services.approval_service import ExtractionApprovalService
+
+            # Try auto-approve first (disabled by default — threshold = 1.1)
+            auto_approval = ExtractionApprovalService.try_auto_approve(invoice, ext_result)
+            if not auto_approval:
+                # Human approval required — set PENDING_APPROVAL
+                invoice.status = InvoiceStatus.PENDING_APPROVAL
+                invoice.save(update_fields=["status", "updated_at"])
+                ExtractionApprovalService.create_pending_approval(invoice, ext_result)
+
+                from apps.auditlog.services import AuditService as _AS
+                from apps.core.enums import AuditEventType as _AET
+                _AS.log_event(
+                    entity_type="Invoice",
+                    entity_id=invoice.pk,
+                    event_type=_AET.EXTRACTION_APPROVAL_PENDING,
+                    description=f"Extraction pending human approval for invoice {invoice.invoice_number}",
+                    metadata={"upload_id": upload_id, "confidence": invoice.extraction_confidence},
+                )
 
         # Audit: extraction completed
         from apps.auditlog.services import AuditService
@@ -130,9 +147,9 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             metadata={"upload_id": upload_id, "is_duplicate": dup_result.is_duplicate, "is_valid": validation_result.is_valid},
         )
 
-        # --- Auto-create AP Case and trigger case processing ---
+        # --- Auto-create AP Case only if invoice is READY_FOR_RECON (auto-approved) ---
         case_id = None
-        if validation_result.is_valid and not dup_result.is_duplicate:
+        if invoice.status == InvoiceStatus.READY_FOR_RECON:
             try:
                 from apps.cases.services.case_creation_service import CaseCreationService
                 case = CaseCreationService.create_from_upload(

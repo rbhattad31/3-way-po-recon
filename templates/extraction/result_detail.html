@@ -61,6 +61,11 @@
       <i class="bi bi-file-earmark-text me-1"></i>Invoice Detail
     </a>
     {% endif %}
+    {% if approval %}
+    <a href="{% url 'extraction:approval_detail' approval.pk %}" class="btn btn-sm {% if approval.status == 'PENDING' %}btn-success{% else %}btn-outline-info{% endif %}" title="Extraction approval">
+      <i class="bi bi-{% if approval.status == 'PENDING' %}check-circle{% elif approval.status == 'APPROVED' or approval.status == 'AUTO_APPROVED' %}check-circle-fill{% else %}x-circle{% endif %} me-1"></i>{% if approval.status == 'PENDING' %}Review & Approve{% else %}{{ approval.status }}{% endif %}
+    </a>
+    {% endif %}
     <a href="{% url 'extraction:workbench' %}" class="btn btn-sm btn-outline-secondary">
       <i class="bi bi-arrow-left me-1"></i>Back
     </a>
