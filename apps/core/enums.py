@@ -236,6 +236,22 @@ class AuditEventType(models.TextChoices):
     EXTRACTION_REJECTED = "EXTRACTION_REJECTED", "Extraction Rejected"
     EXTRACTION_AUTO_APPROVED = "EXTRACTION_AUTO_APPROVED", "Extraction Auto-Approved"
     EXTRACTION_FIELD_CORRECTED = "EXTRACTION_FIELD_CORRECTED", "Extraction Field Corrected"
+    # Extraction platform governance events
+    JURISDICTION_RESOLVED = "JURISDICTION_RESOLVED", "Jurisdiction Resolved"
+    SCHEMA_SELECTED = "SCHEMA_SELECTED", "Schema Selected"
+    PROMPT_SELECTED = "PROMPT_SELECTED", "Prompt Selected"
+    NORMALIZATION_COMPLETED = "NORMALIZATION_COMPLETED", "Normalization Completed"
+    VALIDATION_COMPLETED = "VALIDATION_COMPLETED", "Validation Completed"
+    EVIDENCE_CAPTURED = "EVIDENCE_CAPTURED", "Evidence Captured"
+    REVIEW_ROUTE_ASSIGNED = "REVIEW_ROUTE_ASSIGNED", "Review Route Assigned"
+    EXTRACTION_REPROCESSED = "EXTRACTION_REPROCESSED", "Extraction Reprocessed"
+    EXTRACTION_ESCALATED = "EXTRACTION_ESCALATED", "Extraction Escalated"
+    EXTRACTION_COMMENT_ADDED = "EXTRACTION_COMMENT_ADDED", "Extraction Comment Added"
+    SETTINGS_UPDATED = "SETTINGS_UPDATED", "Settings Updated"
+    SCHEMA_UPDATED = "SCHEMA_UPDATED", "Schema Updated"
+    PROMPT_UPDATED = "PROMPT_UPDATED", "Prompt Updated"
+    ROUTING_RULE_UPDATED = "ROUTING_RULE_UPDATED", "Routing Rule Updated"
+    ANALYTICS_SNAPSHOT_CREATED = "ANALYTICS_SNAPSHOT_CREATED", "Analytics Snapshot Created"
 
 
 class PermissionOverrideType(models.TextChoices):
@@ -642,3 +658,57 @@ class JurisdictionSource(models.TextChoices):
     AUTO_DETECTED = "AUTO_DETECTED", "Auto-Detected"
     HYBRID_CONFIGURED = "HYBRID_CONFIGURED", "Hybrid — Configured Primary"
     HYBRID_FALLBACK = "HYBRID_FALLBACK", "Hybrid — Detection Fallback"
+    FIXED = "FIXED", "Fixed (System Settings)"
+    ENTITY = "ENTITY", "Entity Profile"
+
+
+# ---------------------------------------------------------------------------
+# Extraction Platform Upgrade enums
+# ---------------------------------------------------------------------------
+
+
+class ExtractionRunStatus(models.TextChoices):
+    """Lifecycle status of an ExtractionRun."""
+    PENDING = "PENDING", "Pending"
+    JURISDICTION_RESOLVED = "JURISDICTION_RESOLVED", "Jurisdiction Resolved"
+    SCHEMA_SELECTED = "SCHEMA_SELECTED", "Schema Selected"
+    PROMPT_BUILT = "PROMPT_BUILT", "Prompt Built"
+    EXTRACTING = "EXTRACTING", "Extracting"
+    NORMALIZING = "NORMALIZING", "Normalizing"
+    VALIDATING = "VALIDATING", "Validating"
+    EVIDENCE_CAPTURING = "EVIDENCE_CAPTURING", "Evidence Capturing"
+    ROUTING = "ROUTING", "Routing"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+
+
+class ExtractionIssueSeverity(models.TextChoices):
+    """Severity of an extraction issue."""
+    INFO = "INFO", "Info"
+    WARNING = "WARNING", "Warning"
+    ERROR = "ERROR", "Error"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class ReviewQueue(models.TextChoices):
+    """Review queue classification for extraction review routing."""
+    AP_REVIEW = "AP_REVIEW", "AP Review"
+    TAX_REVIEW = "TAX_REVIEW", "Tax Review"
+    MASTER_DATA_REVIEW = "MASTER_DATA_REVIEW", "Master Data Review"
+    EXCEPTION_OPS = "EXCEPTION_OPS", "Exception Ops"
+    COMPLIANCE = "COMPLIANCE", "Compliance"
+
+
+class ExtractionApprovalAction(models.TextChoices):
+    """Approval actions for extractions."""
+    APPROVED = "APPROVED", "Approved"
+    REJECTED = "REJECTED", "Rejected"
+    ESCALATED = "ESCALATED", "Escalated"
+    REPROCESSED = "REPROCESSED", "Reprocessed"
+
+
+class CountryPackStatus(models.TextChoices):
+    """Activation status for country packs."""
+    DRAFT = "DRAFT", "Draft"
+    ACTIVE = "ACTIVE", "Active"
+    DEPRECATED = "DEPRECATED", "Deprecated"

@@ -56,6 +56,16 @@
                 <i class="bi bi-clock-history me-1"></i>Audit Trail
               </button>
             </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-corrections" data-bs-toggle="pill"
+                      data-bs-target="#panel-corrections" type="button" role="tab"
+                      aria-controls="panel-corrections" aria-selected="false">
+                <i class="bi bi-pencil-square me-1"></i>Corrections
+                {% if correction_count %}
+                  <span class="badge bg-secondary ms-1">{{ correction_count }}</span>
+                {% endif %}
+              </button>
+            </li>
           </ul>
         </div>
         <div class="card-body p-0">
@@ -79,6 +89,10 @@
             {# Tab 5: Audit Trail #}
             <div class="tab-pane fade" id="panel-audit" role="tabpanel" aria-labelledby="tab-audit">
               {% include "extraction/console/_audit_trail.html" %}
+            </div>
+            {# Tab 6: Corrections #}
+            <div class="tab-pane fade" id="panel-corrections" role="tabpanel" aria-labelledby="tab-corrections">
+              {% include "extraction/console/_corrections_panel.html" %}
             </div>
           </div>
         </div>

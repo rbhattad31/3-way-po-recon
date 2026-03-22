@@ -1,0 +1,55 @@
+{# extraction/console/_corrections_panel.html — Field correction audit trail #}
+
+<div class="p-3">
+  {% if corrections %}
+  <div class="mb-2">
+    <span class="small text-muted">{{ corrections|length }} field correction{{ corrections|length|pluralize }}</span>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead>
+        <tr class="small text-muted text-uppercase" style="font-size:.7rem;letter-spacing:.05em">
+          <th>Field</th>
+          <th>Original Value</th>
+          <th>Corrected Value</th>
+          <th>Reason</th>
+          <th>Corrected By</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in corrections %}
+        <tr>
+          <td>
+            <code class="small">{{ c.field_code }}</code>
+          </td>
+          <td>
+            <span class="text-decoration-line-through text-muted small">{{ c.original_value|default:"—"|truncatechars:40 }}</span>
+          </td>
+          <td>
+            <span class="fw-semibold small text-success">{{ c.corrected_value|default:"—"|truncatechars:40 }}</span>
+          </td>
+          <td class="small text-muted">{{ c.correction_reason|default:"—"|truncatechars:50 }}</td>
+          <td class="small">
+            {% if c.corrected_by %}
+              {{ c.corrected_by.email|default:c.corrected_by }}
+            {% else %}
+              <span class="text-muted">System</span>
+            {% endif %}
+          </td>
+          <td class="small text-muted">{{ c.created_at|date:"d M Y H:i" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+  <div class="text-center py-4">
+    <i class="bi bi-pencil-square text-muted fs-1"></i>
+    <p class="text-muted mt-2 mb-0">No field corrections recorded</p>
+    <p class="text-muted small">Corrections appear here when reviewers edit extracted field values.</p>
+  </div>
+  {% endif %}
+</div>

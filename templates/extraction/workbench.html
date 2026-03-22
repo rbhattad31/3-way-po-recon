@@ -114,6 +114,15 @@
         <option value="success">Success</option>
         <option value="failed">Failed</option>
       </select>
+      {# Review queue #}
+      <select id="filterQueue" class="form-select form-select-sm" style="max-width:140px">
+        <option value="">All Queues</option>
+        <option value="AP_REVIEW">AP Review</option>
+        <option value="TAX_REVIEW">Tax Review</option>
+        <option value="MASTER_DATA_REVIEW">Master Data</option>
+        <option value="EXCEPTION_OPS">Exception Ops</option>
+        <option value="COMPLIANCE">Compliance</option>
+      </select>
       {# Quick confidence buttons #}
       <div class="btn-group btn-group-sm" role="group" aria-label="Confidence filter">
         <button type="button" class="btn btn-outline-secondary conf-btn active" data-conf="">All</button>
@@ -161,6 +170,7 @@
           <th style="text-align:right">Amount</th>
           <th style="width:110px">Confidence</th>
           <th style="width:80px">Status</th>
+          <th style="width:100px">Queue</th>
           <th style="width:100px">Approval</th>
           <th style="width:130px">Processed</th>
           <th style="width:60px"></th>
@@ -210,6 +220,13 @@
             <span class="ap-badge ap-badge-danger">FAIL</span>
             {% endif %}
           </td>
+          <td style="font-size:var(--ap-font-size-xs)">
+            {% if r.review_queue %}
+            <span class="ap-badge ap-badge-info">{{ r.review_queue }}</span>
+            {% else %}
+            <span style="color:var(--ap-text-muted)">—</span>
+            {% endif %}
+          </td>
           <td>
             {% if r.success and r.invoice_id %}
               {% get_approval approval_map r.invoice_id as appr %}
@@ -246,7 +263,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
+          <td colspan="10" class="text-center py-5" style="color:var(--ap-text-muted)">
             <i class="bi bi-robot d-block mb-2" style="font-size:2rem"></i>
             No agent runs yet. Upload an invoice to run the extraction agent.
           </td>

@@ -67,6 +67,28 @@
           {{ approval_status }}
         </span>
         {% endif %}
+
+        {# Review queue badge (from ExtractionRun) #}
+        {% if extraction.review_queue %}
+        <span class="badge bg-info-subtle text-info" title="Review queue">
+          <i class="bi bi-inbox me-1"></i>{{ extraction.review_queue }}
+        </span>
+        {% endif %}
+
+        {# Schema badge #}
+        {% if extraction.schema_code %}
+        <span class="badge bg-dark-subtle text-dark" title="Schema: {{ extraction.schema_code }} v{{ extraction.schema_version|default:'?' }}">
+          <i class="bi bi-file-code me-1"></i>{{ extraction.schema_code }}
+        </span>
+        {% endif %}
+
+        {# Extraction method badge #}
+        {% if extraction.extraction_method %}
+        <span class="badge {% if extraction.extraction_method == 'HYBRID' %}bg-purple-subtle text-purple{% elif extraction.extraction_method == 'LLM' %}bg-primary-subtle text-primary{% else %}bg-secondary-subtle text-secondary{% endif %}"
+              title="Extraction method">
+          {{ extraction.extraction_method }}
+        </span>
+        {% endif %}
       </div>
 
       {# RIGHT: Actions #}

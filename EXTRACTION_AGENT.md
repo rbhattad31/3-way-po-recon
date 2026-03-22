@@ -230,9 +230,14 @@ Records individual field corrections for granular analytics.
 
 ## 5. Services
 
+### 5.0 Observability
+
+All extraction services are decorated with `@observed_service` from `apps/core/decorators.py`. This creates a child trace span, measures duration, writes a `ProcessingLog` entry, and optionally emits an `AuditEvent` for each service method invocation.
+
 ### 5.1 InvoiceExtractionAdapter
 
-**File**: `apps/extraction/services/extraction_adapter.py`
+**File**: `apps/extraction/services/extraction_adapter.py`  
+**Decorator**: `@observed_service("extraction.extract", entity_type="DocumentUpload", audit_event="EXTRACTION_STARTED")`
 
 Orchestrates the two-stage extraction pipeline:
 
@@ -268,7 +273,8 @@ raw_json, agent_run_id = _agent_extract(ocr_text)
 
 ### 5.2 ExtractionParserService
 
-**File**: `apps/extraction/services/parser_service.py`
+**File**: `apps/extraction/services/parser_service.py`  
+**Decorator**: `@observed_service("extraction.parse", entity_type="ExtractionResult")`
 
 Parses raw JSON → structured dataclasses:
 
@@ -279,7 +285,8 @@ Flexible field mapping (e.g., accepts both `item_description` and `description`)
 
 ### 5.3 NormalizationService
 
-**File**: `apps/extraction/services/normalization_service.py`
+**File**: `apps/extraction/services/normalization_service.py`  
+**Decorator**: `@observed_service("extraction.normalize", entity_type="Invoice")`
 
 Normalizes parsed values to proper types:
 
@@ -297,7 +304,8 @@ Utility functions live in `apps/core/utils.py`.
 
 ### 5.4 ValidationService
 
-**File**: `apps/extraction/services/validation_service.py`
+**File**: `apps/extraction/services/validation_service.py`  
+**Decorator**: `@observed_service("extraction.validate", entity_type="Invoice")`
 
 Returns `ValidationResult` with `is_valid`, `errors`, and `warnings`.
 
@@ -316,7 +324,8 @@ Returns `ValidationResult` with `is_valid`, `errors`, and `warnings`.
 
 ### 5.5 DuplicateDetectionService
 
-**File**: `apps/extraction/services/duplicate_detection_service.py`
+**File**: `apps/extraction/services/duplicate_detection_service.py`  
+**Decorator**: `@observed_service("extraction.duplicate_check", entity_type="Invoice")`
 
 Returns `DuplicateCheckResult` with `is_duplicate`, `duplicate_invoice_id`, `reason`.
 
@@ -327,7 +336,8 @@ Returns `DuplicateCheckResult` with `is_duplicate`, `duplicate_invoice_id`, `rea
 
 ### 5.6 InvoicePersistenceService
 
-**File**: `apps/extraction/services/persistence_service.py`
+**File**: `apps/extraction/services/persistence_service.py`  
+**Decorator**: `@observed_service("extraction.persist_invoice", entity_type="Invoice", audit_event="INVOICE_PERSISTED")`
 
 Saves normalized invoice + line items to the database.
 
@@ -343,13 +353,31 @@ Saves normalized invoice + line items to the database.
 
 ### 5.7 ExtractionResultPersistenceService
 
+**Decorator**: `@observed_service("extraction.persist_result", entity_type="ExtractionResult", audit_event="EXTRACTION_RESULT_PERSISTED")`
+
 Persists `ExtractionResult` record with engine metadata (separate from Invoice data).
+
+**Additional audit events emitted inline**:
+- `DUPLICATE_DETECTED` — when `DuplicateCheckResult.is_duplicate` is True
+- `VENDOR_RESOLVED` — when vendor is resolved via `Vendor.normalized_name` or `VendorAlias.normalized_alias`
 
 ### 5.8 ExtractionApprovalService
 
-**File**: `apps/extraction/services/approval_service.py`
+**File**: `apps/extraction/services/approval_service.py`  
+**Decorators**:
+- `create_pending_approval()`: `@observed_service("extraction.create_approval", entity_type="ExtractionApproval", audit_event="EXTRACTION_APPROVAL_PENDING")`
+- `try_auto_approve()`: `@observed_service("extraction.try_auto_approve", entity_type="ExtractionApproval")`
+- `approve()`: `@observed_service("extraction.approve", entity_type="ExtractionApproval", audit_event="EXTRACTION_APPROVED")`
+- `reject()`: `@observed_service("extraction.reject", entity_type="ExtractionApproval", audit_event="EXTRACTION_REJECTED")`
 
-See [Section 6: Approval Gate](#6-approval-gate).
+See [Section 8: Approval Gate](#8-approval-gate).
+
+### 5.9 UploadService
+
+**File**: `apps/extraction/services/upload_service.py`  
+**Decorator**: `@observed_service("extraction.upload", entity_type="DocumentUpload", audit_event="INVOICE_UPLOADED")`
+
+Handles file upload, SHA-256 hash computation, and `DocumentUpload` record creation.
 
 ---
 
@@ -666,12 +694,26 @@ with EXACTLY this structure:
 | `/extraction/result/<id>/edit/` | `extraction_edit_values` | POST | `invoices.create` | Edit extracted values |
 | `/extraction/approvals/` | `extraction_approval_queue` | GET | `invoices.view` | Approval queue |
 | `/extraction/approvals/<id>/` | `extraction_approval_detail` | GET | `invoices.view` | Approval detail/review |
-| `/extraction/approvals/<id>/approve/` | `extraction_approve` | POST | `invoices.create` | Approve extraction |
-| `/extraction/approvals/<id>/reject/` | `extraction_reject` | POST | `invoices.create` | Reject extraction |
+| `/extraction/approvals/<id>/approve/` | `extraction_approve` | POST | `extraction.approve` | Approve extraction |
+| `/extraction/approvals/<id>/reject/` | `extraction_reject` | POST | `extraction.reject` | Reject extraction |
 | `/extraction/console/<id>/` | `extraction_console` | GET | `invoices.view` | Agentic review console |
 | `/extraction/approvals/analytics/` | `extraction_approval_analytics` | GET | `invoices.view` | Analytics JSON endpoint |
 
 **API URLs**: `apps/extraction/api_urls.py` — empty (no REST API endpoints yet).
+
+### Observability
+
+All 14 template views are decorated with:
+- `@login_required` — enforced by `LoginRequiredMiddleware`
+- `@permission_required_code("<permission>")` — RBAC permission check
+- `@observed_action("<action_name>")` — creates trace span, captures actor identity, role snapshot, permission checked; writes `AuditEvent`
+
+### Data Scoping (AP_PROCESSOR)
+
+AP_PROCESSOR users see only extractions linked to their own uploaded invoices. The `_scope_extractions_for_user(queryset, user)` helper filters by `document_upload__uploaded_by=user` when the user's primary role is `AP_PROCESSOR`. This scoping is applied to:
+- Workbench queryset (extraction results list)
+- KPI statistics (counts and averages)
+- AJAX filter endpoint (filtered results)
 
 ### View Details
 
@@ -779,40 +821,40 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 │  HEADER BAR — ID, file, status, confidence, jurisdiction,    │
 │               action buttons (Approve, Edit, Reprocess,      │
 │               Escalate, Comment)                             │
-├──────────────────────┬───────────────────────────────────────┤
-│  DOCUMENT VIEWER     │  INTELLIGENCE PANEL (5 tabs)          │
-│  (col-lg-5)          │  (col-lg-7)                           │
-│                      │                                       │
-│  • Page navigation   │  Tab 1: Extracted Data                │
-│  • Zoom controls     │    - Header Fields table              │
-│  • Highlight overlay │    - Parties card                     │
-│  • PDF.js canvas     │    - Tax & Jurisdiction card          │
-│  • Image fallback    │    - Master Data Matches card         │
-│                      │    - Line Items table (expandable)    │
-│                      │                                       │
-│                      │  Tab 2: Validation                    │
-│                      │    - Errors / Warnings / Passed       │
-│                      │    - Go-to-field navigation           │
-│                      │                                       │
-│                      │  Tab 3: Evidence                      │
-│                      │    - Field evidence cards             │
-│                      │    - Source snippets, page refs       │
-│                      │    - Highlight in document            │
-│                      │                                       │
-│                      │  Tab 4: Agent Reasoning               │
-│                      │    - Step-by-step reasoning timeline  │
-│                      │    - Decisions, collapsible details   │
-│                      │                                       │
-│                      │  Tab 5: Audit Trail                   │
-│                      │    - Chronological event timeline     │
-│                      │    - Actor/role badges                │
-│                      │    - Before/after change tracking     │
-├──────────────────────┴───────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────┤
+│  INTELLIGENCE PANEL (5 tabs, full-width col-12)              │
+│                                                              │
+│  Tab 1: Extracted Data                                       │
+│    - Header Fields table                                     │
+│    - Parties card (exc-supplementary-card)                   │
+│    - Tax & Jurisdiction card                                 │
+│    - Master Data Matches card (exc-supplementary-card)       │
+│    - Line Items table (expandable)                           │
+│                                                              │
+│  Tab 2: Validation                                           │
+│    - Errors / Warnings / Passed                              │
+│    - Go-to-field navigation                                  │
+│                                                              │
+│  Tab 3: Evidence                                             │
+│    - Field evidence cards                                    │
+│    - Source snippets, page refs                              │
+│                                                              │
+│  Tab 4: Agent Reasoning                                      │
+│    - Step-by-step reasoning timeline                         │
+│    - Decisions, collapsible details                          │
+│                                                              │
+│  Tab 5: Audit Trail                                          │
+│    - Chronological event timeline                            │
+│    - Actor/role badges                                       │
+│    - Before/after change tracking                            │
+├──────────────────────────────────────────────────────────────┤
 │  PIPELINE TIMELINE — Upload → OCR → Jurisdiction → Schema →  │
 │  Extraction → Normalize → Validate → Enrich → Confidence →   │
 │  Review (state-aware pills)                                  │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+> **Note**: The document viewer column was removed. The console uses a single-column, full-width layout for the intelligence panel. The `_document_viewer.html` template is no longer included.
 
 ### Template Files (14 files in `templates/extraction/console/`)
 
@@ -820,11 +862,11 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 |------|---------|
 | `console.html` | Main layout — extends `base.html`, includes all partials/modals, loads CSS/JS |
 | `_header_bar.html` | Command bar — extraction ID, status/confidence badges, jurisdiction badges, action buttons |
-| `_document_viewer.html` | Sticky document viewer — page nav, zoom, highlight overlay, PDF.js canvas |
+| `_document_viewer.html` | **Deprecated** — no longer included in layout. File exists but is unused. |
 | `_extracted_data.html` | Tab 1 — Header Fields, Parties, Tax/Jurisdiction, Master Data Matches, Line Items |
 | `_confidence_badge.html` | Reusable confidence % indicator (green ≥85%, amber ≥50%, red <50%) |
 | `_validation_panel.html` | Tab 2 — Errors/Warnings/Passed grouped by severity, "Go to field" navigation |
-| `_evidence_panel.html` | Tab 3 — Evidence cards with source snippets, page references, "Highlight in document" |
+| `_evidence_panel.html` | Tab 3 — Evidence cards with source snippets and page references |
 | `_reasoning_panel.html` | Tab 4 — Agent reasoning timeline with step indicators, decisions, collapsible details |
 | `_audit_trail.html` | Tab 5 — Chronological event timeline with actor/role badges, before/after tracking |
 | `_bottom_timeline.html` | Pipeline stage progress bar with state indicators (completed/active/error/skipped/pending) |
@@ -835,41 +877,43 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 
 ### Key Features
 
-**Field Filtering**: Toggle buttons for All Fields / Flagged Only / Low Confidence to focus review on problem areas.
+**Field Filtering**: Toggle buttons for All Fields / Flagged Only / Low Confidence to focus review on problem areas. "Flagged Only" shows rows with the `exc-flagged` class (fields with validation issues). "Low Confidence" shows rows with `exc-low-confidence` or `exc-med-confidence` classes. Supplementary cards (Parties, Master Data Matches) are hidden when a filter other than "All" is active. An empty state message is displayed when no rows match the selected filter.
 
 **Edit Mode**: Toggle switch enables inline editing on all header and tax fields. Modified fields get visual highlighting (`exc-modified` class). Original values preserved in `data-original` for comparison.
 
 **Go-to-Field Navigation**: Validation issues and evidence cards have clickable field links that switch to the Extracted Data tab and scroll/highlight the target field row.
 
-**Evidence → Document Linking**: Evidence entries with page numbers can navigate the document viewer and highlight bounding box regions.
-
 **Line Item Expand/Flag**: Each line item row has expand (shows all field details) and flag (marks for review) actions.
 
 **Modal Workflows**: All approval actions go through Bootstrap modals with CSRF-protected AJAX POST requests. Toast notifications for success/error feedback.
 
+**Permission-Aware Actions**: Action buttons (Approve, Reprocess, Escalate) are conditionally rendered based on the user's RBAC permissions: `extraction.approve` for approval, `extraction.reprocess` for re-extraction, `cases.escalate` for escalation. Checked via `user.has_permission()` (custom RBAC, not Django's `has_perm()`).
+
 ### Static Assets
 
-**`static/css/extraction_console.css`** (~300 lines):
+**`static/css/extraction_console.css`** (~200 lines):
 - `.exc-conf-high/med/low` confidence badge colors
 - `.exc-field-table` compact field table styling
 - `.exc-field-row.exc-low-confidence` / `.exc-med-confidence` left-border indicators
+- `.exc-field-row.exc-flagged` left-border indicator for validation-issue fields
 - `.exc-field-row.exc-editing` edit mode show/hide
 - `.exc-source-snippet` evidence source styling
 - `.exc-reasoning-step-number` numbered step circles with connectors
 - `.exc-audit-dot-*` timeline dot colors per event type
 - `.exc-stage-*` pipeline pill state colors
 - `.exc-pipeline-timeline` horizontal scrollable timeline
-- Responsive breakpoints (≤991px: viewer above panel, reduced heights)
+- `.exc-filter-empty` empty state styling for filter results
+- `.exc-supplementary-card` styling for Parties / Enrichment cards
+- Responsive breakpoints (≤991px: reduced heights)
 
-**`static/js/extraction_console.js`** (~280 lines):
+**`static/js/extraction_console.js`** (~200 lines):
 - Tab persistence (sessionStorage)
-- Field filter toggles (all/flagged/low-confidence)
+- Field filter toggles (all/flagged/low-confidence) with supplementary card visibility
+- Filter empty state toggle
 - Edit mode toggle with modification tracking
 - Go-to-field navigation (cross-tab + scroll + highlight animation)
 - Evidence field filter dropdown
 - Line item expand/collapse and flag toggle
-- Document viewer zoom controls
-- Bounding box highlight rendering
 - AJAX modal submission (approve/reprocess/escalate/comment) with CSRF
 - Toast notification system
 
@@ -889,7 +933,7 @@ The `extraction_console` view builds the following context for the template:
 | `validation_field_issues` | Computed | Map of field names with validation issues |
 | `pipeline_stages` | Computed | 10-stage pipeline with state indicators |
 | `approval` | `ExtractionApproval` | Current approval record (if exists) |
-| `permissions` | Request user | `can_approve`, `can_reprocess`, `can_escalate` flags |
+| `permissions` | Request user | `can_approve` (`extraction.approve`), `can_reprocess` (`extraction.reprocess`), `can_escalate` (`cases.escalate`) — checked via `user.has_permission()` |
 | `assignable_users` | `User.objects` | Top 50 active users for escalation |
 
 ---
@@ -938,9 +982,13 @@ UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → PENDING_APPR
 
 | Event Type | When Logged |
 |------------|-------------|
-| `EXTRACTION_STARTED` | Task begins |
+| `EXTRACTION_STARTED` | Extraction adapter begins OCR + LLM pipeline |
 | `EXTRACTION_COMPLETED` | Pipeline completes successfully |
 | `EXTRACTION_FAILED` | Pipeline fails |
+| `INVOICE_PERSISTED` | Invoice + line items saved to database |
+| `EXTRACTION_RESULT_PERSISTED` | ExtractionResult record saved |
+| `DUPLICATE_DETECTED` | Duplicate invoice detected during persistence |
+| `VENDOR_RESOLVED` | Vendor matched via normalized name or alias during persistence |
 | `EXTRACTION_APPROVAL_PENDING` | Approval record created (PENDING) |
 | `EXTRACTION_APPROVED` | Human approves extraction |
 | `EXTRACTION_AUTO_APPROVED` | System auto-approves extraction |
@@ -981,18 +1029,38 @@ All settings are in `config/settings.py`. Values are loaded from environment var
 | Permission | Description |
 |------------|-------------|
 | `invoices.view` | View extraction results, approval queue, analytics |
-| `invoices.create` | Upload files, approve/reject extractions, edit values |
+| `invoices.create` | Upload files, edit extracted values |
+| `extraction.approve` | Approve extracted invoice data before reconciliation |
+| `extraction.reject` | Reject extracted data and request re-extraction |
 | `extraction.reprocess` | Re-run extraction on existing uploads |
+| `cases.escalate` | Escalate extraction for case-level review |
 
 ### Role Access
 
 | Role | Permissions |
 |------|-------------|
 | ADMIN | All extraction permissions |
-| AP_PROCESSOR | `invoices.view`, `invoices.create` (scoped to own uploads) |
+| AP_PROCESSOR | `invoices.view`, `invoices.create`, `extraction.approve`, `extraction.reject`, `extraction.reprocess` (scoped to own uploads) |
 | REVIEWER | `invoices.view` |
-| FINANCE_MANAGER | `invoices.view`, `invoices.create` |
+| FINANCE_MANAGER | `invoices.view`, `invoices.create`, `extraction.approve`, `extraction.reject`, `extraction.reprocess` |
 | AUDITOR | `invoices.view` |
+| SYSTEM_AGENT | `extraction.approve`, `extraction.reject` |
+
+### Data Scoping
+
+AP_PROCESSOR users are scoped to see only extractions linked to their own uploaded invoices. The `_scope_extractions_for_user()` helper in `template_views.py` filters by `document_upload__uploaded_by=user` when the user's primary role (via `UserRole` enum) is `AP_PROCESSOR`. This is applied to:
+- Workbench queryset (paginated extraction results)
+- KPI statistics (total, success, failed counts and averages)
+- AJAX filter endpoint (filtered extraction results)
+
+All other roles see all extractions.
+
+### Permission Enforcement
+
+- **View decorators**: `@permission_required_code("<permission>")` — checks against RBAC Permission model
+- **Template checks**: `{% has_permission "extraction.approve" as can_approve %}` — uses RBAC template tags
+- **Console permissions**: Checked via `user.has_permission("<code>")` (custom RBAC engine, **not** Django's `has_perm()`)
+- **Separation of duties**: Approve and reject use dedicated `extraction.approve` / `extraction.reject` permissions, separate from `invoices.create` (upload/edit)
 
 ### Sidebar Navigation
 
@@ -1046,6 +1114,7 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 | `apps/extraction/services/duplicate_detection_service.py` | Duplicate invoice detection |
 | `apps/extraction/services/persistence_service.py` | Invoice + LineItem + ExtractionResult persistence |
 | `apps/extraction/services/approval_service.py` | Approval lifecycle (approve/reject/auto-approve + analytics) |
+| `apps/extraction/services/upload_service.py` | File upload, hash computation, DocumentUpload creation |
 | `apps/agents/services/agent_classes.py` | InvoiceExtractionAgent + InvoiceUnderstandingAgent |
 | `apps/agents/services/base_agent.py` | BaseAgent ReAct framework |
 | `apps/core/prompt_registry.py` | LLM prompt templates (extraction.invoice_system) |
@@ -1080,7 +1149,7 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 | **Review Console Templates** | |
 | `templates/extraction/console/console.html` | Main review console layout |
 | `templates/extraction/console/_header_bar.html` | Command bar (status, confidence, actions) |
-| `templates/extraction/console/_document_viewer.html` | Sticky document viewer with zoom/highlight |
+| `templates/extraction/console/_document_viewer.html` | **Deprecated** — no longer included in layout |
 | `templates/extraction/console/_extracted_data.html` | Tab 1: Header, Parties, Tax, Enrichment, Line Items |
 | `templates/extraction/console/_confidence_badge.html` | Reusable confidence % badge (green/amber/red) |
 | `templates/extraction/console/_validation_panel.html` | Tab 2: Errors/Warnings/Passed with go-to-field |
@@ -1093,8 +1162,8 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 | `templates/extraction/console/_escalate_modal.html` | Escalation modal |
 | `templates/extraction/console/_comment_modal.html` | Add comment modal |
 | **Static Assets** | |
-| `static/css/extraction_console.css` | Review console custom styles (~300 lines) |
-| `static/js/extraction_console.js` | Review console JavaScript (~280 lines) |
+| `static/css/extraction_console.css` | Review console custom styles (~200 lines) |
+| `static/js/extraction_console.js` | Review console JavaScript (~200 lines) |
 | `templates/partials/sidebar.html` | Navigation sidebar (extraction links) |
 
 ---

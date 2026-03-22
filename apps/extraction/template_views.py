@@ -117,6 +117,27 @@ def extraction_workbench(request):
         for ea in ExtractionApproval.objects.filter(invoice_id__in=invoice_ids):
             approval_map[ea.invoice_id] = ea
 
+    # Pre-load review queue from ExtractionRun (new pipeline models)
+    try:
+        from apps.extraction_core.models import ExtractionRun
+        doc_upload_ids = [r.document_upload_id for r in page_obj if r.document_upload_id]
+        queue_map = {}
+        if doc_upload_ids:
+            runs = (
+                ExtractionRun.objects
+                .filter(document__document_upload_id__in=doc_upload_ids)
+                .values_list("document__document_upload_id", "review_queue")
+                .order_by("document__document_upload_id", "-created_at")
+            )
+            for doc_id, queue in runs:
+                if doc_id not in queue_map:
+                    queue_map[doc_id] = queue
+        for r in page_obj:
+            r.review_queue = queue_map.get(r.document_upload_id, "")
+    except Exception:
+        for r in page_obj:
+            r.review_queue = ""
+
     # ── Approval tab data ──
     from apps.extraction.services.approval_service import ExtractionApprovalService
 
@@ -1411,6 +1432,36 @@ def extraction_console(request, pk):
     User = get_user_model()
     assignable_users = User.objects.filter(is_active=True).order_by("email")[:50]
 
+    # ── ExtractionRun data (new pipeline models) ──
+    extraction_run = None
+    corrections = []
+    correction_count = 0
+    try:
+        from apps.extraction_core.models import ExtractionRun
+        if ext.document_upload_id:
+            extraction_run = (
+                ExtractionRun.objects
+                .filter(document__document_upload_id=ext.document_upload_id)
+                .select_related("jurisdiction", "schema")
+                .order_by("-created_at")
+                .first()
+            )
+        if extraction_run:
+            corrections = list(
+                extraction_run.corrections
+                .select_related("corrected_by")
+                .order_by("-created_at")
+            )
+            correction_count = len(corrections)
+            # Enrich extraction context with ExtractionRun fields
+            extraction_ctx["review_queue"] = extraction_run.review_queue
+            extraction_ctx["schema_code"] = extraction_run.schema_code
+            extraction_ctx["schema_version"] = extraction_run.schema_version
+            extraction_ctx["extraction_method"] = extraction_run.extraction_method
+            extraction_ctx["requires_review"] = extraction_run.requires_review
+    except Exception:
+        pass
+
     return render(request, "extraction/console/console.html", {
         "extraction": extraction_ctx,
         "ext": ext,
@@ -1435,4 +1486,33 @@ def extraction_console(request, pk):
         "approval": approval,
         "permissions": permissions,
         "assignable_users": assignable_users,
+        "corrections": corrections,
+        "correction_count": correction_count,
+    })
+
+
+# ────────────────────────────────────────────────────────────────
+# Country Pack List — governance overview
+# ────────────────────────────────────────────────────────────────
+@login_required
+@permission_required_code("extraction.view")
+def country_pack_list(request):
+    """Country pack governance page showing all jurisdiction packs."""
+    from apps.extraction_core.models import CountryPack
+
+    packs = (
+        CountryPack.objects
+        .select_related("jurisdiction")
+        .order_by("jurisdiction__country_code")
+    )
+    active_count = packs.filter(pack_status="ACTIVE").count()
+    draft_count = packs.filter(pack_status="DRAFT").count()
+    deprecated_count = packs.filter(pack_status="DEPRECATED").count()
+
+    return render(request, "extraction/country_packs.html", {
+        "packs": packs,
+        "total_packs": packs.count(),
+        "active_count": active_count,
+        "draft_count": draft_count,
+        "deprecated_count": deprecated_count,
     })
