@@ -139,7 +139,7 @@ DocumentUpload (documents)
 PurchaseOrder (documents) ──< PurchaseOrderLineItem (item_category, is_service_item, is_stock_item)
   └── GoodsReceiptNote (documents) ──< GRNLineItem
 
-ExtractionResult (extraction) ── linked to DocumentUpload + Invoice
+ExtractionResult (extraction) ── linked to DocumentUpload + Invoice\nExtractionApproval (extraction) ── OneToOne Invoice, FK ExtractionResult\n  └──< ExtractionFieldCorrection (per-field correction audit trail)
 
 ReconciliationConfig (reconciliation) — tiered tolerance: strict + auto-close bands; mode resolver settings
 ReconciliationPolicy (reconciliation) — vendor/category/location/business-unit → mode mapping
@@ -170,9 +170,15 @@ GeneratedReport (reports)
 
 ### Invoice Status Flow
 ```
-UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → READY_FOR_RECON → RECONCILED
-                                  ↘ INVALID                                 ↘ FAILED
+UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → PENDING_APPROVAL → READY_FOR_RECON → RECONCILED
+                                  ↘ INVALID                ↗ (auto-approve)                    ↘ FAILED
+                                                           ↘ INVALID (rejected)
 ```
+- **PENDING_APPROVAL**: Human-in-the-loop gate. All valid extractions require human approval before reconciliation.
+- Auto-approval: When `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence ≥ `EXTRACTION_AUTO_APPROVE_THRESHOLD`, the system auto-approves and skips human review.
+- Models: `ExtractionApproval` (one-to-one with Invoice), `ExtractionFieldCorrection` (tracks every field correction for analytics).
+- Service: `ExtractionApprovalService` in `apps/extraction/services/approval_service.py`.
+- Analytics: `get_approval_analytics()` returns touchless rate, most-corrected fields, approval breakdown.
 
 ### Reconciliation Match Status
 ```
@@ -261,6 +267,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **RBAC API**: `/api/v1/accounts/` — UserViewSet (CRUD + roles/overrides), RoleViewSet (CRUD + clone), PermissionViewSet, RolePermissionMatrixView
 - **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 6 roles (incl. SYSTEM_AGENT), 40 permissions, full matrix, legacy user sync
 - Extraction pipeline (two-agent architecture: InvoiceExtractionAgent always + InvoiceUnderstandingAgent for low confidence; 8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o)
+- Extraction approval gate: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI; configurable auto-approval (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`)
 - Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
 - `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
 - `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
@@ -348,6 +355,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/core/metrics.py` | In-process metrics collection |
 | `apps/core/decorators.py` | `@observed_service`, `@observed_action`, `@observed_task` decorators |
 | `apps/extraction/tasks.py` | Extraction pipeline task |
+| `apps/extraction/services/approval_service.py` | Extraction approval gate (approve/reject/auto-approve, field correction tracking, touchless analytics) |
 | `apps/reviews/services.py` | Review workflow lifecycle |
 | `apps/agents/services/recommendation_service.py` | Agent recommendation lifecycle (create, query, accept) |
 | `apps/agents/services/agent_trace_service.py` | Unified agent governance tracing |

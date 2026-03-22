@@ -1,0 +1,689 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% load extraction_tags %}
+{% block title %}Invoice Extraction Agent – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item active">Invoice Extraction Agent</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# ── Page Header ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-robot me-2"></i>Invoice Extraction Agent
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      AI-powered agent that reads invoice documents (OCR) and extracts structured data using GPT-4o — standalone, no orchestration required.
+    </p>
+  </div>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadModal">
+    <i class="bi bi-robot me-1"></i>Run Agent
+  </button>
+</div>
+
+{# ══════════ Tabs ══════════ #}
+<ul class="nav nav-tabs mb-4" id="workbenchTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab != 'approvals' %}active{% endif %}" id="runs-tab" data-bs-toggle="tab"
+            data-bs-target="#runs-pane" type="button" role="tab" aria-controls="runs-pane"
+            aria-selected="{% if active_tab != 'approvals' %}true{% else %}false{% endif %}">
+      <i class="bi bi-robot me-1"></i>Agent Runs
+      <span class="badge bg-primary bg-opacity-75 ms-1">{{ stats.total }}</span>
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'approvals' %}active{% endif %}" id="approvals-tab" data-bs-toggle="tab"
+            data-bs-target="#approvals-pane" type="button" role="tab" aria-controls="approvals-pane"
+            aria-selected="{% if active_tab == 'approvals' %}true{% else %}false{% endif %}">
+      <i class="bi bi-clipboard-check me-1"></i>Approvals
+      {% if approval_analytics.pending %}
+      <span class="badge bg-warning text-dark ms-1">{{ approval_analytics.pending }}</span>
+      {% endif %}
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="workbenchTabContent">
+
+{# ══════════ TAB 1 — Agent Runs ══════════ #}
+<div class="tab-pane fade {% if active_tab != 'approvals' %}show active{% endif %}" id="runs-pane" role="tabpanel" aria-labelledby="runs-tab">
+
+{# ── KPI Strip ── #}
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{{ stats.total }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Agent Runs</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ stats.success }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Successful</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-danger)">{{ stats.failed }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Failed</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{% widthratio stats.avg_confidence 1 100 %}%</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Avg Confidence</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-text-secondary)">{{ stats.avg_duration|floatformat:0 }}<span style="font-size:.75rem">ms</span></div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Avg Duration</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Filters ── #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body py-2 px-3">
+    <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size:var(--ap-font-size-sm)">
+      {# Search #}
+      <div class="input-group input-group-sm" style="max-width:240px">
+        <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search"></i></span>
+        <input type="text" id="filterSearch" class="form-control border-start-0" placeholder="Search filename, invoice, vendor…" value="{{ request.GET.q|default:'' }}">
+      </div>
+      {# Status #}
+      <select id="filterStatus" class="form-select form-select-sm" style="max-width:130px">
+        <option value="">All Status</option>
+        <option value="success">Success</option>
+        <option value="failed">Failed</option>
+      </select>
+      {# Quick confidence buttons #}
+      <div class="btn-group btn-group-sm" role="group" aria-label="Confidence filter">
+        <button type="button" class="btn btn-outline-secondary conf-btn active" data-conf="">All</button>
+        <button type="button" class="btn btn-outline-success conf-btn" data-conf="high">High ≥80%</button>
+        <button type="button" class="btn btn-outline-warning conf-btn" data-conf="medium">Mid 50-80%</button>
+        <button type="button" class="btn btn-outline-danger conf-btn" data-conf="low">Low &lt;50%</button>
+      </div>
+      {# Confidence range slider #}
+      <div class="d-flex align-items-center gap-1" style="min-width:200px">
+        <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);white-space:nowrap">Conf:</span>
+        <input type="range" class="form-range form-range-sm" id="confSlider" min="0" max="100" value="0" style="width:120px">
+        <span id="confSliderVal" style="font-size:var(--ap-font-size-xs);font-weight:600;min-width:32px">0%</span>
+      </div>
+      {# Date range #}
+      <input type="date" id="filterDateFrom" class="form-control form-control-sm" style="max-width:140px" title="From date">
+      <input type="date" id="filterDateTo" class="form-control form-control-sm" style="max-width:140px" title="To date">
+      {# Spacer + Export #}
+      <div class="ms-auto d-flex gap-2">
+        <button type="button" id="clearFiltersBtn" class="btn btn-sm btn-outline-secondary" style="display:none">
+          <i class="bi bi-x-circle me-1"></i>Clear
+        </button>
+        <a href="{% url 'extraction:export_csv' %}" id="exportBtn" class="btn btn-sm btn-outline-success">
+          <i class="bi bi-download me-1"></i>Export CSV
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Results Table ── #}
+<div class="ap-card">
+  <div class="d-flex align-items-center justify-content-between px-3 pt-2">
+    <span id="resultCount" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ results|length }} result{{ results|length|pluralize }}</span>
+    <span id="filterIndicator" style="font-size:var(--ap-font-size-xs);color:var(--ap-primary);display:none">
+      <i class="bi bi-funnel-fill me-1"></i>Filtered
+    </span>
+  </div>
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table w-100" style="min-width:800px" id="resultsTable">
+      <thead>
+        <tr>
+          <th>File</th>
+          <th>Invoice #</th>
+          <th>Vendor</th>
+          <th style="text-align:right">Amount</th>
+          <th style="width:110px">Confidence</th>
+          <th style="width:80px">Status</th>
+          <th style="width:100px">Approval</th>
+          <th style="width:130px">Processed</th>
+          <th style="width:60px"></th>
+        </tr>
+      </thead>
+      <tbody id="resultsTableBody">
+        {% for r in results %}
+        <tr>
+          <td>
+            <div style="font-size:var(--ap-font-size-sm);font-weight:500" title="{{ r.document_upload.original_filename|default:'—' }}">
+              {{ r.document_upload.original_filename|default:"—"|truncatechars:30 }}
+            </div>
+            {% if r.duration_ms %}<div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ r.duration_ms|floatformat:0 }}ms · {{ r.engine_name|default:"azure_di_gpt4o" }}</div>{% endif %}
+          </td>
+          <td>
+            {% if r.invoice %}
+            <a href="{% url 'extraction:result_detail' r.pk %}" class="text-decoration-none fw-medium">
+              {{ r.invoice.invoice_number|default:"—" }}
+            </a>
+            {% else %}
+            <span style="color:var(--ap-text-muted)">—</span>
+            {% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-sm)">
+            {% if r.invoice %}{{ r.invoice.vendor.name|default:r.invoice.raw_vendor_name|default:"—"|truncatechars:25 }}{% else %}—{% endif %}
+          </td>
+          <td style="text-align:right">
+            {% if r.invoice and r.invoice.total_amount %}
+            <span style="font-weight:500">{{ r.invoice.currency }} {{ r.invoice.total_amount|floatformat:2 }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if r.confidence is not None %}
+            <div class="ap-confidence">
+              <div class="ap-confidence-bar">
+                <div class="ap-confidence-fill {% if r.confidence >= 0.8 %}high{% elif r.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+                     style="width:{% widthratio r.confidence 1 100 %}%"></div>
+              </div>
+              <span>{% widthratio r.confidence 1 100 %}%</span>
+            </div>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if r.success %}
+            <span class="ap-badge ap-badge-success">OK</span>
+            {% else %}
+            <span class="ap-badge ap-badge-danger">FAIL</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if r.success and r.invoice_id %}
+              {% get_approval approval_map r.invoice_id as appr %}
+              {% if appr %}
+                {% if appr.status == 'PENDING' %}
+                <a href="{% url 'extraction:approval_detail' appr.pk %}" class="ap-badge ap-badge-warning text-decoration-none" title="Review & Approve">
+                  <i class="bi bi-clock me-1"></i>PENDING
+                </a>
+                {% elif appr.status == 'APPROVED' %}
+                <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle me-1"></i>APPROVED</span>
+                {% elif appr.status == 'AUTO_APPROVED' %}
+                <span class="ap-badge ap-badge-info"><i class="bi bi-lightning me-1"></i>AUTO</span>
+                {% elif appr.status == 'REJECTED' %}
+                <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle me-1"></i>REJECTED</span>
+                {% endif %}
+              {% else %}
+                <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span>
+              {% endif %}
+            {% else %}
+              <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span>
+            {% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+            {{ r.created_at|date:"d M Y H:i" }}
+          </td>
+          <td>
+            <a href="{% url 'extraction:result_detail' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
+              View
+            </a>
+            <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-secondary py-0 ms-1" style="font-size:.7rem" title="Review Console">
+              <i class="bi bi-columns-gap"></i>
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
+            <i class="bi bi-robot d-block mb-2" style="font-size:2rem"></i>
+            No agent runs yet. Upload an invoice to run the extraction agent.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Pagination ── #}
+{% if page_obj.has_other_pages %}
+<nav class="mt-3 d-flex justify-content-center">
+  <ul class="pagination pagination-sm mb-0">
+    {% if page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.confidence %}&confidence={{ request.GET.confidence }}{% endif %}">&laquo;</a></li>
+    {% endif %}
+    {% for num in page_obj.paginator.page_range %}
+      {% if page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?page={{ num }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.confidence %}&confidence={{ request.GET.confidence }}{% endif %}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}{% if request.GET.confidence %}&confidence={{ request.GET.confidence }}{% endif %}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+</div>{# /runs-pane #}
+
+{# ══════════ TAB 2 — Approvals ══════════ #}
+<div class="tab-pane fade {% if active_tab == 'approvals' %}show active{% endif %}" id="approvals-pane" role="tabpanel" aria-labelledby="approvals-tab">
+
+{# ── Approval Analytics Strip ── #}
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-warning)">{{ approval_analytics.pending }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Pending</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ approval_analytics.approved }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Approved</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-info)">{{ approval_analytics.auto_approved }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Auto-Approved</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-danger)">{{ approval_analytics.rejected }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Rejected</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3 col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">
+          {% widthratio approval_analytics.touchless_rate 1 100 %}%
+        </div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Touchless Rate</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Approval Filters ── #}
+<div class="ap-card mb-4">
+  <div class="ap-card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <input type="hidden" name="tab" value="approvals">
+      <div class="col-auto">
+        <label class="form-label mb-0" style="font-size:var(--ap-font-size-xs)">Status</label>
+        <select name="approval_status" class="form-select form-select-sm" onchange="this.form.submit()">
+          <option value="ALL" {% if approval_status_filter == "ALL" %}selected{% endif %}>All</option>
+          <option value="PENDING" {% if approval_status_filter == "PENDING" %}selected{% endif %}>Pending</option>
+          <option value="APPROVED" {% if approval_status_filter == "APPROVED" %}selected{% endif %}>Approved</option>
+          <option value="AUTO_APPROVED" {% if approval_status_filter == "AUTO_APPROVED" %}selected{% endif %}>Auto-Approved</option>
+          <option value="REJECTED" {% if approval_status_filter == "REJECTED" %}selected{% endif %}>Rejected</option>
+        </select>
+      </div>
+      <div class="col">
+        <label class="form-label mb-0" style="font-size:var(--ap-font-size-xs)">Search</label>
+        <input type="text" name="approval_q" class="form-control form-control-sm" placeholder="Invoice # or vendor…" value="{{ request.GET.approval_q }}">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-outline-primary btn-sm"><i class="bi bi-search"></i></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Approvals Table ── #}
+<div class="ap-card">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle" style="font-size:var(--ap-font-size-sm)">
+      <thead>
+        <tr>
+          <th>Invoice</th>
+          <th>Vendor</th>
+          <th>Amount</th>
+          <th>Confidence</th>
+          <th>Status</th>
+          <th>Corrections</th>
+          <th>Reviewed By</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for appr in approvals %}
+        <tr>
+          <td>
+            <a href="{% url 'extraction:approval_detail' appr.pk %}" class="text-decoration-none fw-semibold">
+              {{ appr.invoice.invoice_number|default:"—" }}
+            </a>
+          </td>
+          <td>{{ appr.invoice.vendor.name|default:appr.invoice.raw_vendor_name|default:"—" }}</td>
+          <td>{{ appr.invoice.currency }} {{ appr.invoice.total_amount|default:"—" }}</td>
+          <td>
+            {% if appr.confidence_at_review is not None %}
+              {% widthratio appr.confidence_at_review 1 100 %}%
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            {% if appr.status == "PENDING" %}
+              <span class="badge bg-warning text-dark">Pending</span>
+            {% elif appr.status == "APPROVED" %}
+              <span class="badge bg-success">Approved</span>
+            {% elif appr.status == "AUTO_APPROVED" %}
+              <span class="badge bg-info">Auto</span>
+            {% elif appr.status == "REJECTED" %}
+              <span class="badge bg-danger">Rejected</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if appr.is_touchless %}
+              <span class="badge bg-success bg-opacity-10 text-success">Touchless</span>
+            {% elif appr.fields_corrected_count > 0 %}
+              <span class="badge bg-warning bg-opacity-10 text-warning">{{ appr.fields_corrected_count }} fix{{ appr.fields_corrected_count|pluralize:"es" }}</span>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>{{ appr.reviewed_by.get_short_name|default:"—" }}</td>
+          <td>{{ appr.created_at|date:"d M Y H:i" }}</td>
+          <td>
+            {% if appr.status == "PENDING" %}
+              <a href="{% url 'extraction:approval_detail' appr.pk %}" class="btn btn-outline-primary btn-sm py-0">
+                <i class="bi bi-eye me-1"></i>Review
+              </a>
+            {% else %}
+              <a href="{% url 'extraction:approval_detail' appr.pk %}" class="btn btn-outline-secondary btn-sm py-0">
+                View
+              </a>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="9" class="text-center text-muted py-4">No extraction approvals found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Approval Pagination ── #}
+{% if approval_page_obj.has_other_pages %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm justify-content-center">
+    {% if approval_page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?tab=approvals&approval_page={{ approval_page_obj.previous_page_number }}&approval_status={{ approval_status_filter }}&approval_q={{ request.GET.approval_q }}">&laquo;</a></li>
+    {% endif %}
+    {% for num in approval_page_obj.paginator.page_range %}
+      {% if approval_page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > approval_page_obj.number|add:"-3" and num < approval_page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?tab=approvals&approval_page={{ num }}&approval_status={{ approval_status_filter }}&approval_q={{ request.GET.approval_q }}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if approval_page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?tab=approvals&approval_page={{ approval_page_obj.next_page_number }}&approval_status={{ approval_status_filter }}&approval_q={{ request.GET.approval_q }}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+{# ── Most Corrected Fields ── #}
+{% if approval_analytics.most_corrected_fields %}
+<div class="ap-card mt-4">
+  <div class="ap-card-header">
+    <h6 class="mb-0"><i class="bi bi-bar-chart me-1"></i>Most Corrected Fields</h6>
+  </div>
+  <div class="ap-card-body">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" style="font-size:var(--ap-font-size-sm)">
+        <thead><tr><th>Field</th><th>Type</th><th>Corrections</th></tr></thead>
+        <tbody>
+          {% for f in approval_analytics.most_corrected_fields %}
+          <tr>
+            <td><code>{{ f.field_name }}</code></td>
+            <td>{{ f.entity_type }}</td>
+            <td><span class="badge bg-secondary">{{ f.count }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+</div>{# /approvals-pane #}
+</div>{# /tab-content #}
+
+{# ══════════ Upload Modal ══════════ #}
+<div class="modal fade" id="uploadModal" tabindex="-1" aria-labelledby="uploadModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{% url 'extraction:upload' %}" enctype="multipart/form-data" id="extractionForm">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h6 class="modal-title fw-bold" id="uploadModalLabel"><i class="bi bi-robot me-2"></i>Run Invoice Extraction Agent</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="extractionFile" class="form-label" style="font-size:var(--ap-font-size-sm)">Invoice Document</label>
+            <input type="file" class="form-control form-control-sm" id="extractionFile" name="file"
+                   accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif" required>
+            <div class="form-text" style="font-size:var(--ap-font-size-xs)">
+              Supported: PDF, PNG, JPG, TIFF — max 20 MB
+            </div>
+          </div>
+          <div class="alert alert-info py-2 px-3 mb-0" style="font-size:var(--ap-font-size-xs)">
+            <i class="bi bi-robot me-1"></i>
+            The agent will perform OCR scanning and AI-powered data extraction. No AP Case or reconciliation will be triggered.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-sm btn-primary" id="extractBtn">
+            <i class="bi bi-robot me-1"></i>Run Agent
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  // ── Globals ──────────────────────────────────────────────
+  const FILTER_URL  = "{% url 'extraction:ajax_filter' %}";
+  const DETAIL_URL  = "{% url 'extraction:result_detail' pk=0 %}".replace('/0/', '/{pk}/');
+  const EXPORT_URL  = "{% url 'extraction:export_csv' %}";
+  const tbody        = document.getElementById('resultsTableBody');
+  const countEl      = document.getElementById('resultCount');
+  const filterBadge  = document.getElementById('filterIndicator');
+  const clearBtn     = document.getElementById('clearFiltersBtn');
+  const exportBtn    = document.getElementById('exportBtn');
+
+  let debounceTimer = null;
+  let activeConfPreset = '';
+
+  // ── Build query string from current filters ──────────────
+  function buildParams() {
+    const p = new URLSearchParams();
+    const q = document.getElementById('filterSearch').value.trim();
+    const status = document.getElementById('filterStatus').value;
+    const dateFrom = document.getElementById('filterDateFrom').value;
+    const dateTo = document.getElementById('filterDateTo').value;
+    const sliderVal = parseInt(document.getElementById('confSlider').value, 10);
+
+    if (q) p.set('q', q);
+    if (status) p.set('status', status);
+    if (activeConfPreset) p.set('confidence', activeConfPreset);
+    if (sliderVal > 0) p.set('min_confidence', sliderVal);
+    if (dateFrom) p.set('date_from', dateFrom);
+    if (dateTo) p.set('date_to', dateTo);
+    return p;
+  }
+
+  // ── Render table rows from JSON ──────────────────────────
+  function renderRows(rows) {
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
+        <i class="bi bi-funnel d-block mb-2" style="font-size:2rem"></i>No results match your filters.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(function(r) {
+      const confPct = r.confidence !== null ? r.confidence : null;
+      const confClass = confPct !== null ? (confPct >= 80 ? 'high' : confPct >= 50 ? 'medium' : 'low') : '';
+      const confBar = confPct !== null
+        ? `<div class="ap-confidence"><div class="ap-confidence-bar"><div class="ap-confidence-fill ${confClass}" style="width:${confPct}%"></div></div><span>${confPct}%</span></div>`
+        : '—';
+      const statusBadge = r.success
+        ? '<span class="ap-badge ap-badge-success">OK</span>'
+        : '<span class="ap-badge ap-badge-danger">FAIL</span>';
+      const invLink = r.invoice_number
+        ? `<a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="text-decoration-none fw-medium">${escHtml(r.invoice_number)}</a>`
+        : '<span style="color:var(--ap-text-muted)">—</span>';
+      const amount = r.total_amount
+        ? `<span style="font-weight:500">${escHtml(r.currency)} ${parseFloat(r.total_amount).toFixed(2)}</span>`
+        : '—';
+      const fname = r.filename.length > 30 ? r.filename.substring(0, 27) + '…' : r.filename;
+      const vendorName = r.vendor ? (r.vendor.length > 25 ? r.vendor.substring(0, 22) + '…' : r.vendor) : '—';
+      const durationInfo = r.duration_ms
+        ? `<div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${r.duration_ms}ms · ${escHtml(r.engine_name)}</div>`
+        : '';
+
+      return `<tr>
+        <td><div style="font-size:var(--ap-font-size-sm);font-weight:500" title="${escAttr(r.filename)}">${escHtml(fname)}</div>${durationInfo}</td>
+        <td>${invLink}</td>
+        <td style="font-size:var(--ap-font-size-sm)">${escHtml(vendorName)}</td>
+        <td style="text-align:right">${amount}</td>
+        <td>${confBar}</td>
+        <td>${statusBadge}</td>
+        <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
+        <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${escHtml(r.created_at)}</td>
+        <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── Fetch filtered data ──────────────────────────────────
+  function fetchFiltered() {
+    const params = buildParams();
+    const hasFilters = params.toString().length > 0;
+    clearBtn.style.display = hasFilters ? '' : 'none';
+    filterBadge.style.display = hasFilters ? '' : 'none';
+
+    // Update export link with current filters
+    exportBtn.href = EXPORT_URL + (hasFilters ? '?' + params.toString() : '');
+
+    fetch(FILTER_URL + '?' + params.toString(), {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      renderRows(data.results);
+      countEl.textContent = data.total + ' result' + (data.total === 1 ? '' : 's');
+    })
+    .catch(function(err) {
+      console.error('Filter error:', err);
+    });
+  }
+
+  function debouncedFetch() {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(fetchFiltered, 300);
+  }
+
+  // ── Helpers ──────────────────────────────────────────────
+  function escHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+  }
+  function escAttr(s) {
+    return (s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ── Event bindings ───────────────────────────────────────
+  document.getElementById('filterSearch').addEventListener('input', debouncedFetch);
+  document.getElementById('filterStatus').addEventListener('change', fetchFiltered);
+  document.getElementById('filterDateFrom').addEventListener('change', fetchFiltered);
+  document.getElementById('filterDateTo').addEventListener('change', fetchFiltered);
+
+  // Confidence slider
+  var slider = document.getElementById('confSlider');
+  var sliderLabel = document.getElementById('confSliderVal');
+  slider.addEventListener('input', function() {
+    sliderLabel.textContent = this.value + '%';
+    // Deactivate preset buttons when slider is used
+    if (parseInt(this.value, 10) > 0) {
+      activeConfPreset = '';
+      document.querySelectorAll('.conf-btn').forEach(function(b) { b.classList.remove('active'); });
+    }
+    debouncedFetch();
+  });
+
+  // Confidence preset buttons
+  document.querySelectorAll('.conf-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.conf-btn').forEach(function(b) { b.classList.remove('active'); });
+      this.classList.add('active');
+      activeConfPreset = this.dataset.conf;
+      // Reset slider when preset is used
+      slider.value = 0;
+      sliderLabel.textContent = '0%';
+      fetchFiltered();
+    });
+  });
+
+  // Clear all
+  clearBtn.addEventListener('click', function() {
+    document.getElementById('filterSearch').value = '';
+    document.getElementById('filterStatus').value = '';
+    document.getElementById('filterDateFrom').value = '';
+    document.getElementById('filterDateTo').value = '';
+    slider.value = 0;
+    sliderLabel.textContent = '0%';
+    activeConfPreset = '';
+    document.querySelectorAll('.conf-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelector('.conf-btn[data-conf=""]').classList.add('active');
+    fetchFiltered();
+  });
+
+  // Upload form
+  document.getElementById('extractionForm').addEventListener('submit', function() {
+    var btn = document.getElementById('extractBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Agent processing…';
+  });
+})();
+</script>
+{% endblock %}

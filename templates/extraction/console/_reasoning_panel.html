@@ -1,0 +1,76 @@
+{# extraction/console/_reasoning_panel.html — Agent reasoning tab #}
+
+<div class="p-3">
+  {% if reasoning_blocks %}
+  {% for block in reasoning_blocks %}
+  <div class="card exc-reasoning-card mb-2">
+    <div class="card-body p-2">
+      <div class="d-flex align-items-start">
+        {# Step indicator #}
+        <div class="exc-reasoning-step me-3 text-center">
+          <div class="exc-reasoning-step-number">{{ forloop.counter }}</div>
+          {% if not forloop.last %}
+          <div class="exc-reasoning-connector"></div>
+          {% endif %}
+        </div>
+
+        <div class="flex-grow-1">
+          {# Step header #}
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="fw-semibold small">{{ block.title }}</span>
+            <span class="badge bg-{{ block.badge_class|default:'secondary' }}-subtle text-{{ block.badge_class|default:'secondary' }} small">
+              {{ block.category|default:"Step" }}
+            </span>
+            {% if block.duration_ms %}
+            <small class="text-muted">{{ block.duration_ms }}ms</small>
+            {% endif %}
+          </div>
+
+          {# Summary #}
+          <div class="small mb-1">{{ block.summary }}</div>
+
+          {# Decision details #}
+          {% if block.decision %}
+          <div class="exc-decision-box p-2 rounded small mb-1">
+            <i class="bi bi-lightbulb me-1 text-warning"></i>
+            <strong>Decision:</strong> {{ block.decision }}
+          </div>
+          {% endif %}
+
+          {# Details (collapsible) #}
+          {% if block.details %}
+          <div>
+            <button class="btn btn-link btn-sm p-0 small" data-bs-toggle="collapse" 
+                    data-bs-target="#reasoning-detail-{{ forloop.counter0 }}">
+              <i class="bi bi-chevron-down me-1"></i>Details
+            </button>
+            <div class="collapse mt-1" id="reasoning-detail-{{ forloop.counter0 }}">
+              <pre class="exc-reasoning-detail p-2 rounded small mb-0">{{ block.details }}</pre>
+            </div>
+          </div>
+          {% endif %}
+
+          {# Related fields #}
+          {% if block.related_fields %}
+          <div class="mt-1">
+            <small class="text-muted">Related:</small>
+            {% for f in block.related_fields %}
+            <button class="btn btn-link btn-sm p-0 exc-goto-field" data-field="{{ f }}" data-tab="extracted-data">
+              <span class="badge bg-light text-dark border small">{{ f }}</span>
+            </button>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="text-center py-4">
+    <i class="bi bi-cpu text-muted fs-1"></i>
+    <p class="text-muted mt-2 mb-0">No agent reasoning data available</p>
+    <small class="text-muted">Reasoning is available after LLM-based extraction</small>
+  </div>
+  {% endif %}
+</div>

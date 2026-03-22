@@ -17,6 +17,8 @@ from apps.core.utils import (
 )
 from apps.extraction.services.parser_service import ParsedInvoice, ParsedLineItem
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +71,7 @@ class NormalizedInvoice:
 class NormalizationService:
     """Normalise a ParsedInvoice into a NormalizedInvoice."""
 
+    @observed_service("extraction.normalize", entity_type="Invoice")
     def normalize(self, parsed: ParsedInvoice) -> NormalizedInvoice:
         lines = [self._normalize_line(li) for li in parsed.line_items]
 

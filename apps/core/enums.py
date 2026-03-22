@@ -8,9 +8,17 @@ class InvoiceStatus(models.TextChoices):
     EXTRACTED = "EXTRACTED", "Extracted"
     VALIDATED = "VALIDATED", "Validated"
     INVALID = "INVALID", "Invalid"
+    PENDING_APPROVAL = "PENDING_APPROVAL", "Pending Approval"
     READY_FOR_RECON = "READY_FOR_RECON", "Ready for Reconciliation"
     RECONCILED = "RECONCILED", "Reconciled"
     FAILED = "FAILED", "Failed"
+
+
+class ExtractionApprovalStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    APPROVED = "APPROVED", "Approved"
+    REJECTED = "REJECTED", "Rejected"
+    AUTO_APPROVED = "AUTO_APPROVED", "Auto-Approved"
 
 
 class ReconciliationMode(models.TextChoices):
@@ -123,6 +131,10 @@ class UserRole(models.TextChoices):
 
 class DocumentType(models.TextChoices):
     INVOICE = "INVOICE", "Invoice"
+    CREDIT_NOTE = "CREDIT_NOTE", "Credit Note"
+    DEBIT_NOTE = "DEBIT_NOTE", "Debit Note"
+    DELIVERY_NOTE = "DELIVERY_NOTE", "Delivery Note"
+    STATEMENT = "STATEMENT", "Statement"
     PURCHASE_ORDER = "PO", "Purchase Order"
     GRN = "GRN", "Goods Receipt Note"
     PROCUREMENT_RFQ = "PROCUREMENT_RFQ", "Procurement RFQ"
@@ -212,6 +224,18 @@ class AuditEventType(models.TextChoices):
     COPILOT_GOVERNANCE_CONTEXT_VIEWED = "COPILOT_GOVERNANCE_CONTEXT_VIEWED", "Copilot Governance Context Viewed"
     COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST = "COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST", "Copilot Unauthorized Governance Request"
     COPILOT_SENSITIVE_FIELD_REDACTED = "COPILOT_SENSITIVE_FIELD_REDACTED", "Copilot Sensitive Field Redacted"
+    # Extraction pipeline events
+    EXTRACTION_STARTED = "EXTRACTION_STARTED", "Extraction Started"
+    INVOICE_PERSISTED = "INVOICE_PERSISTED", "Invoice Persisted"
+    EXTRACTION_RESULT_PERSISTED = "EXTRACTION_RESULT_PERSISTED", "Extraction Result Persisted"
+    DUPLICATE_DETECTED = "DUPLICATE_DETECTED", "Duplicate Detected"
+    VENDOR_RESOLVED = "VENDOR_RESOLVED", "Vendor Resolved"
+    # Extraction approval events
+    EXTRACTION_APPROVAL_PENDING = "EXTRACTION_APPROVAL_PENDING", "Extraction Approval Pending"
+    EXTRACTION_APPROVED = "EXTRACTION_APPROVED", "Extraction Approved"
+    EXTRACTION_REJECTED = "EXTRACTION_REJECTED", "Extraction Rejected"
+    EXTRACTION_AUTO_APPROVED = "EXTRACTION_AUTO_APPROVED", "Extraction Auto-Approved"
+    EXTRACTION_FIELD_CORRECTED = "EXTRACTION_FIELD_CORRECTED", "Extraction Field Corrected"
 
 
 class PermissionOverrideType(models.TextChoices):
@@ -562,3 +586,59 @@ class ExtractionSourceType(models.TextChoices):
     MANUAL = "MANUAL", "Manual"
     PREFILL = "PREFILL", "Prefill"
     SYSTEM = "SYSTEM", "System"
+
+
+# ---------------------------------------------------------------------------
+# Multi-Country Extraction Platform enums
+# ---------------------------------------------------------------------------
+
+
+class TaxRegime(models.TextChoices):
+    GST = "GST", "Goods and Services Tax (India)"
+    VAT_UAE = "VAT_UAE", "Value Added Tax (UAE)"
+    VAT_SA = "VAT_SA", "Value Added Tax (Saudi Arabia)"
+    VAT_EU = "VAT_EU", "Value Added Tax (EU)"
+    NONE = "NONE", "No Tax Regime"
+
+
+class JurisdictionResolutionMethod(models.TextChoices):
+    TAX_ID_REGEX = "TAX_ID_REGEX", "Tax ID Regex Match"
+    CURRENCY_DETECTION = "CURRENCY_DETECTION", "Currency Detection"
+    ADDRESS_KEYWORDS = "ADDRESS_KEYWORDS", "Address Keywords"
+    EXPLICIT = "EXPLICIT", "Explicitly Provided"
+    LLM_FALLBACK = "LLM_FALLBACK", "LLM Fallback"
+    MANUAL = "MANUAL", "Manual Override"
+
+
+class ExtractionDocumentStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    CLASSIFYING = "CLASSIFYING", "Classifying"
+    EXTRACTING = "EXTRACTING", "Extracting"
+    NORMALIZING = "NORMALIZING", "Normalizing"
+    VALIDATING = "VALIDATING", "Validating"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+
+
+class FieldExtractionMethod(models.TextChoices):
+    DETERMINISTIC = "DETERMINISTIC", "Deterministic (regex/rule)"
+    LLM = "LLM", "LLM-based"
+    HYBRID = "HYBRID", "Hybrid (rule + LLM)"
+    MANUAL = "MANUAL", "Manual Override"
+
+
+class JurisdictionMode(models.TextChoices):
+    """How the system resolves jurisdiction for extraction."""
+    AUTO = "AUTO", "Auto-Detect"
+    FIXED = "FIXED", "Fixed (configured)"
+    HYBRID = "HYBRID", "Hybrid (configured + detection fallback)"
+
+
+class JurisdictionSource(models.TextChoices):
+    """Where the resolved jurisdiction came from."""
+    DOCUMENT_OVERRIDE = "DOCUMENT_OVERRIDE", "Document-Level Override"
+    ENTITY_PROFILE = "ENTITY_PROFILE", "Entity Extraction Profile"
+    SYSTEM_SETTINGS = "SYSTEM_SETTINGS", "System Runtime Settings"
+    AUTO_DETECTED = "AUTO_DETECTED", "Auto-Detected"
+    HYBRID_CONFIGURED = "HYBRID_CONFIGURED", "Hybrid — Configured Primary"
+    HYBRID_FALLBACK = "HYBRID_FALLBACK", "Hybrid — Detection Fallback"

@@ -74,6 +74,8 @@ PERMISSIONS = [
     # Protected actions
     {"code": "cases.escalate", "name": "Escalate Cases", "module": "cases", "action": "escalate", "description": "Escalate AP cases to higher authority"},
     {"code": "extraction.reprocess", "name": "Reprocess Extraction", "module": "extraction", "action": "reprocess", "description": "Re-trigger invoice extraction"},
+    {"code": "extraction.approve", "name": "Approve Extraction", "module": "extraction", "action": "approve", "description": "Approve extracted invoice data before reconciliation"},
+    {"code": "extraction.reject", "name": "Reject Extraction", "module": "extraction", "action": "reject", "description": "Reject extracted data and request re-extraction"},
     # Document scoping
     {"code": "purchase_orders.view", "name": "View Purchase Orders", "module": "purchase_orders", "action": "view", "description": "View purchase order data"},
     {"code": "grns.view", "name": "View GRNs", "module": "grns", "action": "view", "description": "View goods receipt note data"},
@@ -110,6 +112,7 @@ ROLE_MATRIX = {
         "reviews.view",
         "agents.view", "agents.use_copilot",
         "purchase_orders.view", "grns.view", "vendors.view",
+        "extraction.approve", "extraction.reject", "extraction.reprocess",
     ],
     "REVIEWER": [
         "invoices.view",
@@ -135,6 +138,7 @@ ROLE_MATRIX = {
         "recommendations.auto_close", "recommendations.route_review",
         "recommendations.escalate", "recommendations.reprocess",
         "recommendations.route_procurement", "recommendations.vendor_clarification",
+        "extraction.approve", "extraction.reject", "extraction.reprocess",
         # Procurement oversight
         "procurement.view", "procurement.view_results",
     ],
@@ -164,6 +168,7 @@ ROLE_MATRIX = {
         "recommendations.escalate", "recommendations.reprocess",
         "recommendations.route_procurement", "recommendations.vendor_clarification",
         "cases.escalate", "extraction.reprocess",
+        "extraction.approve", "extraction.reject",
         "reviews.assign",
         # Procurement (automated pipeline)
         "procurement.view", "procurement.run_analysis", "procurement.view_results",

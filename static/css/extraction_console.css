@@ -1,0 +1,358 @@
+/* ============================================================
+   Extraction Review Console — Custom Styles
+   ============================================================ */
+
+/* ── Layout ── */
+.exc-workspace {
+  min-height: calc(100vh - 200px);
+}
+
+/* ── Header Bar ── */
+.exc-header-bar {
+  background: var(--bs-body-bg);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+/* ── Confidence Badges ── */
+.exc-conf-high {
+  background-color: rgba(25, 135, 84, 0.12);
+  color: #198754;
+  border: 1px solid rgba(25, 135, 84, 0.25);
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+
+.exc-conf-med {
+  background-color: rgba(255, 193, 7, 0.12);
+  color: #946206;
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+
+.exc-conf-low {
+  background-color: rgba(220, 53, 69, 0.12);
+  color: #dc3545;
+  border: 1px solid rgba(220, 53, 69, 0.25);
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+
+/* ── Status Badges ── */
+.exc-status-extracted { background-color: #0d6efd; color: #fff; }
+.exc-status-validated { background-color: #198754; color: #fff; }
+.exc-status-pending   { background-color: #ffc107; color: #212529; }
+.exc-status-failed    { background-color: #dc3545; color: #fff; }
+.exc-status-approved  { background-color: #198754; color: #fff; }
+
+/* ── Field Table ── */
+.exc-field-card {
+  border-color: var(--bs-border-color);
+}
+
+.exc-field-card .card-header {
+  background: var(--bs-light);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.exc-field-table {
+  font-size: 0.82rem;
+}
+
+.exc-field-table th {
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--bs-secondary);
+  border-bottom-width: 2px;
+  padding: 0.4rem 0.5rem;
+}
+
+.exc-field-table td {
+  padding: 0.4rem 0.5rem;
+  vertical-align: middle;
+}
+
+.exc-field-label {
+  font-weight: 500;
+}
+
+.exc-field-value {
+  font-family: 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.82rem;
+}
+
+.exc-field-edit {
+  font-family: 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.82rem;
+}
+
+/* Row highlighting */
+.exc-field-row.exc-low-confidence {
+  border-left: 3px solid #dc3545;
+}
+
+.exc-field-row.exc-med-confidence {
+  border-left: 3px solid #ffc107;
+}
+
+.exc-field-row.exc-active-highlight {
+  background-color: rgba(13, 110, 253, 0.08);
+  transition: background-color 0.3s ease;
+}
+
+/* Edit mode styling */
+.exc-field-row.exc-editing .exc-field-value { display: none; }
+.exc-field-row.exc-editing .exc-field-edit { display: block !important; }
+
+.exc-field-edit.exc-modified {
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.15);
+}
+
+/* ── Parties ── */
+.exc-party-card {
+  background: var(--bs-light);
+  transition: box-shadow 0.15s;
+}
+
+.exc-party-card:hover {
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+/* ── Match Cards ── */
+.exc-match-card {
+  background: var(--bs-light);
+}
+
+/* ── Line Items Table ── */
+.exc-line-items-table {
+  font-size: 0.82rem;
+}
+
+.exc-line-items-table th {
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--bs-secondary);
+  padding: 0.4rem 0.5rem;
+}
+
+.exc-line-items-table td {
+  padding: 0.35rem 0.5rem;
+  vertical-align: middle;
+}
+
+.exc-line-row.exc-low-confidence {
+  border-left: 3px solid #dc3545;
+}
+
+.exc-line-row.exc-med-confidence {
+  border-left: 3px solid #ffc107;
+}
+
+.exc-line-detail .bg-light {
+  border-top: 1px dashed var(--bs-border-color);
+}
+
+/* ── Validation Panel ── */
+.exc-validation-card {
+  border-left: 3px solid transparent;
+  transition: box-shadow 0.15s;
+}
+
+.exc-validation-error {
+  border-left-color: #dc3545;
+}
+
+.exc-validation-warning {
+  border-left-color: #ffc107;
+}
+
+.exc-validation-card:hover {
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.06);
+}
+
+/* ── Evidence Panel ── */
+.exc-evidence-card {
+  transition: box-shadow 0.15s;
+}
+
+.exc-evidence-card:hover {
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.06);
+}
+
+.exc-source-snippet {
+  background-color: rgba(13, 110, 253, 0.04);
+  border-left: 3px solid rgba(13, 110, 253, 0.3);
+}
+
+/* ── Reasoning Panel ── */
+.exc-reasoning-step-number {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bs-primary);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.exc-reasoning-connector {
+  width: 2px;
+  height: 20px;
+  background: var(--bs-border-color);
+  margin: 2px auto;
+}
+
+.exc-decision-box {
+  background: rgba(255, 193, 7, 0.08);
+  border-left: 3px solid #ffc107;
+}
+
+.exc-reasoning-detail {
+  background: var(--bs-light);
+  font-family: 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* ── Audit Trail ── */
+.exc-audit-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bs-secondary);
+}
+
+.exc-audit-dot-upload   { background: #0d6efd; }
+.exc-audit-dot-extract  { background: #6610f2; }
+.exc-audit-dot-validate { background: #ffc107; }
+.exc-audit-dot-approve  { background: #198754; }
+.exc-audit-dot-reject   { background: #dc3545; }
+.exc-audit-dot-edit     { background: #0dcaf0; }
+.exc-audit-dot-escalate { background: #fd7e14; }
+.exc-audit-dot-info     { background: var(--bs-secondary); }
+
+.exc-audit-line {
+  width: 2px;
+  height: 100%;
+  min-height: 20px;
+  background: var(--bs-border-color);
+  margin: 2px auto;
+}
+
+.exc-change-box {
+  background: var(--bs-light);
+  border: 1px solid var(--bs-border-color);
+  font-family: 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.78rem;
+}
+
+/* ── Pipeline Timeline (Bottom Bar) ── */
+.exc-pipeline-timeline {
+  background: var(--bs-light);
+  border-top: 1px solid var(--bs-border-color);
+  overflow-x: auto;
+}
+
+.exc-stage-pill {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 1rem;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.exc-stage-completed {
+  background: rgba(25, 135, 84, 0.1);
+  color: #198754;
+  border-color: rgba(25, 135, 84, 0.25);
+}
+
+.exc-stage-active {
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+  border-color: rgba(13, 110, 253, 0.35);
+  font-weight: 600;
+}
+
+.exc-stage-error {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+  border-color: rgba(220, 53, 69, 0.25);
+}
+
+.exc-stage-skipped {
+  background: var(--bs-light);
+  color: var(--bs-secondary);
+  border-color: var(--bs-border-color);
+  opacity: 0.6;
+}
+
+.exc-stage-pending {
+  background: var(--bs-light);
+  color: var(--bs-secondary);
+  border-color: var(--bs-border-color);
+}
+
+/* ── Document Viewer (removed) ── */
+
+/* ── Filter empty state ── */
+.exc-filter-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--bs-secondary);
+}
+
+/* Flagged row indicator */
+.exc-field-row.exc-flagged {
+  border-left: 3px solid var(--bs-warning);
+}
+
+/* ── Tab styling ── */
+.exc-tab-content {
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+}
+
+.nav-pills .nav-link {
+  font-size: 0.82rem;
+  padding: 0.35rem 0.75rem;
+}
+
+/* ── Filter buttons ── */
+[data-filter].active {
+  font-weight: 600;
+}
+
+/* ── Responsive adjustments ── */
+@media (max-width: 991.98px) {
+  .exc-viewer-col {
+    order: -1;
+    max-height: 300px;
+  }
+  
+  .exc-doc-canvas-wrapper {
+    max-height: 280px;
+    min-height: 200px;
+  }
+  
+  .exc-intel-col {
+    border-left: none;
+    border-top: 1px solid var(--bs-border-color);
+  }
+  
+  .exc-viewer-card {
+    position: relative;
+    top: auto;
+  }
+}
+
+/* ── Utility ── */
+.text-purple { color: #6f42c1; }

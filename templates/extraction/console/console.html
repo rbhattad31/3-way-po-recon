@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Extraction Review Console — {{ extraction.file_name|default:"Document" }}{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/extraction_console.css' %}?v={{ static_version }}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="exc-console" data-extraction-id="{{ extraction.id|default:'0' }}">
+
+  {# ── HEADER / COMMAND BAR ── #}
+  {% include "extraction/console/_header_bar.html" %}
+
+  {# ── MAIN WORKSPACE ── #}
+  <div class="row g-3 mt-1">
+    <div class="col-12">
+      <div class="card exc-intel-panel">
+        <div class="card-header p-0 border-bottom-0">
+          <ul class="nav nav-pills exc-tab-nav" id="intelTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="tab-data" data-bs-toggle="pill"
+                      data-bs-target="#panel-data" type="button" role="tab"
+                      aria-controls="panel-data" aria-selected="true">
+                <i class="bi bi-grid-3x3-gap me-1"></i>Extracted Data
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-validation" data-bs-toggle="pill"
+                      data-bs-target="#panel-validation" type="button" role="tab"
+                      aria-controls="panel-validation" aria-selected="false">
+                <i class="bi bi-shield-check me-1"></i>Validation
+                {% if validation_issues %}
+                  <span class="badge bg-warning text-dark ms-1">{{ validation_issues|length }}</span>
+                {% endif %}
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-evidence" data-bs-toggle="pill"
+                      data-bs-target="#panel-evidence" type="button" role="tab"
+                      aria-controls="panel-evidence" aria-selected="false">
+                <i class="bi bi-search me-1"></i>Evidence
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-reasoning" data-bs-toggle="pill"
+                      data-bs-target="#panel-reasoning" type="button" role="tab"
+                      aria-controls="panel-reasoning" aria-selected="false">
+                <i class="bi bi-cpu me-1"></i>Agent Reasoning
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-audit" data-bs-toggle="pill"
+                      data-bs-target="#panel-audit" type="button" role="tab"
+                      aria-controls="panel-audit" aria-selected="false">
+                <i class="bi bi-clock-history me-1"></i>Audit Trail
+              </button>
+            </li>
+          </ul>
+        </div>
+        <div class="card-body p-0">
+          <div class="tab-content" id="intelTabContent">
+            {# Tab 1: Extracted Data #}
+            <div class="tab-pane fade show active" id="panel-data" role="tabpanel" aria-labelledby="tab-data">
+              {% include "extraction/console/_extracted_data.html" %}
+            </div>
+            {# Tab 2: Validation #}
+            <div class="tab-pane fade" id="panel-validation" role="tabpanel" aria-labelledby="tab-validation">
+              {% include "extraction/console/_validation_panel.html" %}
+            </div>
+            {# Tab 3: Evidence #}
+            <div class="tab-pane fade" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence">
+              {% include "extraction/console/_evidence_panel.html" %}
+            </div>
+            {# Tab 4: Agent Reasoning #}
+            <div class="tab-pane fade" id="panel-reasoning" role="tabpanel" aria-labelledby="tab-reasoning">
+              {% include "extraction/console/_reasoning_panel.html" %}
+            </div>
+            {# Tab 5: Audit Trail #}
+            <div class="tab-pane fade" id="panel-audit" role="tabpanel" aria-labelledby="tab-audit">
+              {% include "extraction/console/_audit_trail.html" %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── BOTTOM TIMELINE PANEL ── #}
+  {% include "extraction/console/_bottom_timeline.html" %}
+
+</div>
+
+{# ── MODALS ── #}
+{% include "extraction/console/_approve_modal.html" %}
+{% include "extraction/console/_reprocess_modal.html" %}
+{% include "extraction/console/_escalate_modal.html" %}
+{% include "extraction/console/_comment_modal.html" %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/extraction_console.js' %}?v={{ static_version }}"></script>
+{% endblock %}

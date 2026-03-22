@@ -22,6 +22,18 @@
         </a>
       </li>
 
+      {# ── AI Agents ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">AI Agents</li>
+      {% has_permission "invoices.create" as can_extract %}
+      {% if can_extract %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'extraction' %}active fw-bold{% endif %}" href="{% url 'extraction:workbench' %}">
+          <i class="bi bi-robot me-2"></i>Invoice Extraction Agent
+        </a>
+      </li>
+      {% endif %}
+
       {# ── Procurement ── #}
       {% has_permission "procurement.view" as can_view_procurement %}
       {% if can_view_procurement %}

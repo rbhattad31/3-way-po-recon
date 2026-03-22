@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +39,7 @@ class ParsedInvoice:
 class ExtractionParserService:
     """Parse raw extraction JSON into a ``ParsedInvoice`` dataclass."""
 
+    @observed_service("extraction.parse", entity_type="ExtractionResult")
     def parse(self, raw_json: Dict[str, Any]) -> ParsedInvoice:
         if not raw_json:
             raise ValueError("Empty extraction payload")
