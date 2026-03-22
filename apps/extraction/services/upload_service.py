@@ -13,6 +13,8 @@ from apps.core.constants import ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE_MB
 from apps.core.enums import DocumentType, FileProcessingState
 from apps.documents.models import DocumentUpload
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +22,7 @@ class InvoiceUploadService:
     """Persist an uploaded invoice file and return a DocumentUpload record."""
 
     @staticmethod
+    @observed_service("extraction.upload", entity_type="DocumentUpload", audit_event="INVOICE_UPLOADED")
     def upload(file: UploadedFile, uploaded_by=None) -> DocumentUpload:
         """Validate, hash, and save uploaded file.
 

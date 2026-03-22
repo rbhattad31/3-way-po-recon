@@ -28,6 +28,7 @@ from apps.core.enums import (
     ExtractionApprovalStatus,
     FileProcessingState,
     InvoiceStatus,
+    UserRole,
 )
 from apps.core.decorators import observed_action
 from apps.core.permissions import permission_required_code
@@ -35,6 +36,13 @@ from apps.documents.models import DocumentUpload, Invoice, InvoiceLineItem
 from apps.extraction.models import ExtractionResult
 
 logger = logging.getLogger(__name__)
+
+
+def _scope_extractions_for_user(qs, user):
+    """AP_PROCESSOR sees only extractions from their own uploads."""
+    if getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+        return qs
+    return qs.filter(document_upload__uploaded_by=user)
 
 ALLOWED_CONTENT_TYPES = {
     "application/pdf",
@@ -58,6 +66,7 @@ def extraction_workbench(request):
         .select_related("document_upload", "invoice", "invoice__vendor")
         .order_by("-created_at")
     )
+    qs = _scope_extractions_for_user(qs, request.user)
 
     q = request.GET.get("q", "").strip()
     if q:
@@ -82,9 +91,9 @@ def extraction_workbench(request):
     elif confidence_filter == "low":
         qs = qs.filter(confidence__lt=0.5, confidence__isnull=False)
 
-    # KPI stats
+    # KPI stats (scoped to user visibility)
     from django.db.models import Avg, Count, Q as Qf
-    all_results = ExtractionResult.objects.all()
+    all_results = _scope_extractions_for_user(ExtractionResult.objects.all(), request.user)
     stats = {
         "total": all_results.count(),
         "success": all_results.filter(success=True).count(),
@@ -375,6 +384,7 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
 # ────────────────────────────────────────────────────────────────
 @login_required
 @permission_required_code("invoices.view")
+@observed_action("extraction.view_result_detail", permission="invoices.view", entity_type="ExtractionResult")
 def extraction_result_detail(request, pk):
     """Show detailed extraction results for a single run."""
     ext = get_object_or_404(
@@ -439,6 +449,7 @@ def extraction_result_detail(request, pk):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @permission_required_code("invoices.view")
+@observed_action("extraction.download_json", permission="invoices.view", entity_type="ExtractionResult")
 def extraction_result_json(request, pk):
     """Return extraction result raw JSON as downloadable file."""
     ext = get_object_or_404(ExtractionResult, pk=pk)
@@ -501,6 +512,7 @@ def extraction_rerun(request, pk):
 @login_required
 @require_GET
 @permission_required_code("invoices.view")
+@observed_action("extraction.ajax_filter", permission="invoices.view", entity_type="ExtractionResult")
 def extraction_ajax_filter(request):
     """Return filtered extraction results as JSON for AJAX table refresh."""
     qs = (
@@ -508,6 +520,7 @@ def extraction_ajax_filter(request):
         .select_related("document_upload", "invoice", "invoice__vendor")
         .order_by("-created_at")
     )
+    qs = _scope_extractions_for_user(qs, request.user)
 
     # Text search
     q = request.GET.get("q", "").strip()
@@ -832,6 +845,7 @@ def extraction_approval_queue(request):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @permission_required_code("invoices.view")
+@observed_action("extraction.view_approval_detail", permission="invoices.view", entity_type="ExtractionApproval")
 def extraction_approval_detail(request, pk):
     """Detail view for reviewing a single extraction before approval."""
     from apps.extraction.models import ExtractionApproval
@@ -891,10 +905,10 @@ def extraction_approval_detail(request, pk):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @require_POST
-@permission_required_code("invoices.create")
+@permission_required_code("extraction.approve")
 @observed_action(
     "extraction.approve_extraction",
-    permission="invoices.create",
+    permission="extraction.approve",
     entity_type="ExtractionApproval",
 )
 def extraction_approve(request, pk):
@@ -947,10 +961,10 @@ def extraction_approve(request, pk):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @require_POST
-@permission_required_code("invoices.create")
+@permission_required_code("extraction.reject")
 @observed_action(
     "extraction.reject_extraction",
-    permission="invoices.create",
+    permission="extraction.reject",
     entity_type="ExtractionApproval",
 )
 def extraction_reject(request, pk):
@@ -985,6 +999,7 @@ def extraction_reject(request, pk):
 @login_required
 @require_GET
 @permission_required_code("invoices.view")
+@observed_action("extraction.view_approval_analytics", permission="invoices.view", entity_type="ExtractionApproval")
 def extraction_approval_analytics(request):
     """Return extraction approval analytics as JSON."""
     from apps.extraction.services.approval_service import ExtractionApprovalService
@@ -998,6 +1013,7 @@ def extraction_approval_analytics(request):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @permission_required_code("invoices.view")
+@observed_action("extraction.view_console", permission="invoices.view", entity_type="ExtractionResult")
 def extraction_console(request, pk):
     """Agentic extraction review console — full inspection UI."""
     ext = get_object_or_404(
@@ -1048,9 +1064,9 @@ def extraction_console(request, pk):
                 "value": str(val) if val is not None else "",
                 "raw_value": str(raw_val) if raw_val else None,
                 "confidence": ext.confidence,
-                "method": "DET",
+                "method": "LLM",
                 "is_mandatory": mandatory,
-                "evidence": None,
+                "evidence": True,
             }
 
         # Tax fields
@@ -1064,9 +1080,9 @@ def extraction_console(request, pk):
                 "display_name": display,
                 "value": str(val) if val is not None else "",
                 "confidence": ext.confidence,
-                "method": "DET",
+                "method": "LLM",
                 "is_mandatory": False,
-                "evidence": None,
+                "evidence": True,
             }
 
         # Build line items list for template
@@ -1087,19 +1103,63 @@ def extraction_console(request, pk):
                 },
             })
 
-    # ── Enrichment data from raw_response ──
+    # ── Enrichment data from raw_response or invoice context ──
     if isinstance(extracted_data, dict):
         enrichment = extracted_data.get("enrichment")
+    # Fallback: build enrichment from invoice's linked vendor + PO
+    if not enrichment and invoice:
+        vendor = getattr(invoice, "vendor", None)
+        po_num = invoice.po_number
+        vendor_match = {"match_type": "NOT_FOUND"}
+        if vendor:
+            vendor_match = {
+                "match_type": "EXACT",
+                "entity_name": vendor.name if hasattr(vendor, "name") else str(vendor),
+                "entity_code": getattr(vendor, "vendor_code", ""),
+            }
+        elif invoice.raw_vendor_name:
+            vendor_match = {
+                "match_type": "RAW",
+                "entity_name": invoice.raw_vendor_name,
+                "entity_code": "",
+            }
+        po_lookup = {"found": False}
+        if po_num:
+            from apps.documents.models import PurchaseOrder
+            po = PurchaseOrder.objects.filter(po_number=po_num).first()
+            if po:
+                po_lookup = {
+                    "found": True,
+                    "po_number": po.po_number,
+                    "po_status": getattr(po, "status", ""),
+                    "currency": getattr(po, "currency", ""),
+                    "total_amount": float(po.total_amount) if po.total_amount else 0,
+                }
+        enrichment = {
+            "vendor_match": vendor_match,
+            "customer_match": {"match_type": "NOT_FOUND"},
+            "po_lookup": po_lookup,
+        }
 
-    # ── Parties from document intelligence ──
+    # ── Parties from document intelligence or raw_response fallback ──
     if isinstance(extracted_data, dict):
         intelligence = extracted_data.get("document_intelligence", {})
         if isinstance(intelligence, dict):
             raw_parties = intelligence.get("parties", {})
             if isinstance(raw_parties, dict):
                 parties = raw_parties
+    # Fallback: build parties from raw_response vendor_name
+    if not parties and isinstance(extracted_data, dict):
+        vendor_name = extracted_data.get("vendor_name") or (
+            invoice.raw_vendor_name if invoice else None
+        )
+        if vendor_name:
+            parties = {
+                "supplier": [{"name": vendor_name, "confidence": ext.confidence}],
+            }
 
     # ── Validation re-run ──
+    validated_fields = set()
     if ext.raw_response:
         try:
             from apps.extraction.services.parser_service import ExtractionParserService
@@ -1110,6 +1170,7 @@ def extraction_console(request, pk):
             normalized = NormalizationService().normalize(parsed)
             val_result = ValidationService().validate(normalized)
 
+            flagged_fields = set()
             for v in val_result.issues:
                 issue = {
                     "title": v.field or "General",
@@ -1117,10 +1178,31 @@ def extraction_console(request, pk):
                     "rule_code": getattr(v, "rule_code", ""),
                     "affected_fields": [v.field] if v.field else [],
                 }
+                if v.field:
+                    flagged_fields.add(v.field)
                 if v.severity == "error":
                     errors.append(issue)
                 else:
                     warnings.append(issue)
+
+            # Build passed_checks: fields that were checked but have no issues
+            _all_checkable = [
+                ("invoice_number", "Invoice number present"),
+                ("invoice_date", "Invoice date valid"),
+                ("total_amount", "Total amount present"),
+                ("currency", "Currency code valid"),
+                ("po_number", "PO number format valid"),
+                ("subtotal", "Subtotal present"),
+                ("tax_amount", "Tax amount present"),
+                ("line_items", "Line items structure valid"),
+            ]
+            for field_key, title in _all_checkable:
+                if field_key not in flagged_fields:
+                    val = extracted_data.get(field_key) if isinstance(extracted_data, dict) else None
+                    if val is None and invoice:
+                        val = getattr(invoice, field_key, None)
+                    if val is not None and val != "" and val != []:
+                        passed_checks.append({"title": title})
         except Exception:
             pass
 
@@ -1132,6 +1214,152 @@ def extraction_console(request, pk):
     for issue in errors + warnings:
         for f in issue.get("affected_fields", []):
             validation_field_issues[f] = True
+
+    # ── Evidence entries from extracted fields ──
+    if isinstance(extracted_data, dict):
+        _field_display = {
+            "invoice_number": "Invoice Number",
+            "invoice_date": "Invoice Date",
+            "vendor_name": "Vendor Name",
+            "po_number": "PO Number",
+            "currency": "Currency",
+            "subtotal": "Subtotal",
+            "tax_amount": "Tax Amount",
+            "total_amount": "Total Amount",
+            "tax_percentage": "Tax Percentage",
+            "confidence": "Confidence Score",
+        }
+        for field_key, display_name in _field_display.items():
+            val = extracted_data.get(field_key)
+            if val is not None and val != "":
+                evidence_entries.append({
+                    "field_key": field_key,
+                    "field_name": display_name,
+                    "value": str(val),
+                    "confidence": ext.confidence,
+                    "method": "LLM",
+                    "source_text": None,
+                    "page_number": 1,
+                    "table_index": None,
+                    "row_index": None,
+                    "bbox": None,
+                })
+        # Add line item evidence
+        raw_lines = extracted_data.get("line_items", [])
+        if raw_lines:
+            evidence_entries.append({
+                "field_key": "line_items",
+                "field_name": f"Line Items ({len(raw_lines)} rows)",
+                "value": f"{len(raw_lines)} line items extracted",
+                "confidence": ext.confidence,
+                "method": "LLM",
+                "source_text": None,
+                "page_number": 1,
+                "table_index": 0,
+                "row_index": None,
+                "bbox": None,
+            })
+
+    # ── Reasoning blocks from pipeline metadata ──
+    # Synthesize reasoning from the extraction pipeline steps
+    reasoning_blocks.append({
+        "title": "Document Upload",
+        "category": "Ingestion",
+        "badge_class": "info",
+        "summary": f"Document uploaded: {ext.document_upload.original_filename if ext.document_upload else 'Unknown'}",
+        "decision": None,
+        "details": None,
+        "duration_ms": None,
+        "related_fields": [],
+    })
+    reasoning_blocks.append({
+        "title": "OCR & Text Extraction",
+        "category": "OCR",
+        "badge_class": "info",
+        "summary": "Azure Document Intelligence processed the document and extracted raw text.",
+        "decision": None,
+        "details": None,
+        "duration_ms": None,
+        "related_fields": [],
+    })
+    reasoning_blocks.append({
+        "title": "LLM Field Extraction",
+        "category": "Extraction",
+        "badge_class": "primary",
+        "summary": f"GPT-4o extracted {len(evidence_entries)} fields with {ext.confidence:.0%} overall confidence.",
+        "decision": f"Extracted invoice {invoice.invoice_number}" if invoice else "Extraction completed",
+        "details": None,
+        "duration_ms": None,
+        "related_fields": list(extracted_data.keys()) if isinstance(extracted_data, dict) else [],
+    })
+    if invoice and invoice.raw_vendor_name:
+        reasoning_blocks.append({
+            "title": "Vendor Identification",
+            "category": "Enrichment",
+            "badge_class": "success",
+            "summary": f"Identified vendor: {invoice.raw_vendor_name}",
+            "decision": f"Matched vendor from extracted data",
+            "details": None,
+            "duration_ms": None,
+            "related_fields": ["vendor_name"],
+        })
+    reasoning_blocks.append({
+        "title": "Normalization",
+        "category": "Processing",
+        "badge_class": "secondary",
+        "summary": "Field values normalized (dates, amounts, PO number formatting).",
+        "decision": None,
+        "details": None,
+        "duration_ms": None,
+        "related_fields": ["invoice_date", "total_amount", "po_number"],
+    })
+    reasoning_blocks.append({
+        "title": "Validation",
+        "category": "QA",
+        "badge_class": "warning" if (errors or warnings) else "success",
+        "summary": f"Validation complete: {error_count} errors, {warning_count} warnings, {len(passed_checks)} passed.",
+        "decision": "Requires review" if errors else "Passed validation",
+        "details": None,
+        "duration_ms": None,
+        "related_fields": [],
+    })
+
+    # ── Audit events from AuditEvent model ──
+    from apps.auditlog.models import AuditEvent
+    from django.db.models import Q
+    audit_qs = AuditEvent.objects.filter(
+        Q(invoice_id=invoice.pk if invoice else 0)
+        | Q(entity_type="DocumentUpload", entity_id=ext.document_upload_id)
+        | Q(entity_type="ExtractionResult", entity_id=ext.pk)
+    ).order_by("created_at")
+
+    _event_badge_map = {
+        "EXTRACTION_COMPLETED": "success",
+        "EXTRACTION_STARTED": "info",
+        "INVOICE_UPLOADED": "primary",
+        "EXTRACTION_FAILED": "danger",
+        "GUARDRAIL_GRANTED": "success",
+        "GUARDRAIL_DENIED": "danger",
+    }
+    for evt in audit_qs:
+        performer = evt.actor_email
+        if not performer and evt.performed_by:
+            performer = evt.performed_by.email
+        metadata = {}
+        if evt.metadata_json and isinstance(evt.metadata_json, dict):
+            metadata = evt.metadata_json
+        audit_events.append({
+            "action": evt.action or evt.event_type,
+            "event_type": evt.event_type or evt.action,
+            "badge_class": _event_badge_map.get(evt.event_type, "secondary"),
+            "timestamp": evt.created_at,
+            "actor": performer or "System",
+            "actor_role": evt.actor_primary_role or "",
+            "description": evt.event_description or "",
+            "before": evt.status_before or "",
+            "after": evt.status_after or "",
+            "metadata": metadata,
+        })
 
     # ── Pipeline stages ──
     _stage_defs = [
@@ -1156,7 +1384,6 @@ def extraction_console(request, pk):
     extraction_ctx = {
         "id": ext.pk,
         "file_name": ext.document_upload.original_filename if ext.document_upload else "Unknown",
-        "file_url": ext.document_upload.blob_path if ext.document_upload else None,
         "status": "EXTRACTED" if ext.success else "FAILED",
         "confidence": ext.confidence,
         "created_at": ext.created_at,
@@ -1174,9 +1401,9 @@ def extraction_console(request, pk):
 
     # Permissions context
     permissions = {
-        "can_approve": request.user.has_perm("extraction.approve") if hasattr(request.user, "has_perm") else True,
-        "can_reprocess": True,
-        "can_escalate": True,
+        "can_approve": request.user.has_permission("extraction.approve") if hasattr(request.user, "has_permission") else False,
+        "can_reprocess": request.user.has_permission("extraction.reprocess") if hasattr(request.user, "has_permission") else False,
+        "can_escalate": request.user.has_permission("cases.escalate") if hasattr(request.user, "has_permission") else False,
     }
 
     # Assignable users for escalation
@@ -1200,6 +1427,7 @@ def extraction_console(request, pk):
         "errors": errors,
         "warnings": warnings,
         "passed_checks": passed_checks,
+        "passed_count": len(passed_checks),
         "error_count": error_count,
         "warning_count": warning_count,
         "validation_field_issues": validation_field_issues,

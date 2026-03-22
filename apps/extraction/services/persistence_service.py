@@ -16,12 +16,15 @@ from apps.extraction.services.duplicate_detection_service import DuplicateCheckR
 from apps.extraction.services.validation_service import ValidationResult
 from apps.vendors.models import Vendor
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 
 class InvoicePersistenceService:
     """Persist a normalised, validated invoice and its line items."""
 
+    @observed_service("extraction.persist_invoice", entity_type="Invoice", audit_event="INVOICE_PERSISTED")
     @transaction.atomic
     def save(
         self,
@@ -81,6 +84,22 @@ class InvoicePersistenceService:
 
         invoice.save()
 
+        # Audit: duplicate detection
+        if duplicate_result and duplicate_result.is_duplicate:
+            self._log_audit(
+                invoice, "DUPLICATE_DETECTED",
+                f"Duplicate invoice detected: {duplicate_result.reason}",
+                {"duplicate_of_id": duplicate_result.duplicate_invoice_id},
+            )
+
+        # Audit: vendor resolution
+        if vendor:
+            self._log_audit(
+                invoice, "VENDOR_RESOLVED",
+                f"Vendor resolved: {vendor.name} (id={vendor.pk})",
+                {"vendor_id": vendor.pk, "vendor_name": vendor.name},
+            )
+
         # Line items
         line_objs = []
         for li in normalized.line_items:
@@ -107,6 +126,21 @@ class InvoicePersistenceService:
 
         logger.info("Invoice saved: id=%s number=%s lines=%d status=%s", invoice.pk, invoice.invoice_number, len(line_objs), status)
         return invoice
+
+    @staticmethod
+    def _log_audit(invoice, event_type, description, metadata=None):
+        """Log an audit event for persistence actions."""
+        try:
+            from apps.auditlog.services import AuditService
+            AuditService.log_event(
+                entity_type="Invoice",
+                entity_id=invoice.pk,
+                event_type=event_type,
+                description=description,
+                metadata=metadata or {},
+            )
+        except Exception:
+            logger.exception("Failed to log audit event for invoice %s", invoice.pk)
 
     @staticmethod
     def _reconcile_totals(invoice: Invoice, line_objs: list) -> None:
@@ -163,6 +197,7 @@ class ExtractionResultPersistenceService:
     """Persist extraction-engine-level metadata."""
 
     @staticmethod
+    @observed_service("extraction.persist_result", entity_type="ExtractionResult", audit_event="EXTRACTION_RESULT_PERSISTED")
     def save(upload: DocumentUpload, invoice: Optional[Invoice], extraction_response) -> ExtractionResult:
         return ExtractionResult.objects.create(
             document_upload=upload,

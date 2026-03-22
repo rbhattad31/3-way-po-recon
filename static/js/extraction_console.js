@@ -37,14 +37,27 @@ document.addEventListener('DOMContentLoaded', function () {
       if (filter === 'all') {
         row.classList.remove('d-none');
       } else if (filter === 'flagged') {
-        var hasFlagOrWarning = row.classList.contains('exc-low-confidence') ||
-                               row.classList.contains('exc-med-confidence') ||
-                               row.classList.contains('exc-flagged');
-        row.classList.toggle('d-none', !hasFlagOrWarning);
+        var isFlagged = row.classList.contains('exc-flagged') ||
+                        row.classList.contains('exc-low-confidence') ||
+                        row.classList.contains('exc-med-confidence');
+        row.classList.toggle('d-none', !isFlagged);
       } else if (filter === 'low-confidence') {
-        row.classList.toggle('d-none', !row.classList.contains('exc-low-confidence'));
+        var isLow = row.classList.contains('exc-low-confidence');
+        row.classList.toggle('d-none', !isLow);
       }
     });
+
+    // Hide supplementary cards (Parties, Enrichment) when filtering
+    document.querySelectorAll('.exc-supplementary-card').forEach(function (card) {
+      card.classList.toggle('d-none', filter !== 'all');
+    });
+
+    // Show empty-state message if all rows hidden
+    var visibleRows = document.querySelectorAll('.exc-field-row:not(.d-none), .exc-line-row:not(.d-none)');
+    var emptyMsg = document.getElementById('filterEmptyState');
+    if (emptyMsg) {
+      emptyMsg.classList.toggle('d-none', visibleRows.length > 0);
+    }
   }
 
   // ── Edit mode toggle ──
@@ -91,7 +104,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
-  // ── Evidence field → viewer highlight ──
+  // ── Evidence field — switch to evidence tab ──
   document.querySelectorAll('.exc-evidence-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var field = btn.dataset.field;
@@ -156,60 +169,6 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
   });
-
-  // ── Highlight in document viewer ──
-  document.querySelectorAll('.exc-highlight-evidence').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var page = parseInt(btn.dataset.page, 10);
-      var bbox = btn.dataset.bbox;
-      navigateToPage(page);
-      if (bbox) {
-        highlightRegion(bbox);
-      }
-    });
-  });
-
-  document.querySelectorAll('.exc-goto-page').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var page = parseInt(btn.dataset.page, 10);
-      navigateToPage(page);
-    });
-  });
-
-  function navigateToPage(pageNum) {
-    var pageDisplay = document.getElementById('currentPage');
-    if (pageDisplay) {
-      pageDisplay.textContent = pageNum;
-    }
-    // Placeholder: real viewer would render the page via PDF.js
-  }
-
-  function highlightRegion(bboxStr) {
-    var layer = document.getElementById('highlightLayer');
-    if (!layer) return;
-
-    // Clear existing highlights
-    layer.innerHTML = '';
-
-    // bbox expected as "x1,y1,x2,y2" normalized 0-1
-    try {
-      var parts = bboxStr.split(',').map(Number);
-      if (parts.length === 4) {
-        var el = document.createElement('div');
-        el.className = 'exc-field-highlight';
-        el.style.left = (parts[0] * 100) + '%';
-        el.style.top = (parts[1] * 100) + '%';
-        el.style.width = ((parts[2] - parts[0]) * 100) + '%';
-        el.style.height = ((parts[3] - parts[1]) * 100) + '%';
-        layer.appendChild(el);
-
-        // Auto-clear after 3 seconds
-        setTimeout(function () { layer.innerHTML = ''; }, 3000);
-      }
-    } catch (e) {
-      // Ignore malformed bbox
-    }
-  }
 
   // ── Approve modal ──
   var confirmApproveBtn = document.getElementById('confirmApproveBtn');
@@ -339,42 +298,5 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
   });
-
-  // ── Document viewer zoom controls ──
-  var currentZoom = 100;
-  var zoomIn = document.getElementById('zoomIn');
-  var zoomOut = document.getElementById('zoomOut');
-  var zoomFit = document.getElementById('zoomFit');
-  var zoomLevel = document.getElementById('zoomLevel');
-
-  if (zoomIn) {
-    zoomIn.addEventListener('click', function () {
-      currentZoom = Math.min(currentZoom + 25, 300);
-      applyZoom();
-    });
-  }
-
-  if (zoomOut) {
-    zoomOut.addEventListener('click', function () {
-      currentZoom = Math.max(currentZoom - 25, 50);
-      applyZoom();
-    });
-  }
-
-  if (zoomFit) {
-    zoomFit.addEventListener('click', function () {
-      currentZoom = 100;
-      applyZoom();
-    });
-  }
-
-  function applyZoom() {
-    if (zoomLevel) zoomLevel.textContent = currentZoom + '%';
-    var canvas = document.getElementById('pdfCanvas');
-    if (canvas) {
-      canvas.style.transform = 'scale(' + (currentZoom / 100) + ')';
-      canvas.style.transformOrigin = 'top left';
-    }
-  }
 
 });

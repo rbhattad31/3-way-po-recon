@@ -78,6 +78,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.core.context_processors.pending_reviews",
                 "apps.core.context_processors.rbac_context",
+                "apps.core.context_processors.static_version",
             ],
         },
     },
@@ -134,6 +135,9 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Cache-busting version counter — bump after static file changes
+STATIC_VERSION = "1.0.3"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"

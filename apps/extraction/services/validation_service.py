@@ -9,6 +9,8 @@ from django.conf import settings
 
 from apps.extraction.services.normalization_service import NormalizedInvoice
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +45,7 @@ class ValidationResult:
 class ValidationService:
     """Run validation rules on a NormalizedInvoice."""
 
+    @observed_service("extraction.validate", entity_type="Invoice")
     def validate(self, inv: NormalizedInvoice) -> ValidationResult:
         result = ValidationResult()
 

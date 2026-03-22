@@ -224,6 +224,12 @@ class AuditEventType(models.TextChoices):
     COPILOT_GOVERNANCE_CONTEXT_VIEWED = "COPILOT_GOVERNANCE_CONTEXT_VIEWED", "Copilot Governance Context Viewed"
     COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST = "COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST", "Copilot Unauthorized Governance Request"
     COPILOT_SENSITIVE_FIELD_REDACTED = "COPILOT_SENSITIVE_FIELD_REDACTED", "Copilot Sensitive Field Redacted"
+    # Extraction pipeline events
+    EXTRACTION_STARTED = "EXTRACTION_STARTED", "Extraction Started"
+    INVOICE_PERSISTED = "INVOICE_PERSISTED", "Invoice Persisted"
+    EXTRACTION_RESULT_PERSISTED = "EXTRACTION_RESULT_PERSISTED", "Extraction Result Persisted"
+    DUPLICATE_DETECTED = "DUPLICATE_DETECTED", "Duplicate Detected"
+    VENDOR_RESOLVED = "VENDOR_RESOLVED", "Vendor Resolved"
     # Extraction approval events
     EXTRACTION_APPROVAL_PENDING = "EXTRACTION_APPROVAL_PENDING", "Extraction Approval Pending"
     EXTRACTION_APPROVED = "EXTRACTION_APPROVED", "Extraction Approved"

@@ -3,7 +3,7 @@
 {% block title %}Extraction Review Console — {{ extraction.file_name|default:"Document" }}{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/extraction_console.css' %}" rel="stylesheet">
+<link href="{% static 'css/extraction_console.css' %}?v={{ static_version }}" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -12,15 +12,9 @@
   {# ── HEADER / COMMAND BAR ── #}
   {% include "extraction/console/_header_bar.html" %}
 
-  {# ── MAIN 2-COLUMN WORKSPACE ── #}
+  {# ── MAIN WORKSPACE ── #}
   <div class="row g-3 mt-1">
-    {# LEFT: Document Viewer #}
-    <div class="col-lg-5 col-xl-4">
-      {% include "extraction/console/_document_viewer.html" %}
-    </div>
-
-    {# RIGHT: Extraction Intelligence Panel #}
-    <div class="col-lg-7 col-xl-8">
+    <div class="col-12">
       <div class="card exc-intel-panel">
         <div class="card-header p-0 border-bottom-0">
           <ul class="nav nav-pills exc-tab-nav" id="intelTabs" role="tablist">
@@ -106,5 +100,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/extraction_console.js' %}"></script>
+<script src="{% static 'js/extraction_console.js' %}?v={{ static_version }}"></script>
 {% endblock %}

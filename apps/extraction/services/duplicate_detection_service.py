@@ -8,6 +8,8 @@ from typing import Optional
 from apps.documents.models import Invoice
 from apps.extraction.services.normalization_service import NormalizedInvoice
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,6 +23,7 @@ class DuplicateCheckResult:
 class DuplicateDetectionService:
     """Detect potential duplicate invoices using normalised fields."""
 
+    @observed_service("extraction.duplicate_check", entity_type="Invoice")
     def check(self, inv: NormalizedInvoice, exclude_invoice_id: Optional[int] = None) -> DuplicateCheckResult:
         """Return a DuplicateCheckResult.
 

@@ -27,6 +27,7 @@ from apps.extraction.models import (
     ExtractionFieldCorrection,
     ExtractionResult,
 )
+from apps.core.decorators import observed_service
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class ExtractionApprovalService:
     # Create approval record
     # ------------------------------------------------------------------
     @classmethod
+    @observed_service("extraction.create_pending_approval", entity_type="ExtractionApproval", audit_event="EXTRACTION_APPROVAL_PENDING")
     def create_pending_approval(
         cls,
         invoice: Invoice,
@@ -77,6 +79,7 @@ class ExtractionApprovalService:
     # Auto-approve check
     # ------------------------------------------------------------------
     @classmethod
+    @observed_service("extraction.try_auto_approve", entity_type="ExtractionApproval")
     def try_auto_approve(
         cls,
         invoice: Invoice,
@@ -131,6 +134,7 @@ class ExtractionApprovalService:
     # Human approve
     # ------------------------------------------------------------------
     @classmethod
+    @observed_service("extraction.approve", entity_type="ExtractionApproval", audit_event="EXTRACTION_APPROVED")
     @transaction.atomic
     def approve(
         cls,
@@ -213,6 +217,7 @@ class ExtractionApprovalService:
     # Human reject
     # ------------------------------------------------------------------
     @classmethod
+    @observed_service("extraction.reject", entity_type="ExtractionApproval", audit_event="EXTRACTION_REJECTED")
     @transaction.atomic
     def reject(
         cls,

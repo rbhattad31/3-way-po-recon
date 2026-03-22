@@ -7,14 +7,6 @@
   min-height: calc(100vh - 200px);
 }
 
-.exc-viewer-col {
-  position: relative;
-}
-
-.exc-intel-col {
-  border-left: 1px solid var(--bs-border-color);
-}
-
 /* ── Header Bar ── */
 .exc-header-bar {
   background: var(--bs-body-bg);
@@ -309,30 +301,18 @@
   border-color: var(--bs-border-color);
 }
 
-/* ── Document Viewer ── */
-.exc-viewer-card {
-  position: sticky;
-  top: 80px;
+/* ── Document Viewer (removed) ── */
+
+/* ── Filter empty state ── */
+.exc-filter-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--bs-secondary);
 }
 
-.exc-doc-canvas-wrapper {
-  min-height: 500px;
-  max-height: calc(100vh - 280px);
-  overflow: auto;
-  background: #f8f9fa;
-  position: relative;
-}
-
-#highlightLayer {
-  pointer-events: none;
-}
-
-.exc-field-highlight {
-  position: absolute;
-  background: rgba(13, 110, 253, 0.15);
-  border: 2px solid rgba(13, 110, 253, 0.5);
-  border-radius: 2px;
-  transition: all 0.2s ease;
+/* Flagged row indicator */
+.exc-field-row.exc-flagged {
+  border-left: 3px solid var(--bs-warning);
 }
 
 /* ── Tab styling ── */

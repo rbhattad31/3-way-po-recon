@@ -47,6 +47,9 @@
     <a href="{% url 'extraction:result_json' ext.pk %}" class="btn btn-sm btn-outline-secondary" title="Download JSON">
       <i class="bi bi-download me-1"></i>JSON
     </a>
+    <a href="{% url 'extraction:console' ext.pk %}" class="btn btn-sm btn-outline-primary" title="Open Review Console">
+      <i class="bi bi-columns-gap me-1"></i>Review Console
+    </a>
     {% endif %}
     {% if ext.document_upload.blob_path %}
     <form method="post" action="{% url 'extraction:rerun' ext.pk %}" class="d-inline">

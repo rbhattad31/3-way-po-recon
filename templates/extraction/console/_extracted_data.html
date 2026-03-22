@@ -40,7 +40,7 @@
         </thead>
         <tbody>
           {% for key, field in header_fields.items %}
-          <tr class="exc-field-row {% if field.confidence < 0.5 %}exc-low-confidence{% elif field.confidence < 0.75 %}exc-med-confidence{% endif %}"
+          <tr class="exc-field-row {% if field.confidence < 0.5 %}exc-low-confidence{% elif field.confidence < 0.75 %}exc-med-confidence{% endif %}{% if key in validation_field_issues %} exc-flagged{% endif %}"
               data-field-key="{{ key }}" data-category="header">
             <td>
               <span class="exc-field-label">{{ field.display_name|default:key }}</span>
@@ -84,7 +84,7 @@
 
   {# ── Parties Card ── #}
   {% if parties %}
-  <div class="card exc-field-card mb-3">
+  <div class="card exc-field-card mb-3 exc-supplementary-card" id="partiesCard">
     <div class="card-header py-2 px-3 d-flex align-items-center">
       <i class="bi bi-building me-2 text-info"></i>
       <span class="fw-semibold small">Parties</span>
@@ -190,7 +190,7 @@
 
   {# ── Enrichment Card (Master Data Matches) ── #}
   {% if enrichment %}
-  <div class="card exc-field-card mb-3">
+  <div class="card exc-field-card mb-3 exc-supplementary-card" id="enrichmentCard">
     <div class="card-header py-2 px-3 d-flex align-items-center">
       <i class="bi bi-link-45deg me-2 text-purple"></i>
       <span class="fw-semibold small">Master Data Matches</span>
@@ -310,5 +310,12 @@
         </table>
       </div>
     </div>
+  </div>
+
+  {# Empty state shown when filters hide all rows #}
+  <div class="exc-filter-empty d-none" id="filterEmptyState">
+    <i class="bi bi-funnel text-muted" style="font-size: 2rem;"></i>
+    <p class="text-muted mt-2 mb-0">No fields match the selected filter</p>
+    <button class="btn btn-sm btn-outline-secondary mt-2" data-filter="all">Show All Fields</button>
   </div>
 </div>

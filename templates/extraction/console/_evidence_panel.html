@@ -43,10 +43,6 @@
             {% if entry.page_number %}
             <span>
               <i class="bi bi-file-earmark me-1"></i>Page {{ entry.page_number }}
-              <button class="btn btn-link btn-sm p-0 ms-1 exc-goto-page" data-page="{{ entry.page_number }}"
-                      title="Go to page">
-                <i class="bi bi-arrow-right-short"></i>
-              </button>
             </span>
             {% endif %}
             {% if entry.table_index is not None %}
@@ -57,17 +53,6 @@
             {% endif %}
           </div>
         </div>
-
-        {# Highlight in document button #}
-        {% if entry.page_number %}
-        <button class="btn btn-sm btn-outline-primary ms-2 exc-highlight-evidence" 
-                data-page="{{ entry.page_number }}"
-                data-field="{{ entry.field_key }}"
-                {% if entry.bbox %}data-bbox="{{ entry.bbox }}"{% endif %}
-                title="Highlight in document">
-          <i class="bi bi-cursor"></i>
-        </button>
-        {% endif %}
       </div>
     </div>
   </div>

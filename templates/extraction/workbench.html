@@ -239,6 +239,9 @@
             <a href="{% url 'extraction:result_detail' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
               View
             </a>
+            <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-secondary py-0 ms-1" style="font-size:.7rem" title="Review Console">
+              <i class="bi bi-columns-gap"></i>
+            </a>
           </td>
         </tr>
         {% empty %}

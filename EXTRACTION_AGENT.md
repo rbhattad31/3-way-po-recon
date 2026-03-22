@@ -13,16 +13,19 @@
 3. [Extraction Pipeline](#3-extraction-pipeline)
 4. [Data Models](#4-data-models)
 5. [Services](#5-services)
-6. [Approval Gate](#6-approval-gate)
-7. [Agent Framework Integration](#7-agent-framework-integration)
-8. [LLM Prompt](#8-llm-prompt)
-9. [Template Views & URLs](#9-template-views--urls)
-10. [Templates (UI)](#10-templates-ui)
-11. [Enums & Status Flows](#11-enums--status-flows)
-12. [Configuration](#12-configuration)
-13. [Permissions & RBAC](#13-permissions--rbac)
-14. [Django Admin](#14-django-admin)
-15. [File Reference](#15-file-reference)
+6. [Extraction Core — Extended Pipeline](#6-extraction-core--extended-pipeline)
+7. [Master Data Enrichment](#7-master-data-enrichment)
+8. [Approval Gate](#8-approval-gate)
+9. [Agent Framework Integration](#9-agent-framework-integration)
+10. [LLM Prompt](#10-llm-prompt)
+11. [Template Views & URLs](#11-template-views--urls)
+12. [Templates (UI)](#12-templates-ui)
+13. [Extraction Review Console](#13-extraction-review-console)
+14. [Enums & Status Flows](#14-enums--status-flows)
+15. [Configuration](#15-configuration)
+16. [Permissions & RBAC](#16-permissions--rbac)
+17. [Django Admin](#17-django-admin)
+18. [File Reference](#18-file-reference)
 
 ---
 
@@ -350,7 +353,131 @@ See [Section 6: Approval Gate](#6-approval-gate).
 
 ---
 
-## 6. Approval Gate
+## 6. Extraction Core — Extended Pipeline
+
+The `apps/extraction_core/` app provides an advanced, jurisdiction-aware extraction pipeline with 19 service classes. This extends the base extraction pipeline with document intelligence, multi-page support, schema-driven extraction, confidence scoring, master data enrichment, and review routing.
+
+### Pipeline Steps (ExtractionService.extract())
+
+| Step | Service | Description |
+|------|---------|-------------|
+| 1 | `JurisdictionResolverService` | Multi-signal jurisdiction detection (GSTIN, TRN, VAT, currency, keywords) |
+| 2 | Meta extraction | Build `JurisdictionMeta` from resolution |
+| 2b | `DocumentIntelligenceService` | Pre-extraction analysis: document classification, relationship extraction, party extraction |
+| 3 | `SchemaRegistryService` | Jurisdiction-aware schema selection |
+| 4 | `PromptBuilderService` | Build extraction template from schema |
+| 4b | `PageParser` | Multi-page OCR text segmentation, header/footer dedup |
+| 5 | Deterministic extraction | Rule-based field extraction from OCR text |
+| — | Page evidence | Map extracted fields to source pages |
+| 5a | `TableStitcher` + `LineItemExtractor` | Cross-page table reconstruction + schema-driven line item extraction |
+| 5b | `LLMExtractionAdapter` | LLM-based extraction for remaining/low-confidence fields |
+| 6 | `NormalizationService` | Jurisdiction-driven field normalization (dates, amounts, tax IDs) |
+| 7 | `ValidationService` | Jurisdiction-driven validation (mandatory fields, data types, tax rates, amount consistency) |
+| **7b** | **`MasterDataEnrichmentService`** | **Post-extraction vendor matching, PO lookup, confidence adjustments** |
+| 8 | `ConfidenceScorer` | Multi-dimensional confidence scoring (header/tax/line/jurisdiction) |
+| 8b | Metrics | Track extraction performance metrics |
+| 9 | Mandatory check | Final mandatory field validation |
+| 9b | `ReviewRoutingService` | Confidence-driven review routing decision |
+| 10 | Persist | Save `ExtractionDocument` + field results to database |
+
+### Key Dataclasses
+
+**ExtractionResult** (extraction_core):
+- `fields` — dict of `FieldResult` per field key
+- `line_items` — list of line item dicts
+- `jurisdiction` — `JurisdictionMeta` (country_code, regime_code, confidence, source, warning)
+- `document_intelligence` — `DocumentIntelligenceResult` (document type, parties, relationships)
+- `enrichment` — `EnrichmentResult` (vendor/customer/PO matches, confidence adjustments)
+- `page_info` — `ParsedDocument` (page segments, table regions)
+- `confidence_breakdown` — `ConfidenceBreakdown` (per-category scores)
+- `review_decision` — `ReviewRoutingDecision`
+- `validation_issues`, `warnings`, `overall_confidence`, `duration_ms`
+
+### Service Directory (19 services)
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `ExtractionService` | `extraction_service.py` | Primary pipeline orchestrator |
+| `BaseExtractionService` | `base_extraction_service.py` | Schema-driven extraction base class |
+| `JurisdictionResolverService` | `jurisdiction_resolver.py` | Multi-signal jurisdiction detection |
+| `JurisdictionResolutionService` | `resolution_service.py` | 4-tier jurisdiction resolution cascade |
+| `SchemaRegistryService` | `schema_registry.py` | Cached, version-aware schema lookup |
+| `PromptBuilderService` | `prompt_builder.py` | Dynamic LLM prompt construction |
+| `LLMExtractionAdapter` | `llm_extraction_adapter.py` | LLM client wrapper for schema extraction |
+| `NormalizationService` | `normalization_service.py` | Jurisdiction-driven field normalization |
+| `ValidationService` | `validation_service.py` | Jurisdiction-driven field validation |
+| `PageParser` | `page_parser.py` | Multi-page OCR text segmentation |
+| `TableStitcher` | `table_stitcher.py` | Cross-page table continuation |
+| `LineItemExtractor` | `line_item_extractor.py` | Schema-driven line item extraction |
+| `DocumentTypeClassifier` | `document_classifier.py` | Weighted keyword document classification |
+| `RelationshipExtractor` | `relationship_extractor.py` | PO/GRN/contract cross-reference extraction |
+| `PartyExtractor` | `party_extractor.py` | Supplier/buyer/ship-to/bill-to extraction |
+| `DocumentIntelligenceService` | `document_intelligence.py` | Pre-extraction analysis orchestrator |
+| `ConfidenceScorer` | `confidence_scorer.py` | Multi-dimensional confidence scoring |
+| `ReviewRoutingService` | `review_routing.py` | Confidence-driven review routing |
+| `MasterDataEnrichmentService` | `master_data_enrichment.py` | Post-extraction vendor/PO matching |
+
+---
+
+## 7. Master Data Enrichment
+
+**File**: `apps/extraction_core/services/master_data_enrichment.py`  
+**Pipeline position**: Step 7b (after validation, before confidence scoring)
+
+The Master Data Enrichment Service matches extracted entities against the system's master data (Vendors, VendorAliases, PurchaseOrders) and adjusts extraction confidence based on match quality.
+
+### Matching Tiers
+
+**Vendor Matching** (`_match_vendor()`) — 3-tier cascade:
+
+| Tier | Match Type | Confidence | Description |
+|------|-----------|------------|-------------|
+| 1 | `EXACT_TAX_ID` | 0.98 | Exact tax ID match against `Vendor.tax_id` |
+| 2 | `ALIAS` | 0.95 | Normalized alias match against `VendorAlias.normalized_alias` |
+| 3 | `FUZZY` | 0.70–0.95 | SequenceMatcher fuzzy name match (threshold: 0.70, high: 0.85) |
+
+- Scopes vendor candidates by country (if `country_code` provided)
+- Limits to 500 candidates for fuzzy matching
+- Uses `_normalize_name()` — lowercase, strip company suffixes (Pvt Ltd, GmbH, LLC, etc.), collapse whitespace, remove punctuation
+
+**Customer Matching** (`_match_customer()`):
+- Checks `VendorAlias` table first (buyer may appear as alias)
+- Falls back to fuzzy match against `PurchaseOrder.buyer_name` values
+
+**PO Lookup** (`_lookup_po()`):
+- Exact match on `PurchaseOrder.po_number`
+- Falls back to normalized match on `PurchaseOrder.normalized_po_number`
+- Uses `_normalize_po_number()` — uppercase, remove separators
+
+### Confidence Adjustments
+
+| Adjustment | Value | Condition |
+|-----------|-------|----------|
+| `VENDOR_MATCH_BOOST` | +0.05 | Vendor matched (any tier) |
+| `VENDOR_MISMATCH_PENALTY` | −0.08 | Tax ID present but no vendor found |
+| `PO_MATCH_BOOST` | +0.05 | PO number found in system |
+| `PO_VENDOR_MATCH_BOOST` | +0.03 | Cross-validated: PO vendor = matched vendor |
+
+- Warns on PO vendor mismatch (PO belongs to different vendor than matched)
+- All adjustments are clamped to 0.0–1.0 range
+
+### Dataclasses
+
+- `MasterDataMatch` — match_type, entity_id, entity_code, entity_name, matched_value, similarity, confidence
+- `POLookupResult` — found, po_id, po_number, vendor_id, vendor_name, po_status, total_amount, currency, confidence
+- `EnrichmentResult` — vendor_match, customer_match, po_lookup, confidence_adjustments, warnings, duration_ms; properties: `vendor_id`, `customer_id`, `match_confidence`
+
+### Integration
+
+The enrichment result is:
+- Stored in `ExtractionResult.enrichment` dataclass field
+- Serialized in `to_dict()` for JSON persistence
+- Persisted to `extracted_data_json` on `ExtractionDocument`
+- Displayed in the Extraction Review Console (Master Data Matches card)
+
+---
+
+## 8. Approval Gate
 
 ### Overview
 
@@ -430,7 +557,7 @@ created  │         │
 
 ---
 
-## 7. Agent Framework Integration
+## 9. Agent Framework Integration
 
 ### InvoiceExtractionAgent
 
@@ -477,7 +604,7 @@ A deeper analysis agent that runs after extraction for low-confidence or ambiguo
 
 ---
 
-## 8. LLM Prompt
+## 10. LLM Prompt
 
 **Registry key**: `extraction.invoice_system`  
 **File**: `apps/core/prompt_registry.py` (hardcoded default) + DB-overridable via `PromptTemplate` model
@@ -521,7 +648,7 @@ with EXACTLY this structure:
 
 ---
 
-## 9. Template Views & URLs
+## 11. Template Views & URLs
 
 ### URL Routing
 
@@ -541,6 +668,7 @@ with EXACTLY this structure:
 | `/extraction/approvals/<id>/` | `extraction_approval_detail` | GET | `invoices.view` | Approval detail/review |
 | `/extraction/approvals/<id>/approve/` | `extraction_approve` | POST | `invoices.create` | Approve extraction |
 | `/extraction/approvals/<id>/reject/` | `extraction_reject` | POST | `invoices.create` | Reject extraction |
+| `/extraction/console/<id>/` | `extraction_console` | GET | `invoices.view` | Agentic review console |
 | `/extraction/approvals/analytics/` | `extraction_approval_analytics` | GET | `invoices.view` | Analytics JSON endpoint |
 
 **API URLs**: `apps/extraction/api_urls.py` — empty (no REST API endpoints yet).
@@ -587,9 +715,17 @@ with EXACTLY this structure:
 
 **`extraction_export_csv`** — CSV export with columns: ID, Filename, Invoice #, Vendor, Currency, Subtotal, Tax, Total, PO, Confidence %, Status, Duration, Engine, Extracted At.
 
+**`extraction_console`** — Agentic deep-dive review console:
+- Full context build: header fields, tax fields, parties, enrichment, line items, validation re-run
+- Pipeline stages with state tracking (10 stages)
+- Approval record lookup
+- Permission context (can_approve, can_reprocess, can_escalate)
+- Assignable users for escalation
+- See [Section 13: Extraction Review Console](#13-extraction-review-console) for full template/layout details.
+
 ---
 
-## 10. Templates (UI)
+## 12. Templates (UI)
 
 All templates are in `templates/extraction/` and extend `base.html` (Bootstrap 5).
 
@@ -626,7 +762,139 @@ All templates are in `templates/extraction/` and extend `base.html` (Bootstrap 5
 
 ---
 
-## 11. Enums & Status Flows
+## 13. Extraction Review Console
+
+### Overview
+
+The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for reviewing individual extraction results. It provides document viewing, 5-tab intelligence panels, approval workflow modals, and a pipeline timeline — all in a single-page Bootstrap 5 layout.
+
+**Route**: `/extraction/console/<id>/` → `extraction_console` view  
+**Template**: `templates/extraction/console/console.html`  
+**Static**: `static/css/extraction_console.css`, `static/js/extraction_console.js`
+
+### Layout Structure
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  HEADER BAR — ID, file, status, confidence, jurisdiction,    │
+│               action buttons (Approve, Edit, Reprocess,      │
+│               Escalate, Comment)                             │
+├──────────────────────┬───────────────────────────────────────┤
+│  DOCUMENT VIEWER     │  INTELLIGENCE PANEL (5 tabs)          │
+│  (col-lg-5)          │  (col-lg-7)                           │
+│                      │                                       │
+│  • Page navigation   │  Tab 1: Extracted Data                │
+│  • Zoom controls     │    - Header Fields table              │
+│  • Highlight overlay │    - Parties card                     │
+│  • PDF.js canvas     │    - Tax & Jurisdiction card          │
+│  • Image fallback    │    - Master Data Matches card         │
+│                      │    - Line Items table (expandable)    │
+│                      │                                       │
+│                      │  Tab 2: Validation                    │
+│                      │    - Errors / Warnings / Passed       │
+│                      │    - Go-to-field navigation           │
+│                      │                                       │
+│                      │  Tab 3: Evidence                      │
+│                      │    - Field evidence cards             │
+│                      │    - Source snippets, page refs       │
+│                      │    - Highlight in document            │
+│                      │                                       │
+│                      │  Tab 4: Agent Reasoning               │
+│                      │    - Step-by-step reasoning timeline  │
+│                      │    - Decisions, collapsible details   │
+│                      │                                       │
+│                      │  Tab 5: Audit Trail                   │
+│                      │    - Chronological event timeline     │
+│                      │    - Actor/role badges                │
+│                      │    - Before/after change tracking     │
+├──────────────────────┴───────────────────────────────────────┤
+│  PIPELINE TIMELINE — Upload → OCR → Jurisdiction → Schema →  │
+│  Extraction → Normalize → Validate → Enrich → Confidence →   │
+│  Review (state-aware pills)                                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Template Files (14 files in `templates/extraction/console/`)
+
+| File | Purpose |
+|------|---------|
+| `console.html` | Main layout — extends `base.html`, includes all partials/modals, loads CSS/JS |
+| `_header_bar.html` | Command bar — extraction ID, status/confidence badges, jurisdiction badges, action buttons |
+| `_document_viewer.html` | Sticky document viewer — page nav, zoom, highlight overlay, PDF.js canvas |
+| `_extracted_data.html` | Tab 1 — Header Fields, Parties, Tax/Jurisdiction, Master Data Matches, Line Items |
+| `_confidence_badge.html` | Reusable confidence % indicator (green ≥85%, amber ≥50%, red <50%) |
+| `_validation_panel.html` | Tab 2 — Errors/Warnings/Passed grouped by severity, "Go to field" navigation |
+| `_evidence_panel.html` | Tab 3 — Evidence cards with source snippets, page references, "Highlight in document" |
+| `_reasoning_panel.html` | Tab 4 — Agent reasoning timeline with step indicators, decisions, collapsible details |
+| `_audit_trail.html` | Tab 5 — Chronological event timeline with actor/role badges, before/after tracking |
+| `_bottom_timeline.html` | Pipeline stage progress bar with state indicators (completed/active/error/skipped/pending) |
+| `_approve_modal.html` | Approval modal — warnings summary, notes, review confirmation checkbox |
+| `_reprocess_modal.html` | Reprocess modal — reason select, override options (force LLM, override jurisdiction) |
+| `_escalate_modal.html` | Escalation modal — severity, assignee select, flagged fields list |
+| `_comment_modal.html` | Comment modal — text, related fields, internal toggle |
+
+### Key Features
+
+**Field Filtering**: Toggle buttons for All Fields / Flagged Only / Low Confidence to focus review on problem areas.
+
+**Edit Mode**: Toggle switch enables inline editing on all header and tax fields. Modified fields get visual highlighting (`exc-modified` class). Original values preserved in `data-original` for comparison.
+
+**Go-to-Field Navigation**: Validation issues and evidence cards have clickable field links that switch to the Extracted Data tab and scroll/highlight the target field row.
+
+**Evidence → Document Linking**: Evidence entries with page numbers can navigate the document viewer and highlight bounding box regions.
+
+**Line Item Expand/Flag**: Each line item row has expand (shows all field details) and flag (marks for review) actions.
+
+**Modal Workflows**: All approval actions go through Bootstrap modals with CSRF-protected AJAX POST requests. Toast notifications for success/error feedback.
+
+### Static Assets
+
+**`static/css/extraction_console.css`** (~300 lines):
+- `.exc-conf-high/med/low` confidence badge colors
+- `.exc-field-table` compact field table styling
+- `.exc-field-row.exc-low-confidence` / `.exc-med-confidence` left-border indicators
+- `.exc-field-row.exc-editing` edit mode show/hide
+- `.exc-source-snippet` evidence source styling
+- `.exc-reasoning-step-number` numbered step circles with connectors
+- `.exc-audit-dot-*` timeline dot colors per event type
+- `.exc-stage-*` pipeline pill state colors
+- `.exc-pipeline-timeline` horizontal scrollable timeline
+- Responsive breakpoints (≤991px: viewer above panel, reduced heights)
+
+**`static/js/extraction_console.js`** (~280 lines):
+- Tab persistence (sessionStorage)
+- Field filter toggles (all/flagged/low-confidence)
+- Edit mode toggle with modification tracking
+- Go-to-field navigation (cross-tab + scroll + highlight animation)
+- Evidence field filter dropdown
+- Line item expand/collapse and flag toggle
+- Document viewer zoom controls
+- Bounding box highlight rendering
+- AJAX modal submission (approve/reprocess/escalate/comment) with CSRF
+- Toast notification system
+
+### View Context
+
+The `extraction_console` view builds the following context for the template:
+
+| Context Variable | Source | Description |
+|-----------------|--------|-------------|
+| `extraction` | Computed dict | ID, file_name, status, confidence, jurisdiction metadata |
+| `header_fields` | Invoice model | Dict of field dicts (display_name, value, raw_value, confidence, method, is_mandatory, evidence) |
+| `tax_fields` | Invoice model | Tax-specific field dicts |
+| `parties` | `raw_response.document_intelligence.parties` | Supplier/buyer/ship-to/bill-to from document intelligence |
+| `enrichment` | `raw_response.enrichment` | Vendor/customer/PO matches from master data enrichment |
+| `line_items` | `InvoiceLineItem` queryset | List of dicts with description, qty, price, tax, total, confidence, fields |
+| `errors` / `warnings` | Re-run `ValidationService` | Grouped validation issues |
+| `validation_field_issues` | Computed | Map of field names with validation issues |
+| `pipeline_stages` | Computed | 10-stage pipeline with state indicators |
+| `approval` | `ExtractionApproval` | Current approval record (if exists) |
+| `permissions` | Request user | `can_approve`, `can_reprocess`, `can_escalate` flags |
+| `assignable_users` | `User.objects` | Top 50 active users for escalation |
+
+---
+
+## 14. Enums & Status Flows
 
 ### InvoiceStatus
 
@@ -681,7 +949,7 @@ UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → PENDING_APPR
 
 ---
 
-## 12. Configuration
+## 15. Configuration
 
 ### Environment Variables
 
@@ -706,7 +974,7 @@ All settings are in `config/settings.py`. Values are loaded from environment var
 
 ---
 
-## 13. Permissions & RBAC
+## 16. Permissions & RBAC
 
 ### Permission Codes
 
@@ -736,7 +1004,7 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 
 ---
 
-## 14. Django Admin
+## 17. Django Admin
 
 **File**: `apps/extraction/admin.py`
 
@@ -761,7 +1029,7 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 
 ---
 
-## 15. File Reference
+## 18. File Reference
 
 | File | Purpose |
 |------|---------|
@@ -789,6 +1057,44 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 | `templates/extraction/result_detail.html` | Extraction result detail UI |
 | `templates/extraction/approval_queue.html` | Approval queue UI |
 | `templates/extraction/approval_detail.html` | Approval review UI |
+| **Extraction Core Services** | |
+| `apps/extraction_core/services/extraction_service.py` | Primary extraction pipeline orchestrator (19-step) |
+| `apps/extraction_core/services/base_extraction_service.py` | Schema-driven extraction base class |
+| `apps/extraction_core/services/jurisdiction_resolver.py` | Multi-signal jurisdiction detection |
+| `apps/extraction_core/services/resolution_service.py` | 4-tier jurisdiction resolution cascade |
+| `apps/extraction_core/services/schema_registry.py` | Cached, version-aware schema lookup |
+| `apps/extraction_core/services/prompt_builder.py` | Dynamic LLM prompt construction |
+| `apps/extraction_core/services/llm_extraction_adapter.py` | LLM client wrapper for schema extraction |
+| `apps/extraction_core/services/normalization_service.py` | Jurisdiction-driven field normalization |
+| `apps/extraction_core/services/validation_service.py` | Jurisdiction-driven field validation |
+| `apps/extraction_core/services/page_parser.py` | Multi-page OCR text segmentation |
+| `apps/extraction_core/services/table_stitcher.py` | Cross-page table continuation |
+| `apps/extraction_core/services/line_item_extractor.py` | Schema-driven line item extraction |
+| `apps/extraction_core/services/document_classifier.py` | Weighted keyword document classification |
+| `apps/extraction_core/services/relationship_extractor.py` | PO/GRN/contract cross-reference extraction |
+| `apps/extraction_core/services/party_extractor.py` | Supplier/buyer/ship-to/bill-to extraction |
+| `apps/extraction_core/services/document_intelligence.py` | Pre-extraction analysis orchestrator |
+| `apps/extraction_core/services/confidence_scorer.py` | Multi-dimensional confidence scoring |
+| `apps/extraction_core/services/review_routing.py` | Confidence-driven review routing |
+| `apps/extraction_core/services/master_data_enrichment.py` | Post-extraction vendor/PO/customer matching |
+| **Review Console Templates** | |
+| `templates/extraction/console/console.html` | Main review console layout |
+| `templates/extraction/console/_header_bar.html` | Command bar (status, confidence, actions) |
+| `templates/extraction/console/_document_viewer.html` | Sticky document viewer with zoom/highlight |
+| `templates/extraction/console/_extracted_data.html` | Tab 1: Header, Parties, Tax, Enrichment, Line Items |
+| `templates/extraction/console/_confidence_badge.html` | Reusable confidence % badge (green/amber/red) |
+| `templates/extraction/console/_validation_panel.html` | Tab 2: Errors/Warnings/Passed with go-to-field |
+| `templates/extraction/console/_evidence_panel.html` | Tab 3: Evidence cards with source snippets |
+| `templates/extraction/console/_reasoning_panel.html` | Tab 4: Agent reasoning timeline |
+| `templates/extraction/console/_audit_trail.html` | Tab 5: Chronological audit event timeline |
+| `templates/extraction/console/_bottom_timeline.html` | Pipeline stage progress bar |
+| `templates/extraction/console/_approve_modal.html` | Approval confirmation modal |
+| `templates/extraction/console/_reprocess_modal.html` | Reprocess extraction modal |
+| `templates/extraction/console/_escalate_modal.html` | Escalation modal |
+| `templates/extraction/console/_comment_modal.html` | Add comment modal |
+| **Static Assets** | |
+| `static/css/extraction_console.css` | Review console custom styles (~300 lines) |
+| `static/js/extraction_console.js` | Review console JavaScript (~280 lines) |
 | `templates/partials/sidebar.html` | Navigation sidebar (extraction links) |
 
 ---
