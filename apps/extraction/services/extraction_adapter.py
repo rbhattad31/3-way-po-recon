@@ -38,6 +38,7 @@ class ExtractionResponse:
     duration_ms: int = 0
     error_message: str = ""
     ocr_text: str = ""
+    agent_run_id: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ class InvoiceExtractionAdapter:
                 engine_version="2.0",
                 duration_ms=elapsed,
                 ocr_text=ocr_text,
+                agent_run_id=agent_run_id,
             )
         except Exception as exc:
             elapsed = int((time.time() - start) * 1000)

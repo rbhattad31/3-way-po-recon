@@ -230,7 +230,14 @@
             {% else %}—{% endif %}
           </td>
           <td>
-            {% if r.success %}
+            {% if r.invoice %}
+            <span class="ap-badge {% if r.invoice.status == 'RECONCILED' or r.invoice.status == 'READY_FOR_RECON' %}ap-badge-success{% elif r.invoice.status == 'PENDING_APPROVAL' %}ap-badge-warning{% elif r.invoice.status == 'FAILED' or r.invoice.status == 'INVALID' %}ap-badge-danger{% elif r.invoice.status == 'VALIDATED' or r.invoice.status == 'EXTRACTED' %}ap-badge-info{% else %}ap-badge-muted{% endif %}" style="font-size:.65rem">
+              {{ r.invoice.status }}
+            </span>
+            {% if r.invoice.is_duplicate %}
+            <span class="ap-badge ap-badge-danger ms-1" title="Duplicate invoice" style="font-size:.6rem"><i class="bi bi-exclamation-triangle-fill"></i></span>
+            {% endif %}
+            {% elif r.success %}
             <span class="ap-badge ap-badge-success">OK</span>
             {% else %}
             <span class="ap-badge ap-badge-danger">FAIL</span>

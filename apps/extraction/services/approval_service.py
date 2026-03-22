@@ -158,6 +158,22 @@ class ExtractionApprovalService:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
         invoice = approval.invoice
+
+        # ── Duplicate guard ──────────────────────────────────────
+        # If this invoice is a duplicate, only allow approval when
+        # the original invoice has NOT been approved yet.
+        if invoice.is_duplicate and invoice.duplicate_of_id:
+            original = Invoice.objects.get(pk=invoice.duplicate_of_id)
+            original_approval = ExtractionApproval.objects.filter(
+                invoice=original,
+                status__in=[ExtractionApprovalStatus.APPROVED, ExtractionApprovalStatus.AUTO_APPROVED],
+            ).exists()
+            if original_approval:
+                raise ValueError(
+                    f"Cannot approve: original Invoice #{original.invoice_number} "
+                    f"is already approved. Approving this duplicate would risk "
+                    f"duplicate payment."
+                )
         correction_records = []
 
         if corrections:
@@ -178,6 +194,38 @@ class ExtractionApprovalService:
         # Transition invoice to READY_FOR_RECON
         invoice.status = InvoiceStatus.READY_FOR_RECON
         invoice.save(update_fields=["status", "updated_at"])
+
+        # ── If this was a duplicate, supersede the original ──────
+        if invoice.is_duplicate and invoice.duplicate_of_id:
+            try:
+                original = Invoice.objects.get(pk=invoice.duplicate_of_id)
+                old_status = original.status
+                original.status = InvoiceStatus.SUPERSEDED
+                original.save(update_fields=["status", "updated_at"])
+                # Reject original's pending approval if any
+                ExtractionApproval.objects.filter(
+                    invoice=original,
+                    status=ExtractionApprovalStatus.PENDING,
+                ).update(
+                    status=ExtractionApprovalStatus.REJECTED,
+                    reviewed_at=timezone.now(),
+                )
+                cls._log_audit(
+                    original,
+                    AuditEventType.EXTRACTION_REJECTED,
+                    f"Invoice superseded by duplicate Invoice #{invoice.invoice_number} (approved by {user})",
+                    user=user,
+                    metadata={
+                        "superseded_by_invoice_id": invoice.pk,
+                        "previous_status": old_status,
+                    },
+                )
+                logger.info(
+                    "Original invoice %s superseded by duplicate %s",
+                    original.pk, invoice.pk,
+                )
+            except Invoice.DoesNotExist:
+                logger.warning("Duplicate-of invoice %s not found", invoice.duplicate_of_id)
 
         event_type = AuditEventType.EXTRACTION_APPROVED
         desc = f"Extraction approved by {user} for Invoice {invoice.invoice_number}"

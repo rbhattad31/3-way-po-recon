@@ -47,6 +47,15 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
 
+    // Hide/show inline evidence rows to follow their parent field row
+    document.querySelectorAll('.exc-evidence-inline').forEach(function (evRow) {
+      var fieldKey = evRow.dataset.fieldKey;
+      var parentRow = document.querySelector('.exc-field-row[data-field-key="' + fieldKey + '"]');
+      if (parentRow) {
+        evRow.classList.toggle('d-none', parentRow.classList.contains('d-none'));
+      }
+    });
+
     // Hide supplementary cards (Parties, Enrichment) when filtering
     document.querySelectorAll('.exc-supplementary-card').forEach(function (card) {
       card.classList.toggle('d-none', filter !== 'all');
@@ -118,28 +127,6 @@ document.addEventListener('DOMContentLoaded', function () {
   if (confirmReviewedCheck && confirmApproveBtn) {
     confirmReviewedCheck.addEventListener('change', function () {
       confirmApproveBtn.disabled = !confirmReviewedCheck.checked;
-    });
-  }
-
-  if (confirmApproveBtn) {
-    confirmApproveBtn.addEventListener('click', function () {
-      var form = document.getElementById('approveForm');
-      if (form) {
-        var formData = new FormData(form);
-        submitAction('/api/v1/extraction/approve/', formData, 'Approved successfully');
-      }
-    });
-  }
-
-  // ── Reprocess modal ──
-  var confirmReprocessBtn = document.getElementById('confirmReprocessBtn');
-  if (confirmReprocessBtn) {
-    confirmReprocessBtn.addEventListener('click', function () {
-      var form = document.getElementById('reprocessForm');
-      if (form) {
-        var formData = new FormData(form);
-        submitAction('/api/v1/extraction/reprocess/', formData, 'Reprocess started');
-      }
     });
   }
 

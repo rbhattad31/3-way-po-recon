@@ -66,6 +66,16 @@
                 <i class="bi bi-code-slash me-1"></i>Raw JSON
               </button>
             </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-cost" data-bs-toggle="pill"
+                      data-bs-target="#panel-cost" type="button" role="tab"
+                      aria-controls="panel-cost" aria-selected="false">
+                <i class="bi bi-coin me-1"></i>Cost &amp; Tokens
+                {% if cost_token_data %}
+                  <span class="badge bg-success-subtle text-success ms-1">${{ cost_token_data.cost_estimate }}</span>
+                {% endif %}
+              </button>
+            </li>
           </ul>
         </div>
         <div class="card-body p-0">
@@ -94,6 +104,10 @@
             <div class="tab-pane fade" id="panel-rawjson" role="tabpanel" aria-labelledby="tab-rawjson">
               {% include "extraction/console/_raw_json_panel.html" %}
             </div>
+            {# Tab 8: Cost & Tokens #}
+            <div class="tab-pane fade" id="panel-cost" role="tabpanel" aria-labelledby="tab-cost">
+              {% include "extraction/console/_cost_tokens_panel.html" %}
+            </div>
           </div>
         </div>
       </div>
@@ -106,7 +120,7 @@
 </div>
 
 {# ── MODALS ── #}
-{% include "extraction/console/_approve_modal.html" %}
+{% if approval %}{% include "extraction/console/_approve_modal.html" %}{% endif %}
 {% include "extraction/console/_reprocess_modal.html" %}
 {% include "extraction/console/_escalate_modal.html" %}
 {% include "extraction/console/_comment_modal.html" %}

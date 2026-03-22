@@ -22,6 +22,8 @@ class ExtractionResult(BaseModel):
     duration_ms = models.PositiveIntegerField(null=True, blank=True)
     success = models.BooleanField(default=False)
     error_message = models.TextField(blank=True, default="")
+    agent_run_id = models.BigIntegerField(null=True, blank=True, db_index=True,
+                                          help_text="FK to AgentRun that performed extraction")
 
     class Meta:
         db_table = "extraction_result"

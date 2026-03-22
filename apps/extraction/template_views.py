@@ -391,14 +391,20 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
         upload.save(update_fields=["processing_state", "updated_at"])
 
         # 8. Gate through extraction approval
-        if validation_result.is_valid and not dup_result.is_duplicate:
-            from apps.extraction.services.approval_service import ExtractionApprovalService
+        from apps.extraction.services.approval_service import ExtractionApprovalService
 
+        if validation_result.is_valid and not dup_result.is_duplicate:
             auto_approval = ExtractionApprovalService.try_auto_approve(invoice, ext_result)
             if not auto_approval:
                 invoice.status = InvoiceStatus.PENDING_APPROVAL
                 invoice.save(update_fields=["status", "updated_at"])
                 ExtractionApprovalService.create_pending_approval(invoice, ext_result)
+        else:
+            # Validation issues or duplicate — still create PENDING approval
+            # so the human reviewer can see and decide.
+            invoice.status = InvoiceStatus.PENDING_APPROVAL
+            invoice.save(update_fields=["status", "updated_at"])
+            ExtractionApprovalService.create_pending_approval(invoice, ext_result)
 
         # Audit log
         from apps.auditlog.services import AuditService
@@ -477,6 +483,44 @@ def extraction_result_json(request, pk):
 
 
 # ────────────────────────────────────────────────────────────────
+# View PDF
+# ────────────────────────────────────────────────────────────────
+@login_required
+@permission_required_code("invoices.view")
+def extraction_view_pdf(request, pk):
+    """Redirect to the source PDF for an extraction result."""
+    ext = get_object_or_404(
+        ExtractionResult.objects.select_related("document_upload"),
+        pk=pk,
+    )
+    upload = ext.document_upload
+    if not upload:
+        raise Http404("No upload record found.")
+
+    # Option 1: Local file exists — serve via media URL
+    if upload.file and hasattr(upload.file, 'url'):
+        try:
+            return redirect(upload.file.url)
+        except Exception:
+            pass
+
+    # Option 2: Azure Blob — generate a time-limited SAS URL
+    if upload.blob_path:
+        try:
+            from apps.documents.blob_service import generate_blob_sas_url
+            sas_url = generate_blob_sas_url(upload.blob_path, expiry_minutes=30)
+            return redirect(sas_url)
+        except Exception:
+            pass
+
+    # Option 3: Direct blob_url stored on the model
+    if upload.blob_url:
+        return redirect(upload.blob_url)
+
+    raise Http404("Source document is not available.")
+
+
+# ────────────────────────────────────────────────────────────────
 # Re-extract
 # ────────────────────────────────────────────────────────────────
 @login_required
@@ -498,6 +542,10 @@ def extraction_rerun(request, pk):
         messages.error(request, "Original document is not available for re-extraction (no blob path).")
         return redirect("extraction:console", pk=pk)
 
+    # Capture reprocess reason from modal form
+    reason = request.POST.get("reason", "")
+    details = request.POST.get("details", "")
+
     try:
         from apps.documents.blob_service import download_blob_to_tempfile
         tmp_path = download_blob_to_tempfile(upload.blob_path)
@@ -509,6 +557,25 @@ def extraction_rerun(request, pk):
         result = _run_extraction_pipeline(upload, tmp_path)
         if result["success"]:
             _invalidate_extraction_caches(request.user)
+
+            # Log reprocess reason to audit trail
+            from apps.auditlog.services import AuditService
+            from apps.core.enums import AuditEventType
+            AuditService.log_event(
+                entity_type="ExtractionResult",
+                entity_id=result["extraction_result_id"],
+                event_type=AuditEventType.EXTRACTION_REPROCESSED,
+                description=f"Extraction reprocessed: {reason or 'no reason provided'}",
+                user=request.user,
+                invoice_id=ext.invoice_id,
+                metadata={
+                    "reason": reason,
+                    "details": details[:500] if details else "",
+                    "previous_extraction_id": ext.pk,
+                    "new_extraction_id": result["extraction_result_id"],
+                },
+            )
+
             messages.success(request, "Re-extraction completed successfully.")
             return redirect("extraction:console", pk=result["extraction_result_id"])
         else:
@@ -1454,11 +1521,17 @@ def extraction_console(request, pk):
         pipeline_stages.append({"key": key, "label": label, "state": state})
 
     # ── Extraction context for template ──
+    # Use invoice status as the canonical status when available
+    if invoice:
+        display_status = invoice.status
+    else:
+        display_status = "EXTRACTED" if ext.success else "FAILED"
+
     extraction_ctx = {
         "id": ext.pk,
         "file_name": ext.document_upload.original_filename if ext.document_upload else "Unknown",
-        "status": "EXTRACTED" if ext.success else "FAILED",
-        "confidence": ext.confidence,
+        "status": display_status,
+        "extraction_confidence": invoice.extraction_confidence if invoice else ext.confidence,
         "created_at": ext.created_at,
         "resolved_jurisdiction": extracted_data.get("jurisdiction") if isinstance(extracted_data, dict) else None,
         "jurisdiction_source": extracted_data.get("jurisdiction_source") if isinstance(extracted_data, dict) else None,
@@ -1471,10 +1544,29 @@ def extraction_console(request, pk):
     if invoice:
         from apps.extraction.models import ExtractionApproval
         approval = ExtractionApproval.objects.filter(invoice=invoice).first()
+        # Auto-create PENDING approval if missing for a validated invoice
+        if not approval and invoice.status in (InvoiceStatus.VALIDATED, InvoiceStatus.EXTRACTED):
+            from apps.extraction.services.approval_service import ExtractionApprovalService
+            try:
+                approval = ExtractionApprovalService.create_pending_approval(invoice, ext)
+            except Exception:
+                logger.warning("Could not auto-create approval for invoice %s", invoice.pk)
 
     # Permissions context
+    duplicate_blocks_approval = False
+    if invoice and invoice.is_duplicate and invoice.duplicate_of_id:
+        from apps.extraction.models import ExtractionApproval as _EA
+        from apps.core.enums import ExtractionApprovalStatus as _EAS
+        duplicate_blocks_approval = _EA.objects.filter(
+            invoice_id=invoice.duplicate_of_id,
+            status__in=[_EAS.APPROVED, _EAS.AUTO_APPROVED],
+        ).exists()
+
     permissions = {
-        "can_approve": request.user.has_permission("extraction.approve") if hasattr(request.user, "has_permission") else False,
+        "can_approve": (
+            request.user.has_permission("extraction.approve")
+            if hasattr(request.user, "has_permission") else False
+        ) and not duplicate_blocks_approval,
         "can_reprocess": request.user.has_permission("extraction.reprocess") if hasattr(request.user, "has_permission") else False,
         "can_escalate": request.user.has_permission("cases.escalate") if hasattr(request.user, "has_permission") else False,
     }
@@ -1550,6 +1642,54 @@ def extraction_console(request, pk):
     # Build evidence map keyed by field_key for inline display
     evidence_map = {e["field_key"]: e for e in evidence_entries}
 
+    # ── Cost & Token Usage from AgentRun ──
+    cost_token_data = None
+    try:
+        from apps.agents.models import AgentRun
+        from apps.core.enums import AgentType as _AT
+
+        agent_run = None
+        # Primary: use stored agent_run_id on ExtractionResult
+        if ext.agent_run_id:
+            agent_run = AgentRun.objects.filter(pk=ext.agent_run_id).first()
+        # Fallback: find INVOICE_EXTRACTION run by time proximity
+        if not agent_run:
+            from datetime import timedelta
+            window_start = ext.created_at - timedelta(minutes=5)
+            window_end = ext.created_at + timedelta(minutes=5)
+            agent_run = (
+                AgentRun.objects.filter(
+                    agent_type=_AT.INVOICE_EXTRACTION,
+                    created_at__gte=window_start,
+                    created_at__lte=window_end,
+                )
+                .order_by("-created_at")
+                .first()
+            )
+
+        if agent_run and agent_run.total_tokens:
+            prompt_tk = agent_run.prompt_tokens or 0
+            completion_tk = agent_run.completion_tokens or 0
+            total_tk = agent_run.total_tokens or 0
+            # GPT-4o pricing: $5/1M input, $15/1M output
+            cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
+            cost_display = cost.quantize(Decimal("0.000001"))
+            cost_token_data = {
+                "prompt_tokens": prompt_tk,
+                "completion_tokens": completion_tk,
+                "total_tokens": total_tk,
+                "cost_estimate": cost_display,
+                "llm_model": agent_run.llm_model_used or "gpt-4o",
+                "duration_ms": agent_run.duration_ms,
+                "agent_run_id": agent_run.pk,
+                "agent_type": agent_run.get_agent_type_display(),
+                "status": agent_run.status,
+                "started_at": agent_run.started_at,
+                "completed_at": agent_run.completed_at,
+            }
+    except Exception:
+        logger.debug("Could not load cost/token data for extraction %s", ext.pk)
+
     response = render(request, "extraction/console/console.html", {
         "extraction": extraction_ctx,
         "ext": ext,
@@ -1575,11 +1715,17 @@ def extraction_console(request, pk):
         "validation_field_issues": validation_field_issues,
         "pipeline_stages": pipeline_stages,
         "approval": approval,
+        "approval_status": approval.status if approval else None,
+        "is_duplicate": invoice.is_duplicate if invoice else False,
+        "duplicate_of_id": invoice.duplicate_of_id if invoice else None,
+        "duplicate_blocks_approval": duplicate_blocks_approval,
+        "invoice_status": invoice.status if invoice else None,
         "permissions": permissions,
         "assignable_users": assignable_users,
         "corrections": corrections,
         "correction_count": correction_count,
         "raw_json_pretty": raw_json_pretty,
+        "cost_token_data": cost_token_data,
     })
     response["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response

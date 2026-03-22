@@ -11,6 +11,7 @@ class InvoiceStatus(models.TextChoices):
     PENDING_APPROVAL = "PENDING_APPROVAL", "Pending Approval"
     READY_FOR_RECON = "READY_FOR_RECON", "Ready for Reconciliation"
     RECONCILED = "RECONCILED", "Reconciled"
+    SUPERSEDED = "SUPERSEDED", "Superseded"
     FAILED = "FAILED", "Failed"
 
 

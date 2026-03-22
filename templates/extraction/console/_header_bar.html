@@ -62,6 +62,25 @@
         </div>
         {% endif %}
 
+        {# Invoice status (canonical) #}
+        {% if invoice_status and invoice_status != extraction.status %}
+        <span class="badge {% if invoice_status == 'READY_FOR_RECON' or invoice_status == 'RECONCILED' %}bg-success-subtle text-success{% elif invoice_status == 'PENDING_APPROVAL' %}bg-warning-subtle text-warning{% elif invoice_status == 'INVALID' or invoice_status == 'FAILED' %}bg-danger-subtle text-danger{% else %}bg-info-subtle text-info{% endif %}">
+          <i class="bi bi-file-earmark-text me-1"></i>{{ invoice_status }}
+        </span>
+        {% endif %}
+
+        {# Duplicate warning #}
+        {% if is_duplicate %}
+        <span class="badge bg-danger" title="Duplicate of Invoice #{{ duplicate_of_id|default:'?' }}">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i>Duplicate
+        </span>
+        {% if duplicate_blocks_approval %}
+        <span class="badge bg-dark" title="Original invoice already approved — cannot approve this duplicate">
+          <i class="bi bi-lock-fill me-1"></i>Approval Blocked
+        </span>
+        {% endif %}
+        {% endif %}
+
         {# Approval state #}
         {% if approval_status %}
         <span class="badge exc-approval-badge exc-approval-{{ approval_status|lower }}">
@@ -109,26 +128,16 @@
         {% endif %}
         {% endif %}
 
-        {% if permissions.can_approve %}
+        {% if permissions.can_approve and approval and approval.status == 'PENDING' %}
         <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#approveModal">
           <i class="bi bi-check-circle me-1"></i>Approve
         </button>
         {% endif %}
 
-        {% if permissions.can_reprocess %}
+        {% if permissions.can_reprocess and ext.document_upload.blob_path %}
         <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#reprocessModal">
           <i class="bi bi-arrow-repeat me-1"></i>Reprocess
         </button>
-        {% endif %}
-
-        {# Re-extract from blob #}
-        {% if ext.document_upload.blob_path %}
-        <form method="post" action="{% url 'extraction:rerun' ext.pk %}" class="d-inline">
-          {% csrf_token %}
-          <button type="submit" class="btn btn-outline-primary btn-sm" title="Re-run extraction">
-            <i class="bi bi-arrow-repeat me-1"></i>Re-extract
-          </button>
-        </form>
         {% endif %}
 
         {% if permissions.can_escalate %}
@@ -148,6 +157,11 @@
         </a>
         {% endif %}
 
+        {# View PDF #}
+        <a href="{% url 'extraction:view_pdf' ext.pk %}" class="btn btn-outline-secondary btn-sm" target="_blank" title="View source document">
+          <i class="bi bi-file-earmark-pdf me-1"></i>View PDF
+        </a>
+
         {# Invoice Detail link #}
         {% if invoice %}
         <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="btn btn-outline-primary btn-sm" title="Full invoice view">
@@ -155,10 +169,10 @@
         </a>
         {% endif %}
 
-        {# Approval link #}
-        {% if approval %}
-        <a href="{% url 'extraction:approval_detail' approval.pk %}" class="btn btn-sm {% if approval.status == 'PENDING' %}btn-success{% else %}btn-outline-info{% endif %}" title="Extraction approval">
-          <i class="bi bi-{% if approval.status == 'PENDING' %}check-circle{% elif approval.status == 'APPROVED' or approval.status == 'AUTO_APPROVED' %}check-circle-fill{% else %}x-circle{% endif %} me-1"></i>{% if approval.status == 'PENDING' %}Review & Approve{% else %}{{ approval.status }}{% endif %}
+        {# Approval link — show only when NOT pending (already handled by Approve button) #}
+        {% if approval and approval.status != 'PENDING' %}
+        <a href="{% url 'extraction:approval_detail' approval.pk %}" class="btn btn-sm btn-outline-info" title="Extraction approval">
+          <i class="bi bi-{% if approval.status == 'APPROVED' or approval.status == 'AUTO_APPROVED' %}check-circle-fill{% else %}x-circle{% endif %} me-1"></i>{{ approval.status }}
         </a>
         {% endif %}
       </div>

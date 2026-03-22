@@ -209,4 +209,5 @@ class ExtractionResultPersistenceService:
             duration_ms=extraction_response.duration_ms,
             success=extraction_response.success,
             error_message=extraction_response.error_message,
+            agent_run_id=getattr(extraction_response, 'agent_run_id', None),
         )
