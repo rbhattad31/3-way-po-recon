@@ -1,0 +1,85 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}Compare Prompts — Control Center{% endblock %}
+
+{% block cc_content %}
+<div class="mb-3">
+  <a href="{% url 'extraction_control_center:prompt_list' %}" class="text-decoration-none text-muted small">
+    <i class="bi bi-arrow-left me-1"></i>Back to registry
+  </a>
+</div>
+
+<h5 class="fw-bold mb-4"><i class="bi bi-layout-split me-2 text-primary"></i>Compare Prompt Versions</h5>
+
+{# Version selector #}
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label small fw-semibold text-muted">Version A</label>
+        <select class="form-select form-select-sm" name="v1">
+          <option value="">Select…</option>
+          {% for p in prompts %}
+          <option value="{{ p.pk }}" {% if v1 and v1 == p.pk|stringformat:"d" %}selected{% endif %}>{{ p.prompt_code }} v{{ p.version }} ({{ p.status }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label small fw-semibold text-muted">Version B</label>
+        <select class="form-select form-select-sm" name="v2">
+          <option value="">Select…</option>
+          {% for p in prompts %}
+          <option value="{{ p.pk }}" {% if v2 and v2 == p.pk|stringformat:"d" %}selected{% endif %}>{{ p.prompt_code }} v{{ p.version }} ({{ p.status }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-arrow-left-right me-1"></i>Compare</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if comparison %}
+{# Metadata diff #}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-tag me-2"></i>Metadata Comparison</h6>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Field</th>
+            <th>Version A</th>
+            <th>Version B</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for field, vals in comparison.metadata.items %}
+          <tr {% if vals.0 != vals.1 %}class="table-warning"{% endif %}>
+            <td class="ps-3 text-muted small fw-semibold">{{ field }}</td>
+            <td>{{ vals.0|default:"—" }}</td>
+            <td>{{ vals.1|default:"—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{# Prompt text diff #}
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-code-square me-2"></i>Prompt Text Diff</h6>
+  </div>
+  <div class="card-body">
+    <pre class="bg-dark text-light p-3 rounded small" style="white-space: pre-wrap; max-height: 500px; overflow-y: auto;">{{ comparison.diff }}</pre>
+  </div>
+</div>
+{% elif v1 or v2 %}
+<div class="alert alert-info"><i class="bi bi-info-circle me-1"></i>Select both versions to compare.</div>
+{% endif %}
+{% endblock %}

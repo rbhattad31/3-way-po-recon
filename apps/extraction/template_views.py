@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -36,6 +37,20 @@ from apps.documents.models import DocumentUpload, Invoice, InvoiceLineItem
 from apps.extraction.models import ExtractionResult
 
 logger = logging.getLogger(__name__)
+
+# ── Cache keys & invalidation ──────────────────────────────────
+CACHE_KEY_APPROVAL_ANALYTICS = "extraction_approval_analytics"
+
+
+def _invalidate_extraction_caches(user=None):
+    """Clear cached workbench KPI stats and approval analytics.
+
+    Called after extraction runs or approval actions to ensure
+    the next page load sees fresh data.
+    """
+    if user:
+        cache.delete(f"extraction_workbench_stats:{user.pk}")
+    cache.delete(CACHE_KEY_APPROVAL_ANALYTICS)
 
 
 def _scope_extractions_for_user(qs, user):
@@ -91,20 +106,36 @@ def extraction_workbench(request):
     elif confidence_filter == "low":
         qs = qs.filter(confidence__lt=0.5, confidence__isnull=False)
 
-    # KPI stats (scoped to user visibility)
+    # KPI stats (scoped to user visibility, cached 60s)
     from django.db.models import Avg, Count, Q as Qf
-    all_results = _scope_extractions_for_user(ExtractionResult.objects.all(), request.user)
-    stats = {
-        "total": all_results.count(),
-        "success": all_results.filter(success=True).count(),
-        "failed": all_results.filter(success=False).count(),
-        "avg_confidence": all_results.filter(
-            success=True, confidence__isnull=False
-        ).aggregate(avg=Avg("confidence"))["avg"] or 0,
-        "avg_duration": all_results.filter(
-            success=True, duration_ms__isnull=False
-        ).aggregate(avg=Avg("duration_ms"))["avg"] or 0,
-    }
+    cache_key_stats = f"extraction_workbench_stats:{request.user.pk}"
+    cached = cache.get(cache_key_stats)
+    if cached:
+        stats = cached["stats"]
+        stats_cached_at = cached["cached_at"]
+    else:
+        all_results = _scope_extractions_for_user(ExtractionResult.objects.all(), request.user)
+        total = all_results.count()
+        success = all_results.filter(success=True).count()
+        failed = all_results.filter(success=False).count()
+        stats = {
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "success_rate": round(success / total * 100, 1) if total else 0,
+            "low_confidence": all_results.filter(
+                success=True, confidence__lt=0.5, confidence__isnull=False
+            ).count(),
+            "avg_confidence": all_results.filter(
+                success=True, confidence__isnull=False
+            ).aggregate(avg=Avg("confidence"))["avg"] or 0,
+            "avg_duration": all_results.filter(
+                success=True, duration_ms__isnull=False
+            ).aggregate(avg=Avg("duration_ms"))["avg"] or 0,
+        }
+        from django.utils import timezone as _tz
+        stats_cached_at = _tz.now()
+        cache.set(cache_key_stats, {"stats": stats, "cached_at": stats_cached_at}, 60)
 
     paginator = Paginator(qs, 20)
     page_obj = paginator.get_page(request.GET.get("page"))
@@ -161,18 +192,31 @@ def extraction_workbench(request):
         )
     approval_paginator = Paginator(approval_qs, 20)
     approval_page = approval_paginator.get_page(request.GET.get("approval_page"))
-    approval_analytics = ExtractionApprovalService.get_approval_analytics()
+
+    # Approval analytics (cached 60s, global — not user-scoped)
+    cached_analytics = cache.get(CACHE_KEY_APPROVAL_ANALYTICS)
+    if cached_analytics:
+        approval_analytics = cached_analytics["data"]
+        analytics_cached_at = cached_analytics["cached_at"]
+    else:
+        approval_analytics = ExtractionApprovalService.get_approval_analytics()
+        from django.utils import timezone as _tz
+        analytics_cached_at = _tz.now()
+        cache.set(CACHE_KEY_APPROVAL_ANALYTICS, {"data": approval_analytics, "cached_at": analytics_cached_at}, 60)
+
     active_tab = request.GET.get("tab", "runs")
 
     return render(request, "extraction/workbench.html", {
         "results": page_obj,
         "page_obj": page_obj,
         "stats": stats,
+        "stats_cached_at": stats_cached_at,
         "approval_map": approval_map,
         "approvals": approval_page,
         "approval_page_obj": approval_page,
         "approval_status_filter": approval_status_filter,
         "approval_analytics": approval_analytics,
+        "analytics_cached_at": analytics_cached_at,
         "approval_statuses": ExtractionApprovalStatus.choices,
         "active_tab": active_tab,
     })
@@ -234,13 +278,15 @@ def extraction_upload(request):
         result = _run_extraction_pipeline(doc_upload, tmp_path)
 
         if result["success"]:
+            _invalidate_extraction_caches(request.user)
             messages.success(
                 request,
                 f"Extraction completed for '{uploaded_file.name}' — "
                 f"confidence {result['confidence']:.0%}."
             )
-            return redirect("extraction:result_detail", pk=result["extraction_result_id"])
+            return redirect("extraction:console", pk=result["extraction_result_id"])
         else:
+            _invalidate_extraction_caches(request.user)
             messages.error(
                 request,
                 f"Extraction failed for '{uploaded_file.name}': {result['error']}"
@@ -407,62 +453,9 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
 @permission_required_code("invoices.view")
 @observed_action("extraction.view_result_detail", permission="invoices.view", entity_type="ExtractionResult")
 def extraction_result_detail(request, pk):
-    """Show detailed extraction results for a single run."""
-    ext = get_object_or_404(
-        ExtractionResult.objects.select_related(
-            "document_upload", "document_upload__uploaded_by",
-            "invoice", "invoice__vendor",
-        ),
-        pk=pk,
-    )
-
-    invoice = ext.invoice
-    line_items = []
-    validation_issues = []
-    has_line_tax = False
-
-    if invoice:
-        line_items = list(invoice.line_items.order_by("line_number"))
-        has_line_tax = any(
-            li.tax_amount and li.tax_amount != 0 for li in line_items
-        )
-        # Re-run validation to show issues in the UI
-        try:
-            from apps.extraction.services.parser_service import ExtractionParserService
-            from apps.extraction.services.normalization_service import NormalizationService
-            from apps.extraction.services.validation_service import ValidationService
-
-            if ext.raw_response:
-                parsed = ExtractionParserService().parse(ext.raw_response)
-                normalized = NormalizationService().normalize(parsed)
-                val_result = ValidationService().validate(normalized)
-                validation_issues = [
-                    {"field": v.field, "severity": v.severity, "message": v.message}
-                    for v in val_result.issues
-                ]
-        except Exception:
-            pass
-
-    # Raw JSON for display
-    raw_json_pretty = ""
-    if ext.raw_response:
-        raw_json_pretty = json.dumps(ext.raw_response, indent=2, default=str)
-
-    # Load approval record for this invoice
-    approval = None
-    if invoice:
-        from apps.extraction.models import ExtractionApproval
-        approval = ExtractionApproval.objects.filter(invoice=invoice).first()
-
-    return render(request, "extraction/result_detail.html", {
-        "ext": ext,
-        "invoice": invoice,
-        "line_items": line_items,
-        "has_line_tax": has_line_tax,
-        "validation_issues": validation_issues,
-        "raw_json_pretty": raw_json_pretty,
-        "approval": approval,
-    })
+    """Redirect to the unified console — result_detail is merged into console."""
+    get_object_or_404(ExtractionResult, pk=pk)  # 404 check
+    return redirect("extraction:console", pk=pk)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -503,23 +496,25 @@ def extraction_rerun(request, pk):
 
     if not upload.blob_path:
         messages.error(request, "Original document is not available for re-extraction (no blob path).")
-        return redirect("extraction:result_detail", pk=pk)
+        return redirect("extraction:console", pk=pk)
 
     try:
         from apps.documents.blob_service import download_blob_to_tempfile
         tmp_path = download_blob_to_tempfile(upload.blob_path)
     except Exception as exc:
         messages.error(request, f"Failed to download document: {exc}")
-        return redirect("extraction:result_detail", pk=pk)
+        return redirect("extraction:console", pk=pk)
 
     try:
         result = _run_extraction_pipeline(upload, tmp_path)
         if result["success"]:
+            _invalidate_extraction_caches(request.user)
             messages.success(request, "Re-extraction completed successfully.")
-            return redirect("extraction:result_detail", pk=result["extraction_result_id"])
+            return redirect("extraction:console", pk=result["extraction_result_id"])
         else:
+            _invalidate_extraction_caches(request.user)
             messages.error(request, f"Re-extraction failed: {result['error']}")
-            return redirect("extraction:result_detail", pk=pk)
+            return redirect("extraction:console", pk=pk)
     finally:
         try:
             os.unlink(tmp_path)
@@ -739,6 +734,13 @@ def extraction_edit_values(request, pk):
     except (json.JSONDecodeError, ValueError):
         return JsonResponse({"ok": False, "error": "Invalid JSON payload."}, status=400)
 
+    # Fetch linked approval (if any) for field-correction tracking
+    from apps.extraction.models import ExtractionApproval
+    from apps.extraction.models import ExtractionFieldCorrection
+
+    approval = ExtractionApproval.objects.filter(invoice=invoice).first()
+    correction_records = []
+
     # ── Update header fields ───────────────────────────────
     header = payload.get("header", {})
     changed_fields = []
@@ -747,7 +749,11 @@ def extraction_edit_values(request, pk):
     for field_name, value in header.items():
         if field_name not in EDITABLE_HEADER_FIELDS:
             continue
+        old_value = str(getattr(invoice, field_name, "") or "")
         value = str(value).strip()
+
+        if old_value == value:
+            continue
 
         if field_name == "invoice_date":
             try:
@@ -765,6 +771,17 @@ def extraction_edit_values(request, pk):
 
         changed_fields.append(field_name)
         update_fields.append(field_name)
+
+        if approval:
+            correction_records.append(ExtractionFieldCorrection(
+                approval=approval,
+                entity_type="header",
+                entity_id=None,
+                field_name=field_name,
+                original_value=old_value,
+                corrected_value=value,
+                corrected_by=request.user,
+            ))
 
     if changed_fields:
         invoice.save(update_fields=update_fields)
@@ -787,43 +804,71 @@ def extraction_edit_values(request, pk):
                 continue
             if field_name not in EDITABLE_LINE_FIELDS:
                 continue
+            old_value = str(getattr(line_item, field_name, "") or "")
             value = str(value).strip()
 
-            if field_name in ("quantity", "unit_price"):
-                try:
-                    setattr(line_item, field_name, Decimal(value) if value else None)
-                except InvalidOperation:
-                    continue
-            elif field_name in ("tax_amount", "line_amount"):
+            if old_value == value:
+                continue
+
+            if field_name in ("quantity", "unit_price", "tax_amount", "line_amount"):
                 try:
                     setattr(line_item, field_name, Decimal(value) if value else None)
                 except InvalidOperation:
                     continue
             else:
                 setattr(line_item, field_name, value)
+
             line_update_fields.append(field_name)
+
+            if approval:
+                correction_records.append(ExtractionFieldCorrection(
+                    approval=approval,
+                    entity_type="line_item",
+                    entity_id=line_item.pk,
+                    field_name=field_name,
+                    original_value=old_value,
+                    corrected_value=value,
+                    corrected_by=request.user,
+                ))
 
         if len(line_update_fields) > 1:
             line_item.save(update_fields=line_update_fields)
             lines_changed += 1
+
+    # ── Persist field correction records ───────────────────
+    if correction_records:
+        ExtractionFieldCorrection.objects.bulk_create(correction_records)
+
+    # Build field change details for audit
+    field_changes = []
+    for cr in correction_records:
+        field_changes.append({
+            "field": cr.field_name,
+            "entity": cr.entity_type,
+            "old": cr.original_value,
+            "new": cr.corrected_value,
+        })
 
     # ── Audit log ──────────────────────────────────────────
     from apps.auditlog.services import AuditService
     AuditService.log_event(
         entity_type="Invoice",
         entity_id=invoice.pk,
-        event_type=AuditEventType.EXTRACTION_COMPLETED,
+        event_type=AuditEventType.FIELD_CORRECTED,
         description=(
             f"Manual correction of extracted values for Invoice {invoice.invoice_number}: "
             f"header fields={changed_fields}, lines changed={lines_changed}"
         ),
         user=request.user,
+        invoice_id=invoice.pk,
         metadata={
-            "source": "extraction_workbench",
+            "source": "extraction_console",
             "action": "manual_edit",
             "header_fields_changed": changed_fields,
             "lines_changed": lines_changed,
+            "corrections_tracked": len(correction_records),
             "extraction_result_id": ext.pk,
+            "field_changes": field_changes,
         },
     )
 
@@ -831,6 +876,7 @@ def extraction_edit_values(request, pk):
         "ok": True,
         "header_fields_changed": changed_fields,
         "lines_changed": lines_changed,
+        "corrections_tracked": len(correction_records),
     })
 
 
@@ -970,6 +1016,8 @@ def extraction_approve(request, pk):
         except Exception as exc:
             logger.exception("AP Case creation failed after approval for invoice %s: %s", invoice.pk, exc)
 
+    _invalidate_extraction_caches(request.user)
+
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return JsonResponse({"ok": True, "status": "APPROVED"})
 
@@ -1006,6 +1054,8 @@ def extraction_reject(request, pk):
         ExtractionApprovalService.reject(approval, request.user, reason)
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+
+    _invalidate_extraction_caches(request.user)
 
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return JsonResponse({"ok": True, "status": "REJECTED"})
@@ -1352,13 +1402,15 @@ def extraction_console(request, pk):
         Q(invoice_id=invoice.pk if invoice else 0)
         | Q(entity_type="DocumentUpload", entity_id=ext.document_upload_id)
         | Q(entity_type="ExtractionResult", entity_id=ext.pk)
-    ).order_by("created_at")
+        | Q(entity_type="Invoice", entity_id=invoice.pk if invoice else 0)
+    ).order_by("-created_at")
 
     _event_badge_map = {
         "EXTRACTION_COMPLETED": "success",
         "EXTRACTION_STARTED": "info",
         "INVOICE_UPLOADED": "primary",
         "EXTRACTION_FAILED": "danger",
+        "FIELD_CORRECTED": "warning",
         "GUARDRAIL_GRANTED": "success",
         "GUARDRAIL_DENIED": "danger",
     }
@@ -1462,7 +1514,43 @@ def extraction_console(request, pk):
     except Exception:
         pass
 
-    return render(request, "extraction/console/console.html", {
+    # ── Also include ExtractionFieldCorrection records (from Edit Values / Approval) ──
+    if approval:
+        from apps.extraction.models import ExtractionFieldCorrection
+        field_corrections = (
+            ExtractionFieldCorrection.objects
+            .filter(approval=approval)
+            .select_related("corrected_by")
+            .order_by("-created_at")
+        )
+        for fc in field_corrections:
+            corrections.append({
+                "field_code": fc.field_name,
+                "original_value": fc.original_value,
+                "corrected_value": fc.corrected_value,
+                "correction_reason": f"{fc.entity_type} correction",
+                "corrected_by": fc.corrected_by,
+                "created_at": fc.created_at,
+            })
+        correction_count = len(corrections)
+
+    # ── Merged from result_detail: raw JSON, line item models, has_line_tax ──
+    raw_json_pretty = ""
+    if ext.raw_response:
+        raw_json_pretty = json.dumps(ext.raw_response, indent=2, default=str)
+
+    has_line_tax = False
+    line_items_raw = []
+    if invoice:
+        line_items_raw = list(invoice.line_items.order_by("line_number"))
+        has_line_tax = any(
+            li.tax_amount and li.tax_amount != 0 for li in line_items_raw
+        )
+
+    # Build evidence map keyed by field_key for inline display
+    evidence_map = {e["field_key"]: e for e in evidence_entries}
+
+    response = render(request, "extraction/console/console.html", {
         "extraction": extraction_ctx,
         "ext": ext,
         "invoice": invoice,
@@ -1471,7 +1559,10 @@ def extraction_console(request, pk):
         "parties": parties,
         "enrichment": enrichment,
         "line_items": line_items,
+        "line_items_raw": line_items_raw,
+        "has_line_tax": has_line_tax,
         "evidence_entries": evidence_entries,
+        "evidence_map": evidence_map,
         "reasoning_blocks": reasoning_blocks,
         "audit_events": audit_events,
         "validation_issues": errors + warnings,
@@ -1488,31 +1579,7 @@ def extraction_console(request, pk):
         "assignable_users": assignable_users,
         "corrections": corrections,
         "correction_count": correction_count,
+        "raw_json_pretty": raw_json_pretty,
     })
-
-
-# ────────────────────────────────────────────────────────────────
-# Country Pack List — governance overview
-# ────────────────────────────────────────────────────────────────
-@login_required
-@permission_required_code("extraction.view")
-def country_pack_list(request):
-    """Country pack governance page showing all jurisdiction packs."""
-    from apps.extraction_core.models import CountryPack
-
-    packs = (
-        CountryPack.objects
-        .select_related("jurisdiction")
-        .order_by("jurisdiction__country_code")
-    )
-    active_count = packs.filter(pack_status="ACTIVE").count()
-    draft_count = packs.filter(pack_status="DRAFT").count()
-    deprecated_count = packs.filter(pack_status="DEPRECATED").count()
-
-    return render(request, "extraction/country_packs.html", {
-        "packs": packs,
-        "total_packs": packs.count(),
-        "active_count": active_count,
-        "draft_count": draft_count,
-        "deprecated_count": deprecated_count,
-    })
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response

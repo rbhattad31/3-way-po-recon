@@ -60,25 +60,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   }
 
-  // ── Edit mode toggle ──
-  var editToggle = document.getElementById('toggleEditMode');
-  if (editToggle) {
-    editToggle.addEventListener('change', function () {
-      var rows = document.querySelectorAll('.exc-field-row');
-      rows.forEach(function (row) {
-        row.classList.toggle('exc-editing', editToggle.checked);
-      });
-    });
-  }
-
-  // Track field edits
-  document.querySelectorAll('.exc-field-edit').forEach(function (input) {
-    input.addEventListener('input', function () {
-      var original = input.dataset.original || '';
-      input.classList.toggle('exc-modified', input.value !== original);
-    });
-  });
-
   // ── Go-to-field navigation ──
   document.querySelectorAll('.exc-goto-field').forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -103,45 +84,6 @@ document.addEventListener('DOMContentLoaded', function () {
       }, 200);
     });
   });
-
-  // ── Evidence field — switch to evidence tab ──
-  document.querySelectorAll('.exc-evidence-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var field = btn.dataset.field;
-
-      // Switch to evidence tab
-      var evidenceTab = document.querySelector('[data-bs-target="#tab-evidence"]');
-      if (evidenceTab) {
-        var tab = new bootstrap.Tab(evidenceTab);
-        tab.show();
-      }
-
-      // Highlight matching evidence card
-      setTimeout(function () {
-        var card = document.querySelector('[data-evidence-field="' + field + '"]');
-        if (card) {
-          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          card.classList.add('border-primary');
-          setTimeout(function () { card.classList.remove('border-primary'); }, 2000);
-        }
-      }, 200);
-    });
-  });
-
-  // ── Evidence filter by field ──
-  var evidenceFilter = document.getElementById('evidenceFieldFilter');
-  if (evidenceFilter) {
-    evidenceFilter.addEventListener('change', function () {
-      var selectedField = evidenceFilter.value;
-      document.querySelectorAll('.exc-evidence-card').forEach(function (card) {
-        if (!selectedField || card.dataset.evidenceField === selectedField) {
-          card.classList.remove('d-none');
-        } else {
-          card.classList.add('d-none');
-        }
-      });
-    });
-  }
 
   // ── Line item expand/collapse ──
   document.querySelectorAll('.exc-line-expand').forEach(function (btn) {

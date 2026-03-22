@@ -14,10 +14,6 @@
         <i class="bi bi-exclamation-diamond me-1"></i>Low Confidence
       </button>
     </div>
-    <div class="form-check form-switch">
-      <input class="form-check-input" type="checkbox" id="toggleEditMode">
-      <label class="form-check-label small" for="toggleEditMode">Edit Mode</label>
-    </div>
   </div>
 
   {# ── Header Fields Card ── #}
@@ -31,11 +27,11 @@
       <table class="table table-sm exc-field-table mb-0">
         <thead>
           <tr>
-            <th style="width:25%">Field</th>
-            <th style="width:35%">Value</th>
+            <th style="width:28%">Field</th>
+            <th style="width:37%">Value</th>
             <th style="width:15%">Confidence</th>
             <th style="width:10%">Method</th>
-            <th style="width:15%">Actions</th>
+            <th style="width:10%"></th>
           </tr>
         </thead>
         <tbody>
@@ -48,9 +44,6 @@
             </td>
             <td>
               <span class="exc-field-value" id="val-{{ key }}">{{ field.value|default:"—" }}</span>
-              <input type="text" class="form-control form-control-sm exc-field-edit d-none"
-                     id="edit-{{ key }}" value="{{ field.value|default:'' }}"
-                     data-original="{{ field.value|default:'' }}">
               {% if field.raw_value and field.raw_value != field.value %}
               <small class="text-muted d-block" title="Raw value">{{ field.raw_value }}</small>
               {% endif %}
@@ -62,18 +55,33 @@
               <span class="badge bg-light text-dark border small">{{ field.method|default:"DET" }}</span>
             </td>
             <td class="text-end">
-              {% if field.evidence %}
-              <button class="btn btn-sm btn-link p-0 exc-evidence-btn" data-field="{{ key }}"
-                      title="View evidence">
-                <i class="bi bi-search"></i>
-              </button>
-              {% endif %}
               {% if key in validation_field_issues %}
-              <i class="bi bi-exclamation-triangle text-warning ms-1" 
+              <i class="bi bi-exclamation-triangle text-warning" 
                  title="Validation issue" data-field="{{ key }}"></i>
               {% endif %}
             </td>
           </tr>
+          {# Inline evidence row #}
+          {% with ev=evidence_map|default:"" %}
+          {% if ev %}
+          <tr class="exc-evidence-inline" data-field-key="{{ key }}">
+            <td colspan="5" class="py-1 ps-4 border-0" style="background: var(--bs-light, #f8f9fa);">
+              <div class="d-flex align-items-center gap-3 small text-muted">
+                <i class="bi bi-search text-primary opacity-50"></i>
+                <span><i class="bi bi-file-earmark me-1"></i>Page 1</span>
+                <span><i class="bi bi-robot me-1"></i>LLM</span>
+                {% if field.confidence >= 0.85 %}
+                <span class="text-success"><i class="bi bi-check-circle me-1"></i>High confidence</span>
+                {% elif field.confidence >= 0.5 %}
+                <span class="text-warning"><i class="bi bi-dash-circle me-1"></i>Medium confidence</span>
+                {% else %}
+                <span class="text-danger"><i class="bi bi-x-circle me-1"></i>Low confidence</span>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endif %}
+          {% endwith %}
           {% empty %}
           <tr><td colspan="5" class="text-center text-muted py-3">No header fields extracted</td></tr>
           {% endfor %}
@@ -82,163 +90,6 @@
     </div>
   </div>
 
-  {# ── Parties Card ── #}
-  {% if parties %}
-  <div class="card exc-field-card mb-3 exc-supplementary-card" id="partiesCard">
-    <div class="card-header py-2 px-3 d-flex align-items-center">
-      <i class="bi bi-building me-2 text-info"></i>
-      <span class="fw-semibold small">Parties</span>
-    </div>
-    <div class="card-body p-2">
-      <div class="row g-2">
-        {% for role, party_list in parties.items %}
-        {% for party in party_list %}
-        <div class="col-md-6">
-          <div class="exc-party-card p-2 rounded border">
-            <div class="d-flex justify-content-between align-items-start">
-              <div>
-                <span class="badge bg-secondary-subtle text-secondary mb-1">{{ role }}</span>
-                <div class="fw-semibold">{{ party.name }}</div>
-                {% if party.tax_id %}
-                <small class="text-muted"><i class="bi bi-hash me-1"></i>{{ party.tax_id }}</small>
-                {% endif %}
-                {% if party.address %}
-                <small class="text-muted d-block mt-1">
-                  {{ party.address.line1 }}{% if party.address.city %}, {{ party.address.city }}{% endif %}
-                  {% if party.address.postal_code %} {{ party.address.postal_code }}{% endif %}
-                </small>
-                {% endif %}
-              </div>
-              {% include "extraction/console/_confidence_badge.html" with confidence=party.confidence %}
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  {# ── Tax / Jurisdiction Card ── #}
-  <div class="card exc-field-card mb-3">
-    <div class="card-header py-2 px-3 d-flex align-items-center">
-      <i class="bi bi-percent me-2 text-success"></i>
-      <span class="fw-semibold small">Tax &amp; Jurisdiction</span>
-    </div>
-    <div class="card-body p-0">
-      {# Jurisdiction metadata row #}
-      {% if extraction.resolved_jurisdiction %}
-      <div class="px-3 py-2 border-bottom bg-light">
-        <div class="d-flex gap-3 flex-wrap small">
-          <span><strong>Country:</strong> {{ extraction.resolved_jurisdiction.country_code|default:"—" }}</span>
-          <span><strong>Regime:</strong> {{ extraction.resolved_jurisdiction.regime_code|default:"—" }}</span>
-          <span><strong>Source:</strong> {{ extraction.jurisdiction_source|default:"—" }}</span>
-          <span><strong>Confidence:</strong> {{ extraction.jurisdiction_confidence|floatformat:2|default:"—" }}</span>
-          {% if extraction.jurisdiction_warning %}
-          <span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>{{ extraction.jurisdiction_warning }}</span>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-
-      <table class="table table-sm exc-field-table mb-0">
-        <thead>
-          <tr>
-            <th style="width:25%">Field</th>
-            <th style="width:35%">Value</th>
-            <th style="width:15%">Confidence</th>
-            <th style="width:10%">Method</th>
-            <th style="width:15%">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for key, field in tax_fields.items %}
-          <tr class="exc-field-row {% if field.confidence < 0.5 %}exc-low-confidence{% elif field.confidence < 0.75 %}exc-med-confidence{% endif %}"
-              data-field-key="{{ key }}" data-category="tax">
-            <td>
-              <span class="exc-field-label">{{ field.display_name|default:key }}</span>
-              {% if field.is_mandatory %}<i class="bi bi-asterisk text-danger small" title="Mandatory"></i>{% endif %}
-            </td>
-            <td>
-              <span class="exc-field-value" id="val-{{ key }}">{{ field.value|default:"—" }}</span>
-              <input type="text" class="form-control form-control-sm exc-field-edit d-none"
-                     id="edit-{{ key }}" value="{{ field.value|default:'' }}"
-                     data-original="{{ field.value|default:'' }}">
-            </td>
-            <td>
-              {% include "extraction/console/_confidence_badge.html" with confidence=field.confidence %}
-            </td>
-            <td>
-              <span class="badge bg-light text-dark border small">{{ field.method|default:"DET" }}</span>
-            </td>
-            <td class="text-end">
-              {% if field.evidence %}
-              <button class="btn btn-sm btn-link p-0 exc-evidence-btn" data-field="{{ key }}" title="View evidence">
-                <i class="bi bi-search"></i>
-              </button>
-              {% endif %}
-            </td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="5" class="text-center text-muted py-3">No tax fields extracted</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  {# ── Enrichment Card (Master Data Matches) ── #}
-  {% if enrichment %}
-  <div class="card exc-field-card mb-3 exc-supplementary-card" id="enrichmentCard">
-    <div class="card-header py-2 px-3 d-flex align-items-center">
-      <i class="bi bi-link-45deg me-2 text-purple"></i>
-      <span class="fw-semibold small">Master Data Matches</span>
-    </div>
-    <div class="card-body p-2">
-      <div class="row g-2">
-        {# Vendor match #}
-        <div class="col-md-4">
-          <div class="exc-match-card p-2 rounded border">
-            <small class="text-muted d-block">Vendor</small>
-            {% if enrichment.vendor_match.match_type != "NOT_FOUND" %}
-            <div class="fw-semibold">{{ enrichment.vendor_match.entity_name }}</div>
-            <small class="text-muted">{{ enrichment.vendor_match.entity_code }}</small>
-            <span class="badge bg-success-subtle text-success ms-1">{{ enrichment.vendor_match.match_type }}</span>
-            {% else %}
-            <div class="text-muted">Not matched</div>
-            {% endif %}
-          </div>
-        </div>
-        {# Customer match #}
-        <div class="col-md-4">
-          <div class="exc-match-card p-2 rounded border">
-            <small class="text-muted d-block">Customer</small>
-            {% if enrichment.customer_match.match_type != "NOT_FOUND" %}
-            <div class="fw-semibold">{{ enrichment.customer_match.entity_name }}</div>
-            <span class="badge bg-success-subtle text-success ms-1">{{ enrichment.customer_match.match_type }}</span>
-            {% else %}
-            <div class="text-muted">Not matched</div>
-            {% endif %}
-          </div>
-        </div>
-        {# PO lookup #}
-        <div class="col-md-4">
-          <div class="exc-match-card p-2 rounded border">
-            <small class="text-muted d-block">Purchase Order</small>
-            {% if enrichment.po_lookup.found %}
-            <div class="fw-semibold">{{ enrichment.po_lookup.po_number }}</div>
-            <small class="text-muted">{{ enrichment.po_lookup.po_status }} · {{ enrichment.po_lookup.currency }} {{ enrichment.po_lookup.total_amount|floatformat:2 }}</small>
-            {% else %}
-            <div class="text-muted">Not found</div>
-            {% endif %}
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
   {# ── Line Items Card ── #}
   <div class="card exc-field-card mb-3">
     <div class="card-header py-2 px-3 d-flex align-items-center">
@@ -246,6 +97,14 @@
       <span class="fw-semibold small">Line Items</span>
       <span class="badge bg-light text-dark ms-auto small">{{ line_items|length|default:"0" }} rows</span>
     </div>
+    {% if line_items %}
+    <div class="px-3 py-1 border-bottom small text-muted d-flex align-items-center gap-3" style="background: var(--bs-light, #f8f9fa);">
+      <i class="bi bi-search text-primary opacity-50"></i>
+      <span><i class="bi bi-file-earmark me-1"></i>Page 1</span>
+      <span><i class="bi bi-robot me-1"></i>LLM extraction</span>
+      <span><i class="bi bi-table me-1"></i>Table detection</span>
+    </div>
+    {% endif %}
     <div class="card-body p-0">
       <div class="table-responsive">
         <table class="table table-sm exc-line-items-table mb-0">
@@ -311,6 +170,158 @@
       </div>
     </div>
   </div>
+
+  {# ── Parties + Tax / Jurisdiction Row ── #}
+  <div class="row g-3 mb-3">
+    {# Parties column #}
+    {% if parties %}
+    <div class="col-md-6">
+      <div class="card exc-field-card h-100 exc-supplementary-card" id="partiesCard">
+        <div class="card-header py-2 px-3 d-flex align-items-center">
+          <i class="bi bi-building me-2 text-info"></i>
+          <span class="fw-semibold small">Parties</span>
+        </div>
+        <div class="card-body p-2">
+          <div class="row g-2">
+            {% for role, party_list in parties.items %}
+            {% for party in party_list %}
+            <div class="col-12">
+              <div class="exc-party-card p-2 rounded border">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div>
+                    <span class="badge bg-secondary-subtle text-secondary mb-1">{{ role }}</span>
+                    <div class="fw-semibold">{{ party.name }}</div>
+                    {% if party.tax_id %}
+                    <small class="text-muted"><i class="bi bi-hash me-1"></i>{{ party.tax_id }}</small>
+                    {% endif %}
+                    {% if party.address %}
+                    <small class="text-muted d-block mt-1">
+                      {{ party.address.line1 }}{% if party.address.city %}, {{ party.address.city }}{% endif %}
+                      {% if party.address.postal_code %} {{ party.address.postal_code }}{% endif %}
+                    </small>
+                    {% endif %}
+                  </div>
+                  {% include "extraction/console/_confidence_badge.html" with confidence=party.confidence %}
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Tax / Jurisdiction column #}
+    <div class="{% if parties %}col-md-6{% else %}col-12{% endif %}">
+      <div class="card exc-field-card h-100">
+        <div class="card-header py-2 px-3 d-flex align-items-center">
+          <i class="bi bi-percent me-2 text-success"></i>
+          <span class="fw-semibold small">Tax &amp; Jurisdiction</span>
+        </div>
+        <div class="card-body p-0">
+          {# Jurisdiction metadata row #}
+          {% if extraction.resolved_jurisdiction %}
+          <div class="px-3 py-2 border-bottom bg-light">
+            <div class="d-flex gap-3 flex-wrap small">
+              <span><strong>Country:</strong> {{ extraction.resolved_jurisdiction.country_code|default:"—" }}</span>
+              <span><strong>Regime:</strong> {{ extraction.resolved_jurisdiction.regime_code|default:"—" }}</span>
+              <span><strong>Source:</strong> {{ extraction.jurisdiction_source|default:"—" }}</span>
+              <span><strong>Confidence:</strong> {{ extraction.jurisdiction_confidence|floatformat:2|default:"—" }}</span>
+              {% if extraction.jurisdiction_warning %}
+              <span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>{{ extraction.jurisdiction_warning }}</span>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+
+          <table class="table table-sm exc-field-table mb-0">
+            <thead>
+              <tr>
+                <th style="width:30%">Field</th>
+                <th style="width:35%">Value</th>
+                <th style="width:15%">Confidence</th>
+                <th style="width:20%">Method</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for key, field in tax_fields.items %}
+              <tr class="exc-field-row {% if field.confidence < 0.5 %}exc-low-confidence{% elif field.confidence < 0.75 %}exc-med-confidence{% endif %}"
+                  data-field-key="{{ key }}" data-category="tax">
+                <td>
+                  <span class="exc-field-label">{{ field.display_name|default:key }}</span>
+                </td>
+                <td>
+                  <span class="exc-field-value" id="val-{{ key }}">{{ field.value|default:"—" }}</span>
+                </td>
+                <td>
+                  {% include "extraction/console/_confidence_badge.html" with confidence=field.confidence %}
+                </td>
+                <td>
+                  <span class="badge bg-light text-dark border small">{{ field.method|default:"DET" }}</span>
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="4" class="text-center text-muted py-3">No tax fields extracted</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Enrichment Card (Master Data Matches) ── #}
+  {% if enrichment %}
+  <div class="card exc-field-card mb-3 exc-supplementary-card" id="enrichmentCard">
+    <div class="card-header py-2 px-3 d-flex align-items-center">
+      <i class="bi bi-link-45deg me-2 text-purple"></i>
+      <span class="fw-semibold small">Master Data Matches</span>
+    </div>
+    <div class="card-body p-2">
+      <div class="row g-2">
+        {# Vendor match #}
+        <div class="col-md-4">
+          <div class="exc-match-card p-2 rounded border">
+            <small class="text-muted d-block">Vendor</small>
+            {% if enrichment.vendor_match.match_type != "NOT_FOUND" %}
+            <div class="fw-semibold">{{ enrichment.vendor_match.entity_name }}</div>
+            <small class="text-muted">{{ enrichment.vendor_match.entity_code }}</small>
+            <span class="badge bg-success-subtle text-success ms-1">{{ enrichment.vendor_match.match_type }}</span>
+            {% else %}
+            <div class="text-muted">Not matched</div>
+            {% endif %}
+          </div>
+        </div>
+        {# Customer match #}
+        <div class="col-md-4">
+          <div class="exc-match-card p-2 rounded border">
+            <small class="text-muted d-block">Customer</small>
+            {% if enrichment.customer_match.match_type != "NOT_FOUND" %}
+            <div class="fw-semibold">{{ enrichment.customer_match.entity_name }}</div>
+            <span class="badge bg-success-subtle text-success ms-1">{{ enrichment.customer_match.match_type }}</span>
+            {% else %}
+            <div class="text-muted">Not matched</div>
+            {% endif %}
+          </div>
+        </div>
+        {# PO lookup #}
+        <div class="col-md-4">
+          <div class="exc-match-card p-2 rounded border">
+            <small class="text-muted d-block">Purchase Order</small>
+            {% if enrichment.po_lookup.found %}
+            <div class="fw-semibold">{{ enrichment.po_lookup.po_number }}</div>
+            <small class="text-muted">{{ enrichment.po_lookup.po_status }} · {{ enrichment.po_lookup.currency }} {{ enrichment.po_lookup.total_amount|floatformat:2 }}</small>
+            {% else %}
+            <div class="text-muted">Not found</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   {# Empty state shown when filters hide all rows #}
   <div class="exc-filter-empty d-none" id="filterEmptyState">

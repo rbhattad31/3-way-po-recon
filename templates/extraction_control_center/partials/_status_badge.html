@@ -1,0 +1,11 @@
+{% if status == 'ACTIVE' or status == 'COMPLETED' or status == 'APPROVED' or status == True %}
+  <span class="badge bg-success-subtle text-success">{{ label|default:status }}</span>
+{% elif status == 'DRAFT' or status == 'PENDING' %}
+  <span class="badge bg-secondary-subtle text-secondary">{{ label|default:status }}</span>
+{% elif status == 'INACTIVE' or status == 'DEPRECATED' or status == 'FAILED' or status == 'REJECTED' or status == False %}
+  <span class="badge bg-danger-subtle text-danger">{{ label|default:status }}</span>
+{% elif status == 'IN_PROGRESS' or status == 'RUNNING' %}
+  <span class="badge bg-primary-subtle text-primary">{{ label|default:status }}</span>
+{% else %}
+  <span class="badge bg-warning-subtle text-warning">{{ label|default:status }}</span>
+{% endif %}

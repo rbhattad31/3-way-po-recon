@@ -1,0 +1,149 @@
+/* ═══════════════════════════════════════════════════════════════
+   Extraction Control Center — CSS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Sidebar */
+.cc-sidebar {
+  width: 240px;
+  min-height: calc(100vh - 72px);
+  background: var(--bs-body-bg, #fff);
+  border-right: 1px solid var(--bs-border-color, #dee2e6);
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.cc-sidebar-header {
+  padding: 1rem 1.25rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+  color: var(--bs-primary, #0d6efd);
+}
+
+.cc-sidebar-nav {
+  list-style: none;
+  padding: 0.5rem 0;
+  margin: 0;
+}
+
+.cc-sidebar-nav li a {
+  display: block;
+  padding: 0.45rem 1.25rem;
+  color: var(--bs-body-color, #212529);
+  text-decoration: none;
+  font-size: 0.825rem;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.cc-sidebar-nav li a:hover {
+  background-color: var(--bs-tertiary-bg, #f8f9fa);
+  color: var(--bs-primary, #0d6efd);
+}
+
+.cc-sidebar-nav li a.active {
+  background-color: rgba(var(--bs-primary-rgb, 13, 110, 253), 0.08);
+  color: var(--bs-primary, #0d6efd);
+  font-weight: 600;
+  border-left: 3px solid var(--bs-primary, #0d6efd);
+  padding-left: calc(1.25rem - 3px);
+}
+
+.cc-sidebar-nav li a i {
+  width: 1.25rem;
+  text-align: center;
+  margin-right: 0.5rem;
+}
+
+.cc-sidebar-section {
+  padding: 0.75rem 1.25rem 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+/* Main content area */
+.cc-main {
+  min-width: 0;
+}
+
+.cc-content {
+  padding: 1.5rem;
+}
+
+/* Header breadcrumb bar */
+.cc-header {
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+  background: var(--bs-body-bg, #fff);
+}
+
+/* Stat cards */
+.cc-stat-card .cc-stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.cc-stat-card .cc-stat-label {
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color, #6c757d);
+  margin-top: 0.25rem;
+}
+
+/* Sticky footer for form pages */
+.cc-sticky-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bs-body-bg, #fff);
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--bs-border-color, #dee2e6);
+  z-index: 10;
+}
+
+/* Action cards */
+.cc-action-card {
+  transition: transform 0.15s, box-shadow 0.15s;
+  cursor: pointer;
+}
+
+.cc-action-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Responsive: collapse sidebar on small screens */
+@media (max-width: 991.98px) {
+  .cc-sidebar {
+    width: 100%;
+    min-height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+  }
+  .cc-sidebar-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.5rem 1rem;
+  }
+  .cc-sidebar-nav li a {
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+  }
+  .cc-sidebar-nav li a.active {
+    border-left: none;
+    padding-left: 0.75rem;
+  }
+  .cc-sidebar-section {
+    width: 100%;
+    padding: 0.5rem 0 0.15rem;
+  }
+  .d-flex > .cc-sidebar + .cc-main {
+    width: 100%;
+  }
+  .d-flex:has(.cc-sidebar) {
+    flex-direction: column;
+  }
+}

@@ -36,13 +36,6 @@
               </button>
             </li>
             <li class="nav-item" role="presentation">
-              <button class="nav-link" id="tab-evidence" data-bs-toggle="pill"
-                      data-bs-target="#panel-evidence" type="button" role="tab"
-                      aria-controls="panel-evidence" aria-selected="false">
-                <i class="bi bi-search me-1"></i>Evidence
-              </button>
-            </li>
-            <li class="nav-item" role="presentation">
               <button class="nav-link" id="tab-reasoning" data-bs-toggle="pill"
                       data-bs-target="#panel-reasoning" type="button" role="tab"
                       aria-controls="panel-reasoning" aria-selected="false">
@@ -66,6 +59,13 @@
                 {% endif %}
               </button>
             </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-rawjson" data-bs-toggle="pill"
+                      data-bs-target="#panel-rawjson" type="button" role="tab"
+                      aria-controls="panel-rawjson" aria-selected="false">
+                <i class="bi bi-code-slash me-1"></i>Raw JSON
+              </button>
+            </li>
           </ul>
         </div>
         <div class="card-body p-0">
@@ -78,11 +78,7 @@
             <div class="tab-pane fade" id="panel-validation" role="tabpanel" aria-labelledby="tab-validation">
               {% include "extraction/console/_validation_panel.html" %}
             </div>
-            {# Tab 3: Evidence #}
-            <div class="tab-pane fade" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence">
-              {% include "extraction/console/_evidence_panel.html" %}
-            </div>
-            {# Tab 4: Agent Reasoning #}
+            {# Tab 3: Agent Reasoning #}
             <div class="tab-pane fade" id="panel-reasoning" role="tabpanel" aria-labelledby="tab-reasoning">
               {% include "extraction/console/_reasoning_panel.html" %}
             </div>
@@ -93,6 +89,10 @@
             {# Tab 6: Corrections #}
             <div class="tab-pane fade" id="panel-corrections" role="tabpanel" aria-labelledby="tab-corrections">
               {% include "extraction/console/_corrections_panel.html" %}
+            </div>
+            {# Tab 7: Raw JSON & Document Details #}
+            <div class="tab-pane fade" id="panel-rawjson" role="tabpanel" aria-labelledby="tab-rawjson">
+              {% include "extraction/console/_raw_json_panel.html" %}
             </div>
           </div>
         </div>
@@ -110,9 +110,64 @@
 {% include "extraction/console/_reprocess_modal.html" %}
 {% include "extraction/console/_escalate_modal.html" %}
 {% include "extraction/console/_comment_modal.html" %}
+{% include "extraction/console/_edit_modal.html" %}
 
 {% endblock %}
 
 {% block extra_js %}
 <script src="{% static 'js/extraction_console.js' %}?v={{ static_version }}"></script>
+{% if invoice %}
+<script>
+(function() {
+  var saveBtn = document.getElementById('saveEditBtn');
+  if (!saveBtn) return;
+
+  saveBtn.addEventListener('click', function() {
+    var header = {};
+    document.querySelectorAll('.edit-header').forEach(function(inp) {
+      header[inp.dataset.field] = inp.value;
+    });
+
+    var lines = [];
+    document.querySelectorAll('#editModal tr[data-line-pk]').forEach(function(row) {
+      var lineData = { pk: parseInt(row.dataset.linePk, 10) };
+      row.querySelectorAll('.edit-line').forEach(function(inp) {
+        lineData[inp.dataset.field] = inp.value;
+      });
+      lines.push(lineData);
+    });
+
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+
+    fetch("{% url 'extraction:edit_values' ext.pk %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({ header: header, lines: lines })
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
+        if (modal) modal.hide();
+        window.location.reload();
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Corrections';
+      }
+    })
+    .catch(function(err) {
+      alert('Network error: ' + err);
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Corrections';
+    });
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

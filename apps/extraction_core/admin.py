@@ -11,9 +11,11 @@ from apps.extraction_core.models import (
     ExtractionFieldValue,
     ExtractionIssue,
     ExtractionLineItem,
+    ExtractionPromptTemplate,
     ExtractionRun,
     ExtractionRuntimeSettings,
     ExtractionSchemaDefinition,
+    ReviewRoutingRule,
     TaxJurisdictionProfile,
 )
 
@@ -307,3 +309,74 @@ class CountryPackAdmin(admin.ModelAdmin):
     list_filter = ["pack_status"]
     raw_id_fields = ["jurisdiction"]
     readonly_fields = ["created_at", "updated_at"]
+
+
+@admin.register(ExtractionPromptTemplate)
+class ExtractionPromptTemplateAdmin(admin.ModelAdmin):
+    list_display = [
+        "prompt_code",
+        "prompt_category",
+        "country_code",
+        "regime_code",
+        "document_type",
+        "version",
+        "status",
+        "is_active",
+        "updated_at",
+    ]
+    list_filter = ["status", "prompt_category", "country_code", "is_active"]
+    search_fields = ["prompt_code", "prompt_text"]
+    readonly_fields = ["created_at", "updated_at"]
+    fieldsets = (
+        (None, {
+            "fields": (
+                "prompt_code", "prompt_category", "version", "status",
+            ),
+        }),
+        ("Scope", {
+            "fields": (
+                "country_code", "regime_code", "document_type", "schema_code",
+            ),
+        }),
+        ("Content", {
+            "fields": ("prompt_text", "variables_json"),
+        }),
+        ("Validity", {
+            "fields": ("effective_from", "effective_to", "is_active"),
+        }),
+        ("Audit", {
+            "fields": ("created_at", "updated_at", "created_by", "updated_by"),
+            "classes": ("collapse",),
+        }),
+    )
+
+
+@admin.register(ReviewRoutingRule)
+class ReviewRoutingRuleAdmin(admin.ModelAdmin):
+    list_display = [
+        "name",
+        "rule_code",
+        "condition_type",
+        "target_queue",
+        "priority",
+        "is_active",
+        "updated_at",
+    ]
+    list_filter = ["is_active", "condition_type", "target_queue"]
+    search_fields = ["name", "rule_code", "description"]
+    readonly_fields = ["created_at", "updated_at"]
+    fieldsets = (
+        (None, {
+            "fields": (
+                "name", "rule_code", "condition_type",
+                "target_queue", "priority",
+            ),
+        }),
+        ("Configuration", {
+            "fields": ("condition_config_json", "description", "is_active"),
+        }),
+        ("Audit", {
+            "fields": ("created_at", "updated_at", "created_by", "updated_by"),
+            "classes": ("collapse",),
+        }),
+    )

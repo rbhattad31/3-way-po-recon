@@ -20,12 +20,17 @@
       <i class="bi bi-robot me-2"></i>Invoice Extraction Agent
     </h5>
     <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
-      AI-powered agent that reads invoice documents (OCR) and extracts structured data using GPT-4o — standalone, no orchestration required.
+      AI-powered agent that reads invoice documents (OCR) and extracts structured data using GPT-4o.
     </p>
   </div>
-  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadModal">
-    <i class="bi bi-robot me-1"></i>Run Agent
-  </button>
+  <div class="d-flex gap-2">
+    <a href="{% url 'extraction_control_center:overview' %}" class="btn btn-outline-secondary btn-sm" title="Extraction Control Center">
+      <i class="bi bi-sliders me-1"></i>Control Center
+    </a>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadModal">
+      <i class="bi bi-robot me-1"></i>Run Agent
+    </button>
+  </div>
 </div>
 
 {# ══════════ Tabs ══════════ #}
@@ -56,8 +61,16 @@
 <div class="tab-pane fade {% if active_tab != 'approvals' %}show active{% endif %}" id="runs-pane" role="tabpanel" aria-labelledby="runs-tab">
 
 {# ── KPI Strip ── #}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+    <i class="bi bi-bar-chart me-1"></i>Performance Counters
+  </span>
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" title="Stats cached for 60s to reduce DB load. Cached at {{ stats_cached_at|date:'H:i:s' }}">
+    <i class="bi bi-lightning-charge me-1"></i>Cached · {{ stats_cached_at|timesince }} ago
+  </span>
+</div>
 <div class="row g-3 mb-4">
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
         <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{{ stats.total }}</div>
@@ -65,15 +78,16 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ stats.success }}</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Successful</div>
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ stats.success_rate }}%</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Success Rate</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ stats.success }} of {{ stats.total }}</div>
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
         <div style="font-size:1.5rem;font-weight:700;color:var(--ap-danger)">{{ stats.failed }}</div>
@@ -81,7 +95,7 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
         <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{% widthratio stats.avg_confidence 1 100 %}%</div>
@@ -89,7 +103,16 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;{% if stats.low_confidence %}color:var(--ap-warning){% else %}color:var(--ap-success){% endif %}">{{ stats.low_confidence }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Low Confidence</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">&lt; 50%</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
         <div style="font-size:1.5rem;font-weight:700;color:var(--ap-text-secondary)">{{ stats.avg_duration|floatformat:0 }}<span style="font-size:.75rem">ms</span></div>
@@ -164,7 +187,6 @@
     <table class="ap-table w-100" style="min-width:800px" id="resultsTable">
       <thead>
         <tr>
-          <th>File</th>
           <th>Invoice #</th>
           <th>Vendor</th>
           <th style="text-align:right">Amount</th>
@@ -180,14 +202,8 @@
         {% for r in results %}
         <tr>
           <td>
-            <div style="font-size:var(--ap-font-size-sm);font-weight:500" title="{{ r.document_upload.original_filename|default:'—' }}">
-              {{ r.document_upload.original_filename|default:"—"|truncatechars:30 }}
-            </div>
-            {% if r.duration_ms %}<div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ r.duration_ms|floatformat:0 }}ms · {{ r.engine_name|default:"azure_di_gpt4o" }}</div>{% endif %}
-          </td>
-          <td>
             {% if r.invoice %}
-            <a href="{% url 'extraction:result_detail' r.pk %}" class="text-decoration-none fw-medium">
+            <a href="{% url 'extraction:console' r.pk %}" class="text-decoration-none fw-medium">
               {{ r.invoice.invoice_number|default:"—" }}
             </a>
             {% else %}
@@ -253,17 +269,14 @@
             {{ r.created_at|date:"d M Y H:i" }}
           </td>
           <td>
-            <a href="{% url 'extraction:result_detail' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
+            <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
               View
-            </a>
-            <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-secondary py-0 ms-1" style="font-size:.7rem" title="Review Console">
-              <i class="bi bi-columns-gap"></i>
             </a>
           </td>
         </tr>
         {% empty %}
         <tr>
-          <td colspan="10" class="text-center py-5" style="color:var(--ap-text-muted)">
+          <td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
             <i class="bi bi-robot d-block mb-2" style="font-size:2rem"></i>
             No agent runs yet. Upload an invoice to run the extraction agent.
           </td>
@@ -301,6 +314,14 @@
 <div class="tab-pane fade {% if active_tab == 'approvals' %}show active{% endif %}" id="approvals-pane" role="tabpanel" aria-labelledby="approvals-tab">
 
 {# ── Approval Analytics Strip ── #}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+    <i class="bi bi-clipboard-check me-1"></i>Approval Counters
+  </span>
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" title="Analytics cached for 60s. Cached at {{ analytics_cached_at|date:'H:i:s' }}">
+    <i class="bi bi-lightning-charge me-1"></i>Cached · {{ analytics_cached_at|timesince }} ago
+  </span>
+</div>
 <div class="row g-3 mb-4">
   <div class="col-sm-6 col-lg-3 col-xl">
     <div class="ap-card h-100">
@@ -540,7 +561,7 @@
 (function() {
   // ── Globals ──────────────────────────────────────────────
   const FILTER_URL  = "{% url 'extraction:ajax_filter' %}";
-  const DETAIL_URL  = "{% url 'extraction:result_detail' pk=0 %}".replace('/0/', '/{pk}/');
+  const DETAIL_URL  = "{% url 'extraction:console' pk=0 %}".replace('/0/', '/{pk}/');
   const EXPORT_URL  = "{% url 'extraction:export_csv' %}";
   const tbody        = document.getElementById('resultsTableBody');
   const countEl      = document.getElementById('resultCount');
@@ -591,19 +612,15 @@
       const amount = r.total_amount
         ? `<span style="font-weight:500">${escHtml(r.currency)} ${parseFloat(r.total_amount).toFixed(2)}</span>`
         : '—';
-      const fname = r.filename.length > 30 ? r.filename.substring(0, 27) + '…' : r.filename;
       const vendorName = r.vendor ? (r.vendor.length > 25 ? r.vendor.substring(0, 22) + '…' : r.vendor) : '—';
-      const durationInfo = r.duration_ms
-        ? `<div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${r.duration_ms}ms · ${escHtml(r.engine_name)}</div>`
-        : '';
 
       return `<tr>
-        <td><div style="font-size:var(--ap-font-size-sm);font-weight:500" title="${escAttr(r.filename)}">${escHtml(fname)}</div>${durationInfo}</td>
         <td>${invLink}</td>
         <td style="font-size:var(--ap-font-size-sm)">${escHtml(vendorName)}</td>
         <td style="text-align:right">${amount}</td>
         <td>${confBar}</td>
         <td>${statusBadge}</td>
+        <td style="font-size:var(--ap-font-size-xs)"><span style="color:var(--ap-text-muted)">—</span></td>
         <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
         <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${escHtml(r.created_at)}</td>
         <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a></td>

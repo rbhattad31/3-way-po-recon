@@ -1,0 +1,110 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}Audit Log — Control Center{% endblock %}
+
+{% block cc_content %}
+<h5 class="fw-bold mb-4"><i class="bi bi-shield-lock me-2 text-primary"></i>Extraction Audit Log</h5>
+
+{# Filters #}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-0">Event Type</label>
+        <select class="form-select form-select-sm" name="event_type">
+          <option value="">All</option>
+          {% for et in event_types %}
+          <option value="{{ et }}" {% if filters.event_type == et %}selected{% endif %}>{{ et }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Actor</label>
+        <input type="text" class="form-control form-control-sm" name="actor" value="{{ filters.actor }}" placeholder="User email…">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Entity</label>
+        <input type="text" class="form-control form-control-sm" name="entity_type" value="{{ filters.entity_type }}" placeholder="Type…">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">From</label>
+        <input type="date" class="form-control form-control-sm" name="date_from" value="{{ filters.date_from }}">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">To</label>
+        <input type="date" class="form-control form-control-sm" name="date_to" value="{{ filters.date_to }}">
+      </div>
+      <div class="col-auto">
+        <div class="form-check form-check-inline mt-3">
+          <input class="form-check-input" type="checkbox" name="denied_only" value="true"
+                 {% if filters.access_granted == False %}checked{% endif %}>
+          <label class="form-check-label small text-danger">Denied Only</label>
+        </div>
+      </div>
+      <div class="col">
+        <label class="form-label small mb-0">Search</label>
+        <input type="text" class="form-control form-control-sm" name="search" value="{{ filters.search }}" placeholder="Description, trace ID…">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Filter</button>
+        <a href="{% url 'extraction_control_center:audit_log' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# Table #}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">Timestamp</th>
+          <th>Event Type</th>
+          <th>Actor</th>
+          <th>Description</th>
+          <th>Access</th>
+          <th>Trace ID</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td class="ps-3 text-muted small text-nowrap">{{ e.created_at|date:"M d, H:i:s" }}</td>
+          <td><span class="badge bg-secondary-subtle text-secondary small">{{ e.event_type }}</span></td>
+          <td class="small">
+            {% if e.actor_email %}
+            {{ e.actor_email }}
+            {% elif e.created_by %}
+            {{ e.created_by }}
+            {% else %}
+            <span class="text-muted">System</span>
+            {% endif %}
+            {% if e.actor_primary_role %}
+            <br><span class="badge bg-primary-subtle text-primary" style="font-size:.65rem">{{ e.actor_primary_role }}</span>
+            {% endif %}
+          </td>
+          <td class="small">{{ e.description|truncatewords:15 }}</td>
+          <td>
+            {% if e.access_granted is True %}
+            <span class="badge bg-success-subtle text-success"><i class="bi bi-check-circle"></i></span>
+            {% elif e.access_granted is False %}
+            <span class="badge bg-danger-subtle text-danger"><i class="bi bi-x-circle"></i></span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td class="text-muted small font-monospace">
+            {% if e.trace_id %}{{ e.trace_id|truncatechars:12 }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="text-center text-muted py-4">No audit events found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,141 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}Prompt Test Console — Control Center{% endblock %}
+
+{% block cc_content %}
+<div class="mb-3">
+  <a href="{% url 'extraction_control_center:prompt_list' %}" class="text-decoration-none text-muted small">
+    <i class="bi bi-arrow-left me-1"></i>Back to registry
+  </a>
+</div>
+
+<h5 class="fw-bold mb-4"><i class="bi bi-play-circle me-2 text-primary"></i>Prompt Test Console</h5>
+
+<form method="post">
+  {% csrf_token %}
+
+  <div class="row g-3">
+    {# Left column: Input #}
+    <div class="col-lg-6">
+      {# Prompt text #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-code-square me-2"></i>Prompt Template</h6>
+          {% if prompt %}
+          <span class="badge bg-dark">{{ prompt.prompt_code }} v{{ prompt.version }}</span>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          <textarea class="form-control font-monospace" name="prompt_text" rows="12"
+                    placeholder="Enter or paste prompt template…">{% if prompt %}{{ prompt.prompt_text }}{% endif %}</textarea>
+        </div>
+      </div>
+
+      {# Context parameters #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-transparent">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-sliders me-2"></i>Context Parameters</h6>
+        </div>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label small">Country</label>
+              <input type="text" class="form-control form-control-sm" name="country_code" placeholder="IN">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">Regime</label>
+              <input type="text" class="form-control form-control-sm" name="regime_code" placeholder="GST">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">Doc Type</label>
+              <input type="text" class="form-control form-control-sm" name="document_type" placeholder="INVOICE">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small">Schema Code</label>
+              <input type="text" class="form-control form-control-sm" name="schema_code" placeholder="Optional">
+            </div>
+            {% if prompt %}
+            <input type="hidden" name="prompt_id" value="{{ prompt.pk }}">
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      {# OCR text input #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-transparent">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-file-earmark-text me-2"></i>Sample OCR Text</h6>
+        </div>
+        <div class="card-body">
+          <textarea class="form-control font-monospace" name="ocr_text" rows="10"
+                    placeholder="Paste sample OCR text here…"></textarea>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary w-100">
+        <i class="bi bi-play-fill me-1"></i>Run Test
+      </button>
+    </div>
+
+    {# Right column: Output #}
+    <div class="col-lg-6">
+      {% if result %}
+      {# Rendered Prompt #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-eye me-2"></i>Rendered Prompt</h6>
+          <span class="badge {% if result.success %}bg-success{% else %}bg-danger{% endif %}">
+            {{ result.success|yesno:"Success,Failed" }}
+          </span>
+        </div>
+        <div class="card-body">
+          <pre class="bg-light p-3 rounded small" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">{{ result.rendered_prompt }}</pre>
+        </div>
+      </div>
+
+      {# LLM Response #}
+      {% if result.raw_response %}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-robot me-2"></i>LLM Response</h6>
+          {% if result.duration_ms %}
+          <span class="text-muted small">{{ result.duration_ms }}ms</span>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          <pre class="bg-dark text-light p-3 rounded small" style="white-space: pre-wrap; max-height: 400px; overflow-y: auto;">{{ result.raw_response }}</pre>
+        </div>
+      </div>
+      {% endif %}
+
+      {# Parsed Output #}
+      {% if result.parsed_output %}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-transparent">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-braces me-2"></i>Parsed Output</h6>
+        </div>
+        <div class="card-body">
+          <pre class="bg-light p-3 rounded small" style="white-space: pre-wrap; max-height: 400px; overflow-y: auto;">{{ result.parsed_output }}</pre>
+        </div>
+      </div>
+      {% endif %}
+
+      {# Errors #}
+      {% if result.error %}
+      <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle me-1"></i>{{ result.error }}
+      </div>
+      {% endif %}
+
+      {% else %}
+      <div class="card border-0 shadow-sm">
+        <div class="card-body text-center text-muted py-5">
+          <i class="bi bi-play-circle display-4 d-block mb-3 opacity-25"></i>
+          <p>Enter a prompt and sample OCR text, then click <strong>Run Test</strong> to see results.</p>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,107 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}Entity Profiles — Control Center{% endblock %}
+
+{% block cc_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="fw-bold mb-0"><i class="bi bi-building me-2 text-primary"></i>Entity Extraction Profiles</h5>
+  <div class="text-muted small">
+    {{ total }} total &middot; {{ overridden }} with overrides
+  </div>
+</div>
+
+{# Filters #}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-0">Country</label>
+        <input type="text" class="form-control form-control-sm" name="country_code" value="{{ filters.country_code }}" placeholder="IN, US…">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Regime</label>
+        <input type="text" class="form-control form-control-sm" name="regime_code" value="{{ filters.regime_code }}" placeholder="GST, VAT…">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Mode</label>
+        <select class="form-select form-select-sm" name="jurisdiction_mode">
+          <option value="">All</option>
+          <option value="AUTO" {% if filters.jurisdiction_mode == "AUTO" %}selected{% endif %}>AUTO</option>
+          <option value="FIXED" {% if filters.jurisdiction_mode == "FIXED" %}selected{% endif %}>FIXED</option>
+          <option value="HYBRID" {% if filters.jurisdiction_mode == "HYBRID" %}selected{% endif %}>HYBRID</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Status</label>
+        <select class="form-select form-select-sm" name="is_active">
+          <option value="">All</option>
+          <option value="true" {% if filters.is_active == True %}selected{% endif %}>Active</option>
+          <option value="false" {% if filters.is_active == False %}selected{% endif %}>Inactive</option>
+        </select>
+      </div>
+      <div class="col">
+        <label class="form-label small mb-0">Search</label>
+        <input type="text" class="form-control form-control-sm" name="search" value="{{ filters.search }}" placeholder="Entity name…">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Filter</button>
+        <a href="{% url 'extraction_control_center:entity_profiles' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# Table #}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">Entity</th>
+          <th>Country</th>
+          <th>Regime</th>
+          <th>Mode</th>
+          <th>Schema Override</th>
+          <th>Status</th>
+          <th class="text-end pe-3">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in profiles %}
+        <tr>
+          <td class="ps-3 fw-semibold">{{ p.entity }}</td>
+          <td><span class="badge bg-light text-dark border">{{ p.default_country_code|default:"—" }}</span></td>
+          <td>{{ p.default_regime_code|default:"—" }}</td>
+          <td>
+            {% if p.jurisdiction_mode == "AUTO" %}
+            <span class="badge bg-primary-subtle text-primary">AUTO</span>
+            {% elif p.jurisdiction_mode == "FIXED" %}
+            <span class="badge bg-warning-subtle text-warning">FIXED</span>
+            {% else %}
+            <span class="badge bg-info-subtle text-info">{{ p.jurisdiction_mode }}</span>
+            {% endif %}
+          </td>
+          <td>{{ p.schema_override_code|default:"—" }}</td>
+          <td>
+            {% if p.is_active %}
+            <span class="badge bg-success-subtle text-success">Active</span>
+            {% else %}
+            <span class="badge bg-danger-subtle text-danger">Inactive</span>
+            {% endif %}
+          </td>
+          <td class="text-end pe-3">
+            <a href="{% url 'extraction_control_center:entity_profile_detail' p.pk %}" class="btn btn-sm btn-outline-primary">
+              <i class="bi bi-eye me-1"></i>View
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-4">No entity profiles found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

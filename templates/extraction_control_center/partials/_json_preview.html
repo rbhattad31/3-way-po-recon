@@ -1,0 +1,7 @@
+<div class="cc-json-preview">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <small class="text-muted fw-semibold">{{ title|default:"JSON Preview" }}</small>
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyJsonPreview(this)" title="Copy"><i class="bi bi-clipboard"></i></button>
+  </div>
+  <pre class="cc-json-code bg-dark text-light p-3 rounded-2" style="max-height:400px;overflow:auto;font-size:.8rem"><code>{{ json_content }}</code></pre>
+</div>

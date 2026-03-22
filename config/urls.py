@@ -24,6 +24,7 @@ urlpatterns = [
     path("dashboard/", include("apps.dashboard.urls")),
     path("invoices/", include("apps.documents.urls")),
     path("extraction/", include("apps.extraction.urls")),
+    path("extraction/control-center/", include("apps.extraction_core.urls")),
     path("reconciliation/", include("apps.reconciliation.urls")),
     path("reviews/", include("apps.reviews.urls")),
     path("reports/", include("apps.reports.urls")),

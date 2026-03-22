@@ -214,6 +214,71 @@ class ExtractionRuntimeSettings(BaseModel):
         default=True,
         help_text="In FIXED/HYBRID mode, fall back to detection if no schema exists for configured jurisdiction",
     )
+    # --- Extraction runtime ---
+    ocr_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether OCR processing is enabled",
+    )
+    llm_extraction_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether LLM-based extraction is enabled",
+    )
+    retry_count = models.PositiveSmallIntegerField(
+        default=2,
+        help_text="Number of extraction retries on failure",
+    )
+    timeout_seconds = models.PositiveIntegerField(
+        default=120,
+        help_text="Maximum seconds per extraction run",
+    )
+    max_pages = models.PositiveSmallIntegerField(
+        default=50,
+        help_text="Maximum pages to process per document",
+    )
+    multi_document_split_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether multi-document splitting is enabled",
+    )
+    # --- Review settings ---
+    auto_approval_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether auto-approval is enabled for high-confidence extractions",
+    )
+    auto_approval_threshold = models.FloatField(
+        default=0.95,
+        help_text="Minimum confidence for auto-approval (0.0–1.0)",
+    )
+    review_confidence_threshold = models.FloatField(
+        default=0.70,
+        help_text="Below this confidence, extraction is routed for review (0.0–1.0)",
+    )
+    # --- Enrichment settings ---
+    vendor_matching_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether vendor matching enrichment is enabled",
+    )
+    vendor_fuzzy_threshold = models.FloatField(
+        default=0.80,
+        help_text="Minimum fuzzy match score for vendor matching (0.0–1.0)",
+    )
+    po_lookup_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether PO lookup enrichment is enabled",
+    )
+    contract_lookup_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether contract lookup enrichment is enabled",
+    )
+    # --- Learning / analytics ---
+    correction_tracking_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether correction tracking for learning is enabled",
+    )
+    analytics_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether analytics snapshot generation is enabled",
+    )
+
     config_json = models.JSONField(
         default=dict,
         blank=True,
@@ -817,3 +882,155 @@ class CountryPack(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.jurisdiction} — {self.get_pack_status_display()}"
+
+
+# ---------------------------------------------------------------------------
+# Extraction Prompt Template — extraction-scoped versioned prompt
+# ---------------------------------------------------------------------------
+
+
+class ExtractionPromptTemplate(BaseModel):
+    """
+    Extraction-specific prompt template with versioning, scoping,
+    and lifecycle management.
+
+    Only one ACTIVE prompt per logical scope
+    (country_code + regime_code + document_type + schema_code + prompt_code).
+    """
+
+    prompt_code = models.CharField(
+        max_length=120,
+        db_index=True,
+        help_text="Logical prompt identifier (e.g. extraction_core_v2)",
+    )
+    prompt_category = models.CharField(
+        max_length=50,
+        default="extraction",
+        db_index=True,
+        help_text="Category: extraction, enrichment, validation, classification",
+    )
+    country_code = models.CharField(
+        max_length=3,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="ISO country code scope (blank = global)",
+    )
+    regime_code = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        help_text="Tax regime scope (blank = all regimes)",
+    )
+    document_type = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        help_text="Document type scope (blank = all types)",
+    )
+    schema_code = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text="Schema name scope (blank = all schemas)",
+    )
+    version = models.PositiveIntegerField(
+        default=1,
+        help_text="Version number (auto-incremented on clone)",
+    )
+    status = models.CharField(
+        max_length=20,
+        default="DRAFT",
+        db_index=True,
+        help_text="DRAFT / ACTIVE / INACTIVE",
+    )
+    prompt_text = models.TextField(
+        help_text="Full prompt text. Supports {variable} placeholders.",
+    )
+    variables_json = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of expected variables in prompt_text",
+    )
+    effective_from = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this prompt version becomes effective",
+    )
+    effective_to = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this prompt version expires",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        db_table = "extraction_core_extraction_prompt_template"
+        ordering = ["prompt_code", "-version"]
+        verbose_name = "Extraction Prompt Template"
+        verbose_name_plural = "Extraction Prompt Templates"
+        indexes = [
+            models.Index(fields=["prompt_code", "country_code", "document_type", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.prompt_code} v{self.version} ({self.status})"
+
+
+# ---------------------------------------------------------------------------
+# Review Routing Rule — Configurable routing rule
+# ---------------------------------------------------------------------------
+
+
+class ReviewRoutingRule(BaseModel):
+    """
+    Configurable review routing rule.
+
+    Matches extraction issues/conditions to target review queues,
+    with priority ordering and activation control.
+    """
+
+    name = models.CharField(
+        max_length=200,
+        help_text="Human-readable rule name",
+    )
+    rule_code = models.CharField(
+        max_length=100,
+        unique=True,
+        db_index=True,
+        help_text="Machine-readable rule identifier",
+    )
+    condition_type = models.CharField(
+        max_length=50,
+        help_text="Trigger condition: low_confidence, tax_issues, vendor_mismatch, schema_missing, "
+        "jurisdiction_mismatch, duplicate_suspicion, unsupported_document_type",
+    )
+    condition_config_json = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Condition parameters (e.g. threshold values)",
+    )
+    target_queue = models.CharField(
+        max_length=30,
+        choices=ReviewQueue.choices,
+        help_text="Target review queue",
+    )
+    priority = models.PositiveIntegerField(
+        default=100,
+        help_text="Lower number = higher priority. Rules evaluated in priority order.",
+    )
+    description = models.TextField(
+        blank=True,
+        default="",
+        help_text="Human-readable explanation of what this rule does",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        db_table = "extraction_core_review_routing_rule"
+        ordering = ["priority", "name"]
+        verbose_name = "Review Routing Rule"
+        verbose_name_plural = "Review Routing Rules"
+
+    def __str__(self) -> str:
+        return f"{self.name} → {self.target_queue} (priority {self.priority})"

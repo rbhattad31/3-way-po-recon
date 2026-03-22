@@ -1,8 +1,8 @@
 # Invoice Extraction Agent — Feature Documentation
 
-> **Module**: `apps/extraction/`  
+> **Modules**: `apps/extraction/` (Application Layer — UI, Task, Core Models) + `apps/extraction_core/` (Platform Layer — Configuration, Execution, Governance)  
 > **Dependencies**: Azure Document Intelligence (OCR), Azure OpenAI GPT-4o (LLM), Agent Framework (`apps/agents/`)  
-> **Status**: Fully implemented with human-in-the-loop approval gate
+> **Status**: Fully implemented with human-in-the-loop approval gate + multi-country extraction platform
 
 ---
 
@@ -13,7 +13,7 @@
 3. [Extraction Pipeline](#3-extraction-pipeline)
 4. [Data Models](#4-data-models)
 5. [Services](#5-services)
-6. [Extraction Core — Extended Pipeline](#6-extraction-core--extended-pipeline)
+6. [Extraction Core — Multi-Country Extraction Platform](#6-extraction-core--multi-country-extraction-platform)
 7. [Master Data Enrichment](#7-master-data-enrichment)
 8. [Approval Gate](#8-approval-gate)
 9. [Agent Framework Integration](#9-agent-framework-integration)
@@ -31,18 +31,84 @@
 
 ## 1. Overview
 
-The Invoice Extraction Agent converts uploaded invoice documents (PDF, PNG, JPG, TIFF) into structured, normalized data. It uses a two-stage pipeline:
+The Invoice Extraction Agent converts uploaded invoice documents (PDF, PNG, JPG, TIFF) into structured, normalized data. The system spans two Django apps:
+
+- **`apps/extraction/`** — Application layer: template views (workbench, console, approval queue, country packs), Celery task, core models (`ExtractionResult`, `ExtractionApproval`, `ExtractionFieldCorrection`), 8 pipeline services, and the human approval gate.
+- **`apps/extraction_core/`** — Platform layer: 13 data models, 30 service classes, 60+ API endpoints, multi-country jurisdiction resolution, schema-driven extraction, evidence capture, confidence scoring, review routing, analytics/learning, and country pack governance.
+
+### Base Extraction Pipeline (apps/extraction)
+
+Uses a two-stage pipeline:
 
 1. **Azure Document Intelligence** — OCR to extract raw text from the document.
 2. **Azure OpenAI GPT-4o** — LLM-based structured extraction from OCR text into a typed JSON schema.
 
 After extraction, the data passes through parsing, normalization, validation, and duplicate detection before being persisted. A **human approval gate** ensures every extraction is reviewed (or auto-approved at high confidence) before the invoice enters reconciliation.
 
+### Extended Platform Pipeline (apps/extraction_core)
+
+Adds an 11-stage governed pipeline with:
+
+1. **4-tier jurisdiction resolution** — Document declared → entity profile → runtime settings → auto-detect
+2. **Schema-driven extraction** — Versioned schemas per jurisdiction + document type
+3. **Document intelligence** — Document classification, party extraction, relationship extraction
+4. **Multi-page support** — Page segmentation, header/footer dedup, cross-page table stitching
+5. **Country-specific normalization & validation** — Jurisdiction-aware rules (IN-GST, AE-VAT, SA-ZATCA)
+6. **Evidence capture** — Field provenance with OCR snippets, page numbers, bounding boxes
+7. **Confidence scoring** — Multi-dimensional (header, tax, line items, jurisdiction)
+8. **Review routing** — Queue-based routing (EXCEPTION_OPS, TAX_REVIEW, VENDOR_OPS)
+9. **Master data enrichment** — Vendor matching, PO lookup, confidence adjustments
+10. **Analytics/learning** — Correction feedback → ExtractionAnalyticsSnapshot
+11. **Country pack governance** — DRAFT → ACTIVE → DEPRECATED lifecycle per jurisdiction
+
+### Cross-Module Integration
+
+Template views in `apps/extraction/` enrich their context with `apps/extraction_core/` models:
+- Workbench loads `ExtractionRun.review_queue` for each result
+- Console loads `ExtractionRun` data (review queue, schema, method badges) + `ExtractionCorrection` audit trail
+- Country packs page queries `CountryPack` with jurisdiction profiles
+- All cross-module lookups use graceful fallbacks via `try/except`
+
 ---
 
 ## 2. Architecture
 
-### Data Flow Diagram
+### Two-App Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  apps/extraction/  (Application Layer)                       │
+│                                                              │
+│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────┐  │
+│  │ Template Views│  │ Celery Task   │  │ Core Models      │  │
+│  │ (15 views)   │  │ (pipeline)    │  │ ExtractionResult │  │
+│  │ workbench    │  │               │  │ ExtractionApproval│ │
+│  │ console      │  │ 8 services    │  │ FieldCorrection  │  │
+│  │ approvals    │  │               │  │                  │  │
+│  │ country packs│  │               │  │                  │  │
+│  └──────┬───────┘  └───────────────┘  └──────────────────┘  │
+│         │ cross-module queries (ExtractionRun, CountryPack)  │
+├─────────┼───────────────────────────────────────────────────┤
+│  apps/extraction_core/  (Platform Layer)                     │
+│                                                              │
+│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────┐  │
+│  │ Configuration│  │ Pipeline (30  │  │ Governance       │  │
+│  │ Jurisdiction │  │ services)     │  │ CountryPack      │  │
+│  │ Schema       │  │ 11-stage      │  │ Analytics        │  │
+│  │ Runtime      │  │ orchestrator  │  │ Learning         │  │
+│  │ Entity       │  │               │  │ Audit            │  │
+│  └──────────────┘  └───────────────┘  └──────────────────┘  │
+│                                                              │
+│  ┌──────────────┐  ┌───────────────┐                         │
+│  │ 60+ API      │  │ 13 Models     │                         │
+│  │ endpoints    │  │ ExtractionRun │                         │
+│  │ Config +     │  │ FieldValue    │                         │
+│  │ Execution    │  │ Evidence ...  │                         │
+│  └──────────────┘  └───────────────┘                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Data Flow Diagram (Base Pipeline)
 
 ```
 User uploads PDF/Image
@@ -381,69 +447,341 @@ Handles file upload, SHA-256 hash computation, and `DocumentUpload` record creat
 
 ---
 
-## 6. Extraction Core — Extended Pipeline
+## 6. Extraction Core — Multi-Country Extraction Platform
 
-The `apps/extraction_core/` app provides an advanced, jurisdiction-aware extraction pipeline with 19 service classes. This extends the base extraction pipeline with document intelligence, multi-page support, schema-driven extraction, confidence scoring, master data enrichment, and review routing.
+The `apps/extraction_core/` app is a fully governed, multi-country, schema-driven extraction platform. It provides 13 data models, 30 service classes, 60+ API endpoints, and full Django admin coverage. It extends the base extraction pipeline (`apps/extraction/`) with document intelligence, multi-page support, jurisdiction-aware schema-driven extraction, confidence scoring, master data enrichment, review routing, evidence capture, analytics/learning, and country pack governance.
 
-### Pipeline Steps (ExtractionService.extract())
+### Architecture
 
-| Step | Service | Description |
-|------|---------|-------------|
-| 1 | `JurisdictionResolverService` | Multi-signal jurisdiction detection (GSTIN, TRN, VAT, currency, keywords) |
-| 2 | Meta extraction | Build `JurisdictionMeta` from resolution |
-| 2b | `DocumentIntelligenceService` | Pre-extraction analysis: document classification, relationship extraction, party extraction |
-| 3 | `SchemaRegistryService` | Jurisdiction-aware schema selection |
-| 4 | `PromptBuilderService` | Build extraction template from schema |
-| 4b | `PageParser` | Multi-page OCR text segmentation, header/footer dedup |
+```
+                            ┌─────────────────────────────────────┐
+                            │    Extraction Core Platform          │
+                            │                                      │
+  ┌───────────────┐         │  Configuration Layer                 │
+  │ TaxJurisdiction│◄────────┤  ├─ TaxJurisdictionProfile          │
+  │   Profile      │         │  ├─ ExtractionSchemaDefinition      │
+  └───────────────┘         │  ├─ ExtractionRuntimeSettings        │
+                            │  └─ EntityExtractionProfile          │
+                            │                                      │
+                            │  Execution Layer                     │
+  ┌───────────────┐         │  ├─ ExtractionRun (tracks pipeline)  │
+  │ ExtractionRun  │◄────────┤  ├─ ExtractionFieldValue            │
+  │   + children   │         │  ├─ ExtractionLineItem              │
+  └───────────────┘         │  ├─ ExtractionEvidence               │
+                            │  ├─ ExtractionIssue                  │
+                            │  ├─ ExtractionApprovalRecord         │
+                            │  └─ ExtractionCorrection             │
+                            │                                      │
+                            │  Governance Layer                    │
+  ┌───────────────┐         │  ├─ CountryPack                      │
+  │  CountryPack   │◄────────┤  └─ ExtractionAnalyticsSnapshot     │
+  └───────────────┘         └─────────────────────────────────────┘
+```
+
+### 4-Tier Jurisdiction Resolution
+
+Resolution follows a strict precedence cascade:
+
+| Tier | Source | Service | When Used |
+|------|--------|---------|-----------|
+| 1 | Document-level declared | `JurisdictionResolutionService` | Caller provides explicit country/regime |
+| 2 | Entity profile | `EntityExtractionProfile` | Vendor has configured extraction preferences |
+| 3 | System-level settings | `ExtractionRuntimeSettings` | Global defaults (AUTO/FIXED/HYBRID mode) |
+| 4 | Auto-detection fallback | `JurisdictionResolverService` | Multi-signal scoring (GSTIN→IN, TRN→AE, VAT→SA) |
+
+**Modes**: AUTO (always detect), FIXED (use configured), HYBRID (detect + validate + mismatch warnings)
+
+### ExtractionPipeline (11-Stage Governed Pipeline)
+
+**File**: `apps/extraction_core/services/extraction_pipeline.py`  
+**Class**: `ExtractionPipeline`
+
+| Stage | Service | Description |
+|-------|---------|-------------|
+| 1 | `JurisdictionResolutionService` | 4-tier jurisdiction resolution |
+| 2 | `SchemaRegistryService` | Jurisdiction-aware schema selection |
+| 3 | `PromptBuilderService` | Dynamic prompt from schema + jurisdiction |
+| 4 | `PageParser` | Multi-page OCR segmentation, header/footer dedup |
 | 5 | Deterministic extraction | Rule-based field extraction from OCR text |
-| — | Page evidence | Map extracted fields to source pages |
-| 5a | `TableStitcher` + `LineItemExtractor` | Cross-page table reconstruction + schema-driven line item extraction |
+| 5a | `TableStitcher` + `LineItemExtractor` | Cross-page table reconstruction + line item extraction |
 | 5b | `LLMExtractionAdapter` | LLM-based extraction for remaining/low-confidence fields |
-| 6 | `NormalizationService` | Jurisdiction-driven field normalization (dates, amounts, tax IDs) |
-| 7 | `ValidationService` | Jurisdiction-driven validation (mandatory fields, data types, tax rates, amount consistency) |
-| **7b** | **`MasterDataEnrichmentService`** | **Post-extraction vendor matching, PO lookup, confidence adjustments** |
+| 6 | `EnhancedNormalizationService` | Country-specific field normalization (dates, amounts, tax IDs) |
+| 7 | `EnhancedValidationService` | Country-aware validation with ExtractionIssue persistence |
+| 7b | `MasterDataEnrichmentService` | Post-extraction vendor matching, PO lookup, confidence adjustments |
 | 8 | `ConfidenceScorer` | Multi-dimensional confidence scoring (header/tax/line/jurisdiction) |
-| 8b | Metrics | Track extraction performance metrics |
-| 9 | Mandatory check | Final mandatory field validation |
-| 9b | `ReviewRoutingService` | Confidence-driven review routing decision |
-| 10 | Persist | Save `ExtractionDocument` + field results to database |
+| 8b | `EvidenceCaptureService` | Capture field provenance (snippets, pages, bounding boxes) |
+| 9 | `ReviewRoutingEngine` | Queue-based review routing with priority tiers |
+| 10 | Persist | Save `ExtractionRun` + field values + line items + evidence + issues |
+| 11 | `ExtractionAuditService` | Emit audit events for each pipeline stage |
+
+Each stage emits a governance audit event (e.g., `JURISDICTION_RESOLVED`, `SCHEMA_SELECTED`, `EVIDENCE_CAPTURED`, `REVIEW_ROUTE_ASSIGNED`).
+
+### ExtractionService (Legacy Pipeline Orchestrator)
+
+**File**: `apps/extraction_core/services/extraction_service.py`  
+**Class**: `ExtractionService`
+
+The original pipeline orchestrator. Coordinates jurisdiction → schema → deterministic extraction → LLM fallback → normalization → validation → enrichment → confidence → routing → persistence.
+
+### Data Models (13 models)
+
+#### Configuration Models
+
+**TaxJurisdictionProfile** — Tax jurisdiction master data:
+- `country_code`, `country_name`, `tax_regime`, `regime_full_name`, `default_currency`
+- `tax_id_label`, `tax_id_regex`, `date_formats` (JSON), `locale_code`, `fiscal_year_start_month`
+- Unique: (`country_code`, `tax_regime`)
+
+**ExtractionSchemaDefinition** — Versioned extraction schema per jurisdiction:
+- `jurisdiction` (FK), `document_type`, `schema_version`, `name`, `description`
+- `header_fields_json`, `line_item_fields_json`, `tax_fields_json`, `config_json`
+- Unique: (`jurisdiction`, `document_type`, `schema_version`)
+- Method: `get_all_field_keys()` returns combined field list
+
+**ExtractionRuntimeSettings** — Singleton system-level configuration:
+- `jurisdiction_mode` (AUTO|FIXED|HYBRID), `default_country_code`, `default_regime_code`
+- `enable_jurisdiction_detection`, `allow_manual_override`, `confidence_threshold_for_detection`
+- `fallback_to_detection_on_schema_miss`
+- Classmethod: `get_active()` returns current active record
+
+**EntityExtractionProfile** — Per-vendor extraction preferences:
+- `entity` (OneToOne Vendor), `default_country_code`, `default_regime_code`
+- `jurisdiction_mode`, `schema_override_code`, `validation_profile_override_code`, `normalization_profile_override_code`
+
+#### Execution/Tracking Models
+
+**ExtractionRun** — Primary execution record (~25 fields):
+- Status: PENDING|RUNNING|COMPLETED|FAILED|CANCELLED
+- Jurisdiction: `country_code`, `regime_code`, `jurisdiction_source` (FIXED|ENTITY|AUTO_DETECTED), FK to TaxJurisdictionProfile
+- Schema: `schema_code`, `schema_version`, FK to ExtractionSchemaDefinition
+- Confidence: `overall_confidence`, `header_confidence`, `tax_confidence`, `line_item_confidence`, `jurisdiction_confidence`
+- Output: `extracted_data_json`, `extraction_method`, `error_message`
+- Review: `review_queue`, `requires_review`, `review_reasons_json`
+- Timing: `started_at`, `completed_at`, `duration_ms`
+- Metrics: `field_count`, `mandatory_coverage_pct`, `field_coverage_pct`
+- Indexes: (`country_code`, `regime_code`), (`status`, `created_at`)
+
+**ExtractionFieldValue** — Per-field result with confidence & correction tracking:
+- `extraction_run` (FK), `field_code`, `value`, `normalized_value`, `confidence`
+- `extraction_method`, `is_corrected`, `corrected_value`, `category` (HEADER|LINE_ITEM|TAX|PARTY)
+- `line_item_index`, `is_valid`, `validation_message`
+- Index: (`extraction_run`, `field_code`)
+
+**ExtractionLineItem** — Structured line item record:
+- `extraction_run` (FK), `line_index`, `data_json`, `confidence`, `page_number`, `is_valid`
+- Unique: (`extraction_run`, `line_index`)
+
+**ExtractionEvidence** — Provenance tracking per field:
+- `extraction_run` (FK), `field_code`, `page_number`, `snippet` (OCR text)
+- `bounding_box` (JSON coords), `extraction_method`, `confidence`, `line_item_index`
+
+**ExtractionIssue** — Validation/extraction issues:
+- `extraction_run` (FK), `severity` (ERROR|WARNING|INFO), `field_code`, `check_type`, `message`, `details_json`
+
+**ExtractionApprovalRecord** — Approval gate for run:
+- `extraction_run` (OneToOne), `action` (APPROVE|REJECT|ESCALATE|SEND_BACK)
+- `approved_by` (FK User), `comments`, `decided_at`
+
+**ExtractionCorrection** — Field correction audit trail:
+- `extraction_run` (FK), `field_code`, `original_value`, `corrected_value`
+- `correction_reason`, `corrected_by` (FK User)
+
+#### Governance/Analytics Models
+
+**ExtractionAnalyticsSnapshot** — Learning/analytics data:
+- `snapshot_type`, `country_code`, `regime_code`, `period_start`, `period_end`
+- `data_json`, `run_count`, `correction_count`, `average_confidence`
+
+**CountryPack** — Country governance record:
+- `jurisdiction` (OneToOne TaxJurisdictionProfile), `pack_status` (DRAFT|ACTIVE|DEPRECATED)
+- `schema_version`, `validation_profile_version`, `normalization_profile_version`
+- `activated_at`, `deactivated_at`, `config_json`, `notes`
 
 ### Key Dataclasses
 
-**ExtractionResult** (extraction_core):
-- `fields` — dict of `FieldResult` per field key
-- `line_items` — list of line item dicts
-- `jurisdiction` — `JurisdictionMeta` (country_code, regime_code, confidence, source, warning)
-- `document_intelligence` — `DocumentIntelligenceResult` (document type, parties, relationships)
-- `enrichment` — `EnrichmentResult` (vendor/customer/PO matches, confidence adjustments)
-- `page_info` — `ParsedDocument` (page segments, table regions)
-- `confidence_breakdown` — `ConfidenceBreakdown` (per-category scores)
-- `review_decision` — `ReviewRoutingDecision`
-- `validation_issues`, `warnings`, `overall_confidence`, `duration_ms`
+**ExtractionOutputContract** (`output_contract.py`):
+- `meta` — `MetaBlock` (extraction_id, document_type, jurisdiction, schema, prompt, method, timestamps, duration)
+- `fields` — dict of `FieldValue` (value, normalized, confidence, method, evidence list)
+- `parties` — `PartiesBlock` (supplier, buyer, ship_to, bill_to)
+- `tax` — `TaxBlock` (tax_id, rates, breakdown, totals)
+- `line_items` — list of `LineItemRow`
+- `references` — `ReferencesBlock` (po_numbers, grn_refs, contracts, shipments)
+- `warnings` — list of `WarningItem`
 
-### Service Directory (19 services)
+**ExtractionResult** (dataclass in `extraction_service.py`):
+- `fields`, `line_items`, `jurisdiction` (JurisdictionMeta), `document_intelligence` (DocumentIntelligenceResult)
+- `enrichment` (EnrichmentResult), `page_info` (ParsedDocument), `confidence_breakdown` (ConfidenceBreakdown)
+- `review_decision` (ReviewRoutingDecision), `validation_issues`, `warnings`, `overall_confidence`, `duration_ms`
+
+### Service Directory (30 services)
+
+#### Core Pipeline & Orchestration
 
 | Service | File | Purpose |
 |---------|------|---------|
-| `ExtractionService` | `extraction_service.py` | Primary pipeline orchestrator |
+| `ExtractionPipeline` | `extraction_pipeline.py` | 11-stage governed pipeline orchestrator with audit events |
+| `ExtractionService` | `extraction_service.py` | Original pipeline orchestrator |
 | `BaseExtractionService` | `base_extraction_service.py` | Schema-driven extraction base class |
-| `JurisdictionResolverService` | `jurisdiction_resolver.py` | Multi-signal jurisdiction detection |
-| `JurisdictionResolutionService` | `resolution_service.py` | 4-tier jurisdiction resolution cascade |
-| `SchemaRegistryService` | `schema_registry.py` | Cached, version-aware schema lookup |
-| `PromptBuilderService` | `prompt_builder.py` | Dynamic LLM prompt construction |
-| `LLMExtractionAdapter` | `llm_extraction_adapter.py` | LLM client wrapper for schema extraction |
-| `NormalizationService` | `normalization_service.py` | Jurisdiction-driven field normalization |
-| `ValidationService` | `validation_service.py` | Jurisdiction-driven field validation |
-| `PageParser` | `page_parser.py` | Multi-page OCR text segmentation |
-| `TableStitcher` | `table_stitcher.py` | Cross-page table continuation |
-| `LineItemExtractor` | `line_item_extractor.py` | Schema-driven line item extraction |
-| `DocumentTypeClassifier` | `document_classifier.py` | Weighted keyword document classification |
-| `RelationshipExtractor` | `relationship_extractor.py` | PO/GRN/contract cross-reference extraction |
+
+#### Jurisdiction Resolution
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `JurisdictionResolverService` | `jurisdiction_resolver.py` | Multi-signal jurisdiction detection (GSTIN, TRN, VAT) |
+| `JurisdictionResolutionService` | `resolution_service.py` | 4-tier precedence cascade (document → entity → system → auto-detect) |
+
+#### Schema & Registry
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `SchemaRegistryService` | `schema_registry.py` | Cached schema lookup (5-min TTL), version-aware |
+
+#### Document Intelligence (Pre-Extraction)
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `DocumentTypeClassifier` | `document_classifier.py` | Multilingual keyword classification (EN/AR/HI/FR/DE/ES) |
 | `PartyExtractor` | `party_extractor.py` | Supplier/buyer/ship-to/bill-to extraction |
+| `RelationshipExtractor` | `relationship_extractor.py` | PO/GRN/contract/shipment cross-reference extraction |
 | `DocumentIntelligenceService` | `document_intelligence.py` | Pre-extraction analysis orchestrator |
-| `ConfidenceScorer` | `confidence_scorer.py` | Multi-dimensional confidence scoring |
-| `ReviewRoutingService` | `review_routing.py` | Confidence-driven review routing |
-| `MasterDataEnrichmentService` | `master_data_enrichment.py` | Post-extraction vendor/PO matching |
+
+#### Field Extraction & Parsing
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `LineItemExtractor` | `line_item_extractor.py` | Schema-driven line item extraction with column mapping |
+| `PageParser` | `page_parser.py` | Multi-page segmentation, header/footer dedup |
+| `TableStitcher` | `table_stitcher.py` | Cross-page table continuation detection |
+
+#### Normalization & Validation
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `NormalizationService` | `normalization_service.py` | Jurisdiction-driven field normalization |
+| `EnhancedNormalizationService` | `enhanced_normalization.py` | Country-specific normalization (IN/AE/SA/DE/FR currency/date localization) |
+| `ValidationService` | `validation_service.py` | Jurisdiction-driven field validation |
+| `EnhancedValidationService` | `enhanced_validation.py` | Country-aware validation with ExtractionIssue persistence |
+
+#### Evidence, Audit & Tracing
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `EvidenceCaptureService` | `evidence_service.py` | Capture field provenance (snippets, pages, bounding boxes) → ExtractionEvidence records |
+| `ExtractionAuditService` | `extraction_audit.py` | Extraction-specific audit logging (8 event types per pipeline stage) |
+
+#### Confidence & Review Routing
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `ConfidenceScorer` | `confidence_scorer.py` | Multi-dimensional scoring (header=0.3, tax=0.3, line_item=0.2, jurisdiction=0.2) |
+| `ReviewRoutingService` | `review_routing.py` | Confidence-driven review routing with priority tiers |
+| `ReviewRoutingEngine` | `review_routing_engine.py` | Queue-based routing (EXCEPTION_OPS, TAX_REVIEW, VENDOR_OPS); thresholds: CRITICAL=0.4, LOW=0.65, TAX=0.6 |
+
+#### LLM & Prompts
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `PromptBuilderService` | `prompt_builder.py` | Dynamic LLM prompt from schema + jurisdiction |
+| `PromptBuilderService` | `prompt_builder_service.py` | Enhanced prompt builder (global/country/regime/document/schema/tax/evidence sections) |
+| `LLMExtractionAdapter` | `llm_extraction_adapter.py` | LLM client wrapper; retry on parse failures |
+
+#### Master Data & Learning
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `MasterDataEnrichmentService` | `master_data_enrichment.py` | Post-extraction vendor/PO/customer matching + confidence adjustments |
+| `LearningFeedbackService` | `learning_service.py` | Analytics from corrections & failures → ExtractionAnalyticsSnapshot |
+
+#### Country Governance
+
+| Service | File | Purpose |
+|---------|------|---------|
+| `CountryPackService` | `country_pack_service.py` | Multi-country support lifecycle: DRAFT → ACTIVE → DEPRECATED |
+
+#### Output Contract
+
+| Service | File | Purpose |
+|---------|------|---------|
+| ExtractionOutputContract | `output_contract.py` | Canonical output shape (MetaBlock, FieldValue, PartiesBlock, TaxBlock, LineItemRow, ReferencesBlock) |
+
+### API Endpoints
+
+**Configuration API** (`/api/v1/extraction-core/`):
+
+| Method | Path | View | Description |
+|--------|------|------|-------------|
+| GET/POST | `/jurisdictions/` | `TaxJurisdictionProfileViewSet` | List/create tax jurisdictions |
+| GET/PUT/DELETE | `/jurisdictions/<id>/` | | Retrieve/update/delete |
+| GET/POST | `/schemas/` | `ExtractionSchemaDefinitionViewSet` | List/create schemas |
+| GET/PUT/DELETE | `/schemas/<id>/` | | Retrieve/update/delete |
+| GET | `/schemas/<id>/field-definitions/` | | Get fields for schema |
+| GET | `/schemas/<id>/versions/` | | List schema versions |
+| GET/POST | `/runtime-settings/` | `ExtractionRuntimeSettingsViewSet` | List/create settings |
+| GET/PUT/DELETE | `/runtime-settings/<id>/` | | Retrieve/update/delete |
+| GET | `/runtime-settings/active/` | | Get active runtime settings |
+| GET/POST | `/entity-profiles/` | `EntityExtractionProfileViewSet` | List/create vendor profiles |
+| GET/PUT/DELETE | `/entity-profiles/<id>/` | | Retrieve/update/delete |
+| POST | `/resolve-jurisdiction/` | `JurisdictionResolveView` | Simple jurisdiction resolution |
+| POST | `/resolve-jurisdiction-full/` | `JurisdictionResolutionView` | Full 4-tier resolution (jurisdiction + schema + config) |
+| POST | `/lookup-schema/` | `SchemaLookupView` | Schema lookup by jurisdiction + doc type |
+| POST | `/extract/` | `ExtractionView` | Trigger extraction |
+
+**Execution API** (`/api/v1/extraction-pipeline/`):
+
+| Method | Path | View | Description |
+|--------|------|------|-------------|
+| POST | `/run/` | `RunPipelineView` | Trigger governed extraction pipeline |
+| GET | `/runs/` | `ExtractionRunViewSet` | List runs (filter: country, status, queue, requires_review, document) |
+| GET | `/runs/<id>/` | | Run detail |
+| GET | `/runs/<id>/summary/` | | Lightweight summary |
+| GET | `/runs/<id>/fields/` | | List field values |
+| GET | `/runs/<id>/line-items/` | | List line items |
+| GET | `/runs/<id>/validation/` | | List issues |
+| GET | `/runs/<id>/evidence/` | | List evidence records |
+| GET | `/runs/<id>/corrections/` | | List corrections |
+| POST | `/runs/<id>/correct-field/` | | Correct a field value |
+| POST | `/runs/<id>/approve/` | | Approve extraction |
+| POST | `/runs/<id>/reject/` | | Reject extraction |
+| POST | `/runs/<id>/reprocess/` | | Reprocess extraction |
+| POST | `/runs/<id>/escalate/` | | Escalate to review queue |
+| GET | `/analytics/` | `ExtractionAnalyticsViewSet` | List analytics snapshots |
+| GET/POST | `/country-packs/` | `CountryPackViewSet` | List/create country packs |
+
+### Serializers (~25 classes)
+
+**Configuration serializers** (`serializers.py`): `TaxJurisdictionProfileSerializer`, `TaxJurisdictionProfileListSerializer`, `ExtractionSchemaDefinitionSerializer`, `ExtractionSchemaDefinitionListSerializer`, `ExtractionRuntimeSettingsSerializer`, `EntityExtractionProfileSerializer`, `EntityExtractionProfileListSerializer`
+
+**Request serializers**: `JurisdictionResolveRequestSerializer`, `JurisdictionResolutionRequestSerializer`, `SchemaLookupRequestSerializer`, `ExtractionRequestSerializer`
+
+**Execution serializers** (`extraction_serializers.py`): `ExtractionRunListSerializer`, `ExtractionRunDetailSerializer`, `ExtractionRunSummarySerializer`, `ExtractionFieldValueSerializer`, `ExtractionLineItemSerializer`, `ExtractionEvidenceSerializer`, `ExtractionIssueSerializer`, `ExtractionApprovalRecordSerializer`, `ExtractionCorrectionSerializer`, `ExtractionAnalyticsSnapshotSerializer`, `CountryPackSerializer`, `ApproveRejectRequestSerializer`, `CorrectFieldRequestSerializer`, `EscalateRequestSerializer`, `RunPipelineRequestSerializer`
+
+### Django Admin (13 models registered)
+
+All models registered in `apps/extraction_core/admin.py` with full admin features:
+
+| Admin Class | List Display Highlights |
+|-------------|------------------------|
+| `TaxJurisdictionProfileAdmin` | country_code, tax_regime, default_currency, is_active |
+| `ExtractionSchemaDefinitionAdmin` | name, jurisdiction, document_type, schema_version, is_active |
+| `ExtractionRuntimeSettingsAdmin` | name, jurisdiction_mode, defaults, detection settings |
+| `EntityExtractionProfileAdmin` | entity, country_code, regime_code, jurisdiction_mode |
+| `ExtractionRunAdmin` | id, document, status, country_code, overall_confidence, review_queue, duration_ms |
+| `ExtractionFieldValueAdmin` | extraction_run, field_code, value, confidence, category, is_corrected |
+| `ExtractionLineItemAdmin` | extraction_run, line_index, confidence, is_valid |
+| `ExtractionEvidenceAdmin` | extraction_run, field_code, page_number, extraction_method |
+| `ExtractionIssueAdmin` | extraction_run, severity, field_code, check_type, message |
+| `ExtractionApprovalRecordAdmin` | extraction_run, action, approved_by, decided_at |
+| `ExtractionCorrectionAdmin` | extraction_run, field_code, original/corrected values, corrected_by |
+| `ExtractionAnalyticsSnapshotAdmin` | snapshot_type, country_code, regime_code, run_count, average_confidence |
+| `CountryPackAdmin` | jurisdiction, pack_status, schema/validation/normalization versions |
+
+### Migrations
+
+| File | Description |
+|------|-------------|
+| `0001_initial.py` | Creates initial models |
+| `0002_entityextractionprofile_extractionruntimesettings.py` | Adds EntityExtractionProfile + ExtractionRuntimeSettings |
+| `0003_add_extraction_run_pipeline_models.py` | Adds ExtractionRun + all pipeline tracking models |
 
 ---
 
@@ -684,7 +1022,7 @@ with EXACTLY this structure:
 
 | URL Pattern | View | Method | Permission | Description |
 |-------------|------|--------|------------|-------------|
-| `/extraction/` | `extraction_workbench` | GET | `invoices.view` | Main workbench with KPIs |
+| `/extraction/` | `extraction_workbench` | GET | `invoices.view` | Main workbench with KPIs + approval tab |
 | `/extraction/upload/` | `extraction_upload` | POST | `invoices.create` | Upload + extract |
 | `/extraction/filter/` | `extraction_ajax_filter` | GET | `invoices.view` | AJAX filter results |
 | `/extraction/export/` | `extraction_export_csv` | GET | `invoices.view` | CSV export |
@@ -692,18 +1030,19 @@ with EXACTLY this structure:
 | `/extraction/result/<id>/json/` | `extraction_result_json` | GET | `invoices.view` | Download raw JSON |
 | `/extraction/result/<id>/rerun/` | `extraction_rerun` | POST | `extraction.reprocess` | Re-run extraction |
 | `/extraction/result/<id>/edit/` | `extraction_edit_values` | POST | `invoices.create` | Edit extracted values |
-| `/extraction/approvals/` | `extraction_approval_queue` | GET | `invoices.view` | Approval queue |
+| `/extraction/approvals/` | `extraction_approval_queue` | GET | `invoices.view` | Redirects to workbench?tab=approvals |
 | `/extraction/approvals/<id>/` | `extraction_approval_detail` | GET | `invoices.view` | Approval detail/review |
 | `/extraction/approvals/<id>/approve/` | `extraction_approve` | POST | `extraction.approve` | Approve extraction |
 | `/extraction/approvals/<id>/reject/` | `extraction_reject` | POST | `extraction.reject` | Reject extraction |
 | `/extraction/console/<id>/` | `extraction_console` | GET | `invoices.view` | Agentic review console |
 | `/extraction/approvals/analytics/` | `extraction_approval_analytics` | GET | `invoices.view` | Analytics JSON endpoint |
+| `/extraction/country-packs/` | `country_pack_list` | GET | `extraction.view` | Country pack governance |
 
-**API URLs**: `apps/extraction/api_urls.py` — empty (no REST API endpoints yet).
+**API URLs**: `apps/extraction/api_urls.py` — empty (no REST API endpoints; all APIs live in `extraction_core`).
 
 ### Observability
 
-All 14 template views are decorated with:
+All 15 template views are decorated with:
 - `@login_required` — enforced by `LoginRequiredMiddleware`
 - `@permission_required_code("<permission>")` — RBAC permission check
 - `@observed_action("<action_name>")` — creates trace span, captures actor identity, role snapshot, permission checked; writes `AuditEvent`
@@ -715,13 +1054,21 @@ AP_PROCESSOR users see only extractions linked to their own uploaded invoices. T
 - KPI statistics (counts and averages)
 - AJAX filter endpoint (filtered results)
 
+### Cross-Module Enrichment (extraction_core integration)
+
+Several template views enrich their context with data from `extraction_core` models:
+
+- **`extraction_workbench`**: Pre-loads `ExtractionRun.review_queue` for each result (bulk query via `document__document_upload_id` mapping). Displays review queue as badge in results table.
+- **`extraction_console`**: Loads `ExtractionRun` by `document_upload_id` to enrich context with `review_queue`, `schema_code`, `schema_version`, `extraction_method`, `requires_review`. Loads `ExtractionCorrection` records for corrections tab.
+- **`country_pack_list`**: Queries `CountryPack.objects.select_related("jurisdiction")` to display governance table.
+
+All cross-module lookups are wrapped in `try/except` for graceful degradation if extraction_core data isn't populated.
+
 ### View Details
 
-**`extraction_workbench`** — Main extraction agent page with:
-- KPI stats (total runs, success count, failure count, avg confidence, avg duration)
-- Advanced filters (search, status, confidence range, date range)
-- Paginated results table (20 per page)
-- "Run Agent" file upload modal (PDF, PNG, JPG, TIFF — max 20 MB)
+**`extraction_workbench`** — Main extraction agent page with two tabs:
+- **Agent Runs tab**: KPI stats (total, success, failed, avg confidence, avg duration); advanced filters (search, status, confidence range, date range, review queue); paginated results table (20 per page) with review queue column; "Run Agent" file upload modal (PDF, PNG, JPG, TIFF — max 20 MB)
+- **Approvals tab**: Approval queue with filter/search + analytics strip
 
 **`extraction_upload`** — File upload handler:
 - Validates file type and size (20 MB max)
@@ -742,11 +1089,7 @@ AP_PROCESSOR users see only extractions linked to their own uploaded invoices. T
 - Returns changed fields list and count
 - Audits changes as `EXTRACTION_COMPLETED` event
 
-**`extraction_approval_queue`** — Approval queue:
-- Filter by status (PENDING, APPROVED, AUTO_APPROVED, REJECTED, ALL)
-- Search by invoice number or vendor name
-- Analytics strip (pending, approved, auto, rejected, touchless rate)
-- Most corrected fields table
+**`extraction_approval_queue`** — Backward-compatible redirect to `workbench?tab=approvals`. Forwards query params.
 
 **`extraction_approval_detail`** — Review and approve/reject:
 - Confidence and metadata cards
@@ -761,21 +1104,37 @@ AP_PROCESSOR users see only extractions linked to their own uploaded invoices. T
 - Full context build: header fields, tax fields, parties, enrichment, line items, validation re-run
 - Pipeline stages with state tracking (10 stages)
 - Approval record lookup
+- ExtractionRun enrichment (review queue, schema, method badges in header bar)
+- Corrections tab with ExtractionCorrection audit trail
 - Permission context (can_approve, can_reprocess, can_escalate)
 - Assignable users for escalation
 - See [Section 13: Extraction Review Console](#13-extraction-review-console) for full template/layout details.
+
+**`country_pack_list`** — Country pack governance page:
+- KPI strip: total, active, draft, deprecated counts
+- Governance table: country, regime, status (color-coded badges), schema/validation/normalization versions, activated date, notes
+- Gated by `extraction.view` permission
 
 ---
 
 ## 12. Templates (UI)
 
-All templates are in `templates/extraction/` and extend `base.html` (Bootstrap 5).
+All templates are in `templates/extraction/` and extend `base.html` (Bootstrap 5). Total: 19 template files.
+
+### Top-Level Templates
+
+| File | Purpose |
+|------|---------|
+| `workbench.html` | Main workbench with Agent Runs tab (KPIs, filters, results with review queue column) + Approvals tab |
+| `result_detail.html` | Single extraction result detail |
+| `approval_detail.html` | Approval review page (approve/reject modals) |
+| `approval_queue.html` | Deprecated — redirects to workbench |
+| `country_packs.html` | Country pack governance (KPI strip + governance table with status badges) |
 
 ### workbench.html
-- KPI stat cards (total, success, failed, avg confidence, avg duration)
-- Advanced filter panel (search, status dropdown, confidence presets/slider, date range)
-- Results table with AJAX pagination and filtering
-- "Run Agent" modal for file upload (drag-and-drop, file validation)
+- Two-tab layout: **Agent Runs** and **Approvals**
+- Agent Runs: KPI stat cards (total, success, failed, avg confidence, avg duration); advanced filter panel (search, status, confidence presets/slider, date range, review queue dropdown); results table with review queue column; "Run Agent" modal for file upload (drag-and-drop, file validation)
+- Approvals: Approval queue with filter/search + analytics strip
 
 ### result_detail.html
 - Engine metadata panel (name, version, duration, file info)
@@ -784,13 +1143,6 @@ All templates are in `templates/extraction/` and extend `base.html` (Bootstrap 5
 - Invoice header + line items display
 - Validation issues list
 - Action buttons: Edit Values, Download JSON, Re-extract, View Full Invoice
-
-### approval_queue.html
-- Analytics KPI strip (Pending, Approved, Auto-Approved, Rejected, Touchless Rate)
-- Filter controls: status dropdown + search input
-- Results table: invoice #, vendor, amount, confidence bar, status badge, corrections count, reviewer, date
-- Most Corrected Fields analytics table (field name, correction count)
-- Pagination
 
 ### approval_detail.html
 - Confidence card with percentage + status badge
@@ -801,6 +1153,12 @@ All templates are in `templates/extraction/` and extend `base.html` (Bootstrap 5
 - Previous corrections table (showing original → corrected values)
 - Reject modal with reason textarea
 - JavaScript handlers for Approve (AJAX POST) and Reject (modal + AJAX POST)
+
+### country_packs.html
+- Breadcrumb navigation
+- KPI strip: Total Packs, Active, Draft, Deprecated (with color-coded badges)
+- Governance table: Country, Regime, Status (ACTIVE=green, DRAFT=amber, DEPRECATED=red), Schema Version, Validation Version, Normalization Version, Activated date, Notes
+- Empty state message when no packs exist
 
 ---
 
@@ -819,10 +1177,12 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  HEADER BAR — ID, file, status, confidence, jurisdiction,    │
+│               review queue badge, schema badge,              │
+│               extraction method badge,                       │
 │               action buttons (Approve, Edit, Reprocess,      │
 │               Escalate, Comment)                             │
 ├──────────────────────────────────────────────────────────────┤
-│  INTELLIGENCE PANEL (5 tabs, full-width col-12)              │
+│  INTELLIGENCE PANEL (6 tabs, full-width col-12)              │
 │                                                              │
 │  Tab 1: Extracted Data                                       │
 │    - Header Fields table                                     │
@@ -847,6 +1207,12 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 │    - Chronological event timeline                            │
 │    - Actor/role badges                                       │
 │    - Before/after change tracking                            │
+│                                                              │
+│  Tab 6: Corrections                                          │
+│    - Field correction audit trail table                      │
+│    - Original → Corrected values with reasons                │
+│    - Corrected-by user + timestamp                           │
+│                                                              │
 ├──────────────────────────────────────────────────────────────┤
 │  PIPELINE TIMELINE — Upload → OCR → Jurisdiction → Schema →  │
 │  Extraction → Normalize → Validate → Enrich → Confidence →   │
@@ -856,12 +1222,12 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 
 > **Note**: The document viewer column was removed. The console uses a single-column, full-width layout for the intelligence panel. The `_document_viewer.html` template is no longer included.
 
-### Template Files (14 files in `templates/extraction/console/`)
+### Template Files (15 files in `templates/extraction/console/`)
 
 | File | Purpose |
 |------|---------|
-| `console.html` | Main layout — extends `base.html`, includes all partials/modals, loads CSS/JS |
-| `_header_bar.html` | Command bar — extraction ID, status/confidence badges, jurisdiction badges, action buttons |
+| `console.html` | Main layout — extends `base.html`, includes all partials/modals, loads CSS/JS. 6 tab pills. |
+| `_header_bar.html` | Command bar — extraction ID, status/confidence badges, jurisdiction badges, review queue badge (bg-info-subtle), schema badge (bg-dark-subtle), extraction method badge (conditional: HYBRID=purple, LLM=primary, else=secondary), action buttons |
 | `_document_viewer.html` | **Deprecated** — no longer included in layout. File exists but is unused. |
 | `_extracted_data.html` | Tab 1 — Header Fields, Parties, Tax/Jurisdiction, Master Data Matches, Line Items |
 | `_confidence_badge.html` | Reusable confidence % indicator (green ≥85%, amber ≥50%, red <50%) |
@@ -869,6 +1235,7 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 | `_evidence_panel.html` | Tab 3 — Evidence cards with source snippets and page references |
 | `_reasoning_panel.html` | Tab 4 — Agent reasoning timeline with step indicators, decisions, collapsible details |
 | `_audit_trail.html` | Tab 5 — Chronological event timeline with actor/role badges, before/after tracking |
+| `_corrections_panel.html` | Tab 6 — Field correction audit trail table (columns: Field Code, Original Value (strikethrough), Corrected Value (green), Reason, Corrected By, Date). Empty state with guidance text. |
 | `_bottom_timeline.html` | Pipeline stage progress bar with state indicators (completed/active/error/skipped/pending) |
 | `_approve_modal.html` | Approval modal — warnings summary, notes, review confirmation checkbox |
 | `_reprocess_modal.html` | Reprocess modal — reason select, override options (force LLM, override jurisdiction) |
@@ -923,7 +1290,8 @@ The `extraction_console` view builds the following context for the template:
 
 | Context Variable | Source | Description |
 |-----------------|--------|-------------|
-| `extraction` | Computed dict | ID, file_name, status, confidence, jurisdiction metadata |
+| `extraction` | Computed dict | ID, file_name, status, confidence, created_at, resolved_jurisdiction, jurisdiction_source, jurisdiction_confidence, jurisdiction_warning, review_queue, schema_code, schema_version, extraction_method, requires_review |
+| `ext` | `ExtractionResult` | Original extraction result record |
 | `header_fields` | Invoice model | Dict of field dicts (display_name, value, raw_value, confidence, method, is_mandatory, evidence) |
 | `tax_fields` | Invoice model | Tax-specific field dicts |
 | `parties` | `raw_response.document_intelligence.parties` | Supplier/buyer/ship-to/bill-to from document intelligence |
@@ -933,8 +1301,12 @@ The `extraction_console` view builds the following context for the template:
 | `validation_field_issues` | Computed | Map of field names with validation issues |
 | `pipeline_stages` | Computed | 10-stage pipeline with state indicators |
 | `approval` | `ExtractionApproval` | Current approval record (if exists) |
+| `corrections` | `ExtractionCorrection` queryset | Field correction audit trail from `ExtractionRun` (select_related corrected_by) |
+| `correction_count` | int | Count of corrections for badge display |
 | `permissions` | Request user | `can_approve` (`extraction.approve`), `can_reprocess` (`extraction.reprocess`), `can_escalate` (`cases.escalate`) — checked via `user.has_permission()` |
 | `assignable_users` | `User.objects` | Top 50 active users for escalation |
+
+**ExtractionRun enrichment**: The view queries `ExtractionRun` by `document__document_upload_id` to populate `review_queue`, `schema_code`, `schema_version`, `extraction_method`, and `requires_review` in the `extraction` context dict. These appear as badges in the header bar.
 
 ---
 
@@ -995,6 +1367,26 @@ UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → PENDING_APPR
 | `EXTRACTION_REJECTED` | Human rejects extraction |
 | `EXTRACTION_FIELD_CORRECTED` | Field correction applied during approval |
 
+### Extraction Platform Governance Event Types
+
+| Event Type | When Logged |
+|------------|-------------|
+| `JURISDICTION_RESOLVED` | Jurisdiction resolved (tier + country + regime) |
+| `SCHEMA_SELECTED` | Schema selected for extraction |
+| `PROMPT_SELECTED` | Prompt template selected |
+| `NORMALIZATION_COMPLETED` | Country-specific normalization complete |
+| `VALIDATION_COMPLETED` | Country-specific validation complete |
+| `EVIDENCE_CAPTURED` | Field evidence captured |
+| `REVIEW_ROUTE_ASSIGNED` | Review queue assigned |
+| `EXTRACTION_REPROCESSED` | Extraction re-run triggered |
+| `EXTRACTION_ESCALATED` | Extraction escalated to review queue |
+| `EXTRACTION_COMMENT_ADDED` | Comment added to extraction |
+| `SETTINGS_UPDATED` | Runtime settings or schema updated |
+| `SCHEMA_UPDATED` | Schema definition modified |
+| `PROMPT_UPDATED` | Prompt template modified |
+| `ROUTING_RULE_UPDATED` | Routing rule modified |
+| `ANALYTICS_SNAPSHOT_CREATED` | Analytics snapshot generated |
+
 ---
 
 ## 15. Configuration
@@ -1030,10 +1422,13 @@ All settings are in `config/settings.py`. Values are loaded from environment var
 |------------|-------------|
 | `invoices.view` | View extraction results, approval queue, analytics |
 | `invoices.create` | Upload files, edit extracted values |
+| `extraction.view` | View extraction platform data (country packs, schemas, settings) |
 | `extraction.approve` | Approve extracted invoice data before reconciliation |
 | `extraction.reject` | Reject extracted data and request re-extraction |
 | `extraction.reprocess` | Re-run extraction on existing uploads |
-| `cases.escalate` | Escalate extraction for case-level review |
+| `extraction.correct` | Correct field values on extraction runs (API) |
+| `extraction.escalate` | Escalate extraction to review queue (API) |
+| `cases.escalate` | Escalate extraction for case-level review (console UI) |
 
 ### Role Access
 
@@ -1065,18 +1460,19 @@ All other roles see all extractions.
 ### Sidebar Navigation
 
 The extraction section in the sidebar (`templates/partials/sidebar.html`) includes:
-- **Invoice Extraction Agent** — links to the workbench (`/extraction/`)
-- **Extraction Approvals** — links to the approval queue (`/extraction/approvals/`)
-
-Both are gated by `{% has_permission "invoices.view" %}`.
+- **Invoice Extraction Agent** — links to the workbench (`/extraction/`), gated by `{% has_permission "invoices.view" %}`
+- **Extraction Approvals** — links to the approval queue (`/extraction/approvals/`), gated by `{% has_permission "invoices.view" %}`
+- **Country Packs** — links to country pack governance (`/extraction/country-packs/`), gated by `{% has_permission "extraction.view" %}`, uses `bi-globe2` icon
 
 ---
 
 ## 17. Django Admin
 
+### apps/extraction Admin
+
 **File**: `apps/extraction/admin.py`
 
-### ExtractionResultAdmin
+#### ExtractionResultAdmin
 
 | Feature | Detail |
 |---------|--------|
@@ -1085,7 +1481,7 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 | Search | filename, error_message |
 | Fieldsets | Links, Engine, Result, Raw Data (collapsed), Audit (collapsed) |
 
-### ExtractionApprovalAdmin
+#### ExtractionApprovalAdmin
 
 | Feature | Detail |
 |---------|--------|
@@ -1095,17 +1491,39 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 | Inlines | `ExtractionFieldCorrectionInline` (tabular, read-only) |
 | Fieldsets | Links, Decision, Metrics, Snapshot (collapsed), Audit (collapsed) |
 
+### apps/extraction_core Admin
+
+**File**: `apps/extraction_core/admin.py` — 13 models registered
+
+| Admin Class | List Display Highlights |
+|-------------|------------------------|
+| `TaxJurisdictionProfileAdmin` | country_code, country_name, tax_regime, default_currency, tax_id_label, is_active |
+| `ExtractionSchemaDefinitionAdmin` | name, jurisdiction, document_type, schema_version, is_active |
+| `ExtractionRuntimeSettingsAdmin` | name, jurisdiction_mode, default_country_code, default_regime_code, is_active |
+| `EntityExtractionProfileAdmin` | entity, country_code, regime_code, jurisdiction_mode, is_active |
+| `ExtractionRunAdmin` | id, document, status, country_code, overall_confidence, review_queue, requires_review, duration_ms |
+| `ExtractionFieldValueAdmin` | extraction_run, field_code, value, confidence, category, is_corrected |
+| `ExtractionLineItemAdmin` | extraction_run, line_index, confidence, is_valid |
+| `ExtractionEvidenceAdmin` | extraction_run, field_code, page_number, extraction_method, confidence |
+| `ExtractionIssueAdmin` | extraction_run, severity, field_code, check_type, message |
+| `ExtractionApprovalRecordAdmin` | extraction_run, action, approved_by, decided_at |
+| `ExtractionCorrectionAdmin` | extraction_run, field_code, original/corrected values, corrected_by |
+| `ExtractionAnalyticsSnapshotAdmin` | snapshot_type, country_code, period, run_count, average_confidence |
+| `CountryPackAdmin` | jurisdiction, pack_status, schema/validation/normalization versions, activated_at |
+
 ---
 
 ## 18. File Reference
+
+### apps/extraction (Application Layer — UI, Task, Core Models)
 
 | File | Purpose |
 |------|---------|
 | `apps/extraction/models.py` | ExtractionResult, ExtractionApproval, ExtractionFieldCorrection models |
 | `apps/extraction/tasks.py` | Main extraction pipeline Celery task |
-| `apps/extraction/admin.py` | Django admin registrations |
-| `apps/extraction/template_views.py` | All template views (workbench, upload, approval queue, etc.) |
-| `apps/extraction/urls.py` | URL routing |
+| `apps/extraction/admin.py` | Django admin registrations (3 models) |
+| `apps/extraction/template_views.py` | All 15 template views (workbench, upload, approval queue, console, country packs) |
+| `apps/extraction/urls.py` | URL routing (15 routes) |
 | `apps/extraction/api_urls.py` | API URL routing (empty) |
 | `apps/extraction/services/extraction_adapter.py` | Azure DI OCR + LLM extraction orchestration |
 | `apps/extraction/services/parser_service.py` | JSON → ParsedInvoice dataclass parsing |
@@ -1115,40 +1533,89 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 | `apps/extraction/services/persistence_service.py` | Invoice + LineItem + ExtractionResult persistence |
 | `apps/extraction/services/approval_service.py` | Approval lifecycle (approve/reject/auto-approve + analytics) |
 | `apps/extraction/services/upload_service.py` | File upload, hash computation, DocumentUpload creation |
-| `apps/agents/services/agent_classes.py` | InvoiceExtractionAgent + InvoiceUnderstandingAgent |
-| `apps/agents/services/base_agent.py` | BaseAgent ReAct framework |
-| `apps/core/prompt_registry.py` | LLM prompt templates (extraction.invoice_system) |
-| `apps/core/enums.py` | InvoiceStatus, ExtractionApprovalStatus, AuditEventType enums |
-| `apps/core/utils.py` | Normalization utilities (strings, dates, amounts, PO numbers) |
-| `apps/documents/models.py` | DocumentUpload, Invoice, InvoiceLineItem models |
-| `config/settings.py` | Azure credentials, thresholds, auto-approve config |
-| `templates/extraction/workbench.html` | Extraction workbench UI |
-| `templates/extraction/result_detail.html` | Extraction result detail UI |
-| `templates/extraction/approval_queue.html` | Approval queue UI |
-| `templates/extraction/approval_detail.html` | Approval review UI |
-| **Extraction Core Services** | |
-| `apps/extraction_core/services/extraction_service.py` | Primary extraction pipeline orchestrator (19-step) |
+
+### apps/extraction_core (Platform Layer — Configuration, Execution, Governance)
+
+| File | Purpose |
+|------|---------|
+| `apps/extraction_core/models.py` | 13 models (jurisdiction, schema, runtime, entity, run, field, line item, evidence, issue, approval, correction, analytics, country pack) |
+| `apps/extraction_core/admin.py` | Django admin registrations (13 models) |
+| `apps/extraction_core/views.py` | Configuration API ViewSets (jurisdictions, schemas, settings, entity profiles, resolve/lookup) |
+| `apps/extraction_core/extraction_views.py` | Execution API ViewSets (runs, country packs, analytics, pipeline trigger) |
+| `apps/extraction_core/serializers.py` | Configuration API serializers |
+| `apps/extraction_core/extraction_serializers.py` | Execution API serializers |
+| `apps/extraction_core/api_urls.py` | Configuration API URL routing (`/api/v1/extraction-core/`) |
+| `apps/extraction_core/extraction_api_urls.py` | Execution API URL routing (`/api/v1/extraction-pipeline/`) |
+| **Core Pipeline & Orchestration** | |
+| `apps/extraction_core/services/extraction_pipeline.py` | 11-stage governed pipeline orchestrator |
+| `apps/extraction_core/services/extraction_service.py` | Original pipeline orchestrator |
 | `apps/extraction_core/services/base_extraction_service.py` | Schema-driven extraction base class |
+| **Jurisdiction Resolution** | |
 | `apps/extraction_core/services/jurisdiction_resolver.py` | Multi-signal jurisdiction detection |
-| `apps/extraction_core/services/resolution_service.py` | 4-tier jurisdiction resolution cascade |
+| `apps/extraction_core/services/resolution_service.py` | 4-tier resolution cascade |
+| **Schema & Registry** | |
 | `apps/extraction_core/services/schema_registry.py` | Cached, version-aware schema lookup |
-| `apps/extraction_core/services/prompt_builder.py` | Dynamic LLM prompt construction |
-| `apps/extraction_core/services/llm_extraction_adapter.py` | LLM client wrapper for schema extraction |
-| `apps/extraction_core/services/normalization_service.py` | Jurisdiction-driven field normalization |
-| `apps/extraction_core/services/validation_service.py` | Jurisdiction-driven field validation |
-| `apps/extraction_core/services/page_parser.py` | Multi-page OCR text segmentation |
-| `apps/extraction_core/services/table_stitcher.py` | Cross-page table continuation |
-| `apps/extraction_core/services/line_item_extractor.py` | Schema-driven line item extraction |
-| `apps/extraction_core/services/document_classifier.py` | Weighted keyword document classification |
+| **Document Intelligence** | |
+| `apps/extraction_core/services/document_classifier.py` | Multilingual document type classification |
 | `apps/extraction_core/services/relationship_extractor.py` | PO/GRN/contract cross-reference extraction |
 | `apps/extraction_core/services/party_extractor.py` | Supplier/buyer/ship-to/bill-to extraction |
 | `apps/extraction_core/services/document_intelligence.py` | Pre-extraction analysis orchestrator |
+| **Field Extraction & Parsing** | |
+| `apps/extraction_core/services/line_item_extractor.py` | Schema-driven line item extraction |
+| `apps/extraction_core/services/page_parser.py` | Multi-page OCR text segmentation |
+| `apps/extraction_core/services/table_stitcher.py` | Cross-page table continuation |
+| **Normalization & Validation** | |
+| `apps/extraction_core/services/normalization_service.py` | Jurisdiction-driven field normalization |
+| `apps/extraction_core/services/enhanced_normalization.py` | Country-specific normalization (IN/AE/SA/DE/FR) |
+| `apps/extraction_core/services/validation_service.py` | Jurisdiction-driven field validation |
+| `apps/extraction_core/services/enhanced_validation.py` | Country-aware validation with ExtractionIssue persistence |
+| **Evidence, Audit & Tracing** | |
+| `apps/extraction_core/services/evidence_service.py` | Field provenance capture → ExtractionEvidence records |
+| `apps/extraction_core/services/extraction_audit.py` | Extraction-specific audit logging (8 pipeline event types) |
+| **Confidence & Review Routing** | |
 | `apps/extraction_core/services/confidence_scorer.py` | Multi-dimensional confidence scoring |
 | `apps/extraction_core/services/review_routing.py` | Confidence-driven review routing |
+| `apps/extraction_core/services/review_routing_engine.py` | Queue-based routing (EXCEPTION_OPS, TAX_REVIEW, VENDOR_OPS) |
+| **LLM & Prompts** | |
+| `apps/extraction_core/services/prompt_builder.py` | Dynamic LLM prompt construction |
+| `apps/extraction_core/services/prompt_builder_service.py` | Enhanced data-driven prompt builder |
+| `apps/extraction_core/services/llm_extraction_adapter.py` | LLM client wrapper for schema extraction |
+| **Master Data & Learning** | |
 | `apps/extraction_core/services/master_data_enrichment.py` | Post-extraction vendor/PO/customer matching |
-| **Review Console Templates** | |
-| `templates/extraction/console/console.html` | Main review console layout |
-| `templates/extraction/console/_header_bar.html` | Command bar (status, confidence, actions) |
+| `apps/extraction_core/services/learning_service.py` | Analytics from corrections/failures → ExtractionAnalyticsSnapshot |
+| **Country Governance** | |
+| `apps/extraction_core/services/country_pack_service.py` | Country pack lifecycle management |
+| **Output Contract** | |
+| `apps/extraction_core/services/output_contract.py` | Canonical extraction output contract (MetaBlock, FieldValue, PartiesBlock, TaxBlock, LineItemRow) |
+
+### Agent Framework
+
+| File | Purpose |
+|------|---------|
+| `apps/agents/services/agent_classes.py` | InvoiceExtractionAgent + InvoiceUnderstandingAgent |
+| `apps/agents/services/base_agent.py` | BaseAgent ReAct framework |
+| `apps/core/prompt_registry.py` | LLM prompt templates (extraction.invoice_system) |
+
+### Shared Infrastructure
+
+| File | Purpose |
+|------|---------|
+| `apps/core/enums.py` | InvoiceStatus, ExtractionApprovalStatus, AuditEventType (incl. 15 extraction governance events), DocumentType |
+| `apps/core/utils.py` | Normalization utilities (strings, dates, amounts, PO numbers) |
+| `apps/documents/models.py` | DocumentUpload, Invoice, InvoiceLineItem models |
+| `config/settings.py` | Azure credentials, thresholds, auto-approve config |
+
+### Templates
+
+| File | Purpose |
+|------|---------|
+| `templates/extraction/workbench.html` | Extraction workbench UI (Agent Runs + Approvals tabs) |
+| `templates/extraction/result_detail.html` | Extraction result detail UI |
+| `templates/extraction/approval_detail.html` | Approval review UI |
+| `templates/extraction/approval_queue.html` | Deprecated — redirects to workbench |
+| `templates/extraction/country_packs.html` | Country pack governance (KPI strip + table) |
+| `templates/extraction/console/console.html` | Main review console layout (6 tabs) |
+| `templates/extraction/console/_header_bar.html` | Command bar (status, confidence, review queue, schema, method badges) |
 | `templates/extraction/console/_document_viewer.html` | **Deprecated** — no longer included in layout |
 | `templates/extraction/console/_extracted_data.html` | Tab 1: Header, Parties, Tax, Enrichment, Line Items |
 | `templates/extraction/console/_confidence_badge.html` | Reusable confidence % badge (green/amber/red) |
@@ -1156,15 +1623,20 @@ Both are gated by `{% has_permission "invoices.view" %}`.
 | `templates/extraction/console/_evidence_panel.html` | Tab 3: Evidence cards with source snippets |
 | `templates/extraction/console/_reasoning_panel.html` | Tab 4: Agent reasoning timeline |
 | `templates/extraction/console/_audit_trail.html` | Tab 5: Chronological audit event timeline |
+| `templates/extraction/console/_corrections_panel.html` | Tab 6: Field correction audit trail (original → corrected) |
 | `templates/extraction/console/_bottom_timeline.html` | Pipeline stage progress bar |
 | `templates/extraction/console/_approve_modal.html` | Approval confirmation modal |
 | `templates/extraction/console/_reprocess_modal.html` | Reprocess extraction modal |
 | `templates/extraction/console/_escalate_modal.html` | Escalation modal |
 | `templates/extraction/console/_comment_modal.html` | Add comment modal |
-| **Static Assets** | |
+
+### Static Assets
+
+| File | Purpose |
+|------|---------|
 | `static/css/extraction_console.css` | Review console custom styles (~200 lines) |
 | `static/js/extraction_console.js` | Review console JavaScript (~200 lines) |
-| `templates/partials/sidebar.html` | Navigation sidebar (extraction links) |
+| `templates/partials/sidebar.html` | Navigation sidebar (extraction + country packs links) |
 
 ---
 

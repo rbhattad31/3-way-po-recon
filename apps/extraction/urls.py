@@ -1,7 +1,6 @@
 from django.urls import path
 
 from apps.extraction.template_views import (
-    country_pack_list,
     extraction_ajax_filter,
     extraction_approve,
     extraction_approval_analytics,
@@ -36,6 +35,4 @@ urlpatterns = [
     path("approvals/<int:pk>/approve/", extraction_approve, name="approve"),
     path("approvals/<int:pk>/reject/", extraction_reject, name="reject"),
     path("approvals/analytics/", extraction_approval_analytics, name="approval_analytics"),
-    # Country pack governance
-    path("country-packs/", country_pack_list, name="country_pack_list"),
 ]

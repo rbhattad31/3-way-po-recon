@@ -36,8 +36,8 @@
       {% has_permission "extraction.view" as can_view_packs %}
       {% if can_view_packs %}
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'country_pack_list' %}active fw-bold{% endif %}" href="{% url 'extraction:country_pack_list' %}">
-          <i class="bi bi-globe2 me-2"></i>Country Packs
+        <a class="nav-link {% if request.resolver_match.app_name == 'extraction_control_center' %}active fw-bold{% endif %}" href="{% url 'extraction_control_center:overview' %}">
+          <i class="bi bi-sliders2 me-2"></i>Extraction Control Center
         </a>
       </li>
       {% endif %}
