@@ -36,9 +36,9 @@
 {# ══════════ Tabs ══════════ #}
 <ul class="nav nav-tabs mb-4" id="workbenchTabs" role="tablist">
   <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab != 'approvals' %}active{% endif %}" id="runs-tab" data-bs-toggle="tab"
+    <button class="nav-link {% if active_tab != 'approvals' and active_tab != 'rejected' %}active{% endif %}" id="runs-tab" data-bs-toggle="tab"
             data-bs-target="#runs-pane" type="button" role="tab" aria-controls="runs-pane"
-            aria-selected="{% if active_tab != 'approvals' %}true{% else %}false{% endif %}">
+            aria-selected="{% if active_tab != 'approvals' and active_tab != 'rejected' %}true{% else %}false{% endif %}">
       <i class="bi bi-robot me-1"></i>Agent Runs
       <span class="badge bg-primary bg-opacity-75 ms-1">{{ stats.total }}</span>
     </button>
@@ -53,12 +53,22 @@
       {% endif %}
     </button>
   </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'rejected' %}active{% endif %}" id="rejected-tab" data-bs-toggle="tab"
+            data-bs-target="#rejected-pane" type="button" role="tab" aria-controls="rejected-pane"
+            aria-selected="{% if active_tab == 'rejected' %}true{% else %}false{% endif %}">
+      <i class="bi bi-exclamation-triangle me-1"></i>Rejected
+      {% if failed_uploads_count %}
+      <span class="badge bg-danger ms-1">{{ failed_uploads_count }}</span>
+      {% endif %}
+    </button>
+  </li>
 </ul>
 
 <div class="tab-content" id="workbenchTabContent">
 
 {# ══════════ TAB 1 — Agent Runs ══════════ #}
-<div class="tab-pane fade {% if active_tab != 'approvals' %}show active{% endif %}" id="runs-pane" role="tabpanel" aria-labelledby="runs-tab">
+<div class="tab-pane fade {% if active_tab != 'approvals' and active_tab != 'rejected' %}show active{% endif %}" id="runs-pane" role="tabpanel" aria-labelledby="runs-tab">
 
 {# ── Credit Usage Strip ── #}
 <div class="d-flex justify-content-between align-items-center mb-2">
@@ -592,6 +602,86 @@
 {% endif %}
 
 </div>{# /approvals-pane #}
+
+{# ══════════ TAB 3 — Rejected / Failed Uploads ══════════ #}
+<div class="tab-pane fade {% if active_tab == 'rejected' %}show active{% endif %}" id="rejected-pane" role="tabpanel" aria-labelledby="rejected-tab">
+
+{# ── Summary Strip ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <span style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+    <i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>
+    Uploads that were rejected by the document type classifier or failed during processing.
+  </span>
+  <span class="badge bg-danger">{{ failed_uploads_count }} total</span>
+</div>
+
+{# ── Rejected Table ── #}
+<div class="ap-card">
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table w-100" style="min-width:700px">
+      <thead>
+        <tr>
+          <th style="width:50px">#</th>
+          <th>Filename</th>
+          <th>Reason</th>
+          <th style="width:100px">Doc Type</th>
+          <th style="width:140px">Uploaded</th>
+          <th style="width:120px">By</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in failed_uploads %}
+        <tr>
+          <td style="color:var(--ap-text-muted)">{{ u.pk }}</td>
+          <td>
+            <i class="bi bi-file-earmark-pdf me-1 text-danger"></i>
+            <span class="fw-medium">{{ u.original_filename|truncatechars:50 }}</span>
+            {% if u.file_size %}
+            <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" class="ms-1">({{ u.file_size|filesizeformat }})</span>
+            {% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">{{ u.processing_message|truncatechars:150|default:"Unknown error" }}</td>
+          <td>
+            <span class="ap-badge ap-badge-muted" style="font-size:.65rem">{{ u.document_type|default:"INVOICE" }}</span>
+          </td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ u.updated_at|date:"d M Y H:i" }}</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ u.uploaded_by.email|default:"\u2014"|truncatechars:20 }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="text-center py-5" style="color:var(--ap-text-muted)">
+            <i class="bi bi-check-circle d-block mb-2" style="font-size:2rem;color:var(--ap-success)"></i>
+            No rejected or failed uploads. All documents were processed successfully.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Pagination ── #}
+{% if failed_uploads_page_obj.has_other_pages %}
+<nav class="mt-3 d-flex justify-content-center">
+  <ul class="pagination pagination-sm mb-0">
+    {% if failed_uploads_page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?tab=rejected&failed_page={{ failed_uploads_page_obj.previous_page_number }}">&laquo;</a></li>
+    {% endif %}
+    {% for num in failed_uploads_page_obj.paginator.page_range %}
+      {% if failed_uploads_page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > failed_uploads_page_obj.number|add:"-3" and num < failed_uploads_page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?tab=rejected&failed_page={{ num }}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if failed_uploads_page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?tab=rejected&failed_page={{ failed_uploads_page_obj.next_page_number }}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+</div>{# /rejected-pane #}
 </div>{# /tab-content #}
 
 {# ══════════ Upload Modal ══════════ #}

@@ -217,9 +217,10 @@ ExtractionParserService → NormalizationService → ValidationService
 |------|---------|-------------|
 | 0 | `CreditService.reserve()` | Reserve 1 credit (`ref_type="document_upload"`, `ref_id=upload.pk`). Hard-stop if insufficient. |
 | 1 | `InvoiceExtractionAdapter` | OCR + LLM extraction → `ExtractionResponse` |
+| 1a | `DocumentTypeClassifier` | Classify OCR text → reject non-invoices (GRN, PO, DELIVERY_NOTE, STATEMENT) with credit refund |
 | 2 | `ExtractionParserService` | Parse raw JSON → `ParsedInvoice` dataclass |
 | 3 | `NormalizationService` | Normalize fields (dates, amounts, PO numbers) |
-| 4 | `ValidationService` | Check mandatory fields, generate warnings |
+| 4 | `ValidationService` + `ExtractionConfidenceScorer` | Check mandatory fields, compute deterministic confidence score |
 | 5 | `DuplicateDetectionService` | Detect re-submitted invoices |
 | 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database (sets `extraction_run` FK) |
 | 6a | `CreditService.consume()` / `.refund()` | On success → consume; on OCR failure → refund (see §17 decision table) |
@@ -698,7 +699,7 @@ The original pipeline orchestrator. Coordinates jurisdiction → schema → dete
 
 | Service | File | Purpose |
 |---------|------|---------|
-| `DocumentTypeClassifier` | `document_classifier.py` | Multilingual keyword classification (EN/AR/HI/FR/DE/ES) |
+| `DocumentTypeClassifier` | `document_classifier.py` | Multilingual keyword classification (EN/AR/HI/FR/DE/ES); types: INVOICE, CREDIT_NOTE, DEBIT_NOTE, GRN, PURCHASE_ORDER, DELIVERY_NOTE, STATEMENT |
 | `PartyExtractor` | `party_extractor.py` | Supplier/buyer/ship-to/bill-to extraction |
 | `RelationshipExtractor` | `relationship_extractor.py` | PO/GRN/contract/shipment cross-reference extraction |
 | `DocumentIntelligenceService` | `document_intelligence.py` | Pre-extraction analysis orchestrator |
@@ -731,7 +732,7 @@ The original pipeline orchestrator. Coordinates jurisdiction → schema → dete
 
 | Service | File | Purpose |
 |---------|------|---------|
-| `ConfidenceScorer` | `confidence_scorer.py` | Multi-dimensional scoring (header=0.3, tax=0.3, line_item=0.2, jurisdiction=0.2) |
+| `ConfidenceScorer` | `confidence_scorer.py` | Multi-dimensional scoring for governed pipeline (header=0.3, tax=0.3, line_item=0.2, jurisdiction=0.2) |
 | `ReviewRoutingService` | `review_routing.py` | Confidence-driven review routing with priority tiers |
 | `ReviewRoutingEngine` | `review_routing_engine.py` | Queue-based routing (EXCEPTION_OPS, TAX_REVIEW, VENDOR_OPS); thresholds: CRITICAL=0.4, LOW=0.65, TAX=0.6 |
 
@@ -1813,12 +1814,13 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 | `apps/extraction/services/extraction_adapter.py` | Azure DI OCR + LLM extraction orchestration |
 | `apps/extraction/services/parser_service.py` | JSON → ParsedInvoice dataclass parsing |
 | `apps/extraction/services/normalization_service.py` | Field normalization (dates, amounts, strings) |
-| `apps/extraction/services/validation_service.py` | Mandatory field validation + confidence check |
+| `apps/extraction/services/validation_service.py` | Mandatory field validation + deterministic confidence scoring via `ExtractionConfidenceScorer` |
 | `apps/extraction/services/duplicate_detection_service.py` | Duplicate invoice detection |
 | `apps/extraction/services/persistence_service.py` | Invoice + LineItem + ExtractionResult persistence |
 | `apps/extraction/services/approval_service.py` | Approval lifecycle (approve/reject/auto-approve + analytics) |
 | `apps/extraction/services/upload_service.py` | File upload, hash computation, DocumentUpload creation |
 | `apps/extraction/services/credit_service.py` | Credit reserve/consume/refund/allocate/adjust service + audit events, idempotency, invariant enforcement |
+| `apps/extraction/services/confidence_scorer.py` | Deterministic confidence scoring for legacy pipeline (field coverage 50%, line quality 30%, consistency 20%) |
 | `apps/extraction/services/execution_context.py` | ExecutionContext dataclass + get_execution_context() — centralized governed/legacy data resolution |
 | `apps/extraction/credit_models.py` | UserCreditAccount + CreditTransaction models |
 | `apps/extraction/credit_views.py` | Credit account list/detail/adjust views |

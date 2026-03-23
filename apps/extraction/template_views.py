@@ -192,6 +192,18 @@ def extraction_workbench(request):
 
     active_tab = request.GET.get("tab", "runs")
 
+    # ── Failed / rejected uploads (no ExtractionResult created) ──
+    failed_uploads_qs = (
+        DocumentUpload.objects
+        .filter(processing_state=FileProcessingState.FAILED)
+        .order_by("-updated_at")
+    )
+    if getattr(request.user, "role", None) == UserRole.AP_PROCESSOR:
+        failed_uploads_qs = failed_uploads_qs.filter(uploaded_by=request.user)
+    failed_uploads_paginator = Paginator(failed_uploads_qs, 20)
+    failed_uploads_page = failed_uploads_paginator.get_page(request.GET.get("failed_page"))
+    failed_uploads_count = failed_uploads_paginator.count
+
     # ── Credit usage summary for logged-in user ──
     from apps.extraction.services.credit_service import CreditService
     credit_summary = CreditService.get_usage_summary(request.user)
@@ -210,6 +222,9 @@ def extraction_workbench(request):
         "approval_statuses": ExtractionApprovalStatus.choices,
         "active_tab": active_tab,
         "credit_summary": credit_summary,
+        "failed_uploads": failed_uploads_page,
+        "failed_uploads_page_obj": failed_uploads_page,
+        "failed_uploads_count": failed_uploads_count,
     })
 
 

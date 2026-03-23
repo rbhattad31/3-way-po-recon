@@ -83,6 +83,23 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             _refund_credit_for_upload(upload)
             return {"status": "error", "message": extraction_resp.error_message}
 
+        # 1a. Document type classification — reject non-invoices early
+        doc_type_result = _classify_document(extraction_resp.ocr_text)
+        if doc_type_result and doc_type_result.document_type not in ("INVOICE", "CREDIT_NOTE", "DEBIT_NOTE"):
+            reject_msg = (
+                f"Document classified as {doc_type_result.document_type} "
+                f"(confidence: {doc_type_result.confidence:.0%}), not an invoice. "
+                f"Please upload this document through the appropriate channel."
+            )
+            _fail_upload(upload, reject_msg)
+            _refund_credit_for_upload(upload)
+            logger.info(
+                "Upload %s rejected: classified as %s (confidence=%.2f, keywords=%s)",
+                upload_id, doc_type_result.document_type,
+                doc_type_result.confidence, doc_type_result.matched_keywords,
+            )
+            return {"status": "rejected", "message": reject_msg, "document_type": doc_type_result.document_type}
+
         # 2. Parse
         parser = ExtractionParserService()
         parsed = parser.parse(extraction_resp.raw_json)
@@ -221,6 +238,23 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         except (AttributeError, TypeError):
             # Running outside Celery context (sync fallback) — re-raise directly
             raise exc
+
+
+def _classify_document(ocr_text: str):
+    """Run document type classification on OCR text.
+
+    Returns a ClassificationResult or None if classification is unavailable.
+    Non-invoice types (GRN, PURCHASE_ORDER, DELIVERY_NOTE, STATEMENT) trigger
+    early rejection in the extraction task.
+    """
+    if not ocr_text or not ocr_text.strip():
+        return None
+    try:
+        from apps.extraction_core.services.document_classifier import DocumentTypeClassifier
+        return DocumentTypeClassifier.classify(ocr_text)
+    except Exception as exc:
+        logger.warning("Document classification failed, proceeding as INVOICE: %s", exc)
+        return None
 
 
 def _fail_upload(upload: DocumentUpload, message: str) -> None:
