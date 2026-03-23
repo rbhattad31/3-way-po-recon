@@ -262,7 +262,23 @@ def extraction_upload(request):
         uploaded_by=request.user,
     )
 
-    # Save file to a temp location for extraction
+    # Try blob upload first — required for async Celery path
+    _try_blob_upload(doc_upload, uploaded_file)
+
+    # If blob upload succeeded, dispatch via Celery task (async on server)
+    if doc_upload.blob_path:
+        from apps.extraction.tasks import process_invoice_upload_task
+        from apps.core.utils import dispatch_task
+        dispatch_task(process_invoice_upload_task, upload_id=doc_upload.pk)
+        _invalidate_extraction_caches(request.user)
+        messages.success(
+            request,
+            f"'{uploaded_file.name}' uploaded successfully. "
+            f"Extraction agent is processing — refresh to see results."
+        )
+        return redirect("extraction:workbench")
+
+    # Fallback: no blob storage — run extraction synchronously with local file
     tmp_fd, tmp_path = tempfile.mkstemp(
         suffix=os.path.splitext(uploaded_file.name)[1]
     )
@@ -271,10 +287,6 @@ def extraction_upload(request):
             for chunk in uploaded_file.chunks():
                 tmp_f.write(chunk)
 
-        # Also try blob upload (optional — extraction workbench works without it)
-        _try_blob_upload(doc_upload, uploaded_file)
-
-        # Run extraction pipeline (standalone — no case creation)
         result = _run_extraction_pipeline(doc_upload, tmp_path)
 
         if result["success"]:
@@ -546,47 +558,37 @@ def extraction_rerun(request, pk):
     reason = request.POST.get("reason", "")
     details = request.POST.get("details", "")
 
-    try:
-        from apps.documents.blob_service import download_blob_to_tempfile
-        tmp_path = download_blob_to_tempfile(upload.blob_path)
-    except Exception as exc:
-        messages.error(request, f"Failed to download document: {exc}")
-        return redirect("extraction:console", pk=pk)
+    # Log reprocess reason to audit trail before dispatching
+    from apps.auditlog.services import AuditService
+    from apps.core.enums import AuditEventType
+    AuditService.log_event(
+        entity_type="ExtractionResult",
+        entity_id=ext.pk,
+        event_type=AuditEventType.EXTRACTION_REPROCESSED,
+        description=f"Extraction reprocess triggered: {reason or 'no reason provided'}",
+        user=request.user,
+        invoice_id=ext.invoice_id,
+        metadata={
+            "reason": reason,
+            "details": details[:500] if details else "",
+            "previous_extraction_id": ext.pk,
+        },
+    )
 
-    try:
-        result = _run_extraction_pipeline(upload, tmp_path)
-        if result["success"]:
-            _invalidate_extraction_caches(request.user)
+    # Reset upload state and dispatch via Celery task
+    upload.processing_state = FileProcessingState.PROCESSING
+    upload.save(update_fields=["processing_state", "updated_at"])
 
-            # Log reprocess reason to audit trail
-            from apps.auditlog.services import AuditService
-            from apps.core.enums import AuditEventType
-            AuditService.log_event(
-                entity_type="ExtractionResult",
-                entity_id=result["extraction_result_id"],
-                event_type=AuditEventType.EXTRACTION_REPROCESSED,
-                description=f"Extraction reprocessed: {reason or 'no reason provided'}",
-                user=request.user,
-                invoice_id=ext.invoice_id,
-                metadata={
-                    "reason": reason,
-                    "details": details[:500] if details else "",
-                    "previous_extraction_id": ext.pk,
-                    "new_extraction_id": result["extraction_result_id"],
-                },
-            )
+    from apps.extraction.tasks import process_invoice_upload_task
+    from apps.core.utils import dispatch_task
+    dispatch_task(process_invoice_upload_task, upload_id=upload.pk)
+    _invalidate_extraction_caches(request.user)
 
-            messages.success(request, "Re-extraction completed successfully.")
-            return redirect("extraction:console", pk=result["extraction_result_id"])
-        else:
-            _invalidate_extraction_caches(request.user)
-            messages.error(request, f"Re-extraction failed: {result['error']}")
-            return redirect("extraction:console", pk=pk)
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+    messages.success(
+        request,
+        "Re-extraction started. The agent is processing — refresh to see results."
+    )
+    return redirect("extraction:workbench")
 
 
 # ────────────────────────────────────────────────────────────────
