@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 
 from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection, ExtractionResult
+from apps.extraction.credit_models import CreditTransaction, UserCreditAccount
 
 
 @admin.register(ExtractionResult)
@@ -91,3 +92,82 @@ class ExtractionApprovalAdmin(admin.ModelAdmin):
         pct = obj.confidence_at_review * 100
         colour = "#198754" if pct >= 75 else ("#ffc107" if pct >= 50 else "#dc3545")
         return format_html('<span style="color:{}">{:.0f}%</span>', colour, pct)
+
+
+# ---------------------------------------------------------------------------
+# Credit Management Admin
+# ---------------------------------------------------------------------------
+
+class CreditTransactionInline(admin.TabularInline):
+    model = CreditTransaction
+    extra = 0
+    readonly_fields = (
+        "transaction_type", "credits", "balance_after", "reserved_after",
+        "monthly_used_after", "reference_type", "reference_id", "remarks",
+        "created_by", "created_at",
+    )
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(UserCreditAccount)
+class UserCreditAccountAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "user", "balance_credits", "reserved_credits",
+        "available_display", "monthly_limit", "monthly_used",
+        "is_active", "updated_at",
+    )
+    list_filter = ("is_active",)
+    search_fields = ("user__email", "user__first_name", "user__last_name")
+    readonly_fields = ("created_at", "updated_at")
+    list_per_page = 25
+    inlines = [CreditTransactionInline]
+    fieldsets = (
+        ("Account", {"fields": ("user", "is_active")}),
+        ("Credits", {"fields": ("balance_credits", "reserved_credits", "monthly_limit", "monthly_used")}),
+        ("Timestamps", {"fields": ("last_reset_at", "created_at", "updated_at"), "classes": ("collapse",)}),
+    )
+
+    @admin.display(description="Available")
+    def available_display(self, obj):
+        val = obj.available_credits
+        colour = "#dc3545" if val <= 5 else ("#ffc107" if val <= 20 else "#198754")
+        return format_html('<span style="color:{};font-weight:600">{}</span>', colour, val)
+
+
+@admin.register(CreditTransaction)
+class CreditTransactionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "account", "transaction_type", "credits",
+        "balance_after", "reserved_after", "monthly_used_after",
+        "reference_type", "created_by", "created_at",
+    )
+    list_filter = ("transaction_type", "reference_type")
+    search_fields = (
+        "account__user__email", "reference_id", "remarks",
+    )
+    readonly_fields = (
+        "account", "transaction_type", "credits", "balance_after",
+        "reserved_after", "monthly_used_after", "reference_type",
+        "reference_id", "remarks", "created_by", "created_at",
+    )
+    list_per_page = 50
+    date_hierarchy = "created_at"
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

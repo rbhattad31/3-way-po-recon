@@ -253,6 +253,14 @@ class AuditEventType(models.TextChoices):
     PROMPT_UPDATED = "PROMPT_UPDATED", "Prompt Updated"
     ROUTING_RULE_UPDATED = "ROUTING_RULE_UPDATED", "Routing Rule Updated"
     ANALYTICS_SNAPSHOT_CREATED = "ANALYTICS_SNAPSHOT_CREATED", "Analytics Snapshot Created"
+    # Credit management events
+    CREDIT_CHECKED = "CREDIT_CHECKED", "Credit Checked"
+    CREDIT_RESERVED = "CREDIT_RESERVED", "Credit Reserved"
+    CREDIT_CONSUMED = "CREDIT_CONSUMED", "Credit Consumed"
+    CREDIT_REFUNDED = "CREDIT_REFUNDED", "Credit Refunded"
+    CREDIT_ALLOCATION_UPDATED = "CREDIT_ALLOCATION_UPDATED", "Credit Allocation Updated"
+    CREDIT_LIMIT_EXCEEDED = "CREDIT_LIMIT_EXCEEDED", "Credit Limit Exceeded"
+    CREDIT_MONTHLY_RESET = "CREDIT_MONTHLY_RESET", "Credit Monthly Reset"
 
 
 class PermissionOverrideType(models.TextChoices):
@@ -563,6 +571,15 @@ class ValidationNextAction(models.TextChoices):
     READY_FOR_RECOMMENDATION = "READY_FOR_RECOMMENDATION", "Ready for Recommendation"
     READY_FOR_BENCHMARKING = "READY_FOR_BENCHMARKING", "Ready for Benchmarking"
     REQUEST_REFINEMENT = "REQUEST_REFINEMENT", "Request Refinement"
+
+
+class CreditTransactionType(models.TextChoices):
+    ALLOCATE = "ALLOCATE", "Allocate"
+    RESERVE = "RESERVE", "Reserve"
+    CONSUME = "CONSUME", "Consume"
+    REFUND = "REFUND", "Refund"
+    ADJUST = "ADJUST", "Adjust"
+    MONTHLY_RESET = "MONTHLY_RESET", "Monthly Reset"
     NEEDS_TECHNICAL_REVIEW = "NEEDS_TECHNICAL_REVIEW", "Needs Technical Review"
     NEEDS_COMMERCIAL_REVIEW = "NEEDS_COMMERCIAL_REVIEW", "Needs Commercial Review"
 

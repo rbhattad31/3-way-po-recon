@@ -94,6 +94,9 @@ PERMISSIONS = [
     {"code": "procurement.run_analysis", "name": "Run Procurement Analysis", "module": "procurement", "action": "run_analysis", "description": "Trigger recommendation and benchmark analysis runs"},
     {"code": "procurement.manage_quotations", "name": "Manage Quotations", "module": "procurement", "action": "manage_quotations", "description": "Upload and manage supplier quotations"},
     {"code": "procurement.view_results", "name": "View Analysis Results", "module": "procurement", "action": "view_results", "description": "View recommendation, benchmark, and compliance results"},
+    # Credits
+    {"code": "credits.view", "name": "View Credits", "module": "credits", "action": "view", "description": "View credit accounts and balances"},
+    {"code": "credits.manage", "name": "Manage Credits", "module": "credits", "action": "manage", "description": "Allocate, adjust, and manage user credit accounts"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -141,6 +144,8 @@ ROLE_MATRIX = {
         "extraction.approve", "extraction.reject", "extraction.reprocess",
         # Procurement oversight
         "procurement.view", "procurement.view_results",
+        # Credits
+        "credits.view", "credits.manage",
     ],
     "AUDITOR": [
         "invoices.view",

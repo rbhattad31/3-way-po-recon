@@ -210,4 +210,7 @@ class ExtractionResultPersistenceService:
             success=extraction_response.success,
             error_message=extraction_response.error_message,
             agent_run_id=getattr(extraction_response, 'agent_run_id', None),
+            ocr_page_count=getattr(extraction_response, 'ocr_page_count', 0),
+            ocr_duration_ms=getattr(extraction_response, 'ocr_duration_ms', None),
+            ocr_char_count=getattr(extraction_response, 'ocr_char_count', 0),
         )

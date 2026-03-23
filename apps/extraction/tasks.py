@@ -173,6 +173,10 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",
             upload_id, invoice.pk, invoice.status,
         )
+
+        # ── Credit: consume reserved credit on successful extraction ──
+        _consume_credit_for_upload(upload, upload_id)
+
         return {
             "status": "ok",
             "upload_id": upload_id,
@@ -186,6 +190,8 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
     except Exception as exc:
         logger.exception("Extraction pipeline failed for upload %s", upload_id)
         _fail_upload(upload, str(exc))
+        # ── Credit: consume reserved credit (extraction was attempted, resources used) ──
+        _consume_credit_for_upload(upload, upload_id)
         # Audit: extraction failed
         try:
             from apps.auditlog.services import AuditService
@@ -221,6 +227,29 @@ def _fail_upload(upload: DocumentUpload, message: str) -> None:
             upload.save(update_fields=["blob_path", "updated_at"])
         except Exception as mv_err:
             logger.warning("Blob move to exception/ failed: %s", mv_err)
+
+
+def _consume_credit_for_upload(upload: DocumentUpload, upload_id: int) -> None:
+    """Consume reserved credit after extraction (success or failure).
+
+    Policy: once the extraction pipeline has been attempted, the credit is
+    consumed regardless of outcome — system resources were used.
+    """
+    if not upload.uploaded_by_id:
+        return
+    try:
+        from apps.extraction.services.credit_service import CreditService
+        from apps.extraction.credit_models import UserCreditAccount
+        if not UserCreditAccount.objects.filter(user_id=upload.uploaded_by_id, reserved_credits__gt=0).exists():
+            return
+        CreditService.consume(
+            upload.uploaded_by, credits=1,
+            reference_type="upload",
+            reference_id=str(upload_id),
+            remarks=f"Consumed for extraction task upload_id={upload_id}",
+        )
+    except Exception as credit_exc:
+        logger.warning("Credit consume failed for upload %s: %s", upload_id, credit_exc)
 
 
 

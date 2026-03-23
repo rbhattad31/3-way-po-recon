@@ -206,6 +206,10 @@ def extraction_workbench(request):
 
     active_tab = request.GET.get("tab", "runs")
 
+    # ── Credit usage summary for logged-in user ──
+    from apps.extraction.services.credit_service import CreditService
+    credit_summary = CreditService.get_usage_summary(request.user)
+
     return render(request, "extraction/workbench.html", {
         "results": page_obj,
         "page_obj": page_obj,
@@ -219,6 +223,7 @@ def extraction_workbench(request):
         "analytics_cached_at": analytics_cached_at,
         "approval_statuses": ExtractionApprovalStatus.choices,
         "active_tab": active_tab,
+        "credit_summary": credit_summary,
     })
 
 
@@ -244,6 +249,22 @@ def extraction_upload(request):
         messages.error(request, "File too large. Maximum size is 20 MB.")
         return redirect("extraction:workbench")
 
+    # ── Credit check: reserve 1 credit before proceeding ──
+    from apps.extraction.services.credit_service import CreditService
+    credit_check = CreditService.check_can_reserve(request.user, credits=1)
+    if not credit_check.allowed:
+        messages.error(request, credit_check.message)
+        return redirect("extraction:workbench")
+
+    reserve_result = CreditService.reserve(
+        request.user, credits=1,
+        reference_type="upload",
+        remarks=f"Reserved for upload: {uploaded_file.name}",
+    )
+    if not reserve_result.allowed:
+        messages.error(request, reserve_result.message)
+        return redirect("extraction:workbench")
+
     # Compute SHA-256 hash
     sha256 = hashlib.sha256()
     for chunk in uploaded_file.chunks():
@@ -252,20 +273,30 @@ def extraction_upload(request):
     uploaded_file.seek(0)
 
     # Create DocumentUpload record
-    doc_upload = DocumentUpload.objects.create(
-        original_filename=uploaded_file.name,
-        file_size=uploaded_file.size,
-        file_hash=file_hash,
-        content_type=uploaded_file.content_type,
-        document_type=DocumentType.INVOICE,
-        processing_state=FileProcessingState.PROCESSING,
-        uploaded_by=request.user,
-    )
+    try:
+        doc_upload = DocumentUpload.objects.create(
+            original_filename=uploaded_file.name,
+            file_size=uploaded_file.size,
+            file_hash=file_hash,
+            content_type=uploaded_file.content_type,
+            document_type=DocumentType.INVOICE,
+            processing_state=FileProcessingState.PROCESSING,
+            uploaded_by=request.user,
+        )
+    except Exception as exc:
+        # Refund the reserved credit — setup failed before processing
+        CreditService.refund(
+            request.user, credits=1,
+            reference_type="upload",
+            remarks=f"Refund: DocumentUpload creation failed — {exc}",
+        )
+        raise
 
     # Try blob upload first — required for async Celery path
     _try_blob_upload(doc_upload, uploaded_file)
 
     # If blob upload succeeded, dispatch via Celery task (async on server)
+    # Credit consume/refund happens inside the Celery task
     if doc_upload.blob_path:
         from apps.extraction.tasks import process_invoice_upload_task
         from apps.core.utils import dispatch_task
@@ -290,6 +321,13 @@ def extraction_upload(request):
         result = _run_extraction_pipeline(doc_upload, tmp_path)
 
         if result["success"]:
+            # Consume the reserved credit — extraction succeeded
+            CreditService.consume(
+                request.user, credits=1,
+                reference_type="upload",
+                reference_id=str(doc_upload.pk),
+                remarks=f"Consumed for successful extraction: {uploaded_file.name}",
+            )
             _invalidate_extraction_caches(request.user)
             messages.success(
                 request,
@@ -298,12 +336,31 @@ def extraction_upload(request):
             )
             return redirect("extraction:console", pk=result["extraction_result_id"])
         else:
+            # Extraction attempted but failed — consume credit (resources were used)
+            CreditService.consume(
+                request.user, credits=1,
+                reference_type="upload",
+                reference_id=str(doc_upload.pk),
+                remarks=f"Consumed (extraction failed): {uploaded_file.name}",
+            )
             _invalidate_extraction_caches(request.user)
             messages.error(
                 request,
                 f"Extraction failed for '{uploaded_file.name}': {result['error']}"
             )
             return redirect("extraction:workbench")
+    except Exception as exc:
+        # Technical failure before pipeline truly started — refund
+        try:
+            CreditService.refund(
+                request.user, credits=1,
+                reference_type="upload",
+                reference_id=str(doc_upload.pk),
+                remarks=f"Refund: sync extraction setup failed — {exc}",
+            )
+        except Exception:
+            logger.exception("Credit refund failed during sync extraction error")
+        raise
     finally:
         try:
             os.unlink(tmp_path)
@@ -1674,13 +1731,21 @@ def extraction_console(request, pk):
             completion_tk = agent_run.completion_tokens or 0
             total_tk = agent_run.total_tokens or 0
             # GPT-4o pricing: $5/1M input, $15/1M output
-            cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
-            cost_display = cost.quantize(Decimal("0.000001"))
+            llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
+            # Azure Document Intelligence (Read model): $1.50 per 1,000 pages
+            ocr_pages = ext.ocr_page_count or 0
+            ocr_cost = Decimal(str(ocr_pages * 1.5 / 1_000)) if ocr_pages else Decimal("0")
+            total_cost = (llm_cost + ocr_cost).quantize(Decimal("0.000001"))
             cost_token_data = {
                 "prompt_tokens": prompt_tk,
                 "completion_tokens": completion_tk,
                 "total_tokens": total_tk,
-                "cost_estimate": cost_display,
+                "llm_cost": llm_cost.quantize(Decimal("0.000001")),
+                "ocr_cost": ocr_cost.quantize(Decimal("0.000001")),
+                "cost_estimate": total_cost,
+                "ocr_page_count": ocr_pages,
+                "ocr_duration_ms": ext.ocr_duration_ms or 0,
+                "ocr_char_count": ext.ocr_char_count or 0,
                 "llm_model": agent_run.llm_model_used or "gpt-4o",
                 "duration_ms": agent_run.duration_ms,
                 "agent_run_id": agent_run.pk,

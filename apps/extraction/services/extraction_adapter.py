@@ -39,6 +39,9 @@ class ExtractionResponse:
     error_message: str = ""
     ocr_text: str = ""
     agent_run_id: Optional[int] = None
+    ocr_page_count: int = 0
+    ocr_duration_ms: int = 0
+    ocr_char_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -56,15 +59,18 @@ class InvoiceExtractionAdapter:
         start = time.time()
         try:
             # Step 1: OCR via Azure Document Intelligence
-            ocr_text = self._ocr_document(file_path)
+            ocr_text, ocr_page_count, ocr_duration_ms = self._ocr_document(file_path)
+            ocr_char_count = len(ocr_text)
             if not ocr_text.strip():
                 return ExtractionResponse(
                     success=False,
                     error_message="OCR returned no text from the document",
                     duration_ms=int((time.time() - start) * 1000),
+                    ocr_page_count=ocr_page_count,
+                    ocr_duration_ms=ocr_duration_ms,
                 )
 
-            logger.info("OCR completed: %d characters extracted from %s", len(ocr_text), file_path)
+            logger.info("OCR completed: %d characters, %d pages from %s", ocr_char_count, ocr_page_count, file_path)
             print("Document extraction results:", ocr_text)
 
             # Step 2: LLM structured extraction via Invoice Extraction Agent
@@ -81,6 +87,9 @@ class InvoiceExtractionAdapter:
                 duration_ms=elapsed,
                 ocr_text=ocr_text,
                 agent_run_id=agent_run_id,
+                ocr_page_count=ocr_page_count,
+                ocr_duration_ms=ocr_duration_ms,
+                ocr_char_count=ocr_char_count,
             )
         except Exception as exc:
             elapsed = int((time.time() - start) * 1000)
@@ -95,8 +104,12 @@ class InvoiceExtractionAdapter:
     # Step 1: Azure Document Intelligence OCR
     # ------------------------------------------------------------------
     @staticmethod
-    def _ocr_document(file_path: str) -> str:
-        """Use Azure Document Intelligence to extract text from a document."""
+    def _ocr_document(file_path: str) -> tuple:
+        """Use Azure Document Intelligence to extract text from a document.
+
+        Returns:
+            (ocr_text, page_count, duration_ms)
+        """
         from azure.ai.formrecognizer import DocumentAnalysisClient
         from azure.core.credentials import AzureKeyCredential
 
@@ -111,18 +124,21 @@ class InvoiceExtractionAdapter:
             credential=AzureKeyCredential(key),
         )
 
+        ocr_start = time.time()
         with open(file_path, "rb") as f:
             poller = client.begin_analyze_document("prebuilt-read", document=f)
 
         result = poller.result()
+        ocr_duration_ms = int((time.time() - ocr_start) * 1000)
 
         # Concatenate all pages' text
+        page_count = len(result.pages) if result.pages else 0
         lines = []
         for page in result.pages:
             for line in page.lines:
                 lines.append(line.content)
 
-        return "\n".join(lines)
+        return "\n".join(lines), page_count, ocr_duration_ms
 
     # ------------------------------------------------------------------
     # Step 2: Azure OpenAI LLM structured extraction

@@ -5,6 +5,9 @@ from django.db import models
 from apps.core.enums import ExtractionApprovalStatus
 from apps.core.models import BaseModel, TimestampMixin
 
+# Import credit models so Django discovers them for migrations
+from apps.extraction.credit_models import CreditTransaction, UserCreditAccount  # noqa: F401
+
 
 class ExtractionResult(BaseModel):
     """Stores per-extraction-run metadata for audit and reprocessing."""
@@ -24,6 +27,9 @@ class ExtractionResult(BaseModel):
     error_message = models.TextField(blank=True, default="")
     agent_run_id = models.BigIntegerField(null=True, blank=True, db_index=True,
                                           help_text="FK to AgentRun that performed extraction")
+    ocr_page_count = models.PositiveIntegerField(default=0, help_text="Number of pages processed by OCR")
+    ocr_duration_ms = models.PositiveIntegerField(null=True, blank=True, help_text="OCR processing time in ms")
+    ocr_char_count = models.PositiveIntegerField(default=0, help_text="Characters extracted by OCR")
 
     class Meta:
         db_table = "extraction_result"
