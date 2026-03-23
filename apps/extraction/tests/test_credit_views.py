@@ -57,12 +57,12 @@ class TestCreditAccountListView:
 @pytest.mark.django_db
 class TestCreditAccountDetailView:
     def test_detail_renders(self, admin_client, user, credit_account):
-        url = reverse("extraction:credit_detail", kwargs={"user_id": user.pk})
+        url = reverse("extraction:credit_account_detail", kwargs={"user_id": user.pk})
         resp = admin_client.get(url)
         assert resp.status_code == 200
 
     def test_detail_shows_balance(self, admin_client, user, credit_account):
-        url = reverse("extraction:credit_detail", kwargs={"user_id": user.pk})
+        url = reverse("extraction:credit_account_detail", kwargs={"user_id": user.pk})
         resp = admin_client.get(url)
         assert b"10" in resp.content  # balance_credits = 10
 

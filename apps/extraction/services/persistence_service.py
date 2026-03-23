@@ -194,14 +194,33 @@ class InvoicePersistenceService:
 
 
 class ExtractionResultPersistenceService:
-    """Persist extraction-engine-level metadata."""
+    """Persist extraction-engine-level metadata.
+
+    Sets extraction_run FK when a governed ExtractionRun exists for this
+    DocumentUpload, making ExtractionResult point back to the authoritative
+    execution record.
+    """
 
     @staticmethod
     @observed_service("extraction.persist_result", entity_type="ExtractionResult", audit_event="EXTRACTION_RESULT_PERSISTED")
     def save(upload: DocumentUpload, invoice: Optional[Invoice], extraction_response) -> ExtractionResult:
+        # Resolve the ExtractionRun FK (governed pipeline)
+        extraction_run = None
+        try:
+            from apps.extraction_core.models import ExtractionRun
+            extraction_run = (
+                ExtractionRun.objects
+                .filter(document__document_upload=upload)
+                .order_by("-created_at")
+                .first()
+            )
+        except Exception:
+            pass
+
         return ExtractionResult.objects.create(
             document_upload=upload,
             invoice=invoice,
+            extraction_run=extraction_run,
             engine_name=extraction_response.engine_name,
             engine_version=extraction_response.engine_version,
             raw_response=extraction_response.raw_json,

@@ -1,4 +1,14 @@
-"""Celery tasks for the extraction pipeline."""
+"""Celery tasks for the extraction pipeline.
+
+EXECUTION OWNERSHIP
+───────────────────
+The authoritative execution record is ExtractionRun (apps.extraction_core).
+This task creates DocumentUpload records and triggers extraction, but the
+ExtractionRun model is the runtime source of truth once extraction starts.
+Credit lifecycle: reserve (view) → consume (task, on OCR success) or
+refund (task, on OCR failure). reference_type="document_upload",
+reference_id=<DocumentUpload.pk>.
+"""
 from __future__ import annotations
 
 import logging
@@ -70,6 +80,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         if not extraction_resp.success:
             _fail_upload(upload, extraction_resp.error_message)
             ExtractionResultPersistenceService.save(upload, None, extraction_resp)
+            _refund_credit_for_upload(upload)
             return {"status": "error", "message": extraction_resp.error_message}
 
         # 2. Parse
@@ -175,7 +186,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         )
 
         # ── Credit: consume reserved credit on successful extraction ──
-        _consume_credit_for_upload(upload, upload_id)
+        _consume_credit_for_upload(upload)
 
         return {
             "status": "ok",
@@ -190,8 +201,8 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
     except Exception as exc:
         logger.exception("Extraction pipeline failed for upload %s", upload_id)
         _fail_upload(upload, str(exc))
-        # ── Credit: consume reserved credit (extraction was attempted, resources used) ──
-        _consume_credit_for_upload(upload, upload_id)
+        # ── Credit: refund reserved credit — extraction failed (OCR/pipeline error) ──
+        _refund_credit_for_upload(upload)
         # Audit: extraction failed
         try:
             from apps.auditlog.services import AuditService
@@ -229,11 +240,12 @@ def _fail_upload(upload: DocumentUpload, message: str) -> None:
             logger.warning("Blob move to exception/ failed: %s", mv_err)
 
 
-def _consume_credit_for_upload(upload: DocumentUpload, upload_id: int) -> None:
-    """Consume reserved credit after extraction (success or failure).
+def _consume_credit_for_upload(upload: DocumentUpload) -> None:
+    """Consume reserved credit after successful extraction.
 
-    Policy: once the extraction pipeline has been attempted, the credit is
-    consumed regardless of outcome — system resources were used.
+    Policy (Decision 3): credit is consumed only when OCR/extraction
+    succeeds. reference_type='document_upload', reference_id=upload.pk.
+    Idempotent — CreditService.consume() skips if already consumed.
     """
     if not upload.uploaded_by_id:
         return
@@ -244,12 +256,36 @@ def _consume_credit_for_upload(upload: DocumentUpload, upload_id: int) -> None:
             return
         CreditService.consume(
             upload.uploaded_by, credits=1,
-            reference_type="upload",
-            reference_id=str(upload_id),
-            remarks=f"Consumed for extraction task upload_id={upload_id}",
+            reference_type="document_upload",
+            reference_id=str(upload.pk),
+            remarks=f"Consumed for extraction task upload_id={upload.pk}",
         )
     except Exception as credit_exc:
-        logger.warning("Credit consume failed for upload %s: %s", upload_id, credit_exc)
+        logger.warning("Credit consume failed for upload %s: %s", upload.pk, credit_exc)
+
+
+def _refund_credit_for_upload(upload: DocumentUpload) -> None:
+    """Refund reserved credit when extraction fails (OCR/pipeline error).
+
+    Policy (Decision 3): credit is refunded on extraction failure — the
+    user should not be charged for a failed attempt.
+    Idempotent — CreditService.refund() skips if already refunded.
+    """
+    if not upload.uploaded_by_id:
+        return
+    try:
+        from apps.extraction.services.credit_service import CreditService
+        from apps.extraction.credit_models import UserCreditAccount
+        if not UserCreditAccount.objects.filter(user_id=upload.uploaded_by_id, reserved_credits__gt=0).exists():
+            return
+        CreditService.refund(
+            upload.uploaded_by, credits=1,
+            reference_type="document_upload",
+            reference_id=str(upload.pk),
+            remarks=f"Refund for failed extraction task upload_id={upload.pk}",
+        )
+    except Exception as credit_exc:
+        logger.warning("Credit refund failed for upload %s: %s", upload.pk, credit_exc)
 
 
 

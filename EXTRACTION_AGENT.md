@@ -2,7 +2,7 @@
 
 > **Modules**: `apps/extraction/` (Application Layer — UI, Task, Core Models) + `apps/extraction_core/` (Platform Layer — Configuration, Execution, Governance)  
 > **Dependencies**: Azure Document Intelligence (OCR), Azure OpenAI GPT-4o (LLM), Agent Framework (`apps/agents/`)  
-> **Status**: Fully implemented with human-in-the-loop approval gate + multi-country extraction platform
+> **Status**: Fully implemented with human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking
 
 ---
 
@@ -24,8 +24,10 @@
 14. [Enums & Status Flows](#14-enums--status-flows)
 15. [Configuration](#15-configuration)
 16. [Permissions & RBAC](#16-permissions--rbac)
-17. [Django Admin](#17-django-admin)
-18. [File Reference](#18-file-reference)
+17. [Credit System](#17-credit-system)
+18. [OCR Cost Tracking](#18-ocr-cost-tracking)
+19. [Django Admin](#19-django-admin)
+20. [File Reference](#20-file-reference)
 
 ---
 
@@ -63,11 +65,30 @@ Adds an 11-stage governed pipeline with:
 
 ### Cross-Module Integration
 
-Template views in `apps/extraction/` enrich their context with `apps/extraction_core/` models:
-- Workbench loads `ExtractionRun.review_queue` for each result
-- Console loads `ExtractionRun` data (review queue, schema, method badges) + `ExtractionCorrection` audit trail
+Template views in `apps/extraction/` enrich their context with `apps/extraction_core/` models via `ExecutionContext`:
+- Workbench uses `get_execution_context()` to load review_queue and source indicator for each result
+- Console uses `get_execution_context()` to populate extraction_ctx (review queue, schema, method, source badges) + `ExtractionCorrection` audit trail
 - Country packs page queries `CountryPack` with jurisdiction profiles
-- All cross-module lookups use graceful fallbacks via `try/except`
+- Source badge in console header shows **Governed** (green) or **Legacy** (warning) based on `ExecutionContext.source`
+
+### Execution Ownership
+
+**ExtractionRun** (`apps/extraction_core/models.py`) is the **authoritative execution record** — the runtime source of truth. **ExtractionResult** (`apps/extraction/models.py`) is the **UI-facing summary** with an `extraction_run` FK linking back to the governing run.
+
+Views resolve execution data via `ExecutionContext` (`apps/extraction/services/execution_context.py`):
+1. Check `extraction_result.extraction_run` FK (direct link)
+2. Fall back to `ExtractionRun.objects.filter(document__document_upload_id=...)` (lookup by upload)
+3. Return legacy context (all None) if no governed run exists
+
+### GovernanceTrailService
+
+`GovernanceTrailService` (`apps/extraction_core/services/governance_trail.py`) is the **sole writer** of `ExtractionApprovalRecord`. Called by:
+- `ExtractionApprovalService.approve()` / `.reject()` (legacy flow)
+- `ExtractionRunViewSet.approve()` / `.reject()` (governed API)
+
+### Permission Split
+
+Edit-values flow uses `extraction.correct` (not `invoices.create`). `invoices.create` remains for upload only.
 
 ---
 
@@ -188,16 +209,20 @@ ExtractionParserService → NormalizationService → ValidationService
 **Task**: `process_invoice_upload_task` in `apps/extraction/tasks.py`  
 **Decorator**: `@shared_task(bind=True, max_retries=2, default_retry_delay=30)`
 
+> **Execution path**: `ExtractionPipeline` (governed, 11-stage, in `apps/extraction_core`) is the preferred execution path. `ExtractionService` (legacy) remains active for backward compatibility. Step 6 also writes `extraction_run` to `ExtractionResult.extraction_run` FK, linking the UI summary to the authoritative execution record.
+
 ### Pipeline Steps
 
 | Step | Service | Description |
 |------|---------|-------------|
+| 0 | `CreditService.reserve()` | Reserve 1 credit (`ref_type="document_upload"`, `ref_id=upload.pk`). Hard-stop if insufficient. |
 | 1 | `InvoiceExtractionAdapter` | OCR + LLM extraction → `ExtractionResponse` |
 | 2 | `ExtractionParserService` | Parse raw JSON → `ParsedInvoice` dataclass |
 | 3 | `NormalizationService` | Normalize fields (dates, amounts, PO numbers) |
 | 4 | `ValidationService` | Check mandatory fields, generate warnings |
 | 5 | `DuplicateDetectionService` | Detect re-submitted invoices |
-| 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database |
+| 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database (sets `extraction_run` FK) |
+| 6a | `CreditService.consume()` / `.refund()` | On success → consume; on OCR failure → refund (see §17 decision table) |
 | 7 | Approval Gate | Auto-approve or queue for human review |
 
 ### Audit Events
@@ -220,12 +245,13 @@ ExtractionParserService → NormalizationService → ValidationService
 
 **Table**: `extraction_result` | **File**: `apps/extraction/models.py` | **Inherits**: `BaseModel`
 
-Stores per-extraction-run metadata for audit and reprocessing.
+UI-facing summary record — **not** the execution source of truth. The authoritative execution record is `ExtractionRun` (apps/extraction_core). This model links to it via `extraction_run` FK.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `document_upload` | FK → DocumentUpload | Source file |
 | `invoice` | FK → Invoice (nullable) | Linked invoice after persistence |
+| `extraction_run` | FK → ExtractionRun (nullable) | Link to authoritative execution record |
 | `engine_name` | CharField | Engine identifier (default: `"default"`) |
 | `engine_version` | CharField | Engine version string |
 | `raw_response` | JSONField (nullable) | Full JSON response from LLM |
@@ -233,6 +259,9 @@ Stores per-extraction-run metadata for audit and reprocessing.
 | `duration_ms` | PositiveIntegerField (nullable) | Extraction duration in milliseconds |
 | `success` | BooleanField | Whether extraction succeeded |
 | `error_message` | TextField | Error details if failed |
+| `ocr_page_count` | PositiveIntegerField | Number of pages processed by OCR (default: 0) |
+| `ocr_duration_ms` | PositiveIntegerField (nullable) | OCR processing duration in milliseconds |
+| `ocr_char_count` | PositiveIntegerField | Number of characters extracted by OCR (default: 0) |
 
 ### 4.2 ExtractionApproval
 
@@ -307,13 +336,31 @@ All extraction services are decorated with `@observed_service` from `apps/core/d
 
 Orchestrates the two-stage extraction pipeline:
 
-**Stage 1 — OCR**:
+**Stage 1 — Text Extraction** (OCR or native, controlled by `ocr_enabled` flag):
 ```python
-ocr_text = _ocr_document(file_path)
+ocr_enabled = self._is_ocr_enabled()  # Check ExtractionRuntimeSettings → settings.EXTRACTION_OCR_ENABLED
+if ocr_enabled:
+    ocr_text, ocr_page_count, ocr_duration_ms = self._ocr_document(file_path)
+else:
+    ocr_text, ocr_page_count, ocr_duration_ms = self._extract_text_native(file_path)
 ```
-- Uses `DocumentAnalysisClient` from `azure.ai.formrecognizer`
+
+**`_ocr_document(file_path)`** — Azure Document Intelligence:
+- Uses `DocumentAnalysisClient` from `azure.ai.formrecognizer` with `prebuilt-read` model
 - Concatenates all pages' text lines
+- Returns `(text, page_count, duration_ms)` tuple
 - Credentials: `AZURE_DI_ENDPOINT`, `AZURE_DI_KEY`
+- Cost: $1.50 per 1,000 pages
+
+**`_extract_text_native(file_path)`** — PyPDF2 fallback (no OCR cost):
+- Uses `PyPDF2.PdfReader` to extract embedded text layer from native PDFs
+- Returns `(text, page_count, duration_ms)` — same tuple shape
+- No Azure DI call — zero OCR cost, near-instant
+- Useful for accuracy comparison testing
+
+**`_is_ocr_enabled()`** — Two-tier flag check:
+1. `ExtractionRuntimeSettings.get_active().ocr_enabled` (DB, toggleable from Extraction Control Center UI)
+2. Fallback: `settings.EXTRACTION_OCR_ENABLED` (env var, default: `True`)
 
 **Stage 2 — LLM Extraction**:
 ```python
@@ -322,6 +369,8 @@ raw_json, agent_run_id = _agent_extract(ocr_text)
 - Instantiates `InvoiceExtractionAgent()`
 - Returns JSON + `AgentRun.pk` for traceability
 
+**Engine name tracking**: `engine_name` is set to `"azure_di_gpt4o_agent"` when OCR is used, or `"native_pdf_gpt4o_agent"` when native extraction is used. This allows filtering and comparing accuracy by extraction method.
+
 **Returns**: `ExtractionResponse` dataclass:
 
 | Field | Type | Description |
@@ -329,11 +378,14 @@ raw_json, agent_run_id = _agent_extract(ocr_text)
 | `success` | bool | Whether extraction succeeded |
 | `raw_json` | dict | Extracted JSON data |
 | `confidence` | float | 0.0–1.0 confidence |
-| `engine_name` | str | `"azure_di_gpt4o_agent"` |
+| `engine_name` | str | `"azure_di_gpt4o_agent"` (OCR) or `"native_pdf_gpt4o_agent"` (no OCR) |
 | `engine_version` | str | `"2.0"` |
 | `duration_ms` | int | Extraction duration |
 | `error_message` | str | Error details if failed |
 | `ocr_text` | str | Raw OCR text |
+| `ocr_page_count` | int | Number of pages processed (default: 0) |
+| `ocr_duration_ms` | int | OCR processing duration in ms (default: 0) |
+| `ocr_char_count` | int | Characters extracted (default: 0) |
 
 **Fallback**: Direct LLM extraction without agent framework via `_llm_extract(ocr_text)` — uses `response_format={"type": "json_object"}`, temperature=0.0, max_tokens=4096.
 
@@ -516,12 +568,16 @@ Resolution follows a strict precedence cascade:
 
 Each stage emits a governance audit event (e.g., `JURISDICTION_RESOLVED`, `SCHEMA_SELECTED`, `EVIDENCE_CAPTURED`, `REVIEW_ROUTE_ASSIGNED`).
 
+> **Dataclass naming**: The runtime dataclass is `ExtractionExecutionResult` (in `extraction_service.py`) to avoid collision with the Django model `ExtractionResult` (in `apps/extraction/models.py`). A backward-compatible alias `ExtractionResult = ExtractionExecutionResult` is provided.
+
 ### ExtractionService (Legacy Pipeline Orchestrator)
 
 **File**: `apps/extraction_core/services/extraction_service.py`  
 **Class**: `ExtractionService`
 
 The original pipeline orchestrator. Coordinates jurisdiction → schema → deterministic extraction → LLM fallback → normalization → validation → enrichment → confidence → routing → persistence.
+
+> The `ExtractionExecutionResult` dataclass returned by this service was previously named `ExtractionResult`. The rename avoids collision with the Django model of the same name in `apps/extraction/models.py`.
 
 ### Data Models (13 models)
 
@@ -608,10 +664,12 @@ The original pipeline orchestrator. Coordinates jurisdiction → schema → dete
 - `references` — `ReferencesBlock` (po_numbers, grn_refs, contracts, shipments)
 - `warnings` — list of `WarningItem`
 
-**ExtractionResult** (dataclass in `extraction_service.py`):
+**ExtractionExecutionResult** (dataclass in `extraction_service.py`, aliased as `ExtractionResult` for backward compatibility):
 - `fields`, `line_items`, `jurisdiction` (JurisdictionMeta), `document_intelligence` (DocumentIntelligenceResult)
 - `enrichment` (EnrichmentResult), `page_info` (ParsedDocument), `confidence_breakdown` (ConfidenceBreakdown)
 - `review_decision` (ReviewRoutingDecision), `validation_issues`, `warnings`, `overall_confidence`, `duration_ms`
+
+> **Naming**: The runtime dataclass is `ExtractionExecutionResult` to distinguish it from the Django model `ExtractionResult` (UI-facing summary). The alias `ExtractionResult = ExtractionExecutionResult` remains for backward compatibility.
 
 ### Service Directory (30 services)
 
@@ -849,6 +907,19 @@ The enrichment result is:
 
 Every extracted invoice must pass through a human approval step before entering reconciliation. This ensures extraction quality while building analytics for future automation.
 
+### Dual-Model Pattern
+
+Approval state is tracked in **two models** serving different purposes:
+
+| Model | App | Owner | Purpose |
+|-------|-----|-------|---------|
+| `ExtractionApproval` | `apps/extraction` | `ExtractionApprovalService` | **Business state machine** — drives Invoice status transitions, tracks field corrections, computes touchless rate. OneToOne with Invoice. |
+| `ExtractionApprovalRecord` | `apps/extraction_core` | `GovernanceTrailService` | **Governance mirror** — immutable audit record per ExtractionRun. Written exclusively by `GovernanceTrailService`. OneToOne with ExtractionRun. |
+
+Both records are created on every approval/rejection:
+1. `ExtractionApprovalService.approve()` / `.reject()` updates `ExtractionApproval` (business state) then calls `GovernanceTrailService.record_approval_decision()` to write `ExtractionApprovalRecord` (governance trail).
+2. `ExtractionRunViewSet.approve()` / `.reject()` (governed API) writes `ExtractionApprovalRecord` directly, then calls `GovernanceTrailService`.
+
 ### Approval Flow
 
 ```
@@ -867,13 +938,26 @@ AUTO_APPROVED  PENDING_APPROVAL
   ▼         ▼
 READY_FOR_RECON  Approval Queue UI
   │         │
-  ▼    ┌────┴────┐
-AP Case  APPROVE    REJECT
-created  │         │
-         ▼         ▼
-   READY_FOR_RECON  INVALID
-   (case created)   (re-extract)
+  ▼    ┌────┴─────────┐
+AP Case APPROVE  REJECT  REPROCESS
+created  │       │       │
+         ▼       ▼       ▼
+   READY_FOR_RECON  INVALID  New ExtractionRun created
+   (case created)   (re-extract)  ExtractionApproval reset to PENDING
+                                  ExtractionApprovalRecord history retained
+
+   ─────── Both records written on every decision ───────
+   ExtractionApproval (business)  ←  ExtractionApprovalService
+   ExtractionApprovalRecord (governance)  ←  GovernanceTrailService
 ```
+
+### Reprocess Behavior
+
+When an extraction is reprocessed:
+- A **new** `ExtractionRun` is created (the old run remains for audit history)
+- `ExtractionApproval.status` resets to `PENDING` (same record, updated in place)
+- The previous `ExtractionApprovalRecord` is retained (immutable history per run)
+- A new `ExtractionApprovalRecord` is created for the new run upon the next approval/rejection
 
 ### Service Methods
 
@@ -896,11 +980,13 @@ created  │         │
 - Sets `is_touchless = (len(corrections) == 0)`
 - Transitions invoice to `READY_FOR_RECON`
 - Logs `EXTRACTION_APPROVED` audit event
+- Calls `GovernanceTrailService.record_approval_decision()` to write governance mirror
 
 **`reject(approval, user, reason)`**
 - Sets `status = REJECTED` with `rejection_reason`
 - Transitions invoice to `INVALID`
 - Logs `EXTRACTION_REJECTED` audit event
+- Calls `GovernanceTrailService.record_approval_decision()` to write governance mirror
 
 **`get_approval_analytics()`**
 - Returns analytics dict: `total`, `pending`, `approved`, `auto_approved`, `rejected`, `touchless_count`, `human_corrected_count`, `touchless_rate`, `avg_corrections_per_review`, `most_corrected_fields` (top 10)
@@ -1029,7 +1115,7 @@ with EXACTLY this structure:
 | `/extraction/result/<id>/` | `extraction_result_detail` | GET | `invoices.view` | Result detail view |
 | `/extraction/result/<id>/json/` | `extraction_result_json` | GET | `invoices.view` | Download raw JSON |
 | `/extraction/result/<id>/rerun/` | `extraction_rerun` | POST | `extraction.reprocess` | Re-run extraction |
-| `/extraction/result/<id>/edit/` | `extraction_edit_values` | POST | `invoices.create` | Edit extracted values |
+| `/extraction/result/<id>/edit/` | `extraction_edit_values` | POST | `extraction.correct` | Edit extracted values |
 | `/extraction/approvals/` | `extraction_approval_queue` | GET | `invoices.view` | Redirects to workbench?tab=approvals |
 | `/extraction/approvals/<id>/` | `extraction_approval_detail` | GET | `invoices.view` | Approval detail/review |
 | `/extraction/approvals/<id>/approve/` | `extraction_approve` | POST | `extraction.approve` | Approve extraction |
@@ -1222,7 +1308,7 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 
 > **Note**: The document viewer column was removed. The console uses a single-column, full-width layout for the intelligence panel. The `_document_viewer.html` template is no longer included.
 
-### Template Files (15 files in `templates/extraction/console/`)
+### Template Files (16 files in `templates/extraction/console/`)
 
 | File | Purpose |
 |------|---------|
@@ -1236,6 +1322,7 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 | `_reasoning_panel.html` | Tab 4 — Agent reasoning timeline with step indicators, decisions, collapsible details |
 | `_audit_trail.html` | Tab 5 — Chronological event timeline with actor/role badges, before/after tracking |
 | `_corrections_panel.html` | Tab 6 — Field correction audit trail table (columns: Field Code, Original Value (strikethrough), Corrected Value (green), Reason, Corrected By, Date). Empty state with guidance text. |
+| `_cost_tokens_panel.html` | Cost & Tokens — 5 KPI cards (Total/LLM/OCR cost, tokens, OCR pages), cost breakdown (LLM vs OCR), token breakdown bar, execution details table |
 | `_bottom_timeline.html` | Pipeline stage progress bar with state indicators (completed/active/error/skipped/pending) |
 | `_approve_modal.html` | Approval modal — warnings summary, notes, review confirmation checkbox |
 | `_reprocess_modal.html` | Reprocess modal — reason select, override options (force LLM, override jurisdiction) |
@@ -1357,6 +1444,13 @@ UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → PENDING_APPR
 | `EXTRACTION_STARTED` | Extraction adapter begins OCR + LLM pipeline |
 | `EXTRACTION_COMPLETED` | Pipeline completes successfully |
 | `EXTRACTION_FAILED` | Pipeline fails |
+| `CREDIT_CHECKED` | Pre-flight credit balance/limit check |
+| `CREDIT_RESERVED` | Credits reserved for in-progress extraction |
+| `CREDIT_CONSUMED` | Credits consumed after successful extraction |
+| `CREDIT_REFUNDED` | Credits refunded after extraction failure |
+| `CREDIT_ALLOCATION_UPDATED` | Admin allocates or adjusts credits |
+| `CREDIT_LIMIT_EXCEEDED` | Credit reservation rejected (insufficient balance or monthly limit) |
+| `CREDIT_MONTHLY_RESET` | Monthly usage counter reset |
 | `INVOICE_PERSISTED` | Invoice + line items saved to database |
 | `EXTRACTION_RESULT_PERSISTED` | ExtractionResult record saved |
 | `DUPLICATE_DETECTED` | Duplicate invoice detected during persistence |
@@ -1407,10 +1501,23 @@ UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → PENDING_APPR
 | `EXTRACTION_CONFIDENCE_THRESHOLD` | `0.75` | Confidence below this triggers validation warning |
 | `EXTRACTION_AUTO_APPROVE_THRESHOLD` | `1.1` | Confidence threshold for auto-approval (1.1 = disabled) |
 | `EXTRACTION_AUTO_APPROVE_ENABLED` | `"false"` | Master toggle for auto-approval |
+| `EXTRACTION_OCR_ENABLED` | `"true"` | OCR toggle — `true` uses Azure DI, `false` uses native PDF text extraction (PyPDF2). Runtime override via `ExtractionRuntimeSettings.ocr_enabled`. |
 
 ### Settings File
 
 All settings are in `config/settings.py`. Values are loaded from environment variables or `.env` file.
+
+### OCR Mode Configuration
+
+The OCR mode can be controlled at two levels:
+
+1. **Runtime setting** (takes precedence): `ExtractionRuntimeSettings.ocr_enabled` — toggleable from the Extraction Control Center UI without app restart.
+2. **Environment variable** (fallback): `EXTRACTION_OCR_ENABLED` — default `true`.
+
+When OCR is disabled, the system uses PyPDF2 to extract the native text layer from PDFs. This is useful for:
+- **Accuracy comparison**: Run the same invoice with OCR on vs off to measure LLM extraction quality difference.
+- **Cost reduction testing**: Native extraction has zero Azure DI cost ($1.50/1,000 pages saved).
+- **Speed testing**: Native extraction is near-instant vs Azure DI latency.
 
 ---
 
@@ -1421,23 +1528,25 @@ All settings are in `config/settings.py`. Values are loaded from environment var
 | Permission | Description |
 |------------|-------------|
 | `invoices.view` | View extraction results, approval queue, analytics |
-| `invoices.create` | Upload files, edit extracted values |
+| `invoices.create` | Upload files |
 | `extraction.view` | View extraction platform data (country packs, schemas, settings) |
+| `extraction.correct` | Correct/edit extracted field values (workbench + console UI + API) |
 | `extraction.approve` | Approve extracted invoice data before reconciliation |
 | `extraction.reject` | Reject extracted data and request re-extraction |
 | `extraction.reprocess` | Re-run extraction on existing uploads |
-| `extraction.correct` | Correct field values on extraction runs (API) |
 | `extraction.escalate` | Escalate extraction to review queue (API) |
 | `cases.escalate` | Escalate extraction for case-level review (console UI) |
+| `credits.view` | View credit accounts and balances |
+| `credits.manage` | Allocate, adjust, and manage user credit accounts |
 
 ### Role Access
 
 | Role | Permissions |
 |------|-------------|
-| ADMIN | All extraction permissions |
-| AP_PROCESSOR | `invoices.view`, `invoices.create`, `extraction.approve`, `extraction.reject`, `extraction.reprocess` (scoped to own uploads) |
+| ADMIN | All extraction + credit permissions |
+| AP_PROCESSOR | `invoices.view`, `invoices.create`, `extraction.correct`, `extraction.approve`, `extraction.reject`, `extraction.reprocess` (scoped to own uploads) |
 | REVIEWER | `invoices.view` |
-| FINANCE_MANAGER | `invoices.view`, `invoices.create`, `extraction.approve`, `extraction.reject`, `extraction.reprocess` |
+| FINANCE_MANAGER | `invoices.view`, `invoices.create`, `extraction.correct`, `extraction.approve`, `extraction.reject`, `extraction.reprocess`, `credits.view`, `credits.manage` |
 | AUDITOR | `invoices.view` |
 | SYSTEM_AGENT | `extraction.approve`, `extraction.reject` |
 
@@ -1461,12 +1570,169 @@ All other roles see all extractions.
 
 The extraction section in the sidebar (`templates/partials/sidebar.html`) includes:
 - **Invoice Extraction Agent** — links to the workbench (`/extraction/`), gated by `{% has_permission "invoices.view" %}`
-- **Extraction Approvals** — links to the approval queue (`/extraction/approvals/`), gated by `{% has_permission "invoices.view" %}`
-- **Country Packs** — links to country pack governance (`/extraction/country-packs/`), gated by `{% has_permission "extraction.view" %}`, uses `bi-globe2` icon
+- **Extraction Control Center** — links to the extraction core overview (`/extraction-control-center/`), gated by `{% has_permission "extraction.view" %}`
+- **Credits** — links to credit account management (`/extraction/credits/`), gated by `{% has_permission "credits.manage" %}`, uses `bi-coin` icon. Located in the Admin Console sidebar section. Visible to ADMIN and FINANCE_MANAGER roles.
 
 ---
 
-## 17. Django Admin
+## 17. Credit System
+
+### Overview
+
+A per-user credit-based usage control system for invoice extraction. Every extraction consumes 1 credit. Credits are managed by ADMIN and FINANCE_MANAGER roles.
+
+### Data Models
+
+**UserCreditAccount** (`extraction_usercreditaccount`) — OneToOne per User:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user` | OneToOneField → User | Account owner |
+| `balance_credits` | PositiveIntegerField | Available credit balance |
+| `reserved_credits` | PositiveIntegerField | Credits reserved for in-progress extractions |
+| `monthly_limit` | PositiveIntegerField | Monthly usage cap (0 = unlimited) |
+| `monthly_used` | PositiveIntegerField | Credits used this month |
+| `is_active` | BooleanField | Whether the account is active |
+| `last_reset_at` | DateTimeField | Last monthly reset timestamp |
+
+**Properties**: `available_credits` (balance − reserved), `has_available_credits()`, `can_consume_monthly()`
+
+**CreditTransaction** (`extraction_credittransaction`) — Immutable ledger:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `account` | FK → UserCreditAccount | Parent account |
+| `transaction_type` | CharField | RESERVE, CONSUME, REFUND, ALLOCATE, ADJUST, MONTHLY_RESET |
+| `credits` | IntegerField | Signed credit amount |
+| `balance_after` | IntegerField | Snapshot of balance after transaction |
+| `reserved_after` | IntegerField | Snapshot of reserved after transaction |
+| `monthly_used_after` | IntegerField | Snapshot of monthly_used after transaction |
+| `reference_type` | CharField | document_upload, admin, system |
+| `reference_id` | CharField | Optional external reference |
+| `remarks` | TextField | Mandatory for admin adjustments |
+| `created_by` | FK → User | Who performed the action |
+
+### Service: CreditService
+
+**File**: `apps/extraction/services/credit_service.py`
+
+| Method | Purpose | Creates Transaction | Audit Event |
+|--------|---------|-------------------|-------------|
+| `check_can_reserve(user)` | Pre-flight balance/limit check | No | `CREDIT_CHECKED` |
+| `reserve(user, amount)` | Lock credits for upload | RESERVE | `CREDIT_RESERVED` |
+| `consume(user, amount)` | Deduct after successful extraction | CONSUME | `CREDIT_CONSUMED` |
+| `refund(user, amount)` | Return credits on failure | REFUND | `CREDIT_REFUNDED` |
+| `allocate(user, amount)` | Admin add credits (amount > 0) | ALLOCATE | `CREDIT_ALLOCATION_UPDATED` |
+| `adjust(user, amount)` | Admin correct (±amount) | ADJUST | `CREDIT_ALLOCATION_UPDATED` |
+| `reset_monthly_if_due(account)` | Monthly usage reset | MONTHLY_RESET | `CREDIT_MONTHLY_RESET` |
+
+### Upload Integration
+
+The upload flow checks credits before allowing extraction:
+```
+User clicks Upload → check_can_reserve() → reserve(1, ref_type="document_upload", ref_id=upload.pk) → run extraction
+  → Success: consume(1) — charged for successful extraction
+  → OCR Failure: refund(1) — no charge for failed extraction
+```
+
+### Credit Decision Table
+
+The Celery task (`process_invoice_upload_task`) determines credit outcome by pipeline stage:
+
+| Stage | Outcome | Credit Action | Rationale |
+|-------|---------|---------------|-----------|
+| Step 0 (reserve) | Insufficient balance | Block upload (no task dispatched) | User sees error, no credit spent |
+| Step 1 (OCR) | OCR failure | **Refund** | No meaningful extraction occurred |
+| Step 1 (OCR) | OCR success → pipeline continues | — (pending) | Wait for final outcome |
+| Step 2–5 (parse/normalize/validate/dedup) | Pipeline error | **Consume** | OCR resources were used |
+| Step 6 (persist) | Persistence failure | **Consume** | OCR + LLM resources were used |
+| Step 6a | Extraction succeeded | **Consume** | Full pipeline completed |
+| Retry | Celery retry triggered | **No-op** | Idempotency prevents duplicate transactions; same `reference_id` |
+| Max retries exhausted | Final failure | Last stage outcome applies | If OCR never succeeded → refund; if OCR succeeded → consume |
+
+> **Sync fallback path** (no blob storage): OCR success → consume, extraction failure → refund.
+
+**Idempotency**: `reserve()`, `consume()`, and `refund()` check for existing transactions with the same `reference_type + reference_id` before creating duplicates. This ensures safe retries and Celery retry safety.
+
+**Invariant enforcement**: All credit mutations validate `balance_credits >= 0`, `reserved_credits >= 0`, `monthly_used >= 0`, and `balance_credits >= reserved_credits`. Violations raise `CreditAccountingError`.
+
+**Reason codes**: `INSUFFICIENT_BALANCE`, `INACTIVE_ACCOUNT`, `MONTHLY_LIMIT_EXCEEDED`, `OK` — defined as constants in `credit_service.py`.
+
+The workbench UI shows a credit strip with current balance and blocks uploads when credits are insufficient.
+
+### Views
+
+| URL | View | Permission | Description |
+|-----|------|------------|-------------|
+| `/extraction/credits/` | `credit_account_list` | `credits.view` | All accounts with search/pagination |
+| `/extraction/credits/<user_id>/` | `credit_account_detail` | `credits.view` | Account detail + transaction ledger (50 most recent) + adjustment form |
+| `/extraction/credits/<user_id>/adjust/` | `credit_account_adjust` | `credits.manage` | POST: add, subtract, set_limit, toggle_active |
+
+### Audit Trail
+
+Every credit operation is recorded in two layers:
+- **CreditTransaction** — immutable ledger with balance snapshots, searchable in Django admin and the credit detail page
+- **AuditEvent** — 7 event types: `CREDIT_CHECKED`, `CREDIT_RESERVED`, `CREDIT_CONSUMED`, `CREDIT_REFUNDED`, `CREDIT_ALLOCATION_UPDATED`, `CREDIT_LIMIT_EXCEEDED`, `CREDIT_MONTHLY_RESET`
+
+### Management Command
+
+```bash
+python manage.py bootstrap_credit_accounts --initial-credits 100 --monthly-limit 50 --force
+```
+- Creates `UserCreditAccount` for all active users
+- `--force` updates existing accounts
+- `--initial-credits` sets starting balance (default: 0)
+- `--monthly-limit` sets monthly cap (default: 0 = unlimited)
+
+### Sidebar Navigation
+
+**Credits** link in the Admin Console sidebar section, gated by `credits.manage` permission. Uses `bi-coin` icon. Visible to ADMIN and FINANCE_MANAGER roles.
+
+---
+
+## 18. OCR Cost Tracking
+
+### Overview
+
+The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per extraction.
+
+### Cost Calculation
+
+| Component | Pricing | Tracked Fields |
+|-----------|---------|----------------|
+| **LLM** (GPT-4o) | $5.00/1M input tokens, $15.00/1M output tokens | `prompt_tokens`, `completion_tokens`, `total_tokens` |
+| **OCR** (Azure Document Intelligence) | $1.50/1,000 pages | `ocr_page_count` |
+
+**Total cost** = LLM cost + OCR cost
+
+### Data Flow
+
+1. `_ocr_document()` returns `(text, page_count, duration_ms)` — page count and duration captured at OCR time
+2. `ExtractionResponse` carries `ocr_page_count`, `ocr_duration_ms`, `ocr_char_count`
+3. `ExtractionResultPersistenceService` saves OCR fields to `ExtractionResult` model
+4. Console view calculates: `ocr_cost = ocr_pages × $1.50 / 1,000` and `llm_cost` from token usage
+5. Template displays 5 KPI cards (Total Cost, LLM Cost, OCR Cost, Total Tokens, OCR Pages) + cost breakdown
+
+### Console Cost Panel
+
+**Template**: `templates/extraction/console/_cost_tokens_panel.html`
+
+**KPI Cards** (5):
+- Total Cost (LLM + OCR) — warning color
+- LLM Cost — primary color
+- OCR Cost — info color
+- Total Tokens — success color
+- OCR Pages — secondary color
+
+**Cost Breakdown**: Side-by-side LLM vs OCR bars with dollar amounts and detail (token counts / page+char counts)
+
+**Token Breakdown**: Stacked progress bar (prompt vs completion tokens)
+
+**Execution Details**: LLM Model, OCR Engine, Agent Type, Status, OCR Duration, LLM Duration, Timestamps, Pricing rates, Agent Run ID
+
+---
+
+## 19. Django Admin
 
 ### apps/extraction Admin
 
@@ -1511,9 +1777,28 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 | `ExtractionAnalyticsSnapshotAdmin` | snapshot_type, country_code, period, run_count, average_confidence |
 | `CountryPackAdmin` | jurisdiction, pack_status, schema/validation/normalization versions, activated_at |
 
+#### UserCreditAccountAdmin
+
+| Feature | Detail |
+|---------|--------|
+| List display | User email, balance, reserved, available (color-coded), monthly_limit, monthly_used, is_active |
+| Filters | is_active |
+| Search | user email |
+| Inlines | `CreditTransactionInline` (last 50 transactions, read-only) |
+| Validation | Manual adjustments require `remarks` field; validates `balance >= reserved` to prevent invariant violation |
+
+#### CreditTransactionAdmin
+
+| Feature | Detail |
+|---------|--------|
+| List display | Account (email), transaction_type, credits, balance_after, reference_type, created_at |
+| Filters | transaction_type, reference_type |
+| Search | account email, reference_id, remarks |
+| Read-only | All fields (immutable ledger — no add/edit/delete) |
+
 ---
 
-## 18. File Reference
+## 20. File Reference
 
 ### apps/extraction (Application Layer — UI, Task, Core Models)
 
@@ -1533,6 +1818,12 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 | `apps/extraction/services/persistence_service.py` | Invoice + LineItem + ExtractionResult persistence |
 | `apps/extraction/services/approval_service.py` | Approval lifecycle (approve/reject/auto-approve + analytics) |
 | `apps/extraction/services/upload_service.py` | File upload, hash computation, DocumentUpload creation |
+| `apps/extraction/services/credit_service.py` | Credit reserve/consume/refund/allocate/adjust service + audit events, idempotency, invariant enforcement |
+| `apps/extraction/services/execution_context.py` | ExecutionContext dataclass + get_execution_context() — centralized governed/legacy data resolution |
+| `apps/extraction/credit_models.py` | UserCreditAccount + CreditTransaction models |
+| `apps/extraction/credit_views.py` | Credit account list/detail/adjust views |
+| `apps/extraction/forms.py` | CreditAdjustmentForm (add/subtract/set_limit/toggle_active) |
+| `apps/extraction/management/commands/bootstrap_credit_accounts.py` | Bootstrap credit accounts for all users |
 
 ### apps/extraction_core (Platform Layer — Configuration, Execution, Governance)
 
@@ -1548,7 +1839,7 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 | `apps/extraction_core/extraction_api_urls.py` | Execution API URL routing (`/api/v1/extraction-pipeline/`) |
 | **Core Pipeline & Orchestration** | |
 | `apps/extraction_core/services/extraction_pipeline.py` | 11-stage governed pipeline orchestrator |
-| `apps/extraction_core/services/extraction_service.py` | Original pipeline orchestrator |
+| `apps/extraction_core/services/extraction_service.py` | Original pipeline orchestrator (`ExtractionExecutionResult` dataclass — renamed from `ExtractionResult` to avoid Django model collision) |
 | `apps/extraction_core/services/base_extraction_service.py` | Schema-driven extraction base class |
 | **Jurisdiction Resolution** | |
 | `apps/extraction_core/services/jurisdiction_resolver.py` | Multi-signal jurisdiction detection |
@@ -1571,7 +1862,8 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 | `apps/extraction_core/services/enhanced_validation.py` | Country-aware validation with ExtractionIssue persistence |
 | **Evidence, Audit & Tracing** | |
 | `apps/extraction_core/services/evidence_service.py` | Field provenance capture → ExtractionEvidence records |
-| `apps/extraction_core/services/extraction_audit.py` | Extraction-specific audit logging (8 pipeline event types) |
+| `apps/extraction_core/services/extraction_audit.py` | Extraction-specific audit logging (8 pipeline event types). NOTE: log_extraction_approved/rejected are deprecated no-ops — use GovernanceTrailService |
+| `apps/extraction_core/services/governance_trail.py` | GovernanceTrailService — sole writer of ExtractionApprovalRecord |
 | **Confidence & Review Routing** | |
 | `apps/extraction_core/services/confidence_scorer.py` | Multi-dimensional confidence scoring |
 | `apps/extraction_core/services/review_routing.py` | Confidence-driven review routing |
@@ -1603,7 +1895,7 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 | `apps/core/enums.py` | InvoiceStatus, ExtractionApprovalStatus, AuditEventType (incl. 15 extraction governance events), DocumentType |
 | `apps/core/utils.py` | Normalization utilities (strings, dates, amounts, PO numbers) |
 | `apps/documents/models.py` | DocumentUpload, Invoice, InvoiceLineItem models |
-| `config/settings.py` | Azure credentials, thresholds, auto-approve config |
+| `config/settings.py` | Azure credentials, thresholds, auto-approve config, OCR toggle |
 
 ### Templates
 
@@ -1614,6 +1906,8 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 | `templates/extraction/approval_detail.html` | Approval review UI |
 | `templates/extraction/approval_queue.html` | Deprecated — redirects to workbench |
 | `templates/extraction/country_packs.html` | Country pack governance (KPI strip + table) |
+| `templates/extraction/credit_account_list.html` | Credit account list with search/pagination |
+| `templates/extraction/credit_account_detail.html` | Credit account detail + transaction ledger + adjustment form |
 | `templates/extraction/console/console.html` | Main review console layout (6 tabs) |
 | `templates/extraction/console/_header_bar.html` | Command bar (status, confidence, review queue, schema, method badges) |
 | `templates/extraction/console/_document_viewer.html` | **Deprecated** — no longer included in layout |
@@ -1628,6 +1922,7 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 | `templates/extraction/console/_approve_modal.html` | Approval confirmation modal |
 | `templates/extraction/console/_reprocess_modal.html` | Reprocess extraction modal |
 | `templates/extraction/console/_escalate_modal.html` | Escalation modal |
+| `templates/extraction/console/_cost_tokens_panel.html` | Cost & Tokens panel (LLM + OCR cost breakdown, token usage, execution details) |
 | `templates/extraction/console/_comment_modal.html` | Add comment modal |
 
 ### Static Assets
@@ -1636,7 +1931,7 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 |------|---------|
 | `static/css/extraction_console.css` | Review console custom styles (~200 lines) |
 | `static/js/extraction_console.js` | Review console JavaScript (~200 lines) |
-| `templates/partials/sidebar.html` | Navigation sidebar (extraction + country packs links) |
+| `templates/partials/sidebar.html` | Navigation sidebar (extraction + country packs + credits links) |
 
 ---
 
@@ -1644,6 +1939,9 @@ The extraction section in the sidebar (`templates/partials/sidebar.html`) includ
 
 - **LLM calls failing?** Check `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` env vars.
 - **OCR failing?** Check `AZURE_DI_ENDPOINT` and `AZURE_DI_KEY` env vars.
+- **OCR disabled?** Check `ExtractionRuntimeSettings.ocr_enabled` in the Extraction Control Center, or `EXTRACTION_OCR_ENABLED` env var. When disabled, native PDF extraction via PyPDF2 is used (no Azure DI cost).
+- **Credits showing 0?** If `bootstrap_credit_accounts` was run before the user existed, use `--force` flag to update existing accounts. Or adjust via `/extraction/credits/<user_id>/`.
+- **Upload blocked (insufficient credits)?** Check the user's `UserCreditAccount.balance_credits` and `monthly_used` vs `monthly_limit`. Adjust via credit management UI or Django admin.
 - **Extraction task not running?** On Windows without Redis, ensure `CELERY_TASK_ALWAYS_EAGER=True` (tasks run synchronously).
 - **Confidence showing 1%?** `extraction_confidence` is stored as 0.0–1.0 float; templates use `{% widthratio %}` to display as percentage.
 - **Auto-approve not working?** Check both `EXTRACTION_AUTO_APPROVE_ENABLED=true` AND `EXTRACTION_AUTO_APPROVE_THRESHOLD` < 1.0 (e.g., 0.95).

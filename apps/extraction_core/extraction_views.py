@@ -274,12 +274,13 @@ class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
             },
         )
 
-        from apps.extraction_core.services.extraction_audit import (
-            ExtractionAuditService,
-        )
-        ExtractionAuditService.log_extraction_approved(
-            extraction_run_id=run.pk,
-            user=request.user,
+        # REMOVED: duplicate emission — GovernanceTrailService is the single
+        # writer of ExtractionApprovalRecord; audit logged via AuditService
+        # directly below.
+        from apps.extraction_core.services.governance_trail import GovernanceTrailService
+        GovernanceTrailService.record_approval_decision(
+            run=run, action="APPROVE", user=request.user,
+            comments=serializer.validated_data.get("comments", ""),
         )
 
         from apps.extraction_core.extraction_serializers import (
@@ -316,12 +317,12 @@ class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
             },
         )
 
-        from apps.extraction_core.services.extraction_audit import (
-            ExtractionAuditService,
-        )
-        ExtractionAuditService.log_extraction_rejected(
-            extraction_run_id=run.pk,
-            user=request.user,
+        # REMOVED: duplicate emission — GovernanceTrailService is the single
+        # writer of ExtractionApprovalRecord; audit logged via AuditService.
+        from apps.extraction_core.services.governance_trail import GovernanceTrailService
+        GovernanceTrailService.record_approval_decision(
+            run=run, action="REJECT", user=request.user,
+            comments=serializer.validated_data.get("comments", ""),
         )
 
         from apps.extraction_core.extraction_serializers import (

@@ -18,6 +18,23 @@ from apps.extraction.credit_models import CreditTransaction, UserCreditAccount
 
 logger = logging.getLogger(__name__)
 
+# ── Reason codes ────────────────────────────────────────────────
+REASON_INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
+REASON_INACTIVE_ACCOUNT = "INACTIVE_ACCOUNT"
+REASON_MONTHLY_LIMIT_EXCEEDED = "MONTHLY_LIMIT_EXCEEDED"
+REASON_OK = "OK"
+
+REASON_MESSAGES = {
+    REASON_INSUFFICIENT_BALANCE: "You do not have enough credits to process this invoice.",
+    REASON_INACTIVE_ACCOUNT: "This account is inactive. Please contact your administrator.",
+    REASON_MONTHLY_LIMIT_EXCEEDED: "Your monthly invoice processing limit has been reached.",
+    REASON_OK: "",
+}
+
+
+class CreditAccountingError(Exception):
+    """Raised when a credit operation would violate accounting invariants."""
+
 
 @dataclass
 class CreditCheckResult:
@@ -95,8 +112,8 @@ class CreditService:
         if not account.is_active:
             result = CreditCheckResult(
                 allowed=False,
-                reason_code="INACTIVE",
-                message="This account is inactive. Please contact your administrator.",
+                reason_code=REASON_INACTIVE_ACCOUNT,
+                message=REASON_MESSAGES[REASON_INACTIVE_ACCOUNT],
                 balance_credits=account.balance_credits,
                 reserved_credits=account.reserved_credits,
                 available_credits=account.available_credits,
@@ -106,15 +123,15 @@ class CreditService:
             )
             cls._audit(
                 AuditEventType.CREDIT_CHECKED, account,
-                credits=credits, reason_code="INACTIVE",
+                credits=credits, reason_code=REASON_INACTIVE_ACCOUNT,
             )
             return result
 
         if account.available_credits < credits:
             result = CreditCheckResult(
                 allowed=False,
-                reason_code="INSUFFICIENT_BALANCE",
-                message="You do not have enough credits to process this invoice.",
+                reason_code=REASON_INSUFFICIENT_BALANCE,
+                message=REASON_MESSAGES[REASON_INSUFFICIENT_BALANCE],
                 balance_credits=account.balance_credits,
                 reserved_credits=account.reserved_credits,
                 available_credits=account.available_credits,
@@ -124,7 +141,7 @@ class CreditService:
             )
             cls._audit(
                 AuditEventType.CREDIT_LIMIT_EXCEEDED, account,
-                credits=credits, reason_code="INSUFFICIENT_BALANCE",
+                credits=credits, reason_code=REASON_INSUFFICIENT_BALANCE,
             )
             return result
 
@@ -133,8 +150,8 @@ class CreditService:
             if effective_used + credits > account.monthly_limit:
                 result = CreditCheckResult(
                     allowed=False,
-                    reason_code="MONTHLY_LIMIT_EXCEEDED",
-                    message="Your monthly invoice processing limit has been reached.",
+                    reason_code=REASON_MONTHLY_LIMIT_EXCEEDED,
+                    message=REASON_MESSAGES[REASON_MONTHLY_LIMIT_EXCEEDED],
                     balance_credits=account.balance_credits,
                     reserved_credits=account.reserved_credits,
                     available_credits=account.available_credits,
@@ -144,13 +161,13 @@ class CreditService:
                 )
                 cls._audit(
                     AuditEventType.CREDIT_LIMIT_EXCEEDED, account,
-                    credits=credits, reason_code="MONTHLY_LIMIT_EXCEEDED",
+                    credits=credits, reason_code=REASON_MONTHLY_LIMIT_EXCEEDED,
                 )
                 return result
 
         result = CreditCheckResult(
             allowed=True,
-            reason_code="OK",
+            reason_code=REASON_OK,
             message="",
             balance_credits=account.balance_credits,
             reserved_credits=account.reserved_credits,
@@ -161,7 +178,7 @@ class CreditService:
         )
         cls._audit(
             AuditEventType.CREDIT_CHECKED, account,
-            credits=credits, reason_code="OK",
+            credits=credits, reason_code=REASON_OK,
         )
         return result
 
@@ -172,7 +189,7 @@ class CreditService:
         cls,
         user,
         credits: int = 1,
-        reference_type: str = "upload",
+        reference_type: str = "document_upload",
         reference_id: str = "",
         remarks: str = "",
     ) -> CreditCheckResult:
@@ -181,11 +198,31 @@ class CreditService:
             cls.reset_monthly_if_due(account)
             account.refresh_from_db()
 
+            # Idempotency: if a RESERVED transaction already exists for this
+            # reference_type + reference_id, return it without creating a duplicate
+            if reference_id:
+                existing = CreditTransaction.objects.filter(
+                    account=account,
+                    transaction_type=CreditTransactionType.RESERVE,
+                    reference_type=reference_type,
+                    reference_id=str(reference_id),
+                ).first()
+                if existing:
+                    return CreditCheckResult(
+                        allowed=True, reason_code=REASON_OK, message="",
+                        balance_credits=account.balance_credits,
+                        reserved_credits=account.reserved_credits,
+                        available_credits=account.available_credits,
+                        monthly_limit=account.monthly_limit,
+                        monthly_used=account.monthly_used,
+                        monthly_remaining=cls._monthly_remaining(account),
+                    )
+
             # Re-validate under lock
             if not account.is_active:
                 return CreditCheckResult(
-                    allowed=False, reason_code="INACTIVE",
-                    message="This account is inactive. Please contact your administrator.",
+                    allowed=False, reason_code=REASON_INACTIVE_ACCOUNT,
+                    message=REASON_MESSAGES[REASON_INACTIVE_ACCOUNT],
                     balance_credits=account.balance_credits,
                     reserved_credits=account.reserved_credits,
                     available_credits=account.available_credits,
@@ -196,8 +233,8 @@ class CreditService:
 
             if account.available_credits < credits:
                 return CreditCheckResult(
-                    allowed=False, reason_code="INSUFFICIENT_BALANCE",
-                    message="You do not have enough credits to process this invoice.",
+                    allowed=False, reason_code=REASON_INSUFFICIENT_BALANCE,
+                    message=REASON_MESSAGES[REASON_INSUFFICIENT_BALANCE],
                     balance_credits=account.balance_credits,
                     reserved_credits=account.reserved_credits,
                     available_credits=account.available_credits,
@@ -210,8 +247,8 @@ class CreditService:
                 effective_used = account.monthly_used + account.reserved_credits
                 if effective_used + credits > account.monthly_limit:
                     return CreditCheckResult(
-                        allowed=False, reason_code="MONTHLY_LIMIT_EXCEEDED",
-                        message="Your monthly invoice processing limit has been reached.",
+                        allowed=False, reason_code=REASON_MONTHLY_LIMIT_EXCEEDED,
+                        message=REASON_MESSAGES[REASON_MONTHLY_LIMIT_EXCEEDED],
                         balance_credits=account.balance_credits,
                         reserved_credits=account.reserved_credits,
                         available_credits=account.available_credits,
@@ -221,6 +258,12 @@ class CreditService:
                     )
 
             account.reserved_credits += credits
+            # Enforce invariants
+            if account.balance_credits < account.reserved_credits:
+                raise CreditAccountingError(
+                    f"Reserve would violate invariant: balance ({account.balance_credits}) "
+                    f"< reserved ({account.reserved_credits})"
+                )
             account.save(update_fields=["reserved_credits", "updated_at"])
 
             CreditTransaction.objects.create(
@@ -242,7 +285,7 @@ class CreditService:
             reference_id=str(reference_id), user=user,
         )
         return CreditCheckResult(
-            allowed=True, reason_code="OK", message="",
+            allowed=True, reason_code=REASON_OK, message="",
             balance_credits=account.balance_credits,
             reserved_credits=account.reserved_credits,
             available_credits=account.available_credits,
@@ -258,25 +301,45 @@ class CreditService:
         cls,
         account_or_user,
         credits: int = 1,
-        reference_type: str = "upload",
+        reference_type: str = "document_upload",
         reference_id: str = "",
         remarks: str = "",
     ) -> None:
         user = cls._resolve_user(account_or_user)
         with transaction.atomic():
             account = UserCreditAccount.objects.select_for_update().get(user=user)
+
+            # Idempotency: skip if already consumed for this reference
+            if reference_id:
+                already = CreditTransaction.objects.filter(
+                    account=account,
+                    transaction_type=CreditTransactionType.CONSUME,
+                    reference_type=reference_type,
+                    reference_id=str(reference_id),
+                ).exists()
+                if already:
+                    return
+
             if account.reserved_credits < credits:
-                raise ValueError(
+                raise CreditAccountingError(
                     f"Cannot consume {credits} credits: only {account.reserved_credits} reserved."
                 )
             if account.balance_credits < credits:
-                raise ValueError(
+                raise CreditAccountingError(
                     f"Cannot consume {credits} credits: balance is {account.balance_credits}."
                 )
 
             account.reserved_credits -= credits
             account.balance_credits -= credits
             account.monthly_used += credits
+
+            # Enforce invariants
+            if account.balance_credits < 0 or account.reserved_credits < 0 or account.monthly_used < 0:
+                raise CreditAccountingError(
+                    f"Consume would violate invariant: balance={account.balance_credits}, "
+                    f"reserved={account.reserved_credits}, monthly_used={account.monthly_used}"
+                )
+
             account.save(update_fields=[
                 "reserved_credits", "balance_credits", "monthly_used", "updated_at",
             ])
@@ -307,19 +370,38 @@ class CreditService:
         cls,
         account_or_user,
         credits: int = 1,
-        reference_type: str = "upload",
+        reference_type: str = "document_upload",
         reference_id: str = "",
         remarks: str = "",
     ) -> None:
         user = cls._resolve_user(account_or_user)
         with transaction.atomic():
             account = UserCreditAccount.objects.select_for_update().get(user=user)
+
+            # Idempotency: skip if already refunded for this reference
+            if reference_id:
+                already = CreditTransaction.objects.filter(
+                    account=account,
+                    transaction_type=CreditTransactionType.REFUND,
+                    reference_type=reference_type,
+                    reference_id=str(reference_id),
+                ).exists()
+                if already:
+                    return
+
             if account.reserved_credits < credits:
-                raise ValueError(
+                raise CreditAccountingError(
                     f"Cannot refund {credits} credits: only {account.reserved_credits} reserved."
                 )
 
             account.reserved_credits -= credits
+
+            # Enforce invariants
+            if account.reserved_credits < 0:
+                raise CreditAccountingError(
+                    f"Refund would violate invariant: reserved={account.reserved_credits}"
+                )
+
             account.save(update_fields=["reserved_credits", "updated_at"])
 
             CreditTransaction.objects.create(

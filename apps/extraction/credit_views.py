@@ -85,7 +85,7 @@ def credit_account_detail(request, user_id):
 def credit_account_adjust(request, user_id):
     """Process credit adjustment form submission."""
     if request.method != "POST":
-        return redirect("extraction:credit_detail", user_id=user_id)
+        return redirect("extraction:credit_account_detail", user_id=user_id)
 
     target_user = get_object_or_404(User, pk=user_id)
     account = CreditService.get_or_create_account(target_user)
@@ -94,7 +94,7 @@ def credit_account_adjust(request, user_id):
     if not form.is_valid():
         for err in form.errors.values():
             messages.error(request, err[0])
-        return redirect("extraction:credit_detail", user_id=user_id)
+        return redirect("extraction:credit_account_detail", user_id=user_id)
 
     action = form.cleaned_data["action_type"]
     credits = form.cleaned_data.get("credits") or 0
@@ -154,4 +154,4 @@ def credit_account_adjust(request, user_id):
     except ValueError as exc:
         messages.error(request, str(exc))
 
-    return redirect("extraction:credit_detail", user_id=user_id)
+    return redirect("extraction:credit_account_detail", user_id=user_id)

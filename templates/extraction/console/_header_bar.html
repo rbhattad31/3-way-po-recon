@@ -109,6 +109,17 @@
           {{ extraction.extraction_method }}
         </span>
         {% endif %}
+
+        {# Execution source badge #}
+        {% if extraction.extraction_source == "legacy" %}
+        <span class="badge bg-warning-subtle text-warning" title="Legacy extraction — no governed ExtractionRun linked">
+          <i class="bi bi-exclamation-triangle me-1"></i>Legacy
+        </span>
+        {% elif extraction.extraction_source == "governed" %}
+        <span class="badge bg-success-subtle text-success" title="Governed extraction pipeline">
+          <i class="bi bi-shield-check me-1"></i>Governed
+        </span>
+        {% endif %}
       </div>
 
       {# RIGHT: Actions #}
@@ -119,8 +130,8 @@
         </a>
 
         {% if invoice %}
-        {# Edit Values button — requires invoices.create permission #}
-        {% has_permission "invoices.create" as can_edit_values %}
+        {# Edit Values button — requires extraction.correct permission #}
+        {% has_permission "extraction.correct" as can_edit_values %}
         {% if can_edit_values %}
         <button type="button" class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#editModal" title="Correct extracted values">
           <i class="bi bi-pencil-square me-1"></i>Edit Values

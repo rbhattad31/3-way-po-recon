@@ -148,26 +148,12 @@ def extraction_workbench(request):
         for ea in ExtractionApproval.objects.filter(invoice_id__in=invoice_ids):
             approval_map[ea.invoice_id] = ea
 
-    # Pre-load review queue from ExtractionRun (new pipeline models)
-    try:
-        from apps.extraction_core.models import ExtractionRun
-        doc_upload_ids = [r.document_upload_id for r in page_obj if r.document_upload_id]
-        queue_map = {}
-        if doc_upload_ids:
-            runs = (
-                ExtractionRun.objects
-                .filter(document__document_upload_id__in=doc_upload_ids)
-                .values_list("document__document_upload_id", "review_queue")
-                .order_by("document__document_upload_id", "-created_at")
-            )
-            for doc_id, queue in runs:
-                if doc_id not in queue_map:
-                    queue_map[doc_id] = queue
-        for r in page_obj:
-            r.review_queue = queue_map.get(r.document_upload_id, "")
-    except Exception:
-        for r in page_obj:
-            r.review_queue = ""
+    # Pre-load execution context (governed pipeline or legacy fallback)
+    from apps.extraction.services.execution_context import get_execution_context
+    for r in page_obj:
+        ctx = get_execution_context(r)
+        r.review_queue = ctx.review_queue or ""
+        r.extraction_source = ctx.source
 
     # ── Approval tab data ──
     from apps.extraction.services.approval_service import ExtractionApprovalService
@@ -258,7 +244,7 @@ def extraction_upload(request):
 
     reserve_result = CreditService.reserve(
         request.user, credits=1,
-        reference_type="upload",
+        reference_type="document_upload",
         remarks=f"Reserved for upload: {uploaded_file.name}",
     )
     if not reserve_result.allowed:
@@ -287,7 +273,7 @@ def extraction_upload(request):
         # Refund the reserved credit — setup failed before processing
         CreditService.refund(
             request.user, credits=1,
-            reference_type="upload",
+            reference_type="document_upload",
             remarks=f"Refund: DocumentUpload creation failed — {exc}",
         )
         raise
@@ -324,7 +310,7 @@ def extraction_upload(request):
             # Consume the reserved credit — extraction succeeded
             CreditService.consume(
                 request.user, credits=1,
-                reference_type="upload",
+                reference_type="document_upload",
                 reference_id=str(doc_upload.pk),
                 remarks=f"Consumed for successful extraction: {uploaded_file.name}",
             )
@@ -336,12 +322,12 @@ def extraction_upload(request):
             )
             return redirect("extraction:console", pk=result["extraction_result_id"])
         else:
-            # Extraction attempted but failed — consume credit (resources were used)
-            CreditService.consume(
+            # Extraction attempted but failed — refund credit (OCR failure)
+            CreditService.refund(
                 request.user, credits=1,
-                reference_type="upload",
+                reference_type="document_upload",
                 reference_id=str(doc_upload.pk),
-                remarks=f"Consumed (extraction failed): {uploaded_file.name}",
+                remarks=f"Refund (extraction failed): {uploaded_file.name}",
             )
             _invalidate_extraction_caches(request.user)
             messages.error(
@@ -354,7 +340,7 @@ def extraction_upload(request):
         try:
             CreditService.refund(
                 request.user, credits=1,
-                reference_type="upload",
+                reference_type="document_upload",
                 reference_id=str(doc_upload.pk),
                 remarks=f"Refund: sync extraction setup failed — {exc}",
             )
@@ -838,10 +824,10 @@ EDITABLE_LINE_FIELDS = {
 
 @login_required
 @require_POST
-@permission_required_code("invoices.create")
+@permission_required_code("extraction.correct")
 @observed_action(
     "extraction.edit_extracted_values",
-    permission="invoices.create",
+    permission="extraction.correct",
     entity_type="Invoice",
 )
 def extraction_edit_values(request, pk):
@@ -1635,13 +1621,24 @@ def extraction_console(request, pk):
     User = get_user_model()
     assignable_users = User.objects.filter(is_active=True).order_by("email")[:50]
 
-    # ── ExtractionRun data (new pipeline models) ──
+    # ── Execution context (governed pipeline or legacy fallback) ──
+    from apps.extraction.services.execution_context import get_execution_context
+    exec_ctx = get_execution_context(ext)
+
     extraction_run = None
     corrections = []
     correction_count = 0
     try:
         from apps.extraction_core.models import ExtractionRun
-        if ext.document_upload_id:
+        # Prefer the FK on ExtractionResult, fall back to document_upload lookup
+        if ext.extraction_run_id:
+            extraction_run = (
+                ExtractionRun.objects
+                .select_related("jurisdiction", "schema")
+                .filter(pk=ext.extraction_run_id)
+                .first()
+            )
+        elif ext.document_upload_id:
             extraction_run = (
                 ExtractionRun.objects
                 .filter(document__document_upload_id=ext.document_upload_id)
@@ -1656,14 +1653,16 @@ def extraction_console(request, pk):
                 .order_by("-created_at")
             )
             correction_count = len(corrections)
-            # Enrich extraction context with ExtractionRun fields
-            extraction_ctx["review_queue"] = extraction_run.review_queue
-            extraction_ctx["schema_code"] = extraction_run.schema_code
-            extraction_ctx["schema_version"] = extraction_run.schema_version
-            extraction_ctx["extraction_method"] = extraction_run.extraction_method
-            extraction_ctx["requires_review"] = extraction_run.requires_review
     except Exception:
         pass
+
+    # Populate extraction_ctx from ExecutionContext
+    extraction_ctx["review_queue"] = exec_ctx.review_queue
+    extraction_ctx["schema_code"] = exec_ctx.schema_code
+    extraction_ctx["schema_version"] = exec_ctx.schema_version
+    extraction_ctx["extraction_method"] = exec_ctx.extraction_method
+    extraction_ctx["requires_review"] = exec_ctx.requires_review
+    extraction_ctx["extraction_source"] = exec_ctx.source
 
     # ── Also include ExtractionFieldCorrection records (from Edit Values / Approval) ──
     if approval:

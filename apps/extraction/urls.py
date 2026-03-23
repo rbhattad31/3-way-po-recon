@@ -43,7 +43,7 @@ urlpatterns = [
     path("approvals/<int:pk>/reject/", extraction_reject, name="reject"),
     path("approvals/analytics/", extraction_approval_analytics, name="approval_analytics"),
     # Credit management
-    path("credits/", credit_account_list, name="credit_list"),
-    path("credits/<int:user_id>/", credit_account_detail, name="credit_detail"),
+    path("credits/", credit_account_list, name="credit_account_list"),
+    path("credits/<int:user_id>/", credit_account_detail, name="credit_account_detail"),
     path("credits/<int:user_id>/adjust/", credit_account_adjust, name="credit_adjust"),
 ]

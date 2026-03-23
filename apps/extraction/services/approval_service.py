@@ -259,6 +259,10 @@ class ExtractionApprovalService:
             "Extraction approved for invoice %s by %s (corrections=%d, touchless=%s)",
             invoice.pk, user, len(correction_records), approval.is_touchless,
         )
+
+        # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
+        cls._record_governance_trail(approval, "APPROVE", user)
+
         return approval
 
     # ------------------------------------------------------------------
@@ -300,6 +304,10 @@ class ExtractionApprovalService:
         )
 
         logger.info("Extraction rejected for invoice %s by %s", invoice.pk, user)
+
+        # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
+        cls._record_governance_trail(approval, "REJECT", user, reason)
+
         return approval
 
     # ------------------------------------------------------------------
@@ -511,3 +519,28 @@ class ExtractionApprovalService:
             )
         except Exception:
             logger.exception("Failed to log audit event for invoice %s", invoice.pk)
+
+    @staticmethod
+    def _record_governance_trail(approval, action: str, user, comments: str = ""):
+        """Mirror an approval decision to ExtractionApprovalRecord via GovernanceTrailService.
+
+        Silently skips if no ExtractionRun is linked (legacy records).
+        """
+        try:
+            ext_result = approval.extraction_result
+            run = getattr(ext_result, "extraction_run", None) if ext_result else None
+            if run is None:
+                logger.warning(
+                    "Skipping governance trail for approval %s — no ExtractionRun linked",
+                    approval.pk,
+                )
+                return
+            from apps.extraction_core.services.governance_trail import GovernanceTrailService
+            GovernanceTrailService.record_approval_decision(
+                run=run, action=action, user=user, comments=comments,
+            )
+        except Exception:
+            logger.exception(
+                "GovernanceTrailService.record_approval_decision failed for approval %s",
+                approval.pk,
+            )

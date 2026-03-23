@@ -157,6 +157,14 @@
         </a>
       </li>
       {% endif %}
+      {% has_permission "credits.manage" as can_manage_credits %}
+      {% if can_manage_credits %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'credit_account_list' or request.resolver_match.url_name == 'credit_account_detail' %}active fw-bold{% endif %}" href="{% url 'extraction:credit_account_list' %}">
+          <i class="bi bi-coin me-2"></i>Credits
+        </a>
+      </li>
+      {% endif %}
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.url_name == 'recon_settings' %}active fw-bold{% endif %}" href="{% url 'reconciliation:recon_settings' %}">
           <i class="bi bi-gear me-2"></i>Settings

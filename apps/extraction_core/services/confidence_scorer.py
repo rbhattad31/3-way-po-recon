@@ -21,7 +21,7 @@ from django.conf import settings
 if TYPE_CHECKING:
     from apps.extraction_core.services.extraction_service import (
         ConfidenceBreakdown,
-        ExtractionResult,
+        ExtractionExecutionResult,
         ExtractionTemplate,
         FieldResult,
     )
@@ -56,7 +56,7 @@ class ConfidenceScorer:
     @classmethod
     def score(
         cls,
-        result: "ExtractionResult",
+        result: "ExtractionExecutionResult",
         template: "ExtractionTemplate",
         validation: "ValidationResult | None" = None,
     ) -> "ConfidenceBreakdown":
@@ -147,7 +147,7 @@ class ConfidenceScorer:
     @classmethod
     def _jurisdiction_confidence(
         cls,
-        result: "ExtractionResult",
+        result: "ExtractionExecutionResult",
     ) -> float:
         """Jurisdiction resolution confidence (0-1)."""
         return result.jurisdiction.confidence if result.jurisdiction else 0.0
@@ -181,7 +181,7 @@ class ConfidenceScorer:
     def _evaluate_review(
         cls,
         breakdown: "ConfidenceBreakdown",
-        result: "ExtractionResult",
+        result: "ExtractionExecutionResult",
         template: "ExtractionTemplate",
     ) -> None:
         """

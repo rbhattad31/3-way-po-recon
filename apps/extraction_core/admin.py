@@ -178,6 +178,8 @@ class EntityExtractionProfileAdmin(admin.ModelAdmin):
 
 @admin.register(ExtractionRun)
 class ExtractionRunAdmin(admin.ModelAdmin):
+    """Authoritative execution record. ExtractionResult (apps.extraction) is the
+    UI-facing summary — this model is the runtime source of truth."""
     list_display = [
         "id",
         "document",
@@ -254,6 +256,7 @@ class ExtractionIssueAdmin(admin.ModelAdmin):
 
 @admin.register(ExtractionApprovalRecord)
 class ExtractionApprovalRecordAdmin(admin.ModelAdmin):
+    """Fully read-only. Written exclusively by GovernanceTrailService."""
     list_display = [
         "extraction_run",
         "action",
@@ -262,7 +265,19 @@ class ExtractionApprovalRecordAdmin(admin.ModelAdmin):
     ]
     list_filter = ["action"]
     raw_id_fields = ["extraction_run", "approved_by"]
-    readonly_fields = ["created_at", "updated_at"]
+    readonly_fields = [
+        "extraction_run", "action", "approved_by", "comments",
+        "decided_at", "created_at", "updated_at", "created_by", "updated_by",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(ExtractionCorrection)

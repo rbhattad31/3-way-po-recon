@@ -335,59 +335,20 @@ class ExtractionAuditService:
             status_after=new_value[:100],
         )
 
-    @classmethod
-    def log_extraction_approved(
-        cls,
-        extraction_run_id: int,
-        user=None,
-        comments: str = "",
-        permission_checked: str = "extraction.approve",
-        access_granted: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        AuditService.log_event(
-            entity_type="ExtractionRun",
-            entity_id=extraction_run_id,
-            event_type=AuditEventType.EXTRACTION_APPROVED,
-            description="Extraction approved",
-            user=user,
-            metadata=cls._base_metadata(
-                extraction_run_id=extraction_run_id,
-                comments=comments[:500],
-                permission_checked=permission_checked,
-                access_granted=access_granted,
-                **kwargs,
-            ),
-            status_before="COMPLETED",
-            status_after="APPROVED",
-        )
+    # REMOVED: duplicate emission — approval/rejection audit is now emitted
+    # by ExtractionApprovalService._log_audit() (legacy flow) and
+    # GovernanceTrailService.record_approval_decision() (governed flow).
+    # These methods are retained as no-ops for backward compatibility.
 
     @classmethod
-    def log_extraction_rejected(
-        cls,
-        extraction_run_id: int,
-        user=None,
-        reason: str = "",
-        permission_checked: str = "extraction.reject",
-        access_granted: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        AuditService.log_event(
-            entity_type="ExtractionRun",
-            entity_id=extraction_run_id,
-            event_type=AuditEventType.EXTRACTION_REJECTED,
-            description=f"Extraction rejected: {reason[:100]}",
-            user=user,
-            metadata=cls._base_metadata(
-                extraction_run_id=extraction_run_id,
-                reason=reason[:500],
-                permission_checked=permission_checked,
-                access_granted=access_granted,
-                **kwargs,
-            ),
-            status_before="COMPLETED",
-            status_after="REJECTED",
-        )
+    def log_extraction_approved(cls, **kwargs: Any) -> None:
+        """DEPRECATED: No-op. Use GovernanceTrailService.record_approval_decision()."""
+        pass
+
+    @classmethod
+    def log_extraction_rejected(cls, **kwargs: Any) -> None:
+        """DEPRECATED: No-op. Use GovernanceTrailService.record_approval_decision()."""
+        pass
 
     @classmethod
     def log_extraction_reprocessed(

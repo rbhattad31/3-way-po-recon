@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin
 from django.utils.html import format_html
 
@@ -5,10 +6,41 @@ from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection
 from apps.extraction.credit_models import CreditTransaction, UserCreditAccount
 
 
+class UserCreditAccountForm(forms.ModelForm):
+    """Admin form that enforces accounting invariants on manual edits."""
+    remarks = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 2}),
+        help_text="Required when changing credit balances.",
+    )
+
+    class Meta:
+        model = UserCreditAccount
+        fields = "__all__"
+
+    def clean(self):
+        cleaned = super().clean()
+        balance = cleaned.get("balance_credits", 0)
+        reserved = cleaned.get("reserved_credits", 0)
+        if balance is not None and reserved is not None and balance < reserved:
+            raise forms.ValidationError(
+                f"Balance ({balance}) must be >= reserved ({reserved}) to maintain accounting invariants."
+            )
+        # Require remarks when balance or reserved fields are being changed
+        if self.instance.pk:
+            changed_credit_fields = {"balance_credits", "reserved_credits", "monthly_limit", "monthly_used"} & set(self.changed_data)
+            if changed_credit_fields and not cleaned.get("remarks", "").strip():
+                raise forms.ValidationError(
+                    "Remarks are required when manually adjusting credit fields."
+                )
+        return cleaned
+
+
 @admin.register(ExtractionResult)
 class ExtractionResultAdmin(admin.ModelAdmin):
     list_display = (
-        "id", "document_upload", "invoice", "engine_name", "engine_version",
+        "id", "document_upload", "invoice", "extraction_run",
+        "engine_name", "engine_version",
         "confidence_display", "success_badge", "duration_display", "created_at",
     )
     list_filter = ("success", "engine_name", "engine_version")
@@ -17,7 +49,11 @@ class ExtractionResultAdmin(admin.ModelAdmin):
     date_hierarchy = "created_at"
     readonly_fields = ("created_at", "updated_at", "created_by", "updated_by")
     fieldsets = (
-        ("Links", {"fields": ("document_upload", "invoice")}),
+        ("Links", {
+            "fields": ("document_upload", "invoice", "extraction_run"),
+            "description": "extraction_run links to the authoritative ExtractionRun record "
+                           "(source of truth). This is a UI-facing summary — not the execution record.",
+        }),
         ("Engine", {"fields": ("engine_name", "engine_version")}),
         ("Result", {"fields": ("success", "confidence", "duration_ms", "error_message")}),
         ("Raw Data", {"fields": ("raw_response",), "classes": ("collapse",)}),
@@ -120,6 +156,7 @@ class CreditTransactionInline(admin.TabularInline):
 
 @admin.register(UserCreditAccount)
 class UserCreditAccountAdmin(admin.ModelAdmin):
+    form = UserCreditAccountForm
     list_display = (
         "id", "user", "balance_credits", "reserved_credits",
         "available_display", "monthly_limit", "monthly_used",
@@ -133,6 +170,7 @@ class UserCreditAccountAdmin(admin.ModelAdmin):
     fieldsets = (
         ("Account", {"fields": ("user", "is_active")}),
         ("Credits", {"fields": ("balance_credits", "reserved_credits", "monthly_limit", "monthly_used")}),
+        ("Adjustment Note", {"fields": ("remarks",), "description": "Required when changing credit fields."}),
         ("Timestamps", {"fields": ("last_reset_at", "created_at", "updated_at"), "classes": ("collapse",)}),
     )
 

@@ -58,8 +58,17 @@ class InvoiceExtractionAdapter:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
         try:
-            # Step 1: OCR via Azure Document Intelligence
-            ocr_text, ocr_page_count, ocr_duration_ms = self._ocr_document(file_path)
+            # Check runtime setting for OCR mode
+            ocr_enabled = self._is_ocr_enabled()
+
+            if ocr_enabled:
+                # Step 1a: OCR via Azure Document Intelligence
+                ocr_text, ocr_page_count, ocr_duration_ms = self._ocr_document(file_path)
+            else:
+                # Step 1b: Native PDF text extraction (no Azure DI cost)
+                logger.info("OCR disabled — using native PDF text extraction for %s", file_path)
+                ocr_text, ocr_page_count, ocr_duration_ms = self._extract_text_native(file_path)
+
             ocr_char_count = len(ocr_text)
             if not ocr_text.strip():
                 return ExtractionResponse(
@@ -82,7 +91,7 @@ class InvoiceExtractionAdapter:
                 success=True,
                 raw_json=raw_json,
                 confidence=float(raw_json.get("confidence", 0.0)),
-                engine_name="azure_di_gpt4o_agent",
+                engine_name="azure_di_gpt4o_agent" if ocr_enabled else "native_pdf_gpt4o_agent",
                 engine_version="2.0",
                 duration_ms=elapsed,
                 ocr_text=ocr_text,
@@ -101,7 +110,26 @@ class InvoiceExtractionAdapter:
             )
 
     # ------------------------------------------------------------------
-    # Step 1: Azure Document Intelligence OCR
+    # Runtime settings helper
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _is_ocr_enabled() -> bool:
+        """Check ExtractionRuntimeSettings.ocr_enabled flag.
+
+        Falls back to settings.EXTRACTION_OCR_ENABLED (default True) if no
+        runtime settings record exists.
+        """
+        try:
+            from apps.extraction_core.models import ExtractionRuntimeSettings
+            active = ExtractionRuntimeSettings.get_active()
+            if active is not None:
+                return active.ocr_enabled
+        except Exception:
+            logger.debug("Could not read ExtractionRuntimeSettings; using settings fallback")
+        return getattr(settings, "EXTRACTION_OCR_ENABLED", True)
+
+    # ------------------------------------------------------------------
+    # Step 1a: Azure Document Intelligence OCR
     # ------------------------------------------------------------------
     @staticmethod
     def _ocr_document(file_path: str) -> tuple:
@@ -139,6 +167,31 @@ class InvoiceExtractionAdapter:
                 lines.append(line.content)
 
         return "\n".join(lines), page_count, ocr_duration_ms
+
+    # ------------------------------------------------------------------
+    # Step 1b: Native PDF text extraction (no OCR cost)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _extract_text_native(file_path: str) -> tuple:
+        """Extract text from a PDF using PyPDF2 (native text layer).
+
+        Returns:
+            (text, page_count, duration_ms) — same shape as _ocr_document.
+        """
+        import PyPDF2
+
+        native_start = time.time()
+        lines = []
+        page_count = 0
+        with open(file_path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            page_count = len(reader.pages)
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    lines.append(text)
+        duration_ms = int((time.time() - native_start) * 1000)
+        return "\n".join(lines), page_count, duration_ms
 
     # ------------------------------------------------------------------
     # Step 2: Azure OpenAI LLM structured extraction
