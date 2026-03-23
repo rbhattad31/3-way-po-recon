@@ -325,8 +325,8 @@ def _fail_upload(upload: DocumentUpload, message: str) -> None:
 def _consume_credit_for_upload(upload: DocumentUpload) -> None:
     """Consume reserved credit after successful extraction.
 
-    Policy (Decision 3): credit is consumed only when OCR/extraction
-    succeeds. reference_type='document_upload', reference_id=upload.pk.
+    Policy: ChargePolicy.for_extraction_success() → CONSUME.
+    reference_type='document_upload', reference_id=upload.pk.
     Idempotent — CreditService.consume() skips if already consumed.
     """
     if not upload.uploaded_by_id:
@@ -349,8 +349,7 @@ def _consume_credit_for_upload(upload: DocumentUpload) -> None:
 def _refund_credit_for_upload(upload: DocumentUpload) -> None:
     """Refund reserved credit when extraction fails (OCR/pipeline error).
 
-    Policy (Decision 3): credit is refunded on extraction failure — the
-    user should not be charged for a failed attempt.
+    Policy: ChargePolicy.for_ocr_failure() / for_pipeline_failure() / for_non_invoice_document() → REFUND.
     Idempotent — CreditService.refund() skips if already refunded.
     """
     if not upload.uploaded_by_id:

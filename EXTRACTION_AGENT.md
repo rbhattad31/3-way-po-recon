@@ -2,7 +2,7 @@
 
 > **Modules**: `apps/extraction/` (Application Layer — UI, Task, Core Models) + `apps/extraction_core/` (Platform Layer — Configuration, Execution, Governance)  
 > **Dependencies**: Azure Document Intelligence (OCR), Azure OpenAI GPT-4o (LLM), Agent Framework (`apps/agents/`)  
-> **Status**: Fully implemented with human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking
+> **Status**: Human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking. Tests not yet written (pytest + factory-boy configured). ERP connectors and Celery Beat schedules are pending.
 
 ---
 
@@ -217,7 +217,8 @@ ExtractionParserService → NormalizationService → ValidationService
 |------|---------|-------------|
 | 0 | `CreditService.reserve()` | Reserve 1 credit (`ref_type="document_upload"`, `ref_id=upload.pk`). Hard-stop if insufficient. |
 | 1 | `InvoiceExtractionAdapter` | OCR + LLM extraction → `ExtractionResponse` |
-| 1a | `DocumentTypeClassifier` | Classify OCR text → reject non-invoices (GRN, PO, DELIVERY_NOTE, STATEMENT) with credit refund |
+| 1a | `DocumentTypeClassifier` | Classify OCR text → reject non-invoices (GRN, PO, DELIVERY_NOTE, STATEMENT) with credit refund. Rejection requires `confidence ≥ 0.60` **and** `not is_ambiguous`. |
+| 1b | `_run_governed_pipeline()` | Wire governed extraction pipeline (`ExtractionPipeline.run()`) as an enrichment step. Creates `ExtractionDocument` linked to the upload, passes OCR text + invoice reference. Wrapped in try/except for graceful degradation — if the governed pipeline fails, the legacy pipeline continues and the result shows "Legacy" source. |
 | 2 | `ExtractionParserService` | Parse raw JSON → `ParsedInvoice` dataclass |
 | 3 | `NormalizationService` | Normalize fields (dates, amounts, PO numbers) |
 | 4 | `ValidationService` + `ExtractionConfidenceScorer` | Check mandatory fields, compute deterministic confidence score |
@@ -441,6 +442,60 @@ Returns `ValidationResult` with `is_valid`, `errors`, and `warnings`.
 - Low extraction confidence (< `EXTRACTION_CONFIDENCE_THRESHOLD` = 0.75)
 - Line item missing quantity / unit_price / description
 
+### 5.4a ExtractionConfidenceScorer
+
+**File**: `apps/extraction/services/confidence_scorer.py`  
+**Called by**: Pipeline step 4 (after `ValidationService`)
+
+Replaces the LLM's self-reported confidence with a deterministic, auditable score computed from what was actually extracted. Returns a `ConfidenceBreakdown` dataclass with `overall` (0.0–1.0), dimension scores, and a list of penalty reasons.
+
+**Three dimensions (weighted sum)**:
+
+| Dimension | Weight | Description |
+|-----------|--------|-------------|
+| Field coverage | 50% | Were critical/important/optional header fields extracted? |
+| Line-item quality | 30% | How complete are the extracted line items? |
+| Cross-field consistency | 20% | Do the numbers add up? |
+
+**Field coverage — header field weights** (normalised internally):
+
+| Field | Weight | Notes |
+|-------|--------|-------|
+| `total_amount` | 5.0 | Critical |
+| `invoice_number` | 5.0 | Critical |
+| `vendor_name` | 4.0 | Critical |
+| `invoice_date` | 3.0 | Important |
+| `currency` | 2.0 | Important (USD default gets 50% partial credit) |
+| `po_number` | 2.0 | Useful |
+| `subtotal` | 1.5 | Useful |
+| `tax_amount` | 1.5 | Useful |
+
+Missing fields generate `missing:<field>` penalties.
+
+**Line-item quality — per-line field weights** (normalised internally):
+
+| Field | Weight |
+|-------|--------|
+| `description` | 3.0 |
+| `quantity` | 3.0 |
+| `unit_price` | 3.0 |
+| `line_amount` | 2.0 |
+| `tax_amount` | 1.0 |
+
+Returns average completeness across all lines. Zero line items → `no_line_items` penalty → 0.0 score.
+
+**Cross-field consistency checks**:
+
+| Check | Tolerance | Penalty format |
+|-------|-----------|----------------|
+| `subtotal + tax_amount ≈ total_amount` | 2% | `total_mismatch:<expected>!=<actual>` |
+| `sum(line_amounts) ≈ subtotal` (or total) | 5% | `line_sum_mismatch:<sum>!=<reference>` |
+| `qty × unit_price ≈ line_amount` (per line) | 2% | (no per-line penalty to avoid noise) |
+
+If no consistency checks are possible (all values missing), returns 0.5 (neutral).
+
+**Output**: `ConfidenceBreakdown` with `overall`, `field_coverage`, `line_item_quality`, `consistency`, `penalties` list, `llm_original` (preserved for audit comparison). The `overall` score is clamped to [0.0, 1.0] and written to `Invoice.extraction_confidence`.
+
 ### 5.5 DuplicateDetectionService
 
 **File**: `apps/extraction/services/duplicate_detection_service.py`  
@@ -467,7 +522,7 @@ Saves normalized invoice + line items to the database.
 
 **Additional logic**:
 - Sets `is_duplicate` flag and `duplicate_of_id` if duplicate detected
-- Recalculates subtotal/total from line items if they differ from extracted header
+- **Total reconciliation** (`_reconcile_totals`): Compares line-item sum against extracted header subtotal. Only overrides when line items sum to **more** than the header (indicating the header was misread/truncated). When line items sum to **less**, keeps the original header total (the LLM likely missed some line items). Recomputes `total_amount = new_subtotal + tax_amount`.
 - Resolves vendor via `Vendor.normalized_name` or `VendorAlias.normalized_alias`
 
 ### 5.7 ExtractionResultPersistenceService
@@ -475,6 +530,8 @@ Saves normalized invoice + line items to the database.
 **Decorator**: `@observed_service("extraction.persist_result", entity_type="ExtractionResult", audit_event="EXTRACTION_RESULT_PERSISTED")`
 
 Persists `ExtractionResult` record with engine metadata (separate from Invoice data).
+
+**Confidence source**: Prefers `invoice.extraction_confidence` (deterministic score from `ExtractionConfidenceScorer`) over the LLM self-reported `extraction_response.confidence`. Falls back to LLM value only when the deterministic score is unavailable.
 
 **Additional audit events emitted inline**:
 - `DUPLICATE_DETECTED` — when `DuplicateCheckResult.is_duplicate` is True
@@ -699,7 +756,7 @@ The original pipeline orchestrator. Coordinates jurisdiction → schema → dete
 
 | Service | File | Purpose |
 |---------|------|---------|
-| `DocumentTypeClassifier` | `document_classifier.py` | Multilingual keyword classification (EN/AR/HI/FR/DE/ES); types: INVOICE, CREDIT_NOTE, DEBIT_NOTE, GRN, PURCHASE_ORDER, DELIVERY_NOTE, STATEMENT |
+| `DocumentTypeClassifier` | `document_classifier.py` | Multilingual keyword classification (EN/AR/HI/FR/DE/ES); types: INVOICE, CREDIT_NOTE, DEBIT_NOTE, GRN, PURCHASE_ORDER, DELIVERY_NOTE, STATEMENT. Includes **negative signals** (−2.0 to −3.0) for report-adjacent terms ("reconciliation", "summary report", "3-way", "matching report", "variance report", "audit report") on GRN/PO/DELIVERY_NOTE to prevent false classification of reconciliation/summary reports. |
 | `PartyExtractor` | `party_extractor.py` | Supplier/buyer/ship-to/bill-to extraction |
 | `RelationshipExtractor` | `relationship_extractor.py` | PO/GRN/contract/shipment cross-reference extraction |
 | `DocumentIntelligenceService` | `document_intelligence.py` | Pre-extraction analysis orchestrator |
@@ -919,7 +976,9 @@ Approval state is tracked in **two models** serving different purposes:
 
 Both records are created on every approval/rejection:
 1. `ExtractionApprovalService.approve()` / `.reject()` updates `ExtractionApproval` (business state) then calls `GovernanceTrailService.record_approval_decision()` to write `ExtractionApprovalRecord` (governance trail).
-2. `ExtractionRunViewSet.approve()` / `.reject()` (governed API) writes `ExtractionApprovalRecord` directly, then calls `GovernanceTrailService`.
+2. `ExtractionRunViewSet.approve()` / `.reject()` (governed API) delegates entirely to `GovernanceTrailService.record_approval_decision()` — no direct `ExtractionApprovalRecord` writes in the viewset.
+
+**GovernanceTrailService uses `update_or_create(extraction_run=run, defaults={...})`** inside `transaction.atomic()`, so re-decisions (e.g., second approval after reprocess) safely update the existing record rather than violating the OneToOne constraint.
 
 ### Approval Flow
 
@@ -959,6 +1018,24 @@ When an extraction is reprocessed:
 - `ExtractionApproval.status` resets to `PENDING` (same record, updated in place)
 - The previous `ExtractionApprovalRecord` is retained (immutable history per run)
 - A new `ExtractionApprovalRecord` is created for the new run upon the next approval/rejection
+- **Credit reserve**: 1 credit is reserved (`reference_type="reprocess"`, `reference_id=upload.pk`) before re-extraction starts
+- **Finalization guard**: Reprocess is blocked if the current `ExtractionApprovalRecord` has status `APPROVED` or `AUTO_APPROVED`. Both `extraction_rerun` (template view) and `ExtractionRunViewSet.reprocess()` (API) enforce this — API returns HTTP 409 CONFLICT
+
+### Concurrency & Locking
+
+Approval and rejection operations use row-level locking to prevent race conditions:
+
+- **`ExtractionApprovalService.approve()`** / **`.reject()`**: Re-fetch the `ExtractionApproval` row with `select_for_update()` inside `@transaction.atomic` before checking the `PENDING` precondition. This serializes concurrent approve/reject attempts on the same invoice.
+- **CreditService**: All balance-mutating methods (`reserve`, `consume`, `refund`, `allocate`, `adjust`) use `select_for_update()` on `UserCreditAccount` inside `transaction.atomic()`.
+- **GovernanceTrailService**: Uses `update_or_create()` inside `transaction.atomic()` — safe against parallel writes to the same ExtractionRun's approval record.
+
+Valid state transitions for `ExtractionApproval.status`:
+```
+PENDING → APPROVED   (approve)
+PENDING → REJECTED   (reject)
+PENDING → PENDING    (reprocess resets, then re-enters queue)
+AUTO_APPROVED → ×    (terminal state, no further transitions)
+```
 
 ### Service Methods
 
@@ -1153,9 +1230,10 @@ All cross-module lookups are wrapped in `try/except` for graceful degradation if
 
 ### View Details
 
-**`extraction_workbench`** — Main extraction agent page with two tabs:
+**`extraction_workbench`** — Main extraction agent page with three tabs:
 - **Agent Runs tab**: KPI stats (total, success, failed, avg confidence, avg duration); advanced filters (search, status, confidence range, date range, review queue); paginated results table (20 per page) with review queue column; "Run Agent" file upload modal (PDF, PNG, JPG, TIFF — max 20 MB)
 - **Approvals tab**: Approval queue with filter/search + analytics strip
+- **Rejected tab**: Failed/rejected uploads (`DocumentUpload.processing_state=FAILED`). Table with columns: ID, Filename, Rejection Reason, Detected Doc Type, Uploaded timestamp, Uploaded By. Paginated with count badge. Visible when document type classification rejects non-invoice uploads (GRN, PO, etc.).
 
 **`extraction_upload`** — File upload handler:
 - Validates file type and size (20 MB max)
@@ -1212,16 +1290,17 @@ All templates are in `templates/extraction/` and extend `base.html` (Bootstrap 5
 
 | File | Purpose |
 |------|---------|
-| `workbench.html` | Main workbench with Agent Runs tab (KPIs, filters, results with review queue column) + Approvals tab |
+| `workbench.html` | Main workbench with **3 tabs**: Agent Runs (KPIs, filters, results with review queue column) + Approvals + **Rejected** (failed uploads with rejection reason, doc type, timestamp) |
 | `result_detail.html` | Single extraction result detail |
 | `approval_detail.html` | Approval review page (approve/reject modals) |
 | `approval_queue.html` | Deprecated — redirects to workbench |
 | `country_packs.html` | Country pack governance (KPI strip + governance table with status badges) |
 
 ### workbench.html
-- Two-tab layout: **Agent Runs** and **Approvals**
+- Three-tab layout: **Agent Runs**, **Approvals**, and **Rejected**
 - Agent Runs: KPI stat cards (total, success, failed, avg confidence, avg duration); advanced filter panel (search, status, confidence presets/slider, date range, review queue dropdown); results table with review queue column; "Run Agent" modal for file upload (drag-and-drop, file validation)
 - Approvals: Approval queue with filter/search + analytics strip
+- Rejected: Failed uploads table (ID, Filename, Reason, Doc Type, Uploaded, By) with pagination + count badge. Shows uploads rejected by document type classification gate.
 
 ### result_detail.html
 - Engine metadata panel (name, version, duration, file info)
@@ -1314,10 +1393,10 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 | File | Purpose |
 |------|---------|
 | `console.html` | Main layout — extends `base.html`, includes all partials/modals, loads CSS/JS. 6 tab pills. |
-| `_header_bar.html` | Command bar — extraction ID, status/confidence badges, jurisdiction badges, review queue badge (bg-info-subtle), schema badge (bg-dark-subtle), extraction method badge (conditional: HYBRID=purple, LLM=primary, else=secondary), action buttons |
+| `_header_bar.html` | Command bar — extraction ID, status/confidence badges (uses `{% widthratio %}` for 0–1 → percentage conversion), jurisdiction badges, review queue badge (bg-info-subtle), schema badge (bg-dark-subtle), extraction method badge (conditional: HYBRID=purple, LLM=primary, else=secondary), action buttons |
 | `_document_viewer.html` | **Deprecated** — no longer included in layout. File exists but is unused. |
-| `_extracted_data.html` | Tab 1 — Header Fields, Parties, Tax/Jurisdiction, Master Data Matches, Line Items |
-| `_confidence_badge.html` | Reusable confidence % indicator (green ≥85%, amber ≥50%, red <50%) |
+| `_extracted_data.html` | Tab 1 — Header Fields, Parties, Tax/Jurisdiction, Master Data Matches, Line Items with **summary footer** (summed Qty, Tax Amount, Total across all line items) |
+| `_confidence_badge.html` | Reusable confidence % indicator (green ≥85%, amber ≥50%, red <50%). Uses `{% widthratio confidence 1 100 %}` to convert 0–1 float to percentage. |
 | `_validation_panel.html` | Tab 2 — Errors/Warnings/Passed grouped by severity, "Go to field" navigation |
 | `_evidence_panel.html` | Tab 3 — Evidence cards with source snippets and page references |
 | `_reasoning_panel.html` | Tab 4 — Agent reasoning timeline with step indicators, decisions, collapsible details |
@@ -1385,6 +1464,7 @@ The `extraction_console` view builds the following context for the template:
 | `parties` | `raw_response.document_intelligence.parties` | Supplier/buyer/ship-to/bill-to from document intelligence |
 | `enrichment` | `raw_response.enrichment` | Vendor/customer/PO matches from master data enrichment |
 | `line_items` | `InvoiceLineItem` queryset | List of dicts with description, qty, price, tax, total, confidence, fields |
+| `line_items_totals` | Computed | Dict with summed `quantity`, `tax_amount`, `total` across all line items — displayed in table footer |
 | `errors` / `warnings` | Re-run `ValidationService` | Grouped validation issues |
 | `validation_field_issues` | Computed | Map of field names with validation issues |
 | `pipeline_stages` | Computed | 10-stage pipeline with state indicators |

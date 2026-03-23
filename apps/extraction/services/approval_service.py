@@ -144,6 +144,11 @@ class ExtractionApprovalService:
     ) -> ExtractionApproval:
         """Approve an extraction after optional field corrections.
 
+        Concurrency: Locks the ExtractionApproval row via select_for_update()
+        inside the atomic block.  Only PENDING → APPROVED is allowed.
+        Simultaneous approve/reject calls will serialize on the row lock;
+        the second caller will see a non-PENDING status and raise ValueError.
+
         ``corrections`` format::
 
             {
@@ -154,6 +159,12 @@ class ExtractionApprovalService:
                 ]
             }
         """
+        # Lock the row to prevent concurrent approve/reject/reprocess
+        approval = (
+            ExtractionApproval.objects
+            .select_for_update()
+            .get(pk=approval.pk)
+        )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
@@ -277,7 +288,17 @@ class ExtractionApprovalService:
         user,
         reason: str = "",
     ) -> ExtractionApproval:
-        """Reject an extraction — invoice stays in PENDING_APPROVAL."""
+        """Reject an extraction — invoice stays in PENDING_APPROVAL.
+
+        Concurrency: Locks the ExtractionApproval row via select_for_update().
+        Only PENDING → REJECTED is allowed.
+        """
+        # Lock the row to prevent concurrent approve/reject/reprocess
+        approval = (
+            ExtractionApproval.objects
+            .select_for_update()
+            .get(pk=approval.pk)
+        )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 

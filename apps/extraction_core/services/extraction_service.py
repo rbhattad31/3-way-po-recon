@@ -315,9 +315,23 @@ class ExtractionExecutionResult:
         return d
 
 
-# Backward-compatible alias — existing imports of ExtractionResult from this
-# module continue to work.  New code should use ExtractionExecutionResult.
-ExtractionResult = ExtractionExecutionResult
+# DEPRECATED (target removal: 2026-Q3) — This alias exists only to support
+# legacy imports.  All internal code has been migrated to
+# ExtractionExecutionResult.  Do NOT use this alias in new code.
+# The Django model apps.extraction.models.ExtractionResult is the UI-facing
+# summary record; this dataclass is the in-memory pipeline result.
+import warnings as _warnings
+
+
+def __getattr__(name):
+    if name == "ExtractionResult":
+        _warnings.warn(
+            "ExtractionResult alias is deprecated; use ExtractionExecutionResult",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return ExtractionExecutionResult
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # ---------------------------------------------------------------------------

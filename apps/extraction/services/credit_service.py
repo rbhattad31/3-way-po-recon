@@ -3,6 +3,29 @@
 Implements a reserve → consume/refund ledger pattern with monthly limits.
 All balance-mutating methods use select_for_update() under transaction.atomic()
 to prevent race conditions.
+
+Commercial Charge Policy
+────────────────────────
+The table below defines when a reserved credit is consumed vs refunded.
+All policy decisions are centralized in ``ChargePolicy`` below.
+
+Scenario                                 | Outcome | reference_type    | reference_id
+─────────────────────────────────────────|─────────|───────────────────|──────────────
+Successful extraction (invoice)          | CONSUME | document_upload   | upload.pk
+Non-invoice document (classified away)   | REFUND  | document_upload   | upload.pk
+OCR failure (adapter returned error)     | REFUND  | document_upload   | upload.pk
+Parse / normalize / validate failure     | REFUND  | document_upload   | upload.pk
+Persistence failure after extraction     | REFUND  | document_upload   | upload.pk
+Duplicate invoice detected               | CONSUME | document_upload   | upload.pk
+Unsupported jurisdiction / schema        | REFUND  | document_upload   | upload.pk
+Manual reprocess (re-extraction)         | CONSUME | reprocess         | upload.pk
+Rejection after human review             | NO-OP   | (already consumed)|
+Sync fallback — success                  | CONSUME | document_upload   | upload.pk
+Sync fallback — failure                  | REFUND  | document_upload   | upload.pk
+
+Idempotency: CreditService.reserve/consume/refund check for existing
+CreditTransaction with matching (reference_type, reference_id) and
+skip duplicates, making Celery retries safe.
 """
 from __future__ import annotations
 
@@ -30,6 +53,65 @@ REASON_MESSAGES = {
     REASON_MONTHLY_LIMIT_EXCEEDED: "Your monthly invoice processing limit has been reached.",
     REASON_OK: "",
 }
+
+
+# ── Commercial Charge Policy ───────────────────────────────────
+class ChargePolicy:
+    """Centralised credit charge/refund decision logic.
+
+    Every extraction outcome maps to exactly one of:
+      CONSUME — user is billed (OCR work was done successfully)
+      REFUND  — user is not billed (no useful work produced)
+      NOOP    — credit was already consumed in a prior step; do nothing
+
+    This class exists so that policy decisions live in one place instead
+    of being scattered across task branches and view functions.
+    """
+
+    # Outcome constants
+    CONSUME = "CONSUME"
+    REFUND = "REFUND"
+    NOOP = "NOOP"
+
+    @classmethod
+    def for_extraction_success(cls) -> str:
+        """Extraction pipeline completed — user is charged."""
+        return cls.CONSUME
+
+    @classmethod
+    def for_non_invoice_document(cls) -> str:
+        """Document classified as non-invoice — no useful extraction, refund."""
+        return cls.REFUND
+
+    @classmethod
+    def for_ocr_failure(cls) -> str:
+        """OCR adapter returned error — no extraction attempted, refund."""
+        return cls.REFUND
+
+    @classmethod
+    def for_pipeline_failure(cls) -> str:
+        """Parse / normalize / validate / persist failed — refund."""
+        return cls.REFUND
+
+    @classmethod
+    def for_duplicate_invoice(cls) -> str:
+        """Duplicate detected — OCR work was done, charge stands."""
+        return cls.CONSUME
+
+    @classmethod
+    def for_unsupported_jurisdiction(cls) -> str:
+        """Jurisdiction/schema not supported — no useful extraction, refund."""
+        return cls.REFUND
+
+    @classmethod
+    def for_reprocess(cls) -> str:
+        """Manual reprocess — a new extraction run, charges a new credit."""
+        return cls.CONSUME
+
+    @classmethod
+    def for_rejection_after_review(cls) -> str:
+        """Human rejected extraction — credit was already consumed on success, no-op."""
+        return cls.NOOP
 
 
 class CreditAccountingError(Exception):

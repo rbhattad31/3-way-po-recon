@@ -78,7 +78,10 @@ def extraction_workbench(request):
     """Main workbench page: recent extractions + upload form."""
     qs = (
         ExtractionResult.objects
-        .select_related("document_upload", "invoice", "invoice__vendor")
+        .select_related(
+            "document_upload", "invoice", "invoice__vendor",
+            "extraction_run",  # avoid N+1 in get_execution_context()
+        )
         .order_by("-created_at")
     )
     qs = _scope_extractions_for_user(qs, request.user)
@@ -236,7 +239,7 @@ def extraction_workbench(request):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @require_POST
-@permission_required_code("invoices.create")
+@permission_required_code("invoices.create")  # Upload only — edit uses extraction.correct
 @observed_action("extraction.upload_and_extract", permission="invoices.create", entity_type="DocumentUpload", audit_event="INVOICE_UPLOADED")
 def extraction_upload(request):
     """Handle file upload and run extraction pipeline (standalone)."""
@@ -615,9 +618,38 @@ def extraction_rerun(request, pk):
         messages.error(request, "Original document is not available for re-extraction (no blob path).")
         return redirect("extraction:console", pk=pk)
 
+    # ── Guard: prevent reprocess if approval is already finalized ──
+    if ext.invoice_id:
+        from apps.extraction.models import ExtractionApproval
+        from apps.core.enums import ExtractionApprovalStatus
+        finalized = ExtractionApproval.objects.filter(
+            invoice_id=ext.invoice_id,
+            status__in=[ExtractionApprovalStatus.APPROVED, ExtractionApprovalStatus.AUTO_APPROVED],
+        ).exists()
+        if finalized:
+            messages.error(request, "Cannot reprocess — extraction has already been approved.")
+            return redirect("extraction:console", pk=pk)
+
     # Capture reprocess reason from modal form
     reason = request.POST.get("reason", "")
     details = request.POST.get("details", "")
+
+    # ── Credit: reserve 1 credit for reprocess (ChargePolicy.for_reprocess → CONSUME) ──
+    from apps.extraction.services.credit_service import CreditService
+    credit_check = CreditService.check_can_reserve(request.user, credits=1)
+    if not credit_check.allowed:
+        messages.error(request, credit_check.message)
+        return redirect("extraction:console", pk=pk)
+
+    reserve_result = CreditService.reserve(
+        request.user, credits=1,
+        reference_type="reprocess",
+        reference_id=str(upload.pk),
+        remarks=f"Reserved for reprocess: upload_id={upload.pk}",
+    )
+    if not reserve_result.allowed:
+        messages.error(request, reserve_result.message)
+        return redirect("extraction:console", pk=pk)
 
     # Log reprocess reason to audit trail before dispatching
     from apps.auditlog.services import AuditService
@@ -663,7 +695,10 @@ def extraction_ajax_filter(request):
     """Return filtered extraction results as JSON for AJAX table refresh."""
     qs = (
         ExtractionResult.objects
-        .select_related("document_upload", "invoice", "invoice__vendor")
+        .select_related(
+            "document_upload", "invoice", "invoice__vendor",
+            "extraction_run",
+        )
         .order_by("-created_at")
     )
     qs = _scope_extractions_for_user(qs, request.user)
@@ -754,7 +789,10 @@ def extraction_export_csv(request):
     """Export extraction results to CSV."""
     qs = (
         ExtractionResult.objects
-        .select_related("document_upload", "invoice", "invoice__vendor")
+        .select_related(
+            "document_upload", "invoice", "invoice__vendor",
+            "extraction_run",
+        )
         .order_by("-created_at")
     )
 
@@ -1663,36 +1701,28 @@ def extraction_console(request, pk):
     from apps.extraction.services.execution_context import get_execution_context
     exec_ctx = get_execution_context(ext)
 
+    # Use execution context to load ExtractionRun + corrections (single lookup)
     extraction_run = None
     corrections = []
     correction_count = 0
-    try:
-        from apps.extraction_core.models import ExtractionRun
-        # Prefer the FK on ExtractionResult, fall back to document_upload lookup
-        if ext.extraction_run_id:
+    if exec_ctx.extraction_run_id:
+        try:
+            from apps.extraction_core.models import ExtractionRun
             extraction_run = (
                 ExtractionRun.objects
                 .select_related("jurisdiction", "schema")
-                .filter(pk=ext.extraction_run_id)
+                .filter(pk=exec_ctx.extraction_run_id)
                 .first()
             )
-        elif ext.document_upload_id:
-            extraction_run = (
-                ExtractionRun.objects
-                .filter(document__document_upload_id=ext.document_upload_id)
-                .select_related("jurisdiction", "schema")
-                .order_by("-created_at")
-                .first()
-            )
-        if extraction_run:
-            corrections = list(
-                extraction_run.corrections
-                .select_related("corrected_by")
-                .order_by("-created_at")
-            )
-            correction_count = len(corrections)
-    except Exception:
-        pass
+            if extraction_run:
+                corrections = list(
+                    extraction_run.corrections
+                    .select_related("corrected_by")
+                    .order_by("-created_at")
+                )
+                correction_count = len(corrections)
+        except Exception:
+            pass
 
     # Populate extraction_ctx from ExecutionContext
     extraction_ctx["review_queue"] = exec_ctx.review_queue
