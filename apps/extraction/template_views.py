@@ -154,6 +154,9 @@ def extraction_workbench(request):
         ctx = get_execution_context(r)
         r.review_queue = ctx.review_queue or ""
         r.extraction_source = ctx.source
+        # Prefer deterministic confidence from invoice over LLM self-report
+        if r.invoice and r.invoice.extraction_confidence is not None:
+            r.confidence = r.invoice.extraction_confidence
 
     # ── Approval tab data ──
     from apps.extraction.services.approval_service import ExtractionApprovalService
@@ -1239,6 +1242,10 @@ def extraction_console(request, pk):
 
     extracted_data = ext.raw_response or {}
 
+    # Prefer deterministic confidence from invoice over LLM self-report
+    if invoice and invoice.extraction_confidence is not None:
+        ext.confidence = invoice.extraction_confidence
+
     # ── Header / tax / line items from invoice ──
     if invoice:
         line_items_qs = list(invoice.line_items.order_by("line_number"))
@@ -1300,6 +1307,22 @@ def extraction_console(request, pk):
                     "Line Number": li.line_number,
                 },
             })
+
+    # ── Line item totals for template footer ──
+    from decimal import Decimal, InvalidOperation
+    def _to_dec(v):
+        if v is None:
+            return Decimal(0)
+        try:
+            return Decimal(str(v))
+        except (InvalidOperation, ValueError):
+            return Decimal(0)
+
+    line_items_totals = {
+        "quantity": sum(_to_dec(li.get("quantity")) for li in line_items),
+        "tax_amount": sum(_to_dec(li.get("tax_amount")) for li in line_items),
+        "total": sum(_to_dec(li.get("total")) for li in line_items),
+    }
 
     # ── Enrichment data from raw_response or invoice context ──
     if isinstance(extracted_data, dict):
@@ -1781,6 +1804,7 @@ def extraction_console(request, pk):
         "enrichment": enrichment,
         "line_items": line_items,
         "line_items_raw": line_items_raw,
+        "line_items_totals": line_items_totals,
         "has_line_tax": has_line_tax,
         "evidence_entries": evidence_entries,
         "evidence_map": evidence_map,

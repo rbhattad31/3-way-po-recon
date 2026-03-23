@@ -146,10 +146,11 @@ class InvoicePersistenceService:
     def _reconcile_totals(invoice: Invoice, line_objs: list) -> None:
         """Recalculate subtotal/total from line items if they disagree.
 
-        OCR/LLM extraction sometimes misreads header totals while
-        extracting line items correctly.  When the sum of line_amount
-        values differs from the extracted subtotal, trust the line
-        items and recompute subtotal and total_amount.
+        Only trusts line items over the header total when the line-item
+        sum is GREATER than the extracted total — this indicates the
+        header was misread.  When line items sum to LESS than the header
+        total, it usually means the LLM missed some line items, so we
+        keep the original header total.
         """
         if not line_objs:
             return
@@ -163,6 +164,17 @@ class InvoicePersistenceService:
 
         stored_subtotal = invoice.subtotal or Decimal("0.00")
         if stored_subtotal == computed_subtotal:
+            return
+
+        # Only override when line items sum to MORE than header —
+        # this indicates the header was misread or truncated.
+        # When line items sum to LESS, the LLM likely missed items.
+        if computed_subtotal < stored_subtotal:
+            logger.info(
+                "Invoice %s: line items sum (%s) < extracted subtotal (%s) — "
+                "keeping header total (likely missing line items)",
+                invoice.pk, computed_subtotal, stored_subtotal,
+            )
             return
 
         tax = invoice.tax_amount or Decimal("0.00")
@@ -217,6 +229,11 @@ class ExtractionResultPersistenceService:
         except Exception:
             pass
 
+        # Prefer deterministic confidence from invoice over LLM self-report
+        confidence = extraction_response.confidence
+        if invoice and invoice.extraction_confidence is not None:
+            confidence = invoice.extraction_confidence
+
         return ExtractionResult.objects.create(
             document_upload=upload,
             invoice=invoice,
@@ -224,7 +241,7 @@ class ExtractionResultPersistenceService:
             engine_name=extraction_response.engine_name,
             engine_version=extraction_response.engine_version,
             raw_response=extraction_response.raw_json,
-            confidence=extraction_response.confidence,
+            confidence=confidence,
             duration_ms=extraction_response.duration_ms,
             success=extraction_response.success,
             error_message=extraction_response.error_message,

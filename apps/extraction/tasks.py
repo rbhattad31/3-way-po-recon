@@ -85,7 +85,8 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
 
         # 1a. Document type classification — reject non-invoices early
         doc_type_result = _classify_document(extraction_resp.ocr_text)
-        if doc_type_result and doc_type_result.document_type not in ("INVOICE", "CREDIT_NOTE", "DEBIT_NOTE"):
+        if doc_type_result and doc_type_result.document_type not in ("INVOICE", "CREDIT_NOTE", "DEBIT_NOTE") \
+                and doc_type_result.confidence >= 0.60 and not doc_type_result.is_ambiguous:
             reject_msg = (
                 f"Document classified as {doc_type_result.document_type} "
                 f"(confidence: {doc_type_result.confidence:.0%}), not an invoice. "
@@ -99,6 +100,9 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
                 doc_type_result.confidence, doc_type_result.matched_keywords,
             )
             return {"status": "rejected", "message": reject_msg, "document_type": doc_type_result.document_type}
+
+        # 1b. Run governed extraction pipeline (enrichment)
+        _run_governed_pipeline(upload, extraction_resp)
 
         # 2. Parse
         parser = ExtractionParserService()
@@ -255,6 +259,50 @@ def _classify_document(ocr_text: str):
     except Exception as exc:
         logger.warning("Document classification failed, proceeding as INVOICE: %s", exc)
         return None
+
+
+def _run_governed_pipeline(upload: DocumentUpload, extraction_resp) -> None:
+    """Run the governed extraction pipeline as enrichment.
+
+    Creates an ExtractionDocument linked to this upload, then runs the
+    ExtractionPipeline to produce an ExtractionRun with jurisdiction,
+    schema, and review-routing metadata.  This is additive — the legacy
+    adapter result is still used for Invoice persistence.
+
+    Gracefully degrades on any failure (missing jurisdiction profiles,
+    schema configs, etc.) — the upload continues as "Legacy".
+    """
+    try:
+        from apps.extraction_documents.models import ExtractionDocument
+        from apps.extraction_core.services.extraction_pipeline import ExtractionPipeline
+
+        ext_doc = ExtractionDocument.objects.create(
+            document_upload=upload,
+            file_name=upload.original_filename,
+            file_path=upload.blob_path or "",
+            file_hash=upload.file_hash or "",
+            page_count=getattr(extraction_resp, "ocr_page_count", 0) or 0,
+            ocr_text=extraction_resp.ocr_text or "",
+        )
+
+        run = ExtractionPipeline.run(
+            extraction_document_id=ext_doc.pk,
+            ocr_text=extraction_resp.ocr_text or "",
+            document_type="INVOICE",
+            vendor_id=None,
+            enable_llm=False,
+            user=upload.uploaded_by,
+        )
+        logger.info(
+            "Governed pipeline completed for upload %s: run=%s status=%s confidence=%.2f",
+            upload.pk, run.pk, run.status,
+            run.overall_confidence or 0.0,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Governed pipeline skipped for upload %s (falling back to Legacy): %s",
+            upload.pk, exc,
+        )
 
 
 def _fail_upload(upload: DocumentUpload, message: str) -> None:

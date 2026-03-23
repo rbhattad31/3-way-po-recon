@@ -181,11 +181,25 @@ _NEGATIVE_SIGNALS: dict[str, list[tuple[str, float]]] = {
         (r"\btax\s*invoice\b", -2.0),
         (r"\binvoice\b", -1.0),
         (r"\bpurchase\s*order\b", -1.5),
+        (r"\breconcili?ation\b", -3.0),
+        (r"\bsummary\s*report\b", -3.0),
+        (r"\b(?:3|three)[- ]?way\b", -2.5),
+        (r"\bmatch(?:ing)?\s*(?:report|summary|status)\b", -2.5),
+        (r"\bvariance\s*(?:report|analysis|summary)\b", -2.0),
+        (r"\baudit\s*(?:report|trail|log)\b", -2.0),
     ],
     "PURCHASE_ORDER": [
         (r"\btax\s*invoice\b", -2.0),
         (r"\binvoice\b", -1.0),
         (r"\bgoods\s*receiv(?:ed|pt)\s*note\b", -1.5),
+        (r"\breconcili?ation\b", -3.0),
+        (r"\bsummary\s*report\b", -3.0),
+        (r"\b(?:3|three)[- ]?way\b", -2.5),
+    ],
+    "DELIVERY_NOTE": [
+        (r"\breconcili?ation\b", -3.0),
+        (r"\bsummary\s*report\b", -3.0),
+        (r"\b(?:3|three)[- ]?way\b", -2.5),
     ],
 }
 

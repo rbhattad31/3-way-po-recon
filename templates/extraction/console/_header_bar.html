@@ -51,14 +51,15 @@
 
         {# Overall confidence #}
         {% if extraction.extraction_confidence is not None %}
+        {% widthratio extraction.extraction_confidence 1 100 as conf_pct %}
         <div class="exc-confidence-pill d-flex align-items-center gap-1" title="Extraction confidence">
           <i class="bi bi-speedometer2"></i>
           <div class="progress exc-confidence-bar" style="width: 80px; height: 6px;">
             <div class="progress-bar {% if extraction.extraction_confidence >= 0.8 %}bg-success{% elif extraction.extraction_confidence >= 0.5 %}bg-warning{% else %}bg-danger{% endif %}"
-                 style="width: {{ extraction.extraction_confidence|floatformat:0 }}%"
+                 style="width: {{ conf_pct }}%"
                  role="progressbar"></div>
           </div>
-          <span class="small fw-semibold">{{ extraction.extraction_confidence|floatformat:0 }}%</span>
+          <span class="small fw-semibold">{{ conf_pct }}%</span>
         </div>
         {% endif %}
 
