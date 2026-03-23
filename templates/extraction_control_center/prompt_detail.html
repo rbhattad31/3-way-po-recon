@@ -1,0 +1,195 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}{% if creating %}New Prompt{% else %}{{ prompt.prompt_code }} v{{ prompt.version }}{% endif %} — Prompt Registry{% endblock %}
+
+{% block cc_content %}
+<div class="mb-3">
+  <a href="{% url 'extraction_control_center:prompt_list' %}" class="text-decoration-none text-muted small">
+    <i class="bi bi-arrow-left me-1"></i>Back to registry
+  </a>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="fw-bold mb-0">
+    <i class="bi bi-chat-square-text me-2 text-primary"></i>
+    {% if creating %}New Prompt{% else %}{{ prompt.prompt_code }} <span class="badge bg-dark ms-1">v{{ prompt.version }}</span>{% endif %}
+  </h5>
+  {% if not creating and can_edit %}
+  <div class="btn-group btn-group-sm">
+    <form method="post" class="d-inline">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="clone">
+      <button type="submit" class="btn btn-outline-secondary"><i class="bi bi-copy me-1"></i>Clone</button>
+    </form>
+    {% if prompt.status != "ACTIVE" %}
+    <form method="post" class="d-inline">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="activate">
+      <button type="submit" class="btn btn-outline-success"><i class="bi bi-check-circle me-1"></i>Activate</button>
+    </form>
+    {% else %}
+    <form method="post" class="d-inline">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="deactivate">
+      <button type="submit" class="btn btn-outline-warning"><i class="bi bi-pause-circle me-1"></i>Deactivate</button>
+    </form>
+    {% endif %}
+    <a href="{% url 'extraction_control_center:prompt_test_console' %}?prompt_id={{ prompt.pk }}" class="btn btn-outline-info">
+      <i class="bi bi-play-circle me-1"></i>Test
+    </a>
+  </div>
+  {% endif %}
+</div>
+
+{% if not creating %}
+<div class="mb-3">
+  {% if prompt.status == "ACTIVE" %}
+  <span class="badge bg-success-subtle text-success fs-6">Active</span>
+  {% elif prompt.status == "DRAFT" %}
+  <span class="badge bg-warning-subtle text-warning fs-6">Draft</span>
+  {% else %}
+  <span class="badge bg-danger-subtle text-danger fs-6">Inactive</span>
+  {% endif %}
+</div>
+{% endif %}
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="save">
+
+  {# Metadata #}
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-transparent">
+      <h6 class="mb-0 fw-semibold"><i class="bi bi-tag me-2"></i>Metadata</h6>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Prompt Code</label>
+          <input type="text" class="form-control form-control-sm" name="prompt_code"
+                 value="{% if prompt %}{{ prompt.prompt_code }}{% endif %}"
+                 {% if not can_edit %}disabled{% endif %}
+                 {% if not creating %}readonly{% endif %}>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Category</label>
+          <select class="form-select form-select-sm" name="prompt_category" {% if not can_edit %}disabled{% endif %}>
+            <option value="extraction" {% if prompt and prompt.prompt_category == "extraction" %}selected{% endif %}>Extraction</option>
+            <option value="validation" {% if prompt and prompt.prompt_category == "validation" %}selected{% endif %}>Validation</option>
+            <option value="normalization" {% if prompt and prompt.prompt_category == "normalization" %}selected{% endif %}>Normalization</option>
+            <option value="classification" {% if prompt and prompt.prompt_category == "classification" %}selected{% endif %}>Classification</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Schema Code</label>
+          <input type="text" class="form-control form-control-sm" name="schema_code"
+                 value="{% if prompt %}{{ prompt.schema_code }}{% endif %}"
+                 {% if not can_edit %}disabled{% endif %}>
+        </div>
+      </div>
+      <div class="row g-3 mt-1">
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Country Code</label>
+          <input type="text" class="form-control form-control-sm" name="country_code"
+                 value="{% if prompt %}{{ prompt.country_code }}{% endif %}"
+                 {% if not can_edit %}disabled{% endif %} placeholder="Leave blank for global">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Regime Code</label>
+          <input type="text" class="form-control form-control-sm" name="regime_code"
+                 value="{% if prompt %}{{ prompt.regime_code }}{% endif %}"
+                 {% if not can_edit %}disabled{% endif %}>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Document Type</label>
+          <input type="text" class="form-control form-control-sm" name="document_type"
+                 value="{% if prompt %}{{ prompt.document_type }}{% endif %}"
+                 {% if not can_edit %}disabled{% endif %}>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Prompt Text #}
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-transparent">
+      <h6 class="mb-0 fw-semibold"><i class="bi bi-code-square me-2"></i>Prompt Text</h6>
+    </div>
+    <div class="card-body">
+      <textarea class="form-control font-monospace" name="prompt_text" rows="16"
+                {% if not can_edit %}disabled{% endif %}
+                placeholder="Enter the prompt template…">{% if prompt %}{{ prompt.prompt_text }}{% endif %}</textarea>
+    </div>
+  </div>
+
+  {# Variables #}
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-transparent">
+      <h6 class="mb-0 fw-semibold"><i class="bi bi-braces me-2"></i>Variables (JSON)</h6>
+    </div>
+    <div class="card-body">
+      <textarea class="form-control font-monospace" name="variables_json" rows="4"
+                {% if not can_edit %}disabled{% endif %}
+                placeholder='["country_code", "regime_code"]'>{% if prompt and prompt.variables_json %}{{ prompt.variables_json|safe }}{% endif %}</textarea>
+    </div>
+  </div>
+
+  {% if can_edit %}
+  <div class="cc-sticky-footer">
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-check-lg me-1"></i>{% if creating %}Create Prompt{% else %}Save Changes{% endif %}
+    </button>
+  </div>
+  {% endif %}
+</form>
+
+{# Version History #}
+{% if not creating and version_history %}
+<div class="card border-0 shadow-sm mt-4">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-clock-history me-2"></i>Version History</h6>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Version</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Updated By</th>
+            <th class="text-end pe-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in version_history %}
+          <tr {% if v.pk == prompt.pk %}class="table-active"{% endif %}>
+            <td class="ps-3"><span class="badge bg-dark">v{{ v.version }}</span></td>
+            <td>
+              {% if v.status == "ACTIVE" %}
+              <span class="badge bg-success-subtle text-success">Active</span>
+              {% elif v.status == "DRAFT" %}
+              <span class="badge bg-warning-subtle text-warning">Draft</span>
+              {% else %}
+              <span class="badge bg-danger-subtle text-danger">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="text-muted small">{{ v.created_at|date:"M d, Y H:i" }}</td>
+            <td class="text-muted small">{{ v.updated_by|default:"—" }}</td>
+            <td class="text-end pe-3">
+              {% if v.pk != prompt.pk %}
+              <a href="{% url 'extraction_control_center:prompt_detail' v.pk %}" class="btn btn-sm btn-outline-secondary">View</a>
+              <a href="{% url 'extraction_control_center:prompt_compare' %}?v1={{ prompt.pk }}&v2={{ v.pk }}" class="btn btn-sm btn-outline-info">Compare</a>
+              {% else %}
+              <span class="text-muted small">Current</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

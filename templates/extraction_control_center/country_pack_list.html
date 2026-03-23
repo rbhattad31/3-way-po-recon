@@ -1,0 +1,56 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}Country Packs — Control Center{% endblock %}
+
+{% block cc_content %}
+<h5 class="fw-bold mb-4"><i class="bi bi-globe2 me-2 text-primary"></i>Country Packs</h5>
+
+<div class="row g-3">
+  {% for pack in packs %}
+  <div class="col-sm-6 col-lg-4 col-xl-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <h6 class="fw-bold mb-0">
+            {% if pack.jurisdiction %}{{ pack.jurisdiction.country_code }}{% else %}—{% endif %}
+          </h6>
+          {% if pack.pack_status == "ACTIVE" %}
+          <span class="badge bg-success-subtle text-success">Active</span>
+          {% elif pack.pack_status == "DRAFT" %}
+          <span class="badge bg-warning-subtle text-warning">Draft</span>
+          {% elif pack.pack_status == "DEPRECATED" %}
+          <span class="badge bg-danger-subtle text-danger">Deprecated</span>
+          {% else %}
+          <span class="badge bg-secondary-subtle text-secondary">{{ pack.pack_status }}</span>
+          {% endif %}
+        </div>
+        {% if pack.jurisdiction %}
+        <p class="text-muted small mb-2">{{ pack.jurisdiction.regime_code }} — {{ pack.jurisdiction.country_name|default:"" }}</p>
+        {% endif %}
+        <div class="small mb-3">
+          <div class="d-flex justify-content-between text-muted">
+            <span>Schema</span>
+            <span class="fw-semibold">{{ pack.schema_version|default:"—" }}</span>
+          </div>
+          <div class="d-flex justify-content-between text-muted">
+            <span>Validation</span>
+            <span class="fw-semibold">{{ pack.validation_profile_version|default:"—" }}</span>
+          </div>
+          <div class="d-flex justify-content-between text-muted">
+            <span>Normalization</span>
+            <span class="fw-semibold">{{ pack.normalization_profile_version|default:"—" }}</span>
+          </div>
+        </div>
+        <a href="{% url 'extraction_control_center:country_pack_detail' pack.pk %}" class="btn btn-sm btn-outline-primary w-100">
+          <i class="bi bi-eye me-1"></i>Details
+        </a>
+      </div>
+    </div>
+  </div>
+  {% empty %}
+  <div class="col-12">
+    <div class="text-center text-muted py-5">No country packs configured.</div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

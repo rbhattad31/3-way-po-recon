@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Review Quotation Prefill — {{ quotation.vendor_name }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Home</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}">Procurement</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_workspace' pk=quotation.request.pk %}">{{ quotation.request.title|truncatechars:30 }}</a></li>
+    <li class="breadcrumb-item active">Review Quotation Prefill</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+          <h5 class="mb-0"><i class="bi bi-magic me-2"></i>Review Extracted Quotation</h5>
+          <small class="text-muted">
+            Vendor: <strong>{{ quotation.vendor_name }}</strong>
+            {% if payload.overall_confidence %}
+            | Overall Confidence: <span class="badge bg-info">{{ payload.overall_confidence|floatformat:0 }}%</span>
+            {% endif %}
+          </small>
+        </div>
+        <a href="{% url 'procurement:request_workspace' pk=quotation.request.pk %}" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-arrow-left me-1"></i>Back
+        </a>
+      </div>
+      <div class="card-body">
+        <form id="confirm-form">
+          {% csrf_token %}
+
+          {# Header Fields #}
+          <h6 class="mb-3"><i class="bi bi-card-heading me-1"></i>Header Fields</h6>
+          <div class="row mb-3">
+            <div class="col-md-4">
+              <label class="form-label">Vendor Name</label>
+              <input type="text" name="vendor_name" id="hf-vendor_name" class="form-control" value="{{ quotation.vendor_name }}">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Quotation Number</label>
+              <input type="text" name="quotation_number" id="hf-quotation_number" class="form-control" value="">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Total Amount</label>
+              <input type="number" step="0.01" name="total_amount" id="hf-total_amount" class="form-control" value="">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Currency</label>
+              <input type="text" name="currency" id="hf-currency" class="form-control" maxlength="3" value="USD">
+            </div>
+          </div>
+          <div class="row mb-3">
+            <div class="col-md-4">
+              <label class="form-label">Lead Time</label>
+              <input type="text" name="lead_time" id="hf-lead_time" class="form-control" value="">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Validity Period</label>
+              <input type="text" name="validity_period" id="hf-validity_period" class="form-control" value="">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Payment Terms</label>
+              <input type="text" name="payment_terms" id="hf-payment_terms" class="form-control" value="">
+            </div>
+          </div>
+
+          {# Line Items #}
+          <hr>
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="mb-0"><i class="bi bi-list-ol me-1"></i>Line Items</h6>
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addLineItem()">
+              <i class="bi bi-plus me-1"></i>Add Line
+            </button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-hover" style="font-size:var(--ap-font-size-sm)">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:5%">#</th>
+                  <th style="width:25%">Description</th>
+                  <th style="width:10%">Qty</th>
+                  <th style="width:10%">UOM</th>
+                  <th style="width:12%">Unit Price</th>
+                  <th style="width:12%">Total</th>
+                  <th style="width:20%">Specifications</th>
+                  <th style="width:6%"></th>
+                </tr>
+              </thead>
+              <tbody id="line-items-body">
+              </tbody>
+            </table>
+          </div>
+
+          <div class="d-flex justify-content-end gap-2 mt-4">
+            <a href="{% url 'procurement:request_workspace' pk=quotation.request.pk %}" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary" id="btn-confirm">
+              <i class="bi bi-check2-circle me-1"></i>Confirm & Save
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var lineCounter = 0;
+
+function escapeAttr(str) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(str || ''));
+  return div.innerHTML;
+}
+
+function addLineItem(desc, qty, uom, unitPrice, total, specs, confidence) {
+  lineCounter++;
+  var tbody = document.getElementById('line-items-body');
+  var tr = document.createElement('tr');
+  tr.className = 'line-item-row';
+  var confBadge = '';
+  if (confidence != null) {
+    var cls = confidence >= 0.7 ? 'text-success' : (confidence >= 0.4 ? 'text-warning' : 'text-danger');
+    confBadge = '<i class="bi bi-robot ' + cls + '" title="' + (confidence*100).toFixed(0) + '% confidence"></i>';
+  }
+  tr.innerHTML =
+    '<td>' + lineCounter + ' ' + confBadge + '</td>' +
+    '<td><input type="text" name="li_desc[]" class="form-control form-control-sm" value="' + escapeAttr(desc) + '"></td>' +
+    '<td><input type="number" step="0.01" name="li_qty[]" class="form-control form-control-sm" value="' + (qty || '') + '"></td>' +
+    '<td><input type="text" name="li_uom[]" class="form-control form-control-sm" value="' + escapeAttr(uom) + '"></td>' +
+    '<td><input type="number" step="0.01" name="li_unit_price[]" class="form-control form-control-sm" value="' + (unitPrice || '') + '"></td>' +
+    '<td><input type="number" step="0.01" name="li_total[]" class="form-control form-control-sm" value="' + (total || '') + '"></td>' +
+    '<td><input type="text" name="li_specs[]" class="form-control form-control-sm" value="' + escapeAttr(specs) + '"></td>' +
+    '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove()"><i class="bi bi-x"></i></button></td>';
+  tbody.appendChild(tr);
+}
+
+// Populate from prefill payload (injected by Django)
+var payload = {{ payload_json|safe }};
+
+if (payload) {
+  // Header fields
+  var hdr = payload.header_fields || {};
+  for (var key in hdr) {
+    if (!hdr.hasOwnProperty(key)) continue;
+    var el = document.getElementById('hf-' + key);
+    if (el) {
+      var val = hdr[key];
+      el.value = (typeof val === 'object' && val !== null && val.value !== undefined) ? val.value : (val || '');
+    }
+  }
+  // Commercial terms → header
+  var terms = payload.commercial_terms || {};
+  for (var tk in terms) {
+    if (!terms.hasOwnProperty(tk)) continue;
+    var tel = document.getElementById('hf-' + tk);
+    if (tel) {
+      var tv = terms[tk];
+      tel.value = (typeof tv === 'object' && tv !== null && tv.value !== undefined) ? tv.value : (tv || '');
+    }
+  }
+  // Line items
+  var items = payload.line_items || [];
+  for (var i = 0; i < items.length; i++) {
+    var li = items[i];
+    addLineItem(
+      li.description || '',
+      li.quantity,
+      li.unit_of_measure || li.uom || '',
+      li.unit_price,
+      li.total_price || li.total || '',
+      li.specifications || '',
+      li.confidence
+    );
+  }
+}
+if (lineCounter === 0) addLineItem();
+
+// Confirm & save
+document.getElementById('confirm-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var headerFields = {};
+  ['vendor_name', 'quotation_number', 'total_amount', 'currency', 'lead_time', 'validity_period', 'payment_terms'].forEach(function(f) {
+    var el = document.getElementById('hf-' + f);
+    if (el) headerFields[f] = el.value;
+  });
+
+  var lineItems = [];
+  document.querySelectorAll('.line-item-row').forEach(function(row) {
+    var desc = row.querySelector('[name="li_desc[]"]');
+    if (!desc || !desc.value) return;
+    lineItems.push({
+      description: desc.value,
+      quantity: parseFloat(row.querySelector('[name="li_qty[]"]').value) || 0,
+      unit_of_measure: row.querySelector('[name="li_uom[]"]').value || '',
+      unit_price: parseFloat(row.querySelector('[name="li_unit_price[]"]').value) || 0,
+      total_price: parseFloat(row.querySelector('[name="li_total[]"]').value) || 0,
+      specifications: row.querySelector('[name="li_specs[]"]').value || '',
+    });
+  });
+
+  fetch('/api/v1/procurement/quotations/{{ quotation.pk }}/prefill/confirm/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+    },
+    body: JSON.stringify({ header_fields: headerFields, line_items: lineItems }),
+  })
+  .then(function(resp) {
+    if (!resp.ok) return resp.json().then(function(e) { throw new Error(e.detail || 'Save failed'); });
+    return resp.json();
+  })
+  .then(function() {
+    window.location.href = '/procurement/{{ quotation.request.pk }}/';
+  })
+  .catch(function(err) {
+    alert('Error: ' + err.message);
+  });
+});
+</script>
+{% endblock %}

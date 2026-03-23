@@ -15,20 +15,101 @@
 
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-lg-8">
-    <div class="card">
-      <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Create Procurement Request</h5>
+  <div class="col-lg-9">
+
+    {# ── Entry Mode Selector ──────────────────────────────── #}
+    <div class="card mb-3">
+      <div class="card-body py-2">
+        <div class="btn-group w-100" role="group" aria-label="Entry mode">
+          <input type="radio" class="btn-check" name="entry_mode" id="mode_manual" value="manual" checked>
+          <label class="btn btn-outline-primary" for="mode_manual">
+            <i class="bi bi-pencil-square me-1"></i>Manual Entry
+          </label>
+          <input type="radio" class="btn-check" name="entry_mode" id="mode_upload" value="upload">
+          <label class="btn btn-outline-primary" for="mode_upload">
+            <i class="bi bi-file-earmark-pdf me-1"></i>Upload RFQ PDF &amp; Prefill
+          </label>
+        </div>
+      </div>
+    </div>
+
+    {# ── Upload + Prefill Panel ──────────────────────────── #}
+    <div id="upload-panel" class="card mb-3" style="display:none;">
+      <div class="card-header bg-light">
+        <h5 class="mb-0"><i class="bi bi-cloud-upload me-2"></i>Upload RFQ / Requirement Document</h5>
       </div>
       <div class="card-body">
-        <form method="post">
+        <form id="prefill-upload-form" enctype="multipart/form-data">
           {% csrf_token %}
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label class="form-label">Document File <span class="text-danger">*</span></label>
+              <input type="file" name="file" id="prefill-file" class="form-control" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif" required>
+              <div class="form-text">Supported: PDF, PNG, JPG, TIFF (max 25 MB)</div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Document Type</label>
+              <select name="source_document_type" class="form-select">
+                <option value="RFQ">RFQ</option>
+                <option value="REQUIREMENT_NOTE">Requirement Note</option>
+                <option value="SPECIFICATION">Specification</option>
+                <option value="BOQ">BOQ</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Domain Hint</label>
+              <input type="text" name="domain_code" class="form-control" placeholder="e.g. HVAC, IT">
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary" id="btn-extract">
+            <i class="bi bi-cpu me-1"></i>Upload &amp; Extract
+          </button>
+        </form>
+
+        {# Extraction progress #}
+        <div id="extraction-progress" class="mt-3" style="display:none;">
+          <div class="d-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+            <span>Extracting data from document…</span>
+          </div>
+          <div class="progress mt-2" style="height:4px;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width:100%"></div>
+          </div>
+        </div>
+
+        {# Extraction error #}
+        <div id="extraction-error" class="alert alert-danger mt-3" style="display:none;"></div>
+      </div>
+    </div>
+
+    {# ── Main Form (Manual + Prefill Review) ─────────────── #}
+    <div class="card" id="main-form-card">
+      <div class="card-header">
+        <h5 class="mb-0">
+          <i class="bi bi-plus-circle me-2"></i>
+          <span id="form-title">Create Procurement Request</span>
+        </h5>
+        <small id="prefill-badge" class="text-muted" style="display:none;">
+          <i class="bi bi-magic me-1"></i>Fields extracted from document
+          <span id="confidence-badge" class="badge bg-info ms-1"></span>
+        </small>
+      </div>
+      <div class="card-body">
+        <form method="post" id="main-form">
+          {% csrf_token %}
+          <input type="hidden" name="prefill_request_id" id="prefill_request_id" value="">
 
           {# Core Fields #}
           <div class="row mb-3">
             <div class="col-md-8">
               <label class="form-label">Title <span class="text-danger">*</span></label>
-              <input type="text" name="title" class="form-control" required placeholder="e.g. Data Center Cooling System">
+              <div class="input-group">
+                <input type="text" name="title" id="field-title" class="form-control" required placeholder="e.g. Data Center Cooling System">
+                <span class="input-group-text confidence-indicator" id="conf-title" style="display:none;" title="Extraction confidence">
+                  <i class="bi bi-robot"></i> <small></small>
+                </span>
+              </div>
             </div>
             <div class="col-md-4">
               <label class="form-label">Priority</label>
@@ -42,21 +123,31 @@
 
           <div class="mb-3">
             <label class="form-label">Description</label>
-            <textarea name="description" class="form-control" rows="3" placeholder="Describe the procurement need…"></textarea>
+            <div class="input-group">
+              <textarea name="description" id="field-description" class="form-control" rows="3" placeholder="Describe the procurement need…"></textarea>
+              <span class="input-group-text confidence-indicator" id="conf-description" style="display:none;" title="Extraction confidence">
+                <i class="bi bi-robot"></i> <small></small>
+              </span>
+            </div>
           </div>
 
           <div class="row mb-3">
             <div class="col-md-4">
               <label class="form-label">Domain Code <span class="text-danger">*</span></label>
-              <input type="text" name="domain_code" class="form-control" required placeholder="e.g. HVAC, IT, FACILITIES">
+              <div class="input-group">
+                <input type="text" name="domain_code" id="field-domain_code" class="form-control" required placeholder="e.g. HVAC, IT, FACILITIES">
+                <span class="input-group-text confidence-indicator" id="conf-domain_code" style="display:none;" title="Extraction confidence">
+                  <i class="bi bi-robot"></i> <small></small>
+                </span>
+              </div>
             </div>
             <div class="col-md-4">
               <label class="form-label">Schema Code</label>
-              <input type="text" name="schema_code" class="form-control" placeholder="Optional schema identifier">
+              <input type="text" name="schema_code" id="field-schema_code" class="form-control" placeholder="Optional schema identifier">
             </div>
             <div class="col-md-4">
               <label class="form-label">Request Type <span class="text-danger">*</span></label>
-              <select name="request_type" class="form-select" required>
+              <select name="request_type" id="field-request_type" class="form-select" required>
                 {% for val, label in type_choices %}
                 <option value="{{ val }}">{{ label }}</option>
                 {% endfor %}
@@ -67,15 +158,30 @@
           <div class="row mb-3">
             <div class="col-md-4">
               <label class="form-label">Country</label>
-              <input type="text" name="geography_country" class="form-control" placeholder="e.g. USA">
+              <div class="input-group">
+                <input type="text" name="geography_country" id="field-geography_country" class="form-control" placeholder="e.g. USA">
+                <span class="input-group-text confidence-indicator" id="conf-geography_country" style="display:none;" title="Extraction confidence">
+                  <i class="bi bi-robot"></i> <small></small>
+                </span>
+              </div>
             </div>
             <div class="col-md-4">
               <label class="form-label">City</label>
-              <input type="text" name="geography_city" class="form-control" placeholder="e.g. Dallas">
+              <div class="input-group">
+                <input type="text" name="geography_city" id="field-geography_city" class="form-control" placeholder="e.g. Dallas">
+                <span class="input-group-text confidence-indicator" id="conf-geography_city" style="display:none;" title="Extraction confidence">
+                  <i class="bi bi-robot"></i> <small></small>
+                </span>
+              </div>
             </div>
             <div class="col-md-4">
               <label class="form-label">Currency</label>
-              <input type="text" name="currency" class="form-control" value="USD" maxlength="3">
+              <div class="input-group">
+                <input type="text" name="currency" id="field-currency" class="form-control" value="USD" maxlength="3">
+                <span class="input-group-text confidence-indicator" id="conf-currency" style="display:none;" title="Extraction confidence">
+                  <i class="bi bi-robot"></i> <small></small>
+                </span>
+              </div>
             </div>
           </div>
 
@@ -115,7 +221,7 @@
 
           <div class="d-flex justify-content-end gap-2">
             <a href="{% url 'procurement:request_list' %}" class="btn btn-outline-secondary">Cancel</a>
-            <button type="submit" class="btn btn-primary">
+            <button type="submit" class="btn btn-primary" id="btn-submit">
               <i class="bi bi-check-lg me-1"></i>Create Request
             </button>
           </div>
@@ -128,36 +234,213 @@
 
 {% block extra_js %}
 <script>
-function addAttributeRow() {
-  const container = document.getElementById('attributes-container');
-  const row = document.createElement('div');
+// ── Mode toggle ──
+document.querySelectorAll('input[name="entry_mode"]').forEach(function(radio) {
+  radio.addEventListener('change', function() {
+    document.getElementById('upload-panel').style.display = this.value === 'upload' ? 'block' : 'none';
+  });
+});
+
+// ── Sanitize text for HTML attribute insertion ──
+function escapeAttr(str) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(str || ''));
+  return div.innerHTML;
+}
+
+// ── Add attribute row ──
+function addAttributeRow(code, label, type, value, confidence) {
+  var container = document.getElementById('attributes-container');
+  var row = document.createElement('div');
   row.className = 'row g-2 mb-2 attribute-row';
-  row.innerHTML = `
-    <div class="col-md-3">
-      <input type="text" name="attr_code[]" class="form-control form-control-sm" placeholder="Attribute code">
-    </div>
-    <div class="col-md-3">
-      <input type="text" name="attr_label[]" class="form-control form-control-sm" placeholder="Label">
-    </div>
-    <div class="col-md-2">
-      <select name="attr_type[]" class="form-select form-select-sm">
-        <option value="TEXT">Text</option>
-        <option value="NUMBER">Number</option>
-        <option value="BOOLEAN">Boolean</option>
-        <option value="JSON">JSON</option>
-        <option value="SELECT">Select</option>
-      </select>
-    </div>
-    <div class="col-md-3">
-      <input type="text" name="attr_value[]" class="form-control form-control-sm" placeholder="Value">
-    </div>
-    <div class="col-md-1">
-      <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('.attribute-row').remove()">
-        <i class="bi bi-x"></i>
-      </button>
-    </div>
-  `;
+  var confBadge = '';
+  if (confidence != null) {
+    var cls = confidence >= 0.7 ? 'bg-success' : (confidence >= 0.4 ? 'bg-warning text-dark' : 'bg-danger');
+    confBadge = '<span class="badge ' + cls + ' ms-1" title="Confidence: ' + (confidence*100).toFixed(0) + '%"><i class="bi bi-robot"></i> ' + (confidence*100).toFixed(0) + '%</span>';
+  }
+  var selOpts = ['TEXT','NUMBER','BOOLEAN','JSON','SELECT'];
+  var typeHtml = '';
+  for (var i = 0; i < selOpts.length; i++) {
+    typeHtml += '<option value="' + selOpts[i] + '"' + ((type||'TEXT')===selOpts[i]?' selected':'') + '>' + selOpts[i] + '</option>';
+  }
+  row.innerHTML =
+    '<div class="col-md-3"><input type="text" name="attr_code[]" class="form-control form-control-sm" placeholder="Attribute code" value="' + escapeAttr(code) + '"></div>' +
+    '<div class="col-md-3"><input type="text" name="attr_label[]" class="form-control form-control-sm" placeholder="Label" value="' + escapeAttr(label) + '"></div>' +
+    '<div class="col-md-2"><select name="attr_type[]" class="form-select form-select-sm">' + typeHtml + '</select></div>' +
+    '<div class="col-md-3"><input type="text" name="attr_value[]" class="form-control form-control-sm" placeholder="Value" value="' + escapeAttr(value) + '">' + confBadge + '</div>' +
+    '<div class="col-md-1"><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'.attribute-row\').remove()"><i class="bi bi-x"></i></button></div>';
   container.appendChild(row);
 }
+
+// ── Confidence badge helper ──
+function showConfidence(fieldId, confidence) {
+  var el = document.getElementById('conf-' + fieldId);
+  if (!el) return;
+  el.style.display = '';
+  var pct = (confidence * 100).toFixed(0);
+  el.querySelector('small').textContent = pct + '%';
+  el.className = 'input-group-text confidence-indicator ' +
+    (confidence >= 0.7 ? 'text-success' : (confidence >= 0.4 ? 'text-warning' : 'text-danger'));
+}
+
+// ── Upload & Extract ──
+document.getElementById('prefill-upload-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var formData = new FormData(this);
+  var progress = document.getElementById('extraction-progress');
+  var errorDiv = document.getElementById('extraction-error');
+  var btnExtract = document.getElementById('btn-extract');
+
+  progress.style.display = 'block';
+  errorDiv.style.display = 'none';
+  btnExtract.disabled = true;
+
+  fetch('/api/v1/procurement/requests/prefill/', {
+    method: 'POST',
+    body: formData,
+    headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
+  })
+  .then(function(resp) {
+    if (!resp.ok) return resp.json().then(function(err) { throw new Error(err.error || err.detail || 'Upload failed'); });
+    return resp.json();
+  })
+  .then(function(data) {
+    var requestId = data.id;
+    // Poll for prefill completion
+    pollPrefill(requestId, 0);
+  })
+  .catch(function(err) {
+    errorDiv.textContent = err.message;
+    errorDiv.style.display = 'block';
+    progress.style.display = 'none';
+    btnExtract.disabled = false;
+  });
+});
+
+function pollPrefill(requestId, attempt) {
+  if (attempt >= 60) {
+    document.getElementById('extraction-error').textContent = 'Extraction timed out. Please check the request workspace.';
+    document.getElementById('extraction-error').style.display = 'block';
+    document.getElementById('extraction-progress').style.display = 'none';
+    document.getElementById('btn-extract').disabled = false;
+    return;
+  }
+  setTimeout(function() {
+    fetch('/api/v1/procurement/requests/' + requestId + '/prefill/', {
+      headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(statusData) {
+      if (statusData.prefill_status === 'REVIEW_PENDING' || statusData.prefill_status === 'COMPLETED') {
+        document.getElementById('extraction-progress').style.display = 'none';
+        document.getElementById('btn-extract').disabled = false;
+        populatePrefillData(statusData.prefill_payload, requestId);
+      } else if (statusData.prefill_status === 'FAILED') {
+        document.getElementById('extraction-error').textContent = 'Extraction failed. Please try again or use manual entry.';
+        document.getElementById('extraction-error').style.display = 'block';
+        document.getElementById('extraction-progress').style.display = 'none';
+        document.getElementById('btn-extract').disabled = false;
+      } else {
+        pollPrefill(requestId, attempt + 1);
+      }
+    })
+    .catch(function() { pollPrefill(requestId, attempt + 1); });
+  }, 2000);
+}
+
+function populatePrefillData(payload, requestId) {
+  document.getElementById('prefill_request_id').value = requestId;
+  document.getElementById('form-title').textContent = 'Review Extracted Data';
+  document.getElementById('prefill-badge').style.display = '';
+  document.getElementById('confidence-badge').textContent =
+    'Overall: ' + ((payload.overall_confidence || 0) * 100).toFixed(0) + '%';
+  document.getElementById('btn-submit').innerHTML =
+    '<i class="bi bi-check2-circle me-1"></i>Confirm & Save';
+
+  // Core fields
+  var core = payload.core_fields || {};
+  for (var key in core) {
+    if (!core.hasOwnProperty(key)) continue;
+    var info = core[key];
+    var field = document.getElementById('field-' + key);
+    if (field) {
+      field.value = info.value || '';
+      showConfidence(key, info.confidence || 0);
+      if (info.confidence < 0.4) field.classList.add('border-danger');
+      else if (info.confidence < 0.7) field.classList.add('border-warning');
+    }
+  }
+
+  // Clear existing attribute rows and add extracted ones
+  var container = document.getElementById('attributes-container');
+  container.innerHTML = '';
+  var attrs = payload.attributes || [];
+  if (attrs.length > 0) {
+    for (var i = 0; i < attrs.length; i++) {
+      var attr = attrs[i];
+      addAttributeRow(
+        attr.attribute_code,
+        attr.attribute_label,
+        attr.data_type || 'TEXT',
+        typeof attr.value === 'object' ? JSON.stringify(attr.value) : attr.value,
+        attr.confidence
+      );
+    }
+  } else {
+    addAttributeRow();
+  }
+
+  // Scroll to form
+  document.getElementById('main-form-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── Intercept form submit for prefill confirm ──
+document.getElementById('main-form').addEventListener('submit', function(e) {
+  var prefillId = document.getElementById('prefill_request_id').value;
+  if (!prefillId) return; // normal manual submit proceeds
+
+  e.preventDefault();
+
+  var coreFields = {};
+  ['title', 'description', 'domain_code', 'geography_country', 'geography_city', 'currency'].forEach(function(f) {
+    var el = document.getElementById('field-' + f);
+    if (el) coreFields[f] = el.value;
+  });
+  var rtEl = document.getElementById('field-request_type');
+  if (rtEl) coreFields['request_type'] = rtEl.value;
+  var scEl = document.getElementById('field-schema_code');
+  if (scEl) coreFields['schema_code'] = scEl.value;
+
+  var attributes = [];
+  document.querySelectorAll('.attribute-row').forEach(function(row) {
+    var code = row.querySelector('[name="attr_code[]"]');
+    if (!code || !code.value) return;
+    attributes.push({
+      attribute_code: code.value,
+      attribute_label: (row.querySelector('[name="attr_label[]"]') || {}).value || '',
+      data_type: (row.querySelector('[name="attr_type[]"]') || {}).value || 'TEXT',
+      value: (row.querySelector('[name="attr_value[]"]') || {}).value || '',
+    });
+  });
+
+  fetch('/api/v1/procurement/requests/' + prefillId + '/prefill/confirm/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+    },
+    body: JSON.stringify({ core_fields: coreFields, attributes: attributes }),
+  })
+  .then(function(resp) {
+    if (!resp.ok) return resp.json().then(function(e) { throw new Error(e.detail || 'Save failed'); });
+    return resp.json();
+  })
+  .then(function() {
+    window.location.href = '/procurement/' + prefillId + '/';
+  })
+  .catch(function(err) {
+    alert('Error: ' + err.message);
+  });
+});
 </script>
 {% endblock %}

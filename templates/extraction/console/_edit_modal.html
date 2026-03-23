@@ -1,0 +1,107 @@
+{# extraction/console/_edit_modal.html — Edit / correct extracted values #}
+{% load rbac_tags %}
+
+{% if invoice %}
+<div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold" id="editModalLabel">
+          <i class="bi bi-pencil-square me-2 text-warning"></i>Correct Extracted Values
+          {% if ext.confidence is not None %}
+          <span class="badge {% if ext.confidence >= 0.8 %}bg-success{% elif ext.confidence >= 0.5 %}bg-warning text-dark{% else %}bg-danger{% endif %} ms-2" style="font-size:.65rem">Confidence: {% widthratio ext.confidence 1 100 %}%</span>
+          {% endif %}
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 px-3 mb-3" style="font-size:.75rem">
+          <i class="bi bi-info-circle me-1"></i>
+          Review and correct the values below. Changes are audit-logged.
+        </div>
+
+        {# ── Header Fields ── #}
+        <div class="fw-semibold mb-2" style="font-size:.85rem">
+          <i class="bi bi-file-text me-1"></i>Invoice Header
+        </div>
+        <div class="row g-2 mb-3" style="font-size:.8rem">
+          <div class="col-sm-6">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Invoice Number</label>
+            <input type="text" class="form-control form-control-sm edit-header" data-field="invoice_number"
+                   value="{{ invoice.invoice_number|default:'' }}">
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">PO Number</label>
+            <input type="text" class="form-control form-control-sm edit-header" data-field="po_number"
+                   value="{{ invoice.po_number|default:'' }}">
+          </div>
+          <div class="col-sm-4">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Invoice Date</label>
+            <input type="date" class="form-control form-control-sm edit-header" data-field="invoice_date"
+                   value="{% if invoice.invoice_date %}{{ invoice.invoice_date|date:'Y-m-d' }}{% endif %}">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Currency</label>
+            <input type="text" class="form-control form-control-sm edit-header" data-field="currency"
+                   value="{{ invoice.currency|default:'USD' }}" maxlength="10">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Subtotal</label>
+            <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="subtotal"
+                   value="{% if invoice.subtotal %}{{ invoice.subtotal }}{% endif %}">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Tax</label>
+            <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="tax_amount"
+                   value="{% if invoice.tax_amount %}{{ invoice.tax_amount }}{% endif %}">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Total</label>
+            <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="total_amount"
+                   value="{% if invoice.total_amount %}{{ invoice.total_amount }}{% endif %}">
+          </div>
+        </div>
+
+        {# ── Line Items ── #}
+        {% if line_items_raw %}
+        <div class="fw-semibold mb-2" style="font-size:.85rem">
+          <i class="bi bi-list-ul me-1"></i>Line Items
+        </div>
+        <div style="overflow-x:auto">
+          <table class="w-100 mb-2" style="font-size:.8rem;border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:2px solid var(--bs-border-color)">
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:30px">#</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color)">Description</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:75px">Qty</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:90px">Unit Price</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:80px">Tax</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:90px">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for line in line_items_raw %}
+              <tr style="border-bottom:1px solid var(--bs-border-color)" data-line-pk="{{ line.pk }}">
+                <td style="padding:.3rem;color:var(--bs-secondary-color)">{{ line.line_number }}</td>
+                <td style="padding:.3rem"><input type="text" class="form-control form-control-sm edit-line" data-field="description" value="{{ line.description|default:'' }}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="quantity" value="{% if line.quantity %}{{ line.quantity }}{% endif %}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="unit_price" value="{% if line.unit_price %}{{ line.unit_price }}{% endif %}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="tax_amount" value="{% if line.tax_amount %}{{ line.tax_amount }}{% endif %}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="line_amount" value="{% if line.line_amount %}{{ line.line_amount }}{% endif %}"></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="saveEditBtn">
+          <i class="bi bi-check-lg me-1"></i>Save Corrections
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}

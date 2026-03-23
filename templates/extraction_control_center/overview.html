@@ -1,0 +1,244 @@
+{% extends "extraction_control_center/base.html" %}
+{% load static %}
+
+{% block title %}Extraction Control Center{% endblock %}
+
+{% block cc_content %}
+<h5 class="fw-bold mb-4">
+  <i class="bi bi-grid-1x2 me-2 text-primary"></i>Extraction Control Center
+</h5>
+
+{# KPI Cards #}
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100 border-start border-4 border-primary">
+      <div class="card-body">
+        <div class="cc-stat-value text-primary">{{ dashboard.active_jurisdictions }}</div>
+        <div class="cc-stat-label">Active Jurisdictions</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100 border-start border-4 border-success">
+      <div class="card-body">
+        <div class="cc-stat-value text-success">{{ dashboard.active_country_packs }}</div>
+        <div class="cc-stat-label">Active Country Packs</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100 border-start border-4 border-info">
+      <div class="card-body">
+        <div class="cc-stat-value text-info">{{ dashboard.active_schemas }}</div>
+        <div class="cc-stat-label">Active Schemas</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100 border-start border-4 border-warning">
+      <div class="card-body">
+        <div class="cc-stat-value text-warning">{{ dashboard.active_prompts }}</div>
+        <div class="cc-stat-label">Active Prompts</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="cc-stat-value">{{ dashboard.runs_today }}</div>
+        <div class="cc-stat-label">Runs Today</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="cc-stat-value">{{ dashboard.pending_review }}</div>
+        <div class="cc-stat-label">Pending Review</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="cc-stat-value">{{ dashboard.touchless_rate }}%</div>
+        <div class="cc-stat-label">Touchless Rate</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="cc-stat-value">{{ dashboard.avg_confidence }}%</div>
+        <div class="cc-stat-label">Avg Confidence</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  {# Top Corrected Fields #}
+  <div class="col-md-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent fw-semibold small">
+        <i class="bi bi-pencil-square me-1"></i>Top Corrected Fields
+      </div>
+      <div class="card-body p-0">
+        {% if dashboard.top_corrected %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0" style="font-size:.8rem">
+            <thead class="table-light"><tr><th>Field</th><th class="text-end">Count</th></tr></thead>
+            <tbody>
+              {% for item in dashboard.top_corrected %}
+              <tr><td><code>{{ item.field_code }}</code></td><td class="text-end">{{ item.count }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small p-3 mb-0">No corrections recorded.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {# Confidence by Country #}
+  <div class="col-md-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent fw-semibold small">
+        <i class="bi bi-globe2 me-1"></i>Avg Confidence by Country
+      </div>
+      <div class="card-body p-0">
+        {% if dashboard.confidence_by_country %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0" style="font-size:.8rem">
+            <thead class="table-light"><tr><th>Country</th><th class="text-end">Confidence</th><th class="text-end">Runs</th></tr></thead>
+            <tbody>
+              {% for item in dashboard.confidence_by_country %}
+              <tr>
+                <td><span class="badge bg-light text-dark">{{ item.country_code }}</span></td>
+                <td class="text-end">{% widthratio item.avg_confidence 1 100 %}%</td>
+                <td class="text-end">{{ item.run_count }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small p-3 mb-0">No data available.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  {# Queue Distribution #}
+  <div class="col-md-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent fw-semibold small">
+        <i class="bi bi-signpost-split me-1"></i>Review Queue Distribution
+      </div>
+      <div class="card-body p-0">
+        {% if dashboard.queue_distribution %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0" style="font-size:.8rem">
+            <thead class="table-light"><tr><th>Queue</th><th class="text-end">Count</th></tr></thead>
+            <tbody>
+              {% for item in dashboard.queue_distribution %}
+              <tr><td>{{ item.review_queue }}</td><td class="text-end">{{ item.count }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small p-3 mb-0">No queued items.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {# Recent Governance Changes #}
+  <div class="col-md-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent fw-semibold small">
+        <i class="bi bi-shield-lock me-1"></i>Latest Governance Changes
+      </div>
+      <div class="card-body p-0">
+        {% if dashboard.recent_changes %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0" style="font-size:.8rem">
+            <thead class="table-light"><tr><th>Event</th><th>Entity</th><th>When</th></tr></thead>
+            <tbody>
+              {% for ev in dashboard.recent_changes %}
+              <tr>
+                <td><span class="badge bg-secondary-subtle text-secondary">{{ ev.event_type }}</span></td>
+                <td>{{ ev.entity_type }}</td>
+                <td>{{ ev.created_at|date:"M d H:i" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small p-3 mb-0">No recent changes.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Quick Action Cards #}
+<h6 class="fw-bold mb-3"><i class="bi bi-lightning me-1"></i>Quick Actions</h6>
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-md-4 col-xl-2">
+    <a href="{% url 'extraction_control_center:runtime_settings' %}" class="card cc-action-card border-0 shadow-sm h-100 text-decoration-none">
+      <div class="card-body text-center py-4">
+        <i class="bi bi-gear fs-3 text-primary d-block mb-2"></i>
+        <span class="small fw-semibold">Runtime Settings</span>
+      </div>
+    </a>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-2">
+    <a href="{% url 'extraction_control_center:prompt_list' %}" class="card cc-action-card border-0 shadow-sm h-100 text-decoration-none">
+      <div class="card-body text-center py-4">
+        <i class="bi bi-chat-square-text fs-3 text-success d-block mb-2"></i>
+        <span class="small fw-semibold">Manage Prompts</span>
+      </div>
+    </a>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-2">
+    <a href="{% url 'extraction_control_center:schema_list' %}" class="card cc-action-card border-0 shadow-sm h-100 text-decoration-none">
+      <div class="card-body text-center py-4">
+        <i class="bi bi-diagram-3 fs-3 text-info d-block mb-2"></i>
+        <span class="small fw-semibold">Manage Schemas</span>
+      </div>
+    </a>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-2">
+    <a href="{% url 'extraction_control_center:country_pack_list' %}" class="card cc-action-card border-0 shadow-sm h-100 text-decoration-none">
+      <div class="card-body text-center py-4">
+        <i class="bi bi-globe2 fs-3 text-warning d-block mb-2"></i>
+        <span class="small fw-semibold">Country Packs</span>
+      </div>
+    </a>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-2">
+    <a href="{% url 'extraction_control_center:routing_rule_list' %}" class="card cc-action-card border-0 shadow-sm h-100 text-decoration-none">
+      <div class="card-body text-center py-4">
+        <i class="bi bi-signpost-split fs-3 text-danger d-block mb-2"></i>
+        <span class="small fw-semibold">Routing Rules</span>
+      </div>
+    </a>
+  </div>
+  <div class="col-sm-6 col-md-4 col-xl-2">
+    <a href="{% url 'extraction_control_center:analytics_overview' %}" class="card cc-action-card border-0 shadow-sm h-100 text-decoration-none">
+      <div class="card-body text-center py-4">
+        <i class="bi bi-graph-up fs-3 text-secondary d-block mb-2"></i>
+        <span class="small fw-semibold">View Analytics</span>
+      </div>
+    </a>
+  </div>
+</div>
+{% endblock %}

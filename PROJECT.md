@@ -276,6 +276,8 @@ UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → READY_FOR_RE
 | Model | Key Fields | Notes |
 |---|---|---|
 | **ExtractionResult** | engine_name, engine_version, raw_response (JSON), confidence, duration_ms, success, error_message | FK: document_upload, invoice |
+| **ExtractionApproval** | status (ExtractionApprovalStatus), reviewed_by, reviewed_at, rejection_reason, confidence_at_review, original_values_snapshot (JSON), fields_corrected_count, is_touchless | OneToOne: invoice; FK: extraction_result — human-in-the-loop gate |
+| **ExtractionFieldCorrection** | entity_type (header/line_item), entity_id, field_name, original_value, corrected_value, corrected_by | FK: approval — granular correction tracking for analytics |
 
 ### 5.5 Vendors (`apps/vendors/models.py`)
 
@@ -383,6 +385,8 @@ PurchaseOrder ──< PurchaseOrderLineItem
      └──< GoodsReceiptNote ──< GRNLineItem
 
 ExtractionResult ── DocumentUpload + Invoice
+ExtractionApproval ── Invoice (1:1) + ExtractionResult
+     └──< ExtractionFieldCorrection (per-field correction audit)
 
 ReconciliationConfig (tolerances & settings)
 ReconciliationPolicy (mode rules per vendor/category)
@@ -416,7 +420,8 @@ All enums live in `apps/core/enums.py` (24 classes). Key enums:
 ### Invoice & Documents
 | Enum | Values |
 |---|---|
-| `InvoiceStatus` | UPLOADED, EXTRACTION_IN_PROGRESS, EXTRACTED, VALIDATED, INVALID, READY_FOR_RECON, RECONCILED, FAILED |
+| `InvoiceStatus` | UPLOADED, EXTRACTION_IN_PROGRESS, EXTRACTED, VALIDATED, INVALID, **PENDING_APPROVAL**, READY_FOR_RECON, RECONCILED, FAILED |
+| `ExtractionApprovalStatus` | PENDING, APPROVED, REJECTED, AUTO_APPROVED |
 | `InvoiceType` | PO_BACKED, NON_PO, UNKNOWN |
 | `DocumentType` | INVOICE, PO, GRN |
 | `FileProcessingState` | QUEUED, PROCESSING, COMPLETED, FAILED |
@@ -528,6 +533,15 @@ The extraction runs as a Celery task (`process_invoice_upload_task`) using a **t
 - Set invoice status: INVALID (if validation failed), EXTRACTED/VALIDATED (otherwise)
 - Save Invoice + InvoiceLineItem records
 - Save ExtractionResult metadata
+
+**Step 8 — Extraction Approval Gate (`ExtractionApprovalService`)**
+- For valid, non-duplicate invoices: check auto-approval eligibility
+- **Auto-approval**: When `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence ≥ `EXTRACTION_AUTO_APPROVE_THRESHOLD`, auto-approve → READY_FOR_RECON
+- **Human approval**: Otherwise set invoice to PENDING_APPROVAL, create ExtractionApproval record with original values snapshot
+- Human reviews extracted data, optionally corrects fields → each correction tracked as ExtractionFieldCorrection
+- On approve: invoice transitions to READY_FOR_RECON, AP Case auto-created
+- On reject: invoice marked INVALID for re-extraction
+- Analytics: touchless rate, most-corrected fields, approval breakdown via `get_approval_analytics()`
 
 ### 7.3 Azure Blob Storage (`documents/blob_service.py`)
 
@@ -2017,7 +2031,8 @@ celery -A config worker -l info
 
 - All data models, migrations, enums (25 enum classes), permissions, middleware
 - Two-agent extraction architecture: InvoiceExtractionAgent (always, single-shot, json_object) + InvoiceUnderstandingAgent (conditional: confidence < 75%)
-- Extraction pipeline (Azure DI OCR + GPT-4o, 7 services)
+- Extraction pipeline (Azure DI OCR + GPT-4o, 7 services) with human-in-the-loop approval gate
+- **Extraction Approval**: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI with field correction tracking; configurable auto-approval threshold (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`)
 - Reconciliation engine (14 services; 2-way/3-way matching with mode resolver)
 - ReconciliationPolicy model with priority-ordered mode rules
 - Tiered tolerance (strict + auto-close bands)

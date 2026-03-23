@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Extraction Review Console — {{ extraction.file_name|default:"Document" }}{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/extraction_console.css' %}?v={{ static_version }}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="exc-console" data-extraction-id="{{ extraction.id|default:'0' }}">
+
+  {# ── HEADER / COMMAND BAR ── #}
+  {% include "extraction/console/_header_bar.html" %}
+
+  {# ── MAIN WORKSPACE ── #}
+  <div class="row g-3 mt-1">
+    <div class="col-12">
+      <div class="card exc-intel-panel">
+        <div class="card-header p-0 border-bottom-0">
+          <ul class="nav nav-pills exc-tab-nav" id="intelTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="tab-data" data-bs-toggle="pill"
+                      data-bs-target="#panel-data" type="button" role="tab"
+                      aria-controls="panel-data" aria-selected="true">
+                <i class="bi bi-grid-3x3-gap me-1"></i>Extracted Data
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-validation" data-bs-toggle="pill"
+                      data-bs-target="#panel-validation" type="button" role="tab"
+                      aria-controls="panel-validation" aria-selected="false">
+                <i class="bi bi-shield-check me-1"></i>Validation
+                {% if validation_issues %}
+                  <span class="badge bg-warning text-dark ms-1">{{ validation_issues|length }}</span>
+                {% endif %}
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-reasoning" data-bs-toggle="pill"
+                      data-bs-target="#panel-reasoning" type="button" role="tab"
+                      aria-controls="panel-reasoning" aria-selected="false">
+                <i class="bi bi-cpu me-1"></i>Agent Reasoning
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-audit" data-bs-toggle="pill"
+                      data-bs-target="#panel-audit" type="button" role="tab"
+                      aria-controls="panel-audit" aria-selected="false">
+                <i class="bi bi-clock-history me-1"></i>Audit Trail
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-corrections" data-bs-toggle="pill"
+                      data-bs-target="#panel-corrections" type="button" role="tab"
+                      aria-controls="panel-corrections" aria-selected="false">
+                <i class="bi bi-pencil-square me-1"></i>Corrections
+                {% if correction_count %}
+                  <span class="badge bg-secondary ms-1">{{ correction_count }}</span>
+                {% endif %}
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-rawjson" data-bs-toggle="pill"
+                      data-bs-target="#panel-rawjson" type="button" role="tab"
+                      aria-controls="panel-rawjson" aria-selected="false">
+                <i class="bi bi-code-slash me-1"></i>Raw JSON
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-cost" data-bs-toggle="pill"
+                      data-bs-target="#panel-cost" type="button" role="tab"
+                      aria-controls="panel-cost" aria-selected="false">
+                <i class="bi bi-coin me-1"></i>Cost &amp; Tokens
+                {% if cost_token_data %}
+                  <span class="badge bg-success-subtle text-success ms-1">${{ cost_token_data.cost_estimate }}</span>
+                {% endif %}
+              </button>
+            </li>
+          </ul>
+        </div>
+        <div class="card-body p-0">
+          <div class="tab-content" id="intelTabContent">
+            {# Tab 1: Extracted Data #}
+            <div class="tab-pane fade show active" id="panel-data" role="tabpanel" aria-labelledby="tab-data">
+              {% include "extraction/console/_extracted_data.html" %}
+            </div>
+            {# Tab 2: Validation #}
+            <div class="tab-pane fade" id="panel-validation" role="tabpanel" aria-labelledby="tab-validation">
+              {% include "extraction/console/_validation_panel.html" %}
+            </div>
+            {# Tab 3: Agent Reasoning #}
+            <div class="tab-pane fade" id="panel-reasoning" role="tabpanel" aria-labelledby="tab-reasoning">
+              {% include "extraction/console/_reasoning_panel.html" %}
+            </div>
+            {# Tab 5: Audit Trail #}
+            <div class="tab-pane fade" id="panel-audit" role="tabpanel" aria-labelledby="tab-audit">
+              {% include "extraction/console/_audit_trail.html" %}
+            </div>
+            {# Tab 6: Corrections #}
+            <div class="tab-pane fade" id="panel-corrections" role="tabpanel" aria-labelledby="tab-corrections">
+              {% include "extraction/console/_corrections_panel.html" %}
+            </div>
+            {# Tab 7: Raw JSON & Document Details #}
+            <div class="tab-pane fade" id="panel-rawjson" role="tabpanel" aria-labelledby="tab-rawjson">
+              {% include "extraction/console/_raw_json_panel.html" %}
+            </div>
+            {# Tab 8: Cost & Tokens #}
+            <div class="tab-pane fade" id="panel-cost" role="tabpanel" aria-labelledby="tab-cost">
+              {% include "extraction/console/_cost_tokens_panel.html" %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── BOTTOM TIMELINE PANEL ── #}
+  {% include "extraction/console/_bottom_timeline.html" %}
+
+</div>
+
+{# ── MODALS ── #}
+{% if approval %}{% include "extraction/console/_approve_modal.html" %}{% endif %}
+{% include "extraction/console/_reprocess_modal.html" %}
+{% include "extraction/console/_escalate_modal.html" %}
+{% include "extraction/console/_comment_modal.html" %}
+{% include "extraction/console/_edit_modal.html" %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/extraction_console.js' %}?v={{ static_version }}"></script>
+{% if invoice %}
+<script>
+(function() {
+  var saveBtn = document.getElementById('saveEditBtn');
+  if (!saveBtn) return;
+
+  saveBtn.addEventListener('click', function() {
+    var header = {};
+    document.querySelectorAll('.edit-header').forEach(function(inp) {
+      header[inp.dataset.field] = inp.value;
+    });
+
+    var lines = [];
+    document.querySelectorAll('#editModal tr[data-line-pk]').forEach(function(row) {
+      var lineData = { pk: parseInt(row.dataset.linePk, 10) };
+      row.querySelectorAll('.edit-line').forEach(function(inp) {
+        lineData[inp.dataset.field] = inp.value;
+      });
+      lines.push(lineData);
+    });
+
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+
+    fetch("{% url 'extraction:edit_values' ext.pk %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({ header: header, lines: lines })
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
+        if (modal) modal.hide();
+        window.location.reload();
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Corrections';
+      }
+    })
+    .catch(function(err) {
+      alert('Network error: ' + err);
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Corrections';
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -15,6 +15,8 @@ from typing import Any, Dict, Optional
 
 from django.conf import settings
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 _VENDOR_ENGLISH_ENFORCEMENT = (
@@ -36,6 +38,7 @@ class ExtractionResponse:
     duration_ms: int = 0
     error_message: str = ""
     ocr_text: str = ""
+    agent_run_id: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +50,7 @@ class ExtractionResponse:
 class InvoiceExtractionAdapter:
     """Two-step extraction: Azure Document Intelligence OCR -> Azure OpenAI LLM."""
 
+    @observed_service("extraction.extract", entity_type="DocumentUpload", audit_event="EXTRACTION_STARTED")
     def extract(self, file_path: str) -> ExtractionResponse:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
@@ -76,6 +80,7 @@ class InvoiceExtractionAdapter:
                 engine_version="2.0",
                 duration_ms=elapsed,
                 ocr_text=ocr_text,
+                agent_run_id=agent_run_id,
             )
         except Exception as exc:
             elapsed = int((time.time() - start) * 1000)

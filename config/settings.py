@@ -45,6 +45,9 @@ INSTALLED_APPS = [
     "apps.cases",
     "apps.copilot",
     "apps.procurement",
+    "apps.extraction_core",
+    "apps.extraction_configs",
+    "apps.extraction_documents",
 ]
 
 MIDDLEWARE = [
@@ -75,6 +78,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.core.context_processors.pending_reviews",
                 "apps.core.context_processors.rbac_context",
+                "apps.core.context_processors.static_version",
             ],
         },
     },
@@ -131,6 +135,9 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Cache-busting version counter — bump after static file changes
+STATIC_VERSION = "1.0.5"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -212,6 +219,12 @@ DEFAULT_QTY_TOLERANCE_PCT = float(os.getenv("DEFAULT_QTY_TOLERANCE_PCT", "2.0"))
 DEFAULT_PRICE_TOLERANCE_PCT = float(os.getenv("DEFAULT_PRICE_TOLERANCE_PCT", "1.0"))
 DEFAULT_AMOUNT_TOLERANCE_PCT = float(os.getenv("DEFAULT_AMOUNT_TOLERANCE_PCT", "1.0"))
 EXTRACTION_CONFIDENCE_THRESHOLD = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHOLD", "0.75"))
+
+# Extraction approval — human-in-the-loop gate
+# Set to 1.1 (above max confidence) to require human approval for ALL extractions.
+# Lower to e.g. 0.95 once confidence in the system grows, to auto-approve high-confidence results.
+EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "1.1"))
+EXTRACTION_AUTO_APPROVE_ENABLED = os.getenv("EXTRACTION_AUTO_APPROVE_ENABLED", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # Logging

@@ -22,6 +22,26 @@
         </a>
       </li>
 
+      {# ── AI Agents ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">AI Agents</li>
+      {% has_permission "invoices.create" as can_extract %}
+      {% if can_extract %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'extraction' %}active fw-bold{% endif %}" href="{% url 'extraction:workbench' %}">
+          <i class="bi bi-robot me-2"></i>Invoice Extraction Agent
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "extraction.view" as can_view_packs %}
+      {% if can_view_packs %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'extraction_control_center' %}active fw-bold{% endif %}" href="{% url 'extraction_control_center:overview' %}">
+          <i class="bi bi-sliders2 me-2"></i>Extraction Control Center
+        </a>
+      </li>
+      {% endif %}
+
       {# ── Procurement ── #}
       {% has_permission "procurement.view" as can_view_procurement %}
       {% if can_view_procurement %}
@@ -38,14 +58,14 @@
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documents</li>
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'documents' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
+        <a class="nav-link {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'invoice_detail' or request.resolver_match.url_name == 'upload_invoice' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
           <i class="bi bi-file-earmark-text me-2"></i>Invoices
         </a>
       </li>
       {% has_permission "purchase_orders.view" as can_view_pos %}
       {% if can_view_pos %}
       <li class="nav-item">
-        <a class="nav-link" href="{% url 'documents:po_list' %}">
+        <a class="nav-link {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active fw-bold{% endif %}" href="{% url 'documents:po_list' %}">
           <i class="bi bi-cart-check me-2"></i>Purchase Orders
         </a>
       </li>
@@ -53,7 +73,7 @@
       {% has_permission "grns.view" as can_view_grns %}
       {% if can_view_grns %}
       <li class="nav-item">
-        <a class="nav-link" href="{% url 'documents:grn_list' %}">
+        <a class="nav-link {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active fw-bold{% endif %}" href="{% url 'documents:grn_list' %}">
           <i class="bi bi-box-seam me-2"></i>GRNs
         </a>
       </li>

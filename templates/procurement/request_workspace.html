@@ -32,6 +32,7 @@
         <select name="run_type" class="form-select form-select-sm" style="width:auto">
           <option value="RECOMMENDATION">Recommendation</option>
           <option value="BENCHMARK">Benchmark</option>
+          <option value="VALIDATION">Validation</option>
         </select>
         <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-play-fill me-1"></i>Run Analysis</button>
       </form>
@@ -61,6 +62,16 @@
           <tr><td class="text-muted">Currency</td><td>{{ proc_request.currency }}</td></tr>
           <tr><td class="text-muted">Created</td><td>{{ proc_request.created_at|date:"M d, Y H:i" }}</td></tr>
           {% if proc_request.created_by %}<tr><td class="text-muted">By</td><td>{{ proc_request.created_by.email }}</td></tr>{% endif %}
+          {% if proc_request.prefill_status and proc_request.prefill_status != "NOT_STARTED" %}
+          <tr><td class="text-muted">Prefill</td><td>
+            {% if proc_request.prefill_status == "COMPLETED" or proc_request.prefill_status == "REVIEW_PENDING" %}<span class="badge bg-success"><i class="bi bi-magic me-1"></i>{{ proc_request.prefill_status }}</span>
+            {% elif proc_request.prefill_status == "IN_PROGRESS" %}<span class="badge bg-primary"><i class="bi bi-hourglass-split me-1"></i>In Progress</span>
+            {% elif proc_request.prefill_status == "FAILED" %}<span class="badge bg-danger">Failed</span>
+            {% endif %}
+            {% if proc_request.prefill_confidence %}<small class="text-muted ms-1">{{ proc_request.prefill_confidence|floatformat:0 }}%</small>{% endif %}
+          </td></tr>
+          {% if proc_request.source_document_type %}<tr><td class="text-muted">Source Doc</td><td>{{ proc_request.source_document_type }}</td></tr>{% endif %}
+          {% endif %}
           {% if proc_request.trace_id %}<tr><td class="text-muted">Trace</td><td><code style="font-size:0.7rem">{{ proc_request.trace_id|truncatechars:16 }}</code></td></tr>{% endif %}
         </table>
       </div>
@@ -95,6 +106,9 @@
         {% endif %}
       </div>
     </div>
+
+    {# Validation Summary #}
+    {% include "procurement/partials/validation_summary.html" %}
 
     {# Recommendation Result #}
     {% if recommendation %}
@@ -204,6 +218,7 @@
       </div>
       <div class="collapse" id="quotation-form">
         <div class="card-body border-bottom">
+          {# Manual entry #}
           <form method="post" action="{% url 'procurement:upload_quotation' pk=proc_request.pk %}">
             {% csrf_token %}
             <div class="mb-2">
@@ -214,6 +229,25 @@
               <div class="col-6"><input type="number" step="0.01" name="total_amount" class="form-control form-control-sm" placeholder="Amount"></div>
             </div>
             <button type="submit" class="btn btn-primary btn-sm w-100">Add Quotation</button>
+          </form>
+          <hr class="my-2">
+          {# PDF Upload prefill #}
+          <form id="quotation-prefill-form" enctype="multipart/form-data">
+            {% csrf_token %}
+            <input type="hidden" name="request_id" value="{{ proc_request.pk }}">
+            <div class="mb-2">
+              <input type="file" name="file" class="form-control form-control-sm" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif" required>
+            </div>
+            <div class="mb-2">
+              <input type="text" name="vendor_name" class="form-control form-control-sm" placeholder="Vendor name (optional)">
+            </div>
+            <button type="submit" class="btn btn-outline-primary btn-sm w-100" id="btn-quotation-extract">
+              <i class="bi bi-file-earmark-pdf me-1"></i>Upload PDF &amp; Extract
+            </button>
+            <div id="quotation-extract-progress" class="mt-2" style="display:none;">
+              <div class="d-flex align-items-center gap-1"><div class="spinner-border spinner-border-sm text-primary"></div><small>Extracting…</small></div>
+            </div>
+            <div id="quotation-extract-error" class="text-danger small mt-1" style="display:none;"></div>
           </form>
         </div>
       </div>
@@ -226,6 +260,15 @@
           </div>
           {% if q.total_amount %}<small class="text-muted">{{ q.currency }} {{ q.total_amount|floatformat:2 }}</small>{% endif %}
           {% if q.quotation_number %}<small class="text-muted d-block">#{{ q.quotation_number }}</small>{% endif %}
+          {% if q.prefill_status and q.prefill_status != "NOT_STARTED" %}
+          <small class="d-block mt-1">
+            {% if q.prefill_status == "REVIEW_PENDING" %}<a href="{% url 'procurement:quotation_prefill_review' pk=q.pk %}" class="badge bg-warning text-dark"><i class="bi bi-magic me-1"></i>Review Prefill</a>
+            {% elif q.prefill_status == "IN_PROGRESS" %}<span class="badge bg-primary"><i class="bi bi-hourglass-split me-1"></i>Extracting…</span>
+            {% elif q.prefill_status == "COMPLETED" %}<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Prefilled</span>
+            {% elif q.prefill_status == "FAILED" %}<span class="badge bg-danger">Prefill Failed</span>
+            {% endif %}
+          </small>
+          {% endif %}
         </div>
         {% empty %}
         <div class="list-group-item text-muted text-center py-3">No quotations yet.</div>
@@ -242,6 +285,7 @@
           <div class="d-flex justify-content-between">
             <span>
               {% if run.run_type == "RECOMMENDATION" %}<i class="bi bi-lightbulb text-info me-1"></i>
+              {% elif run.run_type == "VALIDATION" %}<i class="bi bi-check2-square text-primary me-1"></i>
               {% else %}<i class="bi bi-bar-chart text-warning me-1"></i>{% endif %}
               {{ run.run_type }}
             </span>
@@ -275,4 +319,43 @@
 
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Quotation PDF prefill upload
+var qForm = document.getElementById('quotation-prefill-form');
+if (qForm) {
+  qForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+    var formData = new FormData(this);
+    var progress = document.getElementById('quotation-extract-progress');
+    var errorDiv = document.getElementById('quotation-extract-error');
+    var btn = document.getElementById('btn-quotation-extract');
+    progress.style.display = 'block';
+    errorDiv.style.display = 'none';
+    btn.disabled = true;
+
+    fetch('/api/v1/procurement/quotations/prefill/?request_id={{ proc_request.pk }}', {
+      method: 'POST',
+      body: formData,
+      headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
+    })
+    .then(function(resp) {
+      if (!resp.ok) return resp.json().then(function(err) { throw new Error(err.error || err.detail || 'Upload failed'); });
+      return resp.json();
+    })
+    .then(function(data) {
+      // Reload page to show the new quotation with prefill status
+      window.location.reload();
+    })
+    .catch(function(err) {
+      errorDiv.textContent = err.message;
+      errorDiv.style.display = 'block';
+      progress.style.display = 'none';
+      btn.disabled = false;
+    });
+  });
+}
+</script>
 {% endblock %}

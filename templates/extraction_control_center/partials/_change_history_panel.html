@@ -1,0 +1,44 @@
+<div class="card border-0 shadow-sm mt-3">
+  <div class="card-header bg-transparent d-flex align-items-center gap-2">
+    <i class="bi bi-clock-history"></i>
+    <span class="fw-semibold small">{{ title|default:"Change History" }}</span>
+  </div>
+  <div class="card-body p-0">
+    {% if history %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" style="font-size:.8rem">
+        <thead class="table-light">
+          <tr>
+            <th>Version</th>
+            <th>Status</th>
+            <th>Updated</th>
+            <th>By</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in history %}
+          <tr>
+            <td>v{{ item.version|default:item.schema_version }}</td>
+            <td>
+              {% with status=item.status|default:item.is_active %}
+              {% include "extraction_control_center/partials/_status_badge.html" %}
+              {% endwith %}
+            </td>
+            <td>{{ item.updated_at|date:"M d, Y H:i" }}</td>
+            <td>{{ item.updated_by|default:"-" }}</td>
+            <td>
+              {% if detail_url_name %}
+              <a href="{% url detail_url_name item.pk %}" class="btn btn-sm btn-outline-primary py-0">View</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted small p-3 mb-0">No history available.</p>
+    {% endif %}
+  </div>
+</div>

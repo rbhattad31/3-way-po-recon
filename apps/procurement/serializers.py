@@ -11,6 +11,10 @@ from apps.procurement.models import (
     QuotationLineItem,
     RecommendationResult,
     SupplierQuotation,
+    ValidationResult,
+    ValidationResultItem,
+    ValidationRule,
+    ValidationRuleSet,
 )
 
 
@@ -24,6 +28,7 @@ class ProcurementRequestAttributeSerializer(serializers.ModelSerializer):
             "id", "attribute_code", "attribute_label", "data_type",
             "value_text", "value_number", "value_json",
             "is_required", "normalized_value",
+            "extraction_source", "confidence_score",
         ]
 
 
@@ -46,7 +51,7 @@ class QuotationLineItemSerializer(serializers.ModelSerializer):
         fields = [
             "id", "line_number", "description", "normalized_description",
             "category_code", "quantity", "unit", "unit_rate", "total_amount",
-            "brand", "model", "extraction_confidence",
+            "brand", "model", "extraction_confidence", "extraction_source",
         ]
 
 
@@ -58,7 +63,8 @@ class SupplierQuotationListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "vendor_name", "quotation_number", "quotation_date",
             "total_amount", "currency", "extraction_status",
-            "extraction_confidence", "line_item_count", "created_at",
+            "extraction_confidence", "prefill_status",
+            "line_item_count", "created_at",
         ]
 
 
@@ -70,7 +76,8 @@ class SupplierQuotationDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id", "vendor_name", "quotation_number", "quotation_date",
             "total_amount", "currency", "extraction_status",
-            "extraction_confidence", "line_items", "created_at", "updated_at",
+            "extraction_confidence", "prefill_status", "prefill_payload_json",
+            "line_items", "created_at", "updated_at",
         ]
 
 
@@ -210,3 +217,115 @@ class ProcurementRequestWriteSerializer(serializers.ModelSerializer):
             attributes=attrs,
             **validated_data,
         )
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+class ValidationResultItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ValidationResultItem
+        fields = [
+            "id", "item_code", "item_label", "category",
+            "status", "severity", "source_type", "source_reference",
+            "remarks", "details_json", "created_at",
+        ]
+
+
+class ValidationResultSerializer(serializers.ModelSerializer):
+    items = ValidationResultItemSerializer(many=True, read_only=True)
+    request_id = serializers.UUIDField(source="run.request.request_id", read_only=True)
+    run_id = serializers.UUIDField(source="run.run_id", read_only=True)
+
+    class Meta:
+        model = ValidationResult
+        fields = [
+            "id", "request_id", "run_id",
+            "validation_type", "overall_status", "completeness_score",
+            "summary_text",
+            "readiness_for_recommendation", "readiness_for_benchmarking",
+            "recommended_next_action",
+            "missing_items_json", "warnings_json", "ambiguous_items_json",
+            "output_payload_json",
+            "items",
+            "created_at", "updated_at",
+        ]
+
+
+class ValidationRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ValidationRule
+        fields = [
+            "id", "rule_code", "rule_name", "rule_type",
+            "severity", "is_active", "evaluation_mode",
+            "condition_json", "expected_value_json",
+            "failure_message", "remediation_hint", "display_order",
+        ]
+
+
+class ValidationRuleSetSerializer(serializers.ModelSerializer):
+    rules = ValidationRuleSerializer(many=True, read_only=True)
+    rule_count = serializers.IntegerField(source="rules.count", read_only=True)
+
+    class Meta:
+        model = ValidationRuleSet
+        fields = [
+            "id", "domain_code", "schema_code",
+            "rule_set_code", "rule_set_name", "description",
+            "validation_type", "is_active", "priority",
+            "config_json", "rule_count", "rules",
+            "created_at", "updated_at",
+        ]
+
+
+class ValidationRuleSetListSerializer(serializers.ModelSerializer):
+    rule_count = serializers.IntegerField(source="rules.count", read_only=True)
+
+    class Meta:
+        model = ValidationRuleSet
+        fields = [
+            "id", "domain_code", "schema_code",
+            "rule_set_code", "rule_set_name", "description",
+            "validation_type", "is_active", "priority",
+            "rule_count", "created_at",
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Prefill serializers
+# ---------------------------------------------------------------------------
+class RequestPrefillUploadSerializer(serializers.Serializer):
+    """Upload an RFQ / requirement PDF to create a draft request and trigger prefill."""
+    file = serializers.FileField()
+    title = serializers.CharField(max_length=300, required=False, default="")
+    source_document_type = serializers.ChoiceField(
+        choices=["RFQ", "REQUIREMENT_NOTE", "SPECIFICATION", "BOQ", "OTHER"],
+        required=False,
+        default="RFQ",
+    )
+    domain_code = serializers.CharField(max_length=100, required=False, default="")
+
+
+class RequestPrefillConfirmSerializer(serializers.Serializer):
+    """Submit user-reviewed prefill data for a procurement request."""
+    core_fields = serializers.DictField(required=False, default=dict)
+    attributes = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+
+
+class QuotationPrefillUploadSerializer(serializers.Serializer):
+    """Upload a proposal / quotation PDF to create a draft quotation and trigger prefill."""
+    file = serializers.FileField()
+    vendor_name = serializers.CharField(max_length=300, required=False, default="")
+
+
+class QuotationPrefillConfirmSerializer(serializers.Serializer):
+    """Submit user-reviewed prefill data for a supplier quotation."""
+    header_fields = serializers.DictField(required=False, default=dict)
+    line_items = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+
+
+class PrefillStatusSerializer(serializers.Serializer):
+    """Prefill status response for polling."""
+    prefill_status = serializers.CharField()
+    prefill_confidence = serializers.FloatField(allow_null=True)
+    prefill_payload = serializers.DictField(allow_null=True)

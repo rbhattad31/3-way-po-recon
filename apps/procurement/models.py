@@ -20,9 +20,20 @@ from apps.core.enums import (
     AttributeDataType,
     BenchmarkRiskLevel,
     ComplianceStatus,
+    ExtractionSourceType,
     ExtractionStatus,
+    PrefillStatus,
     ProcurementRequestStatus,
     ProcurementRequestType,
+    SourceDocumentType,
+    ValidationEvaluationMode,
+    ValidationItemStatus,
+    ValidationNextAction,
+    ValidationOverallStatus,
+    ValidationRuleType,
+    ValidationSeverity,
+    ValidationSourceType,
+    ValidationType,
     VarianceStatus,
 )
 from apps.core.models import BaseModel, TimestampMixin
@@ -72,6 +83,30 @@ class ProcurementRequest(BaseModel):
     )
     trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
+    # PDF-led prefill fields
+    uploaded_document = models.ForeignKey(
+        "documents.DocumentUpload",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="procurement_requests",
+    )
+    source_document_type = models.CharField(
+        max_length=30,
+        choices=SourceDocumentType.choices,
+        blank=True, default="",
+        help_text="Type of source document (RFQ, BOQ, etc.)",
+    )
+    prefill_status = models.CharField(
+        max_length=20,
+        choices=PrefillStatus.choices,
+        default=PrefillStatus.NOT_STARTED,
+    )
+    prefill_confidence = models.FloatField(null=True, blank=True)
+    prefill_payload_json = models.JSONField(
+        null=True, blank=True,
+        help_text="Raw extracted prefill payload before user confirmation",
+    )
+
     class Meta:
         db_table = "procurement_request"
         ordering = ["-created_at"]
@@ -107,6 +142,12 @@ class ProcurementRequestAttribute(TimestampMixin):
     value_json = models.JSONField(null=True, blank=True)
     is_required = models.BooleanField(default=False)
     normalized_value = models.TextField(blank=True, default="")
+    extraction_source = models.CharField(
+        max_length=20,
+        choices=ExtractionSourceType.choices,
+        default=ExtractionSourceType.MANUAL,
+    )
+    confidence_score = models.FloatField(null=True, blank=True)
 
     class Meta:
         db_table = "procurement_request_attribute"
@@ -146,6 +187,17 @@ class SupplierQuotation(BaseModel):
     )
     extraction_confidence = models.FloatField(null=True, blank=True)
 
+    # PDF-led prefill fields
+    prefill_status = models.CharField(
+        max_length=20,
+        choices=PrefillStatus.choices,
+        default=PrefillStatus.NOT_STARTED,
+    )
+    prefill_payload_json = models.JSONField(
+        null=True, blank=True,
+        help_text="Raw extracted prefill payload before user confirmation",
+    )
+
     class Meta:
         db_table = "procurement_supplier_quotation"
         ordering = ["-created_at"]
@@ -176,6 +228,11 @@ class QuotationLineItem(TimestampMixin):
     brand = models.CharField(max_length=200, blank=True, default="")
     model = models.CharField(max_length=200, blank=True, default="")
     extraction_confidence = models.FloatField(null=True, blank=True)
+    extraction_source = models.CharField(
+        max_length=20,
+        choices=ExtractionSourceType.choices,
+        default=ExtractionSourceType.MANUAL,
+    )
 
     class Meta:
         db_table = "procurement_quotation_line_item"
@@ -365,3 +422,199 @@ class ComplianceResult(TimestampMixin):
 
     def __str__(self) -> str:
         return f"Compliance: {self.compliance_status}"
+
+
+# ---------------------------------------------------------------------------
+# 10. ValidationRuleSet
+# ---------------------------------------------------------------------------
+class ValidationRuleSet(BaseModel):
+    """Reusable set of validation rules for a domain/schema."""
+
+    domain_code = models.CharField(
+        max_length=100, blank=True, default="",
+        db_index=True,
+        help_text="Business domain (blank = generic / all domains)",
+    )
+    schema_code = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Attribute schema identifier (blank = all schemas)",
+    )
+    rule_set_code = models.CharField(max_length=120, unique=True, db_index=True)
+    rule_set_name = models.CharField(max_length=300)
+    description = models.TextField(blank=True, default="")
+    validation_type = models.CharField(
+        max_length=40,
+        choices=ValidationType.choices,
+        db_index=True,
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    priority = models.PositiveIntegerField(default=100)
+    config_json = models.JSONField(
+        null=True, blank=True,
+        help_text="Domain-specific checklist/config (e.g. expected docs, categories, commercial terms)",
+    )
+
+    class Meta:
+        db_table = "procurement_validation_rule_set"
+        ordering = ["priority", "rule_set_code"]
+        indexes = [
+            models.Index(fields=["domain_code", "validation_type", "is_active"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.rule_set_code} — {self.rule_set_name}"
+
+
+# ---------------------------------------------------------------------------
+# 11. ValidationRule
+# ---------------------------------------------------------------------------
+class ValidationRule(TimestampMixin):
+    """Individual validation rule within a rule set."""
+
+    rule_set = models.ForeignKey(
+        ValidationRuleSet,
+        on_delete=models.CASCADE,
+        related_name="rules",
+    )
+    rule_code = models.CharField(max_length=120, db_index=True)
+    rule_name = models.CharField(max_length=300)
+    rule_type = models.CharField(
+        max_length=30,
+        choices=ValidationRuleType.choices,
+    )
+    severity = models.CharField(
+        max_length=20,
+        choices=ValidationSeverity.choices,
+        default=ValidationSeverity.ERROR,
+    )
+    is_active = models.BooleanField(default=True)
+    evaluation_mode = models.CharField(
+        max_length=20,
+        choices=ValidationEvaluationMode.choices,
+        default=ValidationEvaluationMode.DETERMINISTIC,
+    )
+    condition_json = models.JSONField(
+        null=True, blank=True,
+        help_text="Evaluation conditions (attribute_code, pattern, etc.)",
+    )
+    expected_value_json = models.JSONField(
+        null=True, blank=True,
+        help_text="Expected value or pattern for comparison",
+    )
+    failure_message = models.CharField(max_length=500, blank=True, default="")
+    remediation_hint = models.CharField(max_length=500, blank=True, default="")
+    display_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "procurement_validation_rule"
+        ordering = ["display_order", "rule_code"]
+        unique_together = [("rule_set", "rule_code")]
+
+    def __str__(self) -> str:
+        return f"{self.rule_code} ({self.rule_type})"
+
+
+# ---------------------------------------------------------------------------
+# 12. ValidationResult
+# ---------------------------------------------------------------------------
+class ValidationResult(TimestampMixin):
+    """Top-level output of a validation run."""
+
+    run = models.OneToOneField(
+        AnalysisRun,
+        on_delete=models.CASCADE,
+        related_name="validation_result",
+    )
+    validation_type = models.CharField(
+        max_length=40,
+        choices=ValidationType.choices,
+        default=ValidationType.ATTRIBUTE_COMPLETENESS,
+        help_text="Primary validation type (or ATTRIBUTE_COMPLETENESS for combined)",
+    )
+    overall_status = models.CharField(
+        max_length=30,
+        choices=ValidationOverallStatus.choices,
+        default=ValidationOverallStatus.FAIL,
+    )
+    completeness_score = models.FloatField(
+        default=0.0,
+        help_text="0-100 percentage",
+    )
+    summary_text = models.TextField(blank=True, default="")
+    readiness_for_recommendation = models.BooleanField(default=False)
+    readiness_for_benchmarking = models.BooleanField(default=False)
+    recommended_next_action = models.CharField(
+        max_length=40,
+        choices=ValidationNextAction.choices,
+        blank=True,
+        default="",
+    )
+    missing_items_json = models.JSONField(
+        null=True, blank=True,
+        help_text="List of missing item dicts",
+    )
+    warnings_json = models.JSONField(
+        null=True, blank=True,
+        help_text="List of warning dicts",
+    )
+    ambiguous_items_json = models.JSONField(
+        null=True, blank=True,
+        help_text="List of ambiguous item dicts",
+    )
+    output_payload_json = models.JSONField(
+        null=True, blank=True,
+        help_text="Full structured output for API consumers",
+    )
+
+    class Meta:
+        db_table = "procurement_validation_result"
+
+    def __str__(self) -> str:
+        return f"Validation: {self.overall_status} ({self.completeness_score:.0f}%)"
+
+
+# ---------------------------------------------------------------------------
+# 13. ValidationResultItem
+# ---------------------------------------------------------------------------
+class ValidationResultItem(TimestampMixin):
+    """Individual finding within a validation result."""
+
+    validation_result = models.ForeignKey(
+        ValidationResult,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    item_code = models.CharField(max_length=120)
+    item_label = models.CharField(max_length=300)
+    category = models.CharField(
+        max_length=40,
+        choices=ValidationType.choices,
+        help_text="Which validation dimension this item belongs to",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=ValidationItemStatus.choices,
+    )
+    severity = models.CharField(
+        max_length=20,
+        choices=ValidationSeverity.choices,
+        default=ValidationSeverity.ERROR,
+    )
+    source_type = models.CharField(
+        max_length=20,
+        choices=ValidationSourceType.choices,
+        default=ValidationSourceType.RULE,
+    )
+    source_reference = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Rule code, attribute code, or document reference",
+    )
+    remarks = models.TextField(blank=True, default="")
+    details_json = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "procurement_validation_result_item"
+        ordering = ["category", "item_code"]
+
+    def __str__(self) -> str:
+        return f"{self.item_code}: {self.status}"
