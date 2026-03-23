@@ -29,12 +29,40 @@ class AnalysisRunService:
     ) -> AnalysisRun:
         ctx = TraceContext.get_current()
 
+        latest_validation = (
+            request.analysis_runs
+            .filter(run_type="VALIDATION", validation_result__isnull=False)
+            .select_related("validation_result")
+            .order_by("-created_at")
+            .first()
+        )
+        quotation_snapshot = [
+            {
+                "quotation_id": quotation.pk,
+                "vendor_name": quotation.vendor_name,
+                "quotation_number": quotation.quotation_number,
+                "total_amount": str(quotation.total_amount) if quotation.total_amount is not None else None,
+                "currency": quotation.currency,
+                "prefill_status": quotation.prefill_status,
+                "extraction_status": quotation.extraction_status,
+                "line_item_count": quotation.line_items.count(),
+            }
+            for quotation in request.quotations.all()[:10]
+        ]
+
         # Build input snapshot
         input_snapshot = {
             "request_id": str(request.request_id),
             "request_type": request.request_type,
             "domain_code": request.domain_code,
             "attributes": AttributeService.get_attributes_dict(request),
+            "quotation_count": request.quotations.count(),
+            "quotations": quotation_snapshot,
+            "latest_validation": {
+                "overall_status": latest_validation.validation_result.overall_status,
+                "completeness_score": latest_validation.validation_result.completeness_score,
+                "recommended_next_action": latest_validation.validation_result.recommended_next_action,
+            } if latest_validation and getattr(latest_validation, "validation_result", None) else None,
         }
 
         run = AnalysisRun.objects.create(
