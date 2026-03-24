@@ -156,7 +156,7 @@
           </div>
           {% if bm.lines.all %}
           <table class="table table-sm mt-3 mb-0" style="font-size:0.75rem">
-            <thead class="table-light"><tr><th>#</th><th>Item</th><th>Quoted</th><th>Avg</th><th>Var%</th><th>Status</th></tr></thead>
+            <thead class="table-light"><tr><th>#</th><th>Item</th><th>Quoted</th><th>Avg</th><th>Var%</th><th>Status</th><th>Source</th></tr></thead>
             <tbody>
             {% for line in bm.lines.all %}
             <tr>
@@ -171,6 +171,15 @@
                 {% elif line.variance_status == "SIGNIFICANTLY_ABOVE" %}<span class="badge bg-danger">High</span>
                 {% elif line.variance_status == "BELOW_BENCHMARK" %}<span class="badge bg-info text-dark">Below</span>
                 {% endif %}
+              </td>
+              <td>
+                <span class="badge bg-light text-dark">{{ line.source_type }}</span>
+                {% if line.source_urls %}
+                  {% for url in line.source_urls %}
+                    <a href="{{ url }}" target="_blank" rel="noopener" class="ms-1" title="{{ url }}"><i class="bi bi-link-45deg"></i></a>
+                  {% endfor %}
+                {% endif %}
+                {% if line.reasoning %}<br><details class="d-inline"><summary class="text-muted small" style="cursor:pointer">View reasoning</summary><small class="text-muted">{{ line.reasoning }}</small></details>{% endif %}
               </td>
             </tr>
             {% endfor %}
@@ -357,5 +366,181 @@ if (qForm) {
     });
   });
 }
+
+// ── Fix Missing Attributes JS ──
+(function() {
+  var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]');
+  if (!csrfToken) return;
+  var csrf = csrfToken.value;
+
+  // Add custom attribute row
+  var btnAdd = document.getElementById('btn-add-custom-attr');
+  if (btnAdd) {
+    btnAdd.addEventListener('click', function() {
+      var section = document.getElementById('missing-attrs-section');
+      var row = document.createElement('div');
+      row.className = 'row g-2 mb-2 missing-attr-row';
+      row.innerHTML =
+        '<div class="col-3">' +
+          '<input type="text" class="form-control form-control-sm attr-code" placeholder="attribute_code" style="font-size:0.78rem;">' +
+        '</div>' +
+        '<div class="col-3">' +
+          '<input type="text" class="form-control form-control-sm attr-label" placeholder="Label" style="font-size:0.78rem;">' +
+        '</div>' +
+        '<div class="col-2">' +
+          '<select class="form-select form-select-sm attr-type" style="font-size:0.78rem;">' +
+            '<option value="TEXT" selected>TEXT</option>' +
+            '<option value="NUMBER">NUMBER</option>' +
+            '<option value="BOOLEAN">BOOLEAN</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="col-3">' +
+          '<input type="text" class="form-control form-control-sm attr-value" placeholder="Value" style="font-size:0.78rem;">' +
+        '</div>' +
+        '<div class="col-1 d-flex align-items-center">' +
+          '<button type="button" class="btn btn-sm btn-outline-danger btn-remove-attr"><i class="bi bi-x-lg"></i></button>' +
+        '</div>';
+      section.appendChild(row);
+      row.querySelector('.btn-remove-attr').addEventListener('click', function() { row.remove(); });
+    });
+  }
+
+  function collectAttributes() {
+    var attrs = [];
+    var seen = {};
+
+    // Existing attributes (edited)
+    document.querySelectorAll('#existing-attrs-section .existing-attr-row').forEach(function(row) {
+      var code = row.getAttribute('data-code');
+      var label = row.querySelector('.attr-label').value.trim();
+      var dtype = row.querySelector('.attr-type').value;
+      var val = row.querySelector('.attr-value').value.trim();
+      if (code && !seen[code]) {
+        seen[code] = true;
+        var attr = { attribute_code: code, attribute_label: label || code, data_type: dtype };
+        if (dtype === 'NUMBER' && val !== '') {
+          attr.value_number = parseFloat(val) || null;
+          attr.value_text = val;
+        } else {
+          attr.value_text = val;
+        }
+        attrs.push(attr);
+      }
+    });
+
+    // Missing / new attributes
+    document.querySelectorAll('#missing-attrs-section .missing-attr-row').forEach(function(row) {
+      var codeEl = row.querySelector('.attr-code') || row.querySelector('input[readonly]');
+      var code = codeEl ? codeEl.value.trim() : (row.getAttribute('data-code') || '');
+      var label = row.querySelector('.attr-label').value.trim();
+      var dtype = row.querySelector('.attr-type').value;
+      var val = row.querySelector('.attr-value').value.trim();
+      if (code && val && !seen[code]) {
+        seen[code] = true;
+        var attr = { attribute_code: code, attribute_label: label || code, data_type: dtype };
+        if (dtype === 'NUMBER' && val !== '') {
+          attr.value_number = parseFloat(val) || null;
+          attr.value_text = val;
+        } else {
+          attr.value_text = val;
+        }
+        attrs.push(attr);
+      }
+    });
+
+    return attrs;
+  }
+
+  function showStatus(msg, isError) {
+    var el = document.getElementById('fix-attrs-status');
+    if (!el) return;
+    el.style.display = 'block';
+    el.className = 'mt-2 alert alert-' + (isError ? 'danger' : 'success') + ' py-2';
+    el.style.fontSize = '0.82rem';
+    el.textContent = msg;
+  }
+
+  function setButtonsLoading(loading) {
+    var b1 = document.getElementById('btn-save-attrs');
+    var b2 = document.getElementById('btn-save-revalidate');
+    if (b1) b1.disabled = loading;
+    if (b2) b2.disabled = loading;
+  }
+
+  // Save Attributes Only
+  var btnSave = document.getElementById('btn-save-attrs');
+  if (btnSave) {
+    btnSave.addEventListener('click', function() {
+      var attrs = collectAttributes();
+      var newAttrs = [];
+      document.querySelectorAll('#missing-attrs-section .missing-attr-row').forEach(function(row) {
+        var val = row.querySelector('.attr-value').value.trim();
+        if (val) newAttrs.push(val);
+      });
+      if (newAttrs.length === 0 && attrs.length === 0) {
+        showStatus('Please fill in at least one attribute value.', true);
+        return;
+      }
+      var requestId = this.getAttribute('data-request-id');
+      setButtonsLoading(true);
+
+      fetch('/api/v1/procurement/requests/' + requestId + '/update-attributes-after-validation/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        body: JSON.stringify({ attributes: attrs }),
+      })
+      .then(function(resp) {
+        if (!resp.ok) return resp.json().then(function(e) { throw new Error(e.error || 'Save failed'); });
+        return resp.json();
+      })
+      .then(function(data) {
+        showStatus('Attributes saved successfully. Reload the page or re-validate.', false);
+        setButtonsLoading(false);
+      })
+      .catch(function(err) {
+        showStatus(err.message, true);
+        setButtonsLoading(false);
+      });
+    });
+  }
+
+  // Save & Re-Validate
+  var btnRevalidate = document.getElementById('btn-save-revalidate');
+  if (btnRevalidate) {
+    btnRevalidate.addEventListener('click', function() {
+      var attrs = collectAttributes();
+      var newAttrs = [];
+      document.querySelectorAll('#missing-attrs-section .missing-attr-row').forEach(function(row) {
+        var val = row.querySelector('.attr-value').value.trim();
+        if (val) newAttrs.push(val);
+      });
+      if (newAttrs.length === 0 && attrs.length === 0) {
+        showStatus('Please fill in at least one attribute value.', true);
+        return;
+      }
+      var requestId = this.getAttribute('data-request-id');
+      setButtonsLoading(true);
+      showStatus('Saving attributes and queuing re-validation…', false);
+
+      fetch('/api/v1/procurement/requests/' + requestId + '/save-and-revalidate/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        body: JSON.stringify({ attributes: attrs }),
+      })
+      .then(function(resp) {
+        if (!resp.ok) return resp.json().then(function(e) { throw new Error(e.error || 'Failed'); });
+        return resp.json();
+      })
+      .then(function(data) {
+        showStatus(data.message || 'Attributes saved. Re-validation queued. Reloading…', false);
+        setTimeout(function() { window.location.reload(); }, 2000);
+      })
+      .catch(function(err) {
+        showStatus(err.message, true);
+        setButtonsLoading(false);
+      });
+    });
+  }
+})();
 </script>
 {% endblock %}

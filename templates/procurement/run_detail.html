@@ -121,7 +121,7 @@
     </div>
     {% if bm.lines.all %}
     <table class="table table-sm" style="font-size:0.75rem">
-      <thead class="table-light"><tr><th>#</th><th>Description</th><th>Quoted</th><th>Min</th><th>Avg</th><th>Max</th><th>Var%</th><th>Status</th><th>Remarks</th></tr></thead>
+      <thead class="table-light"><tr><th>#</th><th>Description</th><th>Quoted</th><th>Min</th><th>Avg</th><th>Max</th><th>Var%</th><th>Status</th><th>Source</th></tr></thead>
       <tbody>
       {% for line in bm.lines.all %}
       <tr>
@@ -139,7 +139,15 @@
           {% elif line.variance_status == "BELOW_BENCHMARK" %}<span class="badge bg-info text-dark">Below</span>
           {% endif %}
         </td>
-        <td>{{ line.remarks|truncatechars:30 }}</td>
+        <td>
+          <span class="badge bg-light text-dark">{{ line.source_type }}</span>
+          {% if line.source_urls %}
+            {% for url in line.source_urls %}
+              <a href="{{ url }}" target="_blank" rel="noopener" class="ms-1" title="{{ url }}"><i class="bi bi-link-45deg"></i></a>
+            {% endfor %}
+          {% endif %}
+          {% if line.reasoning %}<br><details class="d-inline"><summary class="text-muted small" style="cursor:pointer">View reasoning</summary><small class="text-muted">{{ line.reasoning }}</small></details>{% endif %}
+        </td>
       </tr>
       {% endfor %}
       </tbody>

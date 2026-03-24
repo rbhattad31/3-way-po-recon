@@ -59,8 +59,15 @@ class RecommendationAgent:
                     LLMMessage(role="system", content=RecommendationAgent.SYSTEM_PROMPT),
                     LLMMessage(role="user", content=user_msg),
                 ],
+                response_format={"type": "json_object"},
             )
-            return json.loads(response.content)
+            content = (response.content or "").strip()
+            # Strip markdown code fences if present
+            if content.startswith("```"):
+                content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+                if content.endswith("```"):
+                    content = content[:-3].strip()
+            return json.loads(content)
         except (json.JSONDecodeError, Exception) as exc:
             logger.warning("RecommendationAgent LLM call failed: %s", exc)
             return {

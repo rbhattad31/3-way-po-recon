@@ -389,6 +389,15 @@ class BenchmarkResultLine(TimestampMixin):
     )
     remarks = models.TextField(blank=True, default="")
 
+    # Source tracking — what data the benchmark was derived from
+    source_type = models.CharField(
+        max_length=30, blank=True, default="ai_estimate",
+        help_text="oem_catalogue | gcc_market | commodity_derived | compliance_context | ai_estimate | blended",
+    )
+    source_urls = models.JSONField(default=list, blank=True, help_text="URLs of sources used")
+    source_confidence = models.FloatField(null=True, blank=True, help_text="0.0-1.0 confidence in benchmark")
+    reasoning = models.TextField(blank=True, default="", help_text="LLM reasoning for this benchmark")
+
     class Meta:
         db_table = "procurement_benchmark_result_line"
         ordering = ["quotation_line__line_number"]

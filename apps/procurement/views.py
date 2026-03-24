@@ -94,6 +94,10 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
             if self.request and self.request.method == "GET":
                 return [_perm("procurement.view")]
             return [_perm("procurement.create")]
+        if self.action == "update_attributes_after_validation":
+            return [_perm("procurement.edit")]
+        if self.action == "save_and_revalidate":
+            return [_perm("procurement.edit"), _perm("procurement.validate")]
         return super().get_permissions()
 
     def get_serializer_class(self):
@@ -214,6 +218,99 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(ValidationResultSerializer(result).data)
+
+    # ---------- update attributes after validation ----------
+    @action(detail=True, methods=["post"], url_path="update-attributes-after-validation")
+    def update_attributes_after_validation(self, request, pk=None):
+        """Accept corrected/new attributes after a validation failure and save them."""
+        from apps.procurement.services.request_service import AttributeService
+        from apps.auditlog.services import AuditService
+
+        proc_request = self.get_object()
+        attrs_data = request.data.get("attributes", [])
+        if not attrs_data or not isinstance(attrs_data, list):
+            return Response(
+                {"error": "'attributes' must be a non-empty list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        saved = AttributeService.bulk_set_attributes(proc_request, attrs_data)
+        try:
+            AuditService.log(
+                event_type="PROCUREMENT_REQUEST_ATTRIBUTES_UPDATED",
+                entity_type="ProcurementRequest",
+                entity_id=str(proc_request.pk),
+                performed_by=request.user,
+                event_description=(
+                    f"Updated {len(saved)} attribute(s) after validation failure "
+                    f"on request '{proc_request.title}'."
+                ),
+            )
+        except Exception:
+            pass  # audit logging should never block the response
+
+        return Response(
+            ProcurementRequestAttributeSerializer(proc_request.attributes.all(), many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+    # ---------- save attributes + re-validate ----------
+    @action(detail=True, methods=["post"], url_path="save-and-revalidate")
+    def save_and_revalidate(self, request, pk=None):
+        """Update attributes then immediately queue a validation re-run."""
+        from apps.core.enums import AnalysisRunType
+        from apps.procurement.services.request_service import AttributeService
+        from apps.procurement.services.analysis_run_service import AnalysisRunService
+        from apps.procurement.tasks import run_validation_task
+        from apps.auditlog.services import AuditService
+
+        proc_request = self.get_object()
+        attrs_data = request.data.get("attributes", [])
+        if not attrs_data or not isinstance(attrs_data, list):
+            return Response(
+                {"error": "'attributes' must be a non-empty list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        saved = AttributeService.bulk_set_attributes(proc_request, attrs_data)
+
+        # Reset status to DRAFT so validation can re-evaluate
+        if proc_request.status == "FAILED":
+            proc_request.status = "DRAFT"
+            proc_request.save(update_fields=["status", "updated_at"])
+
+        run = AnalysisRunService.create_run(
+            request=proc_request,
+            run_type=AnalysisRunType.VALIDATION,
+            triggered_by=request.user,
+        )
+        run_validation_task.delay(run.pk)
+
+        try:
+            AuditService.log(
+                event_type="PROCUREMENT_REQUEST_ATTRIBUTES_UPDATED",
+                entity_type="ProcurementRequest",
+                entity_id=str(proc_request.pk),
+                performed_by=request.user,
+                event_description=(
+                    f"Updated {len(saved)} attribute(s) and triggered re-validation "
+                    f"(Run {run.run_id}) on request '{proc_request.title}'."
+                ),
+            )
+        except Exception:
+            pass
+
+        return Response(
+            {
+                "attributes": ProcurementRequestAttributeSerializer(
+                    proc_request.attributes.all(), many=True
+                ).data,
+                "run_id": str(run.run_id),
+                "run_status": "queued",
+                "message": f"{len(saved)} attribute(s) saved. Validation re-run queued.",
+            },
+            status=status.HTTP_200_OK,
+        )
 
     # ---------- request prefill: upload ----------
     @action(detail=False, methods=["post"], url_path="prefill")

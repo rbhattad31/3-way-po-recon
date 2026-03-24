@@ -40,21 +40,36 @@ class ScopeCoverageValidationService:
         # Evaluate category rules
         for rule in category_rules:
             condition = rule.condition_json or {}
-            expected_category = condition.get("category_code", rule.rule_code).upper()
 
-            present = expected_category in detected_categories
+            # Support list-based matching: category_codes (plural) with min_match
+            category_codes_list = condition.get("category_codes", [])
+            single_code = condition.get("category_code", "")
+
+            if category_codes_list:
+                upper_codes = [c.upper() for c in category_codes_list]
+                matched = [c for c in upper_codes if c in detected_categories]
+                min_match = condition.get("min_match", 1)
+                present = len(matched) >= min_match
+                match_detail = ", ".join(matched) if matched else ""
+            elif single_code:
+                present = single_code.upper() in detected_categories
+                match_detail = single_code.upper() if present else ""
+            else:
+                expected_fallback = rule.rule_code.upper()
+                present = expected_fallback in detected_categories
+                match_detail = expected_fallback if present else ""
 
             findings.append({
-                "item_code": expected_category,
+                "item_code": rule.rule_code,
                 "item_label": rule.rule_name,
                 "category": ValidationType.SCOPE_COVERAGE,
                 "status": ValidationItemStatus.PRESENT if present else ValidationItemStatus.MISSING,
                 "severity": ValidationSeverity.INFO if present else rule.severity,
                 "source_type": ValidationSourceType.LINE_ITEM,
                 "source_reference": rule.rule_code,
-                "remarks": "" if present else (
-                    rule.failure_message or f"Expected scope category '{expected_category}' not found"
-                ),
+                "remarks": (f"Matched: {match_detail}" if present else (
+                    rule.failure_message or f"Expected scope category not found in line items"
+                )),
             })
 
         # Check config-based expected categories not already covered by rules

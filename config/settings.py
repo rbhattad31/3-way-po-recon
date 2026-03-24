@@ -202,6 +202,12 @@ LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 
+# Bing Web Search API (for benchmark market research)
+BING_SEARCH_API_KEY = os.getenv("BING_SEARCH_API_KEY", "")
+BING_SEARCH_ENDPOINT = os.getenv(
+    "BING_SEARCH_ENDPOINT", "https://api.bing.microsoft.com/v7.0/search",
+)
+
 # Azure Document Intelligence (OCR)
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
 AZURE_DI_KEY = os.getenv("AZURE_DI_KEY", "")

@@ -132,6 +132,111 @@
     </div>
     {% endif %}
 
+    {# ── Fix Missing Attributes Section ── #}
+    {% if validation_result.overall_status == "FAIL" or validation_result.overall_status == "REVIEW_REQUIRED" %}
+    <div class="card border-warning mb-3" id="fix-attributes-card">
+      <div class="card-header bg-warning bg-opacity-10 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-pencil-square me-2"></i>Fix Missing Attributes</h6>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse"
+          data-bs-target="#fixAttrsBody" aria-expanded="true">
+          <i class="bi bi-chevron-down"></i>
+        </button>
+      </div>
+      <div id="fixAttrsBody" class="collapse show">
+        <div class="card-body">
+          <p class="text-muted mb-3" style="font-size: 0.82rem">
+            Fill in the missing attributes below, then save or save &amp; re-validate to improve the completeness score.
+          </p>
+
+          {# Existing Attributes (editable) #}
+          {% if attributes %}
+          <h6 class="mb-2" style="font-size: 0.85rem"><i class="bi bi-pencil me-1"></i>Existing Attributes</h6>
+          <div id="existing-attrs-section" class="mb-3">
+            {% for attr in attributes %}
+            <div class="row g-2 mb-2 existing-attr-row" data-code="{{ attr.attribute_code }}">
+              <div class="col-3">
+                <input type="text" class="form-control form-control-sm" value="{{ attr.attribute_code }}" readonly
+                  style="font-size:0.78rem; background:#f8f9fa;">
+              </div>
+              <div class="col-3">
+                <input type="text" class="form-control form-control-sm attr-label" value="{{ attr.attribute_label }}"
+                  style="font-size:0.78rem;" placeholder="Label">
+              </div>
+              <div class="col-2">
+                <select class="form-select form-select-sm attr-type" style="font-size:0.78rem;">
+                  <option value="TEXT" {% if attr.data_type == "TEXT" %}selected{% endif %}>TEXT</option>
+                  <option value="NUMBER" {% if attr.data_type == "NUMBER" %}selected{% endif %}>NUMBER</option>
+                  <option value="BOOLEAN" {% if attr.data_type == "BOOLEAN" %}selected{% endif %}>BOOLEAN</option>
+                  <option value="JSON" {% if attr.data_type == "JSON" %}selected{% endif %}>JSON</option>
+                  <option value="SELECT" {% if attr.data_type == "SELECT" %}selected{% endif %}>SELECT</option>
+                </select>
+              </div>
+              <div class="col-4">
+                <input type="text" class="form-control form-control-sm attr-value"
+                  value="{% if attr.value_number is not None %}{{ attr.value_number }}{% elif attr.value_json %}{{ attr.value_json }}{% else %}{{ attr.value_text }}{% endif %}"
+                  style="font-size:0.78rem;" placeholder="Value">
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <hr>
+          {% endif %}
+
+          {# Missing Attributes (auto-generated from validation) #}
+          <h6 class="mb-2" style="font-size: 0.85rem"><i class="bi bi-plus-circle me-1 text-danger"></i>Missing Attributes (from validation)</h6>
+          <div id="missing-attrs-section">
+            {% for item in validation_result.missing_items_json %}
+            {% if item.severity == "CRITICAL" or item.severity == "ERROR" or item.severity == "WARNING" %}
+            <div class="row g-2 mb-2 missing-attr-row" data-code="{{ item.item_code }}">
+              <div class="col-3">
+                <input type="text" class="form-control form-control-sm attr-code" value="{{ item.item_code }}"
+                  style="font-size:0.78rem; background:#fff3cd;" readonly>
+              </div>
+              <div class="col-3">
+                <input type="text" class="form-control form-control-sm attr-label" value="{{ item.item_label }}"
+                  style="font-size:0.78rem;" placeholder="Label">
+              </div>
+              <div class="col-2">
+                <select class="form-select form-select-sm attr-type" style="font-size:0.78rem;">
+                  <option value="TEXT" selected>TEXT</option>
+                  <option value="NUMBER">NUMBER</option>
+                  <option value="BOOLEAN">BOOLEAN</option>
+                </select>
+              </div>
+              <div class="col-4">
+                <input type="text" class="form-control form-control-sm attr-value"
+                  style="font-size:0.78rem;" placeholder="Enter value…">
+                <small class="text-muted" style="font-size:0.7rem;">{{ item.remarks|truncatechars:80 }}</small>
+              </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+          </div>
+
+          {# Add custom attribute #}
+          <div class="mt-2 mb-3">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-add-custom-attr">
+              <i class="bi bi-plus-lg me-1"></i>Add Custom Attribute
+            </button>
+          </div>
+
+          {# Action Buttons #}
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-primary btn-sm" id="btn-save-attrs"
+              data-request-id="{{ proc_request.pk }}">
+              <i class="bi bi-save me-1"></i>Save Attributes
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" id="btn-save-revalidate"
+              data-request-id="{{ proc_request.pk }}">
+              <i class="bi bi-arrow-clockwise me-1"></i>Save &amp; Re-Validate
+            </button>
+          </div>
+          <div id="fix-attrs-status" class="mt-2" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     {# Warnings #}
     {% if validation_result.warnings_json %}
     <div class="accordion mb-3" id="warningsAccordion">

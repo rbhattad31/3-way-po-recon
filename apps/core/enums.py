@@ -584,6 +584,8 @@ class ValidationNextAction(models.TextChoices):
     READY_FOR_RECOMMENDATION = "READY_FOR_RECOMMENDATION", "Ready for Recommendation"
     READY_FOR_BENCHMARKING = "READY_FOR_BENCHMARKING", "Ready for Benchmarking"
     REQUEST_REFINEMENT = "REQUEST_REFINEMENT", "Request Refinement"
+    NEEDS_TECHNICAL_REVIEW = "NEEDS_TECHNICAL_REVIEW", "Needs Technical Review"
+    NEEDS_COMMERCIAL_REVIEW = "NEEDS_COMMERCIAL_REVIEW", "Needs Commercial Review"
 
 
 class CreditTransactionType(models.TextChoices):
@@ -593,8 +595,6 @@ class CreditTransactionType(models.TextChoices):
     REFUND = "REFUND", "Refund"
     ADJUST = "ADJUST", "Adjust"
     MONTHLY_RESET = "MONTHLY_RESET", "Monthly Reset"
-    NEEDS_TECHNICAL_REVIEW = "NEEDS_TECHNICAL_REVIEW", "Needs Technical Review"
-    NEEDS_COMMERCIAL_REVIEW = "NEEDS_COMMERCIAL_REVIEW", "Needs Commercial Review"
 
 
 class AttributeDataType(models.TextChoices):

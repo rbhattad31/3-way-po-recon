@@ -67,8 +67,14 @@ class BenchmarkService:
 
             # Step 1 & 2: Resolve benchmarks and compute variance
             line_results = []
+            benchmarks_resolved = 0
+            benchmarks_failed = 0
             for item in line_items:
                 benchmark_data = BenchmarkService._resolve_benchmark(item, use_ai=use_ai)
+                if benchmark_data.get("avg") is not None:
+                    benchmarks_resolved += 1
+                else:
+                    benchmarks_failed += 1
                 variance = BenchmarkService._compute_variance(item, benchmark_data)
                 line_results.append({
                     "item": item,
@@ -78,15 +84,27 @@ class BenchmarkService:
 
             # Step 3: Aggregate and classify risk
             total_quoted = sum(item.total_amount for item in line_items)
-            total_benchmark = sum(
-                lr["benchmark"].get("avg", lr["item"].unit_rate) * lr["item"].quantity
-                for lr in line_results
+            # Only include items with actual benchmark data in the benchmark total
+            total_benchmark = Decimal("0")
+            total_quoted_benchmarked = Decimal("0")
+            for lr in line_results:
+                avg = lr["benchmark"].get("avg")
+                if avg is not None:
+                    total_benchmark += avg * lr["item"].quantity
+                    total_quoted_benchmarked += lr["item"].total_amount
+
+            if total_benchmark and total_quoted_benchmarked:
+                overall_variance_pct = (
+                    (total_quoted_benchmarked - total_benchmark) / total_benchmark * 100
+                )
+            else:
+                overall_variance_pct = None
+
+            risk_level = (
+                BenchmarkService._classify_risk(overall_variance_pct)
+                if overall_variance_pct is not None
+                else BenchmarkRiskLevel.HIGH  # unknown = HIGH risk
             )
-            overall_variance_pct = (
-                ((total_quoted - total_benchmark) / total_benchmark * 100)
-                if total_benchmark else Decimal("0")
-            )
-            risk_level = BenchmarkService._classify_risk(overall_variance_pct)
 
             # Step 4: Persist results
             with transaction.atomic():
@@ -94,14 +112,16 @@ class BenchmarkService:
                     run=run,
                     quotation=quotation,
                     total_quoted_amount=total_quoted,
-                    total_benchmark_amount=total_benchmark,
+                    total_benchmark_amount=total_benchmark if total_benchmark else None,
                     variance_pct=overall_variance_pct,
                     risk_level=risk_level,
                     summary_json={
                         "line_count": len(line_items),
+                        "benchmarks_resolved": benchmarks_resolved,
+                        "benchmarks_failed": benchmarks_failed,
                         "total_quoted": str(total_quoted),
-                        "total_benchmark": str(total_benchmark),
-                        "variance_pct": str(overall_variance_pct),
+                        "total_benchmark": str(total_benchmark) if total_benchmark else None,
+                        "variance_pct": str(overall_variance_pct) if overall_variance_pct is not None else None,
                     },
                 )
 
@@ -119,16 +139,21 @@ class BenchmarkService:
                         variance_pct=v["pct"],
                         variance_status=v["status"],
                         remarks=v.get("remarks", ""),
+                        # Source tracking from ReAct agent
+                        source_type=bm.get("source_type", "ai_estimate"),
+                        source_urls=bm.get("source_urls", []),
+                        source_confidence=bm.get("source_confidence"),
+                        reasoning=bm.get("reasoning", ""),
                     ))
                 BenchmarkResultLine.objects.bulk_create(benchmark_lines)
 
             # Step 5: Finalize
+            variance_str = f"{overall_variance_pct:.1f}%" if overall_variance_pct is not None else "N/A"
             AnalysisRunService.complete_run(
                 run,
-                output_summary=f"Benchmark complete: {risk_level} risk, {overall_variance_pct:.1f}% variance",
+                output_summary=f"Benchmark complete: {risk_level} risk, {variance_str} variance ({benchmarks_resolved}/{len(line_items)} resolved)",
                 confidence_score=0.8 if not use_ai else None,
             )
-
             new_status = (
                 ProcurementRequestStatus.COMPLETED
                 if risk_level in (BenchmarkRiskLevel.LOW, BenchmarkRiskLevel.MEDIUM)
@@ -149,17 +174,19 @@ class BenchmarkService:
     def _resolve_benchmark(
         item: QuotationLineItem,
         *,
-        use_ai: bool = False,
+        use_ai: bool = True,
     ) -> Dict[str, Any]:
-        """Resolve benchmark price range for a line item.
+        """Resolve benchmark price range for a line item via ReAct agent.
 
-        In production, this would query a benchmark database or invoke an AI agent.
-        For now, returns a placeholder that can be extended per domain.
+        The agent uses web-search tools to gather real market data before
+        synthesising a benchmark range.  The quoted price is NOT passed to
+        the agent to avoid anchoring bias.
         """
         if use_ai:
             try:
                 from apps.procurement.agents.benchmark_agent import BenchmarkAgent
-                return BenchmarkAgent.resolve_benchmark_for_item(item)
+                agent = BenchmarkAgent()
+                return agent.resolve_benchmark_for_item(item)
             except Exception:
                 logger.warning("AI benchmark resolution failed for line %s, using fallback", item.pk)
 
@@ -168,7 +195,10 @@ class BenchmarkService:
             "min": None,
             "avg": None,
             "max": None,
-            "source": "none",
+            "source_type": "none",
+            "source_urls": [],
+            "source_confidence": None,
+            "reasoning": "",
         }
 
     @staticmethod
@@ -185,6 +215,8 @@ class BenchmarkService:
                 "remarks": "No benchmark data available",
             }
 
+        # Ensure Decimal arithmetic (avg may arrive as float from AI agent)
+        avg = Decimal(str(avg))
         quoted = item.unit_rate
         pct = ((quoted - avg) / avg) * 100
 

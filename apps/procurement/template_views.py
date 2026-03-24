@@ -12,6 +12,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from apps.auditlog.services import AuditService
 from apps.core.permissions import permission_required_code
 from apps.core.enums import (
+    AnalysisRunStatus,
     AnalysisRunType,
     ProcurementRequestStatus,
     ProcurementRequestType,
@@ -152,10 +153,24 @@ def request_workspace(request, pk):
         run__request=proc_request,
     ).select_related("run").order_by("-created_at").first()
 
-    # Latest benchmark results
-    benchmarks = BenchmarkResult.objects.filter(
-        run__request=proc_request,
-    ).select_related("run", "quotation").prefetch_related("lines").order_by("-created_at")
+    # Latest benchmark results — only from the most recent benchmark run
+    latest_benchmark_run = (
+        AnalysisRun.objects.filter(
+            request=proc_request,
+            run_type=AnalysisRunType.BENCHMARK,
+            status=AnalysisRunStatus.COMPLETED,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    benchmarks = (
+        BenchmarkResult.objects.filter(run=latest_benchmark_run)
+        .select_related("run", "quotation")
+        .prefetch_related("lines")
+        .order_by("-created_at")
+        if latest_benchmark_run
+        else BenchmarkResult.objects.none()
+    )
 
     # Latest compliance
     compliance = ComplianceResult.objects.filter(
