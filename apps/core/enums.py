@@ -269,6 +269,11 @@ class AuditEventType(models.TextChoices):
     BULK_ITEM_CREDIT_BLOCKED = "BULK_ITEM_CREDIT_BLOCKED", "Bulk Item Credit Blocked"
     BULK_JOB_COMPLETED = "BULK_JOB_COMPLETED", "Bulk Job Completed"
     BULK_JOB_FAILED = "BULK_JOB_FAILED", "Bulk Job Failed"
+    # Auth events
+    USER_LOGIN = "USER_LOGIN", "User Login"
+    USER_LOGOUT = "USER_LOGOUT", "User Logout"
+    USER_LOGIN_FAILED = "USER_LOGIN_FAILED", "User Login Failed"
+    PASSWORD_CHANGED = "PASSWORD_CHANGED", "Password Changed"
 
 
 class PermissionOverrideType(models.TextChoices):

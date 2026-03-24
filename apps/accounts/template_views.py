@@ -7,6 +7,7 @@ from django.db import transaction
 from django.db.models import Q, Count
 from django.shortcuts import get_object_or_404, redirect
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.views.generic import ListView, DetailView, TemplateView
 
 from apps.accounts.forms import (
@@ -18,6 +19,7 @@ from apps.accounts.rbac_models import (
     Role, Permission, RolePermission, UserRole, UserPermissionOverride,
 )
 from apps.accounts.rbac_services import RBACEventService
+from apps.core.decorators import observed_action
 from apps.core.permissions import PermissionRequiredMixin
 
 
@@ -71,6 +73,7 @@ class UserListView(PermissionRequiredMixin, ListView):
         return ctx
 
 
+@method_decorator(observed_action("user_create", permission="users.manage", entity_type="User"), name="dispatch")
 class UserCreateView(PermissionRequiredMixin, TemplateView):
     """Create a new user."""
 
@@ -105,6 +108,7 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
         return self.render_to_response({"form": form})
 
 
+@method_decorator(observed_action("user_manage", permission="users.manage", entity_type="User"), name="dispatch")
 class UserDetailView(PermissionRequiredMixin, DetailView):
     """User detail / edit screen with tabs: profile, roles, permissions, overrides."""
 
@@ -349,6 +353,7 @@ class RoleListView(PermissionRequiredMixin, ListView):
         return qs
 
 
+@method_decorator(observed_action("role_manage", permission="roles.manage", entity_type="Role"), name="dispatch")
 class RoleDetailView(PermissionRequiredMixin, DetailView):
     """Role detail / edit screen with permission management."""
 
@@ -442,6 +447,7 @@ class RoleDetailView(PermissionRequiredMixin, DetailView):
         return redirect("accounts:role_detail", pk=role.pk)
 
 
+@method_decorator(observed_action("role_create", permission="roles.manage", entity_type="Role"), name="dispatch")
 class RoleCreateView(PermissionRequiredMixin, TemplateView):
     """Create a new role."""
 
@@ -502,6 +508,7 @@ class PermissionListView(PermissionRequiredMixin, ListView):
 # Role-Permission Matrix
 # ============================================================================
 
+@method_decorator(observed_action("role_permission_matrix", permission="roles.manage", entity_type="Role"), name="dispatch")
 class RolePermissionMatrixView(PermissionRequiredMixin, TemplateView):
     """Full role-permission matrix with bulk edit capability."""
 

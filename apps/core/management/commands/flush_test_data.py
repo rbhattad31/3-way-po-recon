@@ -148,6 +148,13 @@ class Command(BaseCommand):
         except ImportError:
             pass
 
+        # --- Copilot / Chat ---
+        from apps.copilot.models import CopilotSessionArtifact, CopilotMessage, CopilotSession
+
+        for model in [CopilotSessionArtifact, CopilotMessage, CopilotSession]:
+            count = model.objects.all().delete()[0]
+            self.stdout.write(f"  {model.__name__}: {count}")
+
         # --- Documents ---
         from apps.documents.models import (
             GRNLineItem, GoodsReceiptNote, InvoiceLineItem,
