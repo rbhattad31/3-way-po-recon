@@ -48,6 +48,8 @@ INSTALLED_APPS = [
     "apps.extraction_core",
     "apps.extraction_configs",
     "apps.extraction_documents",
+    "apps.posting",
+    "apps.posting_core",
 ]
 
 MIDDLEWARE = [

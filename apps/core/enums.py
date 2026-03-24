@@ -269,6 +269,23 @@ class AuditEventType(models.TextChoices):
     BULK_ITEM_CREDIT_BLOCKED = "BULK_ITEM_CREDIT_BLOCKED", "Bulk Item Credit Blocked"
     BULK_JOB_COMPLETED = "BULK_JOB_COMPLETED", "Bulk Job Completed"
     BULK_JOB_FAILED = "BULK_JOB_FAILED", "Bulk Job Failed"
+    # Posting events
+    POSTING_STARTED = "POSTING_STARTED", "Posting Started"
+    POSTING_ELIGIBILITY_PASSED = "POSTING_ELIGIBILITY_PASSED", "Posting Eligibility Passed"
+    POSTING_ELIGIBILITY_FAILED = "POSTING_ELIGIBILITY_FAILED", "Posting Eligibility Failed"
+    POSTING_MAPPING_COMPLETED = "POSTING_MAPPING_COMPLETED", "Posting Mapping Completed"
+    POSTING_MAPPING_REVIEW_REQUIRED = "POSTING_MAPPING_REVIEW_REQUIRED", "Posting Mapping Review Required"
+    POSTING_VALIDATION_COMPLETED = "POSTING_VALIDATION_COMPLETED", "Posting Validation Completed"
+    POSTING_READY_TO_SUBMIT = "POSTING_READY_TO_SUBMIT", "Posting Ready to Submit"
+    POSTING_SUBMITTED = "POSTING_SUBMITTED", "Posting Submitted"
+    POSTING_SUCCEEDED = "POSTING_SUCCEEDED", "Posting Succeeded"
+    POSTING_FAILED = "POSTING_FAILED", "Posting Failed"
+    POSTING_APPROVED = "POSTING_APPROVED", "Posting Approved"
+    POSTING_REJECTED = "POSTING_REJECTED", "Posting Rejected"
+    POSTING_FIELD_CORRECTED = "POSTING_FIELD_CORRECTED", "Posting Field Corrected"
+    ERP_REFERENCE_IMPORT_STARTED = "ERP_REFERENCE_IMPORT_STARTED", "ERP Reference Import Started"
+    ERP_REFERENCE_IMPORT_COMPLETED = "ERP_REFERENCE_IMPORT_COMPLETED", "ERP Reference Import Completed"
+    ERP_REFERENCE_IMPORT_FAILED = "ERP_REFERENCE_IMPORT_FAILED", "ERP Reference Import Failed"
     # Auth events
     USER_LOGIN = "USER_LOGIN", "User Login"
     USER_LOGOUT = "USER_LOGOUT", "User Logout"
@@ -775,3 +792,106 @@ class BulkItemStatus(models.TextChoices):
     FAILED = "FAILED", "Failed"
     DUPLICATE = "DUPLICATE", "Duplicate"
     UNSUPPORTED = "UNSUPPORTED", "Unsupported"
+
+
+# ---------------------------------------------------------------------------
+# Invoice Posting enums
+# ---------------------------------------------------------------------------
+
+
+class InvoicePostingStatus(models.TextChoices):
+    NOT_READY = "NOT_READY", "Not Ready"
+    READY_FOR_POSTING = "READY_FOR_POSTING", "Ready for Posting"
+    MAPPING_IN_PROGRESS = "MAPPING_IN_PROGRESS", "Mapping In Progress"
+    MAPPING_REVIEW_REQUIRED = "MAPPING_REVIEW_REQUIRED", "Mapping Review Required"
+    READY_TO_SUBMIT = "READY_TO_SUBMIT", "Ready to Submit"
+    SUBMISSION_IN_PROGRESS = "SUBMISSION_IN_PROGRESS", "Submission In Progress"
+    POSTED = "POSTED", "Posted"
+    POST_FAILED = "POST_FAILED", "Post Failed"
+    REJECTED = "REJECTED", "Rejected"
+    RETRY_PENDING = "RETRY_PENDING", "Retry Pending"
+    SKIPPED = "SKIPPED", "Skipped"
+
+
+class PostingRunStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    RUNNING = "RUNNING", "Running"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+class PostingStage(models.TextChoices):
+    ELIGIBILITY_CHECK = "ELIGIBILITY_CHECK", "Eligibility Check"
+    SNAPSHOT_BUILD = "SNAPSHOT_BUILD", "Snapshot Build"
+    REFERENCE_RESOLUTION = "REFERENCE_RESOLUTION", "Reference Resolution"
+    MAPPING = "MAPPING", "Mapping"
+    VALIDATION = "VALIDATION", "Validation"
+    REVIEW_ROUTING = "REVIEW_ROUTING", "Review Routing"
+    PAYLOAD_BUILD = "PAYLOAD_BUILD", "Payload Build"
+    SUBMISSION = "SUBMISSION", "Submission"
+    FINALIZATION = "FINALIZATION", "Finalization"
+
+
+class PostingReviewQueue(models.TextChoices):
+    ITEM_MAPPING_REVIEW = "ITEM_MAPPING_REVIEW", "Item Mapping Review"
+    VENDOR_MAPPING_REVIEW = "VENDOR_MAPPING_REVIEW", "Vendor Mapping Review"
+    TAX_REVIEW = "TAX_REVIEW", "Tax Review"
+    COST_CENTER_REVIEW = "COST_CENTER_REVIEW", "Cost Center Review"
+    PO_REVIEW = "PO_REVIEW", "PO Review"
+    POSTING_OPS = "POSTING_OPS", "Posting Ops"
+
+
+class ERPReferenceBatchType(models.TextChoices):
+    VENDOR = "VENDOR", "Vendor"
+    ITEM = "ITEM", "Item"
+    TAX = "TAX", "Tax"
+    COST_CENTER = "COST_CENTER", "Cost Center"
+    OPEN_PO = "OPEN_PO", "Open PO"
+
+
+class ERPReferenceBatchStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+    PARTIAL = "PARTIAL", "Partial"
+
+
+class PostingFieldCategory(models.TextChoices):
+    HEADER = "HEADER", "Header"
+    LINE_ITEM = "LINE_ITEM", "Line Item"
+    TAX = "TAX", "Tax"
+    ACCOUNTING = "ACCOUNTING", "Accounting"
+    REFERENCE = "REFERENCE", "Reference"
+
+
+class PostingFieldSourceType(models.TextChoices):
+    INVOICE = "INVOICE", "Invoice"
+    INVOICE_LINE = "INVOICE_LINE", "Invoice Line"
+    VENDOR_REF = "VENDOR_REF", "Vendor Reference"
+    ITEM_REF = "ITEM_REF", "Item Reference"
+    TAX_REF = "TAX_REF", "Tax Reference"
+    COST_CENTER_REF = "COST_CENTER_REF", "Cost Center Reference"
+    PO_REF = "PO_REF", "PO Reference"
+    MANUAL_OVERRIDE = "MANUAL_OVERRIDE", "Manual Override"
+    RULE = "RULE", "Rule"
+
+
+class PostingIssueSeverity(models.TextChoices):
+    INFO = "INFO", "Info"
+    WARNING = "WARNING", "Warning"
+    ERROR = "ERROR", "Error"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class PostingRuleType(models.TextChoices):
+    CATEGORY_MAP = "CATEGORY_MAP", "Category Mapping"
+    TAX_MAP = "TAX_MAP", "Tax Code Mapping"
+    COST_CENTER_MAP = "COST_CENTER_MAP", "Cost Center Mapping"
+    LINE_TYPE_MAP = "LINE_TYPE_MAP", "Line Type Mapping"
+    BLOCK_RULE = "BLOCK_RULE", "Block Rule"
+
+
+class PostingApprovalAction(models.TextChoices):
+    APPROVED = "APPROVED", "Approved"
+    REJECTED = "REJECTED", "Rejected"

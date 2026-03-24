@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}ERP Reference Imports — AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'posting:posting-workbench' %}" class="text-decoration-none">Posting Workbench</a></li>
+    <li class="breadcrumb-item active">ERP Reference Imports</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold"><i class="bi bi-cloud-upload me-2"></i>ERP Reference Imports</h5>
+    <p class="mb-0 mt-1 text-muted small">Upload vendor, item, tax code, cost center, and PO reference Excel files.</p>
+  </div>
+</div>
+
+{# ── Filter ── #}
+<form method="get" class="row g-2 mb-3">
+  <div class="col-md-3">
+    <select name="batch_type" class="form-select form-select-sm">
+      <option value="">All Types</option>
+      <option value="VENDOR" {% if batch_type == 'VENDOR' %}selected{% endif %}>Vendor</option>
+      <option value="ITEM" {% if batch_type == 'ITEM' %}selected{% endif %}>Item</option>
+      <option value="TAX_CODE" {% if batch_type == 'TAX_CODE' %}selected{% endif %}>Tax Code</option>
+      <option value="COST_CENTER" {% if batch_type == 'COST_CENTER' %}selected{% endif %}>Cost Center</option>
+      <option value="PO" {% if batch_type == 'PO' %}selected{% endif %}>PO</option>
+    </select>
+  </div>
+  <div class="col-md-2">
+    <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-search me-1"></i>Filter</button>
+  </div>
+</form>
+
+{# ── Table ── #}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>File</th>
+          <th>Status</th>
+          <th>Rows</th>
+          <th>Imported By</th>
+          <th>As-Of</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in page_obj %}
+        <tr>
+          <td>{{ b.pk }}</td>
+          <td><span class="badge bg-primary">{{ b.batch_type }}</span></td>
+          <td class="text-truncate" style="max-width:200px">{{ b.source_file_name|default:"—" }}</td>
+          <td>
+            {% if b.status == 'COMPLETED' %}
+              <span class="badge bg-success">Completed</span>
+            {% elif b.status == 'IN_PROGRESS' %}
+              <span class="badge bg-info">In Progress</span>
+            {% elif b.status == 'FAILED' %}
+              <span class="badge bg-danger">Failed</span>
+            {% else %}
+              <span class="badge bg-secondary">{{ b.status }}</span>
+            {% endif %}
+          </td>
+          <td>{{ b.valid_row_count|default:0 }} / {{ b.row_count|default:0 }}</td>
+          <td>{{ b.imported_by.email|default:"—" }}</td>
+          <td class="text-muted small">{{ b.source_as_of|date:"d M Y"|default:"—" }}</td>
+          <td class="text-muted small">{{ b.created_at|date:"d M Y H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="8" class="text-center text-muted py-4">No import batches found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Pagination ── #}
+{% if page_obj.has_other_pages %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm justify-content-center">
+    {% if page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&batch_type={{ batch_type }}">«</a></li>
+    {% endif %}
+    <li class="page-item disabled"><span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span></li>
+    {% if page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&batch_type={{ batch_type }}">»</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}
