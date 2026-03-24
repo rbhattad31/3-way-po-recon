@@ -94,6 +94,12 @@ PERMISSIONS = [
     {"code": "procurement.run_analysis", "name": "Run Procurement Analysis", "module": "procurement", "action": "run_analysis", "description": "Trigger recommendation and benchmark analysis runs"},
     {"code": "procurement.manage_quotations", "name": "Manage Quotations", "module": "procurement", "action": "manage_quotations", "description": "Upload and manage supplier quotations"},
     {"code": "procurement.view_results", "name": "View Analysis Results", "module": "procurement", "action": "view_results", "description": "View recommendation, benchmark, and compliance results"},
+    # Credits
+    {"code": "credits.view", "name": "View Credits", "module": "credits", "action": "view", "description": "View credit accounts and balances"},
+    {"code": "credits.manage", "name": "Manage Credits", "module": "credits", "action": "manage", "description": "Allocate, adjust, and manage user credit accounts"},
+    # Bulk Extraction
+    {"code": "extraction.bulk_view", "name": "View Bulk Extraction", "module": "extraction", "action": "bulk_view", "description": "View bulk extraction jobs and items"},
+    {"code": "extraction.bulk_create", "name": "Create Bulk Extraction", "module": "extraction", "action": "bulk_create", "description": "Start new bulk extraction jobs"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -113,6 +119,7 @@ ROLE_MATRIX = {
         "agents.view", "agents.use_copilot",
         "purchase_orders.view", "grns.view", "vendors.view",
         "extraction.approve", "extraction.reject", "extraction.reprocess",
+        "extraction.bulk_view", "extraction.bulk_create",
     ],
     "REVIEWER": [
         "invoices.view",
@@ -139,8 +146,11 @@ ROLE_MATRIX = {
         "recommendations.escalate", "recommendations.reprocess",
         "recommendations.route_procurement", "recommendations.vendor_clarification",
         "extraction.approve", "extraction.reject", "extraction.reprocess",
+        "extraction.bulk_view", "extraction.bulk_create",
         # Procurement oversight
         "procurement.view", "procurement.view_results",
+        # Credits
+        "credits.view", "credits.manage",
     ],
     "AUDITOR": [
         "invoices.view",
@@ -152,6 +162,8 @@ ROLE_MATRIX = {
         "purchase_orders.view", "grns.view", "vendors.view",
         # Procurement read-only
         "procurement.view", "procurement.view_results",
+        # Bulk extraction read-only
+        "extraction.bulk_view",
     ],
     "SYSTEM_AGENT": [
         # Scoped agent orchestration + execution
@@ -169,6 +181,7 @@ ROLE_MATRIX = {
         "recommendations.route_procurement", "recommendations.vendor_clarification",
         "cases.escalate", "extraction.reprocess",
         "extraction.approve", "extraction.reject",
+        "extraction.bulk_view", "extraction.bulk_create",
         "reviews.assign",
         # Procurement (automated pipeline)
         "procurement.view", "procurement.run_analysis", "procurement.view_results",

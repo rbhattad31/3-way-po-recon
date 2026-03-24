@@ -11,6 +11,14 @@ that ensure every event includes the mandatory metadata:
 - permission_checked + access_granted
 - duration_ms
 - before/after where applicable
+
+Event taxonomy (stored as ``event_category`` in metadata):
+  business    — user-visible state changes (approve, reject, correct, reprocess)
+  governance  — governed pipeline decisions (jurisdiction, schema, review routing)
+  telemetry   — low-level pipeline steps (normalization, validation, evidence capture)
+
+UI timelines should prioritize business + governance events and collapse or
+filter telemetry-level events to avoid noise.
 """
 from __future__ import annotations
 
@@ -39,9 +47,16 @@ class ExtractionAuditService:
         schema_version: str = "",
         prompt_code: str = "",
         prompt_version: str = "",
+        event_category: str = "telemetry",
         **extra: Any,
     ) -> dict:
-        """Build common metadata dict for extraction events."""
+        """Build common metadata dict for extraction events.
+
+        event_category values:
+          business   — user-visible state changes (approve, reject, correct)
+          governance — governed pipeline decisions (jurisdiction, schema, routing)
+          telemetry  — low-level pipeline steps (normalization, evidence capture)
+        """
         meta = {
             "extraction_run_id": extraction_run_id,
             "country_code": country_code,
@@ -50,6 +65,7 @@ class ExtractionAuditService:
             "schema_version": schema_version,
             "prompt_code": prompt_code,
             "prompt_version": prompt_version,
+            "event_category": event_category,
         }
         meta.update(extra)
         return meta
@@ -75,6 +91,7 @@ class ExtractionAuditService:
             metadata=cls._base_metadata(
                 extraction_run_id=extraction_run_id,
                 document_id=document_id,
+                event_category="governance",
                 **kwargs,
             ),
             status_after="PENDING",
@@ -104,6 +121,7 @@ class ExtractionAuditService:
                 regime_code=regime_code,
                 jurisdiction_source=jurisdiction_source,
                 confidence=confidence,
+                event_category="governance",
                 **kwargs,
             ),
             duration_ms=duration_ms,
@@ -129,6 +147,7 @@ class ExtractionAuditService:
                 extraction_run_id=extraction_run_id,
                 schema_code=schema_code,
                 schema_version=schema_version,
+                event_category="governance",
                 **kwargs,
             ),
             status_after="SCHEMA_SELECTED",
@@ -180,6 +199,7 @@ class ExtractionAuditService:
                 overall_confidence=overall_confidence,
                 field_count=field_count,
                 extraction_method=extraction_method,
+                event_category="governance",
                 **kwargs,
             ),
             duration_ms=duration_ms,
@@ -204,6 +224,7 @@ class ExtractionAuditService:
             metadata=cls._base_metadata(
                 extraction_run_id=extraction_run_id,
                 error_message=error_message[:500],
+                event_category="governance",
                 **kwargs,
             ),
             duration_ms=duration_ms,
@@ -296,6 +317,7 @@ class ExtractionAuditService:
                 extraction_run_id=extraction_run_id,
                 review_queue=review_queue,
                 reasons=reasons or [],
+                event_category="governance",
                 **kwargs,
             ),
         )
@@ -327,6 +349,7 @@ class ExtractionAuditService:
                 field_code=field_code,
                 old_value=old_value[:200],
                 new_value=new_value[:200],
+                event_category="business",
                 permission_checked=permission_checked,
                 access_granted=access_granted,
                 **kwargs,
@@ -335,59 +358,20 @@ class ExtractionAuditService:
             status_after=new_value[:100],
         )
 
-    @classmethod
-    def log_extraction_approved(
-        cls,
-        extraction_run_id: int,
-        user=None,
-        comments: str = "",
-        permission_checked: str = "extraction.approve",
-        access_granted: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        AuditService.log_event(
-            entity_type="ExtractionRun",
-            entity_id=extraction_run_id,
-            event_type=AuditEventType.EXTRACTION_APPROVED,
-            description="Extraction approved",
-            user=user,
-            metadata=cls._base_metadata(
-                extraction_run_id=extraction_run_id,
-                comments=comments[:500],
-                permission_checked=permission_checked,
-                access_granted=access_granted,
-                **kwargs,
-            ),
-            status_before="COMPLETED",
-            status_after="APPROVED",
-        )
+    # REMOVED: duplicate emission — approval/rejection audit is now emitted
+    # by ExtractionApprovalService._log_audit() (legacy flow) and
+    # GovernanceTrailService.record_approval_decision() (governed flow).
+    # These methods are retained as no-ops for backward compatibility.
 
     @classmethod
-    def log_extraction_rejected(
-        cls,
-        extraction_run_id: int,
-        user=None,
-        reason: str = "",
-        permission_checked: str = "extraction.reject",
-        access_granted: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        AuditService.log_event(
-            entity_type="ExtractionRun",
-            entity_id=extraction_run_id,
-            event_type=AuditEventType.EXTRACTION_REJECTED,
-            description=f"Extraction rejected: {reason[:100]}",
-            user=user,
-            metadata=cls._base_metadata(
-                extraction_run_id=extraction_run_id,
-                reason=reason[:500],
-                permission_checked=permission_checked,
-                access_granted=access_granted,
-                **kwargs,
-            ),
-            status_before="COMPLETED",
-            status_after="REJECTED",
-        )
+    def log_extraction_approved(cls, **kwargs: Any) -> None:
+        """DEPRECATED: No-op. Use GovernanceTrailService.record_approval_decision()."""
+        pass
+
+    @classmethod
+    def log_extraction_rejected(cls, **kwargs: Any) -> None:
+        """DEPRECATED: No-op. Use GovernanceTrailService.record_approval_decision()."""
+        pass
 
     @classmethod
     def log_extraction_reprocessed(
@@ -408,6 +392,7 @@ class ExtractionAuditService:
             metadata=cls._base_metadata(
                 extraction_run_id=extraction_run_id,
                 reason=reason[:500],
+                event_category="business",
                 permission_checked=permission_checked,
                 access_granted=access_granted,
                 **kwargs,
@@ -432,8 +417,7 @@ class ExtractionAuditService:
             user=user,
             metadata=cls._base_metadata(
                 extraction_run_id=extraction_run_id,
-                reason=reason[:500],
-                permission_checked=permission_checked,
+                reason=reason[:500],                event_category="business",                permission_checked=permission_checked,
                 access_granted=access_granted,
                 **kwargs,
             ),
@@ -456,6 +440,7 @@ class ExtractionAuditService:
             metadata=cls._base_metadata(
                 extraction_run_id=extraction_run_id,
                 comment=comment[:500],
+                event_category="business",
                 **kwargs,
             ),
         )
@@ -480,7 +465,7 @@ class ExtractionAuditService:
             event_type=AuditEventType.SETTINGS_UPDATED,
             description=f"{entity_type} updated",
             user=user,
-            metadata=kwargs,
+            metadata={"event_category": "governance", **kwargs},
             input_snapshot=before,
             output_snapshot=after,
         )

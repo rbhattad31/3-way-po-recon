@@ -166,6 +166,21 @@
             <tr><td colspan="9" class="text-center text-muted py-4">No line items extracted</td></tr>
             {% endfor %}
           </tbody>
+          {% if line_items_totals %}
+          <tfoot class="table-light">
+            <tr class="fw-semibold">
+              <td></td>
+              <td class="text-end small text-muted">Totals</td>
+              <td class="text-end">{{ line_items_totals.quantity|floatformat:2 }}</td>
+              <td class="text-end"></td>
+              <td class="text-end"></td>
+              <td class="text-end">{{ line_items_totals.tax_amount|floatformat:2 }}</td>
+              <td class="text-end">{{ line_items_totals.total|floatformat:2 }}</td>
+              <td></td>
+              <td></td>
+            </tr>
+          </tfoot>
+          {% endif %}
         </table>
       </div>
     </div>

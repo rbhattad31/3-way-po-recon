@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% block title %}Credit Management – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Extraction</a></li>
+    <li class="breadcrumb-item active">Credit Management</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-coin me-2"></i>Credit Management
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      Manage invoice extraction credit allocations for all users.
+    </p>
+  </div>
+</div>
+
+{# ── Search ── #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body py-2 px-3">
+    <form method="get" class="d-flex align-items-center gap-2">
+      <div class="input-group input-group-sm" style="max-width:320px">
+        <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search"></i></span>
+        <input type="text" name="q" class="form-control border-start-0" placeholder="Search by name or email…" value="{{ q }}">
+      </div>
+      <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-search me-1"></i>Search</button>
+      {% if q %}
+      <a href="{% url 'extraction:credit_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-circle me-1"></i>Clear</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+{# ── Accounts Table ── #}
+<div class="ap-card">
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table w-100">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Email</th>
+          <th style="text-align:right">Balance</th>
+          <th style="text-align:right">Reserved</th>
+          <th style="text-align:right">Available</th>
+          <th style="text-align:right">Monthly Limit</th>
+          <th style="text-align:right">Monthly Used</th>
+          <th style="width:80px">Status</th>
+          <th style="width:80px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for acct in accounts %}
+        <tr>
+          <td class="fw-medium">{{ acct.user.get_full_name|default:acct.user.email }}</td>
+          <td style="font-size:var(--ap-font-size-sm)">{{ acct.user.email }}</td>
+          <td style="text-align:right;font-weight:600">{{ acct.balance_credits }}</td>
+          <td style="text-align:right">{{ acct.reserved_credits }}</td>
+          <td style="text-align:right;font-weight:600;{% if acct.available_credits <= 5 %}color:var(--ap-danger){% elif acct.available_credits <= 20 %}color:var(--ap-warning){% else %}color:var(--ap-success){% endif %}">
+            {{ acct.available_credits }}
+          </td>
+          <td style="text-align:right">{% if acct.monthly_limit > 0 %}{{ acct.monthly_limit }}{% else %}<span style="color:var(--ap-text-muted)">∞</span>{% endif %}</td>
+          <td style="text-align:right">{{ acct.monthly_used }}</td>
+          <td>
+            {% if acct.is_active %}
+            <span class="ap-badge ap-badge-success">Active</span>
+            {% else %}
+            <span class="ap-badge ap-badge-danger">Inactive</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="{% url 'extraction:credit_account_detail' user_id=acct.user_id %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
+              Manage
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
+            <i class="bi bi-coin d-block mb-2" style="font-size:2rem"></i>
+            No credit accounts found.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Pagination ── #}
+{% if page_obj.has_other_pages %}
+<nav class="mt-3 d-flex justify-content-center">
+  <ul class="pagination pagination-sm mb-0">
+    {% if page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if q %}&q={{ q }}{% endif %}">&laquo;</a></li>
+    {% endif %}
+    {% for num in page_obj.paginator.page_range %}
+      {% if page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?page={{ num }}{% if q %}&q={{ q }}{% endif %}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if q %}&q={{ q }}{% endif %}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}

@@ -236,9 +236,14 @@ class ConfidenceBreakdown:
 
 
 @dataclass
-class ExtractionResult:
+class ExtractionExecutionResult:
     """
     Complete extraction pipeline result.
+
+    Named ExtractionExecutionResult to distinguish from the Django model
+    ExtractionResult in apps/extraction, which is the UI-facing summary record.
+    This dataclass carries the full governed pipeline output in memory and is
+    not persisted directly.
 
     Provides a clean, typed output contract with jurisdiction metadata,
     schema template, extracted fields, coverage metrics, confidence
@@ -310,6 +315,25 @@ class ExtractionResult:
         return d
 
 
+# DEPRECATED (target removal: 2026-Q3) — This alias exists only to support
+# legacy imports.  All internal code has been migrated to
+# ExtractionExecutionResult.  Do NOT use this alias in new code.
+# The Django model apps.extraction.models.ExtractionResult is the UI-facing
+# summary record; this dataclass is the in-memory pipeline result.
+import warnings as _warnings
+
+
+def __getattr__(name):
+    if name == "ExtractionResult":
+        _warnings.warn(
+            "ExtractionResult alias is deprecated; use ExtractionExecutionResult",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return ExtractionExecutionResult
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # ---------------------------------------------------------------------------
 # ExtractionService
 # ---------------------------------------------------------------------------
@@ -345,7 +369,7 @@ class ExtractionService:
         vendor_id: int | None = None,
         extraction_document_id: int | None = None,
         enable_llm: bool = False,
-    ) -> ExtractionResult:
+    ) -> ExtractionExecutionResult:
         """
         Run the full extraction pipeline.
 
@@ -360,10 +384,10 @@ class ExtractionService:
                                      unresolved / low-confidence fields.
 
         Returns:
-            ExtractionResult with jurisdiction, template, fields, and metrics.
+            ExtractionExecutionResult with jurisdiction, template, fields, and metrics.
         """
         start = timezone.now()
-        result = ExtractionResult()
+        result = ExtractionExecutionResult()
 
         # ── Step 1: Resolve jurisdiction ──────────────────────────────
         resolution = JurisdictionResolutionService.resolve(
@@ -592,7 +616,7 @@ class ExtractionService:
         primary: ResolutionResult,
         ocr_text: str,
         document_type: str,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
     ) -> ExtractionSchemaDefinition | None:
         """
         When the primary resolution's jurisdiction has no schema and
@@ -822,7 +846,7 @@ class ExtractionService:
     @classmethod
     def _enrich_page_evidence(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         parsed_doc: Any,
     ) -> None:
         """
@@ -868,7 +892,7 @@ class ExtractionService:
     @classmethod
     def _extract_line_items(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         template: ExtractionTemplate,
         parsed_doc: Any,
         resolution: ResolutionResult,
@@ -961,7 +985,7 @@ class ExtractionService:
     @classmethod
     def _normalize_fields(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         resolution: ResolutionResult,
         parsed_doc: Any = None,
     ) -> None:
@@ -1005,7 +1029,7 @@ class ExtractionService:
     @classmethod
     def _validate_fields(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         template: ExtractionTemplate,
         resolution: ResolutionResult,
     ) -> None:
@@ -1039,7 +1063,7 @@ class ExtractionService:
     @classmethod
     def _compute_metrics(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         template: ExtractionTemplate,
     ) -> None:
         """Compute overall confidence and coverage percentages."""
@@ -1088,7 +1112,7 @@ class ExtractionService:
     @classmethod
     def _check_mandatory_fields(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         template: ExtractionTemplate,
     ) -> None:
         """Append warnings for any mandatory fields not extracted."""
@@ -1107,7 +1131,7 @@ class ExtractionService:
     @classmethod
     def _run_llm_extraction(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         template: ExtractionTemplate,
         ocr_text: str,
         resolution: ResolutionResult,
@@ -1116,7 +1140,7 @@ class ExtractionService:
         Run LLM extraction for fields that deterministic extraction
         did not resolve or resolved with low confidence.
 
-        Merges LLM results into the ExtractionResult, updating
+        Merges LLM results into the ExtractionExecutionResult, updating
         extraction_method to HYBRID when LLM contributes fields.
         """
         from apps.extraction_core.services.llm_extraction_adapter import (
@@ -1165,7 +1189,7 @@ class ExtractionService:
     @classmethod
     def _find_unresolved_fields(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         template: ExtractionTemplate,
     ) -> set[str]:
         """
@@ -1187,7 +1211,7 @@ class ExtractionService:
     @classmethod
     def _merge_llm_results(
         cls,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
         llm_results: dict[str, FieldResult],
     ) -> int:
         """
@@ -1235,7 +1259,7 @@ class ExtractionService:
         extraction_document_id: int | None,
         resolution: ResolutionResult,
         schema: ExtractionSchemaDefinition | None,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
     ) -> None:
         """
         Persist jurisdiction + extraction metadata on ExtractionDocument.
@@ -1351,7 +1375,7 @@ class ExtractionService:
     def _persist_field_results(
         cls,
         extraction_document_id: int | None,
-        result: ExtractionResult,
+        result: ExtractionExecutionResult,
     ) -> None:
         """
         Persist per-field extraction results as ExtractionFieldResult rows.

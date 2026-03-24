@@ -1,4 +1,14 @@
-"""Celery tasks for the extraction pipeline."""
+"""Celery tasks for the extraction pipeline.
+
+EXECUTION OWNERSHIP
+───────────────────
+The authoritative execution record is ExtractionRun (apps.extraction_core).
+This task creates DocumentUpload records and triggers extraction, but the
+ExtractionRun model is the runtime source of truth once extraction starts.
+Credit lifecycle: reserve (view) → consume (task, on OCR success) or
+refund (task, on OCR failure). reference_type="document_upload",
+reference_id=<DocumentUpload.pk>.
+"""
 from __future__ import annotations
 
 import logging
@@ -70,7 +80,29 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         if not extraction_resp.success:
             _fail_upload(upload, extraction_resp.error_message)
             ExtractionResultPersistenceService.save(upload, None, extraction_resp)
+            _refund_credit_for_upload(upload)
             return {"status": "error", "message": extraction_resp.error_message}
+
+        # 1a. Document type classification — reject non-invoices early
+        doc_type_result = _classify_document(extraction_resp.ocr_text)
+        if doc_type_result and doc_type_result.document_type not in ("INVOICE", "CREDIT_NOTE", "DEBIT_NOTE") \
+                and doc_type_result.confidence >= 0.60 and not doc_type_result.is_ambiguous:
+            reject_msg = (
+                f"Document classified as {doc_type_result.document_type} "
+                f"(confidence: {doc_type_result.confidence:.0%}), not an invoice. "
+                f"Please upload this document through the appropriate channel."
+            )
+            _fail_upload(upload, reject_msg)
+            _refund_credit_for_upload(upload)
+            logger.info(
+                "Upload %s rejected: classified as %s (confidence=%.2f, keywords=%s)",
+                upload_id, doc_type_result.document_type,
+                doc_type_result.confidence, doc_type_result.matched_keywords,
+            )
+            return {"status": "rejected", "message": reject_msg, "document_type": doc_type_result.document_type}
+
+        # 1b. Run governed extraction pipeline (enrichment)
+        _run_governed_pipeline(upload, extraction_resp)
 
         # 2. Parse
         parser = ExtractionParserService()
@@ -173,6 +205,10 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",
             upload_id, invoice.pk, invoice.status,
         )
+
+        # ── Credit: consume reserved credit on successful extraction ──
+        _consume_credit_for_upload(upload)
+
         return {
             "status": "ok",
             "upload_id": upload_id,
@@ -186,6 +222,8 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
     except Exception as exc:
         logger.exception("Extraction pipeline failed for upload %s", upload_id)
         _fail_upload(upload, str(exc))
+        # ── Credit: refund reserved credit — extraction failed (OCR/pipeline error) ──
+        _refund_credit_for_upload(upload)
         # Audit: extraction failed
         try:
             from apps.auditlog.services import AuditService
@@ -206,6 +244,67 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             raise exc
 
 
+def _classify_document(ocr_text: str):
+    """Run document type classification on OCR text.
+
+    Returns a ClassificationResult or None if classification is unavailable.
+    Non-invoice types (GRN, PURCHASE_ORDER, DELIVERY_NOTE, STATEMENT) trigger
+    early rejection in the extraction task.
+    """
+    if not ocr_text or not ocr_text.strip():
+        return None
+    try:
+        from apps.extraction_core.services.document_classifier import DocumentTypeClassifier
+        return DocumentTypeClassifier.classify(ocr_text)
+    except Exception as exc:
+        logger.warning("Document classification failed, proceeding as INVOICE: %s", exc)
+        return None
+
+
+def _run_governed_pipeline(upload: DocumentUpload, extraction_resp) -> None:
+    """Run the governed extraction pipeline as enrichment.
+
+    Creates an ExtractionDocument linked to this upload, then runs the
+    ExtractionPipeline to produce an ExtractionRun with jurisdiction,
+    schema, and review-routing metadata.  This is additive — the legacy
+    adapter result is still used for Invoice persistence.
+
+    Gracefully degrades on any failure (missing jurisdiction profiles,
+    schema configs, etc.) — the upload continues as "Legacy".
+    """
+    try:
+        from apps.extraction_documents.models import ExtractionDocument
+        from apps.extraction_core.services.extraction_pipeline import ExtractionPipeline
+
+        ext_doc = ExtractionDocument.objects.create(
+            document_upload=upload,
+            file_name=upload.original_filename,
+            file_path=upload.blob_path or "",
+            file_hash=upload.file_hash or "",
+            page_count=getattr(extraction_resp, "ocr_page_count", 0) or 0,
+            ocr_text=extraction_resp.ocr_text or "",
+        )
+
+        run = ExtractionPipeline.run(
+            extraction_document_id=ext_doc.pk,
+            ocr_text=extraction_resp.ocr_text or "",
+            document_type="INVOICE",
+            vendor_id=None,
+            enable_llm=False,
+            user=upload.uploaded_by,
+        )
+        logger.info(
+            "Governed pipeline completed for upload %s: run=%s status=%s confidence=%.2f",
+            upload.pk, run.pk, run.status,
+            run.overall_confidence or 0.0,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Governed pipeline skipped for upload %s (falling back to Legacy): %s",
+            upload.pk, exc,
+        )
+
+
 def _fail_upload(upload: DocumentUpload, message: str) -> None:
     upload.processing_state = FileProcessingState.FAILED
     upload.processing_message = message[:2000]
@@ -221,6 +320,53 @@ def _fail_upload(upload: DocumentUpload, message: str) -> None:
             upload.save(update_fields=["blob_path", "updated_at"])
         except Exception as mv_err:
             logger.warning("Blob move to exception/ failed: %s", mv_err)
+
+
+def _consume_credit_for_upload(upload: DocumentUpload) -> None:
+    """Consume reserved credit after successful extraction.
+
+    Policy: ChargePolicy.for_extraction_success() → CONSUME.
+    reference_type='document_upload', reference_id=upload.pk.
+    Idempotent — CreditService.consume() skips if already consumed.
+    """
+    if not upload.uploaded_by_id:
+        return
+    try:
+        from apps.extraction.services.credit_service import CreditService
+        from apps.extraction.credit_models import UserCreditAccount
+        if not UserCreditAccount.objects.filter(user_id=upload.uploaded_by_id, reserved_credits__gt=0).exists():
+            return
+        CreditService.consume(
+            upload.uploaded_by, credits=1,
+            reference_type="document_upload",
+            reference_id=str(upload.pk),
+            remarks=f"Consumed for extraction task upload_id={upload.pk}",
+        )
+    except Exception as credit_exc:
+        logger.warning("Credit consume failed for upload %s: %s", upload.pk, credit_exc)
+
+
+def _refund_credit_for_upload(upload: DocumentUpload) -> None:
+    """Refund reserved credit when extraction fails (OCR/pipeline error).
+
+    Policy: ChargePolicy.for_ocr_failure() / for_pipeline_failure() / for_non_invoice_document() → REFUND.
+    Idempotent — CreditService.refund() skips if already refunded.
+    """
+    if not upload.uploaded_by_id:
+        return
+    try:
+        from apps.extraction.services.credit_service import CreditService
+        from apps.extraction.credit_models import UserCreditAccount
+        if not UserCreditAccount.objects.filter(user_id=upload.uploaded_by_id, reserved_credits__gt=0).exists():
+            return
+        CreditService.refund(
+            upload.uploaded_by, credits=1,
+            reference_type="document_upload",
+            reference_id=str(upload.pk),
+            remarks=f"Refund for failed extraction task upload_id={upload.pk}",
+        )
+    except Exception as credit_exc:
+        logger.warning("Credit refund failed for upload %s: %s", upload.pk, credit_exc)
 
 
 

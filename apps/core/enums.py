@@ -253,6 +253,27 @@ class AuditEventType(models.TextChoices):
     PROMPT_UPDATED = "PROMPT_UPDATED", "Prompt Updated"
     ROUTING_RULE_UPDATED = "ROUTING_RULE_UPDATED", "Routing Rule Updated"
     ANALYTICS_SNAPSHOT_CREATED = "ANALYTICS_SNAPSHOT_CREATED", "Analytics Snapshot Created"
+    # Credit management events
+    CREDIT_CHECKED = "CREDIT_CHECKED", "Credit Checked"
+    CREDIT_RESERVED = "CREDIT_RESERVED", "Credit Reserved"
+    CREDIT_CONSUMED = "CREDIT_CONSUMED", "Credit Consumed"
+    CREDIT_REFUNDED = "CREDIT_REFUNDED", "Credit Refunded"
+    CREDIT_ALLOCATION_UPDATED = "CREDIT_ALLOCATION_UPDATED", "Credit Allocation Updated"
+    CREDIT_LIMIT_EXCEEDED = "CREDIT_LIMIT_EXCEEDED", "Credit Limit Exceeded"
+    CREDIT_MONTHLY_RESET = "CREDIT_MONTHLY_RESET", "Credit Monthly Reset"
+    # Bulk extraction events
+    BULK_JOB_CREATED = "BULK_JOB_CREATED", "Bulk Job Created"
+    BULK_JOB_STARTED = "BULK_JOB_STARTED", "Bulk Job Started"
+    BULK_ITEM_REGISTERED = "BULK_ITEM_REGISTERED", "Bulk Item Registered"
+    BULK_ITEM_SKIPPED = "BULK_ITEM_SKIPPED", "Bulk Item Skipped"
+    BULK_ITEM_CREDIT_BLOCKED = "BULK_ITEM_CREDIT_BLOCKED", "Bulk Item Credit Blocked"
+    BULK_JOB_COMPLETED = "BULK_JOB_COMPLETED", "Bulk Job Completed"
+    BULK_JOB_FAILED = "BULK_JOB_FAILED", "Bulk Job Failed"
+    # Auth events
+    USER_LOGIN = "USER_LOGIN", "User Login"
+    USER_LOGOUT = "USER_LOGOUT", "User Logout"
+    USER_LOGIN_FAILED = "USER_LOGIN_FAILED", "User Login Failed"
+    PASSWORD_CHANGED = "PASSWORD_CHANGED", "Password Changed"
 
 
 class PermissionOverrideType(models.TextChoices):
@@ -563,6 +584,15 @@ class ValidationNextAction(models.TextChoices):
     READY_FOR_RECOMMENDATION = "READY_FOR_RECOMMENDATION", "Ready for Recommendation"
     READY_FOR_BENCHMARKING = "READY_FOR_BENCHMARKING", "Ready for Benchmarking"
     REQUEST_REFINEMENT = "REQUEST_REFINEMENT", "Request Refinement"
+
+
+class CreditTransactionType(models.TextChoices):
+    ALLOCATE = "ALLOCATE", "Allocate"
+    RESERVE = "RESERVE", "Reserve"
+    CONSUME = "CONSUME", "Consume"
+    REFUND = "REFUND", "Refund"
+    ADJUST = "ADJUST", "Adjust"
+    MONTHLY_RESET = "MONTHLY_RESET", "Monthly Reset"
     NEEDS_TECHNICAL_REVIEW = "NEEDS_TECHNICAL_REVIEW", "Needs Technical Review"
     NEEDS_COMMERCIAL_REVIEW = "NEEDS_COMMERCIAL_REVIEW", "Needs Commercial Review"
 
@@ -713,3 +743,35 @@ class CountryPackStatus(models.TextChoices):
     DRAFT = "DRAFT", "Draft"
     ACTIVE = "ACTIVE", "Active"
     DEPRECATED = "DEPRECATED", "Deprecated"
+
+
+# ---------------------------------------------------------------------------
+# Bulk Extraction Intake enums
+# ---------------------------------------------------------------------------
+
+
+class BulkSourceType(models.TextChoices):
+    LOCAL_FOLDER = "LOCAL_FOLDER", "Local Folder"
+    GOOGLE_DRIVE = "GOOGLE_DRIVE", "Google Drive"
+    ONEDRIVE = "ONEDRIVE", "OneDrive"
+
+
+class BulkJobStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    SCANNING = "SCANNING", "Scanning"
+    PROCESSING = "PROCESSING", "Processing"
+    COMPLETED = "COMPLETED", "Completed"
+    PARTIAL_FAILED = "PARTIAL_FAILED", "Partial Failed"
+    FAILED = "FAILED", "Failed"
+
+
+class BulkItemStatus(models.TextChoices):
+    DISCOVERED = "DISCOVERED", "Discovered"
+    SKIPPED = "SKIPPED", "Skipped"
+    CREDIT_BLOCKED = "CREDIT_BLOCKED", "Credit Blocked"
+    REGISTERED = "REGISTERED", "Registered"
+    PROCESSING = "PROCESSING", "Processing"
+    PROCESSED = "PROCESSED", "Processed"
+    FAILED = "FAILED", "Failed"
+    DUPLICATE = "DUPLICATE", "Duplicate"
+    UNSUPPORTED = "UNSUPPORTED", "Unsupported"

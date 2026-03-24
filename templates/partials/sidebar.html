@@ -28,8 +28,16 @@
       {% has_permission "invoices.create" as can_extract %}
       {% if can_extract %}
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'extraction' %}active fw-bold{% endif %}" href="{% url 'extraction:workbench' %}">
+        <a class="nav-link {% if request.resolver_match.app_name == 'extraction' and request.resolver_match.url_name == 'workbench' %}active fw-bold{% endif %}" href="{% url 'extraction:workbench' %}">
           <i class="bi bi-robot me-2"></i>Invoice Extraction Agent
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "extraction.bulk_view" as can_bulk %}
+      {% if can_bulk %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'bulk_job_list' or request.resolver_match.url_name == 'bulk_job_detail' %}active fw-bold{% endif %}" href="{% url 'extraction:bulk_job_list' %}">
+          <i class="bi bi-collection me-2"></i>Bulk Extraction
         </a>
       </li>
       {% endif %}
@@ -154,6 +162,14 @@
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.url_name == 'role_matrix' %}active fw-bold{% endif %}" href="{% url 'accounts:role_matrix' %}">
           <i class="bi bi-grid-3x3 me-2"></i>Role Matrix
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "credits.manage" as can_manage_credits %}
+      {% if can_manage_credits %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'credit_account_list' or request.resolver_match.url_name == 'credit_account_detail' %}active fw-bold{% endif %}" href="{% url 'extraction:credit_account_list' %}">
+          <i class="bi bi-coin me-2"></i>Credits
         </a>
       </li>
       {% endif %}

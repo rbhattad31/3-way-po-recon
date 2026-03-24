@@ -144,6 +144,11 @@ class ExtractionApprovalService:
     ) -> ExtractionApproval:
         """Approve an extraction after optional field corrections.
 
+        Concurrency: Locks the ExtractionApproval row via select_for_update()
+        inside the atomic block.  Only PENDING → APPROVED is allowed.
+        Simultaneous approve/reject calls will serialize on the row lock;
+        the second caller will see a non-PENDING status and raise ValueError.
+
         ``corrections`` format::
 
             {
@@ -154,6 +159,12 @@ class ExtractionApprovalService:
                 ]
             }
         """
+        # Lock the row to prevent concurrent approve/reject/reprocess
+        approval = (
+            ExtractionApproval.objects
+            .select_for_update()
+            .get(pk=approval.pk)
+        )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
@@ -259,6 +270,10 @@ class ExtractionApprovalService:
             "Extraction approved for invoice %s by %s (corrections=%d, touchless=%s)",
             invoice.pk, user, len(correction_records), approval.is_touchless,
         )
+
+        # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
+        cls._record_governance_trail(approval, "APPROVE", user)
+
         return approval
 
     # ------------------------------------------------------------------
@@ -273,7 +288,17 @@ class ExtractionApprovalService:
         user,
         reason: str = "",
     ) -> ExtractionApproval:
-        """Reject an extraction — invoice stays in PENDING_APPROVAL."""
+        """Reject an extraction — invoice stays in PENDING_APPROVAL.
+
+        Concurrency: Locks the ExtractionApproval row via select_for_update().
+        Only PENDING → REJECTED is allowed.
+        """
+        # Lock the row to prevent concurrent approve/reject/reprocess
+        approval = (
+            ExtractionApproval.objects
+            .select_for_update()
+            .get(pk=approval.pk)
+        )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
@@ -300,6 +325,10 @@ class ExtractionApprovalService:
         )
 
         logger.info("Extraction rejected for invoice %s by %s", invoice.pk, user)
+
+        # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
+        cls._record_governance_trail(approval, "REJECT", user, reason)
+
         return approval
 
     # ------------------------------------------------------------------
@@ -511,3 +540,28 @@ class ExtractionApprovalService:
             )
         except Exception:
             logger.exception("Failed to log audit event for invoice %s", invoice.pk)
+
+    @staticmethod
+    def _record_governance_trail(approval, action: str, user, comments: str = ""):
+        """Mirror an approval decision to ExtractionApprovalRecord via GovernanceTrailService.
+
+        Silently skips if no ExtractionRun is linked (legacy records).
+        """
+        try:
+            ext_result = approval.extraction_result
+            run = getattr(ext_result, "extraction_run", None) if ext_result else None
+            if run is None:
+                logger.warning(
+                    "Skipping governance trail for approval %s — no ExtractionRun linked",
+                    approval.pk,
+                )
+                return
+            from apps.extraction_core.services.governance_trail import GovernanceTrailService
+            GovernanceTrailService.record_approval_decision(
+                run=run, action=action, user=user, comments=comments,
+            )
+        except Exception:
+            logger.exception(
+                "GovernanceTrailService.record_approval_decision failed for approval %s",
+                approval.pk,
+            )

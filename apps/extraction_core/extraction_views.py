@@ -252,7 +252,11 @@ class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
-        """Approve an extraction run."""
+        """Approve an extraction run.
+
+        Delegates exclusively to GovernanceTrailService — the sole writer
+        of ExtractionApprovalRecord.
+        """
         self.required_permission = "extraction.approve"
         self.check_permissions(request)
 
@@ -260,33 +264,17 @@ class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = ApproveRejectRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        from django.utils import timezone
-        from apps.core.enums import ExtractionApprovalAction
-
-        approval, _ = ExtractionApprovalRecord.objects.update_or_create(
-            extraction_run=run,
-            defaults={
-                "action": ExtractionApprovalAction.APPROVED,
-                "approved_by": request.user,
-                "comments": serializer.validated_data.get("comments", ""),
-                "decided_at": timezone.now(),
-                "created_by": request.user,
-            },
-        )
-
-        from apps.extraction_core.services.extraction_audit import (
-            ExtractionAuditService,
-        )
-        ExtractionAuditService.log_extraction_approved(
-            extraction_run_id=run.pk,
-            user=request.user,
+        from apps.extraction_core.services.governance_trail import GovernanceTrailService
+        record = GovernanceTrailService.record_approval_decision(
+            run=run, action="APPROVE", user=request.user,
+            comments=serializer.validated_data.get("comments", ""),
         )
 
         from apps.extraction_core.extraction_serializers import (
             ExtractionApprovalRecordSerializer,
         )
         return Response(
-            ExtractionApprovalRecordSerializer(approval).data,
+            ExtractionApprovalRecordSerializer(record).data,
             status=status.HTTP_200_OK,
         )
 
@@ -294,7 +282,11 @@ class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
-        """Reject an extraction run."""
+        """Reject an extraction run.
+
+        Delegates exclusively to GovernanceTrailService — the sole writer
+        of ExtractionApprovalRecord.
+        """
         self.required_permission = "extraction.reject"
         self.check_permissions(request)
 
@@ -302,33 +294,17 @@ class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = ApproveRejectRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        from django.utils import timezone
-        from apps.core.enums import ExtractionApprovalAction
-
-        approval, _ = ExtractionApprovalRecord.objects.update_or_create(
-            extraction_run=run,
-            defaults={
-                "action": ExtractionApprovalAction.REJECTED,
-                "approved_by": request.user,
-                "comments": serializer.validated_data.get("comments", ""),
-                "decided_at": timezone.now(),
-                "created_by": request.user,
-            },
-        )
-
-        from apps.extraction_core.services.extraction_audit import (
-            ExtractionAuditService,
-        )
-        ExtractionAuditService.log_extraction_rejected(
-            extraction_run_id=run.pk,
-            user=request.user,
+        from apps.extraction_core.services.governance_trail import GovernanceTrailService
+        record = GovernanceTrailService.record_approval_decision(
+            run=run, action="REJECT", user=request.user,
+            comments=serializer.validated_data.get("comments", ""),
         )
 
         from apps.extraction_core.extraction_serializers import (
             ExtractionApprovalRecordSerializer,
         )
         return Response(
-            ExtractionApprovalRecordSerializer(approval).data,
+            ExtractionApprovalRecordSerializer(record).data,
             status=status.HTTP_200_OK,
         )
 
@@ -336,11 +312,24 @@ class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def reprocess(self, request, pk=None):
-        """Reprocess an extraction run (re-run pipeline)."""
+        """Reprocess an extraction run (re-run pipeline).
+
+        Blocked if the run already has an APPROVED governance record —
+        prevents reprocess from racing with approval finalization.
+        """
         self.required_permission = "extraction.reprocess"
         self.check_permissions(request)
 
         run = self.get_object()
+
+        # Guard: prevent reprocess if already approved
+        if ExtractionApprovalRecord.objects.filter(
+            extraction_run=run, action="APPROVED",
+        ).exists():
+            return Response(
+                {"detail": "Cannot reprocess — extraction has already been approved."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         from apps.extraction_core.services.extraction_audit import (
             ExtractionAuditService,

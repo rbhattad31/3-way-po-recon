@@ -381,7 +381,12 @@ class EntityExtractionProfile(BaseModel):
 
 class ExtractionRun(BaseModel):
     """
-    Primary extraction execution record.
+    Authoritative execution record for a governed extraction run.
+
+    Created and updated exclusively by ExtractionPipeline
+    (apps/extraction_core/services/extraction_pipeline.py).
+    ExtractionResult in apps/extraction is the UI-facing summary derived
+    from this record.
 
     Tracks a single extraction pipeline invocation end-to-end, linking
     the resolved jurisdiction, schema, prompt, and confidence metrics.
@@ -737,7 +742,13 @@ class ExtractionIssue(TimestampMixin):
 
 class ExtractionApprovalRecord(BaseModel):
     """
-    Approval gate for an extraction run.
+    Governed pipeline-level approval/review decision record.
+
+    Written exclusively by GovernanceTrailService as a mirror of decisions
+    made in ExtractionApproval. Do not write to this model directly from
+    UI views or approval flows.
+    Supports ESCALATE and SEND_BACK actions not present in ExtractionApproval,
+    which are recorded here only and do not change business approval state.
     """
 
     extraction_run = models.OneToOneField(

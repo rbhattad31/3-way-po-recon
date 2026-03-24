@@ -78,7 +78,10 @@ def extraction_workbench(request):
     """Main workbench page: recent extractions + upload form."""
     qs = (
         ExtractionResult.objects
-        .select_related("document_upload", "invoice", "invoice__vendor")
+        .select_related(
+            "document_upload", "invoice", "invoice__vendor",
+            "extraction_run",  # avoid N+1 in get_execution_context()
+        )
         .order_by("-created_at")
     )
     qs = _scope_extractions_for_user(qs, request.user)
@@ -148,26 +151,15 @@ def extraction_workbench(request):
         for ea in ExtractionApproval.objects.filter(invoice_id__in=invoice_ids):
             approval_map[ea.invoice_id] = ea
 
-    # Pre-load review queue from ExtractionRun (new pipeline models)
-    try:
-        from apps.extraction_core.models import ExtractionRun
-        doc_upload_ids = [r.document_upload_id for r in page_obj if r.document_upload_id]
-        queue_map = {}
-        if doc_upload_ids:
-            runs = (
-                ExtractionRun.objects
-                .filter(document__document_upload_id__in=doc_upload_ids)
-                .values_list("document__document_upload_id", "review_queue")
-                .order_by("document__document_upload_id", "-created_at")
-            )
-            for doc_id, queue in runs:
-                if doc_id not in queue_map:
-                    queue_map[doc_id] = queue
-        for r in page_obj:
-            r.review_queue = queue_map.get(r.document_upload_id, "")
-    except Exception:
-        for r in page_obj:
-            r.review_queue = ""
+    # Pre-load execution context (governed pipeline or legacy fallback)
+    from apps.extraction.services.execution_context import get_execution_context
+    for r in page_obj:
+        ctx = get_execution_context(r)
+        r.review_queue = ctx.review_queue or ""
+        r.extraction_source = ctx.source
+        # Prefer deterministic confidence from invoice over LLM self-report
+        if r.invoice and r.invoice.extraction_confidence is not None:
+            r.confidence = r.invoice.extraction_confidence
 
     # ── Approval tab data ──
     from apps.extraction.services.approval_service import ExtractionApprovalService
@@ -206,6 +198,22 @@ def extraction_workbench(request):
 
     active_tab = request.GET.get("tab", "runs")
 
+    # ── Failed / rejected uploads (no ExtractionResult created) ──
+    failed_uploads_qs = (
+        DocumentUpload.objects
+        .filter(processing_state=FileProcessingState.FAILED)
+        .order_by("-updated_at")
+    )
+    if getattr(request.user, "role", None) == UserRole.AP_PROCESSOR:
+        failed_uploads_qs = failed_uploads_qs.filter(uploaded_by=request.user)
+    failed_uploads_paginator = Paginator(failed_uploads_qs, 20)
+    failed_uploads_page = failed_uploads_paginator.get_page(request.GET.get("failed_page"))
+    failed_uploads_count = failed_uploads_paginator.count
+
+    # ── Credit usage summary for logged-in user ──
+    from apps.extraction.services.credit_service import CreditService
+    credit_summary = CreditService.get_usage_summary(request.user)
+
     return render(request, "extraction/workbench.html", {
         "results": page_obj,
         "page_obj": page_obj,
@@ -219,6 +227,10 @@ def extraction_workbench(request):
         "analytics_cached_at": analytics_cached_at,
         "approval_statuses": ExtractionApprovalStatus.choices,
         "active_tab": active_tab,
+        "credit_summary": credit_summary,
+        "failed_uploads": failed_uploads_page,
+        "failed_uploads_page_obj": failed_uploads_page,
+        "failed_uploads_count": failed_uploads_count,
     })
 
 
@@ -227,7 +239,7 @@ def extraction_workbench(request):
 # ────────────────────────────────────────────────────────────────
 @login_required
 @require_POST
-@permission_required_code("invoices.create")
+@permission_required_code("invoices.create")  # Upload only — edit uses extraction.correct
 @observed_action("extraction.upload_and_extract", permission="invoices.create", entity_type="DocumentUpload", audit_event="INVOICE_UPLOADED")
 def extraction_upload(request):
     """Handle file upload and run extraction pipeline (standalone)."""
@@ -244,6 +256,22 @@ def extraction_upload(request):
         messages.error(request, "File too large. Maximum size is 20 MB.")
         return redirect("extraction:workbench")
 
+    # ── Credit check: reserve 1 credit before proceeding ──
+    from apps.extraction.services.credit_service import CreditService
+    credit_check = CreditService.check_can_reserve(request.user, credits=1)
+    if not credit_check.allowed:
+        messages.error(request, credit_check.message)
+        return redirect("extraction:workbench")
+
+    reserve_result = CreditService.reserve(
+        request.user, credits=1,
+        reference_type="document_upload",
+        remarks=f"Reserved for upload: {uploaded_file.name}",
+    )
+    if not reserve_result.allowed:
+        messages.error(request, reserve_result.message)
+        return redirect("extraction:workbench")
+
     # Compute SHA-256 hash
     sha256 = hashlib.sha256()
     for chunk in uploaded_file.chunks():
@@ -252,17 +280,43 @@ def extraction_upload(request):
     uploaded_file.seek(0)
 
     # Create DocumentUpload record
-    doc_upload = DocumentUpload.objects.create(
-        original_filename=uploaded_file.name,
-        file_size=uploaded_file.size,
-        file_hash=file_hash,
-        content_type=uploaded_file.content_type,
-        document_type=DocumentType.INVOICE,
-        processing_state=FileProcessingState.PROCESSING,
-        uploaded_by=request.user,
-    )
+    try:
+        doc_upload = DocumentUpload.objects.create(
+            original_filename=uploaded_file.name,
+            file_size=uploaded_file.size,
+            file_hash=file_hash,
+            content_type=uploaded_file.content_type,
+            document_type=DocumentType.INVOICE,
+            processing_state=FileProcessingState.PROCESSING,
+            uploaded_by=request.user,
+        )
+    except Exception as exc:
+        # Refund the reserved credit — setup failed before processing
+        CreditService.refund(
+            request.user, credits=1,
+            reference_type="document_upload",
+            remarks=f"Refund: DocumentUpload creation failed — {exc}",
+        )
+        raise
 
-    # Save file to a temp location for extraction
+    # Try blob upload first — required for async Celery path
+    _try_blob_upload(doc_upload, uploaded_file)
+
+    # If blob upload succeeded, dispatch via Celery task (async on server)
+    # Credit consume/refund happens inside the Celery task
+    if doc_upload.blob_path:
+        from apps.extraction.tasks import process_invoice_upload_task
+        from apps.core.utils import dispatch_task
+        dispatch_task(process_invoice_upload_task, upload_id=doc_upload.pk)
+        _invalidate_extraction_caches(request.user)
+        messages.success(
+            request,
+            f"'{uploaded_file.name}' uploaded successfully. "
+            f"Extraction agent is processing — refresh to see results."
+        )
+        return redirect("extraction:workbench")
+
+    # Fallback: no blob storage — run extraction synchronously with local file
     tmp_fd, tmp_path = tempfile.mkstemp(
         suffix=os.path.splitext(uploaded_file.name)[1]
     )
@@ -271,13 +325,16 @@ def extraction_upload(request):
             for chunk in uploaded_file.chunks():
                 tmp_f.write(chunk)
 
-        # Also try blob upload (optional — extraction workbench works without it)
-        _try_blob_upload(doc_upload, uploaded_file)
-
-        # Run extraction pipeline (standalone — no case creation)
         result = _run_extraction_pipeline(doc_upload, tmp_path)
 
         if result["success"]:
+            # Consume the reserved credit — extraction succeeded
+            CreditService.consume(
+                request.user, credits=1,
+                reference_type="document_upload",
+                reference_id=str(doc_upload.pk),
+                remarks=f"Consumed for successful extraction: {uploaded_file.name}",
+            )
             _invalidate_extraction_caches(request.user)
             messages.success(
                 request,
@@ -286,12 +343,31 @@ def extraction_upload(request):
             )
             return redirect("extraction:console", pk=result["extraction_result_id"])
         else:
+            # Extraction attempted but failed — refund credit (OCR failure)
+            CreditService.refund(
+                request.user, credits=1,
+                reference_type="document_upload",
+                reference_id=str(doc_upload.pk),
+                remarks=f"Refund (extraction failed): {uploaded_file.name}",
+            )
             _invalidate_extraction_caches(request.user)
             messages.error(
                 request,
                 f"Extraction failed for '{uploaded_file.name}': {result['error']}"
             )
             return redirect("extraction:workbench")
+    except Exception as exc:
+        # Technical failure before pipeline truly started — refund
+        try:
+            CreditService.refund(
+                request.user, credits=1,
+                reference_type="document_upload",
+                reference_id=str(doc_upload.pk),
+                remarks=f"Refund: sync extraction setup failed — {exc}",
+            )
+        except Exception:
+            logger.exception("Credit refund failed during sync extraction error")
+        raise
     finally:
         try:
             os.unlink(tmp_path)
@@ -542,51 +618,70 @@ def extraction_rerun(request, pk):
         messages.error(request, "Original document is not available for re-extraction (no blob path).")
         return redirect("extraction:console", pk=pk)
 
+    # ── Guard: prevent reprocess if approval is already finalized ──
+    if ext.invoice_id:
+        from apps.extraction.models import ExtractionApproval
+        from apps.core.enums import ExtractionApprovalStatus
+        finalized = ExtractionApproval.objects.filter(
+            invoice_id=ext.invoice_id,
+            status__in=[ExtractionApprovalStatus.APPROVED, ExtractionApprovalStatus.AUTO_APPROVED],
+        ).exists()
+        if finalized:
+            messages.error(request, "Cannot reprocess — extraction has already been approved.")
+            return redirect("extraction:console", pk=pk)
+
     # Capture reprocess reason from modal form
     reason = request.POST.get("reason", "")
     details = request.POST.get("details", "")
 
-    try:
-        from apps.documents.blob_service import download_blob_to_tempfile
-        tmp_path = download_blob_to_tempfile(upload.blob_path)
-    except Exception as exc:
-        messages.error(request, f"Failed to download document: {exc}")
+    # ── Credit: reserve 1 credit for reprocess (ChargePolicy.for_reprocess → CONSUME) ──
+    from apps.extraction.services.credit_service import CreditService
+    credit_check = CreditService.check_can_reserve(request.user, credits=1)
+    if not credit_check.allowed:
+        messages.error(request, credit_check.message)
         return redirect("extraction:console", pk=pk)
 
-    try:
-        result = _run_extraction_pipeline(upload, tmp_path)
-        if result["success"]:
-            _invalidate_extraction_caches(request.user)
+    reserve_result = CreditService.reserve(
+        request.user, credits=1,
+        reference_type="reprocess",
+        reference_id=str(upload.pk),
+        remarks=f"Reserved for reprocess: upload_id={upload.pk}",
+    )
+    if not reserve_result.allowed:
+        messages.error(request, reserve_result.message)
+        return redirect("extraction:console", pk=pk)
 
-            # Log reprocess reason to audit trail
-            from apps.auditlog.services import AuditService
-            from apps.core.enums import AuditEventType
-            AuditService.log_event(
-                entity_type="ExtractionResult",
-                entity_id=result["extraction_result_id"],
-                event_type=AuditEventType.EXTRACTION_REPROCESSED,
-                description=f"Extraction reprocessed: {reason or 'no reason provided'}",
-                user=request.user,
-                invoice_id=ext.invoice_id,
-                metadata={
-                    "reason": reason,
-                    "details": details[:500] if details else "",
-                    "previous_extraction_id": ext.pk,
-                    "new_extraction_id": result["extraction_result_id"],
-                },
-            )
+    # Log reprocess reason to audit trail before dispatching
+    from apps.auditlog.services import AuditService
+    from apps.core.enums import AuditEventType
+    AuditService.log_event(
+        entity_type="ExtractionResult",
+        entity_id=ext.pk,
+        event_type=AuditEventType.EXTRACTION_REPROCESSED,
+        description=f"Extraction reprocess triggered: {reason or 'no reason provided'}",
+        user=request.user,
+        invoice_id=ext.invoice_id,
+        metadata={
+            "reason": reason,
+            "details": details[:500] if details else "",
+            "previous_extraction_id": ext.pk,
+        },
+    )
 
-            messages.success(request, "Re-extraction completed successfully.")
-            return redirect("extraction:console", pk=result["extraction_result_id"])
-        else:
-            _invalidate_extraction_caches(request.user)
-            messages.error(request, f"Re-extraction failed: {result['error']}")
-            return redirect("extraction:console", pk=pk)
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+    # Reset upload state and dispatch via Celery task
+    upload.processing_state = FileProcessingState.PROCESSING
+    upload.save(update_fields=["processing_state", "updated_at"])
+
+    from apps.extraction.tasks import process_invoice_upload_task
+    from apps.core.utils import dispatch_task
+    dispatch_task(process_invoice_upload_task, upload_id=upload.pk)
+    _invalidate_extraction_caches(request.user)
+
+    messages.success(
+        request,
+        "Re-extraction started. The agent is processing — refresh to see results."
+    )
+    return redirect("extraction:workbench")
 
 
 # ────────────────────────────────────────────────────────────────
@@ -600,7 +695,10 @@ def extraction_ajax_filter(request):
     """Return filtered extraction results as JSON for AJAX table refresh."""
     qs = (
         ExtractionResult.objects
-        .select_related("document_upload", "invoice", "invoice__vendor")
+        .select_related(
+            "document_upload", "invoice", "invoice__vendor",
+            "extraction_run",
+        )
         .order_by("-created_at")
     )
     qs = _scope_extractions_for_user(qs, request.user)
@@ -691,7 +789,10 @@ def extraction_export_csv(request):
     """Export extraction results to CSV."""
     qs = (
         ExtractionResult.objects
-        .select_related("document_upload", "invoice", "invoice__vendor")
+        .select_related(
+            "document_upload", "invoice", "invoice__vendor",
+            "extraction_run",
+        )
         .order_by("-created_at")
     )
 
@@ -779,10 +880,10 @@ EDITABLE_LINE_FIELDS = {
 
 @login_required
 @require_POST
-@permission_required_code("invoices.create")
+@permission_required_code("extraction.correct")
 @observed_action(
     "extraction.edit_extracted_values",
-    permission="invoices.create",
+    permission="extraction.correct",
     entity_type="Invoice",
 )
 def extraction_edit_values(request, pk):
@@ -1179,6 +1280,10 @@ def extraction_console(request, pk):
 
     extracted_data = ext.raw_response or {}
 
+    # Prefer deterministic confidence from invoice over LLM self-report
+    if invoice and invoice.extraction_confidence is not None:
+        ext.confidence = invoice.extraction_confidence
+
     # ── Header / tax / line items from invoice ──
     if invoice:
         line_items_qs = list(invoice.line_items.order_by("line_number"))
@@ -1240,6 +1345,22 @@ def extraction_console(request, pk):
                     "Line Number": li.line_number,
                 },
             })
+
+    # ── Line item totals for template footer ──
+    from decimal import Decimal, InvalidOperation
+    def _to_dec(v):
+        if v is None:
+            return Decimal(0)
+        try:
+            return Decimal(str(v))
+        except (InvalidOperation, ValueError):
+            return Decimal(0)
+
+    line_items_totals = {
+        "quantity": sum(_to_dec(li.get("quantity")) for li in line_items),
+        "tax_amount": sum(_to_dec(li.get("tax_amount")) for li in line_items),
+        "total": sum(_to_dec(li.get("total")) for li in line_items),
+    }
 
     # ── Enrichment data from raw_response or invoice context ──
     if isinstance(extracted_data, dict):
@@ -1576,35 +1697,40 @@ def extraction_console(request, pk):
     User = get_user_model()
     assignable_users = User.objects.filter(is_active=True).order_by("email")[:50]
 
-    # ── ExtractionRun data (new pipeline models) ──
+    # ── Execution context (governed pipeline or legacy fallback) ──
+    from apps.extraction.services.execution_context import get_execution_context
+    exec_ctx = get_execution_context(ext)
+
+    # Use execution context to load ExtractionRun + corrections (single lookup)
     extraction_run = None
     corrections = []
     correction_count = 0
-    try:
-        from apps.extraction_core.models import ExtractionRun
-        if ext.document_upload_id:
+    if exec_ctx.extraction_run_id:
+        try:
+            from apps.extraction_core.models import ExtractionRun
             extraction_run = (
                 ExtractionRun.objects
-                .filter(document__document_upload_id=ext.document_upload_id)
                 .select_related("jurisdiction", "schema")
-                .order_by("-created_at")
+                .filter(pk=exec_ctx.extraction_run_id)
                 .first()
             )
-        if extraction_run:
-            corrections = list(
-                extraction_run.corrections
-                .select_related("corrected_by")
-                .order_by("-created_at")
-            )
-            correction_count = len(corrections)
-            # Enrich extraction context with ExtractionRun fields
-            extraction_ctx["review_queue"] = extraction_run.review_queue
-            extraction_ctx["schema_code"] = extraction_run.schema_code
-            extraction_ctx["schema_version"] = extraction_run.schema_version
-            extraction_ctx["extraction_method"] = extraction_run.extraction_method
-            extraction_ctx["requires_review"] = extraction_run.requires_review
-    except Exception:
-        pass
+            if extraction_run:
+                corrections = list(
+                    extraction_run.corrections
+                    .select_related("corrected_by")
+                    .order_by("-created_at")
+                )
+                correction_count = len(corrections)
+        except Exception:
+            pass
+
+    # Populate extraction_ctx from ExecutionContext
+    extraction_ctx["review_queue"] = exec_ctx.review_queue
+    extraction_ctx["schema_code"] = exec_ctx.schema_code
+    extraction_ctx["schema_version"] = exec_ctx.schema_version
+    extraction_ctx["extraction_method"] = exec_ctx.extraction_method
+    extraction_ctx["requires_review"] = exec_ctx.requires_review
+    extraction_ctx["extraction_source"] = exec_ctx.source
 
     # ── Also include ExtractionFieldCorrection records (from Edit Values / Approval) ──
     if approval:
@@ -1672,13 +1798,21 @@ def extraction_console(request, pk):
             completion_tk = agent_run.completion_tokens or 0
             total_tk = agent_run.total_tokens or 0
             # GPT-4o pricing: $5/1M input, $15/1M output
-            cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
-            cost_display = cost.quantize(Decimal("0.000001"))
+            llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
+            # Azure Document Intelligence (Read model): $1.50 per 1,000 pages
+            ocr_pages = ext.ocr_page_count or 0
+            ocr_cost = Decimal(str(ocr_pages * 1.5 / 1_000)) if ocr_pages else Decimal("0")
+            total_cost = (llm_cost + ocr_cost).quantize(Decimal("0.000001"))
             cost_token_data = {
                 "prompt_tokens": prompt_tk,
                 "completion_tokens": completion_tk,
                 "total_tokens": total_tk,
-                "cost_estimate": cost_display,
+                "llm_cost": llm_cost.quantize(Decimal("0.000001")),
+                "ocr_cost": ocr_cost.quantize(Decimal("0.000001")),
+                "cost_estimate": total_cost,
+                "ocr_page_count": ocr_pages,
+                "ocr_duration_ms": ext.ocr_duration_ms or 0,
+                "ocr_char_count": ext.ocr_char_count or 0,
                 "llm_model": agent_run.llm_model_used or "gpt-4o",
                 "duration_ms": agent_run.duration_ms,
                 "agent_run_id": agent_run.pk,
@@ -1700,6 +1834,7 @@ def extraction_console(request, pk):
         "enrichment": enrichment,
         "line_items": line_items,
         "line_items_raw": line_items_raw,
+        "line_items_totals": line_items_totals,
         "has_line_tax": has_line_tax,
         "evidence_entries": evidence_entries,
         "evidence_map": evidence_map,

@@ -19,7 +19,7 @@ from django.conf import settings
 if TYPE_CHECKING:
     from apps.extraction_core.services.extraction_service import (
         ConfidenceBreakdown,
-        ExtractionResult,
+        ExtractionExecutionResult,
     )
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ class ReviewRoutingService:
     def evaluate(
         cls,
         confidence: "ConfidenceBreakdown",
-        result: "ExtractionResult",
+        result: "ExtractionExecutionResult",
     ) -> ReviewRoutingDecision:
         """
         Produce a ``ReviewRoutingDecision`` from the confidence breakdown.

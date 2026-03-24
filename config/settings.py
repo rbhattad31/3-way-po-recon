@@ -137,7 +137,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Cache-busting version counter — bump after static file changes
-STATIC_VERSION = "1.0.5"
+STATIC_VERSION = "1.0.6"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -205,6 +205,9 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 # Azure Document Intelligence (OCR)
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
 AZURE_DI_KEY = os.getenv("AZURE_DI_KEY", "")
+# Set to false to skip Azure DI and use native PDF text extraction (PyPDF2).
+# Useful for accuracy comparison. Runtime override via ExtractionRuntimeSettings.ocr_enabled.
+EXTRACTION_OCR_ENABLED = os.getenv("EXTRACTION_OCR_ENABLED", "true").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # Azure Blob Storage (document storage)

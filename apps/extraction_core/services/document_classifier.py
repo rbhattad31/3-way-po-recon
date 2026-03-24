@@ -131,6 +131,39 @@ _KEYWORDS: dict[str, list[tuple[str, float]]] = {
         (r"\brechnung\b", 2.5),
         (r"\bfactura\b", 2.5),
     ],
+    "GRN": [
+        (r"\bgoods\s*receiv(?:ed|pt)\s*note\b", 3.0),
+        (r"\bGRN\b", 3.0),
+        (r"\bgoods\s*receipt\b", 2.5),
+        (r"\bmaterial\s*receipt\b", 2.5),
+        (r"\breceiving\s*report\b", 2.5),
+        (r"\binward\s*(?:note|challan|slip)\b", 2.5),
+        (r"\bstock\s*receipt\b", 2.0),
+        (r"\bwarehouse\s*receipt\b", 2.0),
+        (r"\breceipt\s*(?:no|number|#)\b", 1.5),
+        (r"\bquantity\s*received\b", 1.5),
+        (r"\breceived\s*(?:by|date|qty)\b", 1.0),
+        # Arabic
+        (r"\bإذن\s*(?:استلام|تسلم)\b", 3.0),
+        # Hindi
+        (r"\bमाल\s*प्राप्ति\b", 3.0),
+    ],
+    "PURCHASE_ORDER": [
+        (r"\bpurchase\s*order\b", 3.0),
+        (r"\bPO\s*(?:no|number|#)\b", 2.5),
+        (r"\bbuy(?:ing)?\s*order\b", 2.5),
+        (r"\bprocurement\s*order\b", 2.5),
+        (r"\border\s*confirmation\b", 2.0),
+        (r"\bsupply\s*order\b", 2.0),
+        (r"\border\s*(?:no|number|date|#)\b", 1.5),
+        (r"\bterms\s*(?:and|&)\s*conditions\b", 0.8),
+        # Arabic
+        (r"\bأمر\s*(?:شراء|توريد)\b", 3.0),
+        # Hindi / French / German
+        (r"\bक्रय\s*आदेश\b", 3.0),
+        (r"\bbon\s*de\s*commande\b", 3.0),
+        (r"\bbestellung\b", 2.5),
+    ],
 }
 
 # Negative signals — reduce score for a type
@@ -140,6 +173,33 @@ _NEGATIVE_SIGNALS: dict[str, list[tuple[str, float]]] = {
         (r"\bdebit\s*note\b", -2.0),
         (r"\bdelivery\s*note\b", -1.5),
         (r"\bstatement\s*of\s*account\b", -1.5),
+        (r"\bgoods\s*receiv(?:ed|pt)\s*note\b", -2.0),
+        (r"\bGRN\b", -2.0),
+        (r"\bpurchase\s*order\b", -2.0),
+    ],
+    "GRN": [
+        (r"\btax\s*invoice\b", -2.0),
+        (r"\binvoice\b", -1.0),
+        (r"\bpurchase\s*order\b", -1.5),
+        (r"\breconcili?ation\b", -3.0),
+        (r"\bsummary\s*report\b", -3.0),
+        (r"\b(?:3|three)[- ]?way\b", -2.5),
+        (r"\bmatch(?:ing)?\s*(?:report|summary|status)\b", -2.5),
+        (r"\bvariance\s*(?:report|analysis|summary)\b", -2.0),
+        (r"\baudit\s*(?:report|trail|log)\b", -2.0),
+    ],
+    "PURCHASE_ORDER": [
+        (r"\btax\s*invoice\b", -2.0),
+        (r"\binvoice\b", -1.0),
+        (r"\bgoods\s*receiv(?:ed|pt)\s*note\b", -1.5),
+        (r"\breconcili?ation\b", -3.0),
+        (r"\bsummary\s*report\b", -3.0),
+        (r"\b(?:3|three)[- ]?way\b", -2.5),
+    ],
+    "DELIVERY_NOTE": [
+        (r"\breconcili?ation\b", -3.0),
+        (r"\bsummary\s*report\b", -3.0),
+        (r"\b(?:3|three)[- ]?way\b", -2.5),
     ],
 }
 
