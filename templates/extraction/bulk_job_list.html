@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% block title %}Bulk Extraction Jobs – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Extraction</a></li>
+    <li class="breadcrumb-item active">Bulk Extraction</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-collection me-2"></i>Bulk Extraction Jobs
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      Process multiple invoice files from configured source folders.
+    </p>
+  </div>
+  {% has_permission "extraction.bulk_create" as can_create %}
+  {% if can_create %}
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addSourceModal">
+      <i class="bi bi-plus-circle me-1"></i>Add Source
+    </button>
+    {% if sources %}
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#startJobModal">
+      <i class="bi bi-play-circle me-1"></i>Start New Job
+    </button>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{# ── Filters ── #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body py-2 px-3">
+    <form method="get" class="d-flex align-items-center gap-2">
+      <select name="status" class="form-select form-select-sm" style="max-width:200px">
+        <option value="">All Statuses</option>
+        {% for val, label in status_choices %}
+        <option value="{{ val }}" {% if status_filter == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
+      {% if status_filter %}
+      <a href="{% url 'extraction:bulk_job_list' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-circle me-1"></i>Clear</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+{# ── Jobs Table ── #}
+<div class="ap-card">
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table w-100">
+      <thead>
+        <tr>
+          <th>Job ID</th>
+          <th>Source</th>
+          <th>Started By</th>
+          <th>Status</th>
+          <th style="text-align:right">Found</th>
+          <th style="text-align:right">Success</th>
+          <th style="text-align:right">Failed</th>
+          <th style="text-align:right">Skipped</th>
+          <th>Started</th>
+          <th>Completed</th>
+          <th style="width:80px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td style="font-size:var(--ap-font-size-xs)">
+            <code>{{ job.job_id|truncatechars:13 }}</code>
+          </td>
+          <td>
+            <span class="badge bg-light text-dark border" style="font-size:.7rem">{{ job.source_connection.get_source_type_display }}</span>
+            {{ job.source_connection.name }}
+          </td>
+          <td>{{ job.started_by.get_full_name|default:job.started_by.email }}</td>
+          <td>
+            {% if job.status == "COMPLETED" %}
+              <span class="badge bg-success-subtle text-success">Completed</span>
+            {% elif job.status == "PROCESSING" or job.status == "SCANNING" %}
+              <span class="badge bg-primary-subtle text-primary"><i class="bi bi-arrow-repeat spin me-1"></i>{{ job.get_status_display }}</span>
+            {% elif job.status == "QUEUED" %}
+              <span class="badge bg-secondary-subtle text-secondary">Queued</span>
+            {% elif job.status == "PARTIAL_FAILED" %}
+              <span class="badge bg-warning-subtle text-warning">Partial</span>
+            {% elif job.status == "FAILED" %}
+              <span class="badge bg-danger-subtle text-danger">Failed</span>
+            {% else %}
+              <span class="badge bg-secondary-subtle text-secondary">{{ job.get_status_display }}</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right">{{ job.total_found }}</td>
+          <td style="text-align:right">
+            {% if job.total_success %}<span class="text-success fw-semibold">{{ job.total_success }}</span>{% else %}0{% endif %}
+          </td>
+          <td style="text-align:right">
+            {% if job.total_failed %}<span class="text-danger fw-semibold">{{ job.total_failed }}</span>{% else %}0{% endif %}
+          </td>
+          <td style="text-align:right">{{ job.total_skipped }}</td>
+          <td style="font-size:var(--ap-font-size-xs)">{{ job.started_at|date:"M d, H:i"|default:"—" }}</td>
+          <td style="font-size:var(--ap-font-size-xs)">{{ job.completed_at|date:"M d, H:i"|default:"—" }}</td>
+          <td>
+            <a href="{% url 'extraction:bulk_job_detail' job_id=job.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:.75rem">
+              <i class="bi bi-eye"></i>
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="11" class="text-center py-4">
+            {% if not sources %}
+            <div class="text-muted mb-2">
+              <i class="bi bi-folder-plus" style="font-size:1.5rem"></i>
+            </div>
+            <p class="mb-1 fw-semibold">No source connections configured</p>
+            <p class="text-muted mb-2" style="font-size:var(--ap-font-size-sm)">
+              Create a source connection first — point it at a local folder or cloud drive containing invoice files.
+            </p>
+            {% if can_create %}
+            <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addSourceModal">
+              <i class="bi bi-plus-circle me-1"></i>Add Source Connection
+            </button>
+            {% endif %}
+            {% else %}
+            <p class="text-muted mb-0">No bulk extraction jobs found. Click <strong>Start New Job</strong> to process invoices in bulk.</p>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Pagination ── #}
+{% if page_obj.has_other_pages %}
+<nav class="mt-3 d-flex justify-content-center">
+  <ul class="pagination pagination-sm mb-0">
+    {% if page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&status={{ status_filter }}">&laquo;</a></li>
+    {% endif %}
+    {% for num in page_obj.paginator.page_range %}
+      {% if page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?page={{ num }}&status={{ status_filter }}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&status={{ status_filter }}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+{# ── Start Job Modal ── #}
+{% if can_create and sources %}
+<div class="modal fade" id="startJobModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{% url 'extraction:bulk_job_start' %}">
+        {% csrf_token %}
+        <div class="modal-header py-2">
+          <h6 class="modal-title fw-bold"><i class="bi bi-play-circle me-2"></i>Start Bulk Extraction Job</h6>
+          <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Source Connection</label>
+            <select name="source_id" class="form-select" required>
+              <option value="">Select a source…</option>
+              {% for src in sources %}
+              <option value="{{ src.pk }}">{{ src.name }} ({{ src.get_source_type_display }})</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">The system will scan the selected source folder and process all supported invoice files.</div>
+          </div>
+          <div class="alert alert-info py-2 px-3 mb-0" style="font-size:var(--ap-font-size-xs)">
+            <i class="bi bi-info-circle me-1"></i>
+            Supported file types: PDF, PNG, JPG, JPEG, TIF, TIFF. One credit will be reserved per eligible file.
+          </div>
+        </div>
+        <div class="modal-footer py-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-play-fill me-1"></i>Start Job</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+</style>
+
+{# ── Add Source Connection Modal ── #}
+{% if can_create %}
+<div class="modal fade" id="addSourceModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{% url 'extraction:bulk_source_create' %}">
+        {% csrf_token %}
+        <div class="modal-header py-2">
+          <h6 class="modal-title fw-bold"><i class="bi bi-plus-circle me-2"></i>Add Source Connection</h6>
+          <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Name</label>
+            <input type="text" name="name" class="form-control" required placeholder="e.g. Invoice Scans Folder">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Source Type</label>
+            <select name="source_type" id="sourceTypeSelect" class="form-select" required>
+              <option value="">Select type…</option>
+              {% for val, label in source_types %}
+              <option value="{{ val }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          {# LOCAL_FOLDER config fields #}
+          <div class="source-config-fields d-none" data-source-type="LOCAL_FOLDER">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Folder Path</label>
+              <input type="text" name="config_folder_path" class="form-control" disabled placeholder="/path/to/invoices">
+              <div class="form-text">Absolute path to the folder on the server.</div>
+            </div>
+          </div>
+
+          {# GOOGLE_DRIVE config fields #}
+          <div class="source-config-fields d-none" data-source-type="GOOGLE_DRIVE">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Drive Folder ID</label>
+              <input type="text" name="config_folder_id" class="form-control" disabled placeholder="1ABC...xyz">
+              <div class="form-text">The Google Drive folder ID from the folder URL.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Service Account JSON</label>
+              <textarea name="config_service_account_json" class="form-control" disabled rows="4" placeholder='{"type":"service_account",...}'></textarea>
+              <div class="form-text">Paste the full service-account credentials JSON.</div>
+            </div>
+          </div>
+
+          {# ONEDRIVE config fields #}
+          <div class="source-config-fields d-none" data-source-type="ONEDRIVE">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Tenant ID</label>
+              <input type="text" name="config_tenant_id" class="form-control" disabled placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Client ID</label>
+              <input type="text" name="config_client_id" class="form-control" disabled placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Client Secret</label>
+              <input type="password" name="config_client_secret" class="form-control" disabled>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Drive ID</label>
+              <input type="text" name="config_drive_id" class="form-control" disabled placeholder="b!...">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Folder Path</label>
+              <input type="text" name="config_folder_path" class="form-control" disabled placeholder="/Invoices/2026">
+              <div class="form-text">Path within the drive to the folder.</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer py-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check-circle me-1"></i>Create Source</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+  document.getElementById('sourceTypeSelect').addEventListener('change', function() {
+    document.querySelectorAll('.source-config-fields').forEach(function(el) {
+      el.classList.add('d-none');
+      el.querySelectorAll('input, textarea').forEach(function(inp) { inp.removeAttribute('required'); inp.disabled = true; });
+    });
+    var selected = this.value;
+    if (selected) {
+      var panel = document.querySelector('.source-config-fields[data-source-type="' + selected + '"');
+      if (panel) {
+        panel.classList.remove('d-none');
+        panel.querySelectorAll('input, textarea').forEach(function(inp) { inp.setAttribute('required', ''); inp.disabled = false; });
+      }
+    }
+  });
+</script>
+{% endif %}
+{% endblock %}

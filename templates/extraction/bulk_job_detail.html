@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% block title %}Bulk Job {{ job.job_id|truncatechars:13 }} – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Extraction</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:bulk_job_list' %}" class="text-decoration-none">Bulk Extraction</a></li>
+    <li class="breadcrumb-item active">Job {{ job.job_id|truncatechars:13 }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# ── Header ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-collection me-2"></i>Bulk Job Detail
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      Job <code>{{ job.job_id }}</code>
+    </p>
+  </div>
+  <a href="{% url 'extraction:bulk_job_list' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to List
+  </a>
+</div>
+
+{# ── Job Info Card ── #}
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="ap-card h-100">
+      <div class="ap-card-body">
+        <h6 class="fw-bold mb-3" style="font-size:var(--ap-font-size-sm)"><i class="bi bi-info-circle me-2"></i>Job Information</h6>
+        <table class="table table-sm table-borderless mb-0" style="font-size:var(--ap-font-size-sm)">
+          <tr>
+            <td class="text-muted" style="width:140px">Source</td>
+            <td>
+              <span class="badge bg-light text-dark border" style="font-size:.7rem">{{ job.source_connection.get_source_type_display }}</span>
+              {{ job.source_connection.name }}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted">Status</td>
+            <td>
+              {% if job.status == "COMPLETED" %}
+                <span class="badge bg-success-subtle text-success">Completed</span>
+              {% elif job.status == "PROCESSING" or job.status == "SCANNING" %}
+                <span class="badge bg-primary-subtle text-primary"><i class="bi bi-arrow-repeat spin me-1"></i>{{ job.get_status_display }}</span>
+              {% elif job.status == "QUEUED" %}
+                <span class="badge bg-secondary-subtle text-secondary">Queued</span>
+              {% elif job.status == "PARTIAL_FAILED" %}
+                <span class="badge bg-warning-subtle text-warning">Partial Failed</span>
+              {% elif job.status == "FAILED" %}
+                <span class="badge bg-danger-subtle text-danger">Failed</span>
+              {% else %}
+                <span class="badge bg-secondary-subtle text-secondary">{{ job.get_status_display }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted">Started By</td>
+            <td>{{ job.started_by.get_full_name|default:job.started_by.email }}</td>
+          </tr>
+          <tr>
+            <td class="text-muted">Started At</td>
+            <td>{{ job.started_at|date:"M d, Y H:i:s"|default:"—" }}</td>
+          </tr>
+          <tr>
+            <td class="text-muted">Completed At</td>
+            <td>{{ job.completed_at|date:"M d, Y H:i:s"|default:"—" }}</td>
+          </tr>
+          {% if job.error_message %}
+          <tr>
+            <td class="text-muted">Error</td>
+            <td><span class="text-danger" style="font-size:var(--ap-font-size-xs)">{{ job.error_message|truncatechars:300 }}</span></td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── Summary Cards ── #}
+  <div class="col-md-6">
+    <div class="ap-card h-100">
+      <div class="ap-card-body">
+        <h6 class="fw-bold mb-3" style="font-size:var(--ap-font-size-sm)"><i class="bi bi-bar-chart me-2"></i>Processing Summary</h6>
+        <div class="row g-2">
+          <div class="col-4">
+            <div class="text-center p-2 rounded" style="background:var(--ap-bg-subtle)">
+              <div class="fw-bold fs-5" style="color:var(--ap-text-primary)">{{ job.total_found }}</div>
+              <div class="text-muted" style="font-size:.7rem">Found</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="text-center p-2 rounded" style="background:#d1e7dd">
+              <div class="fw-bold fs-5 text-success">{{ job.total_success }}</div>
+              <div class="text-muted" style="font-size:.7rem">Success</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="text-center p-2 rounded" style="background:#f8d7da">
+              <div class="fw-bold fs-5 text-danger">{{ job.total_failed }}</div>
+              <div class="text-muted" style="font-size:.7rem">Failed</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="text-center p-2 rounded" style="background:#fff3cd">
+              <div class="fw-bold fs-5 text-warning">{{ job.total_skipped }}</div>
+              <div class="text-muted" style="font-size:.7rem">Skipped</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="text-center p-2 rounded" style="background:#e2e3e5">
+              <div class="fw-bold fs-5 text-secondary">{{ item_stats.duplicate }}</div>
+              <div class="text-muted" style="font-size:.7rem">Duplicate</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="text-center p-2 rounded" style="background:#cff4fc">
+              <div class="fw-bold fs-5 text-info">{{ job.total_credit_blocked }}</div>
+              <div class="text-muted" style="font-size:.7rem">Credit Blocked</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Item Status Filter ── #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body py-2 px-3">
+    <form method="get" class="d-flex align-items-center gap-2">
+      <select name="item_status" class="form-select form-select-sm" style="max-width:200px">
+        <option value="">All Item Statuses</option>
+        {% for val, label in item_status_choices %}
+        <option value="{{ val }}" {% if item_status_filter == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
+      {% if item_status_filter %}
+      <a href="{% url 'extraction:bulk_job_detail' job_id=job.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-circle me-1"></i>Clear</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+{# ── Items Table ── #}
+<div class="ap-card">
+  <div class="ap-card-header py-2 px-3">
+    <h6 class="mb-0 fw-bold" style="font-size:var(--ap-font-size-sm)">
+      <i class="bi bi-list-ul me-2"></i>Items ({{ items_page_obj.paginator.count }})
+    </h6>
+  </div>
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table w-100">
+      <thead>
+        <tr>
+          <th style="width:40px">#</th>
+          <th>File Name</th>
+          <th>Type</th>
+          <th style="text-align:right">Size</th>
+          <th>Status</th>
+          <th>Details</th>
+          <th>Upload</th>
+          <th>Extraction</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ forloop.counter0|add:items_page_obj.start_index }}</td>
+          <td>
+            <span title="{{ item.source_path }}">{{ item.source_name|truncatechars:50 }}</span>
+          </td>
+          <td style="font-size:var(--ap-font-size-xs)">{{ item.mime_type|default:"—" }}</td>
+          <td style="text-align:right;font-size:var(--ap-font-size-xs)">
+            {% if item.file_size %}
+              {% widthratio item.file_size 1024 1 %} KB
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if item.status == "PROCESSED" %}
+              <span class="badge bg-success-subtle text-success">Processed</span>
+            {% elif item.status == "PROCESSING" or item.status == "REGISTERED" %}
+              <span class="badge bg-primary-subtle text-primary">{{ item.get_status_display }}</span>
+            {% elif item.status == "DISCOVERED" %}
+              <span class="badge bg-secondary-subtle text-secondary">Discovered</span>
+            {% elif item.status == "FAILED" %}
+              <span class="badge bg-danger-subtle text-danger">Failed</span>
+            {% elif item.status == "DUPLICATE" %}
+              <span class="badge bg-warning-subtle text-warning">Duplicate</span>
+            {% elif item.status == "UNSUPPORTED" %}
+              <span class="badge bg-secondary-subtle text-secondary">Unsupported</span>
+            {% elif item.status == "CREDIT_BLOCKED" %}
+              <span class="badge bg-info-subtle text-info">Credit Blocked</span>
+            {% elif item.status == "SKIPPED" %}
+              <span class="badge bg-secondary-subtle text-secondary">Skipped</span>
+            {% else %}
+              <span class="badge bg-secondary-subtle text-secondary">{{ item.get_status_display }}</span>
+            {% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-xs);max-width:200px" class="text-truncate">
+            {% if item.skip_reason %}
+              <span class="text-muted" title="{{ item.skip_reason }}">{{ item.skip_reason|truncatechars:60 }}</span>
+            {% elif item.error_message %}
+              <span class="text-danger" title="{{ item.error_message }}">{{ item.error_message|truncatechars:60 }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if item.document_upload %}
+              {% with item.document_upload.extraction_results.first as ext_result %}
+                {% if ext_result %}
+                  <a href="{% url 'extraction:console' pk=ext_result.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:.7rem" title="View in Console">
+                    #{{ item.document_upload.pk }}
+                  </a>
+                {% else %}
+                  <a href="{% url 'documents:invoice_detail' pk=item.document_upload.pk %}" class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:.7rem" title="View Upload">
+                    #{{ item.document_upload.pk }}
+                  </a>
+                {% endif %}
+              {% endwith %}
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if item.extraction_run %}
+              <span class="badge bg-light text-dark border" style="font-size:.65rem">Run #{{ item.extraction_run.pk }}</span>
+            {% elif item.document_upload %}
+              {% with item.document_upload.extraction_results.first as ext_result %}
+                {% if ext_result %}
+                  <a href="{% url 'extraction:console' pk=ext_result.pk %}" class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.7rem">
+                    View
+                  </a>
+                {% else %}—{% endif %}
+              {% endwith %}
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="8" class="text-center text-muted py-4">No items found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Pagination ── #}
+{% if items_page_obj.has_other_pages %}
+<nav class="mt-3 d-flex justify-content-center">
+  <ul class="pagination pagination-sm mb-0">
+    {% if items_page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?page={{ items_page_obj.previous_page_number }}&item_status={{ item_status_filter }}">&laquo;</a></li>
+    {% endif %}
+    {% for num in items_page_obj.paginator.page_range %}
+      {% if items_page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > items_page_obj.number|add:"-3" and num < items_page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?page={{ num }}&item_status={{ item_status_filter }}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if items_page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?page={{ items_page_obj.next_page_number }}&item_status={{ item_status_filter }}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+</style>
+{% endblock %}

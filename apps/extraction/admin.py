@@ -209,3 +209,82 @@ class CreditTransactionAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Bulk Extraction Admin
+# ---------------------------------------------------------------------------
+
+from apps.extraction.bulk_models import BulkExtractionItem, BulkExtractionJob, BulkSourceConnection
+
+
+class BulkExtractionItemInline(admin.TabularInline):
+    model = BulkExtractionItem
+    extra = 0
+    readonly_fields = (
+        "source_file_id", "source_name", "source_path", "mime_type",
+        "file_size", "status", "skip_reason", "error_message",
+        "document_upload", "extraction_run", "created_at",
+    )
+    fields = (
+        "source_name", "status", "skip_reason", "document_upload", "created_at",
+    )
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BulkSourceConnection)
+class BulkSourceConnectionAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "source_type", "is_active", "created_at")
+    list_filter = ("source_type", "is_active")
+    search_fields = ("name",)
+    list_per_page = 25
+    readonly_fields = ("created_at", "updated_at", "created_by", "updated_by")
+    fieldsets = (
+        (None, {"fields": ("name", "source_type", "is_active")}),
+        ("Configuration", {"fields": ("config_json",)}),
+        ("Audit", {"fields": ("created_at", "updated_at", "created_by", "updated_by"), "classes": ("collapse",)}),
+    )
+
+
+@admin.register(BulkExtractionJob)
+class BulkExtractionJobAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "job_id", "source_connection", "status",
+        "started_by", "total_found", "total_success", "total_failed",
+        "started_at", "completed_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("job_id",)
+    list_per_page = 25
+    date_hierarchy = "created_at"
+    readonly_fields = (
+        "job_id", "created_at", "updated_at", "created_by", "updated_by",
+    )
+    inlines = [BulkExtractionItemInline]
+    fieldsets = (
+        (None, {"fields": ("job_id", "source_connection", "status", "started_by")}),
+        ("Timing", {"fields": ("started_at", "completed_at")}),
+        ("Summary", {"fields": (
+            "total_found", "total_registered", "total_success",
+            "total_failed", "total_skipped", "total_credit_blocked",
+        )}),
+        ("Error", {"fields": ("error_message",), "classes": ("collapse",)}),
+        ("Audit", {"fields": ("created_at", "updated_at", "created_by", "updated_by"), "classes": ("collapse",)}),
+    )
+
+
+@admin.register(BulkExtractionItem)
+class BulkExtractionItemAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "job", "source_name", "status",
+        "document_upload", "extraction_run", "created_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("source_name", "source_file_id")
+    list_per_page = 50
+    readonly_fields = ("created_at", "updated_at")

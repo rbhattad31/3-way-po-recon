@@ -28,6 +28,7 @@
 18. [OCR Cost Tracking](#18-ocr-cost-tracking)
 19. [Django Admin](#19-django-admin)
 20. [File Reference](#20-file-reference)
+21. [Bulk Extraction Intake (Phase 1)](#21-bulk-extraction-intake-phase-1)
 
 ---
 
@@ -88,7 +89,9 @@ Views resolve execution data via `ExecutionContext` (`apps/extraction/services/e
 
 ### Permission Split
 
-Edit-values flow uses `extraction.correct` (not `invoices.create`). `invoices.create` remains for upload only.
+- `invoices.create` — upload only (file selection and dispatch to extraction task)
+- `extraction.correct` — edit/correct extracted field values (workbench, console, API)
+- `extraction.approve` / `extraction.reject` — finalize extraction decisions
 
 ---
 
@@ -1053,6 +1056,7 @@ AUTO_APPROVED → ×    (terminal state, no further transitions)
 - Otherwise returns `None`
 
 **`approve(approval, user, corrections=None)`**
+- Locks the `ExtractionApproval` row with `select_for_update()` and verifies `status == PENDING`
 - Applies field corrections to Invoice + LineItems
 - Creates `ExtractionFieldCorrection` records for each changed field
 - Sets `is_touchless = (len(corrections) == 0)`
@@ -1061,6 +1065,7 @@ AUTO_APPROVED → ×    (terminal state, no further transitions)
 - Calls `GovernanceTrailService.record_approval_decision()` to write governance mirror
 
 **`reject(approval, user, reason)`**
+- Locks the `ExtractionApproval` row with `select_for_update()` and verifies `status == PENDING`
 - Sets `status = REJECTED` with `rejection_reason`
 - Transitions invoice to `INVALID`
 - Logs `EXTRACTION_REJECTED` audit event
@@ -1474,7 +1479,9 @@ The `extraction_console` view builds the following context for the template:
 | `permissions` | Request user | `can_approve` (`extraction.approve`), `can_reprocess` (`extraction.reprocess`), `can_escalate` (`cases.escalate`) — checked via `user.has_permission()` |
 | `assignable_users` | `User.objects` | Top 50 active users for escalation |
 
-**ExtractionRun enrichment**: The view queries `ExtractionRun` by `document__document_upload_id` to populate `review_queue`, `schema_code`, `schema_version`, `extraction_method`, and `requires_review` in the `extraction` context dict. These appear as badges in the header bar.
+**ExtractionRun enrichment**: The view calls `get_execution_context(ext)` to populate governed execution metadata. The enriched `ExecutionContext` provides `review_queue`, `schema_code`, `schema_version`, `extraction_method`, `requires_review`, `extraction_run_id`, `country_code`, `regime_code`, `jurisdiction_source`, `overall_confidence`, `review_reasons`, `approval_action`, `approval_decided_at`, and `duration_ms`. These appear as badges and metadata in the header bar and pipeline timeline.
+
+**Query optimization**: The workbench, AJAX filter, and CSV export querysets include `select_related("extraction_run")` to avoid N+1 queries when `get_execution_context()` accesses the FK.
 
 ---
 
@@ -1544,23 +1551,33 @@ UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → PENDING_APPR
 
 ### Extraction Platform Governance Event Types
 
-| Event Type | When Logged |
-|------------|-------------|
-| `JURISDICTION_RESOLVED` | Jurisdiction resolved (tier + country + regime) |
-| `SCHEMA_SELECTED` | Schema selected for extraction |
-| `PROMPT_SELECTED` | Prompt template selected |
-| `NORMALIZATION_COMPLETED` | Country-specific normalization complete |
-| `VALIDATION_COMPLETED` | Country-specific validation complete |
-| `EVIDENCE_CAPTURED` | Field evidence captured |
-| `REVIEW_ROUTE_ASSIGNED` | Review queue assigned |
-| `EXTRACTION_REPROCESSED` | Extraction re-run triggered |
-| `EXTRACTION_ESCALATED` | Extraction escalated to review queue |
-| `EXTRACTION_COMMENT_ADDED` | Comment added to extraction |
-| `SETTINGS_UPDATED` | Runtime settings or schema updated |
-| `SCHEMA_UPDATED` | Schema definition modified |
-| `PROMPT_UPDATED` | Prompt template modified |
-| `ROUTING_RULE_UPDATED` | Routing rule modified |
-| `ANALYTICS_SNAPSHOT_CREATED` | Analytics snapshot generated |
+| Event Type | When Logged | Category |
+|------------|-------------|----------|
+| `JURISDICTION_RESOLVED` | Jurisdiction resolved (tier + country + regime) | governance |
+| `SCHEMA_SELECTED` | Schema selected for extraction | governance |
+| `PROMPT_SELECTED` | Prompt template selected | governance |
+| `NORMALIZATION_COMPLETED` | Country-specific normalization complete | telemetry |
+| `VALIDATION_COMPLETED` | Country-specific validation complete | telemetry |
+| `EVIDENCE_CAPTURED` | Field evidence captured | telemetry |
+| `REVIEW_ROUTE_ASSIGNED` | Review queue assigned | governance |
+| `EXTRACTION_REPROCESSED` | Extraction re-run triggered | business |
+| `EXTRACTION_ESCALATED` | Extraction escalated to review queue | business |
+| `EXTRACTION_COMMENT_ADDED` | Comment added to extraction | business |
+| `SETTINGS_UPDATED` | Runtime settings or schema updated | governance |
+| `SCHEMA_UPDATED` | Schema definition modified | governance |
+| `PROMPT_UPDATED` | Prompt template modified | governance |
+| `ROUTING_RULE_UPDATED` | Routing rule modified | governance |
+| `ANALYTICS_SNAPSHOT_CREATED` | Analytics snapshot generated | telemetry |
+
+### Event Category Taxonomy
+
+All extraction audit events carry an `event_category` field in metadata (added by `ExtractionAuditService._base_metadata()`):
+
+| Category | Purpose | UI Behavior |
+|----------|---------|-------------|
+| `business` | User-visible state changes (approve, reject, correct, reprocess, escalate, comment) | Always show in timelines |
+| `governance` | Governed pipeline decisions (jurisdiction, schema, review routing, started/completed/failed) | Show in timelines |
+| `telemetry` | Low-level pipeline steps (normalization, validation, evidence capture) | Collapse/filter in UI |
 
 ---
 
@@ -1609,7 +1626,7 @@ When OCR is disabled, the system uses PyPDF2 to extract the native text layer fr
 | Permission | Description |
 |------------|-------------|
 | `invoices.view` | View extraction results, approval queue, analytics |
-| `invoices.create` | Upload files |
+| `invoices.create` | Upload files (upload only — edit uses `extraction.correct`) |
 | `extraction.view` | View extraction platform data (country packs, schemas, settings) |
 | `extraction.correct` | Correct/edit extracted field values (workbench + console UI + API) |
 | `extraction.approve` | Approve extracted invoice data before reconciliation |
@@ -1716,7 +1733,24 @@ User clicks Upload → check_can_reserve() → reserve(1, ref_type="document_upl
   → OCR Failure: refund(1) — no charge for failed extraction
 ```
 
-### Credit Decision Table
+**Reprocess flow**: `extraction_rerun` also reserves 1 credit before re-extraction (`ref_type="reprocess"`, `ref_id=upload.pk`). Blocked if the current approval is already finalized (`APPROVED`/`AUTO_APPROVED`).
+
+### Credit Decision Table — ChargePolicy
+
+All charge/refund decisions are centralized in `ChargePolicy` (`apps/extraction/services/credit_service.py`). Each scenario maps to exactly one of **CONSUME**, **REFUND**, or **NOOP**.
+
+| Scenario | ChargePolicy method | Outcome | reference_type | reference_id |
+|----------|-------------------|---------|---------------|-------------|
+| Successful extraction (invoice) | `for_extraction_success()` | CONSUME | `document_upload` | `upload.pk` |
+| Non-invoice document (classified away) | `for_non_invoice_document()` | REFUND | `document_upload` | `upload.pk` |
+| OCR failure (adapter returned error) | `for_ocr_failure()` | REFUND | `document_upload` | `upload.pk` |
+| Parse / normalize / validate failure | `for_pipeline_failure()` | REFUND | `document_upload` | `upload.pk` |
+| Duplicate invoice detected | `for_duplicate_invoice()` | CONSUME | `document_upload` | `upload.pk` |
+| Unsupported jurisdiction / schema | `for_unsupported_jurisdiction()` | REFUND | `document_upload` | `upload.pk` |
+| Manual reprocess (re-extraction) | `for_reprocess()` | CONSUME | `reprocess` | `upload.pk` |
+| Rejection after human review | `for_rejection_after_review()` | NOOP | — | — |
+
+### Credit Pipeline Integration
 
 The Celery task (`process_invoice_upload_task`) determines credit outcome by pipeline stage:
 
@@ -1899,7 +1933,7 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 | `apps/extraction/services/persistence_service.py` | Invoice + LineItem + ExtractionResult persistence |
 | `apps/extraction/services/approval_service.py` | Approval lifecycle (approve/reject/auto-approve + analytics) |
 | `apps/extraction/services/upload_service.py` | File upload, hash computation, DocumentUpload creation |
-| `apps/extraction/services/credit_service.py` | Credit reserve/consume/refund/allocate/adjust service + audit events, idempotency, invariant enforcement |
+| `apps/extraction/services/credit_service.py` | Credit reserve/consume/refund/allocate/adjust service + `ChargePolicy` (centralized charge/refund decisions) + audit events, idempotency, invariant enforcement |
 | `apps/extraction/services/confidence_scorer.py` | Deterministic confidence scoring for legacy pipeline (field coverage 50%, line quality 30%, consistency 20%) |
 | `apps/extraction/services/execution_context.py` | ExecutionContext dataclass + get_execution_context() — centralized governed/legacy data resolution |
 | `apps/extraction/credit_models.py` | UserCreditAccount + CreditTransaction models |
@@ -1921,7 +1955,7 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 | `apps/extraction_core/extraction_api_urls.py` | Execution API URL routing (`/api/v1/extraction-pipeline/`) |
 | **Core Pipeline & Orchestration** | |
 | `apps/extraction_core/services/extraction_pipeline.py` | 11-stage governed pipeline orchestrator |
-| `apps/extraction_core/services/extraction_service.py` | Original pipeline orchestrator (`ExtractionExecutionResult` dataclass — renamed from `ExtractionResult` to avoid Django model collision) |
+| `apps/extraction_core/services/extraction_service.py` | Original pipeline orchestrator (`ExtractionExecutionResult` dataclass — renamed from `ExtractionResult`; legacy alias emits `DeprecationWarning` via module `__getattr__`, target removal 2026-Q3) |
 | `apps/extraction_core/services/base_extraction_service.py` | Schema-driven extraction base class |
 | **Jurisdiction Resolution** | |
 | `apps/extraction_core/services/jurisdiction_resolver.py` | Multi-signal jurisdiction detection |
@@ -1944,8 +1978,8 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 | `apps/extraction_core/services/enhanced_validation.py` | Country-aware validation with ExtractionIssue persistence |
 | **Evidence, Audit & Tracing** | |
 | `apps/extraction_core/services/evidence_service.py` | Field provenance capture → ExtractionEvidence records |
-| `apps/extraction_core/services/extraction_audit.py` | Extraction-specific audit logging (8 pipeline event types). NOTE: log_extraction_approved/rejected are deprecated no-ops — use GovernanceTrailService |
-| `apps/extraction_core/services/governance_trail.py` | GovernanceTrailService — sole writer of ExtractionApprovalRecord |
+| `apps/extraction_core/services/extraction_audit.py` | Extraction-specific audit logging with `event_category` taxonomy (business/governance/telemetry). NOTE: log_extraction_approved/rejected are deprecated no-ops — use GovernanceTrailService |
+| `apps/extraction_core/services/governance_trail.py` | GovernanceTrailService — sole writer of ExtractionApprovalRecord (uses `update_or_create` inside `transaction.atomic`) |
 | **Confidence & Review Routing** | |
 | `apps/extraction_core/services/confidence_scorer.py` | Multi-dimensional confidence scoring |
 | `apps/extraction_core/services/review_routing.py` | Confidence-driven review routing |
@@ -2029,3 +2063,137 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 - **Auto-approve not working?** Check both `EXTRACTION_AUTO_APPROVE_ENABLED=true` AND `EXTRACTION_AUTO_APPROVE_THRESHOLD` < 1.0 (e.g., 0.95).
 - **Agent 400 errors from OpenAI?** Ensure tool-calling messages follow OpenAI format: assistant messages include `tool_calls` array, tool responses include `tool_call_id`.
 - **Approval queue empty?** Invoices only appear when `status=PENDING_APPROVAL` — check that the extraction pipeline completed successfully and auto-approve didn't trigger.
+
+---
+
+## 21. Bulk Extraction Intake (Phase 1)
+
+Bulk Extraction Intake allows operators to point the system at a folder or cloud drive, discover all invoice documents, and process them through the existing extraction pipeline in a single job. This is Phase 1 — manual-start, batch-oriented intake.
+
+### 21.1 Overview
+
+- **Manual start only** — no watched folders, no continuous sync.
+- **Reuses existing pipeline** — each discovered file goes through the same `DocumentUpload` → `process_invoice_upload_task` → extraction → approval flow.
+- **Per-item credit reservation** — one credit reserved and consumed per file; credit-blocked items are skipped without stopping the job.
+- **Duplicate protection** — by `source_file_id` within the job and by SHA-256 `file_hash` against existing `DocumentUpload` records.
+
+### 21.2 Supported Sources
+
+| Source Type | Adapter | Auth | Config Keys |
+|---|---|---|---|
+| `LOCAL_FOLDER` | `LocalFolderBulkSourceAdapter` | Filesystem access | `folder_path` |
+| `GOOGLE_DRIVE` | `GoogleDriveBulkSourceAdapter` | Service-account JSON | `service_account_json`, `folder_id` |
+| `ONEDRIVE` | `OneDriveBulkSourceAdapter` | Client credentials OAuth2 | `tenant_id`, `client_id`, `client_secret`, `drive_id`, `folder_path` |
+
+Supported file types: `.pdf`, `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`.
+
+### 21.3 Data Models
+
+All models in `apps/extraction/bulk_models.py`.
+
+| Model | Inherits | Purpose |
+|---|---|---|
+| `BulkSourceConnection` | `BaseModel` | Reusable source configuration (name, type, `config_json`) |
+| `BulkExtractionJob` | `BaseModel` | One batch run — tracks status, counters, timestamps |
+| `BulkExtractionItem` | `TimestampMixin` | One file within a job — tracks status, links to `DocumentUpload` and `ExtractionRun` |
+
+**Job status flow:**
+```
+QUEUED → SCANNING → PROCESSING → COMPLETED | PARTIAL_FAILED | FAILED
+```
+
+**Item status flow:**
+```
+DISCOVERED → REGISTERED → PROCESSING → PROCESSED
+           → SKIPPED (unsupported type)
+           → DUPLICATE (file hash or source_file_id collision)
+           → CREDIT_BLOCKED (insufficient credits)
+           → FAILED (download/upload/extraction error)
+           → UNSUPPORTED (non-supported extension)
+```
+
+### 21.4 Processing Flow
+
+1. User selects a `BulkSourceConnection` and clicks "Start Job" in the UI.
+2. `BulkExtractionService.create_job()` creates a `QUEUED` job and logs `BULK_JOB_CREATED` audit event.
+3. `run_bulk_job_task` (Celery) calls `BulkExtractionService.run_job()`:
+   - **Validate** source connection config.
+   - **Scan** — adapter's `list_files()` discovers documents; items are created as `DISCOVERED`.
+   - **Process** each item sequentially:
+     - Duplicate check (source_file_id within prior items + SHA-256 hash against `DocumentUpload`).
+     - Credit reservation via `CreditService.reserve()`.
+     - Download via adapter's `download_file()`.
+     - Compute SHA-256 hash, re-check for hash duplicates.
+     - Create `DocumentUpload` record.
+     - Upload to Azure Blob Storage.
+     - Run extraction synchronously via `process_invoice_upload_task.run()`.
+     - Credit consumption via `CreditService.consume()`.
+     - Link `ExtractionRun` to the item.
+   - **Finalize** — compute counters, set terminal status.
+4. Extracted invoices enter the normal approval queue.
+
+### 21.5 Credit Handling
+
+- Uses the existing `CreditService` from `apps/extraction/services/credit_service.py`.
+- **Per-item** reserve → consume lifecycle. If reservation fails, the item is marked `CREDIT_BLOCKED` and the job continues with remaining items.
+- On item failure after reservation, credits are refunded via `CreditService.refund()`.
+- Reference type: `"bulk_item"`, reference ID: `BulkExtractionItem.id`.
+
+### 21.6 Duplicate Protection
+
+Two layers:
+1. **Source-level** — `source_file_id` uniqueness within prior `BulkExtractionItem` records for the same source connection.
+2. **Content-level** — SHA-256 file hash checked against `DocumentUpload.file_hash` across the entire system.
+
+Duplicates are marked with `DUPLICATE` status and a descriptive `skip_reason`.
+
+### 21.7 UI & Routes
+
+| URL | View | Permission | Method |
+|---|---|---|---|
+| `/extraction/bulk/` | `bulk_job_list` | `extraction.bulk_view` | GET |
+| `/extraction/bulk/start/` | `bulk_job_start` | `extraction.bulk_create` | POST |
+| `/extraction/bulk/<id>/` | `bulk_job_detail` | `extraction.bulk_view` | GET |
+
+Templates: `templates/extraction/bulk_job_list.html`, `templates/extraction/bulk_job_detail.html`.
+
+Sidebar entry: "Bulk Extraction" under AI Agents section, gated by `extraction.bulk_view`.
+
+### 21.8 Permissions
+
+| Code | Roles Granted |
+|---|---|
+| `extraction.bulk_view` | ADMIN, AP_PROCESSOR, FINANCE_MANAGER, AUDITOR, SYSTEM_AGENT |
+| `extraction.bulk_create` | ADMIN, AP_PROCESSOR, FINANCE_MANAGER, SYSTEM_AGENT |
+
+### 21.9 Audit Events
+
+| Event Type | When |
+|---|---|
+| `BULK_JOB_CREATED` | Job record created |
+| `BULK_JOB_STARTED` | Job begins processing |
+| `BULK_ITEM_REGISTERED` | Item enters extraction pipeline |
+| `BULK_ITEM_SKIPPED` | Item skipped (unsupported/duplicate) |
+| `BULK_ITEM_CREDIT_BLOCKED` | Insufficient credits for item |
+| `BULK_JOB_COMPLETED` | Job finished (success or partial) |
+| `BULK_JOB_FAILED` | Job failed with unrecoverable error |
+
+### 21.10 Phase 1 Limitations
+
+- **Manual start only** — no watched folders, no scheduled polling.
+- **Sequential item processing** — items are processed one at a time within a job (no parallel extraction).
+- **No re-import** — failed items cannot be retried individually; start a new job.
+- **No continuous sync** — no change detection or incremental scanning.
+- **Google Drive / OneDrive adapters** require external libraries (`google-api-python-client`, `msal`, `requests`) — not yet in `requirements.txt`.
+
+### 21.11 Files
+
+| File | Purpose |
+|---|---|
+| `apps/extraction/bulk_models.py` | BulkSourceConnection, BulkExtractionJob, BulkExtractionItem |
+| `apps/extraction/services/bulk_source_adapters.py` | Source adapters (Local, Google Drive, OneDrive) + factory |
+| `apps/extraction/services/bulk_service.py` | BulkExtractionService orchestrator |
+| `apps/extraction/bulk_tasks.py` | Celery task `run_bulk_job_task` |
+| `apps/extraction/bulk_views.py` | Template views (list, start, detail) |
+| `templates/extraction/bulk_job_list.html` | Job list + start modal |
+| `templates/extraction/bulk_job_detail.html` | Job detail + items table |

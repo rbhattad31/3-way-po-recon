@@ -261,6 +261,14 @@ class AuditEventType(models.TextChoices):
     CREDIT_ALLOCATION_UPDATED = "CREDIT_ALLOCATION_UPDATED", "Credit Allocation Updated"
     CREDIT_LIMIT_EXCEEDED = "CREDIT_LIMIT_EXCEEDED", "Credit Limit Exceeded"
     CREDIT_MONTHLY_RESET = "CREDIT_MONTHLY_RESET", "Credit Monthly Reset"
+    # Bulk extraction events
+    BULK_JOB_CREATED = "BULK_JOB_CREATED", "Bulk Job Created"
+    BULK_JOB_STARTED = "BULK_JOB_STARTED", "Bulk Job Started"
+    BULK_ITEM_REGISTERED = "BULK_ITEM_REGISTERED", "Bulk Item Registered"
+    BULK_ITEM_SKIPPED = "BULK_ITEM_SKIPPED", "Bulk Item Skipped"
+    BULK_ITEM_CREDIT_BLOCKED = "BULK_ITEM_CREDIT_BLOCKED", "Bulk Item Credit Blocked"
+    BULK_JOB_COMPLETED = "BULK_JOB_COMPLETED", "Bulk Job Completed"
+    BULK_JOB_FAILED = "BULK_JOB_FAILED", "Bulk Job Failed"
 
 
 class PermissionOverrideType(models.TextChoices):
@@ -730,3 +738,35 @@ class CountryPackStatus(models.TextChoices):
     DRAFT = "DRAFT", "Draft"
     ACTIVE = "ACTIVE", "Active"
     DEPRECATED = "DEPRECATED", "Deprecated"
+
+
+# ---------------------------------------------------------------------------
+# Bulk Extraction Intake enums
+# ---------------------------------------------------------------------------
+
+
+class BulkSourceType(models.TextChoices):
+    LOCAL_FOLDER = "LOCAL_FOLDER", "Local Folder"
+    GOOGLE_DRIVE = "GOOGLE_DRIVE", "Google Drive"
+    ONEDRIVE = "ONEDRIVE", "OneDrive"
+
+
+class BulkJobStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    SCANNING = "SCANNING", "Scanning"
+    PROCESSING = "PROCESSING", "Processing"
+    COMPLETED = "COMPLETED", "Completed"
+    PARTIAL_FAILED = "PARTIAL_FAILED", "Partial Failed"
+    FAILED = "FAILED", "Failed"
+
+
+class BulkItemStatus(models.TextChoices):
+    DISCOVERED = "DISCOVERED", "Discovered"
+    SKIPPED = "SKIPPED", "Skipped"
+    CREDIT_BLOCKED = "CREDIT_BLOCKED", "Credit Blocked"
+    REGISTERED = "REGISTERED", "Registered"
+    PROCESSING = "PROCESSING", "Processing"
+    PROCESSED = "PROCESSED", "Processed"
+    FAILED = "FAILED", "Failed"
+    DUPLICATE = "DUPLICATE", "Duplicate"
+    UNSUPPORTED = "UNSUPPORTED", "Unsupported"

@@ -22,6 +22,12 @@ from apps.extraction.credit_views import (
     credit_account_detail,
     credit_account_list,
 )
+from apps.extraction.bulk_views import (
+    bulk_job_detail,
+    bulk_job_list,
+    bulk_job_start,
+    bulk_source_create,
+)
 
 app_name = "extraction"
 
@@ -46,4 +52,9 @@ urlpatterns = [
     path("credits/", credit_account_list, name="credit_account_list"),
     path("credits/<int:user_id>/", credit_account_detail, name="credit_account_detail"),
     path("credits/<int:user_id>/adjust/", credit_account_adjust, name="credit_adjust"),
+    # Bulk extraction
+    path("bulk/", bulk_job_list, name="bulk_job_list"),
+    path("bulk/start/", bulk_job_start, name="bulk_job_start"),
+    path("bulk/source/create/", bulk_source_create, name="bulk_source_create"),
+    path("bulk/<int:job_id>/", bulk_job_detail, name="bulk_job_detail"),
 ]
