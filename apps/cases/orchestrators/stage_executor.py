@@ -13,6 +13,7 @@ from apps.cases.state_machine.case_state_machine import CaseStateMachine
 from apps.core.enums import (
     CaseStageType,
     CaseStatus,
+    InvoiceStatus,
     MatchStatus,
     PerformedByType,
     ProcessingPath,
@@ -437,6 +438,12 @@ class StageExecutor:
         from apps.cases.services.non_po_validation_service import NonPOValidationService
 
         result = NonPOValidationService.validate(case)
+
+        # Transition invoice status -- non-PO cases skip reconciliation,
+        # so we mark the invoice as RECONCILED here (validation complete).
+        if case.invoice and case.invoice.status != InvoiceStatus.RECONCILED:
+            case.invoice.status = InvoiceStatus.RECONCILED
+            case.invoice.save(update_fields=["status", "updated_at"])
 
         # Advance to exception analysis
         CaseStateMachine.transition(

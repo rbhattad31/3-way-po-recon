@@ -129,7 +129,7 @@ class Command(BaseCommand):
                 tax_amount=Decimal("1406.25"),
                 total_amount=Decimal("20156.25"),
                 # Status & confidence
-                status=InvoiceStatus.READY_FOR_RECON,
+                status=InvoiceStatus.RECONCILED,
                 extraction_confidence=0.92,
                 extraction_remarks="High confidence extraction. No PO reference detected.",
                 created_by=admin_user,
