@@ -2,11 +2,14 @@
 <nav id="sidebar" class="bg-light border-end position-fixed" style="top:56px;width:250px;height:calc(100vh - 56px);overflow-y:auto;z-index:1030">
   <div class="p-3">
     <ul class="nav flex-column">
+      {% has_permission "agents.use_copilot" as can_use_copilot %}
+      {% if can_use_copilot %}
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'copilot' %}active fw-bold{% endif %}" href="{% url 'copilot:workspace' %}">
           <i class="bi bi-stars me-2"></i>AP Copilot
         </a>
       </li>
+      {% endif %}
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}active fw-bold{% endif %}" href="{% url 'dashboard:index' %}">
           <i class="bi bi-cpu me-2"></i>Command Center
@@ -42,6 +45,8 @@
       {% endif %}
 
       {# ── Reconciliation Agent ── #}
+      {% has_permission "cases.view" as can_view_cases %}
+      {% if can_view_cases %}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Reconciliation Agent</li>
       <li class="nav-item">
@@ -49,8 +54,11 @@
           <i class="bi bi-briefcase me-2"></i>Recon Agent
         </a>
       </li>
+      {% endif %}
 
       {# ── Posting Agent ── #}
+      {% has_permission "invoices.view" as can_view_invoices %}
+      {% if can_view_invoices %}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Posting Agent</li>
       <li class="nav-item">
@@ -63,15 +71,19 @@
           <i class="bi bi-cloud-upload me-2"></i>ERP Reference Imports
         </a>
       </li>
+      {% endif %}
 
       {# ── Documents ── #}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documents</li>
+      {% has_permission "invoices.view" as can_view_invoice_list %}
+      {% if can_view_invoice_list %}
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'invoice_detail' or request.resolver_match.url_name == 'upload_invoice' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
           <i class="bi bi-file-earmark-text me-2"></i>Invoices
         </a>
       </li>
+      {% endif %}
       {% has_permission "purchase_orders.view" as can_view_pos %}
       {% if can_view_pos %}
       <li class="nav-item">
@@ -100,16 +112,22 @@
       {# ── Operations ── #}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Reports</li>
+      {% has_permission "cases.view" as can_view_case_ops %}
+      {% if can_view_case_ops %}
       <li class="nav-item">
         <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
           <i class="bi bi-activity me-2"></i>Case Operations
         </a>
       </li>
+      {% endif %}
+      {% has_permission "agents.view" as can_view_agents %}
+      {% if can_view_agents %}
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.url_name == 'agent_performance' %}active fw-bold{% endif %}" href="{% url 'dashboard:agent_performance' %}">
           <i class="bi bi-robot me-2"></i>Agent Performance
         </a>
       </li>
+      {% endif %}
 
       {# ── Documentation ── #}
       <li class="hr my-2 border-bottom"></li>
