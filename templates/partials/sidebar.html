@@ -13,23 +13,14 @@
         </a>
       </li>
 
-      {# ── Processing ── #}
+      {# ── Extraction Agent ── #}
       <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Processing</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'cases' %}active fw-bold{% endif %}" href="{% url 'cases:case_inbox' %}">
-          <i class="bi bi-briefcase me-2"></i>AP Cases
-        </a>
-      </li>
-
-      {# ── AI Agents ── #}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">AI Agents</li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Extraction Agent</li>
       {% has_permission "invoices.create" as can_extract %}
       {% if can_extract %}
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'extraction' and request.resolver_match.url_name == 'workbench' %}active fw-bold{% endif %}" href="{% url 'extraction:workbench' %}">
-          <i class="bi bi-robot me-2"></i>Invoice Extraction Agent
+          <i class="bi bi-robot me-2"></i>Invoice Extraction
         </a>
       </li>
       {% endif %}
@@ -45,22 +36,33 @@
       {% if can_view_packs %}
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'extraction_control_center' %}active fw-bold{% endif %}" href="{% url 'extraction_control_center:overview' %}">
-          <i class="bi bi-sliders2 me-2"></i>Extraction Control Center
+          <i class="bi bi-sliders2 me-2"></i>Control Center
         </a>
       </li>
       {% endif %}
 
-      {# ── Procurement ── #}
-      {% has_permission "procurement.view" as can_view_procurement %}
-      {% if can_view_procurement %}
+      {# ── Reconciliation Agent ── #}
       <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Procurement</li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Reconciliation Agent</li>
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'procurement' %}active fw-bold{% endif %}" href="{% url 'procurement:request_list' %}">
-          <i class="bi bi-cart4 me-2"></i>Requests
+        <a class="nav-link {% if request.resolver_match.app_name == 'cases' %}active fw-bold{% endif %}" href="{% url 'cases:case_inbox' %}">
+          <i class="bi bi-briefcase me-2"></i>Recon Agent
         </a>
       </li>
-      {% endif %}
+
+      {# ── Posting Agent ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Posting Agent</li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'posting' and request.resolver_match.url_name == 'posting-workbench' %}active fw-bold{% endif %}" href="{% url 'posting:posting-workbench' %}">
+          <i class="bi bi-send me-2"></i>Posting Agent
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'posting-imports' %}active fw-bold{% endif %}" href="{% url 'posting:posting-imports' %}">
+          <i class="bi bi-cloud-upload me-2"></i>ERP Reference Imports
+        </a>
+      </li>
 
       {# ── Documents ── #}
       <li class="hr my-2 border-bottom"></li>
@@ -117,6 +119,18 @@
           <i class="bi bi-book me-2"></i>Platform Reference
         </a>
       </li>
+
+      {# ── Procurement Agent ── #}
+      {% has_permission "procurement.view" as can_view_procurement %}
+      {% if can_view_procurement %}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Procurement Agent</li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'procurement' %}active fw-bold{% endif %}" href="{% url 'procurement:request_list' %}">
+          <i class="bi bi-cart4 me-2"></i>Requests
+        </a>
+      </li>
+      {% endif %}
 
       {# ── Governance ── #}
       {% has_permission "governance.view" as can_view_governance %}

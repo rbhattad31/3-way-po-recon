@@ -33,6 +33,9 @@ urlpatterns = [
     path("governance/", include("apps.auditlog.urls")),
     path("procurement/", include("apps.procurement.urls")),
     path("api/v1/procurement/", include("apps.procurement.api_urls")),
+    path("posting/", include("apps.posting.urls")),
+    path("api/v1/posting/", include("apps.posting.api_urls")),
+    path("api/v1/posting-core/", include("apps.posting_core.api_urls")),
 ]
 
 

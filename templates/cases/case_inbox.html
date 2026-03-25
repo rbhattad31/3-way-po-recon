@@ -26,10 +26,6 @@
   </div>
   <div class="d-flex gap-2">
     <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-download me-1"></i>Export</button>
-    {% has_permission "invoices.create" as can_upload %}
-    {% if can_upload %}
-    <a href="{% url 'documents:invoice_list' %}" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg me-1"></i>New Invoice</a>
-    {% endif %}
   </div>
 </div>
 

@@ -128,6 +128,9 @@ class ExtractionApprovalService:
             "Auto-approved extraction for invoice %s (confidence=%.2f)",
             invoice.pk, confidence,
         )
+        # ── Trigger posting pipeline ──
+        cls._enqueue_posting(invoice, user=None)
+
         return approval
 
     # ------------------------------------------------------------------
@@ -273,6 +276,9 @@ class ExtractionApprovalService:
 
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
         cls._record_governance_trail(approval, "APPROVE", user)
+
+        # ── Trigger posting pipeline ──
+        cls._enqueue_posting(invoice, user)
 
         return approval
 
@@ -564,4 +570,25 @@ class ExtractionApprovalService:
             logger.exception(
                 "GovernanceTrailService.record_approval_decision failed for approval %s",
                 approval.pk,
+            )
+
+    @staticmethod
+    def _enqueue_posting(invoice, user=None):
+        """Enqueue a posting pipeline run for the newly-approved invoice.
+
+        Best-effort: failures are logged but never block the approval path.
+        """
+        try:
+            from apps.posting.tasks import prepare_posting_task
+            user_id = user.pk if user else None
+            trigger = "approval" if user else "auto_approval"
+            prepare_posting_task.delay(
+                invoice_id=invoice.pk,
+                user_id=user_id,
+                trigger=trigger,
+            )
+            logger.info("Enqueued posting pipeline for invoice %s", invoice.pk)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue posting pipeline for invoice %s", invoice.pk,
             )
