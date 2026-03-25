@@ -372,6 +372,10 @@ class StageExecutor:
         """
         from apps.reconciliation.services.runner_service import ReconciliationRunnerService
 
+        # Clear stale VALIDATION_RESULT artifacts from prior runs so the UI
+        # does not display outdated validation checks after reprocessing.
+        case.artifacts.filter(artifact_type="VALIDATION_RESULT").delete()
+
         # Sync invoice PO number if the case has a linked PO from PO_RETRIEVAL
         # so the runner's own PO lookup can find it.
         invoice = case.invoice
@@ -389,13 +393,13 @@ class StageExecutor:
             case.reconciliation_result = result
             case.save(update_fields=["reconciliation_result", "updated_at"])
 
-            if result.match_status == MatchStatus.MATCHED:
-                CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
-            else:
-                # Advance to exception analysis for non-matched results
-                CaseStateMachine.transition(
-                    case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
-                )
+            # Always advance to exception analysis — the full pipeline
+            # (exception analysis -> review routing -> case summary) runs
+            # for all results, including MATCHED. Auto-close decisions are
+            # made by the exception analysis stage, not here.
+            CaseStateMachine.transition(
+                case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
+            )
 
         return {
             "run_id": run.id,
@@ -462,6 +466,7 @@ class StageExecutor:
             # Handle auto-close: when the orchestrator skips agents because
             # the result is MATCHED or within the auto-close tolerance band,
             # the result's match_status is already upgraded to MATCHED.
+            # Summary refresh is handled by CASE_SUMMARY stage which always runs.
             if orch_result.skipped and case.reconciliation_result.match_status == MatchStatus.MATCHED:
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
             elif orch_result.final_recommendation == "AUTO_CLOSE":

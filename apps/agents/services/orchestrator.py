@@ -224,7 +224,18 @@ class AgentOrchestrator:
                     )
                     continue
 
-                agent_run = agent.run(ctx)
+                # Pass review_assignment to ExceptionAnalysisAgent
+                if agent_type == AgentType.EXCEPTION_ANALYSIS:
+                    from apps.reviews.models import ReviewAssignment
+                    _review_assignment = (
+                        ReviewAssignment.objects
+                        .filter(reconciliation_result=result)
+                        .order_by("-created_at")
+                        .first()
+                    )
+                    agent_run = agent.run(ctx, review_assignment=_review_assignment)
+                else:
+                    agent_run = agent.run(ctx)
                 orch_result.agents_executed.append(agent_type)
                 orch_result.agent_runs.append(agent_run)
                 last_output = agent_run

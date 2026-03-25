@@ -95,10 +95,22 @@ class PostingProposal:
 
 
 class PostingMappingEngine:
-    """Resolves ERP values from imported reference tables."""
+    """Resolves ERP values from imported reference tables.
 
-    def __init__(self):
+    When `connector` is provided, lookups go through the shared ERP
+    resolution layer (API → cache → DB fallback). When it is None, the
+    engine falls back to direct DB queries (legacy behaviour).
+    """
+
+    def __init__(self, *, connector=None):
         self._latest_batches: Dict[str, ERPReferenceImportBatch] = {}
+        self._connector = connector
+        self._erp_source_metadata: Dict[str, Any] = {}
+
+    @property
+    def erp_source_metadata(self) -> Dict[str, Any]:
+        """Source metadata collected during resolution (for PostingRun)."""
+        return self._erp_source_metadata
 
     def resolve(
         self,
@@ -169,9 +181,18 @@ class PostingMappingEngine:
     # ------------------------------------------------------------------
 
     def _resolve_vendor(self, invoice, proposal: PostingProposal) -> None:
-        """Resolve vendor code using precedence chain."""
+        """Resolve vendor code using precedence chain.
+
+        When an ERP connector is available, uses the shared VendorResolver
+        (API → DB fallback) first. Falls through to direct DB lookups on failure.
+        """
         vendor = getattr(invoice, "vendor", None)
         vendor_name = invoice.raw_vendor_name or ""
+        vendor_code = (vendor.vendor_code if vendor and hasattr(vendor, "vendor_code") else "") or ""
+
+        # --- ERP resolver path ---
+        if self._try_vendor_via_resolver(vendor_code, vendor_name, proposal, invoice):
+            return
 
         # 1. Exact vendor code from vendor profile
         if vendor and hasattr(vendor, "vendor_code") and vendor.vendor_code:
@@ -233,7 +254,7 @@ class PostingMappingEngine:
         description = line.description or ""
         normalized_desc = _normalize(description)
 
-        # 1. PO reference line match
+        # 1. PO reference line match (always checked first — local data)
         if po_refs:
             po_match = self._match_po_line(line, po_refs)
             if po_match:
@@ -249,8 +270,13 @@ class PostingMappingEngine:
                     )
                 return
 
-        # 2. Exact item code on line
+        # 2. ERP resolver (API → cache → DB fallback)
         item_code = getattr(line, "item_code", "") or ""
+        invoice = getattr(proposal, "_invoice_ref", None)
+        if self._try_item_via_resolver(item_code, description, proposal, line_proposal, invoice):
+            return
+
+        # 3. Exact item code on line (direct DB — legacy fallback)
         if item_code:
             ref = self._find_item_by_code(item_code)
             if ref:
@@ -262,7 +288,7 @@ class PostingMappingEngine:
                 line_proposal.item_source = PostingFieldSourceType.ITEM_REF
                 return
 
-        # 3. Alias mapping
+        # 4. Alias mapping
         alias = self._find_item_alias(description)
         if alias and alias.item_reference:
             ref = alias.item_reference
@@ -318,8 +344,17 @@ class PostingMappingEngine:
     def _resolve_tax(self, line, line_proposal: PostingLineProposal,
                      proposal: PostingProposal) -> None:
         """Resolve tax code for a line item."""
-        # 1. Explicit invoice tax code
+        # 0. Try ERP resolver first
         tax_code_on_line = getattr(line, "tax_code", "") or ""
+        implied_rate = 0.0
+        invoice_tax = line.tax_amount if hasattr(line, "tax_amount") else None
+        if invoice_tax and line.line_amount:
+            implied_rate = float(invoice_tax / line.line_amount) if line.line_amount else 0.0
+        if tax_code_on_line or implied_rate:
+            if self._try_tax_via_resolver(tax_code_on_line, implied_rate, line_proposal):
+                return
+
+        # 1. Explicit invoice tax code (direct DB — legacy fallback)
         if tax_code_on_line:
             ref = self._find_tax_by_code(tax_code_on_line)
             if ref:
@@ -376,6 +411,12 @@ class PostingMappingEngine:
     def _resolve_cost_center(self, line, line_proposal: PostingLineProposal,
                              proposal: PostingProposal) -> None:
         """Resolve cost center for a line item."""
+        # 0. Try ERP resolver first for explicit code
+        cc_on_line = getattr(line, "cost_center", "") or ""
+        if cc_on_line:
+            if self._try_cost_center_via_resolver(cc_on_line, line_proposal):
+                return
+
         # 1. Invoice/entity/business unit mapping via rules
         rule_result = self._apply_rules("COST_CENTER_MAP", {
             "category": line_proposal.mapped_category or line_proposal.source_category,
@@ -462,6 +503,112 @@ class PostingMappingEngine:
         """Store batch IDs used for provenance."""
         for bt, batch in self._latest_batches.items():
             proposal.batch_refs[bt] = batch.pk
+
+    # ------------------------------------------------------------------
+    # ERP Resolver Helpers (shared layer: API → cache → DB fallback)
+    # ------------------------------------------------------------------
+
+    def _try_vendor_via_resolver(self, vendor_code: str, vendor_name: str,
+                                 proposal: PostingProposal, invoice) -> bool:
+        """Try resolving vendor via the ERP integration layer. Returns True if resolved."""
+        try:
+            from apps.erp_integration.services.resolution.vendor_resolver import VendorResolver
+            resolver = VendorResolver()
+            result = resolver.resolve(
+                self._connector,
+                vendor_code=vendor_code, vendor_name=vendor_name,
+                invoice_id=getattr(invoice, "pk", None),
+            )
+            if result.resolved and result.value:
+                proposal.header.vendor_code = result.value.get("vendor_code", "")
+                proposal.header.vendor_name = result.value.get("vendor_name", "")
+                proposal.header.vendor_confidence = result.confidence
+                proposal.header.vendor_source = PostingFieldSourceType.VENDOR_REF
+                self._add_evidence(
+                    proposal, "vendor_code", PostingFieldSourceType.VENDOR_REF,
+                    f"ERP resolver ({result.source_type}): {result.reason}",
+                )
+                self._erp_source_metadata["vendor"] = {
+                    "source_type": result.source_type,
+                    "fallback_used": result.fallback_used,
+                    "confidence": result.confidence,
+                    "connector_name": result.connector_name,
+                }
+                return True
+        except ImportError:
+            pass
+        except Exception:
+            logger.debug("ERP vendor resolver failed, falling through to direct DB", exc_info=True)
+        return False
+
+    def _try_item_via_resolver(self, item_code: str, description: str,
+                               proposal: PostingProposal, line_proposal: PostingLineProposal,
+                               invoice) -> bool:
+        """Try resolving item via the ERP integration layer."""
+        try:
+            from apps.erp_integration.services.resolution.item_resolver import ItemResolver
+            resolver = ItemResolver()
+            result = resolver.resolve(
+                self._connector,
+                item_code=item_code, description=description,
+                invoice_id=getattr(invoice, "pk", None),
+            )
+            if result.resolved and result.value:
+                line_proposal.erp_item_code = result.value.get("item_code", "")
+                line_proposal.mapped_description = result.value.get("item_name", "")
+                line_proposal.mapped_category = result.value.get("category", "")
+                line_proposal.uom = result.value.get("uom", "") or line_proposal.uom
+                line_proposal.confidence = result.confidence
+                line_proposal.item_source = PostingFieldSourceType.ITEM_REF
+                self._erp_source_metadata.setdefault("items", []).append({
+                    "line_index": line_proposal.line_index,
+                    "source_type": result.source_type,
+                    "fallback_used": result.fallback_used,
+                })
+                return True
+        except ImportError:
+            pass
+        except Exception:
+            logger.debug("ERP item resolver failed, falling through to direct DB", exc_info=True)
+        return False
+
+    def _try_tax_via_resolver(self, tax_code: str, rate: float,
+                              line_proposal: PostingLineProposal) -> bool:
+        """Try resolving tax via the ERP integration layer."""
+        try:
+            from apps.erp_integration.services.resolution.tax_resolver import TaxResolver
+            resolver = TaxResolver()
+            result = resolver.resolve(self._connector, tax_code=tax_code, rate=rate)
+            if result.resolved and result.value:
+                line_proposal.tax_code = result.value.get("tax_code", "")
+                line_proposal.tax_source = PostingFieldSourceType.TAX_REF
+                return True
+        except ImportError:
+            pass
+        except Exception:
+            logger.debug("ERP tax resolver failed, falling through to direct DB", exc_info=True)
+        return False
+
+    def _try_cost_center_via_resolver(self, cost_center_code: str,
+                                      line_proposal: PostingLineProposal) -> bool:
+        """Try resolving cost center via the ERP integration layer."""
+        try:
+            from apps.erp_integration.services.resolution.cost_center_resolver import CostCenterResolver
+            resolver = CostCenterResolver()
+            result = resolver.resolve(self._connector, cost_center_code=cost_center_code)
+            if result.resolved and result.value:
+                line_proposal.cost_center = result.value.get("cost_center_code", "")
+                line_proposal.cost_center_source = PostingFieldSourceType.COST_CENTER_REF
+                return True
+        except ImportError:
+            pass
+        except Exception:
+            logger.debug("ERP cost center resolver failed, falling through to direct DB", exc_info=True)
+        return False
+
+    # ------------------------------------------------------------------
+    # Reference Lookups (direct DB — legacy fallback)
+    # ------------------------------------------------------------------
 
     def _find_vendor_by_code(self, code: str) -> Optional[ERPVendorReference]:
         batch = self._latest_batches.get(ERPReferenceBatchType.VENDOR)

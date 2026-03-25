@@ -37,10 +37,14 @@ class PostingEligibilityService:
             result.reasons.append("Invoice does not exist")
             return result
 
-        # 2. Invoice status is READY_FOR_RECON
-        if invoice.status != InvoiceStatus.READY_FOR_RECON:
+        # 2. Invoice status is READY_FOR_RECON or RECONCILED
+        allowed_statuses = {
+            InvoiceStatus.READY_FOR_RECON,
+            InvoiceStatus.RECONCILED,
+        }
+        if invoice.status not in allowed_statuses:
             result.reasons.append(
-                f"Invoice status is {invoice.status}, expected READY_FOR_RECON"
+                f"Invoice status is {invoice.status}, expected READY_FOR_RECON or RECONCILED"
             )
 
         # 3. Not already successfully posted

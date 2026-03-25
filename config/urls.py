@@ -36,6 +36,7 @@ urlpatterns = [
     path("posting/", include("apps.posting.urls")),
     path("api/v1/posting/", include("apps.posting.api_urls")),
     path("api/v1/posting-core/", include("apps.posting_core.api_urls")),
+    path("erp/", include("apps.erp_integration.api_urls")),
 ]
 
 

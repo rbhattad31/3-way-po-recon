@@ -2,7 +2,7 @@
 
 ## Project Context
 
-This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with 13 Django apps.
+This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with **16 Django apps** (added: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`).
 
 **Read [PROJECT.md](../PROJECT.md) for full architecture, models, services, and data flow.**
 
@@ -11,6 +11,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 ## Code Conventions
 
 ### Django & Python
+- **No special characters in generated code** — do not use Unicode arrows (→ ► ↘), fancy quotes (" " ' '), em/en dashes (— –), ellipsis (…), or any non-ASCII characters in Python source files, string literals, comments, or docstrings unless they are explicitly required by a data value (e.g. a test fixture). Use plain ASCII equivalents: `->` for arrows, `--` for dashes, `...` for ellipsis, straight quotes for strings.
 - **Python 3.8+**, type hints encouraged on public functions.
 - **All models** inherit from `apps.core.models.BaseModel` (which includes `TimestampMixin` + `AuditMixin`), unless they are lightweight join/log tables that use `TimestampMixin` only.
 - **Soft delete** via `SoftDeleteMixin` (is_active flag) — never hard-delete business entities.
@@ -41,6 +42,35 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - Tasks should call service classes — never put business logic directly in task functions.
 - Use `acks_late=True` for important tasks.
 - Serialization format: JSON.
+
+### ERP Integration Layer
+- **`apps/erp_integration/`** is the shared ERP connectivity layer used by both the posting pipeline and agent tools.
+- **Resolution chain**: cache → ERP API connector → DB fallback. All lookups go through `BaseResolver` subclasses in `apps/erp_integration/services/resolution/`.
+- **Connectors** (`apps/erp_integration/services/connectors/`): `BaseERPConnector` → `CustomERPConnector`, `DynamicsConnector`, `ZohoConnector`, `SalesforceConnector`. New connectors must implement capability flags (`supports_vendor_lookup()` etc.) and the relevant lookup/submission methods.
+- **`ConnectorFactory`**: `get_default_connector()` returns the active default `ERPConnection` record as a connector instance; `get_connector_by_name(name)` retrieves by name.
+- **DB fallback adapters** (`apps/erp_integration/services/db_fallback/`): one per resolution type — vendor, item, tax, cost center, PO, GRN, duplicate invoice. Falls back to local `posting_core` reference tables.
+- **Submission** (`apps/erp_integration/services/submission/posting_submit_resolver.py`): wraps ERP create/park invoice calls.
+- **Cache** (`ERPCacheService`): TTL-based DB cache (`ERPReferenceCacheRecord`), controlled by `ERP_CACHE_TTL_SECONDS` env var (default 3600s).
+- **Audit** (`ERPAuditService`): logs every resolution + submission to `ERPResolutionLog` / `ERPSubmissionLog` and `AuditEvent`.
+- **`PostingMappingEngine`** now accepts `connector=` kwarg; when provided, vendor/item resolution goes through the ERP resolver chain first, then falls back to direct DB. Source metadata per field is stored in `PostingRun.erp_source_metadata_json`.
+- **`POLookupTool` / `GRNLookupTool`** now attempt ERP resolution first (`_resolve_via_erp()`); fall through to direct DB only if the resolver import fails.
+- **Settings**: `ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD` (default 0.8), `ERP_CACHE_TTL_SECONDS` (default 3600).
+- **API**: `GET/POST /api/v1/erp/resolve/<resolution_type>/` — on-demand ERP reference resolution.
+- **ERP connector enums** live in `apps/erp_integration/enums.py` (not `apps/core/enums.py`): `ERPConnectorType`, `ERPConnectionStatus`, `ERPSourceType`, `ERPResolutionType`, `ERPSubmissionType`, `ERPSubmissionStatus`.
+
+### Invoice Posting Agent (`apps/posting/` + `apps/posting_core/`)
+- **Two-layer architecture**: `apps/posting/` (business/UI layer) + `apps/posting_core/` (platform/core layer), mirroring the extraction system.
+- **`PostingPipeline`** runs a 9-stage sequence: ELIGIBILITY_CHECK → SNAPSHOT_BUILD → MAPPING → VALIDATION → CONFIDENCE → REVIEW_ROUTING → PAYLOAD_BUILD → FINALIZATION → STATUS. Stage 9b also runs a duplicate invoice check via the ERP integration layer.
+- **`PostingMappingEngine`** resolves vendor, item, tax, cost-center, and PO references from imported ERP reference tables (or live ERP API when `connector` is provided). Each resolution follows a strategy chain (exact code → alias → name → fuzzy).
+- **Posting status lifecycle**: `NOT_READY` → `READY_FOR_POSTING` → `MAPPING_IN_PROGRESS` → `MAPPING_REVIEW_REQUIRED` | `READY_TO_SUBMIT` → `SUBMISSION_IN_PROGRESS` → `POSTED` | `POST_FAILED` → `RETRY_PENDING` | `REJECTED` | `SKIPPED`.
+- **ERP reference import**: `ExcelImportOrchestrator` ingests vendor/item/tax/cost-center/open-PO master data from Excel/CSV into `ERPVendorReference`, `ERPItemReference`, `ERPTaxCodeReference`, `ERPCostCenterReference`, `ERPPOReference` tables.
+- **Trigger**: `ExtractionApprovalService.approve()` / `try_auto_approve()` enqueues `prepare_posting_task` automatically (best-effort; never blocks approval).
+- **Review queues**: `VENDOR_MAPPING_REVIEW`, `ITEM_MAPPING_REVIEW`, `TAX_REVIEW`, `COST_CENTER_REVIEW`, `PO_REVIEW`, `POSTING_OPS`.
+- **Confidence scoring**: 5-dimensional weighted score (header completeness 15%, vendor mapping 25%, line mapping 30%, tax completeness 15%, reference freshness 15%). `is_touchless=True` when no review needed.
+- **`PostingRun.erp_source_metadata_json`**: captures per-field ERP resolution source (connector, fallback used, confidence) for every pipeline run.
+- **Governance**: 17 posting-specific `AuditEventType` values; `PostingGovernanceTrailService` is the sole writer of `PostingApprovalRecord`.
+- **Phase 1 mock submit**: `PostingActionService.submit_posting()` is a mock; replace with real ERP connector call for Phase 2.
+- **Setting**: `POSTING_REFERENCE_FRESHNESS_HOURS` (default 168h / 7 days).
 
 ### Agent System
 - All agents extend `BaseAgent` (in `apps/agents/services/`).
@@ -109,6 +139,15 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Seed Helpers | `apps/cases/management/commands/seed_helpers/` (constants, master_data, transactional_data, case_builder, agent_review_data, observability_data, bulk_generator) |
 | Admin | `apps/<app>/admin.py` |
 | Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views, `templates/vendors/` for vendor UI) |
+| ERP Connectors | `apps/erp_integration/services/connectors/` |
+| ERP Resolvers | `apps/erp_integration/services/resolution/` |
+| ERP DB Fallbacks | `apps/erp_integration/services/db_fallback/` |
+| ERP Submission | `apps/erp_integration/services/submission/` |
+| ERP Connection Config | `apps/erp_integration/models.py` (`ERPConnection`, `ERPReferenceCacheRecord`, `ERPResolutionLog`, `ERPSubmissionLog`) |
+| Posting Business Logic | `apps/posting/services/` (eligibility, orchestrator, action service) |
+| Posting Core Pipeline | `apps/posting_core/services/` (mapping engine, pipeline, validation, confidence, review routing, governance trail) |
+| Posting ERP Reference Models | `apps/posting_core/models.py` (`ERPVendorReference`, `ERPItemReference`, `ERPTaxCodeReference`, `ERPCostCenterReference`, `ERPPOReference`, alias/rule models) |
+| Posting Import Pipeline | `apps/posting_core/services/import_pipeline/` (parsers, validators, type importers, orchestrator) |
 | Static files | `static/css/`, `static/js/` |
 | Config | `config/settings.py`, `config/urls.py`, `config/celery.py` |
 
@@ -162,6 +201,21 @@ ReviewAssignment ── linked to ReconciliationResult
 ProcessingLog, AuditEvent, FileProcessingStatus (auditlog)
 IntegrationConfig ──< IntegrationLog (integrations)
 GeneratedReport (reports)
+
+ERPConnection (erp_integration)
+ERPReferenceCacheRecord (erp_integration) — TTL cache for ERP lookups
+ERPResolutionLog (erp_integration) — audit log per lookup attempt
+ERPSubmissionLog (erp_integration) — audit log per ERP submission
+
+InvoicePosting (posting) — 1:1 Invoice; lifecycle state + review queue + payload snapshot
+InvoicePostingFieldCorrection (posting) — per-field correction audit trail
+
+PostingRun (posting_core) ──< PostingFieldValue, PostingLineItem, PostingIssue, PostingEvidence
+PostingRun ──< PostingApprovalRecord (governance mirror)
+PostingRun.erp_source_metadata_json — ERP resolution provenance per field
+ERPVendorReference / ERPItemReference / ERPTaxCodeReference / ERPCostCenterReference / ERPPOReference (posting_core)
+ERPReferenceImportBatch (posting_core) — import metadata (checksum, row counts)
+VendorAliasMapping / ItemAliasMapping / PostingRule (posting_core)
 ```
 
 ---
@@ -229,6 +283,20 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 3. Field synonym mapping is in `AttributeMappingService` (`_QUOTATION_FIELD_SYNONYMS`).
 4. Line items are NOT persisted to DB during extraction — only stored as JSON in `prefill_payload_json`. Persistence happens during user confirmation via `PrefillReviewService.confirm_quotation_prefill()`.
 5. Key files: `apps/procurement/services/prefill/quotation_prefill_service.py`, `apps/procurement/agents/quotation_extraction_agent.py`, `apps/procurement/services/prefill/attribute_mapping_service.py`.
+
+### When adding a new ERP connector
+1. Create class in `apps/erp_integration/services/connectors/` extending `BaseERPConnector`.
+2. Override the relevant `supports_*()` capability flags and lookup/submission methods.
+3. Add the new `ERPConnectorType` value to `apps/erp_integration/enums.py`.
+4. Register in `_CONNECTOR_MAP` in `apps/erp_integration/services/connector_factory.py`.
+5. Create an `ERPConnection` record (via admin or seed) with `connector_type` set to the new value.
+
+### When adding a new ERP resolver
+1. Create class in `apps/erp_integration/services/resolution/` extending `BaseResolver`.
+2. Set `resolution_type` to the appropriate `ERPResolutionType` value.
+3. Implement `_check_capability(connector)`, `_api_lookup(connector, **params)`, and `_db_fallback(**params)`.
+4. Create a matching DB fallback adapter in `apps/erp_integration/services/db_fallback/`.
+5. Add the corresponding `ERPResolutionType` enum value in `apps/erp_integration/enums.py` if it doesn't exist.
 
 ### When adding a new tool
 1. Create tool class in `apps/tools/registry/tools.py` extending `BaseTool`.
@@ -306,10 +374,18 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
+- **Invoice Posting Agent** (`apps/posting/` + `apps/posting_core/`): 9-stage pipeline (eligibility, snapshot, mapping, validation, confidence, review routing, payload build, finalization, status); 11 posting statuses; 6 review queues; Excel/CSV ERP reference import; governance trail; 17 audit event types; posting workbench + detail templates; full DRF API (`/api/v1/posting/` + `/api/v1/posting-core/`).
+- **ERP Integration Layer** (`apps/erp_integration/`): `ERPConnection` model + `ConnectorFactory`; 4 connector implementations (Custom, Dynamics, Zoho, Salesforce); 7 resolver types with DB fallback; TTL cache; resolution + submission audit logs; `POST /api/v1/erp/resolve/<type>/`; wired into `PostingMappingEngine` (connector kwarg) and `POLookupTool`/`GRNLookupTool` (ERP-first with legacy DB fallback).
+- `PostingRun.erp_source_metadata_json` field — captures ERP resolution provenance per pipeline run.
+
 ### ⬜ Not yet implemented (next steps)
 - **Tests**: pytest + factory-boy configured but no tests written. Need unit tests for services, integration tests for API endpoints, and factory classes for all models.
 - **Extraction refinement**: Tune LLM extraction prompts, add support for multi-page invoices, handle edge-case layouts.
-- **ERP integrations**: Build actual connectors for PO/GRN ingestion (PO_API, GRN_API).
+- **Real ERP submission**: `PostingActionService.submit_posting()` is Phase 1 mock — replace with live ERP connector call (SAP BAPI, Oracle REST, etc.).
+- **Auto-submit**: Auto-advance touchless postings (`is_touchless=True`, confidence ≥ threshold) directly to `SUBMISSION_IN_PROGRESS` without human approval.
+- **Feedback learning**: Train `VendorAliasMapping` / `ItemAliasMapping` from accepted field corrections.
+- **Scheduled ERP reference re-import**: Celery Beat task to pull fresh master data from shared drive/ERP.
+- **LLM-assisted item mapping**: Use GPT for fuzzy item description matching in `PostingMappingEngine._resolve_item()`.
 - **Report export services**: GeneratedReport model exists but full CSV/Excel export logic not built (CSV export exists for case console only).
 - **Celery Beat schedules**: No periodic tasks configured yet.
 - **Email notifications**: No notification system for review assignments.
@@ -329,6 +405,10 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **Migration issues?** MySQL requires utf8mb4; check `DATABASES` charset setting.
 - **Template not found?** Templates are in `templates/<app>/`; check `TEMPLATES` setting in settings.py.
 - **Confidence showing 1%?** `extraction_confidence` is stored as 0.0–1.0 float; templates use `{% widthratio %}` to display as percentage.
+- **ERP connector not resolving?** Check that an `ERPConnection` record exists with `is_default=True`, `status=ACTIVE`, `is_active=True`. If none, `ConnectorFactory.get_default_connector()` returns `None` and posting falls back to direct DB lookups.
+- **Posting stuck in MAPPING_IN_PROGRESS?** Check `PostingRun` for `error_code`; inspect `PostingIssue` records with `severity=ERROR`. Also verify ERP reference tables are populated via `/posting/imports/`.
+- **ERP cache stale?** `ERPReferenceCacheRecord` entries expire per `ERP_CACHE_TTL_SECONDS` (default 3600s). Delete cache records or reduce TTL to force re-resolution.
+- **`PostingMappingEngine` not using ERP?** Confirm `PostingPipeline._get_erp_connector()` returns a non-None connector — requires at least one active default `ERPConnection` record.
 
 ---
 
@@ -371,3 +451,11 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/procurement/agents/quotation_extraction_agent.py` | LLM-based quotation data extraction agent |
 | `apps/procurement/services/prefill/attribute_mapping_service.py` | Field synonym mapping for extracted quotation/request fields |
 | `apps/core/templatetags/rbac_tags.py` | RBAC template tags for permission-aware rendering |
+| `apps/erp_integration/services/connectors/base.py` | `BaseERPConnector` + `ERPResolutionResult` / `ERPSubmissionResult` data classes |
+| `apps/erp_integration/services/resolution/base.py` | `BaseResolver` — cache → API → DB fallback pattern |
+| `apps/erp_integration/services/connector_factory.py` | `ConnectorFactory` — instantiates connectors from `ERPConnection` records |
+| `apps/erp_integration/models.py` | `ERPConnection`, `ERPReferenceCacheRecord`, `ERPResolutionLog`, `ERPSubmissionLog` |
+| `apps/posting_core/services/posting_mapping_engine.py` | Core posting value resolution + ERP connector integration |
+| `apps/posting_core/services/posting_pipeline.py` | 9-stage posting pipeline orchestration (incl. duplicate check) |
+| `apps/posting/services/posting_orchestrator.py` | Orchestrates `prepare_posting` lifecycle |
+| `apps/posting/services/posting_action_service.py` | Approve / reject / submit / retry actions |

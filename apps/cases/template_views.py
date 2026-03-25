@@ -431,14 +431,25 @@ def case_agent_view(request, pk):
     validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version", "-created_at").first()
     if validation_artifact and isinstance(validation_artifact.payload, dict):
         checks = validation_artifact.payload.get("checks", {})
-        for check_name, check_data in checks.items():
-            status = check_data.get("status", "")
-            if status in ("FAIL", "WARNING"):
-                validation_issues.append({
-                    "check_name": check_name.replace("_", " ").title(),
-                    "status": status,
-                    "message": check_data.get("message", ""),
-                })
+        if isinstance(checks, dict):
+            for check_name, check_data in checks.items():
+                status = check_data.get("status", "")
+                if status in ("FAIL", "WARNING"):
+                    validation_issues.append({
+                        "check_name": check_name.replace("_", " ").title(),
+                        "status": status,
+                        "message": check_data.get("message", ""),
+                    })
+        elif isinstance(checks, list):
+            for check_data in checks:
+                if isinstance(check_data, dict):
+                    status = check_data.get("status", "")
+                    if status in ("FAIL", "WARNING"):
+                        validation_issues.append({
+                            "check_name": check_data.get("check_name", check_data.get("name", "Unknown")).replace("_", " ").title(),
+                            "status": status,
+                            "message": check_data.get("message", ""),
+                        })
 
     # Agent runs
     from apps.agents.models import AgentRun

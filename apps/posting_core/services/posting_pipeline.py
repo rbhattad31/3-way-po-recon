@@ -99,13 +99,18 @@ class PostingPipeline:
             posting_run.stage_code = PostingStage.MAPPING
             posting_run.save(update_fields=["stage_code", "updated_at"])
 
-            engine = PostingMappingEngine()
+            connector = cls._get_erp_connector()
+            engine = PostingMappingEngine(connector=connector)
             line_items = list(invoice.line_items.order_by("line_number"))
             proposal = engine.resolve(
                 invoice,
                 line_items,
                 po_number=invoice.po_number or "",
             )
+
+            # Store ERP source metadata on the run
+            if engine.erp_source_metadata:
+                posting_run.erp_source_metadata_json = engine.erp_source_metadata
 
             PostingAuditService.log_event(
                 AuditEventType.POSTING_MAPPING_COMPLETED,
@@ -175,6 +180,9 @@ class PostingPipeline:
             posting_run.stage_code = PostingStage.FINALIZATION
             posting_run.save(update_fields=["stage_code", "updated_at"])
             cls._persist_artifacts(posting_run, proposal, all_issues)
+
+            # Stage 9b: Duplicate invoice check (ERP integration)
+            cls._check_duplicate(posting_run, invoice, proposal, connector)
 
             # Stage 10: Finalize status
             has_blocking = any(
@@ -318,3 +326,59 @@ class PostingPipeline:
             ))
         if evidence_records:
             PostingEvidence.objects.bulk_create(evidence_records)
+
+    @staticmethod
+    def _get_erp_connector():
+        """Get the default ERP connector, or None if not configured."""
+        try:
+            from apps.erp_integration.services.connector_factory import ConnectorFactory
+            return ConnectorFactory.get_default_connector()
+        except ImportError:
+            return None
+        except Exception:
+            logger.debug("Could not load ERP connector", exc_info=True)
+            return None
+
+    @staticmethod
+    def _check_duplicate(posting_run, invoice, proposal, connector) -> None:
+        """Run duplicate invoice check via ERP integration layer."""
+        try:
+            from apps.erp_integration.services.resolution.duplicate_invoice_resolver import (
+                DuplicateInvoiceResolver,
+            )
+            resolver = DuplicateInvoiceResolver()
+            result = resolver.resolve(
+                connector,
+                invoice_number=invoice.invoice_number or "",
+                vendor_code=proposal.header.vendor_code,
+                fiscal_year=str(invoice.invoice_date.year) if invoice.invoice_date else "",
+                exclude_invoice_id=invoice.pk,
+                invoice_id=invoice.pk,
+                posting_run_id=posting_run.pk,
+            )
+            if result.resolved and result.value and result.value.get("is_duplicate"):
+                posting_run.requires_review = True
+                dup_count = result.value.get("duplicate_count", 0)
+                reasons = posting_run.review_reasons_json or []
+                reasons.append(f"Potential duplicate invoice detected ({dup_count} match(es))")
+                posting_run.review_reasons_json = reasons
+                erp_meta = posting_run.erp_source_metadata_json or {}
+                erp_meta["duplicate_check"] = {
+                    "is_duplicate": True,
+                    "duplicate_count": dup_count,
+                    "source_type": result.source_type,
+                    "confidence": result.confidence,
+                }
+                posting_run.erp_source_metadata_json = erp_meta
+                posting_run.save(update_fields=[
+                    "requires_review", "review_reasons_json",
+                    "erp_source_metadata_json", "updated_at",
+                ])
+                logger.info(
+                    "Duplicate invoice check: %d potential duplicate(s) for invoice %s",
+                    dup_count, invoice.invoice_number,
+                )
+        except ImportError:
+            pass
+        except Exception:
+            logger.debug("Duplicate invoice check skipped", exc_info=True)

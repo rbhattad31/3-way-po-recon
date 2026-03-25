@@ -84,6 +84,10 @@ class PostingRun(BaseModel):
     normalized_posting_data_json = models.JSONField(default=dict, blank=True)
     posting_payload_json = models.JSONField(default=dict, blank=True)
     response_json = models.JSONField(default=dict, blank=True)
+    erp_source_metadata_json = models.JSONField(
+        default=dict, blank=True,
+        help_text="ERP resolution source metadata (connector, fallback, confidence per field)",
+    )
 
     # Error tracking
     error_code = models.CharField(max_length=50, blank=True, default="")

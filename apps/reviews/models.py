@@ -20,6 +20,20 @@ class ReviewAssignment(BaseModel):
     due_date = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")
 
+    # Reviewer-facing exception summary (populated by ExceptionAnalysisAgent after assignment)
+    reviewer_summary = models.TextField(blank=True, default="")
+    reviewer_risk_level = models.CharField(
+        max_length=10, blank=True, default="",
+        choices=[("LOW", "Low"), ("MEDIUM", "Medium"), ("HIGH", "High")],
+    )
+    reviewer_confidence = models.FloatField(null=True, blank=True)
+    reviewer_recommendation = models.CharField(max_length=30, blank=True, default="")
+    reviewer_suggested_actions = models.JSONField(default=list)
+    reviewer_summary_generated_at = models.DateTimeField(null=True, blank=True)
+
+    # Feedback after reviewer acts
+    reviewer_agreed_with_agent = models.BooleanField(null=True, blank=True)
+
     class Meta:
         db_table = "reviews_assignment"
         ordering = ["priority", "-created_at"]

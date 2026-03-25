@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "apps.extraction_documents",
     "apps.posting",
     "apps.posting_core",
+    "apps.erp_integration",
 ]
 
 MIDDLEWARE = [
@@ -190,6 +191,14 @@ CELERY_TASK_DEFAULT_QUEUE = "default"
 # Run tasks synchronously when no Celery worker is available (e.g. Windows dev)
 CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "True").lower() in ("true", "1", "yes")
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
+
+# ---------------------------------------------------------------------------
+# ERP Integration
+# ---------------------------------------------------------------------------
+ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD = float(
+    os.getenv("ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD", "0.8")
+)
+ERP_CACHE_TTL_SECONDS = int(os.getenv("ERP_CACHE_TTL_SECONDS", "3600"))
 
 # ---------------------------------------------------------------------------
 # LLM / AI service configuration

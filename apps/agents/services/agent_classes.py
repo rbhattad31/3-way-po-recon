@@ -72,13 +72,40 @@ def _to_agent_output(data: Dict[str, Any], raw: str) -> AgentOutput:
 # 1. Exception Analysis Agent
 # ============================================================================
 class ExceptionAnalysisAgent(BaseAgent):
-    """Analyses reconciliation exceptions, determines root causes, and recommends actions."""
+    """Analyses reconciliation exceptions, determines root causes, and recommends actions.
+
+    After the standard ReAct analysis loop, also produces a structured
+    reviewer-facing summary that is persisted on the ReviewAssignment so
+    human reviewers can see it immediately when opening the review ticket.
+    """
 
     agent_type = AgentType.EXCEPTION_ANALYSIS
 
+    _REVIEWER_SUMMARY_INSTRUCTION = (
+        "\n\nAfter completing your analysis, you MUST end your response with a JSON block "
+        "delimited by <reviewer_summary> tags in exactly this format:\n\n"
+        "<reviewer_summary>\n"
+        '{\n'
+        '  "recommendation": "APPROVE|APPROVE_WITH_FIXES|REJECT|NEEDS_INFO|ESCALATE",\n'
+        '  "risk_level": "LOW|MEDIUM|HIGH",\n'
+        '  "confidence": 0.85,\n'
+        '  "summary": "One clear paragraph a non-technical AP reviewer can understand. '
+        'State what matched, what did not, and what action you recommend. '
+        'Avoid jargon. Reference actual amounts and percentages.",\n'
+        '  "suggested_actions": [\n'
+        '    {"action": "string describing the specific action", "field": "field name", '
+        '"current_value": "what it is", "suggested_value": "what it should be"}\n'
+        '  ]\n'
+        '}\n'
+        "</reviewer_summary>\n\n"
+        "Before the <reviewer_summary> block, produce your existing reconciliation "
+        "analysis output exactly as before."
+    )
+
     @property
     def system_prompt(self) -> str:
-        return PromptRegistry.get("agent.exception_analysis")
+        base_prompt = PromptRegistry.get("agent.exception_analysis")
+        return base_prompt + self._REVIEWER_SUMMARY_INSTRUCTION
 
     def build_user_message(self, ctx: AgentContext) -> str:
         return (
@@ -100,6 +127,73 @@ class ExceptionAnalysisAgent(BaseAgent):
     def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
         data = _parse_agent_json(content)
         return _to_agent_output(data, content)
+
+    # ------------------------------------------------------------------
+    # Overridden run() — adds reviewer summary write after ReAct loop
+    # ------------------------------------------------------------------
+    def run(self, ctx: AgentContext, review_assignment=None):
+        """Execute the standard ReAct loop, then persist a reviewer summary.
+
+        Args:
+            ctx: Agent context (same as BaseAgent).
+            review_assignment: Optional ReviewAssignment to write the summary to.
+        """
+        agent_run = super().run(ctx)
+
+        # Extract the final assistant message content from persisted messages
+        from apps.agents.models import AgentMessage
+        last_msg = (
+            AgentMessage.objects
+            .filter(agent_run=agent_run, role="assistant")
+            .order_by("-message_index")
+            .first()
+        )
+        final_content = last_msg.content if last_msg else ""
+
+        # Parse and persist reviewer summary
+        reviewer_data = self._parse_reviewer_summary(final_content)
+        if reviewer_data and review_assignment:
+            review_assignment.reviewer_summary = reviewer_data.get("summary", "")
+            review_assignment.reviewer_risk_level = reviewer_data.get("risk_level", "")
+            review_assignment.reviewer_confidence = reviewer_data.get("confidence")
+            review_assignment.reviewer_recommendation = reviewer_data.get("recommendation", "")
+            review_assignment.reviewer_suggested_actions = reviewer_data.get("suggested_actions", [])
+            review_assignment.reviewer_summary_generated_at = timezone.now()
+            review_assignment.save(update_fields=[
+                "reviewer_summary", "reviewer_risk_level", "reviewer_confidence",
+                "reviewer_recommendation", "reviewer_suggested_actions",
+                "reviewer_summary_generated_at",
+            ])
+            # Record as a second decision log entry for audit trail
+            from apps.agents.services.agent_trace_service import AgentTraceService
+            AgentTraceService.log_agent_decision(
+                agent_run_id=agent_run.pk,
+                decision_type="REVIEWER_SUMMARY",
+                summary=reviewer_data.get("summary", ""),
+                confidence=reviewer_data.get("confidence"),
+                evidence=reviewer_data,
+            )
+        elif not reviewer_data and review_assignment:
+            logger.warning(
+                "ExceptionAnalysisAgent run %s did not produce a <reviewer_summary> block",
+                agent_run.pk,
+            )
+
+        return agent_run
+
+    @staticmethod
+    def _parse_reviewer_summary(content: str) -> Optional[dict]:
+        """Extract the <reviewer_summary> JSON block from LLM output."""
+        import re
+        match = re.search(
+            r'<reviewer_summary>(.*?)</reviewer_summary>', content, re.DOTALL,
+        )
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(1).strip())
+        except (json.JSONDecodeError, ValueError):
+            return None
 
 
 # ============================================================================
