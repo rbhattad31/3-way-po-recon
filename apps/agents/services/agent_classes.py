@@ -440,12 +440,22 @@ class ReviewRoutingAgent(BaseAgent):
         return PromptRegistry.get("agent.review_routing")
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        prior_lines = []
+        if ctx.memory:
+            for agent_type, summary in ctx.memory.agent_summaries.items():
+                prior_lines.append(f"  {agent_type}: {summary}")
+            if ctx.memory.current_recommendation:
+                prior_lines.append(
+                    f"  Current best recommendation: {ctx.memory.current_recommendation} "
+                    f"(confidence {ctx.memory.current_confidence:.0%})"
+                )
+        prior_block = "\n".join(prior_lines) if prior_lines else "No prior agent findings."
         return (
             _mode_context(ctx)
             + f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
             f"Match Status: {ctx.reconciliation_result.match_status}\n"
             f"Exceptions: {json.dumps(ctx.exceptions, indent=2, default=str)}\n"
-            f"Prior agent reasoning: {ctx.extra.get('prior_reasoning', 'N/A')}\n"
+            f"Prior agent findings:\n{prior_block}\n"
             "\nDetermine the best routing for this case."
         )
 
@@ -471,14 +481,18 @@ class CaseSummaryAgent(BaseAgent):
         return PromptRegistry.get("agent.case_summary")
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        prior = ctx.memory.agent_summaries if ctx.memory else {}
+        rec = (ctx.memory.current_recommendation or "N/A") if ctx.memory else "N/A"
+        conf = (ctx.memory.current_confidence or 0.0) if ctx.memory else 0.0
+        prior_text = " | ".join(f"{k}: {v[:100]}" for k, v in prior.items()) or "N/A"
         return (
             _mode_context(ctx)
             + f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
             f"Invoice ID: {ctx.invoice_id}\n"
             f"PO Number: {ctx.po_number or 'N/A'}\n"
             f"Match Status: {ctx.reconciliation_result.match_status}\n"
-            f"Prior analysis: {ctx.extra.get('prior_reasoning', 'N/A')}\n"
-            f"Recommendation: {ctx.extra.get('recommendation_type', 'N/A')}\n"
+            f"Prior analysis: {prior_text}\n"
+            f"Recommendation: {rec} (confidence {conf:.0%})\n"
             "\nGather data using tools, then produce a clear case summary."
         )
 
@@ -507,12 +521,19 @@ class ReconciliationAssistAgent(BaseAgent):
         return PromptRegistry.get("agent.reconciliation_assist")
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        resolved_po_line = ""
+        if ctx.memory and ctx.memory.resolved_po_number is not None:
+            resolved_po_line = (
+                f"Note: PO retrieval agent resolved PO number to: "
+                f"{ctx.memory.resolved_po_number}\n"
+            )
         return (
             _mode_context(ctx)
             + f"Reconciliation Result ID: {ctx.reconciliation_result.pk}\n"
             f"Invoice ID: {ctx.invoice_id}\n"
             f"PO Number: {ctx.po_number or 'N/A'}\n"
-            f"Match Status: {ctx.reconciliation_result.match_status}\n"
+            + resolved_po_line
+            + f"Match Status: {ctx.reconciliation_result.match_status}\n"
             f"Exceptions: {json.dumps(ctx.exceptions, indent=2, default=str)}\n"
             "\nInvestigate and advise."
         )

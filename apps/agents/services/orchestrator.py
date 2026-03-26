@@ -64,6 +64,8 @@ class OrchestrationResult:
     skipped: bool = False
     skip_reason: str = ""
     error: str = ""
+    plan_source: str = ""
+    plan_confidence: float = 0.0
 
 
 class _AgentRunOutputProxy:
@@ -130,8 +132,26 @@ class AgentOrchestrator:
         from apps.core.trace import TraceContext
         TraceContext.set_current(trace_ctx)
 
+        # Idempotency guard: skip if a run for this result is already in progress.
+        from apps.agents.models import AgentRun
+        live_statuses = [AgentRunStatus.RUNNING]
+        already_running = AgentRun.objects.filter(
+            reconciliation_result=result,
+            status__in=live_statuses,
+        ).exists()
+        if already_running:
+            logger.warning(
+                "Orchestration skipped for result %s: a live agent run already exists.",
+                result.pk,
+            )
+            orch_result.skipped = True
+            orch_result.skip_reason = "Duplicate orchestration prevented: an active run exists for this result."
+            return orch_result
+
         # 1. Build the plan
         plan = self.policy.plan(result)
+        orch_result.plan_source = plan.plan_source
+        orch_result.plan_confidence = plan.plan_confidence
 
         if plan.skip_agents:
             orch_result.skipped = True
@@ -217,13 +237,6 @@ class AgentOrchestrator:
                 logger.warning("No agent class for type %s", agent_type)
                 continue
 
-            # Pass forward context from previous agents
-            if last_output:
-                ctx.extra["prior_reasoning"] = last_output.summarized_reasoning or ""
-                ctx.extra["recommendation_type"] = (
-                    last_output.output_payload or {}
-                ).get("recommendation_type", "")
-
             agent: BaseAgent = agent_cls()
             try:
                 # --- RBAC: check per-agent permission ---
@@ -258,6 +271,14 @@ class AgentOrchestrator:
                 orch_result.agents_executed.append(agent_type)
                 orch_result.agent_runs.append(agent_run)
                 last_output = agent_run
+
+                # Stamp plan metadata onto the first agent run for dashboard tracking.
+                if len(orch_result.agent_runs) == 1:
+                    agent_run.input_payload = agent_run.input_payload or {}
+                    agent_run.input_payload["plan_source"] = plan.plan_source
+                    agent_run.input_payload["plan_confidence"] = plan.plan_confidence
+                    agent_run.input_payload["planned_agents"] = plan.agents
+                    agent_run.save(update_fields=["input_payload"])
 
                 # Update structured memory from this agent's output.
                 _output_proxy = _AgentRunOutputProxy(agent_run)
@@ -313,8 +334,27 @@ class AgentOrchestrator:
                             "message", "details", "resolved",
                         )
                     )
-                    ctx.extra["grn_available"] = result.grn_available
-                    ctx.extra["grn_fully_received"] = result.grn_fully_received
+                    ctx.memory.resolved_po_number = ctx.po_number
+                    ctx.memory.facts["grn_available"] = bool(result.grn_available)
+                    ctx.memory.facts["grn_fully_received"] = bool(result.grn_fully_received)
+
+            # --- Reflection: dynamically insert agents based on findings ---
+            if last_output:
+                extra_agents = self._reflect(
+                    agent_type,
+                    last_output,
+                    result,
+                    llm_agents[llm_agents.index(agent_type) + 1:],
+                    ctx,
+                )
+                if extra_agents:
+                    insert_pos = llm_agents.index(agent_type) + 1
+                    for i, new_agent in enumerate(extra_agents):
+                        llm_agents.insert(insert_pos + i, new_agent)
+                    logger.info(
+                        "Reflection inserted agents %s after %s for result %s",
+                        extra_agents, agent_type, result.pk,
+                    )
 
         # 5. Deterministic resolution for tail agents (replaces LLM for
         #    EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY)
@@ -339,6 +379,51 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _reflect(
+        self,
+        completed_agent_type,
+        agent_run,
+        result,
+        remaining_agents,
+        ctx,
+    ):
+        """Inspect the just-completed agent run and return any agent types to
+        insert immediately after the current position in the pipeline.
+
+        Returns a list of agent_type strings (possibly empty). Never raises.
+        """
+        try:
+            if ctx.memory is None:
+                return []
+
+            # Rule 1: PO was just found in a 3-way case -- check for GRN next.
+            if (
+                completed_agent_type == AgentType.PO_RETRIEVAL
+                and ctx.memory.resolved_po_number is not None
+                and getattr(result, "reconciliation_mode", "") != "TWO_WAY"
+                and AgentType.GRN_RETRIEVAL not in remaining_agents
+            ):
+                return [AgentType.GRN_RETRIEVAL]
+
+            # Rule 2: Very low confidence extraction -- investigate discrepancies too.
+            if (
+                completed_agent_type == AgentType.INVOICE_UNDERSTANDING
+                and agent_run.confidence is not None
+                and agent_run.confidence < 0.5
+                and AgentType.RECONCILIATION_ASSIST not in remaining_agents
+            ):
+                return [AgentType.RECONCILIATION_ASSIST]
+
+            return []
+        except Exception:
+            logger.exception(
+                "_reflect() raised unexpectedly for agent %s result %s",
+                completed_agent_type,
+                getattr(result, "pk", "?"),
+            )
+            return []
+
     def _resolve_final_recommendation(
         self, orch: OrchestrationResult, result: ReconciliationResult
     ) -> None:

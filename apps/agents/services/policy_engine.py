@@ -33,6 +33,8 @@ class AgentPlan:
     skip_agents: bool = False
     auto_close: bool = False  # True when auto-closed by tolerance band
     reconciliation_mode: str = ""  # Propagated to orchestrator/agents
+    plan_source: str = "deterministic"   # "deterministic" or "llm"
+    plan_confidence: float = 0.0
 
 
 class PolicyEngine:

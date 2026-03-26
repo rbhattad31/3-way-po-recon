@@ -157,6 +157,8 @@ class AgentPlan:
     skip_agents: bool          # True -> skip all agents
     auto_close: bool           # True -> auto-close the result
     reconciliation_mode: str   # propagated to context
+    plan_source: str = "deterministic"  # "deterministic" or "llm"
+    plan_confidence: float = 0.0        # planner self-reported confidence (0-1)
 ```
 
 ### OrchestrationResult
@@ -175,6 +177,8 @@ class OrchestrationResult:
     skipped: bool
     skip_reason: str
     error: str
+    plan_source: str = ""    # which planner produced the plan ("deterministic" or "llm")
+    plan_confidence: float = 0.0  # planner self-reported confidence; 0.0 for deterministic
 ```
 
 ---
@@ -185,7 +189,7 @@ class OrchestrationResult:
 |---|---|---|
 | `AgentContext` / `AgentOutput` | `base_agent.py` | Data contracts |
 | `AgentMemory` | `agent_memory.py` | Structured cross-agent findings store |
-| `BaseAgent` | `base_agent.py` | ReAct loop, message persistence, `_sanitise_text()` |
+| `BaseAgent` | `base_agent.py` | ReAct loop, message persistence, `_sanitise_text()`, `_call_llm_with_retry()` |
 | `LLMClient` | `llm_client.py` | Azure OpenAI / OpenAI wrapper |
 | `PolicyEngine` | `policy_engine.py` | Decide which agents to run (no LLM) |
 | `ReasoningPlanner` | `reasoning_planner.py` | LLM-backed planner; wraps PolicyEngine as fallback |
@@ -430,8 +434,8 @@ It is purely deterministic (no LLM, no I/O aside from DB reads).
 
 > **Note:** `AgentOrchestrator` now uses `ReasoningPlanner` instead of
 > `PolicyEngine` directly. `ReasoningPlanner` wraps `PolicyEngine` as its
-> deterministic fallback and calls the LLM only when
-> `AGENT_REASONING_ENGINE_ENABLED=True`. See Section 16 for details.
+> deterministic fallback and always calls the LLM to produce the final plan.
+> On any LLM error the deterministic `PolicyEngine` result is used unchanged.
 
 ### Decision Matrix
 
@@ -494,7 +498,11 @@ point for the entire agentic pipeline.
 1. resolve_actor(request_user)              # user or SYSTEM_AGENT
 2. authorize_orchestration(actor)           # agents.orchestrate permission
 3. build_trace_context_for_agent(actor)     # set TraceContext thread-local
+3a. idempotency guard: query AgentRun.objects for RUNNING runs on this result;
+    if found -> set orch_result.skipped=True / skip_reason and return early
 4. policy.plan(result)                      # ReasoningPlanner -> PolicyEngine fallback
+4a. orch_result.plan_source = plan.plan_source
+    orch_result.plan_confidence = plan.plan_confidence
 5. if plan.skip_agents -> auto-close or skip, return
 6. partition plan.agents:
      llm_agents       = plan.agents - REPLACED_AGENTS
@@ -504,11 +512,16 @@ point for the entire agentic pipeline.
 9. for agent_type in llm_agents:
      a. authorize_agent(actor, agent_type)
      b. agent_cls().run(ctx)
-     c. pass forward: ctx.extra["prior_reasoning"], ctx.extra["recommendation_type"]
-     d. memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
-     e. if EXCEPTION_ANALYSIS: write reviewer summary to ReviewAssignment
-     f. if agent in _RECOMMENDING_AGENTS: log_recommendation()
-     g. if agent in _FEEDBACK_AGENTS: _apply_agent_findings() -> re-reconcile
+     c. memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
+     d. if EXCEPTION_ANALYSIS: write reviewer summary to ReviewAssignment
+     e. if agent in _RECOMMENDING_AGENTS: log_recommendation()
+     f. if agent in _FEEDBACK_AGENTS: _apply_agent_findings() -> re-reconcile;
+           refresh ctx.po_number, ctx.exceptions, ctx.memory.resolved_po_number,
+           ctx.memory.facts["grn_available"], ctx.memory.facts["grn_fully_received"]
+     g. _reflect(agent_type, agent_run, result, remaining, ctx)
+           -> may insert new agents into llm_agents immediately after current position
+     h. on first iteration only: stamp plan metadata onto agent_run.input_payload
+           (plan_source, plan_confidence, planned_agents) and save(update_fields=...)
 10. if deterministic_tail: _apply_deterministic_resolution()
 11. _resolve_final_recommendation()         # highest-confidence AgentRecommendation
 12. _apply_post_policies():
@@ -518,16 +531,8 @@ point for the entire agentic pipeline.
 
 ### Context Forwarding Between Agents
 
-After each LLM agent completes, the orchestrator forwards output via two
-mechanisms:
+After each LLM agent completes, the orchestrator updates structured memory:
 
-**Legacy string approach** (kept for backward compatibility):
-```python
-ctx.extra["prior_reasoning"] = last_output.summarized_reasoning or ""
-ctx.extra["recommendation_type"] = (last_output.output_payload or {}).get("recommendation_type", "")
-```
-
-**Structured memory** (new -- see `AgentMemory` in Section 2):
 ```python
 memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
 ```
@@ -536,6 +541,28 @@ memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
 `.output_payload`, and `.confidence` from an `AgentRun` DB record and presents
 them as `.reasoning`, `.recommendation_type`, `.confidence`, and `.evidence` --
 the interface expected by `AgentMemory.record_agent_output()`.
+
+After the feedback loop (PO_RETRIEVAL only), context is also refreshed on memory:
+
+```python
+ctx.memory.resolved_po_number = ctx.po_number
+# Always written -- bool() ensures False is correctly propagated (not just skipped).
+ctx.memory.facts["grn_available"] = bool(result.grn_available)
+ctx.memory.facts["grn_fully_received"] = bool(result.grn_fully_received)
+```
+
+Agents read from `ctx.memory` directly. The table below documents what each
+agent reads in its `build_user_message()` method:
+
+| Agent | Fields read from `ctx.memory` |
+|---|---|
+| `ReviewRoutingAgent` | `agent_summaries` (all prior summaries), `current_recommendation`, `current_confidence` |
+| `CaseSummaryAgent` | `agent_summaries` (pipe-joined, 100 chars each), `current_recommendation`, `current_confidence` |
+| `ReconciliationAssistAgent` | `resolved_po_number` (appended to prompt when not None) |
+
+All other agents do not currently read from `ctx.memory` in `build_user_message()`;
+they receive context exclusively through `AgentContext` fields (`po_number`,
+`exceptions`, etc.).
 
 ---
 
@@ -638,6 +665,23 @@ Deterministic runs use `llm_model_used="deterministic"`, token counts = 0.
 `agent-performance` endpoints read directly from `AgentRun`, `AgentStep`,
 `AgentMessage`, and `DecisionLog`.
 
+### Plan Comparison Dashboard Card
+
+The `agent_performance` view (`apps/dashboard/views.py`) also queries
+`AgentRun.input_payload__plan_source` over the past 7 days and passes a
+`plan_comparison` context variable to `templates/dashboard/agent_performance.html`.
+This renders a Bootstrap 5 card with a table:
+
+| Column | Source |
+|---|---|
+| Planner | `plan_source` value ("deterministic" or "llm") |
+| Runs | count of AgentRun records for that planner |
+| Avg Agent Confidence | average `final_confidence` for those runs |
+
+The card shows "No plan data yet." when no plan metadata has been stored
+(e.g., before any LLM planner runs or before any `AgentRun.input_payload`
+records are populated).
+
 ---
 
 ## 15. How the Pipeline Is Triggered
@@ -689,12 +733,12 @@ flow as the safe fallback.
 | DeterministicResolver always handles tail agents | LLM cannot override routing in edge cases |
 | No planning step -- just a rule lookup | Cannot handle novel exception combinations |
 
-> **Implementation status:** Phases 1 and 2 are **fully implemented** and
+> **Implementation status:** Phases 1, 2, and 3 are **fully implemented** and
 > merged. `AgentMemory` is live in `agent_memory.py`. `ReasoningPlanner` is
 > live in `reasoning_planner.py` and is what `AgentOrchestrator.__init__()`
-> instantiates. The deterministic `PolicyEngine` remains as the internal
-> fallback. Set `AGENT_REASONING_ENGINE_ENABLED=True` in `.env` to activate
-> the LLM planning path (Phase 3). Phases 4 and 5 remain optional/future.
+> instantiates -- the LLM planning path is always active with `PolicyEngine`
+> as the internal fallback on error. The reflection step (`_reflect()`) runs
+> after every agent in the loop. Phases 4 and 5 remain optional/future.
 
 ### Target Architecture: Planner + Executor
 
@@ -772,168 +816,185 @@ class AgentMemory:
 Add `memory: Optional[AgentMemory] = None` to `AgentContext`. Existing code
 ignores it; new planner/executor code uses it.
 
-#### Step 2 -- ReasoningPlanner (additive, feature-flagged)
+#### Step 2 -- ReasoningPlanner (always active)
 
-The planner is a single LLM call that produces a structured execution plan.
-It runs instead of `PolicyEngine.plan()` when `AGENT_REASONING_ENGINE_ENABLED=True`.
-When the flag is off, the existing `PolicyEngine` runs unchanged.
+The planner makes a single LLM call to produce a structured execution plan.
+It always runs; `PolicyEngine` is the internal fallback on any LLM error.
 
 ```python
-# apps/agents/services/reasoning_planner.py  (new file)
-
-import json
-from typing import List, Optional
-from dataclasses import dataclass, field
-from apps.agents.services.llm_client import LLMClient, LLMMessage
-from apps.agents.services.policy_engine import AgentPlan, PolicyEngine
-from apps.core.enums import AgentType
-from django.conf import settings
-
-
-@dataclass
-class PlannedStep:
-    agent_type: str
-    rationale: str
-    priority: int = 0
-
-
-@dataclass
-class ReasoningPlan:
-    steps: List[PlannedStep] = field(default_factory=list)
-    overall_reasoning: str = ""
-    confidence: float = 0.0
-    fallback_to_deterministic: bool = False
-
-
-_PLANNER_SYSTEM_PROMPT = """
-You are a reconciliation orchestration planner for an accounts-payable system.
-Given a reconciliation result (match status, exception types, extraction confidence,
-reconciliation mode), produce a minimal ordered execution plan of AI agents to
-investigate and resolve the case.
-
-Available agents:
-- PO_RETRIEVAL: find a missing or mismatched Purchase Order
-- GRN_RETRIEVAL: find missing Goods Receipt Note (3-way mode only)
-- INVOICE_UNDERSTANDING: re-analyse invoice when extraction confidence is low
-- RECONCILIATION_ASSIST: investigate a partial match discrepancy
-- EXCEPTION_ANALYSIS: classify and explain reconciliation exceptions
-- REVIEW_ROUTING: determine which team should review the case
-- CASE_SUMMARY: produce a human-readable summary for the reviewer
-
-Rules:
-- Only include agents that are genuinely needed.
-- GRN_RETRIEVAL must not appear in TWO_WAY mode.
-- EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY should appear if exceptions exist.
-- Return JSON only.
-"""
-
-_PLANNER_OUTPUT_SCHEMA = (
-    '{"overall_reasoning": "...", "confidence": 0.9, '
-    '"steps": [{"agent_type": "PO_RETRIEVAL", "rationale": "...", "priority": 1}, ...]}'
-)
-
+# apps/agents/services/reasoning_planner.py
 
 class ReasoningPlanner:
-    """LLM-based dynamic planner. Falls back to PolicyEngine on failure."""
+    """Wraps PolicyEngine and enhances the plan using an LLM.
 
-    def __init__(self):
-        self._llm = LLMClient(temperature=0.0, max_tokens=1024)
+    The LLM plan is always attempted. On any LLM error the deterministic
+    PolicyEngine result is used as a safe fallback.
+    """
+
+    def __init__(self) -> None:
         self._fallback = PolicyEngine()
+        self._llm = LLMClient(temperature=0.0, max_tokens=1024)
 
     def plan(self, result) -> AgentPlan:
-        """Produce an agent plan using the LLM, falling back to PolicyEngine."""
-        if not getattr(settings, "AGENT_REASONING_ENGINE_ENABLED", False):
-            return self._fallback.plan(result)
+        quick_plan = self._fallback.plan(result)
 
+        # Skip agent execution for clean matches or auto-close cases.
+        if quick_plan.skip_agents:
+            return quick_plan
+
+        # Attempt LLM-driven plan; fall back to deterministic on any error.
         try:
             return self._llm_plan(result)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception(
-                "ReasoningPlanner LLM call failed for result %s -- falling back", result.pk
+        except Exception as exc:
+            logger.warning(
+                "ReasoningPlanner LLM plan failed for result %s (%s); "
+                "falling back to deterministic plan.",
+                getattr(result, "pk", "?"),
+                exc,
             )
-            return self._fallback.plan(result)
-
-    def _llm_plan(self, result) -> AgentPlan:
-        exc_types = list(
-            result.exceptions.values_list("exception_type", flat=True)
-        )
-        user_message = (
-            f"Match status: {result.match_status}\n"
-            f"Reconciliation mode: {getattr(result, 'reconciliation_mode', 'THREE_WAY')}\n"
-            f"Deterministic confidence: {result.deterministic_confidence or 0.0:.2f}\n"
-            f"Extraction confidence: {result.extraction_confidence or 0.0:.2f}\n"
-            f"Exception types: {exc_types}\n\n"
-            f"Produce a minimal agent execution plan. Respond ONLY with JSON in this schema:\n"
-            f"{_PLANNER_OUTPUT_SCHEMA}"
-        )
-        resp = self._llm.chat(
-            messages=[
-                LLMMessage(role="system", content=_PLANNER_SYSTEM_PROMPT),
-                LLMMessage(role="user", content=user_message),
-            ],
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(resp.content or "{}")
-        steps = data.get("steps", [])
-        agents = [s["agent_type"] for s in sorted(steps, key=lambda x: x.get("priority", 0))]
-
-        # Safety: validate all agent types
-        valid = {v for v in AgentType}
-        agents = [a for a in agents if a in valid]
-
-        recon_mode = getattr(result, "reconciliation_mode", "") or ""
-        return AgentPlan(
-            agents=agents,
-            reason=data.get("overall_reasoning", "LLM-planned"),
-            reconciliation_mode=recon_mode,
-        )
+            return quick_plan
 ```
 
-Wire it into `AgentOrchestrator.__init__()`:
+`ReasoningPlanner` also delegates the two post-policy checks so the orchestrator
+can call them on `self.policy` regardless of which planner is in use:
 
 ```python
-# In orchestrator.py __init__:
-from apps.agents.services.reasoning_planner import ReasoningPlanner
+def should_auto_close(self, recommendation_type, confidence) -> bool:
+    return self._fallback.should_auto_close(recommendation_type, confidence)
 
-self.policy = ReasoningPlanner()  # replaces PolicyEngine(); falls back internally
+def should_escalate(self, recommendation_type, confidence) -> bool:
+    return self._fallback.should_escalate(recommendation_type, confidence)
 ```
 
-No other changes needed -- `ReasoningPlanner.plan()` returns the same
-`AgentPlan` dataclass that the orchestrator already consumes.
-
-#### Step 3 -- Reflection Step (optional, additive)
-
-Add a lightweight reflection check after each LLM agent. If the agent
-found something unexpected (e.g. PO retrieved changes the exception set),
-the executor can insert additional agents.
+`_llm_plan()` applies three validation guards before returning the plan, and
+stamps `plan_source` / `plan_confidence` on the returned `AgentPlan`:
 
 ```python
-# In AgentOrchestrator.execute(), after each agent run:
+# Guard 1 -- empty plan
+if not valid_steps:
+    raise ValueError("LLM planner returned no valid agent steps.")
 
-if getattr(settings, "AGENT_REASONING_ENGINE_ENABLED", False):
-    extra_agents = self._reflect(agent_type, last_output, result, remaining_agents)
+# Guard 2 -- CASE_SUMMARY must be last if present
+agent_names = [s["agent_type"] for s in valid_steps]
+if "CASE_SUMMARY" in agent_names and agent_names[-1] != "CASE_SUMMARY":
+    raise ValueError("CASE_SUMMARY must be the last agent in the plan.")
+
+# Guard 3 -- GRN_RETRIEVAL is invalid for TWO_WAY reconciliation
+if recon_mode == "TWO_WAY" and "GRN_RETRIEVAL" in agent_names:
+    raise ValueError("GRN_RETRIEVAL is not valid for TWO_WAY reconciliation.")
+
+plan_confidence = float(payload.get("confidence", 0.0))
+return AgentPlan(..., plan_source="llm", plan_confidence=plan_confidence)
+```
+
+If any guard raises, the exception propagates to `plan()` which catches it and
+falls back to the deterministic `quick_plan` (so the pipeline degrades
+gracefully rather than crashing).
+
+#### Step 3 -- Reflection Step (implemented)
+
+After each LLM agent completes, `_reflect()` inspects the findings and may
+insert additional agents immediately after the current position. This allows
+the pipeline to react to mid-run discoveries without re-planning from scratch.
+
+```python
+# In AgentOrchestrator.execute(), after the feedback loop block:
+
+if last_output:
+    extra_agents = self._reflect(
+        agent_type,
+        last_output,
+        result,
+        llm_agents[llm_agents.index(agent_type) + 1:],
+        ctx,
+    )
     if extra_agents:
-        llm_agents = extra_agents + llm_agents   # prepend urgent new steps
+        insert_pos = llm_agents.index(agent_type) + 1
+        for i, new_agent in enumerate(extra_agents):
+            llm_agents.insert(insert_pos + i, new_agent)
+        logger.info(
+            "Reflection inserted agents %s after %s for result %s",
+            extra_agents, agent_type, result.pk,
+        )
 
-def _reflect(self, completed_agent, agent_run, result, remaining):
-    """Decide if new agents should be inserted based on latest findings."""
-    output = agent_run.output_payload or {}
-    evidence = output.get("evidence", {})
 
-    # Example: PO was just found -- if GRN_RETRIEVAL is not already planned
-    # and this is 3-way mode, add it now.
-    recon_mode = getattr(result, "reconciliation_mode", "")
-    if (
-        completed_agent == AgentType.PO_RETRIEVAL
-        and evidence.get("found_po")
-        and recon_mode != "TWO_WAY"
-        and AgentType.GRN_RETRIEVAL not in remaining
-    ):
-        return [AgentType.GRN_RETRIEVAL]
+def _reflect(self, completed_agent_type, agent_run, result, remaining_agents, ctx):
+    """Inspect the just-completed agent run and return agent types to insert.
 
-    return []
+    Returns a list of agent_type strings (possibly empty). Never raises.
+    """
+    try:
+        if ctx.memory is None:
+            return []
+
+        # Rule 1: PO was just found in a 3-way case -- check for GRN next.
+        if (
+            completed_agent_type == AgentType.PO_RETRIEVAL
+            and ctx.memory.resolved_po_number is not None
+            and getattr(result, "reconciliation_mode", "") != "TWO_WAY"
+            and AgentType.GRN_RETRIEVAL not in remaining_agents
+        ):
+            return [AgentType.GRN_RETRIEVAL]
+
+        # Rule 2: Very low confidence extraction -- investigate discrepancies too.
+        if (
+            completed_agent_type == AgentType.INVOICE_UNDERSTANDING
+            and agent_run.confidence is not None
+            and agent_run.confidence < 0.5
+            and AgentType.RECONCILIATION_ASSIST not in remaining_agents
+        ):
+            return [AgentType.RECONCILIATION_ASSIST]
+
+        return []
+    except Exception:
+        logger.exception(
+            "_reflect() raised unexpectedly for agent %s result %s",
+            completed_agent_type,
+            getattr(result, "pk", "?"),
+        )
+        return []
 ```
+
+Reflection rules:
+
+| Trigger | Condition | Agent Inserted |
+|---|---|---|
+| `PO_RETRIEVAL` succeeds | `ctx.memory.resolved_po_number is not None` and mode != TWO_WAY and GRN_RETRIEVAL not already queued | `GRN_RETRIEVAL` |
+| `INVOICE_UNDERSTANDING` finishes | `agent_run.confidence < 0.5` and RECONCILIATION_ASSIST not already queued | `RECONCILIATION_ASSIST` |
+
+#### Step 3b -- BaseAgent LLM Retry Wrapper
+
+All LLM calls inside the ReAct tool loop go through `_call_llm_with_retry()`,
+a static method on `BaseAgent`. It retries up to 3 times on transient OpenAI
+errors with exponential backoff (2s, 4s, 8s), then re-raises on exhaustion:
+
+```python
+@staticmethod
+def _call_llm_with_retry(llm, messages, tools, max_retries=3, base_delay=2):
+    import time as _time
+    import openai
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            return llm.chat(messages=messages, tools=tools if tools else None)
+        except (
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+        ) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "LLM transient error (attempt %d/%d), retrying in %ds: %s",
+                    attempt + 1, max_retries, delay, exc,
+                )
+                _time.sleep(delay)
+    raise last_exc
+```
+
+Errors not in the retry list (`AuthenticationError`, `BadRequestError`, etc.)
+propagate immediately without retrying.
 
 #### Step 4 -- LLM-Backed Terminal Agents (optional)
 

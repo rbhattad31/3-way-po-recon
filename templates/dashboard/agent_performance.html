@@ -344,6 +344,32 @@
     </div>
   </div>
 
+  <div class="card mb-4">
+    <div class="card-header fw-semibold">Plan Comparison: Deterministic vs LLM Planner</div>
+    <div class="card-body p-0">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Planner</th>
+            <th>Runs</th>
+            <th>Avg Agent Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in plan_comparison %}
+          <tr>
+            <td>{{ row.input_payload__plan_source|default:"-" }}</td>
+            <td>{{ row.count }}</td>
+            <td>{{ row.avg_confidence|floatformat:2 }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3" class="text-muted text-center py-3">No plan data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
 

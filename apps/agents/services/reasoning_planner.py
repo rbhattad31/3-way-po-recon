@@ -1,9 +1,9 @@
 """LLM-backed agent execution planner.
 
-ReasoningPlanner wraps PolicyEngine and optionally uses the LLM to decide
+ReasoningPlanner wraps PolicyEngine and always uses the LLM to decide
 which agents to run and in what order. The deterministic PolicyEngine always
-runs first; the LLM path is only activated when
-AGENT_REASONING_ENGINE_ENABLED=True in Django settings.
+runs first as a baseline; the LLM then produces the final plan and falls
+back to the deterministic plan on any error.
 
 Usage::
 
@@ -15,8 +15,6 @@ from __future__ import annotations
 import json
 import logging
 from typing import List
-
-from django.conf import settings
 
 from apps.agents.services.llm_client import LLMClient, LLMMessage
 from apps.agents.services.policy_engine import AgentPlan, PolicyEngine
@@ -61,12 +59,10 @@ _PLANNER_SYSTEM_PROMPT = (
 
 
 class ReasoningPlanner:
-    """Wraps PolicyEngine and optionally enhances the plan using an LLM.
+    """Wraps PolicyEngine and enhances the plan using an LLM.
 
-    When AGENT_REASONING_ENGINE_ENABLED is False (the default), this class
-    behaves identically to calling PolicyEngine.plan() directly.
-    When the flag is True, it attempts an LLM-generated plan and falls back
-    to the deterministic plan on any error.
+    The LLM plan is always attempted. On any LLM error the deterministic
+    PolicyEngine result is used as a safe fallback.
     """
 
     def __init__(self) -> None:
@@ -92,10 +88,6 @@ class ReasoningPlanner:
         if quick_plan.skip_agents:
             return quick_plan
 
-        # Feature flag: return deterministic plan unless LLM planner is enabled.
-        if not getattr(settings, "AGENT_REASONING_ENGINE_ENABLED", False):
-            return quick_plan
-
         # Attempt LLM-driven plan; fall back to deterministic on any error.
         try:
             return self._llm_plan(result)
@@ -107,6 +99,14 @@ class ReasoningPlanner:
                 exc,
             )
             return quick_plan
+
+    def should_auto_close(self, recommendation_type, confidence: float) -> bool:
+        """Delegate to the underlying PolicyEngine."""
+        return self._fallback.should_auto_close(recommendation_type, confidence)
+
+    def should_escalate(self, recommendation_type, confidence: float) -> bool:
+        """Delegate to the underlying PolicyEngine."""
+        return self._fallback.should_escalate(recommendation_type, confidence)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -175,7 +175,27 @@ class ReasoningPlanner:
         # Sort by priority ascending (lower number = earlier in pipeline).
         valid_steps.sort(key=lambda s: int(s.get("priority", 999)))
 
+        if not valid_steps:
+            raise ValueError(
+                "LLM planner returned no valid agent steps from payload: "
+                + json.dumps(list(payload.get("steps", [])))[:200]
+            )
+
+        # Require CASE_SUMMARY to be the last step if present.
+        agent_names = [s["agent_type"] for s in valid_steps]
+        if "CASE_SUMMARY" in agent_names and agent_names[-1] != "CASE_SUMMARY":
+            raise ValueError(
+                "LLM planner placed CASE_SUMMARY out of position: " + str(agent_names)
+            )
+
+        # GRN_RETRIEVAL must not appear in TWO_WAY plans.
+        if recon_mode == "TWO_WAY" and "GRN_RETRIEVAL" in agent_names:
+            raise ValueError(
+                "LLM planner included GRN_RETRIEVAL for a TWO_WAY reconciliation."
+            )
+
         agents = [s["agent_type"] for s in valid_steps]
+        plan_confidence = float(payload.get("confidence", 0.0))
 
         return AgentPlan(
             agents=agents,
@@ -183,4 +203,6 @@ class ReasoningPlanner:
             skip_agents=False,
             auto_close=False,
             reconciliation_mode=recon_mode,
+            plan_source="llm",
+            plan_confidence=plan_confidence,
         )

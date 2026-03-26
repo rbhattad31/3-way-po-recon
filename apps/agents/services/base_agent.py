@@ -134,10 +134,11 @@ class BaseAgent(ABC):
             tool_specs = ToolRegistry.get_specs(self.allowed_tools)
 
             for round_idx in range(MAX_TOOL_ROUNDS):
-                # LLM call
+                # LLM call (with retry on transient errors)
                 step_counter += 1
-                llm_resp = self.llm.chat(
-                    messages=[
+                llm_resp = self._call_llm_with_retry(
+                    self.llm,
+                    [
                         LLMMessage(
                             role=m["role"],
                             content=m["content"],
@@ -147,7 +148,7 @@ class BaseAgent(ABC):
                         )
                         for m in messages
                     ],
-                    tools=tool_specs if tool_specs else None,
+                    tool_specs if tool_specs else None,
                 )
 
                 # Track token usage
@@ -335,6 +336,35 @@ class BaseAgent(ABC):
             "actor_primary_role": ctx.actor_primary_role,
             "permission_checked": ctx.permission_checked,
         }
+
+    @staticmethod
+    def _call_llm_with_retry(llm, messages, tools, max_retries=3, base_delay=2):
+        """Call llm.chat() with exponential-backoff retry on transient OpenAI errors.
+
+        Retries on: RateLimitError, APIConnectionError, InternalServerError.
+        All other exceptions (AuthenticationError, BadRequestError, etc.) propagate
+        immediately without retry.
+        """
+        import time as _time
+        import openai
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                return llm.chat(messages=messages, tools=tools if tools else None)
+            except (
+                openai.RateLimitError,
+                openai.APIConnectionError,
+                openai.InternalServerError,
+            ) as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "LLM transient error (attempt %d/%d), retrying in %ds: %s",
+                        attempt + 1, max_retries, delay, exc,
+                    )
+                    _time.sleep(delay)
+        raise last_exc
 
     @staticmethod
     def _resolve_actor(ctx: AgentContext):
