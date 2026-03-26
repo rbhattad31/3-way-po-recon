@@ -2,8 +2,9 @@
 
 > Covers the complete agentic layer of the 3-Way PO Reconciliation Platform:
 > how agents are structured, how the pipeline executes, how the deterministic
-> and LLM layers interact, and a concrete upgrade path to a full reasoning
-> engine without breaking the existing flow.
+> and LLM layers interact, a concrete upgrade path to a full reasoning
+> engine without breaking the existing flow, best-practice upgrades for each
+> existing agent, and open source tools for agent observability.
 
 ---
 
@@ -25,6 +26,18 @@
 14. [Observability and Governance](#14-observability-and-governance)
 15. [How the Pipeline Is Triggered](#15-how-the-pipeline-is-triggered)
 16. [Upgrade Path: Reasoning Engine](#16-upgrade-path-reasoning-engine)
+17. [Upgrading Existing Agents to Best Agentic Practices](#17-upgrading-existing-agents-to-best-agentic-practices)
+18. [Open Source Tools for Agent Performance and Inter-Agent Tracing](#18-open-source-tools-for-agent-performance-and-inter-agent-tracing)
+    - 18.1 Open Source vs. SaaS Clarification
+    - 18.2 Recommended Combination for This Stack
+    - 18.3 Coverage Matrix
+    - 18.4 Langfuse
+    - 18.5 Phoenix / Arize
+    - 18.6 OpenLLMetry / openinference
+    - 18.7 Weave / W&B (Not Recommended)
+    - 18.8 What the Internal Platform Already Covers
+    - 18.9 Windows Compatibility for All Tools
+    - 18.10 Recommended Integration Sequence
 
 ---
 
@@ -917,3 +930,913 @@ def _is_complex_case(self, result, exceptions) -> bool:
 
 All three flags are independent. They can be enabled incrementally. When all
 are False the system behaves exactly as it does today.
+
+---
+
+## 17. Upgrading Existing Agents to Best Agentic Practices
+
+This section audits each existing agent against current best-practice standards
+and provides a concrete upgrade checklist. The goal is to close the gap between
+the current working implementation and the ideal agentic design -- without
+breaking anything that already works.
+
+### 17.1 Best Practice Checklist (applies to all agents)
+
+| Practice | Standard | Current State | Action Required |
+|---|---|---|---|
+| Structured output enforcement | Use `response_format={"type":"json_object"}` or explicit JSON-only instruction | Only `InvoiceExtractionAgent` uses `json_object`; others rely on prompt instructions | Upgrade ReAct agents to use json_object mode or schema validation |
+| Idempotent runs | Re-running the same agent twice on the same input should produce safe, identical-or-compatible results | Agents create new `AgentRun` records each time but do not deduplicate | Add idempotency key check at orchestrator level |
+| Tool error resilience | Agents must handle tool failures gracefully and not hallucinate when a tool returns an error | `_execute_tool` returns a `ToolResult(success=False)` but the LLM still sees the error string -- it may try to guess the answer | Add explicit "if tool fails, escalate rather than guess" instruction to system prompts |
+| Prompt versioning | Every agent run should record which prompt version was used | `AgentRun.prompt_version` field exists but is never written | Populate from `PromptTemplate.version` during `_init_messages()` |
+| Token budget awareness | Agent should not silently truncate context | No context-length guard; very large exception lists could overflow | Add a pre-flight token estimator and truncate `ctx.exceptions` to the N highest-severity ones when over budget |
+| Confidence calibration | Confidence scores must be grounded in evidence, not just stated | Agents produce confidence from LLM output; no post-hoc calibration | Add a cross-check: if confidence > 0.9 but tool calls failed, cap at 0.75 |
+| Retry with backoff | Transient LLM failures should retry before failing the run | `AgentDefinition.max_retries=2` field exists but `BaseAgent.run()` does not read it | Wire `max_retries` into the try/except block in `BaseAgent.run()` |
+| Minimal tool surface | Each agent should only see the tools it actually needs | `allowed_tools` is correctly scoped per agent | No change needed -- already correct |
+| Human-readable reasoning | `summarized_reasoning` must be meaningful to a non-technical reviewer | Content is taken directly from LLM output; quality varies | Add a reasoning quality check: minimum 50 characters, must mention at least one invoice or PO reference |
+| No special characters in output | Agent-generated strings that are stored to DB or shown in UI must use ASCII only | LLM may return Unicode arrows, fancy quotes, em-dashes | Add an output sanitiser in `_finalise_run()` that strips non-ASCII characters from `summarized_reasoning` and `case_summary` |
+
+---
+
+### 17.2 Per-Agent Upgrade Guide
+
+#### ExceptionAnalysisAgent
+
+Current gaps:
+- Produces two output formats in one response (standard JSON + `<reviewer_summary>` block).
+  This makes parsing fragile and increases the chance of parse failure.
+- `_parse_reviewer_summary()` silently returns None on parse failure with only a warning log.
+
+Recommended upgrades:
+
+1. **Split into two dedicated prompts.** Keep the main analysis JSON as-is.
+   Have the reviewer summary as a second, simpler structured call after the
+   ReAct loop completes (not embedded in the same response).
+
+2. **Add fallback reviewer summary.** When `_parse_reviewer_summary()` returns
+   None, generate a minimal summary from the main JSON output rather than
+   leaving `reviewer_summary` empty on the `ReviewAssignment`.
+
+3. **Validate recommendation_type against enum.** Before calling
+   `interpret_response`, assert the value is one of the known
+   `RecommendationType` values; default to `SEND_TO_AP_REVIEW` if not.
+
+```python
+# In interpret_response, after _parse_agent_json:
+VALID_REC_TYPES = {rt.value for rt in RecommendationType}
+rec = data.get("recommendation_type")
+if rec not in VALID_REC_TYPES:
+    data["recommendation_type"] = RecommendationType.SEND_TO_AP_REVIEW
+    data["confidence"] = min(float(data.get("confidence", 0.5)), 0.6)
+```
+
+---
+
+#### InvoiceExtractionAgent
+
+Current gaps:
+- Uses `response_format={"type":"json_object"}` (correct) but does not
+  validate the returned schema before storing.
+- `confidence` is taken directly from the LLM output without a bounds check.
+
+Recommended upgrades:
+
+1. **Schema validation after extraction.** Use a lightweight schema check
+   (required keys, numeric confidence, non-empty line_items) before calling
+   `_finalise_run()`. If validation fails, mark the run FAILED so the
+   extraction pipeline can retry.
+
+2. **Confidence bounds.** Clamp to [0.0, 1.0] and check that it is not
+   suspiciously high (> 0.95) when critical fields like `invoice_number`
+   are empty.
+
+```python
+def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
+    data = _parse_agent_json(content)
+    # Bounds check
+    conf = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
+    # Penalise for empty critical fields
+    if not data.get("invoice_number") or not data.get("vendor_name"):
+        conf = min(conf, 0.5)
+    data["confidence"] = conf
+    return AgentOutput(
+        reasoning=f"Extracted {len(data.get('line_items', []))} line items with confidence {conf}",
+        confidence=conf,
+        evidence=data,
+        raw_content=content,
+    )
+```
+
+---
+
+#### PORetrievalAgent
+
+Current gaps:
+- The feedback loop in the orchestrator checks evidence keys `found_po`,
+  `po_number`, `matched_po` -- but the agent prompt does not explicitly
+  instruct the LLM to use these key names.
+- If the LLM puts the PO number in `evidence["result"]` or similar, the
+  feedback loop silently does nothing.
+
+Recommended upgrade:
+
+Add explicit instruction to the system prompt:
+
+```
+When you find a PO, you MUST include it in the evidence JSON with the key
+"found_po": "<po_number>". This key is required for the reconciliation
+feedback loop to function.
+```
+
+Also add a post-process check in `interpret_response`:
+
+```python
+def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
+    data = _parse_agent_json(content)
+    # Normalise PO evidence key so feedback loop always finds it
+    evidence = data.get("evidence", {})
+    for key in ("po_number", "matched_po", "result", "found"):
+        if key in evidence and "found_po" not in evidence:
+            evidence["found_po"] = evidence[key]
+            break
+    data["evidence"] = evidence
+    return _to_agent_output(data, content)
+```
+
+---
+
+#### GRNRetrievalAgent
+
+Current gaps:
+- No mode guard inside the agent itself; it relies entirely on the
+  `PolicyEngine` never scheduling it in TWO_WAY mode. If an agent is
+  triggered directly (e.g. from a test), it may produce irrelevant output.
+
+Recommended upgrade:
+
+Add a mode guard at the top of `build_user_message()`:
+
+```python
+def build_user_message(self, ctx: AgentContext) -> str:
+    if ctx.reconciliation_mode == "TWO_WAY":
+        return (
+            "ERROR: GRN retrieval was called in TWO_WAY mode. "
+            "This agent should not run in 2-way reconciliation. "
+            "Respond with: {\"reasoning\": \"Agent not applicable in TWO_WAY mode\", "
+            "\"recommendation_type\": null, \"confidence\": 0.0, \"decisions\": [], \"evidence\": {}}"
+        )
+    return (
+        _mode_context(ctx)
+        + f"Invoice ID: {ctx.invoice_id}\n"
+        # ... rest of message
+    )
+```
+
+---
+
+#### ReviewRoutingAgent and CaseSummaryAgent
+
+These are already replaced by `DeterministicResolver` in the current pipeline.
+Their class definitions exist for the case where LLM tail is enabled (Section 16
+Phase 5). When that path is active:
+
+- Both agents should use `response_format={"type":"json_object"}`.
+- `CaseSummaryAgent` should not use tools at that point -- the DeterministicResolver
+  already built the summary template; the LLM's job is enrichment only.
+- `ReviewRoutingAgent` should receive the full agent memory (Section 16.1) as
+  context so it does not re-derive what prior agents already established.
+
+---
+
+#### ReconciliationAssistAgent
+
+Current gaps:
+- The most open-ended agent -- broad tool access and a general-purpose prompt.
+  This is the most likely to hallucinate when tools return partial data.
+
+Recommended upgrades:
+
+1. **Ground every claim in a tool result.** Add to the system prompt:
+   "You MUST call at least one tool before forming your recommendation.
+   Never recommend AUTO_CLOSE without first verifying amounts via
+   reconciliation_summary or invoice_details."
+
+2. **Add a minimum tool-call enforcement check.** In `BaseAgent.run()`,
+   after the ReAct loop, check that `step_counter > 2` (at least one tool
+   call happened). If not, downgrade confidence by 20% before finalising.
+
+---
+
+### 17.3 Shared Improvements for All Agents
+
+These can be implemented once in `BaseAgent` and all agents inherit them.
+
+#### Output Sanitiser (no special characters in stored content)
+
+```python
+# In base_agent.py _finalise_run(), before saving:
+import re
+
+def _sanitise_text(text: str) -> str:
+    """Strip non-ASCII characters from agent-generated text before storing."""
+    # Replace common Unicode substitutes with ASCII equivalents
+    replacements = {
+        "\u2019": "'", "\u2018": "'",  # curly quotes
+        "\u201c": '"', "\u201d": '"',  # curly double quotes
+        "\u2014": "--", "\u2013": "-", # em/en dash
+        "\u2026": "...",               # ellipsis
+        "\u2192": "->", "\u2190": "<-", "\u21d2": "=>",  # arrows
+        "\u2022": "-",                 # bullet
+    }
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    # Strip anything else outside printable ASCII
+    return re.sub(r"[^\x00-\x7F]", "", text)
+```
+
+Apply in `_finalise_run()`:
+
+```python
+agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
+```
+
+And in `DeterministicResolver._build_case_summary()` before returning.
+
+#### Prompt Version Capture
+
+```python
+# In BaseAgent._init_messages(), after building sys_msg:
+try:
+    from apps.core.models import PromptTemplate
+    pt = PromptTemplate.objects.filter(
+        slug=f"agent.{self.agent_type.lower()}", is_active=True
+    ).only("version").first()
+    if pt:
+        agent_run.prompt_version = pt.version
+        agent_run.save(update_fields=["prompt_version"])
+except Exception:
+    pass
+```
+
+#### Retry on Transient LLM Failure
+
+```python
+# In BaseAgent.run(), wrap the LLM call with retry:
+import time as _time
+
+MAX_LLM_RETRIES = 2
+RETRY_DELAY_SECONDS = 2
+
+for attempt in range(MAX_LLM_RETRIES + 1):
+    try:
+        llm_resp = self.llm.chat(messages=[...], tools=tool_specs)
+        break
+    except Exception as exc:
+        if attempt < MAX_LLM_RETRIES:
+            _time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+            continue
+        raise
+```
+
+#### Token Budget Pre-flight
+
+```python
+# In AgentOrchestrator.execute(), before building AgentContext:
+MAX_EXCEPTION_CONTEXT = 20  # keep only the 20 highest-severity exceptions
+
+if len(exceptions) > MAX_EXCEPTION_CONTEXT:
+    severity_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    exceptions = sorted(
+        exceptions,
+        key=lambda e: severity_order.get(e.get("severity", "LOW"), 3)
+    )[:MAX_EXCEPTION_CONTEXT]
+```
+
+---
+
+## 18. Open Source Tools for Agent Performance and Inter-Agent Tracing
+
+The platform already has a strong internal governance layer
+(`AgentTraceService`, `DecisionLog`, `ToolCall`, governance API). The tools
+below extend this with visual dashboards, cross-session analytics, and
+evaluation frameworks that would otherwise need to be built from scratch.
+
+### 18.1 Open Source vs. SaaS Clarification
+
+A common misconception: **LangSmith is not open source**. The LangChain agent
+SDK (`langchain`) is MIT-licensed, but the LangSmith observability server has
+never been released as open source. The only backend is `smith.langchain.com`.
+Do not plan around a self-hosted LangSmith.
+
+| Tool | Truly Open Source | Self-hostable | License |
+|---|---|---|---|
+| **Langfuse** | Yes | Yes (Docker + Postgres) | MIT |
+| **Phoenix (Arize)** | Yes | Yes (Docker + SQLite or Postgres) | Apache 2.0 |
+| **OpenLLMetry / openinference** | Yes (SDK) | Yes (any OTEL backend) | Apache 2.0 |
+| **Helicone** | Yes (backend) | Yes (Docker + Clickhouse) | Apache 2.0 |
+| **Weave (W&B)** | SDK only | No -- W&B cloud required | -- |
+| **LangSmith** | No | No -- LangChain cloud only | -- |
+| **PromptLayer** | No | No -- proprietary SaaS | -- |
+
+### 18.2 Recommended Combination for This Stack
+
+**Tier 1 (recommended):** Langfuse + openinference instrumentation
+
+- Langfuse is self-hostable on the existing Postgres + Redis stack (same infrastructure as Django/Celery).
+- Its trace/span/generation hierarchy maps directly to `AgentRun > AgentStep > AgentMessage`.
+- First-class Azure OpenAI cost tracking with deployment-name pricing overrides.
+- `openinference-instrumentation-openai` auto-instruments every `AzureOpenAI` SDK call with zero per-call changes.
+
+**Tier 1b (pure OTEL alternative):** Phoenix + openinference
+
+- Better fit if the org already runs an OpenTelemetry stack for non-LLM services.
+- Phoenix stores to SQLite (default) or Postgres, runs as a single container.
+- Strongest eval templates (hallucination, Q&A, relevance via LLM-as-judge).
+
+**Not recommended:**
+
+- **Weave/W&B:** The backend is W&B cloud only -- PO/invoice financial data must not leave your infrastructure on a mandatory external service.
+- **LangSmith:** Closed backend, not self-hostable.
+- **PromptLayer:** Not an agent observability tool; predates multi-step agent tracing.
+
+---
+
+### 18.3 Coverage Matrix
+
+| Capability | Langfuse | Phoenix | openinference (OTel) |
+|---|---|---|---|
+| Latency, token usage, cost | Native (model-level pricing) | Via OTEL spans | Captures, exports to backend |
+| Tool call frequency/latency | Custom spans on AgentStep | OTEL span attributes | Auto-captured from OpenAI tool calls |
+| Inter-agent message tracing | Parent/child spans | Parent/child OTEL spans | Trace context propagation |
+| Hallucination / reasoning eval | Built-in eval runner + LLM-as-judge | Best-in-class eval templates | N/A (instrumentation only) |
+| Execution flow visualisation | Waterfall trace UI | Interactive trace tree | N/A |
+| Azure OpenAI | Yes, deployment-name cost mapping | Yes, via openinference | Yes, transparent proxy |
+| Self-hostable | Yes | Yes | SDK only, needs OTEL backend |
+
+---
+
+### 18.4 Langfuse (Recommended First Choice)
+
+**GitHub:** https://github.com/langfuse/langfuse
+**Pip:** `langfuse`
+**Self-hostable:** Yes -- Docker Compose or Kubernetes. Postgres + Redis only (same stack as this project).
+**License:** MIT (core), commercial for cloud
+
+Langfuse is the closest match to what this project already tracks internally.
+It provides:
+- Trace/span hierarchy (maps directly to `AgentRun` -> `AgentStep` -> `ToolCall`)
+- Prompt version management (mirrors `PromptRegistry`)
+- Token cost tracking per model per run
+- Score/feedback collection (human feedback on recommendations)
+- Cross-run analytics: average latency, token usage, tool call frequency per agent type
+- Evaluation datasets: capture bad agent outputs and replay them to test prompt changes
+
+**Integration approach -- three options (all additive, none replace existing models):**
+
+**Option A -- Low-level SDK** (maps 1:1 to `AgentRun/AgentStep` schema):
+
+```python
+from langfuse import Langfuse
+lf = Langfuse()
+
+trace = lf.trace(id=str(agent_run.pk), name="agent_run", user_id=str(actor_user_id))
+span  = trace.span(name="agent_step", input=step.input_data, metadata={"tool": step.action})
+gen   = span.generation(name="llm_call", model=llm_model, usage={"input": pt, "output": ct})
+gen.end(output=response_content)
+span.end(output=step.output_data)
+trace.update(output=final_output)
+```
+
+Emit from Django post-save signals on `AgentStep` saves to keep Langfuse and Postgres in sync.
+
+**Option B -- Decorator approach** (wraps ReAct loop functions):
+
+```python
+from langfuse.decorators import observe, langfuse_context
+
+@observe(name="agent_run")
+def run_agent(query: str):
+    langfuse_context.update_current_trace(session_id=session_id)
+    ...
+```
+
+**Option C -- OpenAI SDK patch** (zero-code LLM call capture):
+
+```python
+from langfuse.openai import openai   # drop-in replacement for: import openai
+```
+
+**LangfuseTracer wrapper** (additive, does not replace existing AgentRun writes):
+
+```python
+# apps/agents/services/langfuse_tracer.py  (new file)
+
+from __future__ import annotations
+from typing import Any, Dict, List, Optional
+from django.conf import settings
+
+try:
+    from langfuse import Langfuse
+    from langfuse.decorators import langfuse_context, observe
+    _LANGFUSE_ENABLED = getattr(settings, "LANGFUSE_ENABLED", False)
+except ImportError:
+    _LANGFUSE_ENABLED = False
+
+
+class LangfuseTracer:
+    """Thin wrapper that sends LLM calls to Langfuse when enabled.
+
+    All existing AgentRun/AgentStep records continue to be written as before.
+    Langfuse receives a copy for the visual dashboard only.
+    """
+
+    _client = None
+
+    @classmethod
+    def get_client(cls):
+        if not _LANGFUSE_ENABLED:
+            return None
+        if cls._client is None:
+            cls._client = Langfuse(
+                public_key=settings.LANGFUSE_PUBLIC_KEY,
+                secret_key=settings.LANGFUSE_SECRET_KEY,
+                host=getattr(settings, "LANGFUSE_HOST", "https://cloud.langfuse.com"),
+            )
+        return cls._client
+
+    @classmethod
+    def trace_llm_call(
+        cls,
+        agent_type: str,
+        agent_run_id: int,
+        messages: List[Dict],
+        response_content: str,
+        tool_calls: List,
+        tokens: Dict[str, int],
+        model: str,
+    ) -> None:
+        client = cls.get_client()
+        if not client:
+            return
+        try:
+            trace = client.trace(
+                name=f"agent.{agent_type}",
+                id=str(agent_run_id),
+                metadata={"agent_type": agent_type},
+            )
+            trace.generation(
+                name="llm_call",
+                model=model,
+                input=messages,
+                output=response_content,
+                usage={
+                    "input": tokens.get("prompt_tokens", 0),
+                    "output": tokens.get("completion_tokens", 0),
+                    "total": tokens.get("total_tokens", 0),
+                },
+            )
+        except Exception:
+            pass  # Never let tracing break the agent run
+```
+
+Wire into `BaseAgent.run()` after each LLM call:
+
+```python
+from apps.agents.services.langfuse_tracer import LangfuseTracer
+
+# After llm_resp is received (in the ReAct loop):
+LangfuseTracer.trace_llm_call(
+    agent_type=self.agent_type,
+    agent_run_id=agent_run.pk,
+    messages=[m for m in messages if m["role"] != "tool"],
+    response_content=llm_resp.content or "",
+    tool_calls=llm_resp.tool_calls,
+    tokens={
+        "prompt_tokens": llm_resp.prompt_tokens,
+        "completion_tokens": llm_resp.completion_tokens,
+        "total_tokens": llm_resp.total_tokens,
+    },
+    model=llm_resp.model,
+)
+```
+
+**Settings to add:**
+
+```python
+# config/settings.py
+LANGFUSE_ENABLED = env.bool("LANGFUSE_ENABLED", default=False)
+LANGFUSE_PUBLIC_KEY = env.str("LANGFUSE_PUBLIC_KEY", default="")
+LANGFUSE_SECRET_KEY = env.str("LANGFUSE_SECRET_KEY", default="")
+LANGFUSE_HOST = env.str("LANGFUSE_HOST", default="http://localhost:3000")  # self-hosted
+```
+
+---
+
+### 18.5 Phoenix / Arize (Best for Local Dev Inspection and Evals)
+
+**GitHub:** https://github.com/Arize-ai/phoenix
+**Pip:** `arize-phoenix` (server), `arize-phoenix-otel` (instrumentation), `openinference-instrumentation-openai` (auto-instrument)
+**Self-hostable:** Yes -- runs as a local process, no external dependencies.
+Stores traces in SQLite by default (zero config) or Postgres for production.
+**License:** Apache 2.0
+
+Phoenix provides a local browser-based trace inspector. The `openinference`
+library auto-instruments the OpenAI SDK so every `client.chat.completions.create()`
+call is captured without any code changes.
+
+**Integration (zero-code for LLM calls):**
+
+```python
+# In config/settings.py or apps/__init__.py (only in dev/staging):
+
+import os
+if os.getenv("PHOENIX_ENABLED", "false").lower() == "true":
+    import phoenix as px
+    from openinference.instrumentation.openai import OpenAIInstrumentor
+
+    px.launch_app()               # starts the local UI on http://localhost:6006
+    OpenAIInstrumentor().instrument()  # patches openai SDK automatically
+```
+
+Because `LLMClient` uses `openai.AzureOpenAI`, the `OpenAIInstrumentor` patches
+it automatically. Every LLM call in every agent will appear in the Phoenix UI
+with full message/token/latency detail.
+
+**What it shows:**
+- Full conversation thread per `AgentRun`
+- Token usage per round, cumulative per session
+- Tool call latency waterfall
+- Side-by-side comparison of two runs on the same input
+- Hallucination scores (via `phoenix.evals`)
+
+**Limitation:** Phoenix does not know about the inter-agent orchestration
+(which agent ran after which). To show the pipeline graph, emit an
+OpenTelemetry span per agent using the approach in Section 18.4.
+
+---
+
+### 18.6 OpenLLMetry / openinference (Best for Inter-Agent Tracing)
+
+**GitHub:** https://github.com/traceloop/openllmetry
+**Pip:** `opentelemetry-sdk`, `openinference-instrumentation-openai` (for auto-instrumentation);
+optionally `traceloop-sdk` as a convenience wrapper
+**Self-hostable:** The SDK is fully open source. Route telemetry to Phoenix,
+Langfuse, Jaeger, Grafana Tempo, or any OTEL-compatible backend -- no vendor lock-in.
+**License:** Apache 2.0
+
+Think of OpenLLMetry/openinference as the **instrumentation layer** and Phoenix
+or Langfuse as the **server**. It uses OpenTelemetry to trace agent pipelines
+as distributed spans and is the right tool for answering: "which agent was the
+bottleneck and which tool call was slowest?"
+
+**Integration (using Traceloop's convenience wrapper):**
+
+```python
+# In Django AppConfig.ready() or wsgi.py -- one-liner setup:
+from traceloop.sdk import Traceloop
+Traceloop.init(
+    app_name="po-recon-agent",
+    api_endpoint="http://localhost:6006/v1/traces",   # point at Phoenix or Langfuse
+    disable_batch=False,
+)
+```
+
+**Manual OTEL setup (no Traceloop dependency):**
+
+```python
+# apps/agents/services/otel_tracer.py  (new file)
+
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from openinference.instrumentation.openai import OpenAIInstrumentor
+from django.conf import settings
+
+_provider = None
+
+
+def init_otel():
+    """Call once from Django AppConfig.ready() when OTEL_ENABLED=True."""
+    global _provider
+    if _provider or not getattr(settings, "OTEL_ENABLED", False):
+        return
+    exporter = OTLPSpanExporter(
+        endpoint=getattr(settings, "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:6006/v1/traces")
+    )
+    _provider = TracerProvider()
+    _provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(_provider)
+    OpenAIInstrumentor().instrument(tracer_provider=_provider)  # auto-patches AzureOpenAI
+
+
+def get_tracer():
+    return trace.get_tracer("po-recon.agents")
+```
+
+Wrap each agent execution in `AgentOrchestrator`:
+
+```python
+from apps.agents.services.otel_tracer import get_tracer
+from opentelemetry import trace as otel_trace
+
+tracer = get_tracer()
+
+# In execute(), around the agent run loop:
+with tracer.start_as_current_span(
+    f"agent.{agent_type}",
+    attributes={
+        "agent.type": agent_type,
+        "reconciliation.result_id": str(result.pk),
+        "agent_run.id": str(agent_run.pk) if agent_run else "",
+    },
+) as span:
+    agent_run = agent.run(ctx)
+    span.set_attribute("agent.confidence", agent_run.confidence or 0.0)
+    span.set_attribute("agent.tokens_total", agent_run.total_tokens or 0)
+    span.set_attribute("agent.status", agent_run.status)
+```
+
+The existing `trace_id` and `span_id` on `AgentRun` can be populated from the
+OTel span context:
+
+```python
+ctx_span = otel_trace.get_current_span()
+if ctx_span and ctx_span.is_recording():
+    ctx.trace_id = format(ctx_span.get_span_context().trace_id, "032x")
+    ctx.span_id = format(ctx_span.get_span_context().span_id, "016x")
+```
+
+This makes `AgentRun.trace_id` and the OTel trace ID identical, so you can
+jump from the governance DB to the Jaeger/Tempo trace in one click.
+
+---
+
+### 18.7 Weave / W&B (Not Recommended for This Stack)
+
+**GitHub:** https://github.com/wandb/weave
+**Pip:** `weave`
+**Self-hostable:** No. The SDK is Apache 2.0, but all data is sent to `wandb.ai`.
+There is no supported path to run the W&B backend on-premise.
+**License:** Apache 2.0 (SDK only)
+
+**Hard blocker for this project:** PO/invoice financial data must not be sent
+to an external mandatory cloud service. Weave has no self-hosted backend option.
+
+If evaluation dataset tracking is needed, use Phoenix's eval framework instead
+(Section 18.5) -- it provides comparable LLM-as-judge evaluation templates
+and runs entirely on your infrastructure.
+
+For reference, Weave tracks agent inputs/outputs as versioned datasets and
+lets you run evaluations. The `@weave.op()` decorator approach looks like this:
+
+**Integration pattern:**
+
+```python
+# After orchestration completes, log the result to Weave:
+
+import weave
+from django.conf import settings
+
+if getattr(settings, "WEAVE_ENABLED", False):
+    weave.init(project_name="po-recon-agents")
+
+    @weave.op()
+    def log_orchestration_result(result_id, agents_executed, final_recommendation, confidence):
+        return {
+            "result_id": result_id,
+            "agents_executed": agents_executed,
+            "final_recommendation": final_recommendation,
+            "confidence": confidence,
+        }
+
+    log_orchestration_result(
+        result_id=orch_result.reconciliation_result_id,
+        agents_executed=orch_result.agents_executed,
+        final_recommendation=orch_result.final_recommendation,
+        confidence=orch_result.final_confidence,
+    )
+```
+
+Use case: capture every case where a human reviewer overrides the agent
+recommendation. That `accepted=False` signal on `AgentRecommendation` is the
+ground truth for your evaluation dataset.
+
+---
+
+### 18.8 What the Internal Platform Already Covers (No External Tool Needed)
+
+Before adding any external tool, note what the built-in governance layer
+already provides:
+
+| Capability | Built-in Location |
+|---|---|
+| Full message-level audit trail | `AgentMessage` model + governance API |
+| Tool call timing and success rate | `AgentStep.duration_ms`, `ToolCall.status` |
+| Token usage per agent per run | `AgentRun.prompt_tokens`, `completion_tokens`, `total_tokens` |
+| Confidence over time | `AgentRun.confidence` queryable via governance API |
+| Decision audit with evidence | `DecisionLog` + `agent-performance` endpoint |
+| Per-invoice full trace | `AgentTraceService.get_trace_for_invoice()` |
+| RBAC / guardrail decisions | `AuditEvent` with `GUARDRAIL_GRANTED/DENIED` types |
+| Inter-agent context forwarding | `ctx.extra["prior_reasoning"]` logged in each agent's `AgentMessage` |
+
+External tools add: visual timeline UI, cross-session aggregated analytics,
+evaluation scoring, and alerts. They do not replace what is already here.
+
+---
+
+### 18.9 Windows Compatibility for All Tools
+
+All development on this project runs on **Windows 11 Pro**. This section
+gives an exact compatibility verdict for each tool and the precise steps
+needed on Windows.
+
+#### Python SDKs -- all work natively on Windows
+
+Every pip package listed below is pure Python and installs without issue
+on Windows. No native extensions, no platform-specific compiled code.
+
+```
+pip install langfuse
+pip install arize-phoenix arize-phoenix-otel
+pip install openinference-instrumentation-openai
+pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+pip install traceloop-sdk
+```
+
+Run these inside the existing virtual environment used by the Django app.
+
+---
+
+#### Phoenix server -- runs natively on Windows, no Docker needed
+
+Phoenix is the easiest option on Windows because it runs as a plain Python
+process with no external dependencies.
+
+```bash
+pip install arize-phoenix
+
+# Start the UI server (runs in a background thread inside the same Python process)
+python -m phoenix.server.main serve
+
+# Or launch programmatically from Django app startup (dev only):
+# import phoenix as px
+# px.launch_app()
+```
+
+The UI opens at `http://localhost:6006`. Traces are stored in SQLite under
+`%USERPROFILE%\.phoenix\` by default -- no config needed.
+
+**Windows-specific note:** `px.launch_app()` launches a background thread.
+On Windows with Django's `runserver --reload`, the thread is re-created on
+each code reload. Use `PHOENIX_ENABLED=true` with a conditional check and
+a `threading.Event` guard to avoid duplicate launches:
+
+```python
+# In apps/agents/apps.py AgentConfig.ready():
+import os
+import threading
+
+_phoenix_started = threading.Event()
+
+def start_phoenix_once():
+    if os.getenv("PHOENIX_ENABLED", "false").lower() != "true":
+        return
+    if _phoenix_started.is_set():
+        return
+    _phoenix_started.set()
+    try:
+        import phoenix as px
+        from openinference.instrumentation.openai import OpenAIInstrumentor
+        px.launch_app()
+        OpenAIInstrumentor().instrument()
+    except Exception:
+        pass
+```
+
+---
+
+#### Langfuse Python SDK -- works natively on Windows
+
+The `langfuse` pip package has no OS dependency. Install and use immediately:
+
+```python
+from langfuse import Langfuse
+lf = Langfuse(
+    public_key="...",
+    secret_key="...",
+    host="http://localhost:3000",   # or cloud.langfuse.com
+)
+```
+
+**Langfuse self-hosted server on Windows:** The server is a Docker Compose
+stack (Next.js + Postgres + Redis + worker). On Windows 11 this requires
+**Docker Desktop with the WSL2 backend** (the default for Windows 11):
+
+1. Install Docker Desktop from `https://docker.com/products/docker-desktop`.
+   Enable the WSL2 integration during setup. WSL2 is included in Windows 11.
+
+2. Clone and start:
+   ```bash
+   git clone https://github.com/langfuse/langfuse.git
+   cd langfuse
+   docker compose up -d
+   ```
+
+3. The UI is available at `http://localhost:3000`.
+
+4. To reuse the existing project Postgres (avoid a second Postgres container),
+   edit `docker-compose.yml` and replace the `db` service with the connection
+   string for your local Postgres instance. The Langfuse server accepts a
+   standard `DATABASE_URL` env var.
+
+**Performance note:** Docker Desktop on Windows uses a WSL2 VM. File I/O
+inside the container is fast, but mounting Windows-native paths (e.g.
+`C:\...`) into the container is slow. The Langfuse server does not mount
+host paths so this is not an issue.
+
+---
+
+#### openinference / OpenTelemetry SDK -- works natively on Windows
+
+All `opentelemetry-*` and `openinference-*` packages are pure Python. The
+`OTLPSpanExporter` sends spans over HTTP to Phoenix (`http://localhost:6006`)
+or Langfuse -- no OS-level socket differences between Windows and Linux.
+
+```bash
+pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http openinference-instrumentation-openai
+```
+
+No changes to the `otel_tracer.py` code shown in Section 18.6 are needed
+for Windows.
+
+---
+
+#### Helicone self-hosted -- requires Docker Desktop (Clickhouse dependency)
+
+Helicone's self-hosted backend requires **Clickhouse** as its analytics store.
+Clickhouse has no native Windows binary; it must run in Docker. This makes
+Helicone the most operationally complex option on Windows:
+
+- Docker Desktop with WSL2 required
+- Clickhouse container is memory-heavy (1 GB+ RAM)
+- The proxy service and Clickhouse both run as containers
+
+Given the alternatives (Langfuse and Phoenix) cover the same capabilities
+with simpler Windows setup, Helicone is not recommended for this project.
+
+---
+
+#### Weave / W&B -- SDK installs on Windows but not recommended
+
+The `weave` pip package installs on Windows. However, as noted in Section
+18.7, all data is sent to `wandb.ai` (no self-hosted option), which is a
+hard blocker for PO/invoice financial data regardless of OS.
+
+---
+
+#### Quick-start summary for Windows 11
+
+| Tool | Windows setup | Effort |
+|---|---|---|
+| Phoenix server | `pip install arize-phoenix` then `python -m phoenix.server.main serve` | 2 minutes |
+| openinference SDK | `pip install openinference-instrumentation-openai` | 1 minute |
+| Langfuse SDK | `pip install langfuse` | 1 minute |
+| Langfuse server | Docker Desktop (WSL2) + `docker compose up` | 15-20 minutes first time |
+| OTel SDK | `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http` | 1 minute |
+| Helicone | Docker Desktop + Clickhouse -- not recommended | Complex |
+
+**Fastest path on Windows:** install `arize-phoenix` +
+`openinference-instrumentation-openai`, call `OpenAIInstrumentor().instrument()`
+once at app startup, and open `http://localhost:6006`. Every Azure OpenAI
+call across all agents is visible immediately with zero infrastructure setup.
+
+---
+
+### 18.10 Recommended Integration Sequence
+
+1. **Start with Phoenix + openinference** (zero infrastructure, local dev only).
+   Install `arize-phoenix` + `openinference-instrumentation-openai`. Call
+   `OpenAIInstrumentor().instrument()` once at startup (see Windows guard
+   pattern in Section 18.9). Set `PHOENIX_ENABLED=true`. Every Azure OpenAI
+   call immediately appears in the browser at `http://localhost:6006` -- no
+   DB changes, no settings changes for other team members.
+
+2. **Add Langfuse** (staging and production). Self-host with Docker Compose
+   on Windows using Docker Desktop (WSL2 backend) -- or deploy the container
+   to the staging server directly. Wire `LangfuseTracer` into `BaseAgent`
+   using Option A (low-level SDK, Section 18.4) so Langfuse traces map 1:1
+   to `AgentRun` PKs. This gives the team a shared production dashboard for
+   latency, token cost, and confidence trends.
+
+3. **Add OTel spans around the orchestration loop** (when inter-agent
+   bottleneck analysis is needed). Use `init_otel()` from Section 18.6.
+   Point to Phoenix or Langfuse as the OTEL backend -- no separate Jaeger
+   instance needed. Populate `AgentRun.trace_id` from the OTel span context
+   so governance records and OTel traces share the same ID.
+
+4. **Add Phoenix evals as a batch job** (when building an evaluation dataset).
+   Read `AgentRecommendation.accepted=False` records from Postgres as the
+   ground-truth dataset. Run `HallucinationEvaluator` and `QAEvaluator`
+   against the corresponding `AgentMessage` records. Run before any
+   system-prompt change to measure regression. This replaces Weave without
+   requiring any external cloud dependency.

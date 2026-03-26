@@ -73,8 +73,10 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Setting**: `POSTING_REFERENCE_FRESHNESS_HOURS` (default 168h / 7 days).
 
 ### Agent System
+- **Full architecture reference:** See [AGENT_ARCHITECTURE.md](../AGENT_ARCHITECTURE.md) for the complete agentic layer documentation, including all agent implementations, the PolicyEngine decision matrix, the DeterministicResolver rule table, RBAC guardrails, the reasoning engine upgrade path, best-practice upgrade guide per agent, and open source observability tool recommendations.
+- **No special characters in agent output stored to DB** -- this rule extends beyond source code. LLM-generated text written to `AgentRun.summarized_reasoning`, `ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, and `DecisionLog.rationale` must use ASCII only. Apply the `_sanitise_text()` helper (defined in `AGENT_ARCHITECTURE.md` Section 17.3) before any `.save()` call on agent-generated content.
 - All agents extend `BaseAgent` (in `apps/agents/services/`).
-- Agents use **ReAct loop**: LLM → parse tool calls → execute tools → loop (max 6 iterations).
+- Agents use **ReAct loop**: LLM -> parse tool calls -> execute tools -> loop (max 6 iterations).
 - Tool-calling uses **OpenAI-compliant format**: `tool_calls` array on assistant messages, `tool_call_id` + `name` on tool response messages.
 - Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`. Each tool declares `required_permission` (e.g., `"purchase_orders.view"`).
 - `AgentOrchestrator` is the entry point; `PolicyEngine` decides which agents to run based on match status + exception types.
@@ -97,6 +99,12 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Decorators** (`apps/core/decorators.py`): `@observed_service` (service methods), `@observed_action` (FBV views), `@observed_task` (Celery tasks). All create child spans, measure duration, write `ProcessingLog`/`AuditEvent`.
 - **RequestTraceMiddleware** (`apps/core/middleware.py`): Creates root `TraceContext` per request, enriches with RBAC, sets `X-Trace-ID`/`X-Request-ID` headers.
 - When adding new services or views, decorate entry-point methods with the appropriate `@observed_*` decorator.
+- **External agent observability tools** (Langfuse, Phoenix, openinference, OpenLLMetry): See `AGENT_ARCHITECTURE.md` Section 18 for the full comparison, integration code, and Windows-specific setup. Key points for this Windows 11 dev environment:
+  - **Phoenix** (`arize-phoenix` + `openinference-instrumentation-openai`): pure Python, no Docker needed. Start with `python -m phoenix.server.main serve` on port 6006. Use the `threading.Event` guard in `AgentConfig.ready()` to prevent duplicate launches on Django `runserver --reload`.
+  - **Langfuse SDK** (`langfuse`): pure Python, installs directly via pip. Self-hosted Langfuse server needs Docker Desktop with the WSL2 backend (Windows 11 default). Set `LANGFUSE_ENABLED`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` in `.env`.
+  - **openinference / OTel SDK** (`opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`): pure Python, works on Windows. Point `OTLPSpanExporter` at `http://localhost:6006` (Phoenix) -- no separate collector needed.
+  - **Weave/W&B and LangSmith are not self-hostable** -- do not use for financial/PO data. LangSmith is not open source despite common misconceptions; the server is closed SaaS only.
+  - All agent-observable content stored to DB (`AgentRun.summarized_reasoning`, `ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, `DecisionLog.rationale`) must be passed through `_sanitise_text()` (defined in `AGENT_ARCHITECTURE.md` Section 17.3) before saving to strip non-ASCII characters that LLMs may generate.
 
 ### Governance & Audit
 - `AuditEvent` model has 20+ fields: trace IDs, RBAC snapshot (actor_primary_role, actor_email, actor_roles_snapshot), permission tracking (permission_checked, permission_source, access_granted), cross-references (invoice_id, case_id, reconciliation_result_id), status_before/after, duration_ms, error_code.

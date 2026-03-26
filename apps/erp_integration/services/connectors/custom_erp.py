@@ -18,8 +18,27 @@ from apps.erp_integration.services.secrets_resolver import resolve_secret
 logger = logging.getLogger(__name__)
 
 
+# Default endpoint paths -- used when metadata_json has no "endpoints" key.
+DEFAULT_ENDPOINTS: Dict[str, str] = {
+    "vendor_lookup": "/api/vendors/lookup",
+    "item_lookup": "/api/items/lookup",
+    "tax_lookup": "/api/tax-codes/lookup",
+    "cost_center_lookup": "/api/cost-centers/lookup",
+    "po_lookup": "/api/purchase-orders/lookup",
+    "grn_lookup": "/api/grns/lookup",
+    "duplicate_check": "/api/invoices/duplicate-check",
+    "invoice_create": "/api/invoices/create",
+    "invoice_park": "/api/invoices/park",
+    "invoice_status": "/api/invoices/{document_number}/status",
+}
+
+
 class CustomERPConnector(BaseERPConnector):
     """Connector for custom ERP systems using REST API.
+
+    Endpoint paths are read from ``metadata_json["endpoints"]`` on the
+    ERPConnection record.  When a key is missing the connector falls back
+    to the built-in defaults defined in ``DEFAULT_ENDPOINTS``.
 
     Secrets are resolved from environment variables via resolve_secret().
     """
@@ -32,15 +51,30 @@ class CustomERPConnector(BaseERPConnector):
         self.timeout = connection_config.get("timeout_seconds", 30)
         self._api_key: str | None = None
 
+        # Merge user-supplied endpoint overrides with defaults.
+        meta = connection_config.get("metadata_json") or {}
+        user_endpoints = meta.get("endpoints") or {}
+        self._endpoints: Dict[str, str] = {**DEFAULT_ENDPOINTS, **user_endpoints}
+
+    def _endpoint(self, key: str, **fmt_kwargs: str) -> str:
+        """Return the endpoint path for *key*, applying any format kwargs."""
+        path = self._endpoints.get(key, DEFAULT_ENDPOINTS.get(key, ""))
+        if fmt_kwargs:
+            path = path.format(**fmt_kwargs)
+        return path
+
     # ------------------------------------------------------------------
     # Auth
     # ------------------------------------------------------------------
 
     def _get_headers(self) -> Dict[str, str]:
         if self._api_key is None:
-            key_ref = self.config.get("auth_config_json", {}).get(
-                "api_key_env", "ERP_API_KEY"
-            )
+            # Prefer typed field; fall back to legacy auth_config_json.
+            key_ref = self.config.get("api_key_env") or ""
+            if not key_ref:
+                key_ref = self.config.get("auth_config_json", {}).get(
+                    "api_key_env", "ERP_API_KEY"
+                )
             self._api_key = resolve_secret(key_ref)
         return {
             "Authorization": f"Bearer {self._api_key}",
@@ -59,6 +93,31 @@ class CustomERPConnector(BaseERPConnector):
     # ------------------------------------------------------------------
     # Capability checks
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Connectivity test
+    # ------------------------------------------------------------------
+
+    def test_connectivity(self) -> tuple:
+        """Test connectivity by sending a HEAD request to the base URL."""
+        if not self.base_url:
+            return False, "Base URL is not configured."
+        try:
+            resp = requests.head(
+                self.base_url,
+                headers=self._get_headers(),
+                timeout=min(self.timeout, 10),
+                allow_redirects=True,
+            )
+            if resp.status_code < 500:
+                return True, f"Connected successfully (HTTP {resp.status_code})."
+            return False, f"Server error (HTTP {resp.status_code})."
+        except requests.ConnectionError:
+            return False, f"Cannot reach {self.base_url} -- connection refused or DNS failure."
+        except requests.Timeout:
+            return False, f"Connection to {self.base_url} timed out."
+        except Exception as exc:
+            return False, f"Connection test failed: {exc}"
 
     def supports_vendor_lookup(self) -> bool:
         return True
@@ -97,7 +156,7 @@ class CustomERPConnector(BaseERPConnector):
             params["vendor_code"] = vendor_code
         if vendor_name:
             params["vendor_name"] = vendor_name
-        return self._do_lookup("/api/vendors/lookup", params, "vendor")
+        return self._do_lookup(self._endpoint("vendor_lookup"), params, "vendor")
 
     def lookup_po(self, po_number: str = "", vendor_code: str = "", **kwargs) -> ERPResolutionResult:
         params: Dict[str, str] = {}
@@ -105,7 +164,7 @@ class CustomERPConnector(BaseERPConnector):
             params["po_number"] = po_number
         if vendor_code:
             params["vendor_code"] = vendor_code
-        return self._do_lookup("/api/purchase-orders/lookup", params, "po")
+        return self._do_lookup(self._endpoint("po_lookup"), params, "po")
 
     def lookup_grn(self, po_number: str = "", grn_number: str = "", **kwargs) -> ERPResolutionResult:
         params: Dict[str, str] = {}
@@ -113,7 +172,7 @@ class CustomERPConnector(BaseERPConnector):
             params["po_number"] = po_number
         if grn_number:
             params["grn_number"] = grn_number
-        return self._do_lookup("/api/grns/lookup", params, "grn")
+        return self._do_lookup(self._endpoint("grn_lookup"), params, "grn")
 
     def lookup_item(self, item_code: str = "", description: str = "", **kwargs) -> ERPResolutionResult:
         params: Dict[str, str] = {}
@@ -121,7 +180,7 @@ class CustomERPConnector(BaseERPConnector):
             params["item_code"] = item_code
         if description:
             params["description"] = description
-        return self._do_lookup("/api/items/lookup", params, "item")
+        return self._do_lookup(self._endpoint("item_lookup"), params, "item")
 
     def lookup_tax(self, tax_code: str = "", rate: float = 0.0, **kwargs) -> ERPResolutionResult:
         params: Dict[str, str] = {}
@@ -129,13 +188,13 @@ class CustomERPConnector(BaseERPConnector):
             params["tax_code"] = tax_code
         if rate:
             params["rate"] = str(rate)
-        return self._do_lookup("/api/tax-codes/lookup", params, "tax")
+        return self._do_lookup(self._endpoint("tax_lookup"), params, "tax")
 
     def lookup_cost_center(self, cost_center_code: str = "", **kwargs) -> ERPResolutionResult:
         params: Dict[str, str] = {}
         if cost_center_code:
             params["cost_center_code"] = cost_center_code
-        return self._do_lookup("/api/cost-centers/lookup", params, "cost_center")
+        return self._do_lookup(self._endpoint("cost_center_lookup"), params, "cost_center")
 
     def check_duplicate_invoice(
         self, invoice_number: str = "", vendor_code: str = "",
@@ -149,7 +208,7 @@ class CustomERPConnector(BaseERPConnector):
         if fiscal_year:
             params["fiscal_year"] = fiscal_year
         return self._do_lookup(
-            "/api/invoices/duplicate-check", params, "duplicate_invoice",
+            self._endpoint("duplicate_check"), params, "duplicate_invoice",
         )
 
     # ------------------------------------------------------------------
@@ -157,17 +216,17 @@ class CustomERPConnector(BaseERPConnector):
     # ------------------------------------------------------------------
 
     def create_invoice(self, payload: Dict[str, Any]) -> ERPSubmissionResult:
-        return self._do_submit("/api/invoices/create", payload)
+        return self._do_submit(self._endpoint("invoice_create"), payload)
 
     def park_invoice(self, payload: Dict[str, Any]) -> ERPSubmissionResult:
-        return self._do_submit("/api/invoices/park", payload)
+        return self._do_submit(self._endpoint("invoice_park"), payload)
 
     def get_posting_status(self, erp_document_number: str) -> ERPSubmissionResult:
         start = time.time()
         try:
             resp = self._request(
                 "GET",
-                f"/api/invoices/{erp_document_number}/status",
+                self._endpoint("invoice_status", document_number=erp_document_number),
             )
             elapsed = int((time.time() - start) * 1000)
             data = resp.json() if resp.status_code == 200 else {}

@@ -107,11 +107,36 @@ def posting_detail(request, pk):
 
     corrections = posting.field_corrections.order_by("-created_at")[:20]
 
+    # ERP resolution data from latest run
+    field_values = []
+    line_items = []
+    erp_source_metadata = {}
+    header_fields = []
+    erp_ref_fields = []
+    if latest_run:
+        field_values = list(latest_run.field_values.order_by("category", "field_code"))
+        line_items = list(latest_run.line_items.order_by("line_index"))
+        erp_source_metadata = latest_run.erp_source_metadata_json or {}
+        # Split field values into header vs ERP-sourced for structured display
+        for fv in field_values:
+            if fv.source_type in (
+                "VENDOR_REF", "ITEM_REF", "TAX_REF",
+                "COST_CENTER_REF", "PO_REF",
+            ):
+                erp_ref_fields.append(fv)
+            else:
+                header_fields.append(fv)
+
     return render(request, "posting/detail.html", {
         "posting": posting,
         "latest_run": latest_run,
         "run_history": run_history,
         "corrections": corrections,
+        "field_values": field_values,
+        "header_fields": header_fields,
+        "erp_ref_fields": erp_ref_fields,
+        "line_items": line_items,
+        "erp_source_metadata": erp_source_metadata,
     })
 
 

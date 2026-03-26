@@ -4,6 +4,7 @@ from django.db import models
 
 from apps.core.models import BaseModel, TimestampMixin
 from apps.erp_integration.enums import (
+    ERPAuthType,
     ERPConnectionStatus,
     ERPConnectorType,
     ERPResolutionType,
@@ -26,11 +27,11 @@ class ERPConnection(BaseModel):
         default=ERPConnectorType.CUSTOM,
         db_index=True,
     )
-    base_url = models.URLField(max_length=500)
+    base_url = models.URLField(max_length=500, blank=True, default="")
     auth_config_json = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Secret references (env var names), never raw secrets",
+        help_text="Legacy JSON auth config. Prefer the typed fields below.",
     )
     status = models.CharField(
         max_length=20,
@@ -41,6 +42,67 @@ class ERPConnection(BaseModel):
     timeout_seconds = models.PositiveIntegerField(default=30)
     is_default = models.BooleanField(default=False)
     metadata_json = models.JSONField(default=dict, blank=True)
+
+    # ── REST API fields (CUSTOM, DYNAMICS, ZOHO, SALESFORCE) ──
+    auth_type = models.CharField(
+        max_length=20,
+        choices=ERPAuthType.choices,
+        default=ERPAuthType.BEARER,
+        blank=True,
+    )
+    api_key_env = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Env var name holding the API key / bearer token",
+    )
+
+    # ── SQL Server fields (SQLSERVER) ──
+    connection_string_env = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Env var name holding the ODBC connection string (advanced)",
+    )
+    database_name = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Database name",
+    )
+    db_host = models.CharField(
+        max_length=300, blank=True, default="",
+        help_text="Database server hostname or IP",
+    )
+    db_port = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Database port (default 1433 for SQL Server)",
+    )
+    db_username = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Database login username",
+    )
+    db_password_encrypted = models.TextField(
+        blank=True, default="",
+        help_text="Fernet-encrypted database password",
+    )
+    db_driver = models.CharField(
+        max_length=200, blank=True, default="ODBC Driver 17 for SQL Server",
+        help_text="ODBC driver name",
+    )
+    db_trust_cert = models.BooleanField(
+        default=False,
+        help_text="Append TrustServerCertificate=yes and Encrypt=yes "
+                  "(common for on-prem servers with self-signed certs)",
+    )
+
+    # ── OAuth fields (DYNAMICS, ZOHO, SALESFORCE) ──
+    tenant_id = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Tenant / Org ID for cloud ERP",
+    )
+    client_id_env = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Env var name holding the OAuth client ID",
+    )
+    client_secret_env = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Env var name holding the OAuth client secret",
+    )
 
     class Meta:
         db_table = "erp_integration_connection"

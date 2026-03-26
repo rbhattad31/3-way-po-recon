@@ -9,13 +9,17 @@ from apps.erp_integration.models import ERPConnection
 from apps.erp_integration.services.connectors.base import BaseERPConnector
 from apps.erp_integration.services.connectors.custom_erp import CustomERPConnector
 from apps.erp_integration.services.connectors.dynamics import DynamicsConnector
+from apps.erp_integration.services.connectors.mysql import MySQLERPConnector
 from apps.erp_integration.services.connectors.salesforce import SalesforceConnector
+from apps.erp_integration.services.connectors.sqlserver import SQLServerERPConnector
 from apps.erp_integration.services.connectors.zoho import ZohoConnector
 
 logger = logging.getLogger(__name__)
 
 _CONNECTOR_MAP = {
     ERPConnectorType.CUSTOM: CustomERPConnector,
+    ERPConnectorType.SQLSERVER: SQLServerERPConnector,
+    ERPConnectorType.MYSQL: MySQLERPConnector,
     ERPConnectorType.DYNAMICS: DynamicsConnector,
     ERPConnectorType.ZOHO: ZohoConnector,
     ERPConnectorType.SALESFORCE: SalesforceConnector,
@@ -40,7 +44,34 @@ class ConnectorFactory:
             "metadata_json": connection.metadata_json or {},
             "connection_id": connection.id,
             "connection_name": connection.name,
+            # Typed credential fields
+            "auth_type": connection.auth_type,
+            "api_key_env": connection.api_key_env,
+            "connection_string_env": connection.connection_string_env,
+            "database_name": connection.database_name,
+            "db_host": connection.db_host,
+            "db_port": connection.db_port,
+            "db_username": connection.db_username,
+            "db_password_encrypted": connection.db_password_encrypted,
+            "db_driver": connection.db_driver,
+            "db_trust_cert": connection.db_trust_cert,
+            "tenant_id": connection.tenant_id,
+            "client_id_env": connection.client_id_env,
+            "client_secret_env": connection.client_secret_env,
         }
+        return connector_cls(config)
+
+    @staticmethod
+    def create_from_config(config: dict) -> BaseERPConnector:
+        """Instantiate a connector from a raw config dict (no saved record needed).
+
+        The dict must include ``connector_type`` plus the fields relevant
+        to that connector type.
+        """
+        connector_type = config.get("connector_type", "")
+        connector_cls = _CONNECTOR_MAP.get(connector_type)
+        if connector_cls is None:
+            raise ValueError(f"Unknown connector type: {connector_type}")
         return connector_cls(config)
 
     @staticmethod
@@ -65,7 +96,6 @@ class ConnectorFactory:
             ERPConnection.objects.filter(
                 name=name,
                 status=ERPConnectionStatus.ACTIVE,
-                is_active=True,
             )
             .first()
         )

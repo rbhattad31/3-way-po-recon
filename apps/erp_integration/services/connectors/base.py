@@ -91,6 +91,18 @@ class BaseERPConnector:
         return False
 
     # ------------------------------------------------------------------
+    # Connectivity test
+    # ------------------------------------------------------------------
+
+    def test_connectivity(self) -> tuple:
+        """Test actual connectivity to the ERP system.
+
+        Returns:
+            (success: bool, message: str)
+        """
+        return False, "Connectivity test not implemented for this connector."
+
+    # ------------------------------------------------------------------
     # Reference lookups
     # ------------------------------------------------------------------
 

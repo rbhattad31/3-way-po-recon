@@ -71,6 +71,11 @@
           <i class="bi bi-cloud-upload me-2"></i>ERP Reference Imports
         </a>
       </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'erp_integration' %}active fw-bold{% endif %}" href="{% url 'erp_integration:erp_connection_list' %}">
+          <i class="bi bi-cloud me-2"></i>ERP Connections
+        </a>
+      </li>
       {% endif %}
 
       {# ── Documents ── #}
