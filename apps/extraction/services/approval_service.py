@@ -128,6 +128,9 @@ class ExtractionApprovalService:
             "Auto-approved extraction for invoice %s (confidence=%.2f)",
             invoice.pk, confidence,
         )
+        # ── Trigger posting pipeline ──
+        cls._enqueue_posting(invoice, user=None)
+
         return approval
 
     # ------------------------------------------------------------------
@@ -144,6 +147,11 @@ class ExtractionApprovalService:
     ) -> ExtractionApproval:
         """Approve an extraction after optional field corrections.
 
+        Concurrency: Locks the ExtractionApproval row via select_for_update()
+        inside the atomic block.  Only PENDING → APPROVED is allowed.
+        Simultaneous approve/reject calls will serialize on the row lock;
+        the second caller will see a non-PENDING status and raise ValueError.
+
         ``corrections`` format::
 
             {
@@ -154,10 +162,32 @@ class ExtractionApprovalService:
                 ]
             }
         """
+        # Lock the row to prevent concurrent approve/reject/reprocess
+        approval = (
+            ExtractionApproval.objects
+            .select_for_update()
+            .get(pk=approval.pk)
+        )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
         invoice = approval.invoice
+
+        # ── Duplicate guard ──────────────────────────────────────
+        # If this invoice is a duplicate, only allow approval when
+        # the original invoice has NOT been approved yet.
+        if invoice.is_duplicate and invoice.duplicate_of_id:
+            original = Invoice.objects.get(pk=invoice.duplicate_of_id)
+            original_approval = ExtractionApproval.objects.filter(
+                invoice=original,
+                status__in=[ExtractionApprovalStatus.APPROVED, ExtractionApprovalStatus.AUTO_APPROVED],
+            ).exists()
+            if original_approval:
+                raise ValueError(
+                    f"Cannot approve: original Invoice #{original.invoice_number} "
+                    f"is already approved. Approving this duplicate would risk "
+                    f"duplicate payment."
+                )
         correction_records = []
 
         if corrections:
@@ -178,6 +208,38 @@ class ExtractionApprovalService:
         # Transition invoice to READY_FOR_RECON
         invoice.status = InvoiceStatus.READY_FOR_RECON
         invoice.save(update_fields=["status", "updated_at"])
+
+        # ── If this was a duplicate, supersede the original ──────
+        if invoice.is_duplicate and invoice.duplicate_of_id:
+            try:
+                original = Invoice.objects.get(pk=invoice.duplicate_of_id)
+                old_status = original.status
+                original.status = InvoiceStatus.SUPERSEDED
+                original.save(update_fields=["status", "updated_at"])
+                # Reject original's pending approval if any
+                ExtractionApproval.objects.filter(
+                    invoice=original,
+                    status=ExtractionApprovalStatus.PENDING,
+                ).update(
+                    status=ExtractionApprovalStatus.REJECTED,
+                    reviewed_at=timezone.now(),
+                )
+                cls._log_audit(
+                    original,
+                    AuditEventType.EXTRACTION_REJECTED,
+                    f"Invoice superseded by duplicate Invoice #{invoice.invoice_number} (approved by {user})",
+                    user=user,
+                    metadata={
+                        "superseded_by_invoice_id": invoice.pk,
+                        "previous_status": old_status,
+                    },
+                )
+                logger.info(
+                    "Original invoice %s superseded by duplicate %s",
+                    original.pk, invoice.pk,
+                )
+            except Invoice.DoesNotExist:
+                logger.warning("Duplicate-of invoice %s not found", invoice.duplicate_of_id)
 
         event_type = AuditEventType.EXTRACTION_APPROVED
         desc = f"Extraction approved by {user} for Invoice {invoice.invoice_number}"
@@ -211,6 +273,13 @@ class ExtractionApprovalService:
             "Extraction approved for invoice %s by %s (corrections=%d, touchless=%s)",
             invoice.pk, user, len(correction_records), approval.is_touchless,
         )
+
+        # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
+        cls._record_governance_trail(approval, "APPROVE", user)
+
+        # ── Trigger posting pipeline ──
+        cls._enqueue_posting(invoice, user)
+
         return approval
 
     # ------------------------------------------------------------------
@@ -225,7 +294,17 @@ class ExtractionApprovalService:
         user,
         reason: str = "",
     ) -> ExtractionApproval:
-        """Reject an extraction — invoice stays in PENDING_APPROVAL."""
+        """Reject an extraction — invoice stays in PENDING_APPROVAL.
+
+        Concurrency: Locks the ExtractionApproval row via select_for_update().
+        Only PENDING → REJECTED is allowed.
+        """
+        # Lock the row to prevent concurrent approve/reject/reprocess
+        approval = (
+            ExtractionApproval.objects
+            .select_for_update()
+            .get(pk=approval.pk)
+        )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
@@ -252,6 +331,10 @@ class ExtractionApprovalService:
         )
 
         logger.info("Extraction rejected for invoice %s by %s", invoice.pk, user)
+
+        # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
+        cls._record_governance_trail(approval, "REJECT", user, reason)
+
         return approval
 
     # ------------------------------------------------------------------
@@ -463,3 +546,49 @@ class ExtractionApprovalService:
             )
         except Exception:
             logger.exception("Failed to log audit event for invoice %s", invoice.pk)
+
+    @staticmethod
+    def _record_governance_trail(approval, action: str, user, comments: str = ""):
+        """Mirror an approval decision to ExtractionApprovalRecord via GovernanceTrailService.
+
+        Silently skips if no ExtractionRun is linked (legacy records).
+        """
+        try:
+            ext_result = approval.extraction_result
+            run = getattr(ext_result, "extraction_run", None) if ext_result else None
+            if run is None:
+                logger.warning(
+                    "Skipping governance trail for approval %s — no ExtractionRun linked",
+                    approval.pk,
+                )
+                return
+            from apps.extraction_core.services.governance_trail import GovernanceTrailService
+            GovernanceTrailService.record_approval_decision(
+                run=run, action=action, user=user, comments=comments,
+            )
+        except Exception:
+            logger.exception(
+                "GovernanceTrailService.record_approval_decision failed for approval %s",
+                approval.pk,
+            )
+
+    @staticmethod
+    def _enqueue_posting(invoice, user=None):
+        """Enqueue a posting pipeline run for the newly-approved invoice.
+
+        Best-effort: failures are logged but never block the approval path.
+        """
+        try:
+            from apps.posting.tasks import prepare_posting_task
+            user_id = user.pk if user else None
+            trigger = "approval" if user else "auto_approval"
+            prepare_posting_task.delay(
+                invoice_id=invoice.pk,
+                user_id=user_id,
+                trigger=trigger,
+            )
+            logger.info("Enqueued posting pipeline for invoice %s", invoice.pk)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue posting pipeline for invoice %s", invoice.pk,
+            )

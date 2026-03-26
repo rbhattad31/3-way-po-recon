@@ -1,0 +1,111 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}Schema Registry — Control Center{% endblock %}
+
+{% block cc_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="fw-bold mb-0"><i class="bi bi-diagram-3 me-2 text-primary"></i>Schema Registry</h5>
+  {% if can_edit %}
+  <a href="{% url 'extraction_control_center:schema_compare' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-layout-split me-1"></i>Compare
+  </a>
+  {% endif %}
+</div>
+
+{# Filters #}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-0">Jurisdiction</label>
+        <select class="form-select form-select-sm" name="jurisdiction_id">
+          <option value="">All</option>
+          {% for j in jurisdictions %}
+          <option value="{{ j.pk }}" {% if filters.jurisdiction_id == j.pk|stringformat:"d" %}selected{% endif %}>{{ j.country_code }} — {{ j.regime_code }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Doc Type</label>
+        <input type="text" class="form-control form-control-sm" name="document_type" value="{{ filters.document_type }}" placeholder="INVOICE…">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Status</label>
+        <select class="form-select form-select-sm" name="is_active">
+          <option value="">All</option>
+          <option value="true" {% if filters.is_active == True %}selected{% endif %}>Active</option>
+          <option value="false" {% if filters.is_active == False %}selected{% endif %}>Inactive</option>
+        </select>
+      </div>
+      <div class="col">
+        <label class="form-label small mb-0">Search</label>
+        <input type="text" class="form-control form-control-sm" name="search" value="{{ filters.search }}" placeholder="Schema code, description…">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Filter</button>
+        <a href="{% url 'extraction_control_center:schema_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# Table #}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">Schema</th>
+          <th>Jurisdiction</th>
+          <th>Doc Type</th>
+          <th>Version</th>
+          <th>Fields</th>
+          <th>Status</th>
+          <th class="text-end pe-3">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in schemas %}
+        <tr>
+          <td class="ps-3">
+            <span class="fw-semibold">{{ s.schema_code }}</span>
+            {% if s.description %}<br><small class="text-muted">{{ s.description|truncatewords:8 }}</small>{% endif %}
+          </td>
+          <td>
+            {% if s.jurisdiction %}
+            <span class="badge bg-light text-dark border">{{ s.jurisdiction.country_code }}</span>
+            <span class="text-muted small">{{ s.jurisdiction.regime_code }}</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>{{ s.document_type|default:"—" }}</td>
+          <td><span class="badge bg-dark">v{{ s.schema_version }}</span></td>
+          <td class="text-muted small">
+            {% if s.header_fields_json %}H{% endif %}
+            {% if s.line_item_fields_json %}L{% endif %}
+            {% if s.tax_fields_json %}T{% endif %}
+          </td>
+          <td>
+            {% if s.is_active %}
+            <span class="badge bg-success-subtle text-success">Active</span>
+            {% else %}
+            <span class="badge bg-danger-subtle text-danger">Inactive</span>
+            {% endif %}
+          </td>
+          <td class="text-end pe-3">
+            <a href="{% url 'extraction_control_center:schema_detail' s.pk %}" class="btn btn-sm btn-outline-primary">
+              <i class="bi bi-eye"></i>
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-4">No schemas found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

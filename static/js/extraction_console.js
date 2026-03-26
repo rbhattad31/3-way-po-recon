@@ -47,6 +47,15 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
 
+    // Hide/show inline evidence rows to follow their parent field row
+    document.querySelectorAll('.exc-evidence-inline').forEach(function (evRow) {
+      var fieldKey = evRow.dataset.fieldKey;
+      var parentRow = document.querySelector('.exc-field-row[data-field-key="' + fieldKey + '"]');
+      if (parentRow) {
+        evRow.classList.toggle('d-none', parentRow.classList.contains('d-none'));
+      }
+    });
+
     // Hide supplementary cards (Parties, Enrichment) when filtering
     document.querySelectorAll('.exc-supplementary-card').forEach(function (card) {
       card.classList.toggle('d-none', filter !== 'all');
@@ -59,25 +68,6 @@ document.addEventListener('DOMContentLoaded', function () {
       emptyMsg.classList.toggle('d-none', visibleRows.length > 0);
     }
   }
-
-  // ── Edit mode toggle ──
-  var editToggle = document.getElementById('toggleEditMode');
-  if (editToggle) {
-    editToggle.addEventListener('change', function () {
-      var rows = document.querySelectorAll('.exc-field-row');
-      rows.forEach(function (row) {
-        row.classList.toggle('exc-editing', editToggle.checked);
-      });
-    });
-  }
-
-  // Track field edits
-  document.querySelectorAll('.exc-field-edit').forEach(function (input) {
-    input.addEventListener('input', function () {
-      var original = input.dataset.original || '';
-      input.classList.toggle('exc-modified', input.value !== original);
-    });
-  });
 
   // ── Go-to-field navigation ──
   document.querySelectorAll('.exc-goto-field').forEach(function (btn) {
@@ -103,45 +93,6 @@ document.addEventListener('DOMContentLoaded', function () {
       }, 200);
     });
   });
-
-  // ── Evidence field — switch to evidence tab ──
-  document.querySelectorAll('.exc-evidence-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var field = btn.dataset.field;
-
-      // Switch to evidence tab
-      var evidenceTab = document.querySelector('[data-bs-target="#tab-evidence"]');
-      if (evidenceTab) {
-        var tab = new bootstrap.Tab(evidenceTab);
-        tab.show();
-      }
-
-      // Highlight matching evidence card
-      setTimeout(function () {
-        var card = document.querySelector('[data-evidence-field="' + field + '"]');
-        if (card) {
-          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          card.classList.add('border-primary');
-          setTimeout(function () { card.classList.remove('border-primary'); }, 2000);
-        }
-      }, 200);
-    });
-  });
-
-  // ── Evidence filter by field ──
-  var evidenceFilter = document.getElementById('evidenceFieldFilter');
-  if (evidenceFilter) {
-    evidenceFilter.addEventListener('change', function () {
-      var selectedField = evidenceFilter.value;
-      document.querySelectorAll('.exc-evidence-card').forEach(function (card) {
-        if (!selectedField || card.dataset.evidenceField === selectedField) {
-          card.classList.remove('d-none');
-        } else {
-          card.classList.add('d-none');
-        }
-      });
-    });
-  }
 
   // ── Line item expand/collapse ──
   document.querySelectorAll('.exc-line-expand').forEach(function (btn) {
@@ -176,28 +127,6 @@ document.addEventListener('DOMContentLoaded', function () {
   if (confirmReviewedCheck && confirmApproveBtn) {
     confirmReviewedCheck.addEventListener('change', function () {
       confirmApproveBtn.disabled = !confirmReviewedCheck.checked;
-    });
-  }
-
-  if (confirmApproveBtn) {
-    confirmApproveBtn.addEventListener('click', function () {
-      var form = document.getElementById('approveForm');
-      if (form) {
-        var formData = new FormData(form);
-        submitAction('/api/v1/extraction/approve/', formData, 'Approved successfully');
-      }
-    });
-  }
-
-  // ── Reprocess modal ──
-  var confirmReprocessBtn = document.getElementById('confirmReprocessBtn');
-  if (confirmReprocessBtn) {
-    confirmReprocessBtn.addEventListener('click', function () {
-      var form = document.getElementById('reprocessForm');
-      if (form) {
-        var formData = new FormData(form);
-        submitAction('/api/v1/extraction/reprocess/', formData, 'Reprocess started');
-      }
     });
   }
 

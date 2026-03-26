@@ -1,0 +1,13 @@
+<div class="cc-header">
+  <div class="d-flex align-items-center gap-2">
+    <a href="{% url 'extraction:workbench' %}" class="btn btn-sm btn-outline-secondary" title="Back to Extraction Workbench">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <nav aria-label="breadcrumb">
+      <ol class="breadcrumb mb-0 small">
+        <li class="breadcrumb-item"><a href="{% url 'extraction_control_center:overview' %}">Control Center</a></li>
+        {% block cc_breadcrumb %}{% endblock %}
+      </ol>
+    </nav>
+  </div>
+</div>

@@ -20,20 +20,25 @@
       <i class="bi bi-robot me-2"></i>Invoice Extraction Agent
     </h5>
     <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
-      AI-powered agent that reads invoice documents (OCR) and extracts structured data using GPT-4o — standalone, no orchestration required.
+      AI-powered agent that reads invoice documents (OCR) and extracts structured data using GPT-4o.
     </p>
   </div>
-  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadModal">
-    <i class="bi bi-robot me-1"></i>Run Agent
-  </button>
+  <div class="d-flex gap-2">
+    <a href="{% url 'extraction_control_center:overview' %}" class="btn btn-outline-secondary btn-sm" title="Extraction Control Center">
+      <i class="bi bi-sliders me-1"></i>Control Center
+    </a>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadModal">
+      <i class="bi bi-robot me-1"></i>Run Agent
+    </button>
+  </div>
 </div>
 
 {# ══════════ Tabs ══════════ #}
 <ul class="nav nav-tabs mb-4" id="workbenchTabs" role="tablist">
   <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab != 'approvals' %}active{% endif %}" id="runs-tab" data-bs-toggle="tab"
+    <button class="nav-link {% if active_tab != 'approvals' and active_tab != 'rejected' %}active{% endif %}" id="runs-tab" data-bs-toggle="tab"
             data-bs-target="#runs-pane" type="button" role="tab" aria-controls="runs-pane"
-            aria-selected="{% if active_tab != 'approvals' %}true{% else %}false{% endif %}">
+            aria-selected="{% if active_tab != 'approvals' and active_tab != 'rejected' %}true{% else %}false{% endif %}">
       <i class="bi bi-robot me-1"></i>Agent Runs
       <span class="badge bg-primary bg-opacity-75 ms-1">{{ stats.total }}</span>
     </button>
@@ -48,16 +53,101 @@
       {% endif %}
     </button>
   </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'rejected' %}active{% endif %}" id="rejected-tab" data-bs-toggle="tab"
+            data-bs-target="#rejected-pane" type="button" role="tab" aria-controls="rejected-pane"
+            aria-selected="{% if active_tab == 'rejected' %}true{% else %}false{% endif %}">
+      <i class="bi bi-exclamation-triangle me-1"></i>Rejected
+      {% if failed_uploads_count %}
+      <span class="badge bg-danger ms-1">{{ failed_uploads_count }}</span>
+      {% endif %}
+    </button>
+  </li>
 </ul>
 
 <div class="tab-content" id="workbenchTabContent">
 
 {# ══════════ TAB 1 — Agent Runs ══════════ #}
-<div class="tab-pane fade {% if active_tab != 'approvals' %}show active{% endif %}" id="runs-pane" role="tabpanel" aria-labelledby="runs-tab">
+<div class="tab-pane fade {% if active_tab != 'approvals' and active_tab != 'rejected' %}show active{% endif %}" id="runs-pane" role="tabpanel" aria-labelledby="runs-tab">
+
+{# ── Credit Usage Strip ── #}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+    <i class="bi bi-coin me-1"></i>Credit Usage
+  </span>
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+    1 invoice upload = 1 credit
+  </span>
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;{% if credit_summary.available_credits <= 5 %}color:var(--ap-danger){% elif credit_summary.available_credits <= 20 %}color:var(--ap-warning){% else %}color:var(--ap-success){% endif %}">{{ credit_summary.available_credits }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Available Credits</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-warning)">{{ credit_summary.reserved_credits }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Reserved</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-info)">{{ credit_summary.monthly_used }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Monthly Used</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-text-secondary)">
+          {% if credit_summary.monthly_limit > 0 %}{{ credit_summary.monthly_limit }}{% else %}∞{% endif %}
+        </div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Monthly Limit</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">
+          {% if credit_summary.monthly_remaining < 0 %}∞{% else %}{{ credit_summary.monthly_remaining }}{% endif %}
+        </div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Monthly Remaining</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% if credit_summary.monthly_limit > 0 and credit_summary.usage_percent > 0 %}
+<div class="mb-4">
+  <div class="progress" style="height:6px">
+    <div class="progress-bar {% if credit_summary.usage_percent >= 90 %}bg-danger{% elif credit_summary.usage_percent >= 70 %}bg-warning{% else %}bg-primary{% endif %}"
+         role="progressbar" style="width:{{ credit_summary.usage_percent }}%" aria-valuenow="{{ credit_summary.usage_percent }}" aria-valuemin="0" aria-valuemax="100"></div>
+  </div>
+  <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" class="mt-1">
+    {{ credit_summary.usage_percent }}% of monthly limit used
+  </div>
+</div>
+{% endif %}
 
 {# ── KPI Strip ── #}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+    <i class="bi bi-bar-chart me-1"></i>Performance Counters
+  </span>
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" title="Stats cached for 60s to reduce DB load. Cached at {{ stats_cached_at|date:'H:i:s' }}">
+    <i class="bi bi-lightning-charge me-1"></i>Cached · {{ stats_cached_at|timesince }} ago
+  </span>
+</div>
 <div class="row g-3 mb-4">
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
         <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{{ stats.total }}</div>
@@ -65,15 +155,16 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ stats.success }}</div>
-        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Successful</div>
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-success)">{{ stats.success_rate }}%</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Success Rate</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ stats.success }} of {{ stats.total }}</div>
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
         <div style="font-size:1.5rem;font-weight:700;color:var(--ap-danger)">{{ stats.failed }}</div>
@@ -81,7 +172,7 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
         <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{% widthratio stats.avg_confidence 1 100 %}%</div>
@@ -89,7 +180,16 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3 col-xl">
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;{% if stats.low_confidence %}color:var(--ap-warning){% else %}color:var(--ap-success){% endif %}">{{ stats.low_confidence }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Low Confidence</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">&lt; 50%</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
         <div style="font-size:1.5rem;font-weight:700;color:var(--ap-text-secondary)">{{ stats.avg_duration|floatformat:0 }}<span style="font-size:.75rem">ms</span></div>
@@ -113,6 +213,15 @@
         <option value="">All Status</option>
         <option value="success">Success</option>
         <option value="failed">Failed</option>
+      </select>
+      {# Review queue #}
+      <select id="filterQueue" class="form-select form-select-sm" style="max-width:140px">
+        <option value="">All Queues</option>
+        <option value="AP_REVIEW">AP Review</option>
+        <option value="TAX_REVIEW">Tax Review</option>
+        <option value="MASTER_DATA_REVIEW">Master Data</option>
+        <option value="EXCEPTION_OPS">Exception Ops</option>
+        <option value="COMPLIANCE">Compliance</option>
       </select>
       {# Quick confidence buttons #}
       <div class="btn-group btn-group-sm" role="group" aria-label="Confidence filter">
@@ -155,12 +264,12 @@
     <table class="ap-table w-100" style="min-width:800px" id="resultsTable">
       <thead>
         <tr>
-          <th>File</th>
           <th>Invoice #</th>
           <th>Vendor</th>
           <th style="text-align:right">Amount</th>
           <th style="width:110px">Confidence</th>
           <th style="width:80px">Status</th>
+          <th style="width:100px">Queue</th>
           <th style="width:100px">Approval</th>
           <th style="width:130px">Processed</th>
           <th style="width:60px"></th>
@@ -170,14 +279,8 @@
         {% for r in results %}
         <tr>
           <td>
-            <div style="font-size:var(--ap-font-size-sm);font-weight:500" title="{{ r.document_upload.original_filename|default:'—' }}">
-              {{ r.document_upload.original_filename|default:"—"|truncatechars:30 }}
-            </div>
-            {% if r.duration_ms %}<div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ r.duration_ms|floatformat:0 }}ms · {{ r.engine_name|default:"azure_di_gpt4o" }}</div>{% endif %}
-          </td>
-          <td>
             {% if r.invoice %}
-            <a href="{% url 'extraction:result_detail' r.pk %}" class="text-decoration-none fw-medium">
+            <a href="{% url 'extraction:console' r.pk %}" class="text-decoration-none fw-medium">
               {{ r.invoice.invoice_number|default:"—" }}
             </a>
             {% else %}
@@ -204,10 +307,24 @@
             {% else %}—{% endif %}
           </td>
           <td>
-            {% if r.success %}
+            {% if r.invoice %}
+            <span class="ap-badge {% if r.invoice.status == 'RECONCILED' or r.invoice.status == 'READY_FOR_RECON' %}ap-badge-success{% elif r.invoice.status == 'PENDING_APPROVAL' %}ap-badge-warning{% elif r.invoice.status == 'FAILED' or r.invoice.status == 'INVALID' %}ap-badge-danger{% elif r.invoice.status == 'VALIDATED' or r.invoice.status == 'EXTRACTED' %}ap-badge-info{% else %}ap-badge-muted{% endif %}" style="font-size:.65rem">
+              {{ r.invoice.status }}
+            </span>
+            {% if r.invoice.is_duplicate %}
+            <span class="ap-badge ap-badge-danger ms-1" title="Duplicate invoice" style="font-size:.6rem"><i class="bi bi-exclamation-triangle-fill"></i></span>
+            {% endif %}
+            {% elif r.success %}
             <span class="ap-badge ap-badge-success">OK</span>
             {% else %}
             <span class="ap-badge ap-badge-danger">FAIL</span>
+            {% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-xs)">
+            {% if r.review_queue %}
+            <span class="ap-badge ap-badge-info">{{ r.review_queue }}</span>
+            {% else %}
+            <span style="color:var(--ap-text-muted)">—</span>
             {% endif %}
           </td>
           <td>
@@ -236,11 +353,8 @@
             {{ r.created_at|date:"d M Y H:i" }}
           </td>
           <td>
-            <a href="{% url 'extraction:result_detail' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
+            <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">
               View
-            </a>
-            <a href="{% url 'extraction:console' r.pk %}" class="btn btn-sm btn-outline-secondary py-0 ms-1" style="font-size:.7rem" title="Review Console">
-              <i class="bi bi-columns-gap"></i>
             </a>
           </td>
         </tr>
@@ -284,6 +398,14 @@
 <div class="tab-pane fade {% if active_tab == 'approvals' %}show active{% endif %}" id="approvals-pane" role="tabpanel" aria-labelledby="approvals-tab">
 
 {# ── Approval Analytics Strip ── #}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+    <i class="bi bi-clipboard-check me-1"></i>Approval Counters
+  </span>
+  <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" title="Analytics cached for 60s. Cached at {{ analytics_cached_at|date:'H:i:s' }}">
+    <i class="bi bi-lightning-charge me-1"></i>Cached · {{ analytics_cached_at|timesince }} ago
+  </span>
+</div>
 <div class="row g-3 mb-4">
   <div class="col-sm-6 col-lg-3 col-xl">
     <div class="ap-card h-100">
@@ -480,6 +602,86 @@
 {% endif %}
 
 </div>{# /approvals-pane #}
+
+{# ══════════ TAB 3 — Rejected / Failed Uploads ══════════ #}
+<div class="tab-pane fade {% if active_tab == 'rejected' %}show active{% endif %}" id="rejected-pane" role="tabpanel" aria-labelledby="rejected-tab">
+
+{# ── Summary Strip ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <span style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+    <i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>
+    Uploads that were rejected by the document type classifier or failed during processing.
+  </span>
+  <span class="badge bg-danger">{{ failed_uploads_count }} total</span>
+</div>
+
+{# ── Rejected Table ── #}
+<div class="ap-card">
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table w-100" style="min-width:700px">
+      <thead>
+        <tr>
+          <th style="width:50px">#</th>
+          <th>Filename</th>
+          <th>Reason</th>
+          <th style="width:100px">Doc Type</th>
+          <th style="width:140px">Uploaded</th>
+          <th style="width:120px">By</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in failed_uploads %}
+        <tr>
+          <td style="color:var(--ap-text-muted)">{{ u.pk }}</td>
+          <td>
+            <i class="bi bi-file-earmark-pdf me-1 text-danger"></i>
+            <span class="fw-medium">{{ u.original_filename|truncatechars:50 }}</span>
+            {% if u.file_size %}
+            <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)" class="ms-1">({{ u.file_size|filesizeformat }})</span>
+            {% endif %}
+          </td>
+          <td style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">{{ u.processing_message|truncatechars:150|default:"Unknown error" }}</td>
+          <td>
+            <span class="ap-badge ap-badge-muted" style="font-size:.65rem">{{ u.document_type|default:"INVOICE" }}</span>
+          </td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ u.updated_at|date:"d M Y H:i" }}</td>
+          <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ u.uploaded_by.email|default:"\u2014"|truncatechars:20 }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="text-center py-5" style="color:var(--ap-text-muted)">
+            <i class="bi bi-check-circle d-block mb-2" style="font-size:2rem;color:var(--ap-success)"></i>
+            No rejected or failed uploads. All documents were processed successfully.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Pagination ── #}
+{% if failed_uploads_page_obj.has_other_pages %}
+<nav class="mt-3 d-flex justify-content-center">
+  <ul class="pagination pagination-sm mb-0">
+    {% if failed_uploads_page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?tab=rejected&failed_page={{ failed_uploads_page_obj.previous_page_number }}">&laquo;</a></li>
+    {% endif %}
+    {% for num in failed_uploads_page_obj.paginator.page_range %}
+      {% if failed_uploads_page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > failed_uploads_page_obj.number|add:"-3" and num < failed_uploads_page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" href="?tab=rejected&failed_page={{ num }}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if failed_uploads_page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?tab=rejected&failed_page={{ failed_uploads_page_obj.next_page_number }}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+</div>{# /rejected-pane #}
 </div>{# /tab-content #}
 
 {# ══════════ Upload Modal ══════════ #}
@@ -501,14 +703,25 @@
               Supported: PDF, PNG, JPG, TIFF — max 20 MB
             </div>
           </div>
+          {# ── Credit info in upload modal ── #}
+          <div class="d-flex gap-3 mb-3" style="font-size:var(--ap-font-size-xs)">
+            <div><strong>Available:</strong> <span class="{% if credit_summary.available_credits <= 5 %}text-danger{% else %}text-success{% endif %}">{{ credit_summary.available_credits }}</span></div>
+            <div><strong>Monthly remaining:</strong> {% if credit_summary.monthly_remaining < 0 %}∞{% else %}{{ credit_summary.monthly_remaining }}{% endif %}</div>
+          </div>
+          {% if credit_summary.available_credits <= 0 %}
+          <div class="alert alert-danger py-2 px-3 mb-3" style="font-size:var(--ap-font-size-xs)">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            You do not have enough credits to process an invoice. Please contact your administrator.
+          </div>
+          {% endif %}
           <div class="alert alert-info py-2 px-3 mb-0" style="font-size:var(--ap-font-size-xs)">
-            <i class="bi bi-robot me-1"></i>
-            The agent will perform OCR scanning and AI-powered data extraction. No AP Case or reconciliation will be triggered.
+            <i class="bi bi-coin me-1"></i>
+            Each invoice upload consumes 1 credit. The agent will perform OCR scanning and AI-powered data extraction.
           </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-sm btn-primary" id="extractBtn">
+          <button type="submit" class="btn btn-sm btn-primary" id="extractBtn" {% if credit_summary.available_credits <= 0 %}disabled{% endif %}>
             <i class="bi bi-robot me-1"></i>Run Agent
           </button>
         </div>
@@ -523,7 +736,7 @@
 (function() {
   // ── Globals ──────────────────────────────────────────────
   const FILTER_URL  = "{% url 'extraction:ajax_filter' %}";
-  const DETAIL_URL  = "{% url 'extraction:result_detail' pk=0 %}".replace('/0/', '/{pk}/');
+  const DETAIL_URL  = "{% url 'extraction:console' pk=0 %}".replace('/0/', '/{pk}/');
   const EXPORT_URL  = "{% url 'extraction:export_csv' %}";
   const tbody        = document.getElementById('resultsTableBody');
   const countEl      = document.getElementById('resultCount');
@@ -574,19 +787,15 @@
       const amount = r.total_amount
         ? `<span style="font-weight:500">${escHtml(r.currency)} ${parseFloat(r.total_amount).toFixed(2)}</span>`
         : '—';
-      const fname = r.filename.length > 30 ? r.filename.substring(0, 27) + '…' : r.filename;
       const vendorName = r.vendor ? (r.vendor.length > 25 ? r.vendor.substring(0, 22) + '…' : r.vendor) : '—';
-      const durationInfo = r.duration_ms
-        ? `<div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${r.duration_ms}ms · ${escHtml(r.engine_name)}</div>`
-        : '';
 
       return `<tr>
-        <td><div style="font-size:var(--ap-font-size-sm);font-weight:500" title="${escAttr(r.filename)}">${escHtml(fname)}</div>${durationInfo}</td>
         <td>${invLink}</td>
         <td style="font-size:var(--ap-font-size-sm)">${escHtml(vendorName)}</td>
         <td style="text-align:right">${amount}</td>
         <td>${confBar}</td>
         <td>${statusBadge}</td>
+        <td style="font-size:var(--ap-font-size-xs)"><span style="color:var(--ap-text-muted)">—</span></td>
         <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
         <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${escHtml(r.created_at)}</td>
         <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a></td>

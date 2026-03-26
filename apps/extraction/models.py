@@ -5,15 +5,33 @@ from django.db import models
 from apps.core.enums import ExtractionApprovalStatus
 from apps.core.models import BaseModel, TimestampMixin
 
+# Import credit models so Django discovers them for migrations
+from apps.extraction.credit_models import CreditTransaction, UserCreditAccount  # noqa: F401
+
 
 class ExtractionResult(BaseModel):
-    """Stores per-extraction-run metadata for audit and reprocessing."""
+    """UI-facing extraction summary and legacy compatibility record.
+
+    This is NOT the execution source of truth.
+    For execution state, timing, confidence breakdown, schema, and
+    review routing, use ExtractionRun (apps/extraction_core).
+    ExtractionResult.extraction_run links to the governing run where available.
+    """
 
     document_upload = models.ForeignKey(
         "documents.DocumentUpload", on_delete=models.CASCADE, related_name="extraction_results"
     )
     invoice = models.ForeignKey(
         "documents.Invoice", on_delete=models.SET_NULL, null=True, blank=True, related_name="extraction_results"
+    )
+    extraction_run = models.ForeignKey(
+        "extraction_core.ExtractionRun",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="summary_results",
+        help_text="Link to the governing ExtractionRun where available. "
+                  "Always reflects the most recent governed run.",
     )
     engine_name = models.CharField(max_length=100, default="default", help_text="Extraction engine identifier")
     engine_version = models.CharField(max_length=50, blank=True, default="")
@@ -22,6 +40,11 @@ class ExtractionResult(BaseModel):
     duration_ms = models.PositiveIntegerField(null=True, blank=True)
     success = models.BooleanField(default=False)
     error_message = models.TextField(blank=True, default="")
+    agent_run_id = models.BigIntegerField(null=True, blank=True, db_index=True,
+                                          help_text="FK to AgentRun that performed extraction")
+    ocr_page_count = models.PositiveIntegerField(default=0, help_text="Number of pages processed by OCR")
+    ocr_duration_ms = models.PositiveIntegerField(null=True, blank=True, help_text="OCR processing time in ms")
+    ocr_char_count = models.PositiveIntegerField(default=0, help_text="Characters extracted by OCR")
 
     class Meta:
         db_table = "extraction_result"
@@ -37,7 +60,14 @@ class ExtractionResult(BaseModel):
 # Extraction Approval — human-in-the-loop gate post-extraction
 # ---------------------------------------------------------------------------
 class ExtractionApproval(BaseModel):
-    """Tracks human approval or auto-approval of an extraction result.
+    """Business-facing invoice approval workflow.
+
+    Tracks whether an extracted invoice has been reviewed and approved
+    before entering reconciliation.
+    This is the PRIMARY approval state machine. All UI approval actions
+    operate against this model.
+    GovernanceTrailService mirrors decisions to ExtractionApprovalRecord
+    for governed audit purposes.
 
     Every successful extraction creates an ExtractionApproval in PENDING
     state.  A human reviewer inspects the extracted data, optionally

@@ -1,0 +1,149 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}{{ profile.entity }} — Entity Profile{% endblock %}
+
+{% block cc_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <a href="{% url 'extraction_control_center:entity_profiles' %}" class="text-decoration-none text-muted small">
+      <i class="bi bi-arrow-left me-1"></i>Back to profiles
+    </a>
+    <h5 class="fw-bold mt-1 mb-0"><i class="bi bi-building me-2 text-primary"></i>{{ profile.entity }}</h5>
+  </div>
+  <span class="badge {% if profile.is_active %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %} fs-6">
+    {{ profile.is_active|yesno:"Active,Inactive" }}
+  </span>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+
+  {# Jurisdiction Settings #}
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-transparent">
+      <h6 class="mb-0 fw-semibold"><i class="bi bi-globe2 me-2"></i>Jurisdiction Settings</h6>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Jurisdiction Mode</label>
+          <select class="form-select form-select-sm" name="jurisdiction_mode" {% if not can_edit %}disabled{% endif %}>
+            <option value="AUTO" {% if profile.jurisdiction_mode == "AUTO" %}selected{% endif %}>AUTO</option>
+            <option value="FIXED" {% if profile.jurisdiction_mode == "FIXED" %}selected{% endif %}>FIXED</option>
+            <option value="HYBRID" {% if profile.jurisdiction_mode == "HYBRID" %}selected{% endif %}>HYBRID</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Default Country Code</label>
+          <input type="text" class="form-control form-control-sm" name="default_country_code" value="{{ profile.default_country_code }}" {% if not can_edit %}disabled{% endif %}>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Default Regime Code</label>
+          <input type="text" class="form-control form-control-sm" name="default_regime_code" value="{{ profile.default_regime_code }}" {% if not can_edit %}disabled{% endif %}>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Document Language</label>
+          <input type="text" class="form-control form-control-sm" name="default_document_language" value="{{ profile.default_document_language }}" {% if not can_edit %}disabled{% endif %}>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Override Settings #}
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-transparent">
+      <h6 class="mb-0 fw-semibold"><i class="bi bi-sliders me-2"></i>Override Settings</h6>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Schema Override Code</label>
+          <input type="text" class="form-control form-control-sm" name="schema_override_code" value="{{ profile.schema_override_code }}" {% if not can_edit %}disabled{% endif %}>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Validation Profile Override</label>
+          <input type="text" class="form-control form-control-sm" name="validation_profile_override_code" value="{{ profile.validation_profile_override_code }}" {% if not can_edit %}disabled{% endif %}>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Normalization Profile Override</label>
+          <input type="text" class="form-control form-control-sm" name="normalization_profile_override_code" value="{{ profile.normalization_profile_override_code }}" {% if not can_edit %}disabled{% endif %}>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold text-muted">Active</label>
+          <div class="form-check form-switch mt-1">
+            <input class="form-check-input" type="checkbox" name="is_active" {% if profile.is_active %}checked{% endif %} {% if not can_edit %}disabled{% endif %}>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Effective Settings Comparison #}
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-transparent">
+      <h6 class="mb-0 fw-semibold"><i class="bi bi-layout-split me-2"></i>Effective Settings (Entity vs System)</h6>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-3">Setting</th>
+              <th>Entity Value</th>
+              <th>System Default</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for key, row in effective.items %}
+            <tr>
+              <td class="ps-3 text-muted small">{{ key }}</td>
+              <td>
+                {% if row.entity_value is not None %}
+                <span class="fw-semibold">{{ row.entity_value }}</span>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="text-muted">{{ row.system_value|default:"—" }}</td>
+              <td>
+                {% if row.source == "entity" %}
+                <span class="badge bg-info-subtle text-info">Entity Override</span>
+                {% else %}
+                <span class="badge bg-secondary-subtle text-secondary">System Default</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {% if can_edit %}
+  <div class="cc-sticky-footer">
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-check-lg me-1"></i>Save Profile
+    </button>
+  </div>
+  {% endif %}
+</form>
+
+{# Entity metadata #}
+<div class="card border-0 shadow-sm mt-3">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-info-circle me-2"></i>Entity Details</h6>
+  </div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3 text-muted small">Entity Name</dt>
+      <dd class="col-sm-9">{{ profile.entity }}</dd>
+      <dt class="col-sm-3 text-muted small">Profile Created</dt>
+      <dd class="col-sm-9">{{ profile.created_at|date:"M d, Y H:i" }}</dd>
+      <dt class="col-sm-3 text-muted small">Last Updated</dt>
+      <dd class="col-sm-9">{{ profile.updated_at|date:"M d, Y H:i" }}{% if profile.updated_by %} by {{ profile.updated_by }}{% endif %}</dd>
+    </dl>
+  </div>
+</div>
+{% endblock %}

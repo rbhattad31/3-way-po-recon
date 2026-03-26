@@ -11,135 +11,150 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Audit Log</h4>
-  <span class="text-muted">{{ page_obj.paginator.count }} event{{ page_obj.paginator.count|pluralize }}</span>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted">{{ page_obj.paginator.count }} event{{ page_obj.paginator.count|pluralize }}</span>
+    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#filterPanel" aria-expanded="{% if current_entity_type or current_event_type or current_role or current_user or current_trace_id or current_entity_id or current_denied_only %}true{% else %}false{% endif %}">
+      <i class="bi bi-funnel me-1"></i>Filters{% if current_entity_type or current_event_type or current_role or current_user or current_trace_id or current_entity_id or current_denied_only %} <span class="badge bg-primary ms-1">active</span>{% endif %}
+    </button>
+  </div>
 </div>
 
-{# ── Filters ── #}
-<div class="ap-filter-bar mb-3">
-  <form method="get" class="row g-2 align-items-end">
-    <div class="col-md-2">
-      <label class="form-label form-label-sm mb-0">Entity Type</label>
-      <select name="entity_type" class="form-select form-select-sm">
-        <option value="">All</option>
-        {% for et in entity_types %}
-        <option value="{{ et }}" {% if et == current_entity_type %}selected{% endif %}>{{ et }}</option>
-        {% endfor %}
-      </select>
+{# ── Collapsible Filters ── #}
+<div class="collapse {% if current_entity_type or current_event_type or current_role or current_user or current_trace_id or current_entity_id or current_denied_only %}show{% endif %}" id="filterPanel">
+  <div class="ap-card mb-3">
+    <div class="ap-card-body py-2 px-3">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-lg-2 col-md-4">
+          <label class="form-label form-label-sm mb-0">User</label>
+          <select name="user" class="form-select form-select-sm">
+            <option value="">All Users</option>
+            {% for u in users %}
+            <option value="{{ u }}" {% if u == current_user %}selected{% endif %}>{{ u }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-2 col-md-4">
+          <label class="form-label form-label-sm mb-0">Event Type</label>
+          <select name="event_type" class="form-select form-select-sm">
+            <option value="">All Events</option>
+            {% for ev in event_types %}
+            <option value="{{ ev }}" {% if ev == current_event_type %}selected{% endif %}>{{ ev }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-2 col-md-4">
+          <label class="form-label form-label-sm mb-0">Entity Type</label>
+          <select name="entity_type" class="form-select form-select-sm">
+            <option value="">All Entities</option>
+            {% for et in entity_types %}
+            <option value="{{ et }}" {% if et == current_entity_type %}selected{% endif %}>{{ et }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-1 col-md-3">
+          <label class="form-label form-label-sm mb-0">Role</label>
+          <select name="role" class="form-select form-select-sm">
+            <option value="">All</option>
+            {% for r in roles %}
+            <option value="{{ r }}" {% if r == current_role %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-1 col-md-3">
+          <label class="form-label form-label-sm mb-0">Entity ID</label>
+          <input type="number" name="entity_id" class="form-control form-control-sm" value="{{ current_entity_id }}" placeholder="ID">
+        </div>
+        <div class="col-lg-2 col-md-3">
+          <label class="form-label form-label-sm mb-0">Trace ID</label>
+          <input type="text" name="trace_id" class="form-control form-control-sm" value="{{ current_trace_id|default:'' }}" placeholder="trace-id...">
+        </div>
+        <div class="col-lg-1 col-md-2">
+          <div class="form-check mt-3">
+            <input type="checkbox" name="denied_only" value="1" class="form-check-input" id="deniedCheck" {% if current_denied_only %}checked{% endif %}>
+            <label class="form-check-label form-label-sm" for="deniedCheck">Denied only</label>
+          </div>
+        </div>
+        <div class="col-lg-1 col-md-3 d-flex gap-1">
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
+          <a href="{% url 'governance:audit_event_list' %}" class="btn btn-sm btn-outline-secondary" title="Clear"><i class="bi bi-x-lg"></i></a>
+        </div>
+      </form>
     </div>
-    <div class="col-md-2">
-      <label class="form-label form-label-sm mb-0">Event Type</label>
-      <select name="event_type" class="form-select form-select-sm">
-        <option value="">All</option>
-        {% for ev in event_types %}
-        <option value="{{ ev }}" {% if ev == current_event_type %}selected{% endif %}>{{ ev }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-md-2">
-      <label class="form-label form-label-sm mb-0">Role</label>
-      <select name="role" class="form-select form-select-sm">
-        <option value="">All</option>
-        {% for r in roles %}
-        <option value="{{ r }}" {% if r == current_role %}selected{% endif %}>{{ r }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-md-2">
-      <label class="form-label form-label-sm mb-0">Trace ID</label>
-      <input type="text" name="trace_id" class="form-control form-control-sm" value="{{ current_trace_id|default:'' }}" placeholder="trace-id...">
-    </div>
-    <div class="col-md-1">
-      <label class="form-label form-label-sm mb-0">Entity ID</label>
-      <input type="number" name="entity_id" class="form-control form-control-sm" value="{{ current_entity_id }}" placeholder="ID">
-    </div>
-    <div class="col-md-1">
-      <div class="form-check mt-3">
-        <input type="checkbox" name="denied_only" value="1" class="form-check-input" id="deniedCheck" {% if current_denied_only %}checked{% endif %}>
-        <label class="form-check-label form-label-sm" for="deniedCheck">Denied</label>
-      </div>
-    </div>
-    <div class="col-md-2">
-      <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
-      <a href="{% url 'governance:audit_event_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
-    </div>
-  </form>
+  </div>
 </div>
 
 {# ── Event Table ── #}
 <div class="ap-card">
   <div class="ap-card-body p-0 table-responsive">
-    <table class="ap-table mb-0" style="min-width:900px;">
+    <table class="ap-table mb-0">
       <thead>
         <tr>
-          <th style="width:50px">ID</th>
-          <th>Event Type</th>
+          <th>Event</th>
           <th>Entity</th>
           <th>Description</th>
           <th>Actor</th>
-          <th>Role</th>
-          <th>Permission</th>
-          <th style="width:130px">Timestamp</th>
+          <th>Access</th>
+          <th style="width:130px">When</th>
         </tr>
       </thead>
       <tbody>
         {% for ev in events %}
         <tr {% if ev.access_granted == False %}class="table-danger"{% endif %}>
-          <td class="text-muted">{{ ev.id }}</td>
           <td>
             {% if ev.event_type %}
             <span class="ap-badge
-              {% if 'COMPLETED' in ev.event_type or 'APPROVED' in ev.event_type or 'GRANTED' in ev.event_type or 'AUTHORIZED' in ev.event_type or 'ACTIVATED' in ev.event_type %}ap-badge-matched
+              {% if 'COMPLETED' in ev.event_type or 'APPROVED' in ev.event_type or 'GRANTED' in ev.event_type or 'AUTHORIZED' in ev.event_type or 'ACTIVATED' in ev.event_type or 'LOGIN' in ev.event_type %}ap-badge-matched
               {% elif 'FAILED' in ev.event_type or 'REJECTED' in ev.event_type or 'DENIED' in ev.event_type or 'DEACTIVATED' in ev.event_type %}ap-badge-unmatched
               {% elif 'STARTED' in ev.event_type or 'UPLOADED' in ev.event_type %}ap-badge-info
               {% elif 'ASSIGNED' in ev.event_type or 'CREATED' in ev.event_type %}ap-badge-review
               {% elif 'RECOMMENDATION' in ev.event_type or 'OVERRIDE' in ev.event_type %}ap-badge-partial
               {% elif 'CORRECTED' in ev.event_type or 'UPDATED' in ev.event_type or 'CHANGED' in ev.event_type %}ap-badge-status-closed
-              {% elif 'REMOVED' in ev.event_type %}ap-badge-status-new
+              {% elif 'REMOVED' in ev.event_type or 'LOGOUT' in ev.event_type %}ap-badge-status-new
               {% else %}ap-badge-status-new{% endif %}">{{ ev.event_type }}</span>
             {% else %}
               <span class="ap-badge ap-badge-status-new">{{ ev.action }}</span>
             {% endif %}
           </td>
           <td>
-            {{ ev.entity_type }}
+            <span class="text-muted small">{{ ev.entity_type }}</span>
             {% if ev.entity_type == "Invoice" %}
-              <a href="{% url 'governance:invoice_governance' ev.entity_id %}" class="ms-1">#{{ ev.entity_id }}</a>
+              <a href="{% url 'governance:invoice_governance' ev.entity_id %}">#{{ ev.entity_id }}</a>
             {% else %}
               <span class="text-muted">#{{ ev.entity_id }}</span>
             {% endif %}
           </td>
           <td>
-            {{ ev.event_description|default:ev.action|truncatewords:15 }}
-            {% if ev.trace_id %}<br><small class="text-muted font-monospace">{{ ev.trace_id|truncatechars:12 }}</small>{% endif %}
+            <span class="small">{{ ev.event_description|default:ev.action|truncatewords:12 }}</span>
+            {% if ev.trace_id %}<br><small class="text-muted font-monospace" title="{{ ev.trace_id }}">{{ ev.trace_id|truncatechars:12 }}</small>{% endif %}
           </td>
           <td>
             {% if ev.performed_by %}
               <small>{{ ev.performed_by.email }}</small>
             {% elif ev.performed_by_agent %}
               <small class="text-muted"><i class="bi bi-robot me-1"></i>{{ ev.performed_by_agent }}</small>
+            {% elif ev.actor_email %}
+              <small>{{ ev.actor_email }}</small>
             {% else %}
               <small class="text-muted">system</small>
             {% endif %}
-          </td>
-          <td>
             {% if ev.actor_primary_role %}
-              <span class="badge bg-secondary">{{ ev.actor_primary_role }}</span>
+              <span class="badge bg-secondary ms-1" style="font-size:.65em">{{ ev.actor_primary_role }}</span>
             {% endif %}
           </td>
           <td>
             {% if ev.permission_checked %}
               <small class="font-monospace">{{ ev.permission_checked }}</small>
               {% if ev.access_granted == False %}
-                <i class="bi bi-x-circle text-danger ms-1" title="Denied"></i>
+                <i class="bi bi-x-circle-fill text-danger ms-1" title="Denied"></i>
               {% elif ev.access_granted %}
-                <i class="bi bi-check-circle text-success ms-1" title="Granted"></i>
+                <i class="bi bi-check-circle-fill text-success ms-1" title="Granted"></i>
               {% endif %}
             {% endif %}
           </td>
           <td><small class="text-muted">{{ ev.created_at|date:"M d, H:i:s" }}</small></td>
         </tr>
         {% empty %}
-        <tr><td colspan="8" class="text-center text-muted py-4">No audit events found.</td></tr>
+        <tr><td colspan="6" class="text-center text-muted py-4">No audit events found.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -149,21 +164,31 @@
 {# ── Pagination ── #}
 {% if page_obj.has_other_pages %}
 <nav class="mt-3">
-  <ul class="pagination pagination-sm justify-content-center">
+  <ul class="pagination pagination-sm justify-content-center" id="auditPagination">
     {% if page_obj.has_previous %}
-    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if current_entity_type %}&entity_type={{ current_entity_type }}{% endif %}{% if current_event_type %}&event_type={{ current_event_type }}{% endif %}{% if current_entity_id %}&entity_id={{ current_entity_id }}{% endif %}{% if current_role %}&role={{ current_role }}{% endif %}{% if current_trace_id %}&trace_id={{ current_trace_id }}{% endif %}{% if current_denied_only %}&denied_only=1{% endif %}">&laquo;</a></li>
+    <li class="page-item"><a class="page-link" data-page="{{ page_obj.previous_page_number }}">&laquo;</a></li>
     {% endif %}
     {% for num in page_obj.paginator.page_range %}
       {% if page_obj.number == num %}
       <li class="page-item active"><span class="page-link">{{ num }}</span></li>
       {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
-      <li class="page-item"><a class="page-link" href="?page={{ num }}{% if current_entity_type %}&entity_type={{ current_entity_type }}{% endif %}{% if current_event_type %}&event_type={{ current_event_type }}{% endif %}{% if current_entity_id %}&entity_id={{ current_entity_id }}{% endif %}{% if current_role %}&role={{ current_role }}{% endif %}{% if current_trace_id %}&trace_id={{ current_trace_id }}{% endif %}{% if current_denied_only %}&denied_only=1{% endif %}">{{ num }}</a></li>
+      <li class="page-item"><a class="page-link" data-page="{{ num }}">{{ num }}</a></li>
       {% endif %}
     {% endfor %}
     {% if page_obj.has_next %}
-    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if current_entity_type %}&entity_type={{ current_entity_type }}{% endif %}{% if current_event_type %}&event_type={{ current_event_type }}{% endif %}{% if current_entity_id %}&entity_id={{ current_entity_id }}{% endif %}{% if current_role %}&role={{ current_role }}{% endif %}{% if current_trace_id %}&trace_id={{ current_trace_id }}{% endif %}{% if current_denied_only %}&denied_only=1{% endif %}">&raquo;</a></li>
+    <li class="page-item"><a class="page-link" data-page="{{ page_obj.next_page_number }}">&raquo;</a></li>
     {% endif %}
   </ul>
 </nav>
+<script>
+document.getElementById('auditPagination').addEventListener('click', function(e) {
+  var link = e.target.closest('a[data-page]');
+  if (!link) return;
+  e.preventDefault();
+  var params = new URLSearchParams(window.location.search);
+  params.set('page', link.dataset.page);
+  window.location.search = params.toString();
+});
+</script>
 {% endif %}
 {% endblock %}

@@ -23,6 +23,7 @@ def audit_event_list(request):
     event_type = request.GET.get("event_type")
     entity_id = request.GET.get("entity_id")
     role = request.GET.get("role")
+    user_filter = request.GET.get("user")
     trace_id = request.GET.get("trace_id", "").strip()
     denied_only = request.GET.get("denied_only")
 
@@ -34,6 +35,8 @@ def audit_event_list(request):
         qs = qs.filter(entity_id=entity_id)
     if role:
         qs = qs.filter(actor_primary_role=role)
+    if user_filter:
+        qs = qs.filter(performed_by__email=user_filter)
     if trace_id:
         qs = qs.filter(trace_id=trace_id)
     if denied_only:
@@ -60,6 +63,12 @@ def audit_event_list(request):
         .values_list("actor_primary_role", flat=True)
         .distinct()
     )
+    users = (
+        AuditEvent.objects.filter(performed_by__isnull=False)
+        .order_by("performed_by__email")
+        .values_list("performed_by__email", flat=True)
+        .distinct()
+    )
 
     return render(request, "governance/audit_event_list.html", {
         "events": page_obj,
@@ -67,10 +76,12 @@ def audit_event_list(request):
         "entity_types": entity_types,
         "event_types": event_types,
         "roles": roles,
+        "users": users,
         "current_entity_type": entity_type or "",
         "current_event_type": event_type or "",
         "current_entity_id": entity_id or "",
         "current_role": role or "",
+        "current_user": user_filter or "",
         "current_trace_id": trace_id,
         "current_denied_only": bool(denied_only),
     })

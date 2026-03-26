@@ -173,18 +173,11 @@
   box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.06);
 }
 
-/* ── Evidence Panel ── */
-.exc-evidence-card {
-  transition: box-shadow 0.15s;
-}
-
-.exc-evidence-card:hover {
-  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.06);
-}
-
-.exc-source-snippet {
-  background-color: rgba(13, 110, 253, 0.04);
-  border-left: 3px solid rgba(13, 110, 253, 0.3);
+/* ── Inline Evidence ── */
+.exc-evidence-inline td {
+  font-size: 0.8rem;
+  padding-top: 0.15rem !important;
+  padding-bottom: 0.15rem !important;
 }
 
 /* ── Reasoning Panel ── */

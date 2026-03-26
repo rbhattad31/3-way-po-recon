@@ -8,6 +8,7 @@ from typing import List
 from django.conf import settings
 
 from apps.extraction.services.normalization_service import NormalizedInvoice
+from apps.extraction.services.confidence_scorer import ExtractionConfidenceScorer
 
 from apps.core.decorators import observed_service
 
@@ -78,6 +79,30 @@ class ValidationService:
             if li.unit_price is None:
                 result.add_warning(f"{prefix}.unit_price", f"Line {li.line_number}: unit price missing")
 
+        # ── Deterministic confidence scoring ──────────────────────────
+        # Replace LLM self-reported confidence with a score computed from
+        # what was actually extracted: field coverage (50%), line-item
+        # quality (30%), and cross-field consistency (20%).
+        llm_confidence = inv.confidence  # preserve for audit
+        breakdown = ExtractionConfidenceScorer.score(inv, llm_confidence=llm_confidence)
+        inv.confidence = breakdown.overall
+
+        if breakdown.overall != llm_confidence:
+            result.add_warning(
+                "confidence_recomputed",
+                f"Confidence recomputed: LLM reported {llm_confidence:.2f}, "
+                f"deterministic score {breakdown.overall:.2f} "
+                f"(coverage={breakdown.field_coverage:.2f}, "
+                f"lines={breakdown.line_item_quality:.2f}, "
+                f"consistency={breakdown.consistency:.2f})",
+            )
+
+        if breakdown.penalties:
+            result.add_warning(
+                "confidence_penalties",
+                f"Confidence penalties: {', '.join(breakdown.penalties)}",
+            )
+
         # Low extraction confidence
         threshold = getattr(settings, "EXTRACTION_CONFIDENCE_THRESHOLD", 0.75)
         if inv.confidence < threshold:
@@ -87,7 +112,8 @@ class ValidationService:
             )
 
         logger.info(
-            "Validation complete: valid=%s errors=%d warnings=%d",
+            "Validation complete: valid=%s errors=%d warnings=%d confidence=%.2f (llm=%.2f)",
             result.is_valid, len(result.errors), len(result.warnings),
+            inv.confidence, llm_confidence,
         )
         return result

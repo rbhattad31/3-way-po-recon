@@ -1,0 +1,103 @@
+"""Celery tasks for the posting pipeline."""
+from __future__ import annotations
+
+import logging
+
+from celery import shared_task
+
+from apps.core.decorators import observed_task
+
+logger = logging.getLogger(__name__)
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=60, acks_late=True)
+@observed_task("posting.prepare_posting", audit_event="POSTING_STARTED", entity_type="Invoice")
+def prepare_posting_task(self, invoice_id: int, user_id: int | None = None, trigger: str = "system") -> dict:
+    """Prepare a posting proposal for a single invoice.
+
+    Called automatically after extraction approval or manually from the UI.
+    """
+    from django.contrib.auth import get_user_model
+    from apps.posting.services.posting_orchestrator import PostingOrchestrator
+
+    User = get_user_model()
+    user = None
+    if user_id:
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            pass
+
+    try:
+        posting = PostingOrchestrator.prepare_posting(
+            invoice_id=invoice_id,
+            user=user,
+            trigger=trigger,
+        )
+        return {
+            "status": "ok",
+            "posting_id": posting.pk,
+            "posting_status": posting.status,
+        }
+    except Exception as exc:
+        logger.exception("prepare_posting_task failed for invoice %s", invoice_id)
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=1, default_retry_delay=30, acks_late=True)
+@observed_task("posting.import_reference_excel", audit_event="ERP_REFERENCE_IMPORT_STARTED", entity_type="ERPReferenceImportBatch")
+def import_reference_excel_task(
+    self,
+    file_path: str,
+    batch_type: str,
+    user_id: int | None = None,
+    source_as_of: str | None = None,
+    column_map: dict | None = None,
+) -> dict:
+    """Import ERP reference data from an Excel/CSV file.
+
+    Args:
+        file_path: Absolute path to the uploaded file.
+        batch_type: One of VENDOR, ITEM, TAX_CODE, COST_CENTER, PO.
+        user_id: Uploader user PK.
+        source_as_of: ISO date string for the data as-of date.
+        column_map: Optional header overrides.
+    """
+    from datetime import date
+    from django.contrib.auth import get_user_model
+    from apps.posting_core.services.import_pipeline.excel_import_orchestrator import (
+        ExcelImportOrchestrator,
+    )
+
+    User = get_user_model()
+    user = None
+    if user_id:
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            pass
+
+    parsed_as_of = None
+    if source_as_of:
+        try:
+            parsed_as_of = date.fromisoformat(source_as_of)
+        except ValueError:
+            pass
+
+    try:
+        batch = ExcelImportOrchestrator.run_import(
+            file_path=file_path,
+            batch_type=batch_type,
+            user=user,
+            source_as_of=parsed_as_of,
+            column_map=column_map,
+        )
+        return {
+            "status": "ok",
+            "batch_id": batch.pk,
+            "valid_row_count": batch.valid_row_count,
+            "invalid_row_count": batch.invalid_row_count,
+        }
+    except Exception as exc:
+        logger.exception("import_reference_excel_task failed for %s (%s)", file_path, batch_type)
+        raise self.retry(exc=exc)

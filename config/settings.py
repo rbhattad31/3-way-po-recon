@@ -48,6 +48,9 @@ INSTALLED_APPS = [
     "apps.extraction_core",
     "apps.extraction_configs",
     "apps.extraction_documents",
+    "apps.posting",
+    "apps.posting_core",
+    "apps.erp_integration",
 ]
 
 MIDDLEWARE = [
@@ -137,7 +140,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Cache-busting version counter — bump after static file changes
-STATIC_VERSION = "1.0.3"
+STATIC_VERSION = "1.0.6"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -190,6 +193,14 @@ CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "True").lower()
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 
 # ---------------------------------------------------------------------------
+# ERP Integration
+# ---------------------------------------------------------------------------
+ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD = float(
+    os.getenv("ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD", "0.8")
+)
+ERP_CACHE_TTL_SECONDS = int(os.getenv("ERP_CACHE_TTL_SECONDS", "3600"))
+
+# ---------------------------------------------------------------------------
 # LLM / AI service configuration
 # ---------------------------------------------------------------------------
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "azure_openai")
@@ -205,6 +216,9 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 # Azure Document Intelligence (OCR)
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
 AZURE_DI_KEY = os.getenv("AZURE_DI_KEY", "")
+# Set to false to skip Azure DI and use native PDF text extraction (PyPDF2).
+# Useful for accuracy comparison. Runtime override via ExtractionRuntimeSettings.ocr_enabled.
+EXTRACTION_OCR_ENABLED = os.getenv("EXTRACTION_OCR_ENABLED", "true").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # Azure Blob Storage (document storage)

@@ -66,6 +66,12 @@ class POLookupTool(BaseTool):
         if not po_number:
             return ToolResult(success=False, error="po_number or vendor_id is required")
 
+        # Resolve via ERP integration layer (API → DB fallback)
+        resolution_result = self._resolve_via_erp(po_number, vendor_id, **kwargs)
+        if resolution_result is not None:
+            return resolution_result
+
+        # Direct DB lookup (legacy path — only reached if resolver import fails)
         po = PurchaseOrder.objects.filter(po_number=po_number).first()
         if not po:
             norm = normalize_po_number(po_number)
@@ -98,6 +104,42 @@ class POLookupTool(BaseTool):
             "line_items": json.loads(json.dumps(lines, default=_decimal_serialise)),
         })
 
+    def _resolve_via_erp(self, po_number: str, vendor_id: int = 0, **kwargs):
+        """Attempt resolution via the ERP integration layer.
+
+        Returns a ToolResult if resolved (found or not found), or None to
+        fall through to legacy direct DB lookup.
+        """
+        try:
+            from apps.erp_integration.services.connector_factory import ConnectorFactory
+            from apps.erp_integration.services.resolution.po_resolver import POResolver
+
+            connector = ConnectorFactory.get_default_connector()
+            resolver = POResolver()
+            result = resolver.resolve(
+                connector,
+                po_number=po_number,
+                reconciliation_result_id=kwargs.get("reconciliation_result_id"),
+            )
+
+            if not result.resolved:
+                return ToolResult(success=True, data={
+                    "found": False,
+                    "po_number": po_number,
+                    "_erp_source": result.source_type,
+                    "_erp_fallback_used": result.fallback_used,
+                })
+
+            data = result.value or {}
+            data["_erp_source"] = result.source_type
+            data["_erp_confidence"] = result.confidence
+            data["_erp_fallback_used"] = result.fallback_used
+            data["found"] = True
+            return ToolResult(success=True, data=data)
+        except Exception:
+            logger.debug("ERP resolver not available for PO lookup, using direct DB", exc_info=True)
+            return None
+
 
 # ---------------------------------------------------------------------------
 # GRN Lookup Tool
@@ -124,6 +166,12 @@ class GRNLookupTool(BaseTool):
         if not po_number:
             return ToolResult(success=False, error="po_number is required")
 
+        # Resolve via ERP integration layer (API → DB fallback)
+        resolution_result = self._resolve_via_erp(po_number, **kwargs)
+        if resolution_result is not None:
+            return resolution_result
+
+        # Direct DB lookup (legacy path — only reached if resolver import fails)
         po = PurchaseOrder.objects.filter(po_number=po_number).first()
         if not po:
             return ToolResult(success=True, data={"found": False, "po_number": po_number})
@@ -149,6 +197,43 @@ class GRNLookupTool(BaseTool):
             "grn_count": len(grn_data),
             "grns": grn_data,
         })
+
+    def _resolve_via_erp(self, po_number: str, **kwargs):
+        """Attempt resolution via the ERP integration layer.
+
+        Returns a ToolResult if resolved (found or not found), or None to
+        fall through to legacy direct DB lookup.
+        """
+        try:
+            from apps.erp_integration.services.connector_factory import ConnectorFactory
+            from apps.erp_integration.services.resolution.grn_resolver import GRNResolver
+
+            connector = ConnectorFactory.get_default_connector()
+            resolver = GRNResolver()
+            result = resolver.resolve(
+                connector,
+                po_number=po_number,
+                reconciliation_result_id=kwargs.get("reconciliation_result_id"),
+            )
+
+            if not result.resolved:
+                return ToolResult(success=True, data={
+                    "found": False,
+                    "po_number": po_number,
+                    "_erp_source": result.source_type,
+                    "_erp_fallback_used": result.fallback_used,
+                })
+
+            data = result.value or {}
+            data["_erp_source"] = result.source_type
+            data["_erp_confidence"] = result.confidence
+            data["_erp_fallback_used"] = result.fallback_used
+            data["found"] = True
+            data["po_number"] = po_number
+            return ToolResult(success=True, data=data)
+        except Exception:
+            logger.debug("ERP resolver not available for GRN lookup, using direct DB", exc_info=True)
+            return None
 
 
 # ---------------------------------------------------------------------------

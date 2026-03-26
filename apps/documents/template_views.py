@@ -273,6 +273,7 @@ def invoice_list(request):
     from apps.core.enums import FileProcessingState
     pending_uploads = DocumentUpload.objects.filter(
         processing_state__in=[FileProcessingState.QUEUED, FileProcessingState.PROCESSING],
+        document_type=DocumentType.INVOICE,
     ).select_related("uploaded_by").order_by("-created_at")[:10]
 
     # KPI stats (scoped to same visibility as the listing)

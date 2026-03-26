@@ -188,7 +188,7 @@ class CaseOrchestrator:
                 self.case.refresh_from_db()
                 path = self.case.processing_path
 
-            # Set the case status to match the newly resolved path
+            # Transition the case status to match the resolved path via state machine
             _PATH_IN_PROGRESS = {
                 ProcessingPath.TWO_WAY: CaseStatus.TWO_WAY_IN_PROGRESS,
                 ProcessingPath.THREE_WAY: CaseStatus.THREE_WAY_IN_PROGRESS,
@@ -196,8 +196,7 @@ class CaseOrchestrator:
             }
             target_status = _PATH_IN_PROGRESS.get(path)
             if target_status and self.case.status != target_status:
-                self.case.status = target_status
-                self.case.save(update_fields=["status", "updated_at"])
+                CaseStateMachine.transition(self.case, target_status, PerformedByType.DETERMINISTIC)
 
         if path == ProcessingPath.TWO_WAY:
             self._run_two_way_path()
@@ -217,12 +216,14 @@ class CaseOrchestrator:
                     f"PO '{po_number}' not found in system but invoice references it; "
                     "treating as TWO_WAY (PO-backed)",
                 )
+                CaseStateMachine.transition(self.case, CaseStatus.TWO_WAY_IN_PROGRESS, PerformedByType.DETERMINISTIC)
                 self._run_two_way_path()
             else:
                 CaseRoutingService.reroute_path(
                     self.case, ProcessingPath.NON_PO,
                     "No PO reference on invoice and PO retrieval failed",
                 )
+                CaseStateMachine.transition(self.case, CaseStatus.NON_PO_VALIDATION_IN_PROGRESS, PerformedByType.DETERMINISTIC)
                 self._run_non_po_path()
 
     def _run_two_way_path(self):
@@ -250,11 +251,11 @@ class CaseOrchestrator:
         self._run_common_tail()
 
     def _run_common_tail(self):
-        """Execute the common tail stages: exception analysis → routing → summary."""
+        """Execute the common tail stages: exception analysis -> routing -> summary."""
         self._execute_stage(CaseStageType.EXCEPTION_ANALYSIS)
-        if CaseStateMachine.is_terminal(self.case.status):
-            return
-        self._execute_stage(CaseStageType.REVIEW_ROUTING)
+        if not CaseStateMachine.is_terminal(self.case.status):
+            self._execute_stage(CaseStageType.REVIEW_ROUTING)
+        # Always run case summary so stale data is refreshed, even on auto-close
         self._execute_stage(CaseStageType.CASE_SUMMARY)
 
     def _execute_stage(self, stage_name: str):
