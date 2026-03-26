@@ -37,6 +37,16 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 6  # Safety cap on tool-call loops
 
+# Agents that MUST call at least one tool to produce a reliable recommendation.
+# If none are called, confidence is capped to signal unreliability.
+_TOOL_GROUNDED_AGENT_TYPES = frozenset({
+    "PO_RETRIEVAL",
+    "GRN_RETRIEVAL",
+    "RECONCILIATION_ASSIST",
+    "INVOICE_UNDERSTANDING",
+    "EXCEPTION_ANALYSIS",
+})
+
 
 @dataclass
 class AgentContext:
@@ -127,11 +137,17 @@ class BaseAgent(ABC):
         )
 
         # Stamp the current prompt version on the run for auditability.
+        # Always persist prompt_version (including empty string) so the field
+        # is never silently missing from the audit trail.
         from apps.core.prompt_registry import PromptRegistry
         pv = PromptRegistry.version_for(self.agent_type) or ""
-        if pv:
-            agent_run.prompt_version = pv
-            agent_run.save(update_fields=["prompt_version"])
+        agent_run.prompt_version = pv
+        if not pv:
+            logger.warning(
+                "No prompt version available for agent %s -- prompt_version stored as empty",
+                self.agent_type,
+            )
+        agent_run.save(update_fields=["prompt_version"])
 
         # Resolve actor for tool-level authorization
         self._actor_user = self._resolve_actor(ctx)
@@ -207,16 +223,10 @@ class BaseAgent(ABC):
                             bool(output.evidence),
                         )
                     output.confidence = composite
-
-                    # AUTO_CLOSE enforcement (keep this after composite calculation)
-                    if failed_tool_count > 0 and output.recommendation_type == "AUTO_CLOSE":
-                        output.recommendation_type = "SEND_TO_AP_REVIEW"
-                        output.confidence = min(output.confidence, 0.5)
-                        logger.warning(
-                            "Agent %s: AUTO_CLOSE blocked due to %d tool failure(s)",
-                            self.agent_type, failed_tool_count,
-                        )
-                    # Enforce output-level evidence.
+                    output = self._apply_tool_failure_guards(
+                        output, failed_tool_count, total_tool_calls
+                    )
+                    # Enforce output-level evidence after guards are applied.
                     if not output.evidence:
                         output.evidence = {"_provenance": "no_evidence_supplied"}
                         output.confidence = min(output.confidence, 0.5)
@@ -271,16 +281,10 @@ class BaseAgent(ABC):
                     bool(output.evidence),
                 )
             output.confidence = composite
-
-            # AUTO_CLOSE enforcement (keep this after composite calculation)
-            if failed_tool_count > 0 and output.recommendation_type == "AUTO_CLOSE":
-                output.recommendation_type = "SEND_TO_AP_REVIEW"
-                output.confidence = min(output.confidence, 0.5)
-                logger.warning(
-                    "Agent %s: AUTO_CLOSE blocked due to %d tool failure(s)",
-                    self.agent_type, failed_tool_count,
-                )
-            # Enforce output-level evidence.
+            output = self._apply_tool_failure_guards(
+                output, failed_tool_count, total_tool_calls
+            )
+            # Enforce output-level evidence after guards are applied.
             if not output.evidence:
                 output.evidence = {"_provenance": "no_evidence_supplied"}
                 output.confidence = min(output.confidence, 0.5)
@@ -520,6 +524,56 @@ class BaseAgent(ABC):
                     )
                     _time.sleep(delay)
         raise last_exc
+
+    def _apply_tool_failure_guards(
+        self, output: "AgentOutput", failed_tool_count: int, total_tool_calls: int
+    ) -> "AgentOutput":
+        """Centralised runtime safety enforcement based on tool call results.
+
+        Rules enforced (in priority order):
+        1. If any tools FAILED: cap confidence at 0.5.  AUTO_CLOSE is also
+           downgraded to SEND_TO_AP_REVIEW because a failed tool path must
+           never produce a high-confidence close action.  Stricter routing
+           (e.g. ESCALATE_TO_MANAGER) is preserved -- only confidence is capped.
+        2. If the agent is tool-grounded (expected to call at least one tool)
+           but called NO tools at all: cap confidence at 0.6 and record a
+           provenance marker so downstream audit is clear.
+
+        Deterministic agents that never go through BaseAgent.run() are
+        unaffected by this method.
+        """
+        if failed_tool_count > 0:
+            output.confidence = min(output.confidence, 0.5)
+            if output.recommendation_type == "AUTO_CLOSE":
+                output.recommendation_type = "SEND_TO_AP_REVIEW"
+                logger.warning(
+                    "Agent %s: AUTO_CLOSE downgraded to SEND_TO_AP_REVIEW due to %d tool failure(s); "
+                    "confidence capped at 0.5",
+                    self.agent_type, failed_tool_count,
+                )
+            else:
+                logger.warning(
+                    "Agent %s: confidence capped at 0.5 due to %d tool failure(s) "
+                    "(recommendation=%s preserved)",
+                    self.agent_type, failed_tool_count, output.recommendation_type,
+                )
+            if not output.evidence:
+                output.evidence = {"_provenance": "tool_failures"}
+            else:
+                output.evidence.setdefault("_provenance", "tool_failures_partial")
+
+        if self.agent_type in _TOOL_GROUNDED_AGENT_TYPES and total_tool_calls == 0:
+            output.confidence = min(output.confidence, 0.6)
+            if not output.evidence:
+                output.evidence = {"_provenance": "no_tools_called"}
+            else:
+                output.evidence.setdefault("_provenance", "no_tools_called")
+            logger.warning(
+                "Agent %s is tool-grounded but called no tools -- confidence capped at 0.6",
+                self.agent_type,
+            )
+
+        return output
 
     @staticmethod
     def _compute_composite_confidence(

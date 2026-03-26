@@ -469,22 +469,27 @@ def agent_reference(request):
             "description": f"Check the actor holds the '{ORCHESTRATE_PERMISSION}' permission before starting the agent pipeline.",
         },
         {
-            "step": 3, "name": "Per-Agent Authorization",
+            "step": 3, "name": "Data-Scope Authorization",
+            "icon": "bi-funnel", "color": "secondary",
+            "description": "Verify the actor's data scope (business unit, vendor) covers the reconciliation result. Checked once per pipeline run after orchestration auth. Admins and SYSTEM_AGENT are always unrestricted.",
+        },
+        {
+            "step": 4, "name": "Per-Agent Authorization",
             "icon": "bi-robot", "color": "success",
             "description": "Before each agent runs, verify the actor has the agent-specific permission (e.g. agents.run_extraction).",
         },
         {
-            "step": 4, "name": "Per-Tool Authorization",
+            "step": 5, "name": "Per-Tool Authorization",
             "icon": "bi-wrench", "color": "warning",
             "description": "When an agent invokes a tool, verify the actor has the tool's required permission (e.g. purchase_orders.view).",
         },
         {
-            "step": 5, "name": "Recommendation Authorization",
+            "step": 6, "name": "Recommendation Authorization",
             "icon": "bi-lightbulb", "color": "danger",
             "description": "When an agent produces a recommendation, verify the actor may issue that recommendation type.",
         },
         {
-            "step": 6, "name": "Post-Policy Authorization",
+            "step": 7, "name": "Post-Policy Authorization",
             "icon": "bi-shield-check", "color": "dark",
             "description": "Auto-close and escalation actions are authorized separately after the policy engine decides.",
         },
@@ -523,6 +528,42 @@ def agent_reference(request):
         for action, perm_code in ACTION_PERMISSIONS.items()
     ]
 
+    # ---- Hardening: tool-failure runtime guards ----
+    from apps.agents.services.base_agent import _TOOL_GROUNDED_AGENT_TYPES
+    tool_grounded_agents = sorted(_TOOL_GROUNDED_AGENT_TYPES)
+
+    # ---- Hardening: data-scope authorization dimensions ----
+    data_scope_dimensions = [
+        {
+            "dimension": "Business Unit",
+            "scope_key": "allowed_business_units",
+            "source_actor": "UserRole.scope_json[\"allowed_business_units\"] — list[str]",
+            "source_result": "ReconciliationPolicy.business_unit (via result.policy_applied)",
+            "status": "enforced",
+        },
+        {
+            "dimension": "Vendor",
+            "scope_key": "allowed_vendor_ids",
+            "source_actor": "UserRole.scope_json[\"allowed_vendor_ids\"] — list[int]",
+            "source_result": "result.invoice.vendor_id",
+            "status": "enforced",
+        },
+        {
+            "dimension": "Country / Legal Entity",
+            "scope_key": "—",
+            "source_actor": "Not yet supported",
+            "source_result": "No country_code field on Invoice or PurchaseOrder",
+            "status": "pending",
+        },
+        {
+            "dimension": "Cost Centre",
+            "scope_key": "—",
+            "source_actor": "Not yet supported",
+            "source_result": "No cost_centre field on Invoice or PurchaseOrder",
+            "status": "pending",
+        },
+    ]
+
     return render(request, "agents/reference.html", {
         "agents_info": agents_info,
         "tools_info": tools_info,
@@ -559,4 +600,7 @@ def agent_reference(request):
         "recommendation_perms": recommendation_perms,
         "action_perms": action_perms,
         "orchestrate_permission": ORCHESTRATE_PERMISSION,
+        # Hardening
+        "tool_grounded_agents": tool_grounded_agents,
+        "data_scope_dimensions": data_scope_dimensions,
     })

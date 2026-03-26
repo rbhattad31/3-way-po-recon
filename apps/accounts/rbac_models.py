@@ -132,6 +132,17 @@ class UserRole(TimestampMixin):
         help_text="Null = never expires",
     )
     is_active = models.BooleanField(default=True, db_index=True)
+    scope_json = models.JSONField(
+        null=True, blank=True,
+        help_text=(
+            "Optional scope restrictions for this specific role assignment. "
+            "Null means unrestricted (full role scope). "
+            "Supported keys: allowed_business_units (list[str]), "
+            "allowed_vendor_ids (list[int]). "
+            "Unsupported / pending: country, legal_entity, cost_centre "
+            "(require schema extension on Invoice/PurchaseOrder)."
+        ),
+    )
 
     class Meta:
         db_table = "accounts_user_role"

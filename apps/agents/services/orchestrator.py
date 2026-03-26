@@ -126,6 +126,14 @@ class AgentOrchestrator:
             entity_id=result.pk,
         )
 
+        # --- RBAC: data-scope authorization (action + data boundary) ---
+        if not AgentGuardrailsService.authorize_data_scope(actor, result):
+            orch_result.error = (
+                "Data scope authorization denied: actor lacks access to this result's "
+                "business unit / vendor scope. See audit log for details."
+            )
+            return orch_result
+
         # Set trace context with RBAC metadata for downstream audit events
         trace_ctx = AgentGuardrailsService.build_trace_context_for_agent(
             actor, permission_checked=ORCHESTRATE_PERMISSION, access_granted=True,

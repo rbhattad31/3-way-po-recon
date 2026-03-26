@@ -731,45 +731,33 @@ if already_escalated:
     return
 ```
 
-### Data-Scope Authorization
+### Data-Scope Authorization -- IMPLEMENTED
 
-The current RBAC layer controls **what** an actor may do (permission codes).
-Enterprise finance workflows also need to control **which records** an actor
-may act on -- by entity, vendor, business unit, country, or cost centre.
+The RBAC layer controls **what** an actor may do (permission codes).
+The data-scope layer (now implemented) controls **which records** they may act on.
 
-**Current gap:** `AgentGuardrailsService` checks action permissions but does
-not enforce data scope. A FINANCE_MANAGER role today can trigger the pipeline
-for any `ReconciliationResult` regardless of entity or business unit.
+**Implementation:** `AgentGuardrailsService.authorize_data_scope(actor, result)` is called in `AgentOrchestrator.execute()` immediately after `authorize_orchestration()`. A denial causes the orchestration to return early with an error (fail-closed).
 
-**Design requirements for a future scope layer:**
+**How actor scope is configured:**
+Scope restrictions are stored in `UserRole.scope_json` (nullable JSON field added via migration `accounts/0003_userrole_scope_json`). Null on all assignments means unrestricted. ADMIN and SYSTEM_AGENT actors are always unrestricted.
 
-| Scope Dimension | Check Location | Example Rule |
-|---|---|---|
-| Business unit | `authorize_orchestration()` | Actor's assigned BUs must include `result.invoice.business_unit` |
-| Vendor | `authorize_tool()` for `vendor_search` | AP_PROCESSOR may only search vendors linked to their uploaded invoices |
-| Country / entity | `authorize_agent()` or orchestrator pre-check | REVIEWER scoped to country `GB` may not process invoices with `country_code != "GB"` |
-| Cost centre | `authorize_action()` for auto-close | Auto-close only permitted when actor's cost centre matches the invoice's cost centre |
-
-**Implementation pattern (when required):**
-
-```python
-class AgentGuardrailsService:
-    @staticmethod
-    def authorize_data_scope(actor, result) -> bool:
-        """Return True if actor is permitted to operate on this result's entity scope."""
-        # Example: business unit scope check
-        actor_bus = set(actor.userrole_set.values_list("business_unit", flat=True))
-        if actor_bus and result.invoice.business_unit not in actor_bus:
-            return False
-        return True
+Example `UserRole.scope_json` value:
+```json
+{"allowed_business_units": ["APAC", "EMEA"], "allowed_vendor_ids": [42, 99]}
 ```
 
-Add a call to `authorize_data_scope()` immediately after
-`authorize_orchestration()` in `execute()`. Use the same
-`log_guardrail_decision()` pattern for audit.
+Scope is the **union** across all active, non-expired role assignments.
 
-**Until implemented:** document which roles have unrestricted data scope in
-`seed_rbac.py` comments so the gap is visible in code review.
+**Enforced scope dimensions:**
+
+| Dimension | Source on Actor | Source on Result | Status |
+|---|---|---|---|
+| Business unit | `UserRole.scope_json["allowed_business_units"]` | `ReconciliationPolicy.business_unit` (via `result.policy_applied`) | **ENFORCED** |
+| Vendor | `UserRole.scope_json["allowed_vendor_ids"]` | `result.invoice.vendor_id` | **ENFORCED** |
+| Country / legal entity | -- | No `country_code` field on Invoice/PurchaseOrder | PENDING: schema extension required |
+| Cost centre | -- | No `cost_centre` field on Invoice/PurchaseOrder | PENDING: schema extension required |
+
+**Audit:** every scope check (allow or deny) is written as an `AuditEvent` via `log_guardrail_decision()` with `action="data_scope_check"` and `metadata` containing `actor_scope`, `result_scope`, and `denial_reason`.
 
 ### Fail-Closed Behaviour
 
@@ -1322,9 +1310,9 @@ breaking anything that already works.
 |---|---|---|---|
 | Structured output enforcement | Use `response_format={"type":"json_object"}` or explicit JSON-only instruction | **DONE** -- `BaseAgent.enforce_json_response=True` passes json_object to every ReAct-loop LLM call; `AgentOutputSchema` validates with Pydantic v2 | No further action required; `InvoiceExtractionAgent` sets `enforce_json_response=False` and handles its own format |
 | Output schema validation | Validate LLM JSON output against a schema before storing | **DONE** -- `AgentOutputSchema` (Pydantic v2, `agent_output_schema.py`) validates `recommendation_type`, `confidence`, `decisions`, `evidence`; invalid `recommendation_type` coerced to `SEND_TO_AP_REVIEW`; confidence clamped to [0.0, 1.0] | No further action required |
-| Idempotent runs | Re-running the same agent twice on the same input should produce safe, identical-or-compatible results | **DONE** -- `AgentOrchestrationRun` RUNNING guard prevents duplicate pipeline invocations | Agent-level deduplication (same `AgentRun` content) remains optional future work |
-| Tool error resilience | Agents must handle tool failures gracefully and not hallucinate when a tool returns an error | `_execute_tool` returns a `ToolResult(success=False)` but the LLM still sees the error string -- it may try to guess the answer | Add explicit "if tool fails, escalate rather than guess" instruction to system prompts |
-| Prompt versioning | Every agent run should record which prompt version was used | `AgentRun.prompt_version` field exists but is never written | Populate from `PromptTemplate.version` during `_init_messages()` |
+| Idempotent runs | Re-running the same agent twice on the same input should produce safe, identical-or-compatible results | **DONE** -- `AgentOrchestrationRun` RUNNING guard prevents duplicate pipeline invocations; `DecisionLogService.log_recommendation()` applies service-layer deduplication: if a pending (accepted=None) recommendation of the same type already exists for the result it returns the existing record without creating a duplicate | No further action required |
+| Tool error resilience | Agents must handle tool failures gracefully and not hallucinate when a tool returns an error | **DONE** -- `BaseAgent._apply_tool_failure_guards()` enforces at runtime (not just via prompts): (1) any tool failure caps confidence at 0.5 and downgrades AUTO_CLOSE to SEND_TO_AP_REVIEW; (2) tool-grounded agents (PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, INVOICE_UNDERSTANDING, EXCEPTION_ANALYSIS) that call no tools have confidence capped at 0.6; (3) provenance markers are written to `output.evidence._provenance`. Stricter recommendations (ESCALATE_TO_MANAGER) are preserved but confidence is still capped. | No further action required |
+| Prompt versioning | Every agent run should record which prompt version was used | **DONE** -- `BaseAgent.run()` always writes `agent_run.prompt_version` (from `PromptRegistry.version_for(agent_type)`) before the ReAct loop; empty string is written if no template is found and a `logger.warning` is emitted so the gap is visible in logs | No further action required |
 | Token budget awareness | Agent should not silently truncate context | **DONE** -- `BaseAgent._truncate_exceptions()` truncates `ctx.exceptions` to the 20 highest-severity entries (HIGH -> MEDIUM -> LOW -> INFO) at three call sites in the orchestrator: initial context build, feedback-loop refresh, and `_apply_deterministic_resolution()`. Logs a warning with the count dropped. | No further action required |
 | Confidence calibration | Confidence scores must be grounded in evidence, not just stated | **DONE** -- `BaseAgent._compute_composite_confidence()` blends LLM confidence (60%), tool success rate (25%), and evidence quality (15%) into a composite score clamped to [0.0, 1.0]. AUTO_CLOSE is suppressed when any tool failed (downgraded to SEND_TO_AP_REVIEW, confidence capped at 0.5). Per-decision evidence is also enforced in `_finalise_run()` -- decisions with no evidence have confidence capped at 0.5 and `evidence_refs` set to `{"_provenance": "no_evidence_supplied"}`. | No further action required |
 | Retry with backoff | Transient LLM failures should retry before failing the run | **DONE** -- `BaseAgent.run()` now reads `agent_def.max_retries` (falling back to `AGENT_MAX_RETRIES` constant) and passes it to `_call_llm_with_retry()`. | No further action required |
@@ -1597,23 +1585,23 @@ ReAct loop completes:
 This propagates to `agent_run.output_payload["evidence"]` and all downstream
 `DecisionLog` entries created by `_finalise_run()`.
 
-#### AUTO_CLOSE Suppression on Tool Failures -- DONE
+#### Tool Failure Runtime Guards -- DONE (`_apply_tool_failure_guards`)
 
-In both exit paths of the ReAct loop, after the composite confidence is
-calculated, if any tool failed and the LLM returned `AUTO_CLOSE`:
+All tool-failure enforcement is centralised in `BaseAgent._apply_tool_failure_guards(output, failed_tool_count, total_tool_calls)`, called in both exit paths of the ReAct loop after composite confidence is calculated. This replaces the earlier single-check pattern.
 
-```python
-if failed_tool_count > 0 and output.recommendation_type == "AUTO_CLOSE":
-    output.recommendation_type = "SEND_TO_AP_REVIEW"
-    output.confidence = min(output.confidence, 0.5)
-    logger.warning(
-        "Agent %s: AUTO_CLOSE blocked due to %d tool failure(s)",
-        self.agent_type, failed_tool_count,
-    )
-```
+**Rule 1 -- any tool failed:**
+- `output.confidence` capped at `min(confidence, 0.5)`
+- If `recommendation_type == "AUTO_CLOSE"` it is downgraded to `SEND_TO_AP_REVIEW` (stricter recommendations such as `ESCALATE_TO_MANAGER` are preserved)
+- `output.evidence._provenance` set to `"tool_failures"` or `"tool_failures_partial"`
 
-This ensures that AUTO_CLOSE is never recommended when the agent used
-incomplete tool data to form its conclusion.
+**Rule 2 -- tool-grounded agent called no tools:**
+`_TOOL_GROUNDED_AGENT_TYPES = {PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, INVOICE_UNDERSTANDING, EXCEPTION_ANALYSIS}`
+- `output.confidence` capped at `min(confidence, 0.6)`
+- `output.evidence._provenance` set to `"no_tools_called"`
+
+Deterministic agents (resolved by `DeterministicResolver`) never go through `BaseAgent.run()` and are unaffected.
+
+Prompt-level instructions remain as a belt-and-braces layer but are no longer the sole guard.
 
 ---
 
@@ -1891,71 +1879,49 @@ if not already_escalated:
 
 ---
 
-### 19.4 Data-Scope Authorization [DOC ONLY]
+### 19.4 Data-Scope Authorization [CODE DONE]
 
-The current permission layer controls **what** an actor may do. A scope layer
-controls **which records** they may operate on.
+Implemented in `AgentGuardrailsService` (three methods) and wired into `AgentOrchestrator.execute()`.
 
-**Scope dimensions:**
+| Method | Purpose |
+|---|---|
+| `get_actor_scope(actor)` | Returns `{allowed_business_units, allowed_vendor_ids}` union across active `UserRole.scope_json` entries; ADMIN/SYSTEM_AGENT always unrestricted |
+| `get_result_scope(result)` | Returns `{business_unit, vendor_id}` extracted from current schema relationships |
+| `_scope_value_allowed(allowed, value)` | None on either side = pass-through; otherwise value must be in allowed list |
+| `authorize_data_scope(actor, result)` | Orchestrates the above; logs AuditEvent for every allow/deny; returns bool |
 
-| Dimension | Check Point | Example Restriction |
-|---|---|---|
-| Business unit | Before `execute()`, inside `authorize_orchestration()` | REVIEWER for BU "APAC" cannot trigger pipeline for a "EMEA" invoice |
-| Vendor | `authorize_tool()` for `vendor_search` | AP_PROCESSOR sees only vendors linked to their own invoices |
-| Country / Entity | Orchestrator pre-check | Finance staff scoped to country "GB" cannot act on "US" invoices |
-| Cost centre | `authorize_action()` for auto-close | Auto-close blocked when actor's cost centre set does not include the invoice cost centre |
+**Scope per UserRole** is stored in `UserRole.scope_json` (nullable). No restrictions when null.
 
-**Target implementation pattern:**
+**Currently enforced dimensions:**
+- `business_unit` via `ReconciliationPolicy.business_unit` (looked up through `result.policy_applied`)
+- `vendor_id` via `result.invoice.vendor_id`
 
-```python
-@staticmethod
-def authorize_data_scope(actor, result) -> bool:
-    actor_bus = set(actor.userrole_set.values_list("business_unit", flat=True))
-    if actor_bus and result.invoice.business_unit not in actor_bus:
-        AgentGuardrailsService.log_guardrail_decision(
-            actor, result, granted=False,
-            reason="DATA_SCOPE_BU_MISMATCH",
-        )
-        return False
-    return True
-```
-
-Call `authorize_data_scope()` immediately after `authorize_orchestration()`
-in `AgentOrchestrator.execute()`.
-
-**Until this is implemented:** annotate roles that have unrestricted data
-scope in `seed_rbac.py` with `# DATA_SCOPE: unrestricted` so the gap is
-visible in code review and security audits.
+**Pending dimensions (schema extension required before enforcement can be added):**
+- country / legal_entity: no `country_code` field on `Invoice` or `PurchaseOrder`
+- cost_centre: no `cost_centre` field on `Invoice` or `PurchaseOrder`
 
 ---
 
-### 19.5 Duplicate Recommendation Prevention [CODE DONE]
+### 19.5 Duplicate Recommendation Prevention [CODE DONE -- HARDENED]
 
-`AgentRecommendation` carries a `UniqueConstraint` on
-`(reconciliation_result, recommendation_type, agent_run)`:
+**Two-layer idempotency:**
 
-```python
-# apps/agents/models.py -- AgentRecommendation.Meta
-constraints = [
-    models.UniqueConstraint(
-        fields=["reconciliation_result", "recommendation_type", "agent_run"],
-        name="uq_rec_result_type_run",
-    ),
-]
-```
-
-Both `log_recommendation()` call sites in `AgentOrchestrator` (LLM loop and
-`_apply_deterministic_resolution()`) are wrapped with an `IntegrityError` guard:
+**Layer 1 (service-layer, deterministic key):** `DecisionLogService.log_recommendation()` checks for any PENDING (`accepted=None`) recommendation of the same `(reconciliation_result, recommendation_type)` before creating. If found it returns the existing record without hitting the DB constraint. This handles cross-run retries where different `agent_run` IDs would bypass the model constraint.
 
 ```python
-try:
-    rec = self.decision_service.log_recommendation(...)
-except IntegrityError:
-    logger.warning(
-        "Duplicate recommendation skipped: result=%s type=%s agent_run=%s",
-        result.pk, rec_type, agent_run.pk,
-    )
+existing = AgentRecommendation.objects.filter(
+    reconciliation_result=reconciliation_result,
+    recommendation_type=recommendation_type,
+    accepted__isnull=True,
+).first()
+if existing:
+    logger.info("Idempotent recommendation: ... pending rec #%s already exists", existing.pk)
+    return existing
 ```
+
+**Layer 2 (model constraint, safety net):** `AgentRecommendation` carries a `UniqueConstraint` on `(reconciliation_result, recommendation_type, agent_run)`. Both call sites in `AgentOrchestrator` remain wrapped with an `IntegrityError` guard as a final safety net.
+
+Intentionally distinct decisions (e.g. a recommendation was accepted/rejected and a new pipeline cycle produces a new one) are allowed because the filter on `accepted__isnull=True` ensures only the pending record is de-duped.
 
 The `else` branch runs only when the insert succeeded, so the backfill of
 `rec.invoice_id` and the `AuditEvent` write are skipped cleanly on duplicates.
