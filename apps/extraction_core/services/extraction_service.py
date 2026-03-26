@@ -435,7 +435,7 @@ class ExtractionService:
         ):
             effective_doc_type = intel.classification.document_type
             logger.info(
-                "Document intelligence reclassified %s → %s (%.2f)",
+                "Document intelligence reclassified %s -> %s (%.2f)",
                 document_type,
                 effective_doc_type,
                 intel.classification.confidence,
@@ -562,7 +562,7 @@ class ExtractionService:
         cls,
         resolution: ResolutionResult,
     ) -> JurisdictionMeta:
-        """Map ResolutionResult → JurisdictionMeta."""
+        """Map ResolutionResult -> JurisdictionMeta."""
         return JurisdictionMeta(
             country_code=resolution.country_code,
             regime_code=resolution.regime_code,

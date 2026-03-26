@@ -47,8 +47,15 @@ class InvoicePersistenceService:
             for issue in validation_result.issues:
                 remarks_parts.append(f"[{issue.severity}] {issue.field}: {issue.message}")
 
-        invoice = Invoice(
-            document_upload=upload,
+        # Check for existing invoice on same upload (reprocessing case)
+        existing_invoice = (
+            Invoice.objects
+            .filter(document_upload=upload)
+            .order_by("-created_at")
+            .first()
+        )
+
+        field_values = dict(
             vendor=vendor,
             # Raw
             raw_vendor_name=normalized.raw_vendor_name,
@@ -76,6 +83,17 @@ class InvoicePersistenceService:
             extraction_raw_json=extraction_raw_json,
         )
 
+        if existing_invoice:
+            # Update existing invoice in-place
+            for attr, value in field_values.items():
+                setattr(existing_invoice, attr, value)
+            # Reset duplicate flags -- will be re-evaluated below
+            existing_invoice.is_duplicate = False
+            existing_invoice.duplicate_of_id = None
+            invoice = existing_invoice
+        else:
+            invoice = Invoice(document_upload=upload, **field_values)
+
         # Duplicate handling
         if duplicate_result and duplicate_result.is_duplicate:
             invoice.is_duplicate = True
@@ -83,6 +101,10 @@ class InvoicePersistenceService:
             invoice.extraction_remarks += f"\nDUPLICATE: {duplicate_result.reason}"
 
         invoice.save()
+
+        # On reprocess, remove old line items before creating fresh ones
+        if existing_invoice:
+            InvoiceLineItem.objects.filter(invoice=invoice).delete()
 
         # Audit: duplicate detection
         if duplicate_result and duplicate_result.is_duplicate:
@@ -234,8 +256,7 @@ class ExtractionResultPersistenceService:
         if invoice and invoice.extraction_confidence is not None:
             confidence = invoice.extraction_confidence
 
-        return ExtractionResult.objects.create(
-            document_upload=upload,
+        field_vals = dict(
             invoice=invoice,
             extraction_run=extraction_run,
             engine_name=extraction_response.engine_name,
@@ -249,4 +270,21 @@ class ExtractionResultPersistenceService:
             ocr_page_count=getattr(extraction_response, 'ocr_page_count', 0),
             ocr_duration_ms=getattr(extraction_response, 'ocr_duration_ms', None),
             ocr_char_count=getattr(extraction_response, 'ocr_char_count', 0),
+        )
+
+        # Reuse existing ExtractionResult for same upload (reprocessing)
+        existing = (
+            ExtractionResult.objects
+            .filter(document_upload=upload)
+            .order_by("-created_at")
+            .first()
+        )
+        if existing:
+            for attr, value in field_vals.items():
+                setattr(existing, attr, value)
+            existing.save()
+            return existing
+
+        return ExtractionResult.objects.create(
+            document_upload=upload, **field_vals
         )
