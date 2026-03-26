@@ -78,6 +78,7 @@ class AgentOutput:
     confidence: float = 0.0
     evidence: Dict[str, Any] = field(default_factory=dict)
     decisions: List[Dict[str, Any]] = field(default_factory=list)
+    tools_used: List[str] = field(default_factory=list)
     raw_content: str = ""
 
 
@@ -170,6 +171,9 @@ class BaseAgent(ABC):
 
             failed_tool_count = 0
             total_tool_calls = 0
+            _called_tool_names: List[str] = []
+            # Grounding cap flag -- reset each run; set inside the two exit branches.
+            _grounding_cap_active = False
             for round_idx in range(MAX_TOOL_ROUNDS):
                 # Deadline check before each LLM call
                 if self._elapsed_seconds(start) > timeout_s:
@@ -207,7 +211,20 @@ class BaseAgent(ABC):
 
                 # If no tool calls, we're done
                 if not llm_resp.tool_calls:
+                    # Check 1: Catalog tool grounding -- flag if grounding required but no tools called.
+                    if agent_def and agent_def.requires_tool_grounding and total_tool_calls == 0:
+                        logger.warning(
+                            "Agent %s: requires_tool_grounding=True but no tools were called. "
+                            "Capping confidence at 0.4.",
+                            self.agent_type,
+                        )
+                        _grounding_cap_active = True
+                    else:
+                        _grounding_cap_active = False
                     output = self.interpret_response(llm_resp.content or "", ctx)
+                    # Override tools_used from runtime tracking (authoritative over LLM-reported).
+                    if _called_tool_names:
+                        output.tools_used = list(_called_tool_names)
                     # Replace the simple penalty block with composite confidence.
                     composite = self._compute_composite_confidence(
                         llm_confidence=output.confidence,
@@ -223,6 +240,23 @@ class BaseAgent(ABC):
                             bool(output.evidence),
                         )
                     output.confidence = composite
+                    # Apply grounding cap (Check 1).
+                    if _grounding_cap_active:
+                        output.confidence = min(output.confidence, 0.4)
+                    # Check 2: Catalog-defined confidence cap on tool failure.
+                    if (
+                        agent_def
+                        and agent_def.tool_failure_confidence_cap is not None
+                        and failed_tool_count > 0
+                    ):
+                        cap = float(agent_def.tool_failure_confidence_cap)
+                        if output.confidence > cap:
+                            logger.info(
+                                "Agent %s: applying catalog tool_failure_confidence_cap=%.2f "
+                                "(composite was %.2f)",
+                                self.agent_type, cap, output.confidence,
+                            )
+                            output.confidence = cap
                     output = self._apply_tool_failure_guards(
                         output, failed_tool_count, total_tool_calls
                     )
@@ -234,7 +268,7 @@ class BaseAgent(ABC):
                             "Agent %s returned no evidence in output -- confidence capped at 0.5",
                             self.agent_type,
                         )
-                    self._finalise_run(agent_run, output, start)
+                    self._finalise_run(agent_run, output, start, agent_def=agent_def)
                     return agent_run
 
                 # Process tool calls — include tool_calls on the assistant msg
@@ -260,12 +294,26 @@ class BaseAgent(ABC):
                     if not tool_result.success:
                         failed_tool_count += 1
                     total_tool_calls += 1
+                    _called_tool_names.append(tc.name)
                     tool_msg = json.dumps(tool_result.data if tool_result.success else {"error": tool_result.error})
                     messages.append({"role": "tool", "content": tool_msg, "tool_call_id": tc.id, "name": tc.name})
                     self._save_message(agent_run, "tool", tool_msg, len(messages), name=tc.name)
 
-            # Exhausted rounds — use last content
+            # Exhausted rounds -- use last content
+            # Check 1: Catalog tool grounding -- flag if grounding required but no tools called.
+            if agent_def and agent_def.requires_tool_grounding and total_tool_calls == 0:
+                logger.warning(
+                    "Agent %s: requires_tool_grounding=True but no tools were called. "
+                    "Capping confidence at 0.4.",
+                    self.agent_type,
+                )
+                _grounding_cap_active = True
+            else:
+                _grounding_cap_active = False
             output = self.interpret_response(llm_resp.content or "", ctx)
+            # Override tools_used from runtime tracking (authoritative over LLM-reported).
+            if _called_tool_names:
+                output.tools_used = list(_called_tool_names)
             # Replace the simple penalty block with composite confidence.
             composite = self._compute_composite_confidence(
                 llm_confidence=output.confidence,
@@ -281,6 +329,23 @@ class BaseAgent(ABC):
                     bool(output.evidence),
                 )
             output.confidence = composite
+            # Apply grounding cap (Check 1).
+            if _grounding_cap_active:
+                output.confidence = min(output.confidence, 0.4)
+            # Check 2: Catalog-defined confidence cap on tool failure.
+            if (
+                agent_def
+                and agent_def.tool_failure_confidence_cap is not None
+                and failed_tool_count > 0
+            ):
+                cap = float(agent_def.tool_failure_confidence_cap)
+                if output.confidence > cap:
+                    logger.info(
+                        "Agent %s: applying catalog tool_failure_confidence_cap=%.2f "
+                        "(composite was %.2f)",
+                        self.agent_type, cap, output.confidence,
+                    )
+                    output.confidence = cap
             output = self._apply_tool_failure_guards(
                 output, failed_tool_count, total_tool_calls
             )
@@ -292,7 +357,7 @@ class BaseAgent(ABC):
                     "Agent %s returned no evidence in output -- confidence capped at 0.5",
                     self.agent_type,
                 )
-            self._finalise_run(agent_run, output, start)
+            self._finalise_run(agent_run, output, start, agent_def=agent_def)
 
         except Exception as exc:
             rr_pk = ctx.reconciliation_result.pk if ctx.reconciliation_result else None
@@ -369,7 +434,63 @@ class BaseAgent(ABC):
         )
         return result
 
-    def _finalise_run(self, agent_run: AgentRun, output: AgentOutput, start: float) -> None:
+    def _finalise_run(self, agent_run: AgentRun, output: AgentOutput, start: float, agent_def=None) -> None:
+        # Check 4: Apply catalog default fallback when output has no recommendation.
+        if (
+            output.recommendation_type is None
+            and agent_def
+            and agent_def.default_fallback_recommendation
+        ):
+            logger.info(
+                "Agent %s: recommendation_type is None, applying catalog fallback '%s'",
+                self.agent_type, agent_def.default_fallback_recommendation,
+            )
+            output.recommendation_type = agent_def.default_fallback_recommendation
+
+        # Check 3: Validate recommendation_type against the catalog allowed list.
+        allowed = None
+        if agent_def and agent_def.allowed_recommendation_types:
+            allowed = list(agent_def.allowed_recommendation_types)
+        if allowed and output.recommendation_type and output.recommendation_type not in allowed:
+            logger.warning(
+                "Agent %s: recommendation_type '%s' not in allowed list %s. "
+                "Falling back to default_fallback_recommendation.",
+                self.agent_type, output.recommendation_type, allowed,
+            )
+            fallback = (
+                agent_def.default_fallback_recommendation
+                if agent_def and agent_def.default_fallback_recommendation
+                else "SEND_TO_AP_REVIEW"
+            )
+            output.recommendation_type = fallback
+            output.confidence = min(output.confidence, 0.6)
+
+        # Check 5: Reject recommendations that are explicitly prohibited in the catalog.
+        if (
+            agent_def
+            and agent_def.prohibited_actions
+            and output.recommendation_type in agent_def.prohibited_actions
+        ):
+            logger.warning(
+                "Agent %s: recommendation_type '%s' is in prohibited_actions. "
+                "Overriding with fallback.",
+                self.agent_type, output.recommendation_type,
+            )
+            fallback = (
+                agent_def.default_fallback_recommendation
+                or "SEND_TO_AP_REVIEW"
+            )
+            output.recommendation_type = fallback
+            output.confidence = min(output.confidence, 0.5)
+
+        # Phase 2: Normalise required evidence structure keys (_tools_used, _grounding,
+        # _uncertainties). Non-destructive -- existing LLM-supplied values are preserved.
+        self._enforce_evidence_keys(output)
+
+        # Phase 6: Guard reasoning quality. Replace vague/empty reasoning with a
+        # minimal factual fallback derived from the structured output fields.
+        output.reasoning = self._guard_reasoning_quality(output, self.agent_type)
+
         agent_run.status = AgentRunStatus.COMPLETED
         agent_run.completed_at = timezone.now()
         agent_run.duration_ms = int((time.monotonic() - start) * 1000)
@@ -378,6 +499,7 @@ class BaseAgent(ABC):
             "recommendation_type": output.recommendation_type,
             "confidence": output.confidence,
             "evidence": output.evidence,
+            "tools_used": output.tools_used,
         }
         agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
         agent_run.confidence = output.confidence
@@ -427,6 +549,134 @@ class BaseAgent(ABC):
         for char, ascii_eq in replacements.items():
             text = text.replace(char, ascii_eq)
         return re.sub(r"[^\x00-\x7F]", "", text)
+
+    @staticmethod
+    def _enforce_evidence_keys(output: "AgentOutput") -> None:
+        """Normalise the three required evidence keys for all agent outputs.
+
+        Adds _tools_used, _grounding, and _uncertainties to the evidence dict
+        if they are absent. Existing LLM-supplied values are never overwritten.
+
+        - _tools_used  : copied from runtime-tracked output.tools_used
+        - _grounding   : "full" when tools were called, "partial" when evidence
+                         has substantive non-underscore keys but no tool calls,
+                         "none" otherwise. "none" triggers an additional
+                         confidence cap to signal weak grounding.
+        - _uncertainties: defaults to [] (empty list = no unresolved questions).
+
+        If any key was added automatically, a "_evidence_keys_auto_added" marker
+        is stored so the audit trail can surface LLM omissions.
+        """
+        if not isinstance(output.evidence, dict):
+            output.evidence = {}
+
+        keys_added = []
+
+        # _tools_used -- authoritative from runtime tracking
+        if "_tools_used" not in output.evidence:
+            output.evidence["_tools_used"] = list(output.tools_used or [])
+            keys_added.append("_tools_used")
+
+        # _grounding -- derived from tool call history and evidence content
+        if "_grounding" not in output.evidence:
+            if output.tools_used:
+                grounding = "full"
+            elif any(not k.startswith("_") for k in output.evidence):
+                grounding = "partial"
+            else:
+                grounding = "none"
+            output.evidence["_grounding"] = grounding
+            keys_added.append("_grounding")
+
+        # _uncertainties -- default to empty list
+        if "_uncertainties" not in output.evidence:
+            output.evidence["_uncertainties"] = []
+            keys_added.append("_uncertainties")
+
+        if keys_added:
+            output.evidence.setdefault("_evidence_keys_auto_added", keys_added)
+            # If grounding is "none", confidence signals weak reliability
+            if output.evidence.get("_grounding") == "none":
+                output.confidence = min(output.confidence, 0.5)
+                logger.debug(
+                    "Evidence grounding=none: confidence capped at 0.5 "
+                    "(auto-added keys: %s)",
+                    keys_added,
+                )
+
+    @staticmethod
+    def _guard_reasoning_quality(output: "AgentOutput", agent_type: str) -> str:
+        """Check reasoning quality and return a safe factual fallback if too weak.
+
+        Heuristics (simple, deterministic -- no NLP required):
+          1. Fewer than 40 characters -> weak.
+          2. Starts with a known vague filler phrase AND contains no
+             domain-specific marker word -> weak.
+
+        If weak, derives a minimal factual summary from the structured output
+        fields (recommendation, confidence, evidence keys, tools used).
+        The fallback is always ASCII-safe and kept under 500 characters.
+        """
+        _VAGUE_OPENERS = (
+            "based on analysis",
+            "upon review",
+            "the data suggests",
+            "based on the available",
+            "after reviewing",
+            "upon analysis",
+            "the analysis shows",
+            "based on my analysis",
+        )
+        _SPECIFICITY_MARKERS = (
+            "invoice", "po", "grn", "vendor", "amount", "total", "exception",
+            "difference", "match", "quantity", "price", "tax", "confidence",
+            "number", "line item",
+        )
+
+        reasoning = (output.reasoning or "").strip()
+
+        is_weak = False
+        if len(reasoning) < 40:
+            is_weak = True
+        else:
+            lower = reasoning.lower()
+            is_vague_opener = any(lower.startswith(p) for p in _VAGUE_OPENERS)
+            has_specifics = any(m in lower for m in _SPECIFICITY_MARKERS)
+            if is_vague_opener and not has_specifics:
+                is_weak = True
+
+        if not is_weak:
+            return reasoning
+
+        # Build a safe factual fallback from structured output
+        parts = []
+        if output.recommendation_type:
+            parts.append("Recommendation: " + output.recommendation_type)
+        conf_pct = int(output.confidence * 100)
+        parts.append("Confidence: " + str(conf_pct) + "%")
+
+        ev = output.evidence or {}
+        specifics = []
+        for key in (
+            "invoice_number", "po_number", "vendor", "total_amount",
+            "match_status", "exception_type", "found_po", "grn_count",
+        ):
+            val = ev.get(key)
+            if val not in (None, "", [], {}):
+                specifics.append(key + "=" + str(val))
+        if specifics:
+            parts.append("Evidence: " + ", ".join(specifics[:4]))
+
+        if output.tools_used:
+            parts.append("Tools called: " + ", ".join(output.tools_used))
+
+        fallback = "[auto-summary agent=" + agent_type + "] " + ". ".join(parts) + "."
+        logger.warning(
+            "Agent %s produced weak reasoning (%d chars, original='%s...'); "
+            "replaced with auto-summary.",
+            agent_type, len(reasoning or ""), (reasoning or "")[:60],
+        )
+        return fallback[:500]
 
     @staticmethod
     def _truncate_exceptions(

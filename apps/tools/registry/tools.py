@@ -29,6 +29,12 @@ class POLookupTool(BaseTool):
         "Supports exact, normalized, and partial/contains matching on PO numbers. "
         "Pass vendor_id alone to list all open POs for that vendor."
     )
+    when_to_use = "When you need to verify a PO number exists, get PO header/line details, or find open POs for a vendor."
+    when_not_to_use = "Do not use as evidence that goods were received. PO existence does not confirm delivery."
+    no_result_meaning = "No matching PO found in the system. Does not prove the PO does not exist in ERP -- it may not be synced yet."
+    failure_handling_instruction = "On tool failure, do not infer PO existence from memory alone. Report uncertainty."
+    authoritative_fields = ["po_number", "vendor_id", "total_amount", "status", "line_items"]
+    evidence_keys_produced = ["found", "po_number", "vendor", "total_amount", "status", "line_items"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -151,6 +157,12 @@ class GRNLookupTool(BaseTool):
         "Look up Goods Receipt Notes for a given PO number. "
         "Returns GRN headers and received quantities."
     )
+    when_to_use = "When you need to confirm whether goods were physically received for a given PO in 3-WAY mode."
+    when_not_to_use = "Do not use in TWO_WAY reconciliation mode. GRN is not applicable there."
+    no_result_meaning = "No GRN found for this PO. Goods may not have been received yet or GRN not yet recorded."
+    failure_handling_instruction = "On tool failure, do not assume goods were or were not received. Escalate if receipt status is critical."
+    authoritative_fields = ["grn_number", "receipt_date", "status", "line_items.quantity_received"]
+    evidence_keys_produced = ["found", "po_number", "grn_count", "grns"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -246,6 +258,12 @@ class VendorSearchTool(BaseTool):
         "Search for a vendor by name, code, or alias. "
         "Use when the invoice vendor doesn't match the PO vendor."
     )
+    when_to_use = "When the invoice vendor name does not match the PO vendor and you need to check for aliases or alternate names."
+    when_not_to_use = "Do not use to confirm payment terms or spending limits -- this tool only returns identity data."
+    no_result_meaning = "No vendor match found. The vendor may be unknown, inactive, or using a name not yet registered as an alias."
+    failure_handling_instruction = "On failure, do not assume vendor identity from invoice text alone. Flag for manual vendor verification."
+    authoritative_fields = ["vendor_id", "code", "name", "match_type"]
+    evidence_keys_produced = ["query", "count", "vendors"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -319,6 +337,12 @@ class InvoiceDetailsTool(BaseTool):
     description = (
         "Get full details of an invoice including header, line items, and extraction metadata."
     )
+    when_to_use = "When you need the full extracted invoice data including header fields, line items, and extraction confidence."
+    when_not_to_use = "Do not use to look up PO or GRN data -- this tool returns invoice data only."
+    no_result_meaning = "Invoice not found by ID. This is a system error -- the invoice should always exist if the context is valid."
+    failure_handling_instruction = "On failure, rely only on the context already provided. Do not fabricate invoice fields."
+    authoritative_fields = ["invoice_number", "vendor", "po_number", "total_amount", "extraction_confidence", "line_items"]
+    evidence_keys_produced = ["invoice_id", "invoice_number", "vendor_id", "total_amount", "extraction_confidence", "line_items"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -369,6 +393,12 @@ class ExceptionListTool(BaseTool):
         "Retrieve all reconciliation exceptions for a given ReconciliationResult. "
         "Use to understand what mismatches were found."
     )
+    when_to_use = "When you need the full list of reconciliation exceptions for root cause analysis."
+    when_not_to_use = "Do not use to retrieve invoice or PO data -- call invoice_details or po_lookup instead."
+    no_result_meaning = "No exceptions found. The reconciliation result may have no discrepancies at this point."
+    failure_handling_instruction = "On failure, use the exceptions already present in the agent context."
+    authoritative_fields = ["exception_type", "severity", "message", "resolved"]
+    evidence_keys_produced = ["reconciliation_result_id", "exceptions"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -405,6 +435,12 @@ class ReconciliationSummaryTool(BaseTool):
         "Get the reconciliation result summary for a given ReconciliationResult, "
         "including match status, confidence, and header-level evidence."
     )
+    when_to_use = "When you need the match status, confidence scores, and header-level comparison results for a reconciliation."
+    when_not_to_use = "Do not use to get line item detail -- use invoice_details or po_lookup for that."
+    no_result_meaning = "Reconciliation result not found. This is a system error if the context references a valid result ID."
+    failure_handling_instruction = "On failure, use match_status and confidence from the agent context. Do not fabricate match outcomes."
+    authoritative_fields = ["match_status", "deterministic_confidence", "vendor_match", "po_total_match", "total_amount_difference", "grn_available", "grn_fully_received"]
+    evidence_keys_produced = ["result_id", "match_status", "vendor_match", "po_total_match", "total_amount_difference", "grn_available"]
     parameters_schema = {
         "type": "object",
         "properties": {

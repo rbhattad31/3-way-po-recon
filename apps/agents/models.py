@@ -27,6 +27,63 @@ class AgentDefinition(BaseModel):
     timeout_seconds = models.PositiveIntegerField(default=120)
     config_json = models.JSONField(null=True, blank=True, help_text="Agent-specific configuration")
 
+    # ------------------------------------------------------------------
+    # Catalog / contract fields
+    # ------------------------------------------------------------------
+    purpose = models.TextField(blank=True, default="",
+        help_text="What this agent does and why it exists")
+    entry_conditions = models.TextField(blank=True, default="",
+        help_text="When this agent should be invoked")
+    success_criteria = models.TextField(blank=True, default="",
+        help_text="What a successful run looks like")
+    prohibited_actions = models.JSONField(null=True, blank=True,
+        help_text="List of actions this agent must never take, e.g. ['AUTO_CLOSE']")
+
+    # ------------------------------------------------------------------
+    # Tool grounding
+    # ------------------------------------------------------------------
+    requires_tool_grounding = models.BooleanField(default=False,
+        help_text="If True, at least one tool call must succeed before a recommendation is made")
+    min_tool_calls = models.PositiveIntegerField(default=0,
+        help_text="Minimum number of successful tool calls required")
+    tool_failure_confidence_cap = models.FloatField(null=True, blank=True,
+        help_text="Maximum confidence allowed when any tool fails. Overrides the platform default of 0.5")
+
+    # ------------------------------------------------------------------
+    # Recommendation contract
+    # ------------------------------------------------------------------
+    allowed_recommendation_types = models.JSONField(null=True, blank=True,
+        help_text="List of RecommendationType values this agent is allowed to emit. Null = all allowed")
+    default_fallback_recommendation = models.CharField(max_length=60, blank=True, default="",
+        help_text="Recommendation to use when output is invalid or suppressed. Must be a valid RecommendationType value")
+
+    # ------------------------------------------------------------------
+    # Output schema
+    # ------------------------------------------------------------------
+    output_schema_name = models.CharField(max_length=100, blank=True, default="",
+        help_text="Name of the output schema this agent targets, e.g. AgentOutputSchema")
+    output_schema_version = models.CharField(max_length=20, blank=True, default="",
+        help_text="Version of the output schema, e.g. v1")
+
+    # ------------------------------------------------------------------
+    # Lifecycle and governance
+    # ------------------------------------------------------------------
+    lifecycle_status = models.CharField(
+        max_length=20,
+        choices=[("draft", "Draft"), ("active", "Active"), ("deprecated", "Deprecated")],
+        default="active",
+        db_index=True,
+        help_text="Operational lifecycle of this agent definition",
+    )
+    owner_team = models.CharField(max_length=100, blank=True, default="",
+        help_text="Team responsible for this agent, e.g. AP Automation")
+    capability_tags = models.JSONField(null=True, blank=True,
+        help_text="Primary and secondary capabilities, e.g. ['retrieval', 'routing']")
+    domain_tags = models.JSONField(null=True, blank=True,
+        help_text="Business domain tags, e.g. ['po', 'grn', 'vendor']")
+    human_review_required_conditions = models.TextField(blank=True, default="",
+        help_text="Conditions under which a human reviewer must be assigned")
+
     class Meta:
         db_table = "agents_definition"
         ordering = ["agent_type"]

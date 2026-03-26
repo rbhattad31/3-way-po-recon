@@ -60,9 +60,13 @@ class EscalationInline(admin.TabularInline):
 # ---------------------------------------------------------------------------
 @admin.register(AgentDefinition)
 class AgentDefinitionAdmin(admin.ModelAdmin):
-    list_display = ("agent_type", "name", "enabled_badge", "llm_model", "max_retries", "timeout_seconds", "run_count")
-    list_filter = ("enabled", "agent_type")
-    search_fields = ("name", "description")
+    list_display = (
+        "agent_type", "name", "enabled_badge", "lifecycle_status",
+        "requires_tool_grounding", "capability_tags", "allowed_recommendation_types",
+        "default_fallback_recommendation", "llm_model", "max_retries", "timeout_seconds", "run_count",
+    )
+    list_filter = ("enabled", "agent_type", "lifecycle_status", "requires_tool_grounding")
+    search_fields = ("name", "description", "owner_team")
     list_per_page = 25
     readonly_fields = ("created_at", "updated_at", "created_by", "updated_by")
     fieldsets = (
@@ -70,6 +74,20 @@ class AgentDefinitionAdmin(admin.ModelAdmin):
         ("LLM", {"fields": ("llm_model", "system_prompt")}),
         ("Limits", {"fields": ("max_retries", "timeout_seconds")}),
         ("Config", {"fields": ("config_json",), "classes": ("collapse",)}),
+        ("Contract", {"fields": (
+            "purpose", "entry_conditions", "success_criteria",
+            "prohibited_actions", "human_review_required_conditions",
+        )}),
+        ("Tool Grounding", {"fields": (
+            "requires_tool_grounding", "min_tool_calls", "tool_failure_confidence_cap",
+        )}),
+        ("Recommendation Contract", {"fields": (
+            "allowed_recommendation_types", "default_fallback_recommendation",
+            "output_schema_name", "output_schema_version",
+        )}),
+        ("Governance", {"fields": (
+            "lifecycle_status", "owner_team", "capability_tags", "domain_tags",
+        )}),
         ("Audit", {"fields": ("created_at", "updated_at", "created_by", "updated_by"), "classes": ("collapse",)}),
     )
 

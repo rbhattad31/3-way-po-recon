@@ -27,6 +27,8 @@ class AgentOutputSchema(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     decisions: List[DecisionSchema] = Field(default_factory=list)
     evidence: Dict[str, Any] = Field(default_factory=dict)
+    tools_used: List[str] = Field(default_factory=list,
+        description="Tool names called during this agent run")
 
     @field_validator("recommendation_type", mode="before")
     @classmethod

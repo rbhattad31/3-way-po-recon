@@ -1,65 +1,47 @@
-# Agent Architecture — Developer Guide
+# Agent Architecture -- Developer Guide
 
-> Covers the complete agentic layer of the 3-Way PO Reconciliation Platform:
-> how agents are structured, how the pipeline executes, how the deterministic
-> and LLM layers interact, a concrete upgrade path to a full reasoning
-> engine without breaking the existing flow, best-practice upgrades for each
-> existing agent, and open source tools for agent observability.
+> 3-Way PO Reconciliation Platform -- Agentic Layer Reference
 
 ---
 
 ## Table of Contents
 
-1. [Big Picture](#1-big-picture)
-2. [Core Concepts and Data Structures](#2-core-concepts-and-data-structures)
-3. [Component Inventory](#3-component-inventory)
-4. [Agent Definitions (Database-Backed Config)](#4-agent-definitions-database-backed-config)
-5. [The Tool System](#5-the-tool-system)
-6. [The LLM Client](#6-the-llm-client)
-7. [BaseAgent and the ReAct Loop](#7-baseagent-and-the-react-loop)
-8. [Concrete Agent Implementations](#8-concrete-agent-implementations)
-9. [The PolicyEngine](#9-the-policyengine)
-10. [The DeterministicResolver](#10-the-deterministicresolver)
-11. [The AgentOrchestrator](#11-the-agentorchestrator)
-12. [RBAC Guardrails](#12-rbac-guardrails)
-13. [Agent Feedback Loop](#13-agent-feedback-loop)
-14. [Observability and Governance](#14-observability-and-governance)
-15. [How the Pipeline Is Triggered](#15-how-the-pipeline-is-triggered)
-16. [Upgrade Path: Reasoning Engine](#16-upgrade-path-reasoning-engine)
-17. [Upgrading Existing Agents to Best Agentic Practices](#17-upgrading-existing-agents-to-best-agentic-practices)
-18. [Open Source Tools for Agent Performance and Inter-Agent Tracing](#18-open-source-tools-for-agent-performance-and-inter-agent-tracing)
-19. [Design Requirements and Enforcement Rules](#19-design-requirements-and-enforcement-rules)
-    - 18.1 Open Source vs. SaaS Clarification
-    - 18.2 Recommended Combination for This Stack
-    - 18.3 Coverage Matrix
-    - 18.4 Langfuse
-    - 18.5 Phoenix / Arize
-    - 18.6 OpenLLMetry / openinference
-    - 18.7 Weave / W&B (Not Recommended)
-    - 18.8 What the Internal Platform Already Covers
-    - 18.9 Windows Compatibility for All Tools
-    - 18.10 Recommended Integration Sequence
+1. [Overview](#1-overview)
+2. [Core Runtime Model](#2-core-runtime-model)
+3. [Orchestration Flow](#3-orchestration-flow)
+4. [Agent Catalog and Contract Model](#4-agent-catalog-and-contract-model)
+5. [Tool System and Authoring Standard](#5-tool-system-and-authoring-standard)
+6. [Prompting and Output Contracts](#6-prompting-and-output-contracts)
+7. [Concrete Agents](#7-concrete-agents)
+8. [Governance and RBAC](#8-governance-and-rbac)
+9. [Observability and Audit](#9-observability-and-audit)
+10. [Extension Guide](#10-extension-guide)
+11. [Remaining Gaps and Roadmap](#11-remaining-gaps-and-roadmap)
 
 ---
 
-## 1. Big Picture
+## 1. Overview
+
+### 1.1 Purpose
 
 The agentic layer sits **after** the deterministic reconciliation engine. It
 is invoked only when the matching result is not a clean MATCHED (or an
 auto-closeable PARTIAL_MATCH). Its job is to:
 
-1. Understand *why* a match failed.
-2. Attempt to recover missing data (PO, GRN).
+1. Understand why a match failed.
+2. Attempt to recover missing documents (PO, GRN).
 3. Classify exceptions and decide where to route the case.
 4. Produce a human-readable summary for the reviewer.
 
+### 1.2 High-Level Flow
+
 ```
-ReconciliationResult (PARTIAL_MATCH / UNMATCHED / REQUIRES_REVIEW)
+ReconciliationResult (PARTIAL_MATCH | UNMATCHED | REQUIRES_REVIEW)
         |
         v
-  PolicyEngine.plan()               <-- deterministic: no LLM
+  ReasoningPlanner.plan()           -- LLM plan with PolicyEngine fallback
         |
-        +--> skip_agents=True       --> auto-close by tolerance band (no AI)
+        +--> skip_agents=True  -->  auto-close by tolerance band (no AI)
         |
         +--> agents=[...] list
                 |
@@ -67,38 +49,53 @@ ReconciliationResult (PARTIAL_MATCH / UNMATCHED / REQUIRES_REVIEW)
   AgentOrchestrator.execute()
         |
         +--> llm_agents (PO_RETRIEVAL, GRN_RETRIEVAL, INVOICE_UNDERSTANDING,
-        |                RECONCILIATION_ASSIST)
+        |                EXCEPTION_ANALYSIS, RECONCILIATION_ASSIST)
         |        |
         |        v
-        |    BaseAgent.run()         <-- ReAct loop (LLM + tools)
+        |    BaseAgent.run()         -- ReAct loop (LLM + tools)
         |        |
         |        +--> feedback loop if PO found --> re-reconcile
+        |        |
+        |        +--> _reflect()     -- may insert additional agents
         |
-        +--> deterministic_tail (EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY)
+        +--> deterministic_tail (REVIEW_ROUTING, CASE_SUMMARY)
                  |
                  v
-             DeterministicResolver.resolve()  <-- rule-based, no LLM
-                 |
-                 v
-             synthetic AgentRun records (same schema as LLM runs)
+             DeterministicResolver.resolve()  -- rule-based, no LLM
         |
         v
   _apply_post_policies()
-        +--> should_auto_close()    --> MATCHED (no human needed)
-        +--> should_escalate()      --> AgentEscalation record
+        +--> should_auto_close()   --> mark MATCHED (no human needed)
+        +--> should_escalate()     --> create AgentEscalation record
 ```
 
-**Key design choice:** the pipeline runs the LLM only for agents that
-genuinely need reasoning (retrieval, understanding, partial-match assist).
-The final classification, routing, and summary steps are handled by a
-rule-based `DeterministicResolver` that writes identical `AgentRun` records
-so governance/audit is indistinguishable from the LLM path.
+### 1.3 Key Design Principles
+
+**Deterministic-first, agentic where needed.** The reconciliation engine and
+`DeterministicResolver` handle all standard cases. LLM agents run only for
+genuine uncertainty. A rule-based `PolicyEngine` always exists as a fallback
+if the LLM planner fails.
+
+**Governance-first.** Every agent run, tool call, and decision is persisted
+in `AgentRun`, `AgentStep`, `DecisionLog`, and `AuditEvent` before any
+downstream action. The audit trail is identical for LLM and deterministic
+runs -- `AgentRun` records from `DeterministicResolver` use
+`llm_model_used="deterministic"` and zero token counts.
+
+**Fail-closed RBAC.** No agent action (plan, run, tool call, recommendation,
+auto-close, escalation) executes without a passing RBAC check via
+`AgentGuardrailsService`. Unknown actions are denied, not defaulted.
+
+**ASCII-only stored output.** All LLM-generated text written to the database
+(`AgentRun.summarized_reasoning`, `ReconciliationResult.summary`,
+`ReviewAssignment.reviewer_summary`, `DecisionLog.rationale`) must pass
+through `BaseAgent._sanitise_text()` before saving.
 
 ---
 
-## 2. Core Concepts and Data Structures
+## 2. Core Runtime Model
 
-### AgentContext
+### 2.1 AgentContext
 
 Immutable bag passed into every agent run. Populated by the orchestrator.
 
@@ -124,14 +121,44 @@ class AgentContext:
     memory: Optional[AgentMemory] = None
 ```
 
-The `memory` field carries an `AgentMemory` instance created by the orchestrator
-at the start of each pipeline run. It accumulates findings (resolved PO, GRN
-numbers, agent reasoning summaries, running recommendation) so that later agents
-have structured access to what earlier agents discovered -- replacing the
-previous plain-string `ctx.extra["prior_reasoning"]` approach.
-Both mechanisms are kept in parallel for backward compatibility.
+### 2.2 AgentMemory
 
-### AgentOutput
+Created by the orchestrator at pipeline start. Accumulates findings so later
+agents have structured access to what earlier agents discovered.
+
+```python
+@dataclass
+class AgentMemory:
+    resolved_po_number: Optional[str] = None
+    resolved_grn_numbers: List[str] = field(default_factory=list)
+    extraction_issues: List[str] = field(default_factory=list)
+    agent_summaries: Dict[str, str] = field(default_factory=dict)
+    current_recommendation: Optional[str] = None
+    current_confidence: float = 0.0
+    facts: Dict[str, Any] = field(default_factory=dict)
+
+    def record_agent_output(self, agent_type: str, output) -> None:
+        self.agent_summaries[agent_type] = output.reasoning[:500]
+        if output.recommendation_type:
+            if output.confidence > self.current_confidence:
+                self.current_recommendation = output.recommendation_type
+                self.current_confidence = output.confidence
+        evidence = output.evidence or {}
+        if evidence.get("found_po"):
+            self.resolved_po_number = evidence["found_po"]
+```
+
+**What each agent reads from `ctx.memory`:**
+
+| Agent | Fields read |
+|---|---|
+| `ReviewRoutingAgent` | `agent_summaries`, `current_recommendation`, `current_confidence` |
+| `CaseSummaryAgent` | `agent_summaries` (pipe-joined, 100 chars each), `current_recommendation`, `current_confidence` |
+| `ReconciliationAssistAgent` | `resolved_po_number` (appended to prompt when set) |
+| `GRNRetrievalAgent` | `facts["grn_available"]`, `facts["grn_fully_received"]` |
+| `InvoiceUnderstandingAgent` | `facts["extraction_confidence"]`, `facts["match_status"]`, `facts["validation_warnings"]` |
+
+### 2.3 AgentOutput
 
 What `interpret_response()` returns after the ReAct loop finishes.
 
@@ -146,23 +173,23 @@ class AgentOutput:
     raw_content: str
 ```
 
-### AgentPlan
+### 2.4 AgentPlan
 
-What `PolicyEngine.plan()` returns.
+What `ReasoningPlanner.plan()` returns.
 
 ```python
 @dataclass
 class AgentPlan:
-    agents: List[str]          # ordered AgentType values to run
-    reason: str                # human-readable explanation
-    skip_agents: bool          # True -> skip all agents
-    auto_close: bool           # True -> auto-close the result
-    reconciliation_mode: str   # propagated to context
-    plan_source: str = "deterministic"  # "deterministic" or "llm"
-    plan_confidence: float = 0.0        # planner self-reported confidence (0-1)
+    agents: List[str]            # ordered AgentType values to run
+    reason: str
+    skip_agents: bool            # True -> skip all agents
+    auto_close: bool             # True -> auto-close the result
+    reconciliation_mode: str
+    plan_source: str = "deterministic"   # "deterministic" or "llm"
+    plan_confidence: float = 0.0         # planner self-reported confidence
 ```
 
-### OrchestrationResult
+### 2.5 OrchestrationResult
 
 Aggregated outcome returned by `AgentOrchestrator.execute()`.
 
@@ -178,343 +205,166 @@ class OrchestrationResult:
     skipped: bool
     skip_reason: str
     error: str
-    plan_source: str = ""    # which planner produced the plan ("deterministic" or "llm")
-    plan_confidence: float = 0.0  # planner self-reported confidence; 0.0 for deterministic
+    plan_source: str = ""
+    plan_confidence: float = 0.0
 ```
 
-### AgentOrchestrationRun (DB Model)
+### 2.6 AgentOrchestrationRun (DB Model)
 
 Persisted state record for one full invocation of `AgentOrchestrator.execute()`.
-Created before any agent runs. Updated incrementally as agents complete.
-Serves three purposes: (1) duplicate-run protection, (2) visibility into
-incomplete/failed pipelines, (3) foundation for future partial resume.
+Created before any agent runs; updated incrementally as agents complete.
+Serves three purposes: duplicate-run protection, visibility into incomplete
+pipelines, and foundation for future partial resume.
 
 ```python
 class AgentOrchestrationRun(BaseModel):
     class Status(models.TextChoices):
         PLANNED   = "PLANNED"    # not yet started
         RUNNING   = "RUNNING"    # pipeline is executing
-        COMPLETED = "COMPLETED"  # all agents finished successfully
-        PARTIAL   = "PARTIAL"    # some agents failed but pipeline reached the end
+        COMPLETED = "COMPLETED"  # all agents finished
+        PARTIAL   = "PARTIAL"    # some agents failed, pipeline reached the end
         FAILED    = "FAILED"     # pipeline crashed before completing
 
-    reconciliation_result  # FK -> ReconciliationResult
-    status                 # PLANNED | RUNNING | COMPLETED | PARTIAL | FAILED
-    plan_source            # "deterministic" or "llm"
-    plan_confidence        # float 0-1 from planner
-    planned_agents         # JSON list of agent types from planner
-    executed_agents        # JSON list updated after each agent finishes
-    final_recommendation   # copied from OrchestrationResult on completion
-    final_confidence       # copied from OrchestrationResult on completion
-    skip_reason            # populated on COMPLETED skipped runs
-    error_message          # populated on FAILED runs
-    actor_user_id          # PK of triggering user (or SYSTEM_AGENT)
-    trace_id               # links to TraceContext for distributed tracing
+    reconciliation_result        # FK -> ReconciliationResult
+    status                       # see Status above
+    plan_source                  # "deterministic" or "llm"
+    plan_confidence              # float 0-1 from planner
+    planned_agents               # JSON list of agent types from planner
+    executed_agents              # JSON list updated after each agent finishes
+    final_recommendation
+    final_confidence
+    skip_reason
+    error_message
+    actor_user_id
+    trace_id
     started_at / completed_at / duration_ms
 ```
 
-**Duplicate-run protection:** if a `RUNNING` record already exists for a
-`ReconciliationResult`, `execute()` logs a warning and returns early with
-`orch_result.skipped=True` before any agent runs.
+**State machine:**
 
-**Lifecycle transitions:**
 ```
-create(RUNNING) -> [per agent: save executed_agents] -> save(COMPLETED | PARTIAL)
-                                                   \-> on exception: save(FAILED)
-skip_agents=True -> create(COMPLETED, skip_reason=plan.reason)
+PLANNED --[execute() called]--> RUNNING
+                                   |
+                                   +-- all agents done, no error -------> COMPLETED (terminal)
+                                   +-- all agents done, some errors ----> PARTIAL  (terminal)
+                                   +-- unhandled exception -------------> FAILED   (terminal)
+                                   +-- skip_agents=True ----------------> COMPLETED (no agents run)
+
+Duplicate guard:
+  RUNNING already exists for same reconciliation_result
+    -> new execute() call returns early (orch_result.skipped=True)
+    -> no new record created, no agents run
 ```
 
-DB table: `agents_orchestration_run`. Migration: `0006_add_orchestration_run`.
+**Stale RUNNING records:** A worker crash leaves a `RUNNING` record blocking
+all retries. Set `status=FAILED` via Django admin or the governance API.
+Monitor for records where `started_at < now() - 10 min AND status=RUNNING`.
 
 ---
 
-## 3. Component Inventory
+## 3. Orchestration Flow
 
-| Component | File | Role |
-|---|---|---|
-| `AgentContext` / `AgentOutput` | `base_agent.py` | Data contracts |
-| `AgentMemory` | `agent_memory.py` | Structured cross-agent findings store |
-| `BaseAgent` | `base_agent.py` | ReAct loop, message persistence, `_sanitise_text()`, `_truncate_exceptions()`, `_compute_composite_confidence()`, `_call_llm_with_retry()`, `enforce_json_response` |
-| `AgentOutputSchema` | `agent_output_schema.py` | Pydantic v2 validation of all standard agent JSON output |
-| `LLMClient` | `llm_client.py` | Azure OpenAI / OpenAI wrapper |
-| `PolicyEngine` | `policy_engine.py` | Decide which agents to run (no LLM) |
-| `ReasoningPlanner` | `reasoning_planner.py` | LLM-backed planner; wraps PolicyEngine as fallback; delegates `should_auto_close` / `should_escalate` |
-| `DeterministicResolver` | `deterministic_resolver.py` | Rule-based exception routing |
-| `AgentOrchestrator` | `orchestrator.py` | Sequence execution, feedback, post-policy; writes `AgentOrchestrationRun` |
-| `AgentOrchestrationRun` | `agents/models.py` | DB record for one full pipeline invocation (state machine) |
-| `AgentGuardrailsService` | `guardrails_service.py` | RBAC enforcement |
-| `AgentTraceService` | `agent_trace_service.py` | Unified governance writes |
-| `DecisionLogService` | `decision_log_service.py` | Recommendation lifecycle |
-| `BaseTool` / `ToolRegistry` | `tools/registry/base.py` | Tool system |
-| Concrete tools (6) | `tools/registry/tools.py` | PO, GRN, vendor, invoice lookups |
-| Concrete agents (8) | `agent_classes.py` | Specialised implementations |
-| `AGENT_CLASS_REGISTRY` | `agent_classes.py` | AgentType -> class map |
-| `_AgentRunOutputProxy` | `orchestrator.py` | Adapts `AgentRun` DB record to `AgentMemory` interface |
+### 3.1 The AgentOrchestrator
 
----
+`AgentOrchestrator.execute(result, request_user)` is the single public entry
+point for the entire agentic pipeline.
 
-## 4. Agent Definitions (Database-Backed Config)
+**Execution sequence:**
 
-Every agent type has an `AgentDefinition` record in the database (seeded by
-`seed_config`). This is the source of truth for whether an agent is enabled
-and what tools it may use.
+```
+1.  resolve_actor(request_user)             -- user or SYSTEM_AGENT
+2.  authorize_orchestration(actor)          -- agents.orchestrate permission
+3.  authorize_data_scope(actor, result)     -- business-unit + vendor scope check
+4.  plan = ReasoningPlanner.plan(result)    -- LLM plan, PolicyEngine fallback
+4a. if plan.skip_agents:
+        create AgentOrchestrationRun(COMPLETED, skip_reason=plan.reason)
+        if plan.auto_close: mark result MATCHED
+        return
+4b. duplicate-run guard: if RUNNING record exists for result -> return early
+5.  create AgentOrchestrationRun(RUNNING, planned_agents=plan.agents)
+6.  partition plan.agents:
+        llm_agents   = plan.agents - REPLACED_AGENTS
+        det_tail     = plan.agents & REPLACED_AGENTS
+7.  build AgentContext (exceptions, extra, RBAC fields, trace IDs)
+        ctx.exceptions = _truncate_exceptions(exceptions, max=20)
+8.  ctx.memory = AgentMemory()
+9.  for agent_type in llm_agents:
+        a. authorize_agent(actor, agent_type)
+        b. agent_cls().run(ctx)
+        c. save executed_agents to AgentOrchestrationRun
+        d. memory.record_agent_output(agent_type, ...)
+        e. if EXCEPTION_ANALYSIS: write reviewer_summary to ReviewAssignment
+        f. if agent in _RECOMMENDING_AGENTS: log_recommendation() with IntegrityError guard
+        g. if agent in _FEEDBACK_AGENTS: _apply_agent_findings() -> re-reconcile
+           refresh ctx.po_number, ctx.exceptions, ctx.memory fields
+        h. _reflect(agent_type, ...) -> may insert additional agents
+10. _apply_deterministic_resolution()       -- REVIEW_ROUTING, CASE_SUMMARY
+11. _resolve_final_recommendation()         -- highest-confidence AgentRecommendation
+12. _apply_post_policies():
+        should_auto_close() -> result.match_status = MATCHED
+        should_escalate()   -> create AgentEscalation
+13. finalize AgentOrchestrationRun:
+        status = PARTIAL if orch_result.error else COMPLETED
+        final_recommendation, final_confidence, completed_at -> save()
+```
+
+### 3.2 ReasoningPlanner (Always Active)
+
+`ReasoningPlanner` makes a single LLM call to produce a structured execution
+plan. If the LLM call fails for any reason, `PolicyEngine` is the internal
+deterministic fallback.
 
 ```python
-class AgentDefinition(BaseModel):
-    agent_type    # AgentType enum value
-    name
-    description
-    enabled       # False -> orchestrator skips
-    config_json   # {"allowed_tools": ["po_lookup", ...], "max_tokens": 4096}
+class ReasoningPlanner:
+    def plan(self, result) -> AgentPlan:
+        quick_plan = self._fallback.plan(result)    # PolicyEngine
+        if quick_plan.skip_agents:
+            return quick_plan
+        try:
+            return self._llm_plan(result)   # stamps plan_source="llm", plan_confidence=float
+        except Exception:
+            logger.warning("LLM plan failed; falling back to deterministic plan.")
+            return quick_plan               # plan_source="deterministic"
 ```
 
-**To disable an agent** without code changes: set `enabled=False` via admin.
-The orchestrator calls `AgentDefinition.objects.filter(agent_type=..., enabled=True).first()`
-at the start of each `BaseAgent.run()`. If None, a run record is still created
-but with no `agent_definition` FK.
+**LLM plan validation guards:**
+1. Empty plan -> raise (fallback to deterministic).
+2. `CASE_SUMMARY` not last if present -> raise.
+3. `GRN_RETRIEVAL` in a TWO_WAY plan -> raise.
 
----
+**Post-policy delegation:** `ReasoningPlanner` exposes `should_auto_close()`
+and `should_escalate()` by delegating to `PolicyEngine`, so the orchestrator
+always calls these through the same interface regardless of which planner ran.
 
-## 5. The Tool System
+### 3.3 PolicyEngine Decision Matrix
 
-### Structure
-
-```
-BaseTool (abstract)
-  +-- name: str
-  +-- description: str
-  +-- parameters_schema: dict     # JSON Schema passed to LLM
-  +-- required_permission: str    # RBAC permission code
-  +-- run(**kwargs) -> ToolResult  # implement this
-  +-- execute(**kwargs) -> ToolResult  # wraps run() with timing + error handling
-  +-- get_spec() -> ToolSpec      # returns LLM-facing spec
-
-ToolRegistry (singleton)
-  +-- register(tool)
-  +-- get(name) -> BaseTool
-  +-- get_specs(names) -> List[ToolSpec]   # passed to LLM as tools=
-```
-
-### Registered Tools
-
-| Tool Name | Permission | Purpose |
-|---|---|---|
-| `po_lookup` | `purchase_orders.view` | Lookup PO by number or vendor; tries ERP resolver first |
-| `grn_lookup` | `grns.view` | Lookup GRN by PO number; tries ERP resolver first |
-| `vendor_search` | `vendors.view` | Search vendors by name |
-| `invoice_details` | `invoices.view` | Full invoice data (header + lines) |
-| `exception_list` | `reconciliation.view` | Active exceptions for a result |
-| `reconciliation_summary` | `reconciliation.view` | Match status + key metrics |
-
-### Adding a Tool
-
-```python
-@register_tool
-class MyTool(BaseTool):
-    name = "my_tool"
-    description = "Does something useful."
-    required_permission = "module.action"
-    parameters_schema = {
-        "type": "object",
-        "properties": {
-            "param_one": {"type": "string", "description": "..."},
-        },
-        "required": ["param_one"],
-    }
-
-    def run(self, param_one: str = "", **kwargs) -> ToolResult:
-        # business logic here
-        return ToolResult(success=True, data={"result": param_one})
-```
-
-Register: `ToolDefinition` record pointing to the new tool name; reference it
-in the relevant agent's `config_json["allowed_tools"]`.
-
----
-
-## 6. The LLM Client
-
-`LLMClient` is a thin wrapper around `openai.AzureOpenAI` (or `OpenAI`).
-Configured entirely via settings/env vars.
-
-```python
-client = LLMClient(
-    model=None,          # defaults to AZURE_OPENAI_DEPLOYMENT or LLM_MODEL_NAME
-    temperature=None,    # defaults to LLM_TEMPERATURE (0.1)
-    max_tokens=None,     # defaults to LLM_MAX_TOKENS (4096)
-)
-
-response: LLMResponse = client.chat(
-    messages=[LLMMessage(role="system", content="..."), ...],
-    tools=[ToolSpec(name="...", description="...", parameters={...})],
-    tool_choice="auto",          # or "none" / specific function
-    response_format=None,        # {"type": "json_object"} for structured output
-)
-```
-
-`LLMResponse` carries:
-- `content`: text content (None when finish_reason is `tool_calls`)
-- `tool_calls`: list of `LLMToolCall(id, name, arguments)`
-- `prompt_tokens`, `completion_tokens`, `total_tokens`
-
-The client resolves provider from `LLM_PROVIDER` setting:
-- `"azure_openai"` (default) -> `AzureOpenAI` with deployment-as-model
-- any other value -> plain `OpenAI`
-
----
-
-## 7. BaseAgent and the ReAct Loop
-
-Every agent follows the **Reason + Act** pattern:
-
-```
-INIT: [system_msg, user_msg]
-LOOP (max 6 rounds):
-  1. LLM call with current messages + tool specs
-  2. If finish_reason != tool_calls -> interpret_response() -> done
-  3. Append assistant msg (with tool_calls array)
-  4. For each tool call:
-       a. RBAC check (authorize_tool)
-       b. tool.execute(**arguments)
-       c. Append tool response msg (with tool_call_id)
-       d. Persist AgentStep
-  5. Back to 1
-FINALIZE: persist AgentRun, DecisionLog entries
-```
-
-Message format follows the OpenAI tool-calling convention exactly:
-- Assistant messages include a `tool_calls` array.
-- Tool response messages include `tool_call_id` and `name`.
-
-### Implementing a New Agent
-
-```python
-class MyNewAgent(BaseAgent):
-    agent_type = AgentType.MY_NEW_TYPE   # add to core/enums.py first
-
-    @property
-    def system_prompt(self) -> str:
-        return PromptRegistry.get("agent.my_new_type")   # seed via seed_prompts
-
-    def build_user_message(self, ctx: AgentContext) -> str:
-        return (
-            _mode_context(ctx)
-            + f"Invoice: {ctx.invoice_id}\n"
-            "Do something useful."
-        )
-
-    @property
-    def allowed_tools(self) -> List[str]:
-        return ["invoice_details", "po_lookup"]
-
-    def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
-        data = _parse_agent_json(content)
-        return _to_agent_output(data, content)
-```
-
-### `_sanitise_text()` -- ASCII Safety on All Stored Output
-
-`BaseAgent` exposes a static method that must be applied to any LLM-generated
-text before it is persisted:
-
-```python
-@staticmethod
-def _sanitise_text(text: str) -> str:
-    replacements = {
-        "\u2018": "'", "\u2019": "'",       # curly single quotes
-        "\u201c": '"', "\u201d": '"',       # curly double quotes
-        "\u2014": "--", "\u2013": "-",      # em/en dash
-        "\u2026": "...",                    # ellipsis
-        "\u2192": "->", "\u2190": "<-", "\u21d2": "=>",  # arrows
-        "\u2022": "-",                      # bullet
-    }
-    for char, ascii_eq in replacements.items():
-        text = text.replace(char, ascii_eq)
-    return re.sub(r"[^\x00-\x7F]", "", text)
-```
-
-`_finalise_run()` calls it before writing `agent_run.summarized_reasoning`:
-
-```python
-agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
-```
-
-This satisfies the project-wide rule that `AgentRun.summarized_reasoning`,
-`ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, and
-`DecisionLog.rationale` must contain only ASCII characters.
-
-Then:
-1. Add `AgentType.MY_NEW_TYPE` to `apps/core/enums.py`.
-2. Register in `AGENT_CLASS_REGISTRY` in `agent_classes.py`.
-3. Add `agents.run_my_new_type` permission to `seed_rbac.py`.
-4. Map permission to roles and to `SYSTEM_AGENT` in the role matrix.
-5. Add entry to `AGENT_PERMISSIONS` in `guardrails_service.py`.
-6. Add to `PolicyEngine` decision logic if needed.
-7. Create `AgentDefinition` record (via seed or admin).
-
----
-
-## 8. Concrete Agent Implementations
-
-| Agent | Type Enum | LLM Used | Tools | Notes |
-|---|---|---|---|---|
-| `ExceptionAnalysisAgent` | `EXCEPTION_ANALYSIS` | Yes | po_lookup, grn_lookup, invoice_details, exception_list, recon_summary | Also emits `<reviewer_summary>` block for ReviewAssignment; validates recommendation_type against enum; clamps confidence to [0.0, 1.0] |
-| `InvoiceExtractionAgent` | `INVOICE_EXTRACTION` | Yes (temp=0, json_object) | None | Single-shot extraction; runs during upload, not reconciliation pipeline |
-| `InvoiceUnderstandingAgent` | `INVOICE_UNDERSTANDING` | Yes | invoice_details, po_lookup, vendor_search | Runs when extraction confidence < threshold |
-| `PORetrievalAgent` | `PO_RETRIEVAL` | Yes | po_lookup, vendor_search, invoice_details | Triggers feedback loop if PO found; `interpret_response` normalises evidence to `found_po` from fallback keys |
-| `GRNRetrievalAgent` | `GRN_RETRIEVAL` | Yes | grn_lookup, po_lookup, invoice_details | 3-way mode only; `build_user_message` returns a no-op JSON payload immediately when `ctx.reconciliation_mode == "TWO_WAY"` |
-| `ReviewRoutingAgent` | `REVIEW_ROUTING` | **No (deterministic)** | reconciliation_summary, exception_list | Replaced by DeterministicResolver |
-| `CaseSummaryAgent` | `CASE_SUMMARY` | **No (deterministic)** | invoice_details, po_lookup, grn_lookup, etc. | Replaced by DeterministicResolver |
-| `ReconciliationAssistAgent` | `RECONCILIATION_ASSIST` | Yes | invoice_details, po_lookup, grn_lookup, etc. | Handles PARTIAL_MATCH analysis |
-
-`EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, and `CASE_SUMMARY` are listed in
-`DeterministicResolver.REPLACED_AGENTS`. The orchestrator partitions the
-plan so these always run through the rule-based path. Their `AgentRun`
-records use `llm_model_used="deterministic"` and zero token counts.
-
----
-
-## 9. The PolicyEngine
-
-`PolicyEngine.plan(result)` maps reconciliation state to an ordered agent list.
-It is purely deterministic (no LLM, no I/O aside from DB reads).
-
-> **Note:** `AgentOrchestrator` now uses `ReasoningPlanner` instead of
-> `PolicyEngine` directly. `ReasoningPlanner` wraps `PolicyEngine` as its
-> deterministic fallback and always calls the LLM to produce the final plan.
-> On any LLM error the deterministic `PolicyEngine` result is used unchanged.
-
-### Decision Matrix
+`PolicyEngine.plan()` is the deterministic plan that `ReasoningPlanner` falls
+back to. It is also the authoritative source for the auto-close logic.
 
 | Condition | Agents Planned |
 |---|---|
-| MATCHED, confidence >= threshold | `skip_agents=True` (no pipeline) |
+| MATCHED, confidence >= threshold | `skip_agents=True` |
 | PARTIAL_MATCH, all lines within auto-close band, no HIGH exceptions | `skip_agents=True, auto_close=True` |
 | PO_NOT_FOUND exception | + PO_RETRIEVAL |
 | GRN_NOT_FOUND exception (3-way only) | + GRN_RETRIEVAL |
 | extraction confidence < threshold | + INVOICE_UNDERSTANDING |
-| PARTIAL_MATCH (outside auto-close band) | + RECONCILIATION_ASSIST |
+| PARTIAL_MATCH outside auto-close band | + RECONCILIATION_ASSIST |
 | any exceptions exist | + EXCEPTION_ANALYSIS |
 | any agents planned | + REVIEW_ROUTING + CASE_SUMMARY (always appended) |
-| REQUIRES_REVIEW / UNMATCHED / ERROR with no specific agents | EXCEPTION_ANALYSIS + REVIEW_ROUTING + CASE_SUMMARY |
+| REQUIRES_REVIEW / UNMATCHED / ERROR, no specific trigger | EXCEPTION_ANALYSIS + REVIEW_ROUTING + CASE_SUMMARY |
 
-### Auto-Close Tolerance Band
+**Auto-close tolerance band:** `_within_auto_close_band()` checks every line
+result against wider thresholds (default: qty 5%, price 3%, amount 3%).
+If all lines pass and no HIGH-severity exceptions exist, the result is
+auto-closed without any LLM agents.
 
-`_within_auto_close_band()` checks every line result against the wider
-auto-close thresholds (default: qty 5%, price 3%, amount 3%). If all lines
-pass AND there are no HIGH-severity exceptions, the result is auto-closed
-without any AI agents.
+### 3.4 DeterministicResolver
 
----
+Replaces three LLM agents (`EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`,
+`CASE_SUMMARY`) with rule-based logic, producing identical `AgentRun` output
+structures. These agents are listed in `DeterministicResolver.REPLACED_AGENTS`.
 
-## 10. The DeterministicResolver
-
-`DeterministicResolver.resolve()` applies a priority-ordered rule matrix to
-exception types and severities. It replaces three LLM agents
-(`EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, `CASE_SUMMARY`) with deterministic
-logic while producing identical output structures.
-
-### Rule Priority (highest first)
+**Rule priority (highest first):**
 
 | Priority | Condition | Recommendation |
 |---|---|---|
@@ -526,156 +376,597 @@ logic while producing identical output structures.
 | 5 | Default | `SEND_TO_AP_REVIEW` |
 
 Numeric mismatches (`QTY_MISMATCH`, `PRICE_MISMATCH`, `AMOUNT_MISMATCH`,
-`TAX_MISMATCH`) are collapsed to a single category for complexity assessment
-to avoid false escalation from natural cascading.
+`TAX_MISMATCH`) are collapsed to one category for complexity assessment to
+avoid false escalation from natural cascading.
 
-The resolver also builds a structured `case_summary` string and persists it
-on `ReconciliationResult.summary`.
+Deterministic runs use `llm_model_used="deterministic"` and zero token counts.
+
+### 3.5 Reflection Step
+
+After each LLM agent, `_reflect()` inspects findings and may insert additional
+agents immediately after the current position:
+
+| Trigger | Condition | Agent Inserted |
+|---|---|---|
+| PO_RETRIEVAL completes | `ctx.memory.resolved_po_number` is set AND mode != TWO_WAY AND GRN_RETRIEVAL not already run or in remaining | `GRN_RETRIEVAL` |
+| INVOICE_UNDERSTANDING completes | `agent_run.confidence < 0.5` AND RECONCILIATION_ASSIST not already run or in remaining | `RECONCILIATION_ASSIST` |
+
+`_reflect()` never raises; all exceptions are caught and logged.
+The `already_executed` set prevents re-inserting an agent that has already run.
+
+### 3.6 Agent Feedback Loop
+
+When `PORetrievalAgent` (the only `_FEEDBACK_AGENTS` member) finds a PO:
+
+```
+1. Lookup PurchaseOrder by po_number (normalised from evidence["found_po"])
+2. AgentFeedbackService.apply_found_po(result, po, agent_run_id)
+     -> re-link invoice to PO
+     -> re-run deterministic matching (ThreeWayMatchService or TwoWayMatchService)
+     -> update ReconciliationResult status, exceptions, line results
+3. Refresh AgentContext:
+     ctx.po_number = new po.po_number
+     ctx.exceptions = refreshed from DB (_truncate_exceptions applied)
+     ctx.memory.resolved_po_number, facts["grn_available"], facts["grn_fully_received"] updated
+```
+
+**Evidence normalisation:** `PORetrievalAgent.interpret_response()` always
+copies the PO number to `evidence["found_po"]`. Fallback key priority:
+`found_po` -> `po_number` -> `matched_po` -> `result` -> `found` -> `po`.
+
+### 3.7 LLM Client
+
+`LLMClient` is a thin wrapper around `openai.AzureOpenAI` (or `OpenAI`).
+
+```python
+client = LLMClient(
+    model=None,          # defaults to AZURE_OPENAI_DEPLOYMENT or LLM_MODEL_NAME
+    temperature=None,    # defaults to LLM_TEMPERATURE (0.1)
+    max_tokens=None,     # defaults to LLM_MAX_TOKENS (4096)
+)
+response = client.chat(
+    messages=[...],
+    tools=[ToolSpec(...)],
+    tool_choice="auto",
+    response_format=None,
+)
+```
+
+`LLMResponse` carries `content`, `tool_calls` (list of `LLMToolCall(id, name, arguments)`),
+and token counts. Provider resolved from `LLM_PROVIDER` setting:
+`"azure_openai"` (default) -> `AzureOpenAI`; anything else -> plain `OpenAI`.
+
+**Retry wrapper:** All LLM calls use `BaseAgent._call_llm_with_retry()`,
+which retries up to 3 times on `RateLimitError`, `APIConnectionError`, and
+`InternalServerError` with exponential backoff (2s, 4s, 8s).
 
 ---
 
-## 11. The AgentOrchestrator
+## 4. Agent Catalog and Contract Model
 
-`AgentOrchestrator.execute(result, request_user)` is the single public entry
-point for the entire agentic pipeline.
+### 4.1 AgentDefinition Model
 
-### Execution Sequence
-
-```
-1. resolve_actor(request_user)              # user or SYSTEM_AGENT
-2. authorize_orchestration(actor)           # agents.orchestrate permission
-3. build_trace_context_for_agent(actor)     # set TraceContext thread-local
-4. policy.plan(result)                      # ReasoningPlanner -> PolicyEngine fallback
-4a. orch_result.plan_source = plan.plan_source
-    orch_result.plan_confidence = plan.plan_confidence
-4b. duplicate-run guard: query AgentOrchestrationRun for RUNNING record on this result;
-    if found -> log warning, set orch_result.skipped=True / skip_reason, return early
-5. if plan.skip_agents:
-     -> create AgentOrchestrationRun(COMPLETED, skip_reason=plan.reason)
-     -> auto-close or log skip
-     -> return
-6. create AgentOrchestrationRun(RUNNING, planned_agents=plan.agents, executed_agents=[])
-   start _orch_start timer
-7. partition plan.agents:
-     llm_agents         = plan.agents - REPLACED_AGENTS
-     deterministic_tail = plan.agents & REPLACED_AGENTS
-8. build AgentContext (exceptions, extra, RBAC fields, trace IDs)
-   exceptions are immediately truncated via `BaseAgent._truncate_exceptions()` (max 20, sorted HIGH->MEDIUM->LOW->INFO)
-9. create AgentMemory() and assign ctx.memory = memory
-10. for agent_type in llm_agents:
-     a. authorize_agent(actor, agent_type)
-     b. agent_cls().run(ctx)             # uses enforce_json_response=True by default
-     c. orch_db_run.executed_agents = list(orch_result.agents_executed); save()
-     d. memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
-     e. if EXCEPTION_ANALYSIS: write reviewer summary to ReviewAssignment
-     f. if agent in _RECOMMENDING_AGENTS: `log_recommendation()` wrapped with `IntegrityError` guard -- duplicate skipped with warning, pipeline continues
-     g. if agent in _FEEDBACK_AGENTS: `_apply_agent_findings()` -> re-reconcile;
-           refresh `ctx.po_number`, `ctx.exceptions` (re-truncated via `_truncate_exceptions()`),
-           `ctx.memory.resolved_po_number`, `ctx.memory.facts["grn_available"]`, `ctx.memory.facts["grn_fully_received"]`
-     h. `_reflect(agent_type, agent_run, result, remaining, ctx, already_executed=list(orch_result.agents_executed))`
-           -> may insert new agents; guards against re-inserting an agent already in `agents_executed`
-     i. on first iteration only: stamp plan metadata onto agent_run.input_payload
-           (plan_source, plan_confidence, planned_agents) and save(update_fields=...)
-11. if deterministic_tail: _apply_deterministic_resolution()
-12. _resolve_final_recommendation()         # highest-confidence AgentRecommendation
-13. _apply_post_policies():
-     - should_auto_close() -> result.match_status = MATCHED
-     - should_escalate()   -> create AgentEscalation
-14. finalize AgentOrchestrationRun:
-     status = PARTIAL if orch_result.error else COMPLETED
-     final_recommendation, final_confidence, completed_at, duration_ms -> save()
-```
-
-### Orchestration State Machine
-
-`AgentOrchestrationRun.status` follows a strict finite state machine.
-Terminal states (`COMPLETED`, `PARTIAL`, `FAILED`) are never re-entered.
-Only a fresh `AgentOrchestrationRun` record represents a new attempt.
-
-```
-Initial
-  |
-  v
-PLANNED --[execute() called]---> RUNNING
-                                    |
-                                    |-- all agents done, no error -------> COMPLETED (terminal)
-                                    |
-                                    |-- all agents done, some errors ----> PARTIAL  (terminal)
-                                    |
-                                    |-- unhandled exception in execute --> FAILED   (terminal)
-                                    |
-                                    |-- plan.skip_agents=True -----------> [RUNNING skipped]
-                                         create separate COMPLETED record with skip_reason
-
-Duplicate guard:
-  RUNNING already exists for same reconciliation_result
-    -> new execute() call returns early (orch_result.skipped=True)
-    -> NO new AgentOrchestrationRun record is created
-    -> NO agents are run
-```
-
-**Terminal state rules:**
-- `COMPLETED`: `final_recommendation` and `final_confidence` are always set.
-- `PARTIAL`: at least one agent raised an exception; `error_message` is set;
-  `final_recommendation` may be empty if the pipeline did not reach
-  `_resolve_final_recommendation()`.
-- `FAILED`: pipeline crashed before step 13; `completed_at` is set, all
-  agent-level fields (executed_agents, final_recommendation) may be empty.
-
-**Retry safety:**
-- Celery retries produce a new `execute()` call on the same result. If the
-  previous run is still `RUNNING` the duplicate guard blocks the retry.
-  If the previous run reached a terminal state the new call proceeds normally,
-  creating a new `AgentOrchestrationRun` record.
-- The duplicate guard uses `status=RUNNING` only -- terminal states never block
-  a fresh attempt. This means stale `RUNNING` records (e.g. from a worker
-  crash) will block retries until manually set to `FAILED`. Monitor for
-  long-lived `RUNNING` records with the governance API.
-
-### Context Forwarding Between Agents
-
-After each LLM agent completes, the orchestrator updates structured memory:
+Every agent type has an `AgentDefinition` DB record (seeded by `seed_config`
+and enriched by `seed_agent_contracts`). This is the source of truth for
+whether an agent is enabled and what contract it must honour.
 
 ```python
-memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
+class AgentDefinition(BaseModel):
+    # Core identity
+    agent_type         # AgentType enum value
+    name
+    description
+    enabled            # False -> orchestrator skips this agent
+    llm_model          # Override model (blank = platform default)
+    config_json        # Legacy config (allowed_tools list lives here)
+
+    # Narrative / catalog
+    purpose                    # what this agent does and why
+    entry_conditions           # when it should be invoked
+    success_criteria           # what a successful run looks like
+
+    # Tool grounding contract
+    requires_tool_grounding    # True -> cap confidence at 0.4 if no tools called
+    min_tool_calls             # advisory minimum (applies 0.4 cap if not met)
+    tool_failure_confidence_cap  # override when any tool fails (default platform: 0.5)
+
+    # Recommendation contract
+    prohibited_actions              # JSON list of RecommendationType values; never emit these
+    allowed_recommendation_types    # JSON list; null = all allowed
+    default_fallback_recommendation # used when output is suppressed or invalid
+
+    # Output schema
+    output_schema_name         # e.g. "AgentOutputSchema"
+    output_schema_version      # e.g. "v1"
+
+    # Lifecycle / governance
+    lifecycle_status           # draft | active | deprecated
+    owner_team
+    capability_tags            # JSON list e.g. ["retrieval", "routing"]
+    domain_tags                # JSON list e.g. ["po", "grn"]
+    human_review_required_conditions
 ```
 
-`_AgentRunOutputProxy` is an internal adapter that reads `.summarized_reasoning`,
-`.output_payload`, and `.confidence` from an `AgentRun` DB record and presents
-them as `.reasoning`, `.recommendation_type`, `.confidence`, and `.evidence` --
-the interface expected by `AgentMemory.record_agent_output()`.
+**Contract fields are first-class DB columns** (not stored in `config_json`).
+Seed or update via the `seed_agent_contracts` management command
+(idempotent) or via Django admin (AgentDefinition -> Contract fieldsets).
 
-After the feedback loop (PO_RETRIEVAL only), context is also refreshed on memory:
+### 4.2 Capability Tags
 
-```python
-ctx.memory.resolved_po_number = ctx.po_number
-# Always written -- bool() ensures False is correctly propagated (not just skipped).
-ctx.memory.facts["grn_available"] = bool(result.grn_available)
-ctx.memory.facts["grn_fully_received"] = bool(result.grn_fully_received)
-```
+`extraction`, `understanding`, `retrieval`, `assist`, `routing`, `summary`,
+`validation`, `enrichment`. An agent may carry multiple tags.
 
-Agents read from `ctx.memory` directly. The table below documents what each
-agent reads in its `build_user_message()` method:
+### 4.3 Lifecycle Statuses
 
-| Agent | Fields read from `ctx.memory` |
+| Status | Meaning |
 |---|---|
-| `ReviewRoutingAgent` | `agent_summaries` (all prior summaries), `current_recommendation`, `current_confidence` |
-| `CaseSummaryAgent` | `agent_summaries` (pipe-joined, 100 chars each), `current_recommendation`, `current_confidence` |
-| `ReconciliationAssistAgent` | `resolved_po_number` (appended to prompt when not None) |
-| `GRNRetrievalAgent` | `facts["grn_available"]`, `facts["grn_fully_received"]` (with `ctx.extra` as secondary fallback) |
-| `InvoiceUnderstandingAgent` | `facts["extraction_confidence"]`, `facts["match_status"]` (when `rr` is None); `facts["validation_warnings"]` (primary, `ctx.extra` secondary) |
+| `draft` | In development; not run in production pipelines |
+| `active` | Production use; `PolicyEngine` may invoke this agent |
+| `deprecated` | No longer invoked; record kept for audit history |
 
-All other agents do not currently read from `ctx.memory` in `build_user_message()`;
-they receive context exclusively through `AgentContext` fields (`po_number`,
-`exceptions`, etc.).
+### 4.4 Runtime Enforcement
+
+`BaseAgent._finalise_run()` enforces five checks using contract fields.
+All checks are **fail-open**: if `agent_def` is None or the field is null,
+the check is silently skipped.
+
+| Check | Contract Field | What Happens |
+|---|---|---|
+| 1. Default fallback | `default_fallback_recommendation` | Applied when output `recommendation_type` is None |
+| 2. Allowed rec types | `allowed_recommendation_types` | Falls back to default, caps confidence at 0.6 |
+| 3. Prohibited actions | `prohibited_actions` | Overrides prohibited rec type with fallback, caps confidence at 0.5 |
+| 4. Tool grounding | `requires_tool_grounding` | Caps confidence at 0.4 if no tools were called |
+| 5. Tool failure cap | `tool_failure_confidence_cap` | Stricter cap applied when `failed_tool_count > 0` |
+
+Checks run in order 1 -> 5. After check 5, `_enforce_evidence_keys()` runs
+to inject the three required evidence keys (see Section 6.5).
+
+### 4.5 Agent Contract Template
+
+When adding a new agent, fill in this template and run `seed_agent_contracts`
+after the `AgentDefinition` record is created.
+
+```
+# -----------------------------------------------------------------------
+# AGENT CONTRACT
+# -----------------------------------------------------------------------
+Agent name:
+Agent type (AgentType value):
+Primary capability:      [extraction|understanding|retrieval|assist|routing|summary|validation|enrichment]
+Secondary capabilities:  [comma-separated or none]
+
+# -- Purpose and scope --
+Purpose:
+Entry conditions:
+Success criteria:
+
+# -- Recommendation contract --
+Prohibited actions:              [comma-separated RecommendationType values or none]
+Allowed recommendation types:   [comma-separated or "all"]
+Default fallback recommendation: [RecommendationType value]
+
+# -- Tool grounding --
+Requires tool grounding: [true|false]
+Minimum tool calls:      [integer, 0 if not enforced]
+Tool failure confidence cap: [0.0 - 1.0 or null]
+
+# -- Human review --
+Human review conditions:
+
+# -- Output schema --
+Output schema:         AgentOutputSchema
+Output schema version: v1
+
+# -- Lifecycle --
+Lifecycle status: [draft|active|deprecated]
+Owner team:
+
+# -- System prompt sections (fill in each) --
+System prompt sections:
+  1. Role / purpose:
+  2. Task objective:
+  3. Tool usage policy (_TOOL_POLICY_<TYPE>):
+       Preferred tool order:
+       Mandatory tool conditions:
+       Fallback if mandatory tool fails:
+  4. DO NOT INFER rules:     [shared -- _DO_NOT_INFER_RULES]
+  5. Tool failure rules:     [shared -- _TOOL_FAILURE_RULES]
+  6. Evidence citation rules:[shared -- _EVIDENCE_CITATION_RULES]
+  7. Reasoning quality rules:[shared -- _REASONING_QUALITY_RULES]
+  8. Confidence rules:       [shared -- _CONFIDENCE_RULES]
+  9. Output schema:          [shared -- _AGENT_JSON_INSTRUCTION]
+# -----------------------------------------------------------------------
+```
 
 ---
 
-## 12. RBAC Guardrails
+## 5. Tool System and Authoring Standard
+
+### 5.1 Structure
+
+```
+BaseTool (abstract)
+  +-- name: str
+  +-- description: str
+  +-- parameters_schema: dict        # JSON Schema passed to LLM
+  +-- required_permission: str       # RBAC permission code
+  +-- when_to_use: str
+  +-- when_not_to_use: str
+  +-- no_result_meaning: str
+  +-- failure_handling_instruction: str
+  +-- evidence_keys_produced: list
+  +-- authoritative_fields: list
+  +-- run(**kwargs) -> ToolResult    # implement this
+  +-- execute(**kwargs) -> ToolResult  # wraps run() with timing + error handling
+  +-- get_spec() -> ToolSpec         # builds LLM-facing spec (see 5.3)
+
+ToolRegistry (singleton)
+  +-- register(tool)
+  +-- get(name) -> BaseTool
+  +-- get_specs(names) -> List[ToolSpec]    # passed to LLM as tools=
+```
+
+### 5.2 Registered Tools
+
+| Tool Name | Permission | Purpose |
+|---|---|---|
+| `po_lookup` | `purchase_orders.view` | Lookup PO by number or vendor; tries ERP resolver first |
+| `grn_lookup` | `grns.view` | Lookup GRN by PO number; tries ERP resolver first |
+| `vendor_search` | `vendors.view` | Search vendors by name |
+| `invoice_details` | `invoices.view` | Full invoice data (header + lines) |
+| `exception_list` | `reconciliation.view` | Active exceptions for a reconciliation result |
+| `reconciliation_summary` | `reconciliation.view` | Match status + key metrics |
+
+### 5.3 How `get_spec()` Composes the LLM Description
+
+```
+<base description>
+Use when: <when_to_use>
+Do not use when: <when_not_to_use>
+No result means: <no_result_meaning>
+On failure: <failure_handling_instruction>
+```
+
+Each line is only appended when the attribute is non-empty.
+`evidence_keys_produced` is NOT sent to the LLM -- it is documentation only.
+
+### 5.4 Tool Attribute Rules
+
+| Attribute | Rule |
+|---|---|
+| `description` | One sentence; describes what the tool returns |
+| `when_to_use` | One sentence, active voice; "Call this tool when..." |
+| `when_not_to_use` | One sentence; "Do not use when..." |
+| `no_result_meaning` | What an empty/null result means; prevents incorrect inference |
+| `failure_handling_instruction` | What the LLM should do on tool error |
+| `evidence_keys_produced` | Keys from output that agents should store as evidence |
+| `authoritative_fields` | Fields this tool is the single source of truth for |
+
+Keep each attribute under 120 characters. Use plain ASCII only.
+
+### 5.5 Adding a Tool
+
+Declare all ten attributes; `get_spec()` is inherited.
+
+```python
+@register_tool
+class MyTool(BaseTool):
+    # -- Core identity --
+    name = "my_tool"
+    description = "One-sentence what it does and when an agent should reach for it."
+    required_permission = "module.action"
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "param_one": {"type": "string", "description": "..."},
+        },
+        "required": ["param_one"],
+    }
+
+    # -- Behavioural guidance (surfaced to LLM via get_spec) --
+    when_to_use = "Call this tool when you need X and you do not yet have it from a prior tool call."
+    when_not_to_use = "Do not call this when Y is already present in evidence from a previous tool."
+    no_result_meaning = "The record does not exist in the system; do not retry with guessed parameters."
+    failure_handling_instruction = "If this tool fails, note the failure in _uncertainties and reduce confidence."
+
+    # -- Evidence contract --
+    evidence_keys_produced = ["key_one", "key_two"]
+    authoritative_fields = ["key_one"]
+
+    def run(self, param_one: str = "", **kwargs) -> ToolResult:
+        return ToolResult(success=True, data={"key_one": param_one, "key_two": "..."})
+```
+
+**Registration checklist:**
+1. Create a `ToolDefinition` DB record with `name` matching the class attribute.
+2. Add the tool name to the relevant agent's `config_json["allowed_tools"]`.
+3. Seed the permission (`module.action`) in `seed_rbac` if it is new.
+4. Reference the tool in Section 7 under the relevant agent's "Tools used".
+
+---
+
+## 6. Prompting and Output Contracts
+
+### 6.1 ReAct Loop
+
+Every LLM agent follows the Reason + Act pattern:
+
+```
+INIT: [system_msg, user_msg]
+LOOP (max 6 rounds):
+  1. LLM call with current messages + tool specs
+  2. If finish_reason != tool_calls -> interpret_response() -> done
+  3. Append assistant msg (with tool_calls array)
+  4. For each tool call:
+       a. RBAC check (authorize_tool)
+       b. tool.execute(**arguments)
+       c. Append tool response msg (with tool_call_id + name)
+       d. Persist AgentStep
+  5. Back to 1
+FINALIZE: _apply_tool_failure_guards() -> _enforce_evidence_keys()
+          -> _guard_reasoning_quality() -> persist AgentRun + DecisionLog
+```
+
+Messages follow the OpenAI tool-calling convention:
+- Assistant messages include a `tool_calls` array.
+- Tool response messages include `tool_call_id` and `name`.
+
+### 6.2 Mandatory Shared Prompt Blocks
+
+All agent prompts in `apps/core/prompt_registry.py` follow this block order.
+Deviating from this order violates the shared rules assumption.
+
+**Tool-using agents (all blocks):**
+
+1. `_TOOL_POLICY_<AGENT_TYPE>` -- per-agent tool usage policy
+2. `_DO_NOT_INFER_RULES` -- seven rules prohibiting fabrication
+3. `_TOOL_FAILURE_RULES` -- three rules for handling tool errors
+4. `_EVIDENCE_CITATION_RULES` -- five rules for grounding and citation
+5. `_REASONING_QUALITY_RULES` -- heuristic weak-reasoning detection rules
+6. `_CONFIDENCE_RULES` -- five confidence calibration rules
+7. `_AGENT_JSON_INSTRUCTION` -- output schema and example
+
+**Agents without tools (REVIEW_ROUTING, CASE_SUMMARY):** omit
+`_TOOL_FAILURE_RULES`; include all other blocks.
+
+### 6.3 Per-Agent Tool Usage Policy
+
+Each tool-using agent declares a `_TOOL_POLICY_<TYPE>` constant specifying:
+- Which tools to call first (preferred order).
+- Conditions under which a tool call is **mandatory** before any recommendation.
+- What to do if the mandatory tool fails.
+
+Insert this block between the role/task section and `_DO_NOT_INFER_RULES`.
+
+### 6.4 Output Schema Validation
+
+`AgentOutputSchema` (Pydantic v2, `agent_output_schema.py`) validates all
+standard agent JSON output:
+- `recommendation_type`: invalid values coerced to `SEND_TO_AP_REVIEW`.
+- `confidence`: clamped to [0.0, 1.0].
+- `decisions` and `evidence` presence checked.
+
+`enforce_json_response=True` (default on `BaseAgent`) passes
+`response_format={"type":"json_object"}` to every ReAct loop LLM call.
+`InvoiceExtractionAgent` sets this to `False` and handles its own format.
+
+### 6.5 Required Evidence Keys
+
+The `evidence` block in every agent JSON output must include:
+
+| Key | Value |
+|---|---|
+| `_tools_used` | List of tool names that returned data used in the decision |
+| `_grounding` | `"full"` (all from tools), `"partial"` (some context-only), or `"none"` (no tool data) |
+| `_uncertainties` | List of unresolved questions, or empty list |
+
+Additional keys must match the `authoritative_fields` of the tools called.
+
+**Runtime enforcement:** `BaseAgent._enforce_evidence_keys()` is called from
+`_finalise_run()` after all catalog checks:
+- Preserves any LLM-supplied values (non-destructive).
+- Auto-adds missing keys from runtime-tracked data, sets `_evidence_keys_auto_added=True`.
+- Caps confidence at 0.5 when `_grounding == "none"`.
+
+### 6.6 Confidence Calibration
+
+| Range | Meaning |
+|---|---|
+| 0.9 - 1.0 | All evidence from successful tool calls, no ambiguity |
+| 0.7 - 0.89 | Strong evidence; at most one source is context-only |
+| 0.5 - 0.69 | Partial evidence or one minor tool uncertainty |
+| below 0.5 | Tool failures, incomplete evidence, or conflicting signals |
+
+**Composite confidence scoring:** `BaseAgent._compute_composite_confidence()`
+blends LLM confidence (60%), tool success rate (25%), and evidence quality (15%):
+
+```python
+tool_score = 1.0 if total_tool_calls == 0 else (total_tool_calls - failed) / total_tool_calls
+evidence_score = 0.5 if not evidence or list(evidence.keys()) == ["_provenance"] else 1.0
+composite = llm_confidence * 0.6 + tool_score * 0.25 + evidence_score * 0.15
+result = max(0.0, min(1.0, composite))
+```
+
+Do not assign 0.9+ if any tool call failed or any field was context-only.
+
+### 6.7 Tool Failure Runtime Guards
+
+`BaseAgent._apply_tool_failure_guards(output, failed_tool_count, total_tool_calls)`
+runs in both exit paths of the ReAct loop:
+
+**Rule 1 -- any tool failed:**
+- Caps confidence at 0.5.
+- Downgrades `AUTO_CLOSE` to `SEND_TO_AP_REVIEW` (stricter recommendations preserved).
+- Sets `evidence._provenance = "tool_failures"`.
+
+**Rule 2 -- tool-grounded agent called no tools:**
+Applies to: `PO_RETRIEVAL`, `GRN_RETRIEVAL`, `RECONCILIATION_ASSIST`,
+`INVOICE_UNDERSTANDING`, `EXCEPTION_ANALYSIS`
+- Caps confidence at 0.6.
+- Sets `evidence._provenance = "no_tools_called"`.
+
+### 6.8 Reasoning Quality Guard
+
+`BaseAgent._guard_reasoning_quality(output, agent_type)` runs in `_finalise_run()`
+before persisting `summarized_reasoning`. Weak-reasoning heuristics:
+
+- Reasoning shorter than 40 characters -> weak.
+- Vague opener ("Based on analysis", "Upon review", etc.) with no domain marker
+  word ("invoice", "po", "amount", "vendor", "match", "quantity", ...) -> weak.
+
+When weak, a safe fallback is derived from structured output:
+`[auto-summary agent=TYPE] Recommendation: X. Confidence: Y%. Evidence: key=val...`
+(capped at 500 chars, ASCII-safe). The original reasoning is never hard-failed.
+
+### 6.9 ASCII-Safety Rule
+
+`BaseAgent._sanitise_text()` must be applied before persisting any LLM-generated
+text to the database:
+
+```python
+@staticmethod
+def _sanitise_text(text: str) -> str:
+    replacements = {
+        "\u2018": "'", "\u2019": "'",
+        "\u201c": '"', "\u201d": '"',
+        "\u2014": "--", "\u2013": "-",
+        "\u2026": "...",
+        "\u2192": "->", "\u2190": "<-", "\u21d2": "=>",
+        "\u2022": "-",
+    }
+    for char, ascii_eq in replacements.items():
+        text = text.replace(char, ascii_eq)
+    return re.sub(r"[^\x00-\x7F]", "", text)
+```
+
+Fields that must always be sanitised: `AgentRun.summarized_reasoning`,
+`ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`,
+`DecisionLog.rationale`.
+
+---
+
+## 7. Concrete Agents
+
+### 7.1 Agent Summary
+
+| Agent | Type Enum | LLM | Tools | Replaced By |
+|---|---|---|---|---|
+| ExceptionAnalysisAgent | `EXCEPTION_ANALYSIS` | Yes | po_lookup, grn_lookup, invoice_details, exception_list, reconciliation_summary | DeterministicResolver (standard cases) |
+| InvoiceExtractionAgent | `INVOICE_EXTRACTION` | Yes | None | -- (runs during upload, not pipeline) |
+| InvoiceUnderstandingAgent | `INVOICE_UNDERSTANDING` | Yes | invoice_details, po_lookup, vendor_search | -- |
+| PORetrievalAgent | `PO_RETRIEVAL` | Yes | po_lookup, vendor_search, invoice_details | -- |
+| GRNRetrievalAgent | `GRN_RETRIEVAL` | Yes | grn_lookup, po_lookup, invoice_details | -- |
+| ReviewRoutingAgent | `REVIEW_ROUTING` | No | reconciliation_summary, exception_list | DeterministicResolver |
+| CaseSummaryAgent | `CASE_SUMMARY` | No | invoice_details, po_lookup, grn_lookup | DeterministicResolver |
+| ReconciliationAssistAgent | `RECONCILIATION_ASSIST` | Yes | invoice_details, po_lookup, grn_lookup, reconciliation_summary, exception_list | -- |
+
+`EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, and `CASE_SUMMARY` are listed in
+`DeterministicResolver.REPLACED_AGENTS`. The orchestrator always routes them
+through the rule-based path. Their `AgentRun` records carry
+`llm_model_used="deterministic"` and zero token counts.
+
+### 7.2 ExceptionAnalysisAgent [IMPLEMENTED]
+
+**Purpose:** Analyse active reconciliation exceptions, determine the root cause,
+and produce a structured summary for the reviewer.
+
+**Tools used:** `exception_list` (mandatory first call), `po_lookup`,
+`grn_lookup`, `invoice_details`, `reconciliation_summary`.
+
+**Implemented behaviour:**
+- `_build_reviewer_summary()` issues a second dedicated LLM call after the
+  ReAct loop; the main analysis JSON no longer embeds a `<reviewer_summary>` block.
+- If the second call fails, a minimal summary is constructed from the main
+  output (recommendation type + confidence + first evidence value) -- the
+  `reviewer_summary` field on `ReviewAssignment` is never left empty.
+- `interpret_response()` replaces unknown `recommendation_type` values with
+  `SEND_TO_AP_REVIEW` and clamps confidence to [0.0, 1.0].
+
+### 7.3 InvoiceExtractionAgent [IMPLEMENTED]
+
+**Purpose:** Single-shot extraction of invoice header and line-item data from
+OCR text. Runs during upload, not during the reconciliation pipeline.
+
+**Tools used:** None.
+
+**Remaining gap:** No lightweight schema check (required keys, numeric
+confidence, non-empty line_items) before calling `_finalise_run()`. If the
+LLM returns a partial response the run succeeds with incomplete data.
+
+### 7.4 InvoiceUnderstandingAgent [IMPLEMENTED]
+
+**Purpose:** Deeper invoice analysis when extraction confidence is below
+threshold. Resolves ambiguous vendor references, validates line items against
+PO context.
+
+**Tools used:** `invoice_details`, `po_lookup`, `vendor_search`.
+
+### 7.5 PORetrievalAgent [IMPLEMENTED]
+
+**Purpose:** Locate the correct PO when the invoice arrives without a valid PO
+reference. Triggers the feedback loop if a match is found.
+
+**Tools used:** `po_lookup` (mandatory first call), `vendor_search`,
+`invoice_details`.
+
+**Evidence normalisation:** `interpret_response()` always copies the found PO
+number to `evidence["found_po"]` from whichever key the LLM used
+(`po_number`, `matched_po`, `result`, `found`, or `po`).
+
+**Prompt contract (implemented):** `_TOOL_POLICY_PO_RETRIEVAL` explicitly
+instructs the LLM to return `found_po` as the canonical key.
+
+### 7.6 GRNRetrievalAgent [IMPLEMENTED]
+
+**Purpose:** Locate the GRN for a 3-way match when the GRN is missing or
+ambiguous.
+
+**Tools used:** `grn_lookup`, `po_lookup`, `invoice_details`.
+
+**Mode guard (implemented):** `build_user_message()` returns a machine-
+parseable JSON no-op immediately when `ctx.reconciliation_mode == "TWO_WAY"`.
+
+### 7.7 ReviewRoutingAgent [IMPLEMENTED -- DETERMINISTIC]
+
+**Purpose:** Route the reviewed case to the correct team queue.
+
+**Runtime:** Handled by `DeterministicResolver`, not LLM. Agent class exists
+for Phase 5 (LLM tail) if `AGENT_REASONING_LLM_TAIL_ENABLED=True`.
+
+### 7.8 CaseSummaryAgent [IMPLEMENTED -- DETERMINISTIC]
+
+**Purpose:** Produce a human-readable case summary after all analysis agents
+have run.
+
+**Runtime:** Handled by `DeterministicResolver`, not LLM. The resolver builds
+`case_summary` and persists it on `ReconciliationResult.summary`.
+
+### 7.9 ReconciliationAssistAgent [IMPLEMENTED]
+
+**Purpose:** Assist with PARTIAL_MATCH analysis when exceptions fall outside
+the auto-close band.
+
+**Tools used:** `invoice_details`, `po_lookup`, `grn_lookup`,
+`reconciliation_summary`, `exception_list`.
+
+**Implemented behaviour:**
+- `_TOOL_POLICY_RECONCILIATION_ASSIST` in `prompt_registry.py` includes:
+  "You MUST call at least one tool before forming your recommendation. Never
+  recommend AUTO_CLOSE without first verifying amounts via
+  `reconciliation_summary` or `invoice_details`."
+- `BaseAgent._enforce_evidence_keys()` caps confidence at 0.5 when
+  `_grounding == "none"` (no tool data in evidence).
+
+---
+
+## 8. Governance and RBAC
+
+### 8.1 AgentGuardrailsService
 
 `AgentGuardrailsService` is the sole gatekeeper for every agent action.
+No agent operation executes without a passing check.
 
-### Permission Map
+**Permission map:**
 
 | Check | Permission Code | Evaluated By |
 |---|---|---|
@@ -687,1549 +978,169 @@ they receive context exclusively through `AgentContext` fields (`po_number`,
 | Run EXCEPTION_ANALYSIS | `agents.run_exception_analysis` | `authorize_agent()` |
 | Run REVIEW_ROUTING | `agents.run_review_routing` | `authorize_agent()` |
 | Run CASE_SUMMARY | `agents.run_case_summary` | `authorize_agent()` |
-| Call `po_lookup` tool | `purchase_orders.view` | `authorize_tool()` |
-| Call `grn_lookup` tool | `grns.view` | `authorize_tool()` |
+| Call `po_lookup` | `purchase_orders.view` | `authorize_tool()` |
+| Call `grn_lookup` | `grns.view` | `authorize_tool()` |
 | Auto-close a result | `recommendations.auto_close` | `authorize_action()` |
 | Escalate a case | `cases.escalate` | `authorize_action()` |
 
-### System Agent Identity
+### 8.2 System Agent Identity
 
-When no human user is available (Celery async trigger, scheduled jobs),
+When no human user is available (Celery async, scheduled jobs),
 `resolve_actor(None)` returns the `system-agent@internal` user with the
 `SYSTEM_AGENT` role (rank 100, `is_system_role=True`). This identity has
-exactly the permissions seeded in `seed_rbac` for that role -- it is never
-an admin bypass.
+exactly the permissions seeded in `seed_rbac` -- it is never an admin bypass.
 
-### Post-Policy Idempotency Guards
+### 8.3 Data-Scope Authorization [IMPLEMENTED]
 
-`_apply_post_policies()` runs at the end of every pipeline invocation. Because
-Celery tasks can be retried on failure, and because the same result may be
-processed by both the sync view path and an async task, these actions must be
-idempotent.
+`AgentGuardrailsService.authorize_data_scope(actor, result)` is called in
+`execute()` immediately after `authorize_orchestration()`. A denial causes
+orchestration to return early (fail-closed).
 
-**Current state (enforcement required):**
+| Method | Purpose |
+|---|---|
+| `get_actor_scope(actor)` | Returns `{allowed_business_units, allowed_vendor_ids}` union across active `UserRole.scope_json` entries; ADMIN/SYSTEM_AGENT always unrestricted |
+| `get_result_scope(result)` | Returns `{business_unit, vendor_id}` from current schema |
+| `authorize_data_scope(actor, result)` | Orchestrates the above; logs AuditEvent for every allow/deny |
 
-| Action | Risk | Required Guard |
-|---|---|---|
-| Auto-close (`match_status = MATCHED`) | Re-running sets the same value, no harm -- but wastes a DB write | Check `result.match_status != MATCHED` before writing |
-| Create `AgentEscalation` | Retries create duplicate escalation records for the same result | Check `AgentEscalation.objects.filter(reconciliation_result=result, resolved=False).exists()` before creating |
-| Write `ReconciliationResult.summary` | Idempotent (overwrite) | No guard needed |
+Scope stored in `UserRole.scope_json` (nullable). Null means unrestricted.
 
-**Rule:** Any `_apply_post_policies()` action that creates a new DB record
-must first check whether an equivalent unresolved record already exists.
-
-Example guard for escalation:
-
-```python
-# In _apply_post_policies(), before AgentEscalation.objects.create():
-already_escalated = AgentEscalation.objects.filter(
-    reconciliation_result=result,
-    resolved=False,
-).exists()
-if already_escalated:
-    logger.info("Escalation skipped for result %s -- unresolved escalation exists", result.pk)
-    return
-```
-
-### Data-Scope Authorization -- IMPLEMENTED
-
-The RBAC layer controls **what** an actor may do (permission codes).
-The data-scope layer (now implemented) controls **which records** they may act on.
-
-**Implementation:** `AgentGuardrailsService.authorize_data_scope(actor, result)` is called in `AgentOrchestrator.execute()` immediately after `authorize_orchestration()`. A denial causes the orchestration to return early with an error (fail-closed).
-
-**How actor scope is configured:**
-Scope restrictions are stored in `UserRole.scope_json` (nullable JSON field added via migration `accounts/0003_userrole_scope_json`). Null on all assignments means unrestricted. ADMIN and SYSTEM_AGENT actors are always unrestricted.
-
-Example `UserRole.scope_json` value:
-```json
-{"allowed_business_units": ["APAC", "EMEA"], "allowed_vendor_ids": [42, 99]}
-```
-
-Scope is the **union** across all active, non-expired role assignments.
-
-**Enforced scope dimensions:**
+**Currently enforced dimensions:**
 
 | Dimension | Source on Actor | Source on Result | Status |
 |---|---|---|---|
-| Business unit | `UserRole.scope_json["allowed_business_units"]` | `ReconciliationPolicy.business_unit` (via `result.policy_applied`) | **ENFORCED** |
-| Vendor | `UserRole.scope_json["allowed_vendor_ids"]` | `result.invoice.vendor_id` | **ENFORCED** |
-| Country / legal entity | -- | No `country_code` field on Invoice/PurchaseOrder | PENDING: schema extension required |
-| Cost centre | -- | No `cost_centre` field on Invoice/PurchaseOrder | PENDING: schema extension required |
+| Business unit | `UserRole.scope_json["allowed_business_units"]` | `ReconciliationPolicy.business_unit` | ENFORCED |
+| Vendor | `UserRole.scope_json["allowed_vendor_ids"]` | `result.invoice.vendor_id` | ENFORCED |
+| Country / legal entity | -- | No `country_code` field on Invoice/PO | PENDING |
+| Cost centre | -- | No `cost_centre` field on Invoice/PO | PENDING |
 
-**Audit:** every scope check (allow or deny) is written as an `AuditEvent` via `log_guardrail_decision()` with `action="data_scope_check"` and `metadata` containing `actor_scope`, `result_scope`, and `denial_reason`.
+### 8.4 Fail-Closed Behaviour
 
-### Fail-Closed Behaviour
-
-- Unknown tool names: denied by `authorize_tool()` (returns False).
+- Unknown tool names: denied by `authorize_tool()`.
 - Unknown agent types: denied (`AGENT_PERMISSIONS.get()` returns None -> False).
-- Missing `SYSTEM_AGENT` role (seed not run): `resolve_actor` still returns a
-  user object but it will fail permission checks.
+- Missing `SYSTEM_AGENT` role (seed not run): user is returned but fails permission checks.
+
+### 8.5 Decision Provenance
+
+Every `DecisionLog` and `AgentRecommendation` must cite at least one provenance
+source. Naming convention:
+
+```
+<tool_name>.<output_key>           e.g.  po_lookup.matched_line_count
+<exception_type_code>              e.g.  PRICE_VARIANCE_EXCEEDED
+<deterministic_rule>.<rule_id>     e.g.  DeterministicResolver.PRICE_WITHIN_AUTO_CLOSE
+```
+
+Required enforcement in `DecisionLogService` (see Section 11 for open status):
+- `log_decision()` must reject entries where both `rule_name` is blank and
+  `evidence_refs` is null or empty.
+- `log_recommendation()` must reject entries where `reasoning` < 20 characters.
+
+### 8.6 Duplicate Recommendation Prevention [IMPLEMENTED]
+
+Two-layer idempotency:
+
+**Layer 1 (service layer):** `DecisionLogService.log_recommendation()` filters
+for any PENDING (`accepted=None`) recommendation of the same
+`(reconciliation_result, recommendation_type)` before creating. Returns the
+existing record without a DB write.
+
+**Layer 2 (model constraint):** `AgentRecommendation` carries a
+`UniqueConstraint` on `(reconciliation_result, recommendation_type, agent_run)`.
+Both orchestrator call sites are wrapped with an `IntegrityError` guard.
 
 ---
 
-## 13. Agent Feedback Loop
+## 9. Observability and Audit
 
-When the `PORetrievalAgent` (the only current `_FEEDBACK_AGENTS` member)
-completes, the orchestrator checks its output for a PO number.
-`PORetrievalAgent.interpret_response()` normalises the evidence dict so the
-feedback loop can always find the PO regardless of which key the LLM used.
-The normalisation checks keys in this priority order:
-`"found_po"` (canonical) → `"po_number"` → `"matched_po"` → `"result"` → `"found"` → `"po"`.
-The first non-empty string is copied to `evidence["found_po"]`.
-
-If a PO number is found:
-
-```
-1. Lookup PurchaseOrder by po_number (or normalized variant)
-2. AgentFeedbackService.apply_found_po(result, po, agent_run_id)
-   |
-   +--> Link invoice to PO (re-link)
-   +--> Re-run deterministic matching (ThreeWayMatchService or TwoWayMatchService)
-   +--> Update ReconciliationResult status, exceptions, line results
-3. Refresh AgentContext:
-   - ctx.po_number = new po.po_number
-   - ctx.exceptions = refreshed from DB
-   - ctx.extra["grn_available"], ["grn_fully_received"] updated
-```
-
-Subsequent agents in the pipeline then see the updated state. The resolved PO
-number is also stored in `ctx.memory.resolved_po_number` when `AgentMemory` is
-available.
-
----
-
-## 14. Observability and Governance
-
-### Persisted Records Per Run
+### 9.1 Persisted Records Per Run
 
 | Record | Written By | Content |
 |---|---|---|
-| `AgentOrchestrationRun` | `AgentOrchestrator.execute()` | Pipeline-level state machine record; created before any agent runs |
-| `AgentRun` | `BaseAgent.run()` start | Agent type, status, tokens, RBAC fields, trace ID |
+| `AgentOrchestrationRun` | `AgentOrchestrator.execute()` | Pipeline-level state machine |
+| `AgentRun` | `BaseAgent.run()` | Agent type, status, tokens, RBAC fields, trace ID |
 | `AgentMessage` | `_save_message()` | Every system/user/assistant/tool message |
 | `AgentStep` | `_execute_tool()` | Every tool call: input, output, duration, success |
 | `DecisionLog` | `_finalise_run()` | Every `decisions` entry from AgentOutput |
-| `AgentRecommendation` | `DecisionLogService.log_recommendation()` | REVIEW_ROUTING + CASE_SUMMARY only |
-| `AgentEscalation` | `_apply_post_policies()` | When escalation triggered |
+| `AgentRecommendation` | `DecisionLogService.log_recommendation()` | Per-recommending-agent recommendation |
+| `AgentEscalation` | `_apply_post_policies()` | When escalation is triggered |
 | `AuditEvent` (guardrail) | `log_guardrail_decision()` | Every RBAC allow/deny |
-| `AuditEvent` (recommendation) | orchestrator post-run | AGENT_RECOMMENDATION_CREATED |
+| `AuditEvent` (recommendation) | orchestrator post-run | `AGENT_RECOMMENDATION_CREATED` |
 
-### AgentRun RBAC Fields
+`AgentRun` RBAC fields: `actor_user_id`, `actor_primary_role`,
+`actor_roles_snapshot_json`, `permission_checked`, `permission_source`,
+`access_granted`, `trace_id`, `span_id`.
 
-Every `AgentRun` record carries:
-- `actor_user_id`, `actor_primary_role`, `actor_roles_snapshot_json`
-- `permission_checked`, `permission_source`, `access_granted`
-- `trace_id`, `span_id`
+### 9.2 Pipeline Trigger
 
-Deterministic runs use `llm_model_used="deterministic"`, token counts = 0.
-
-### Governance API
-
-`/api/v1/governance/` exposes 9 endpoints. The `agent-trace` and
-`agent-performance` endpoints read directly from `AgentRun`, `AgentStep`,
-`AgentMessage`, and `DecisionLog`.
-
-### Plan Comparison Dashboard Card
-
-The `agent_performance` view (`apps/dashboard/views.py`) also queries
-`AgentRun.input_payload__plan_source` over the past 7 days and passes a
-`plan_comparison` context variable to `templates/dashboard/agent_performance.html`.
-This renders a Bootstrap 5 card with a table:
-
-| Column | Source |
-|---|---|
-| Planner | `plan_source` value ("deterministic" or "llm") |
-| Runs | count of AgentRun records for that planner |
-| Avg Agent Confidence | average `final_confidence` for those runs |
-
-The card shows "No plan data yet." when no plan metadata has been stored
-(e.g., before any LLM planner runs or before any `AgentRun.input_payload`
-records are populated).
-
-### Decision Provenance Rule
-
-Every recommendation or decision stored in the system **must** state which
-concrete evidence supports it. Vague or self-referential rationales are not
-acceptable for a financial audit trail.
-
-**Minimum required provenance per record:**
-
-| Record | Mandatory provenance field | Acceptable sources |
-|---|---|---| 
-| `DecisionLog.rationale` | `rule_name` OR `evidence_refs` (JSON list) | Tool name + output key, exception type code, deterministic rule identifier |
-| `AgentRecommendation.reasoning` | At least one sentence referencing a tool output, exception type, or rule name | Free text, minimum 20 chars, must not be empty |
-| `AgentEscalation.notes` | Exception type or threshold that triggered escalation | `EscalationReason` enum value + numeric threshold |
-
-**Enforcement rules for code review:**
-
-1. `DecisionLogService.log_decision()` must reject entries where both
-   `rule_name` is blank and `evidence_refs` is null or empty. Raise
-   `ValueError("DecisionLog requires at least one provenance source")`.
-2. `DecisionLogService.log_recommendation()` must reject entries where
-   `reasoning` is empty or fewer than 20 characters.
-3. LLM-agent `_finalise_run()` calls must pass all tool outputs that reached
-   the `AgentContext.memory.facts` dict as `evidence_refs` to each
-   `DecisionLog` entry.
-
-**Convention for naming provenance sources:**
-
-```
-<tool_name>.<output_key>              e.g.  po_lookup.matched_line_count
-<exception_type_code>                 e.g.  PRICE_VARIANCE_EXCEEDED
-<deterministic_rule>.<rule_id>        e.g.  DeterministicResolver.UNIT_PRICE_WITHIN_TOLERANCE
-```
-
-**Example `DecisionLog` with correct provenance:**
+**Synchronous (view-triggered):**
 
 ```python
-DecisionLog.objects.create(
-    agent_run=agent_run,
-    decision="Approve partial match for PO-2024-001",
-    rationale="Price variance 1.8% is within the 2% auto-close band",
-    confidence=0.88,
-    rule_name="DeterministicResolver.PRICE_WITHIN_AUTO_CLOSE",
-    evidence_refs=["po_lookup.unit_price_variance_pct", "PRICE_VARIANCE_EXCEEDED"],
-)
-```
-
----
-
-## 15. How the Pipeline Is Triggered
-
-### Synchronous (view-triggered)
-
-```python
-# apps/reconciliation/template_views.py -> start_reconciliation view
+# apps/reconciliation/template_views.py
 from apps.agents.services.orchestrator import AgentOrchestrator
 orchestrator = AgentOrchestrator()
 orchestrator.execute(result, request_user=request.user)
 ```
 
-### Asynchronous (Celery)
+**Asynchronous (Celery):**
 
 ```python
 # apps/agents/tasks.py
 @shared_task(bind=True, max_retries=2, acks_late=True)
 def run_agent_pipeline_task(self, reconciliation_result_id: int) -> dict:
     result = ReconciliationResult.objects.get(pk=reconciliation_result_id)
-    orchestrator = AgentOrchestrator()
-    orch_result = orchestrator.execute(result, request_user=None)
-    # request_user=None -> SYSTEM_AGENT identity used
+    orch_result = AgentOrchestrator().execute(result, request_user=None)
     return {"status": orch_result.final_recommendation, ...}
 ```
 
-### On Windows Dev (no Redis)
+`request_user=None` triggers SYSTEM_AGENT identity.
+`CELERY_TASK_ALWAYS_EAGER=True` (default on Windows dev) runs tasks
+synchronously in-process; sync and async paths produce identical results.
 
-`CELERY_TASK_ALWAYS_EAGER=True` (default) runs tasks synchronously in-process.
-The async and sync paths produce identical results.
+### 9.3 Governance API
 
----
+`/api/v1/governance/` exposes 9 endpoints:
 
-## 16. Upgrade Path: Reasoning Engine
-
-The current architecture is a **fixed-pipeline** system: the `PolicyEngine`
-decides a static ordered list of agents, each runs once, and the
-`DeterministicResolver` handles the terminal steps. This section describes
-how to upgrade it to a **dynamic reasoning engine** where a meta-agent plans,
-reflects, and re-plans on the fly -- while keeping the existing deterministic
-flow as the safe fallback.
-
-### Current Architecture Constraints
-
-| Constraint | Impact |
+| Endpoint | Data Source |
 |---|---|
-| Agent order is fixed (list from PolicyEngine) | Cannot react to mid-pipeline discoveries |
-| Each agent runs exactly once | Cannot retry or branch based on findings |
-| DeterministicResolver always handles tail agents | LLM cannot override routing in edge cases |
-| No planning step -- just a rule lookup | Cannot handle novel exception combinations |
-
-> **Implementation status:** Phases 1, 2, and 3 are **fully implemented** and
-> merged. `AgentMemory` is live in `agent_memory.py`. `ReasoningPlanner` is
-> live in `reasoning_planner.py` and is what `AgentOrchestrator.__init__()`
-> instantiates -- the LLM planning path is always active with `PolicyEngine`
-> as the internal fallback on error. The reflection step (`_reflect()`) runs
-> after every agent in the loop. Phases 4 and 5 remain optional/future.
-
-### Target Architecture: Planner + Executor
-
-```
-ReconciliationResult
-        |
-        v
-  ReasoningPlanner (new)           <-- LLM call: produces a structured plan
-        |                              given: match_status, exceptions, mode
-        +--> JSON plan: [
-        |      {"agent": "PO_RETRIEVAL", "rationale": "PO_NOT_FOUND exception"},
-        |      {"agent": "EXCEPTION_ANALYSIS", "rationale": "analyse remaining exceptions"},
-        |      {"agent": "REVIEW_ROUTING", "rationale": "route based on analysis"}
-        |    ]
-        |
-        v
-  ReasoningExecutor (new)          <-- iterates the plan, runs each agent,
-        |                              updates shared memory, can re-plan
-        |
-        +--> SharedMemory (new)    <-- structured dict of findings from all agents
-        |
-        +--> Reflection step       <-- after each agent: should we re-plan?
-        |
-        v
-  DeterministicResolver            <-- UNCHANGED: still the safe fallback for
-                                       terminal classification when planner
-                                       confidence is below threshold
-```
-
-### What to Build
-
-#### Step 1 -- SharedMemory (no breaking changes)
-
-Replace `ctx.extra` string-passing with a typed memory object. This is
-additive and does not change any existing code paths.
-
-```python
-# apps/agents/services/agent_memory.py  (new file)
-
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
-
-@dataclass
-class AgentMemory:
-    """Accumulated findings shared across all agents in a single orchestration run."""
-
-    # Findings from retrieval agents
-    resolved_po_number: Optional[str] = None
-    resolved_grn_numbers: List[str] = field(default_factory=list)
-    extraction_issues: List[str] = field(default_factory=list)
-
-    # Reasoning chain
-    agent_summaries: Dict[str, str] = field(default_factory=dict)
-    # {"PO_RETRIEVAL": "Found PO-4821 matching vendor X"}
-
-    # Running recommendation
-    current_recommendation: Optional[str] = None
-    current_confidence: float = 0.0
-
-    # Arbitrary facts for novel agent types
-    facts: Dict[str, Any] = field(default_factory=dict)
-
-    def record_agent_output(self, agent_type: str, output) -> None:
-        """Called by executor after each agent run."""
-        self.agent_summaries[agent_type] = output.reasoning[:500]
-        if output.recommendation_type:
-            if output.confidence > self.current_confidence:
-                self.current_recommendation = output.recommendation_type
-                self.current_confidence = output.confidence
-        evidence = output.evidence or {}
-        if evidence.get("found_po"):
-            self.resolved_po_number = evidence["found_po"]
-```
-
-Add `memory: Optional[AgentMemory] = None` to `AgentContext`. Existing code
-ignores it; new planner/executor code uses it.
-
-#### Step 2 -- ReasoningPlanner (always active)
-
-The planner makes a single LLM call to produce a structured execution plan.
-It always runs; `PolicyEngine` is the internal fallback on any LLM error.
-
-```python
-# apps/agents/services/reasoning_planner.py
-
-class ReasoningPlanner:
-    """Wraps PolicyEngine and enhances the plan using an LLM.
-
-    The LLM plan is always attempted. On any LLM error the deterministic
-    PolicyEngine result is used as a safe fallback.
-    """
-
-    def __init__(self) -> None:
-        self._fallback = PolicyEngine()
-        self._llm = LLMClient(temperature=0.0, max_tokens=1024)
-
-    def plan(self, result) -> AgentPlan:
-        quick_plan = self._fallback.plan(result)
-
-        # Skip agent execution for clean matches or auto-close cases.
-        if quick_plan.skip_agents:
-            return quick_plan
-
-        # Attempt LLM-driven plan; fall back to deterministic on any error.
-        try:
-            return self._llm_plan(result)
-        except Exception as exc:
-            logger.warning(
-                "ReasoningPlanner LLM plan failed for result %s (%s); "
-                "falling back to deterministic plan.",
-                getattr(result, "pk", "?"),
-                exc,
-            )
-            return quick_plan
-```
-
-`ReasoningPlanner` also delegates the two post-policy checks so the orchestrator
-can call them on `self.policy` regardless of which planner is in use:
-
-```python
-def should_auto_close(self, recommendation_type, confidence) -> bool:
-    return self._fallback.should_auto_close(recommendation_type, confidence)
-
-def should_escalate(self, recommendation_type, confidence) -> bool:
-    return self._fallback.should_escalate(recommendation_type, confidence)
-```
-
-`_llm_plan()` applies three validation guards before returning the plan, and
-stamps `plan_source` / `plan_confidence` on the returned `AgentPlan`:
-
-```python
-# Guard 1 -- empty plan
-if not valid_steps:
-    raise ValueError("LLM planner returned no valid agent steps.")
-
-# Guard 2 -- CASE_SUMMARY must be last if present
-agent_names = [s["agent_type"] for s in valid_steps]
-if "CASE_SUMMARY" in agent_names and agent_names[-1] != "CASE_SUMMARY":
-    raise ValueError("CASE_SUMMARY must be the last agent in the plan.")
-
-# Guard 3 -- GRN_RETRIEVAL is invalid for TWO_WAY reconciliation
-if recon_mode == "TWO_WAY" and "GRN_RETRIEVAL" in agent_names:
-    raise ValueError("GRN_RETRIEVAL is not valid for TWO_WAY reconciliation.")
-
-plan_confidence = float(payload.get("confidence", 0.0))
-return AgentPlan(..., plan_source="llm", plan_confidence=plan_confidence)
-```
-
-If any guard raises, the exception propagates to `plan()` which catches it and
-falls back to the deterministic `quick_plan` (so the pipeline degrades
-gracefully rather than crashing).
-
-#### Step 3 -- Reflection Step (implemented)
-
-After each LLM agent completes, `_reflect()` inspects the findings and may
-insert additional agents immediately after the current position. This allows
-the pipeline to react to mid-run discoveries without re-planning from scratch.
-
-```python
-# In AgentOrchestrator.execute(), after the feedback loop block:
-
-if last_output:
-    extra_agents = self._reflect(
-        agent_type,
-        last_output,
-        result,
-        llm_agents[llm_agents.index(agent_type) + 1:],
-        ctx,
-        already_executed=list(orch_result.agents_executed),
-    )
-    if extra_agents:
-        insert_pos = llm_agents.index(agent_type) + 1
-        for i, new_agent in enumerate(extra_agents):
-            llm_agents.insert(insert_pos + i, new_agent)
-        logger.info(
-            "Reflection inserted agents %s after %s for result %s",
-            extra_agents, agent_type, result.pk,
-        )
-
-
-def _reflect(
-    self,
-    completed_agent_type,
-    agent_run,
-    result,
-    remaining_agents,
-    ctx,
-    already_executed=None,         # set of agent types already run in this pipeline
-):
-    """Inspect the just-completed agent run and return agent types to insert.
-
-    Returns a list of agent_type strings (possibly empty). Never raises.
-    `already_executed` prevents reflection from re-inserting an agent that
-    has already run in this orchestration.
-    """
-    try:
-        if ctx.memory is None:
-            return []
-
-        already_executed = set(already_executed or [])
-
-        # Rule 1: PO was just found in a 3-way case -- check for GRN next.
-        if (
-            completed_agent_type == AgentType.PO_RETRIEVAL
-            and ctx.memory.resolved_po_number is not None
-            and getattr(result, "reconciliation_mode", "") != "TWO_WAY"
-            and AgentType.GRN_RETRIEVAL not in remaining_agents
-            and AgentType.GRN_RETRIEVAL not in already_executed
-        ):
-            return [AgentType.GRN_RETRIEVAL]
-
-        # Rule 2: Very low confidence extraction -- investigate discrepancies too.
-        if (
-            completed_agent_type == AgentType.INVOICE_UNDERSTANDING
-            and agent_run.confidence is not None
-            and agent_run.confidence < 0.5
-            and AgentType.RECONCILIATION_ASSIST not in remaining_agents
-            and AgentType.RECONCILIATION_ASSIST not in already_executed
-        ):
-            return [AgentType.RECONCILIATION_ASSIST]
-
-        return []
-    except Exception:
-        logger.exception(
-            "_reflect() raised unexpectedly for agent %s result %s",
-            completed_agent_type,
-            getattr(result, "pk", "?"),
-        )
-        return []
-```
-
-Reflection rules:
-
-| Trigger | Condition | Agent Inserted |
-|---|---|---|
-| `PO_RETRIEVAL` succeeds | `ctx.memory.resolved_po_number is not None` and mode != TWO_WAY and GRN_RETRIEVAL not in remaining_agents and not in already_executed | `GRN_RETRIEVAL` |
-| `INVOICE_UNDERSTANDING` finishes | `agent_run.confidence < 0.5` and RECONCILIATION_ASSIST not in remaining_agents and not in already_executed | `RECONCILIATION_ASSIST` |
-
-#### Step 3b -- BaseAgent LLM Retry Wrapper
-
-All LLM calls inside the ReAct tool loop go through `_call_llm_with_retry()`,
-a static method on `BaseAgent`. It retries up to 3 times on transient OpenAI
-errors with exponential backoff (2s, 4s, 8s), then re-raises on exhaustion:
-
-```python
-@staticmethod
-def _call_llm_with_retry(llm, messages, tools, max_retries=3, base_delay=2, response_format=None):
-    import time as _time
-    import openai
-    last_exc = None
-    for attempt in range(max_retries + 1):
-        try:
-            return llm.chat(
-                messages=messages,
-                tools=tools if tools else None,
-                response_format=response_format,
-            )
-        except (
-            openai.RateLimitError,
-            openai.APIConnectionError,
-            openai.InternalServerError,
-        ) as exc:
-            last_exc = exc
-            if attempt < max_retries:
-                delay = base_delay * (2 ** attempt)
-                logger.warning(
-                    "LLM transient error (attempt %d/%d), retrying in %ds: %s",
-                    attempt + 1, max_retries, delay, exc,
-                )
-                _time.sleep(delay)
-    raise last_exc
-```
-
-Errors not in the retry list (`AuthenticationError`, `BadRequestError`, etc.)
-propagate immediately without retrying.
-
-#### Step 4 -- LLM-Backed Terminal Agents (optional)
-
-Currently `EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, and `CASE_SUMMARY` always
-go to `DeterministicResolver`. To allow the LLM to handle genuinely novel
-cases, add a complexity check:
-
-```python
-# In _apply_deterministic_resolution(), before calling resolver:
-
-if (
-    getattr(settings, "AGENT_REASONING_ENGINE_ENABLED", False)
-    and self._is_complex_case(result, fresh_exceptions)
-):
-    # Run LLM agents for the tail instead of deterministic resolver
-    for det_agent_type in deterministic_agents:
-        agent_cls = AGENT_CLASS_REGISTRY.get(det_agent_type)
-        if agent_cls:
-            agent_run = agent_cls().run(ctx)
-            orch.agents_executed.append(det_agent_type)
-            orch.agent_runs.append(agent_run)
-    return   # skip deterministic path
-
-# Otherwise fall through to existing DeterministicResolver call (unchanged)
-
-def _is_complex_case(self, result, exceptions) -> bool:
-    """True for cases the rule matrix cannot handle reliably."""
-    types = {e["exception_type"] for e in exceptions}
-    severities = {e.get("severity") for e in exceptions}
-    # Novel combination: multiple HIGH + cross-team exceptions
-    return (
-        len(types) > 4
-        or (len(types) > 2 and "HIGH" in severities and "VENDOR_MISMATCH" in types)
-    )
-```
-
-### Migration Strategy
-
-| Phase | What Changes | Status | Existing Flow |
-|---|---|---|---|
-| Phase 1: SharedMemory | Add `AgentMemory` dataclass to `AgentContext` | **DONE** | Unchanged (field ignored by legacy callers) |
-| Phase 2: ReasoningPlanner | `AgentOrchestrator` uses `ReasoningPlanner` | **DONE** | Identical -- `PolicyEngine` runs as fallback |
-| Phase 3: LLM planner always active | No flag -- planner runs unconditionally; PolicyEngine is internal fallback on error | **DONE** | LLM plans the pipeline; PolicyEngine fallback on any LLM failure |
-| Phase 4: Reflection | `_reflect()` runs after every agent with `already_executed` dedup guard | **DONE** | Inserts GRN_RETRIEVAL or RECONCILIATION_ASSIST only when not already run in this pipeline |
-| Phase 5: LLM tail | Complex cases use LLM terminal agents instead of DeterministicResolver | Not started | DeterministicResolver still handles standard cases |
-
-### What Must Never Change
-
-- **`PolicyEngine`** must remain intact as the fallback. Never delete it.
-- **`DeterministicResolver`** handles all standard cases regardless of
-  whether the reasoning engine is enabled. It is the correctness guarantee.
-- **`AgentGuardrailsService`** -- all permission checks remain mandatory for
-  both LLM-planned and deterministic paths.
-- **`AgentRun` schema** -- deterministic and LLM runs use the same model.
-  Governance and audit code must not distinguish between them.
-- **`SYSTEM_AGENT` identity** -- autonomous runs (Celery) always use the
-  system-agent user. The reasoning planner follows the same rule.
-
-### Feature Flag Summary
-
-| Setting | Default | Effect |
-|---|---|---|
-| `AGENT_REASONING_ENGINE_ENABLED` | N/A | **Removed.** The LLM planner has no feature flag -- it is always active. `PolicyEngine` is the built-in fallback on any LLM error. |
-| `AGENT_REASONING_REFLECTION_ENABLED` | N/A | **Removed.** Reflection (`_reflect()`) runs unconditionally after every agent in the loop. |
-| `AGENT_REASONING_LLM_TAIL_ENABLED` | `False` | When True, complex cases use LLM terminal agents instead of `DeterministicResolver`. |
-
-`AGENT_REASONING_LLM_TAIL_ENABLED` is the only remaining optional flag.
-Do not add code guards for the first two -- they are redundant because both
-features are now unconditionally active.
-
----
-
-## 17. Upgrading Existing Agents to Best Agentic Practices
-
-This section audits each existing agent against current best-practice standards
-and provides a concrete upgrade checklist. The goal is to close the gap between
-the current working implementation and the ideal agentic design -- without
-breaking anything that already works.
-
-### 17.1 Best Practice Checklist (applies to all agents)
-
-| Practice | Standard | Current State | Action Required |
-|---|---|---|---|
-| Structured output enforcement | Use `response_format={"type":"json_object"}` or explicit JSON-only instruction | **DONE** -- `BaseAgent.enforce_json_response=True` passes json_object to every ReAct-loop LLM call; `AgentOutputSchema` validates with Pydantic v2 | No further action required; `InvoiceExtractionAgent` sets `enforce_json_response=False` and handles its own format |
-| Output schema validation | Validate LLM JSON output against a schema before storing | **DONE** -- `AgentOutputSchema` (Pydantic v2, `agent_output_schema.py`) validates `recommendation_type`, `confidence`, `decisions`, `evidence`; invalid `recommendation_type` coerced to `SEND_TO_AP_REVIEW`; confidence clamped to [0.0, 1.0] | No further action required |
-| Idempotent runs | Re-running the same agent twice on the same input should produce safe, identical-or-compatible results | **DONE** -- `AgentOrchestrationRun` RUNNING guard prevents duplicate pipeline invocations; `DecisionLogService.log_recommendation()` applies service-layer deduplication: if a pending (accepted=None) recommendation of the same type already exists for the result it returns the existing record without creating a duplicate | No further action required |
-| Tool error resilience | Agents must handle tool failures gracefully and not hallucinate when a tool returns an error | **DONE** -- `BaseAgent._apply_tool_failure_guards()` enforces at runtime (not just via prompts): (1) any tool failure caps confidence at 0.5 and downgrades AUTO_CLOSE to SEND_TO_AP_REVIEW; (2) tool-grounded agents (PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, INVOICE_UNDERSTANDING, EXCEPTION_ANALYSIS) that call no tools have confidence capped at 0.6; (3) provenance markers are written to `output.evidence._provenance`. Stricter recommendations (ESCALATE_TO_MANAGER) are preserved but confidence is still capped. | No further action required |
-| Prompt versioning | Every agent run should record which prompt version was used | **DONE** -- `BaseAgent.run()` always writes `agent_run.prompt_version` (from `PromptRegistry.version_for(agent_type)`) before the ReAct loop; empty string is written if no template is found and a `logger.warning` is emitted so the gap is visible in logs | No further action required |
-| Token budget awareness | Agent should not silently truncate context | **DONE** -- `BaseAgent._truncate_exceptions()` truncates `ctx.exceptions` to the 20 highest-severity entries (HIGH -> MEDIUM -> LOW -> INFO) at three call sites in the orchestrator: initial context build, feedback-loop refresh, and `_apply_deterministic_resolution()`. Logs a warning with the count dropped. | No further action required |
-| Confidence calibration | Confidence scores must be grounded in evidence, not just stated | **DONE** -- `BaseAgent._compute_composite_confidence()` blends LLM confidence (60%), tool success rate (25%), and evidence quality (15%) into a composite score clamped to [0.0, 1.0]. AUTO_CLOSE is suppressed when any tool failed (downgraded to SEND_TO_AP_REVIEW, confidence capped at 0.5). Per-decision evidence is also enforced in `_finalise_run()` -- decisions with no evidence have confidence capped at 0.5 and `evidence_refs` set to `{"_provenance": "no_evidence_supplied"}`. | No further action required |
-| Retry with backoff | Transient LLM failures should retry before failing the run | **DONE** -- `BaseAgent.run()` now reads `agent_def.max_retries` (falling back to `AGENT_MAX_RETRIES` constant) and passes it to `_call_llm_with_retry()`. | No further action required |
-| Minimal tool surface | Each agent should only see the tools it actually needs | `allowed_tools` is correctly scoped per agent | No change needed -- already correct |
-| Human-readable reasoning | `summarized_reasoning` must be meaningful to a non-technical reviewer | Content is taken directly from LLM output; quality varies | Add a reasoning quality check: minimum 50 characters, must mention at least one invoice or PO reference |
-| No special characters in output | Agent-generated strings that are stored to DB or shown in UI must use ASCII only | **DONE** -- `BaseAgent._sanitise_text()` is implemented and called in `_finalise_run()` | No further action required |
-
----
-
-### 17.2 Per-Agent Upgrade Guide
-
-#### ExceptionAnalysisAgent
-
-Current gaps:
-- Produces two output formats in one response (standard JSON + `<reviewer_summary>` block).
-  This makes parsing fragile and increases the chance of parse failure.
-- `_parse_reviewer_summary()` silently returns None on parse failure with only a warning log.
-
-Recommended upgrades:
-
-1. **Split into two dedicated prompts.** Keep the main analysis JSON as-is.
-   Have the reviewer summary as a second, simpler structured call after the
-   ReAct loop completes (not embedded in the same response).
-
-2. **Add fallback reviewer summary.** When `_parse_reviewer_summary()` returns
-   None, generate a minimal summary from the main JSON output rather than
-   leaving `reviewer_summary` empty on the `ReviewAssignment`.
-
-3. **Validate recommendation_type against enum.** **DONE** -- implemented in
-   `interpret_response()`. Invalid values are replaced with `SEND_TO_AP_REVIEW`
-   and confidence is capped at 0.6. Confidence is always clamped to [0.0, 1.0].
-
----
-
-#### InvoiceExtractionAgent
-
-Current gaps:
-- Uses `response_format={"type":"json_object"}` (correct) but does not
-  validate the returned schema before storing.
-- `confidence` is taken directly from the LLM output without a bounds check.
-
-Recommended upgrades:
-
-1. **Schema validation after extraction.** Use a lightweight schema check
-   (required keys, numeric confidence, non-empty line_items) before calling
-   `_finalise_run()`. If validation fails, mark the run FAILED so the
-   extraction pipeline can retry.
-
-2. **Confidence bounds.** Clamp to [0.0, 1.0] and check that it is not
-   suspiciously high (> 0.95) when critical fields like `invoice_number`
-   are empty.
-
-```python
-def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
-    data = _parse_agent_json(content)
-    # Bounds check
-    conf = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
-    # Penalise for empty critical fields
-    if not data.get("invoice_number") or not data.get("vendor_name"):
-        conf = min(conf, 0.5)
-    data["confidence"] = conf
-    return AgentOutput(
-        reasoning=f"Extracted {len(data.get('line_items', []))} line items with confidence {conf}",
-        confidence=conf,
-        evidence=data,
-        raw_content=content,
-    )
-```
-
----
-
-#### PORetrievalAgent
-
-Current gaps:
-- The feedback loop in the orchestrator checks evidence keys `found_po`,
-  `po_number`, `matched_po` -- but the agent prompt does not explicitly
-  instruct the LLM to use these key names.
-- If the LLM puts the PO number in `evidence["result"]` or similar, the
-  feedback loop silently does nothing.
-
-**DONE** -- `interpret_response()` now normalises the evidence dict.
-Fallback keys checked in priority order: `po_number` -> `matched_po` ->
-`result` -> `found` -> `po`. The first non-empty string value is copied to
-`evidence["found_po"]`. The system prompt upgrade (instructing the LLM to use
-`found_po` explicitly) is the remaining recommended action.
-
----
-
-#### GRNRetrievalAgent
-
-Current gaps:
-- No mode guard inside the agent itself; it relied entirely on the
-  `PolicyEngine` never scheduling it in TWO_WAY mode.
-
-**DONE** -- `build_user_message()` now returns a machine-parseable JSON
-no-op string immediately when `ctx.reconciliation_mode == "TWO_WAY"`.
-`interpret_response` / `_to_agent_output` handle this gracefully (zero
-confidence, empty decisions, empty evidence).
-
----
-
-#### ReviewRoutingAgent and CaseSummaryAgent
-
-These are already replaced by `DeterministicResolver` in the current pipeline.
-Their class definitions exist for the case where LLM tail is enabled (Section 16
-Phase 5). When that path is active:
-
-- Both agents should use `response_format={"type":"json_object"}`.
-- `CaseSummaryAgent` should not use tools at that point -- the DeterministicResolver
-  already built the summary template; the LLM's job is enrichment only.
-- `ReviewRoutingAgent` should receive the full agent memory (Section 16.1) as
-  context so it does not re-derive what prior agents already established.
-
----
-
-#### ReconciliationAssistAgent
-
-Current gaps:
-- The most open-ended agent -- broad tool access and a general-purpose prompt.
-  This is the most likely to hallucinate when tools return partial data.
-
-Recommended upgrades:
-
-1. **Ground every claim in a tool result.** Add to the system prompt:
-   "You MUST call at least one tool before forming your recommendation.
-   Never recommend AUTO_CLOSE without first verifying amounts via
-   reconciliation_summary or invoice_details."
-
-2. **Add a minimum tool-call enforcement check.** In `BaseAgent.run()`,
-   after the ReAct loop, check that `step_counter > 2` (at least one tool
-   call happened). If not, downgrade confidence by 20% before finalising.
-
----
-
-### 17.3 Shared Improvements for All Agents
-
-These can be implemented once in `BaseAgent` and all agents inherit them.
-
-#### Output Sanitiser -- DONE
-
-`BaseAgent._sanitise_text()` is implemented and called in `_finalise_run()`.
-See Section 7 for the full method. No further action required for existing
-agents. New agents inherit this automatically.
-
-#### Prompt Version Capture
-
-```python
-# In BaseAgent._init_messages(), after building sys_msg:
-try:
-    from apps.core.models import PromptTemplate
-    pt = PromptTemplate.objects.filter(
-        slug=f"agent.{self.agent_type.lower()}", is_active=True
-    ).only("version").first()
-    if pt:
-        agent_run.prompt_version = pt.version
-        agent_run.save(update_fields=["prompt_version"])
-except Exception:
-    pass
-```
-
-#### Retry on Transient LLM Failure
-
-```python
-# In BaseAgent.run(), wrap the LLM call with retry:
-import time as _time
-
-MAX_LLM_RETRIES = 2
-RETRY_DELAY_SECONDS = 2
-
-for attempt in range(MAX_LLM_RETRIES + 1):
-    try:
-        llm_resp = self.llm.chat(messages=[...], tools=tool_specs)
-        break
-    except Exception as exc:
-        if attempt < MAX_LLM_RETRIES:
-            _time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
-            continue
-        raise
-```
-
-#### Token Budget Pre-flight -- DONE
-
-`BaseAgent._truncate_exceptions()` is implemented and called at three points
-in `AgentOrchestrator`:
-
-1. After the initial `exceptions = list(result.exceptions.values(...))` build in `execute()`.
-2. After the feedback-loop `ctx.exceptions = list(...)` refresh.
-3. After `fresh_exceptions = list(...)` in `_apply_deterministic_resolution()`.
-
-The static method sorts by severity (`HIGH -> MEDIUM -> LOW -> INFO`), caps at
-`max_exceptions=20`, and logs a warning with the count dropped.
-
-```python
-# BaseAgent._truncate_exceptions() -- implemented in base_agent.py
-@staticmethod
-def _truncate_exceptions(exceptions: list, max_exceptions: int = 20) -> list:
-    if len(exceptions) <= max_exceptions:
-        return exceptions
-    _SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
-    sorted_excs = sorted(
-        exceptions,
-        key=lambda e: _SEVERITY_ORDER.get(str(e.get("severity", "LOW")).upper(), 4),
-    )
-    truncated = sorted_excs[:max_exceptions]
-    logger.warning(
-        "Exception list truncated from %d to %d for token budget "
-        "(dropped %d LOW/INFO exceptions)",
-        len(exceptions), max_exceptions, len(exceptions) - max_exceptions,
-    )
-    return truncated
-```
-
-The call sites in the orchestrator use a deferred local import to avoid a
-circular import at module level:
-
-```python
-from apps.agents.services.base_agent import BaseAgent as _BA
-exceptions = _BA._truncate_exceptions(exceptions)
-```
-
-#### Composite Confidence Scoring -- DONE
-
-`BaseAgent._compute_composite_confidence()` replaces the simple fixed-penalty
-(`penalty = 0.15 * failed_tool_count`) in both exit paths of the ReAct loop.
-
-```python
-@staticmethod
-def _compute_composite_confidence(
-    llm_confidence: float,
-    failed_tool_count: int,
-    total_tool_calls: int,
-    evidence: dict,
-) -> float:
-    # Tool success score: 1.0 if no tools called; else successful / total
-    if total_tool_calls == 0:
-        tool_score = 1.0
-    else:
-        tool_score = max(0, total_tool_calls - failed_tool_count) / total_tool_calls
-
-    # Evidence quality score: 0.5 if empty or only _provenance key; else 1.0
-    evidence_score = 0.5 if not evidence or list(evidence.keys()) == ["_provenance"] else 1.0
-
-    composite = float(llm_confidence) * 0.6 + tool_score * 0.25 + evidence_score * 0.15
-    return max(0.0, min(1.0, composite))
-```
-
-Weight rationale:
-- LLM confidence (60%): the primary signal, but alone it cannot be trusted.
-- Tool success (25%): failed tool calls mean the LLM may have reasoned on incomplete data.
-- Evidence quality (15%): distinguishes grounded decisions from no-evidence guesses.
-
-`total_tool_calls` is tracked alongside `failed_tool_count` in `BaseAgent.run()`
-and incremented unconditionally after every tool execution.
-
-#### Evidence Enforcement on Decisions -- DONE
-
-`_finalise_run()` now enforces that every `DecisionLog` entry has non-empty
-`evidence_refs`. Decisions with no evidence are:
-- Confidence capped at 0.5.
-- `evidence_refs` set to `{"_provenance": "no_evidence_supplied"}`.
-- A `logger.warning` is emitted naming the decision text (truncated to 100 chars).
-
-Output-level evidence is also enforced in both the clean-exit path and the
-exhausted-rounds path. When `output.evidence` is empty or falsy after the
-ReAct loop completes:
-- `output.evidence` set to `{"_provenance": "no_evidence_supplied"}`.
-- `output.confidence` capped at 0.5.
-- A `logger.warning` is emitted.
-
-This propagates to `agent_run.output_payload["evidence"]` and all downstream
-`DecisionLog` entries created by `_finalise_run()`.
-
-#### Tool Failure Runtime Guards -- DONE (`_apply_tool_failure_guards`)
-
-All tool-failure enforcement is centralised in `BaseAgent._apply_tool_failure_guards(output, failed_tool_count, total_tool_calls)`, called in both exit paths of the ReAct loop after composite confidence is calculated. This replaces the earlier single-check pattern.
-
-**Rule 1 -- any tool failed:**
-- `output.confidence` capped at `min(confidence, 0.5)`
-- If `recommendation_type == "AUTO_CLOSE"` it is downgraded to `SEND_TO_AP_REVIEW` (stricter recommendations such as `ESCALATE_TO_MANAGER` are preserved)
-- `output.evidence._provenance` set to `"tool_failures"` or `"tool_failures_partial"`
-
-**Rule 2 -- tool-grounded agent called no tools:**
-`_TOOL_GROUNDED_AGENT_TYPES = {PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, INVOICE_UNDERSTANDING, EXCEPTION_ANALYSIS}`
-- `output.confidence` capped at `min(confidence, 0.6)`
-- `output.evidence._provenance` set to `"no_tools_called"`
-
-Deterministic agents (resolved by `DeterministicResolver`) never go through `BaseAgent.run()` and are unaffected.
-
-Prompt-level instructions remain as a belt-and-braces layer but are no longer the sole guard.
-
----
-
-## 18. Open Source Tools for Agent Performance and Inter-Agent Tracing
-
-The platform already has a strong internal governance layer
-(`AgentTraceService`, `DecisionLog`, `ToolCall`, governance API). The tools
-below extend this with visual dashboards, cross-session analytics, and
-evaluation frameworks that would otherwise need to be built from scratch.
-
-### 18.1 Open Source vs. SaaS Clarification
-
-A common misconception: **LangSmith is not open source**. The LangChain agent
-SDK (`langchain`) is MIT-licensed, but the LangSmith observability server has
-never been released as open source. The only backend is `smith.langchain.com`.
-Do not plan around a self-hosted LangSmith.
-
-| Tool | Truly Open Source | Self-hostable | License |
-|---|---|---|---|
-| **Langfuse** | Yes | Yes (Docker + Postgres) | MIT |
-| **Phoenix (Arize)** | Yes | Yes (Docker + SQLite or Postgres) | Apache 2.0 |
-| **OpenLLMetry / openinference** | Yes (SDK) | Yes (any OTEL backend) | Apache 2.0 |
-| **Helicone** | Yes (backend) | Yes (Docker + Clickhouse) | Apache 2.0 |
-| **Weave (W&B)** | SDK only | No -- W&B cloud required | -- |
-| **LangSmith** | No | No -- LangChain cloud only | -- |
-| **PromptLayer** | No | No -- proprietary SaaS | -- |
-
-### 18.2 Recommended Combination for This Stack
-
-**Tier 1 (recommended):** Langfuse + openinference instrumentation
-
-- Langfuse is self-hostable on the existing Postgres + Redis stack (same infrastructure as Django/Celery).
-- Its trace/span/generation hierarchy maps directly to `AgentRun > AgentStep > AgentMessage`.
-- First-class Azure OpenAI cost tracking with deployment-name pricing overrides.
-- `openinference-instrumentation-openai` auto-instruments every `AzureOpenAI` SDK call with zero per-call changes.
-
-**Tier 1b (pure OTEL alternative):** Phoenix + openinference
-
-- Better fit if the org already runs an OpenTelemetry stack for non-LLM services.
-- Phoenix stores to SQLite (default) or Postgres, runs as a single container.
-- Strongest eval templates (hallucination, Q&A, relevance via LLM-as-judge).
-
-**Not recommended:**
-
-- **Weave/W&B:** The backend is W&B cloud only -- PO/invoice financial data must not leave your infrastructure on a mandatory external service.
-- **LangSmith:** Closed backend, not self-hostable.
-- **PromptLayer:** Not an agent observability tool; predates multi-step agent tracing.
-
----
-
-### 18.3 Coverage Matrix
-
-| Capability | Langfuse | Phoenix | openinference (OTel) |
-|---|---|---|---|
-| Latency, token usage, cost | Native (model-level pricing) | Via OTEL spans | Captures, exports to backend |
-| Tool call frequency/latency | Custom spans on AgentStep | OTEL span attributes | Auto-captured from OpenAI tool calls |
-| Inter-agent message tracing | Parent/child spans | Parent/child OTEL spans | Trace context propagation |
-| Hallucination / reasoning eval | Built-in eval runner + LLM-as-judge | Best-in-class eval templates | N/A (instrumentation only) |
-| Execution flow visualisation | Waterfall trace UI | Interactive trace tree | N/A |
-| Azure OpenAI | Yes, deployment-name cost mapping | Yes, via openinference | Yes, transparent proxy |
-| Self-hostable | Yes | Yes | SDK only, needs OTEL backend |
-
----
-
-### 18.4 Langfuse (Recommended First Choice)
-
-**GitHub:** https://github.com/langfuse/langfuse
-**Pip:** `langfuse`
-**Self-hostable:** Yes -- Docker Compose or Kubernetes. Postgres + Redis only (same stack as this project).
-**License:** MIT (core), commercial for cloud
-
-Langfuse is the closest match to what this project already tracks internally.
-It provides:
-- Trace/span hierarchy (maps directly to `AgentRun` -> `AgentStep` -> `ToolCall`)
-- Prompt version management (mirrors `PromptRegistry`)
-- Token cost tracking per model per run
-- Score/feedback collection (human feedback on recommendations)
-- Cross-run analytics: average latency, token usage, tool call frequency per agent type
-- Evaluation datasets: capture bad agent outputs and replay them to test prompt changes
-
-**Integration approach -- three options (all additive, none replace existing models):**
-
-**Option A -- Low-level SDK** (maps 1:1 to `AgentRun/AgentStep` schema):
-
-```python
-from langfuse import Langfuse
-lf = Langfuse()
-
-trace = lf.trace(id=str(agent_run.pk), name="agent_run", user_id=str(actor_user_id))
-span  = trace.span(name="agent_step", input=step.input_data, metadata={"tool": step.action})
-gen   = span.generation(name="llm_call", model=llm_model, usage={"input": pt, "output": ct})
-gen.end(output=response_content)
-span.end(output=step.output_data)
-trace.update(output=final_output)
-```
-
-Emit from Django post-save signals on `AgentStep` saves to keep Langfuse and Postgres in sync.
-
-**Option B -- Decorator approach** (wraps ReAct loop functions):
-
-```python
-from langfuse.decorators import observe, langfuse_context
-
-@observe(name="agent_run")
-def run_agent(query: str):
-    langfuse_context.update_current_trace(session_id=session_id)
-    ...
-```
-
-**Option C -- OpenAI SDK patch** (zero-code LLM call capture):
-
-```python
-from langfuse.openai import openai   # drop-in replacement for: import openai
-```
-
-**LangfuseTracer wrapper** (additive, does not replace existing AgentRun writes):
-
-```python
-# apps/agents/services/langfuse_tracer.py  (new file)
-
-from __future__ import annotations
-from typing import Any, Dict, List, Optional
-from django.conf import settings
-
-try:
-    from langfuse import Langfuse
-    from langfuse.decorators import langfuse_context, observe
-    _LANGFUSE_ENABLED = getattr(settings, "LANGFUSE_ENABLED", False)
-except ImportError:
-    _LANGFUSE_ENABLED = False
-
-
-class LangfuseTracer:
-    """Thin wrapper that sends LLM calls to Langfuse when enabled.
-
-    All existing AgentRun/AgentStep records continue to be written as before.
-    Langfuse receives a copy for the visual dashboard only.
-    """
-
-    _client = None
-
-    @classmethod
-    def get_client(cls):
-        if not _LANGFUSE_ENABLED:
-            return None
-        if cls._client is None:
-            cls._client = Langfuse(
-                public_key=settings.LANGFUSE_PUBLIC_KEY,
-                secret_key=settings.LANGFUSE_SECRET_KEY,
-                host=getattr(settings, "LANGFUSE_HOST", "https://cloud.langfuse.com"),
-            )
-        return cls._client
-
-    @classmethod
-    def trace_llm_call(
-        cls,
-        agent_type: str,
-        agent_run_id: int,
-        messages: List[Dict],
-        response_content: str,
-        tool_calls: List,
-        tokens: Dict[str, int],
-        model: str,
-    ) -> None:
-        client = cls.get_client()
-        if not client:
-            return
-        try:
-            trace = client.trace(
-                name=f"agent.{agent_type}",
-                id=str(agent_run_id),
-                metadata={"agent_type": agent_type},
-            )
-            trace.generation(
-                name="llm_call",
-                model=model,
-                input=messages,
-                output=response_content,
-                usage={
-                    "input": tokens.get("prompt_tokens", 0),
-                    "output": tokens.get("completion_tokens", 0),
-                    "total": tokens.get("total_tokens", 0),
-                },
-            )
-        except Exception:
-            pass  # Never let tracing break the agent run
-```
-
----
-
-## 19. Design Requirements and Enforcement Rules
-
-This section consolidates the four core design requirements introduced during
-the Q3 architecture hardening pass. Each requirement has a status tag:
-`[CODE DONE]` = enforced in code; `[DOC ONLY]` = required by architecture but
-not yet implemented; `[PARTIAL]` = guard exists in one path only.
-
----
-
-### 19.1 Orchestration State Machine [CODE DONE]
-
-`AgentOrchestrationRun` is a DB-backed state machine. Every call to
-`AgentOrchestrator.execute()` creates exactly one record.
-
-**Allowed transitions:**
-
-```
-PLANNED -> RUNNING -> COMPLETED   (all agents succeeded)
-                   -> PARTIAL     (at least one agent error, pipeline continued)
-                   -> FAILED      (unhandled exception before agent loop completes)
-PLANNED -> COMPLETED              (skip_agents=True; no agents run)
-```
-
-**Terminal states:** `COMPLETED`, `PARTIAL`, `FAILED` -- never re-entered.
-
-**Duplicate guard:** If a `RUNNING` record already exists for the same
-`reconciliation_result`, `execute()` returns immediately without creating a
-new record or running any agents.
-
-**Stale RUNNING records:** A worker crash leaves a `RUNNING` record that
-blocks all retries. Resolution: set `status=FAILED` manually via Django admin
-or the governance API. Monitor for `started_at < now() - 10 min` AND
-`status=RUNNING` records in alerting.
-
----
-
-### 19.2 Decision Provenance [DOC ONLY]
-
-Every `DecisionLog` and `AgentRecommendation` must cite at least one
-provenance source using the naming convention below.
-
-**Provenance source naming convention:**
-
-```
-<tool_name>.<output_key>              po_lookup.matched_line_count
-<exception_type_code>                 PRICE_VARIANCE_EXCEEDED
-<deterministic_rule>.<rule_id>        DeterministicResolver.PRICE_WITHIN_AUTO_CLOSE
-```
-
-**Enforcement (to implement in `DecisionLogService`):**
-
-```python
-if not record.rule_name and not record.evidence_refs:
-    raise ValueError("DecisionLog requires at least one provenance source")
-if not record.reasoning or len(record.reasoning) < 20:
-    raise ValueError("AgentRecommendation.reasoning must be at least 20 characters")
-```
-
-**LLM agents:** must pass `ctx.memory.facts` keys as `evidence_refs` entries
-in every `DecisionLog` written by `_finalise_run()`.
-
----
-
-### 19.3 Post-Policy Action Idempotency [PARTIAL]
-
-`_apply_post_policies()` can be called multiple times on the same result due
-to Celery retries. Actions that create new DB records must be idempotent.
-
-| Action | Guard | Status |
-|---|---|---|
-| Auto-close write | Check `result.match_status != MATCHED` before writing | [PARTIAL] -- check present but no explicit guard |
-| Create `AgentEscalation` | Filter on `(reconciliation_result, resolved=False)` before create | [DOC ONLY] |
-| Write `ReconciliationResult.summary` | Overwrite is safe | [CODE DONE] |
-
-**Implementation target for `AgentEscalation` guard:**
-
-```python
-already_escalated = AgentEscalation.objects.filter(
-    reconciliation_result=result,
-    resolved=False,
-).exists()
-if not already_escalated:
-    AgentEscalation.objects.create(...)
-```
-
----
-
-### 19.4 Data-Scope Authorization [CODE DONE]
-
-Implemented in `AgentGuardrailsService` (three methods) and wired into `AgentOrchestrator.execute()`.
-
-| Method | Purpose |
+| `audit-history` | `AuditEvent` |
+| `agent-trace` | `AgentRun`, `AgentStep`, `AgentMessage`, `DecisionLog` |
+| `recommendations` | `AgentRecommendation` |
+| `timeline` | `CaseTimelineService` |
+| `access-history` | `AuditEvent` (RBAC types) |
+| `stage-timeline` | `AuditEvent` (stage transition types) |
+| `permission-denials` | `AuditEvent` (GUARDRAIL_DENIED) |
+| `rbac-activity` | `AuditEvent` (RBAC assignment types) |
+| `agent-performance` | `AgentRun` + `AgentStep` aggregates |
+
+The `agent-performance` endpoint also provides a `plan_comparison` table
+breaking down run count and average confidence by `plan_source`
+("deterministic" vs "llm") over the past 7 days.
+
+### 9.4 Built-In Observability Coverage
+
+Before adding any external observability tool, note what is already provided:
+
+| Capability | Built-In Location |
 |---|---|
-| `get_actor_scope(actor)` | Returns `{allowed_business_units, allowed_vendor_ids}` union across active `UserRole.scope_json` entries; ADMIN/SYSTEM_AGENT always unrestricted |
-| `get_result_scope(result)` | Returns `{business_unit, vendor_id}` extracted from current schema relationships |
-| `_scope_value_allowed(allowed, value)` | None on either side = pass-through; otherwise value must be in allowed list |
-| `authorize_data_scope(actor, result)` | Orchestrates the above; logs AuditEvent for every allow/deny; returns bool |
-
-**Scope per UserRole** is stored in `UserRole.scope_json` (nullable). No restrictions when null.
-
-**Currently enforced dimensions:**
-- `business_unit` via `ReconciliationPolicy.business_unit` (looked up through `result.policy_applied`)
-- `vendor_id` via `result.invoice.vendor_id`
-
-**Pending dimensions (schema extension required before enforcement can be added):**
-- country / legal_entity: no `country_code` field on `Invoice` or `PurchaseOrder`
-- cost_centre: no `cost_centre` field on `Invoice` or `PurchaseOrder`
-
----
-
-### 19.5 Duplicate Recommendation Prevention [CODE DONE -- HARDENED]
-
-**Two-layer idempotency:**
-
-**Layer 1 (service-layer, deterministic key):** `DecisionLogService.log_recommendation()` checks for any PENDING (`accepted=None`) recommendation of the same `(reconciliation_result, recommendation_type)` before creating. If found it returns the existing record without hitting the DB constraint. This handles cross-run retries where different `agent_run` IDs would bypass the model constraint.
-
-```python
-existing = AgentRecommendation.objects.filter(
-    reconciliation_result=reconciliation_result,
-    recommendation_type=recommendation_type,
-    accepted__isnull=True,
-).first()
-if existing:
-    logger.info("Idempotent recommendation: ... pending rec #%s already exists", existing.pk)
-    return existing
-```
-
-**Layer 2 (model constraint, safety net):** `AgentRecommendation` carries a `UniqueConstraint` on `(reconciliation_result, recommendation_type, agent_run)`. Both call sites in `AgentOrchestrator` remain wrapped with an `IntegrityError` guard as a final safety net.
-
-Intentionally distinct decisions (e.g. a recommendation was accepted/rejected and a new pipeline cycle produces a new one) are allowed because the filter on `accepted__isnull=True` ensures only the pending record is de-duped.
-
-The `else` branch runs only when the insert succeeded, so the backfill of
-`rec.invoice_id` and the `AuditEvent` write are skipped cleanly on duplicates.
-
-This prevents duplicate records when an agent is retried or run multiple times
-within one orchestration. The constraint is enforced at both the Python level
-(IntegrityError catch) and the database level (unique index on the `agents_recommendation`
-table, migration `0007_add_recommendation_unique_constraint`).
-
-
-Wire into `BaseAgent.run()` after each LLM call:
-
-```python
-from apps.agents.services.langfuse_tracer import LangfuseTracer
-
-# After llm_resp is received (in the ReAct loop):
-LangfuseTracer.trace_llm_call(
-    agent_type=self.agent_type,
-    agent_run_id=agent_run.pk,
-    messages=[m for m in messages if m["role"] != "tool"],
-    response_content=llm_resp.content or "",
-    tool_calls=llm_resp.tool_calls,
-    tokens={
-        "prompt_tokens": llm_resp.prompt_tokens,
-        "completion_tokens": llm_resp.completion_tokens,
-        "total_tokens": llm_resp.total_tokens,
-    },
-    model=llm_resp.model,
-)
-```
-
-**Settings to add:**
-
-```python
-# config/settings.py
-LANGFUSE_ENABLED = env.bool("LANGFUSE_ENABLED", default=False)
-LANGFUSE_PUBLIC_KEY = env.str("LANGFUSE_PUBLIC_KEY", default="")
-LANGFUSE_SECRET_KEY = env.str("LANGFUSE_SECRET_KEY", default="")
-LANGFUSE_HOST = env.str("LANGFUSE_HOST", default="http://localhost:3000")  # self-hosted
-```
-
----
-
-### 18.5 Phoenix / Arize (Best for Local Dev Inspection and Evals)
-
-**GitHub:** https://github.com/Arize-ai/phoenix
-**Pip:** `arize-phoenix` (server), `arize-phoenix-otel` (instrumentation), `openinference-instrumentation-openai` (auto-instrument)
-**Self-hostable:** Yes -- runs as a local process, no external dependencies.
-Stores traces in SQLite by default (zero config) or Postgres for production.
-**License:** Apache 2.0
-
-Phoenix provides a local browser-based trace inspector. The `openinference`
-library auto-instruments the OpenAI SDK so every `client.chat.completions.create()`
-call is captured without any code changes.
-
-**Integration (zero-code for LLM calls):**
-
-```python
-# In config/settings.py or apps/__init__.py (only in dev/staging):
-
-import os
-if os.getenv("PHOENIX_ENABLED", "false").lower() == "true":
-    import phoenix as px
-    from openinference.instrumentation.openai import OpenAIInstrumentor
-
-    px.launch_app()               # starts the local UI on http://localhost:6006
-    OpenAIInstrumentor().instrument()  # patches openai SDK automatically
-```
-
-Because `LLMClient` uses `openai.AzureOpenAI`, the `OpenAIInstrumentor` patches
-it automatically. Every LLM call in every agent will appear in the Phoenix UI
-with full message/token/latency detail.
-
-**What it shows:**
-- Full conversation thread per `AgentRun`
-- Token usage per round, cumulative per session
-- Tool call latency waterfall
-- Side-by-side comparison of two runs on the same input
-- Hallucination scores (via `phoenix.evals`)
-
-**Limitation:** Phoenix does not know about the inter-agent orchestration
-(which agent ran after which). To show the pipeline graph, emit an
-OpenTelemetry span per agent using the approach in Section 18.4.
-
----
-
-### 18.6 OpenLLMetry / openinference (Best for Inter-Agent Tracing)
-
-**GitHub:** https://github.com/traceloop/openllmetry
-**Pip:** `opentelemetry-sdk`, `openinference-instrumentation-openai` (for auto-instrumentation);
-optionally `traceloop-sdk` as a convenience wrapper
-**Self-hostable:** The SDK is fully open source. Route telemetry to Phoenix,
-Langfuse, Jaeger, Grafana Tempo, or any OTEL-compatible backend -- no vendor lock-in.
-**License:** Apache 2.0
-
-Think of OpenLLMetry/openinference as the **instrumentation layer** and Phoenix
-or Langfuse as the **server**. It uses OpenTelemetry to trace agent pipelines
-as distributed spans and is the right tool for answering: "which agent was the
-bottleneck and which tool call was slowest?"
-
-**Integration (using Traceloop's convenience wrapper):**
-
-```python
-# In Django AppConfig.ready() or wsgi.py -- one-liner setup:
-from traceloop.sdk import Traceloop
-Traceloop.init(
-    app_name="po-recon-agent",
-    api_endpoint="http://localhost:6006/v1/traces",   # point at Phoenix or Langfuse
-    disable_batch=False,
-)
-```
-
-**Manual OTEL setup (no Traceloop dependency):**
-
-```python
-# apps/agents/services/otel_tracer.py  (new file)
-
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from openinference.instrumentation.openai import OpenAIInstrumentor
-from django.conf import settings
-
-_provider = None
-
-
-def init_otel():
-    """Call once from Django AppConfig.ready() when OTEL_ENABLED=True."""
-    global _provider
-    if _provider or not getattr(settings, "OTEL_ENABLED", False):
-        return
-    exporter = OTLPSpanExporter(
-        endpoint=getattr(settings, "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:6006/v1/traces")
-    )
-    _provider = TracerProvider()
-    _provider.add_span_processor(BatchSpanProcessor(exporter))
-    trace.set_tracer_provider(_provider)
-    OpenAIInstrumentor().instrument(tracer_provider=_provider)  # auto-patches AzureOpenAI
-
-
-def get_tracer():
-    return trace.get_tracer("po-recon.agents")
-```
-
-Wrap each agent execution in `AgentOrchestrator`:
-
-```python
-from apps.agents.services.otel_tracer import get_tracer
-from opentelemetry import trace as otel_trace
-
-tracer = get_tracer()
-
-# In execute(), around the agent run loop:
-with tracer.start_as_current_span(
-    f"agent.{agent_type}",
-    attributes={
-        "agent.type": agent_type,
-        "reconciliation.result_id": str(result.pk),
-        "agent_run.id": str(agent_run.pk) if agent_run else "",
-    },
-) as span:
-    agent_run = agent.run(ctx)
-    span.set_attribute("agent.confidence", agent_run.confidence or 0.0)
-    span.set_attribute("agent.tokens_total", agent_run.total_tokens or 0)
-    span.set_attribute("agent.status", agent_run.status)
-```
-
-The existing `trace_id` and `span_id` on `AgentRun` can be populated from the
-OTel span context:
-
-```python
-ctx_span = otel_trace.get_current_span()
-if ctx_span and ctx_span.is_recording():
-    ctx.trace_id = format(ctx_span.get_span_context().trace_id, "032x")
-    ctx.span_id = format(ctx_span.get_span_context().span_id, "016x")
-```
-
-This makes `AgentRun.trace_id` and the OTel trace ID identical, so you can
-jump from the governance DB to the Jaeger/Tempo trace in one click.
-
----
-
-### 18.7 Weave / W&B (Not Recommended for This Stack)
-
-**GitHub:** https://github.com/wandb/weave
-**Pip:** `weave`
-**Self-hostable:** No. The SDK is Apache 2.0, but all data is sent to `wandb.ai`.
-There is no supported path to run the W&B backend on-premise.
-**License:** Apache 2.0 (SDK only)
-
-**Hard blocker for this project:** PO/invoice financial data must not be sent
-to an external mandatory cloud service. Weave has no self-hosted backend option.
-
-If evaluation dataset tracking is needed, use Phoenix's eval framework instead
-(Section 18.5) -- it provides comparable LLM-as-judge evaluation templates
-and runs entirely on your infrastructure.
-
-For reference, Weave tracks agent inputs/outputs as versioned datasets and
-lets you run evaluations. The `@weave.op()` decorator approach looks like this:
-
-**Integration pattern:**
-
-```python
-# After orchestration completes, log the result to Weave:
-
-import weave
-from django.conf import settings
-
-if getattr(settings, "WEAVE_ENABLED", False):
-    weave.init(project_name="po-recon-agents")
-
-    @weave.op()
-    def log_orchestration_result(result_id, agents_executed, final_recommendation, confidence):
-        return {
-            "result_id": result_id,
-            "agents_executed": agents_executed,
-            "final_recommendation": final_recommendation,
-            "confidence": confidence,
-        }
-
-    log_orchestration_result(
-        result_id=orch_result.reconciliation_result_id,
-        agents_executed=orch_result.agents_executed,
-        final_recommendation=orch_result.final_recommendation,
-        confidence=orch_result.final_confidence,
-    )
-```
-
-Use case: capture every case where a human reviewer overrides the agent
-recommendation. That `accepted=False` signal on `AgentRecommendation` is the
-ground truth for your evaluation dataset.
-
----
-
-### 18.8 What the Internal Platform Already Covers (No External Tool Needed)
-
-Before adding any external tool, note what the built-in governance layer
-already provides:
-
-| Capability | Built-in Location |
-|---|---|
-| Full message-level audit trail | `AgentMessage` model + governance API |
+| Full message-level audit trail | `AgentMessage` + governance API |
 | Tool call timing and success rate | `AgentStep.duration_ms`, `ToolCall.status` |
-| Token usage per agent per run | `AgentRun.prompt_tokens`, `completion_tokens`, `total_tokens` |
-| Confidence over time | `AgentRun.confidence` queryable via governance API |
+| Token usage per agent per run | `AgentRun.prompt_tokens/completion_tokens/total_tokens` |
+| Confidence over time | `AgentRun.confidence` via governance API |
 | Decision audit with evidence | `DecisionLog` + `agent-performance` endpoint |
 | Per-invoice full trace | `AgentTraceService.get_trace_for_invoice()` |
-| RBAC / guardrail decisions | `AuditEvent` with `GUARDRAIL_GRANTED/DENIED` types |
-| Inter-agent context forwarding | `ctx.extra["prior_reasoning"]` logged in each agent's `AgentMessage` |
+| RBAC / guardrail decisions | `AuditEvent` with GUARDRAIL_GRANTED/DENIED types |
+| Inter-agent context forwarding | `AgentMemory` + `ctx.extra["prior_reasoning"]` |
 
-External tools add: visual timeline UI, cross-session aggregated analytics,
-evaluation scoring, and alerts. They do not replace what is already here.
+### 9.5 External Observability (Future Direction)
 
----
+Two options are compatible with this stack and can be self-hosted:
 
-### 18.9 Windows Compatibility for All Tools
-
-All development on this project runs on **Windows 11 Pro**. This section
-gives an exact compatibility verdict for each tool and the precise steps
-needed on Windows.
-
-#### Python SDKs -- all work natively on Windows
-
-Every pip package listed below is pure Python and installs without issue
-on Windows. No native extensions, no platform-specific compiled code.
-
-```
-pip install langfuse
-pip install arize-phoenix arize-phoenix-otel
-pip install openinference-instrumentation-openai
-pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
-pip install traceloop-sdk
-```
-
-Run these inside the existing virtual environment used by the Django app.
-
----
-
-#### Phoenix server -- runs natively on Windows, no Docker needed
-
-Phoenix is the easiest option on Windows because it runs as a plain Python
-process with no external dependencies.
-
-```bash
-pip install arize-phoenix
-
-# Start the UI server (runs in a background thread inside the same Python process)
-python -m phoenix.server.main serve
-
-# Or launch programmatically from Django app startup (dev only):
-# import phoenix as px
-# px.launch_app()
-```
-
-The UI opens at `http://localhost:6006`. Traces are stored in SQLite under
-`%USERPROFILE%\.phoenix\` by default -- no config needed.
-
-**Windows-specific note:** `px.launch_app()` launches a background thread.
-On Windows with Django's `runserver --reload`, the thread is re-created on
-each code reload. Use `PHOENIX_ENABLED=true` with a conditional check and
-a `threading.Event` guard to avoid duplicate launches:
+**Option A -- Phoenix (best for local dev):**
+Pure Python, no Docker needed. Stores traces in SQLite locally.
 
 ```python
-# In apps/agents/apps.py AgentConfig.ready():
-import os
-import threading
-
+# In apps/agents/apps.py AgentConfig.ready() -- dev only:
+import os, threading
 _phoenix_started = threading.Event()
 
 def start_phoenix_once():
@@ -2241,136 +1152,289 @@ def start_phoenix_once():
     try:
         import phoenix as px
         from openinference.instrumentation.openai import OpenAIInstrumentor
-        px.launch_app()
+        px.launch_app()               # http://localhost:6006
         OpenAIInstrumentor().instrument()
     except Exception:
         pass
 ```
 
----
+`OpenAIInstrumentor` auto-patches `AzureOpenAI` -- every LLM call appears
+in the Phoenix UI without per-call code changes.
 
-#### Langfuse Python SDK -- works natively on Windows
-
-The `langfuse` pip package has no OS dependency. Install and use immediately:
+**Option B -- Langfuse (staging/production):**
+Self-hosted on Docker Compose (Postgres + Redis -- same stack as this project).
 
 ```python
+# apps/agents/services/langfuse_tracer.py  (additive -- does not replace existing writes)
 from langfuse import Langfuse
-lf = Langfuse(
-    public_key="...",
-    secret_key="...",
-    host="http://localhost:3000",   # or cloud.langfuse.com
-)
+
+class LangfuseTracer:
+    @classmethod
+    def trace_llm_call(cls, agent_type, agent_run_id, messages,
+                       response_content, tokens, model):
+        client = cls.get_client()
+        if not client:
+            return
+        try:
+            trace = client.trace(name=f"agent.{agent_type}", id=str(agent_run_id))
+            trace.generation(name="llm_call", model=model, input=messages,
+                             output=response_content, usage=tokens)
+        except Exception:
+            pass   # never let tracing break an agent run
 ```
 
-**Langfuse self-hosted server on Windows:** The server is a Docker Compose
-stack (Next.js + Postgres + Redis + worker). On Windows 11 this requires
-**Docker Desktop with the WSL2 backend** (the default for Windows 11):
+Settings: `LANGFUSE_ENABLED`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`,
+`LANGFUSE_HOST` (default `http://localhost:3000`).
 
-1. Install Docker Desktop from `https://docker.com/products/docker-desktop`.
-   Enable the WSL2 integration during setup. WSL2 is included in Windows 11.
+**OTel spans (inter-agent bottleneck analysis):**
 
-2. Clone and start:
-   ```bash
-   git clone https://github.com/langfuse/langfuse.git
-   cd langfuse
-   docker compose up -d
-   ```
+```python
+from opentelemetry import trace as otel_trace
+tracer = otel_trace.get_tracer("po-recon.agents")
 
-3. The UI is available at `http://localhost:3000`.
-
-4. To reuse the existing project Postgres (avoid a second Postgres container),
-   edit `docker-compose.yml` and replace the `db` service with the connection
-   string for your local Postgres instance. The Langfuse server accepts a
-   standard `DATABASE_URL` env var.
-
-**Performance note:** Docker Desktop on Windows uses a WSL2 VM. File I/O
-inside the container is fast, but mounting Windows-native paths (e.g.
-`C:\...`) into the container is slow. The Langfuse server does not mount
-host paths so this is not an issue.
-
----
-
-#### openinference / OpenTelemetry SDK -- works natively on Windows
-
-All `opentelemetry-*` and `openinference-*` packages are pure Python. The
-`OTLPSpanExporter` sends spans over HTTP to Phoenix (`http://localhost:6006`)
-or Langfuse -- no OS-level socket differences between Windows and Linux.
-
-```bash
-pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http openinference-instrumentation-openai
+with tracer.start_as_current_span(f"agent.{agent_type}", attributes={...}) as span:
+    agent_run = agent_cls().run(ctx)
+    span.set_attribute("agent.confidence", agent_run.confidence or 0.0)
 ```
 
-No changes to the `otel_tracer.py` code shown in Section 18.6 are needed
-for Windows.
+Point the `OTLPSpanExporter` at Phoenix (`http://localhost:6006/v1/traces`)
+or Langfuse -- no separate Jaeger instance needed.
+
+**Not recommended:**
+- **Weave/W&B:** no self-hosted backend; financial data must not go to W&B cloud.
+- **LangSmith:** closed SaaS backend only; not self-hostable despite common misconception.
 
 ---
 
-#### Helicone self-hosted -- requires Docker Desktop (Clickhouse dependency)
+## 10. Extension Guide
 
-Helicone's self-hosted backend requires **Clickhouse** as its analytics store.
-Clickhouse has no native Windows binary; it must run in Docker. This makes
-Helicone the most operationally complex option on Windows:
+### 10.1 How to Add a New Agent
 
-- Docker Desktop with WSL2 required
-- Clickhouse container is memory-heavy (1 GB+ RAM)
-- The proxy service and Clickhouse both run as containers
+1. Add `AgentType.MY_NEW_TYPE` to `apps/core/enums.py`.
+2. Create the agent class in `apps/agents/services/agent_classes.py` extending `BaseAgent`:
 
-Given the alternatives (Langfuse and Phoenix) cover the same capabilities
-with simpler Windows setup, Helicone is not recommended for this project.
+```python
+class MyNewAgent(BaseAgent):
+    agent_type = AgentType.MY_NEW_TYPE
 
----
+    @property
+    def system_prompt(self) -> str:
+        return PromptRegistry.get("agent.my_new_type")
 
-#### Weave / W&B -- SDK installs on Windows but not recommended
+    def build_user_message(self, ctx: AgentContext) -> str:
+        return (
+            _mode_context(ctx)
+            + f"Invoice: {ctx.invoice_id}\n"
+            + "Your task: ..."
+        )
 
-The `weave` pip package installs on Windows. However, as noted in Section
-18.7, all data is sent to `wandb.ai` (no self-hosted option), which is a
-hard blocker for PO/invoice financial data regardless of OS.
+    @property
+    def allowed_tools(self) -> List[str]:
+        return ["invoice_details", "po_lookup"]
 
----
+    def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
+        data = _parse_agent_json(content)
+        return _to_agent_output(data, content)
+```
 
-#### Quick-start summary for Windows 11
+3. Register in `AGENT_CLASS_REGISTRY` in `agent_classes.py`.
+4. Add `agents.run_my_new_type` permission to `seed_rbac.py` PERMISSIONS list.
+5. Map the permission to appropriate roles and to `SYSTEM_AGENT` in the role matrix.
+6. Add the entry to `AGENT_PERMISSIONS` in `guardrails_service.py`.
+7. Add to `PolicyEngine` decision logic if the new agent has specific trigger conditions.
+8. Create an `AgentDefinition` record (via `seed_config` or admin), filling the
+   full contract (Section 4.5 template).
+9. Add system prompt constant to `apps/core/prompt_registry.py` following the
+   block order in Section 6.2.
+10. Run `python manage.py seed_agent_contracts --agent-type MY_NEW_TYPE`.
 
-| Tool | Windows setup | Effort |
+### 10.2 How to Add a New Tool
+
+Follow the checklist in Section 5.5. Key points:
+- Declare all ten attributes.
+- Create a `ToolDefinition` DB record.
+- Add to the relevant agent's `config_json["allowed_tools"]`.
+- Seed any new permission in `seed_rbac`.
+
+### 10.3 When to Add a New Agent vs Extend an Existing One
+
+**Add a NEW agent when:**
+- The capability does not exist in any current agent.
+- The scope requires different `prohibited_actions` or `allowed_recommendation_types`.
+- Entry conditions differ substantially from all existing agents.
+- The existing agent prompt would exceed 1500 tokens after the addition.
+- A different output schema or schema version is needed.
+
+**Extend an EXISTING agent when:**
+- The new behaviour fits the existing agent's purpose and entry conditions.
+- Only the prompt or tool list needs updating.
+- Output schema and `allowed_recommendation_types` stay the same.
+- The change does not violate `prohibited_actions`.
+- The prompt stays under 1500 tokens.
+
+**Decision checklist (answer yes -> add new agent):**
+```
+[ ] New behaviour requires different tools than the existing agent allows?
+[ ] New behaviour conflicts with any prohibited_actions?
+[ ] New behaviour targets a recommendation type not in allowed_recommendation_types?
+[ ] Would existing agent prompt exceed 1500 tokens after addition?
+[ ] Are entry conditions substantially different?
+```
+
+**When updating an existing agent:**
+1. Update the system prompt constant in `apps/core/prompt_registry.py`.
+2. Update `allowed_tools` on the agent class if a new tool is needed.
+3. Update contract fields via `seed_agent_contracts` or Django admin.
+4. Run `python manage.py seed_agent_contracts --dry-run` to verify.
+5. Set `lifecycle_status=draft` during development; back to `active` before deploy.
+
+### 10.4 Component Inventory
+
+| Component | File | Role |
 |---|---|---|
-| Phoenix server | `pip install arize-phoenix` then `python -m phoenix.server.main serve` | 2 minutes |
-| openinference SDK | `pip install openinference-instrumentation-openai` | 1 minute |
-| Langfuse SDK | `pip install langfuse` | 1 minute |
-| Langfuse server | Docker Desktop (WSL2) + `docker compose up` | 15-20 minutes first time |
-| OTel SDK | `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http` | 1 minute |
-| Helicone | Docker Desktop + Clickhouse -- not recommended | Complex |
-
-**Fastest path on Windows:** install `arize-phoenix` +
-`openinference-instrumentation-openai`, call `OpenAIInstrumentor().instrument()`
-once at app startup, and open `http://localhost:6006`. Every Azure OpenAI
-call across all agents is visible immediately with zero infrastructure setup.
+| `AgentContext` / `AgentOutput` | `base_agent.py` | Data contracts |
+| `AgentMemory` | `agent_memory.py` | Structured cross-agent findings store |
+| `BaseAgent` | `base_agent.py` | ReAct loop, sanitise, truncate, composite confidence, retry |
+| `AgentOutputSchema` | `agent_output_schema.py` | Pydantic v2 output validation |
+| `LLMClient` | `llm_client.py` | Azure OpenAI / OpenAI wrapper |
+| `PolicyEngine` | `policy_engine.py` | Deterministic agent plan (no LLM) |
+| `ReasoningPlanner` | `reasoning_planner.py` | LLM-backed planner; PolicyEngine fallback |
+| `DeterministicResolver` | `deterministic_resolver.py` | Rule-based exception routing |
+| `AgentOrchestrator` | `orchestrator.py` | Sequence execution, feedback, post-policy |
+| `AgentOrchestrationRun` | `agents/models.py` | DB state machine for one pipeline invocation |
+| `AgentGuardrailsService` | `guardrails_service.py` | RBAC enforcement |
+| `AgentTraceService` | `agent_trace_service.py` | Unified governance writes |
+| `DecisionLogService` | `decision_log_service.py` | Recommendation lifecycle |
+| `BaseTool` / `ToolRegistry` | `tools/registry/base.py` | Tool system |
+| Concrete tools (6) | `tools/registry/tools.py` | PO, GRN, vendor, invoice lookups |
+| Concrete agents (8) | `agent_classes.py` | Specialised implementations |
+| `AGENT_CLASS_REGISTRY` | `agent_classes.py` | `AgentType` -> class map |
+| `_AgentRunOutputProxy` | `orchestrator.py` | Adapts `AgentRun` to `AgentMemory` interface |
 
 ---
 
-### 18.10 Recommended Integration Sequence
+## 11. Remaining Gaps and Roadmap
 
-1. **Start with Phoenix + openinference** (zero infrastructure, local dev only).
-   Install `arize-phoenix` + `openinference-instrumentation-openai`. Call
-   `OpenAIInstrumentor().instrument()` once at startup (see Windows guard
-   pattern in Section 18.9). Set `PHOENIX_ENABLED=true`. Every Azure OpenAI
-   call immediately appears in the browser at `http://localhost:6006` -- no
-   DB changes, no settings changes for other team members.
+### [DONE] -- Fully Implemented
 
-2. **Add Langfuse** (staging and production). Self-host with Docker Compose
-   on Windows using Docker Desktop (WSL2 backend) -- or deploy the container
-   to the staging server directly. Wire `LangfuseTracer` into `BaseAgent`
-   using Option A (low-level SDK, Section 18.4) so Langfuse traces map 1:1
-   to `AgentRun` PKs. This gives the team a shared production dashboard for
-   latency, token cost, and confidence trends.
+- **Orchestration state machine** -- `AgentOrchestrationRun` with duplicate-run
+  guard, terminal states, and stale-run detection.
+- **Agent contract fields** -- all 8 AgentDefinition records have full contract
+  columns; `seed_agent_contracts` is idempotent.
+- **Tool metadata standard** -- all 6 `BaseTool` subclasses have all 10
+  attributes; `get_spec()` composes them into LLM descriptions.
+- **Prompt block ordering** -- all 7 tool-using agent prompts follow the
+  mandatory 7-block order; `_REASONING_QUALITY_RULES` is block 5.
+- **Required evidence keys** -- `_enforce_evidence_keys()` runs in
+  `_finalise_run()` after all catalog checks; keys are always present in
+  persisted evidence.
+- **Composite confidence scoring** -- `_compute_composite_confidence()` blends
+  LLM score (60%), tool success (25%), evidence quality (15%).
+- **Tool failure guards** -- `_apply_tool_failure_guards()` in both ReAct exit
+  paths; AUTO_CLOSE downgraded on tool failure; no-tool cap at 0.6.
+- **Reasoning quality guard** -- `_guard_reasoning_quality()` detects weak
+  reasoning and produces an auto-summary fallback.
+- **Structured output validation** -- `AgentOutputSchema` (Pydantic v2)
+  validates all standard agent output; applied via `enforce_json_response=True`.
+- **Idempotent recommendations** -- two-layer dedup (service filter + model
+  unique constraint + IntegrityError guard).
+- **Data-scope authorization** -- business unit + vendor scope enforced in
+  `authorize_data_scope()`; logged as AuditEvent.
+- **LLM retry with backoff** -- `_call_llm_with_retry()` retries on transient
+  OpenAI errors (max 3, exponential backoff 2/4/8s).
+- **Exception truncation** -- `_truncate_exceptions()` caps at 20, sorted by
+  severity; called at 3 orchestrator sites.
+- **Prompt version capture** -- `BaseAgent.run()` always writes
+  `agent_run.prompt_version` before the ReAct loop.
+- **ASCII sanitisation** -- `_sanitise_text()` applied in `_finalise_run()`.
+- **ReasoningPlanner** -- LLM planner always active; PolicyEngine is the
+  internal fallback on LLM error.
+- **Reflection step** -- `_reflect()` runs after every LLM agent; deduped
+  via `already_executed` set.
+- **AgentMemory** -- structured cross-agent findings; agents read from
+  `ctx.memory` in `build_user_message()`.
+- **ExceptionAnalysisAgent reviewer summary** -- separate LLM call;
+  no-fail fallback summary.
+- **PORetrievalAgent found_po normalisation** -- interpret_response normalises
+  to canonical key; prompt explicitly instructs `found_po`.
+- **GRNRetrievalAgent TWO_WAY guard** -- immediate no-op JSON when mode is TWO_WAY.
+- **ReconciliationAssistAgent tool grounding** -- prompt MANDATORY rule;
+  runtime `_enforce_evidence_keys()` caps confidence at 0.5 if `_grounding == "none"`.
 
-3. **Add OTel spans around the orchestration loop** (when inter-agent
-   bottleneck analysis is needed). Use `init_otel()` from Section 18.6.
-   Point to Phoenix or Langfuse as the OTEL backend -- no separate Jaeger
-   instance needed. Populate `AgentRun.trace_id` from the OTel span context
-   so governance records and OTel traces share the same ID.
+---
 
-4. **Add Phoenix evals as a batch job** (when building an evaluation dataset).
-   Read `AgentRecommendation.accepted=False` records from Postgres as the
-   ground-truth dataset. Run `HallucinationEvaluator` and `QAEvaluator`
-   against the corresponding `AgentMessage` records. Run before any
-   system-prompt change to measure regression. This replaces Weave without
-   requiring any external cloud dependency.
+### [PARTIAL] -- Partially Implemented
+
+**Decision Provenance Enforcement**
+- Convention is defined (Section 8.5).
+- `_finalise_run()` enforces non-empty evidence on `DecisionLog` entries
+  (caps confidence at 0.5, sets `_provenance` marker).
+- `DecisionLogService.log_decision()` does NOT yet reject entries where both
+  `rule_name` and `evidence_refs` are empty.
+- `DecisionLogService.log_recommendation()` does NOT yet reject `reasoning`
+  shorter than 20 characters.
+- Target: add the two validation raises to `DecisionLogService`.
+
+**Post-Policy Idempotency**
+- `ReconciliationResult.summary` overwrite: safe (no guard needed).
+- Auto-close: check `result.match_status != MATCHED` before writing (present
+  but no explicit commit guard).
+- `AgentEscalation`: no duplicate guard yet. Required:
+  ```python
+  already_escalated = AgentEscalation.objects.filter(
+      reconciliation_result=result, resolved=False).exists()
+  if not already_escalated:
+      AgentEscalation.objects.create(...)
+  ```
+
+**LLM Tail for Complex Cases**
+- `AGENT_REASONING_LLM_TAIL_ENABLED` setting exists (default `False`).
+- `_is_complex_case()` detection logic is scaffolded.
+- LLM-based `ReviewRoutingAgent` and `CaseSummaryAgent` class bodies exist
+  but are not wired into the deterministic tail path when the flag is enabled.
+- Completion requires: complexity check in `_apply_deterministic_resolution()`,
+  wiring agent classes for the LLM tail path, and ensuring these agents use
+  `response_format={"type":"json_object"}`.
+
+**InvoiceExtractionAgent Schema Validation**
+- No lightweight schema check (required keys, numeric confidence, non-empty
+  line_items) before `_finalise_run()`. A partial LLM response succeeds silently.
+- Target: add schema validation in `interpret_response()`; mark run FAILED
+  if validation fails so the extraction pipeline can retry. Also add a
+  confidence penalty when `invoice_number` or `vendor_name` is empty.
+
+---
+
+### [FUTURE] -- Not Yet Started
+
+**Country / Cost-Centre Scope Enforcement**
+- `Invoice` and `PurchaseOrder` do not yet have `country_code` or `cost_centre`
+  fields. Add schema columns, then wire into `authorize_data_scope()`.
+
+**Feedback Learning from Field Corrections**
+- `VendorAliasMapping` and `ItemAliasMapping` exist in `posting_core` but are
+  not updated when a human reviewer accepts an ExtractionFieldCorrection.
+
+**Scheduled ERP Reference Re-import**
+- No Celery Beat task to pull fresh vendor/item master data from shared drive
+  or ERP on a schedule.
+
+**LLM-Assisted Item Mapping**
+- `PostingMappingEngine._resolve_item()` uses exact/alias/fuzzy matching only.
+  GPT-based semantic description matching would improve coverage on novel items.
+
+**External Observability Wiring**
+- Phoenix / Langfuse / OTel integration code examples are in Section 9.5.
+  None are wired into the app by default -- they are opt-in via env flags.
+  `PHOENIX_ENABLED`, `LANGFUSE_ENABLED`, `OTEL_ENABLED` exist in settings
+  but the corresponding tracer / instrumentor startup code is not yet present
+  in `AgentConfig.ready()`.
+
+**Email Notifications**
+- No notification system for new review assignments or agent escalations.
+
+**Auto-Submit for Touchless Postings**
+- `PostingActionService.submit_posting()` is a Phase 1 mock. Real ERP
+  connector call (SAP BAPI, Oracle REST, etc.) not yet implemented.
+  Auto-advance of touchless postings (`is_touchless=True`, confidence above
+  threshold) to `SUBMISSION_IN_PROGRESS` is also not yet implemented.
