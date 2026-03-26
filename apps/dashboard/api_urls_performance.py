@@ -3,6 +3,7 @@ from django.urls import path
 from apps.dashboard.api_views_performance import (
     PerfLatencyView,
     PerfLiveFeedView,
+    PerfPlanComparisonView,
     PerfRecommendationsView,
     PerfReliabilityView,
     PerfSummaryView,
@@ -22,4 +23,5 @@ urlpatterns = [
     path("tools/", PerfToolUsageView.as_view(), name="perf-tools"),
     path("recommendations/", PerfRecommendationsView.as_view(), name="perf-recommendations"),
     path("live-feed/", PerfLiveFeedView.as_view(), name="perf-live-feed"),
+    path("plan-comparison/", PerfPlanComparisonView.as_view(), name="perf_plan_comparison"),
 ]

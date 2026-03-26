@@ -23,6 +23,7 @@ from typing import Dict, List, Optional
 from django.utils import timezone
 
 from apps.agents.models import AgentEscalation, AgentRecommendation, AgentRun
+from apps.agents.services.agent_memory import AgentMemory
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
 from apps.agents.services.base_agent import AgentContext, BaseAgent
 from apps.agents.services.decision_log_service import DecisionLogService
@@ -34,6 +35,7 @@ from apps.agents.services.guardrails_service import (
     AgentGuardrailsService,
 )
 from apps.agents.services.policy_engine import PolicyEngine
+from apps.agents.services.reasoning_planner import ReasoningPlanner
 from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
 from apps.core.decorators import observed_service
 from apps.core.metrics import MetricsService
@@ -64,11 +66,24 @@ class OrchestrationResult:
     error: str = ""
 
 
+class _AgentRunOutputProxy:
+    """Lightweight read-only adapter that presents an AgentRun DB record
+    with the same interface expected by AgentMemory.record_agent_output().
+    """
+
+    def __init__(self, agent_run: AgentRun) -> None:
+        self.reasoning: str = agent_run.summarized_reasoning or ""
+        payload = agent_run.output_payload or {}
+        self.recommendation_type: Optional[str] = payload.get("recommendation_type")
+        self.confidence: float = float(agent_run.confidence or 0.0)
+        self.evidence: dict = payload.get("evidence") or {}
+
+
 class AgentOrchestrator:
     """Orchestrates the agentic layer for a single ReconciliationResult."""
 
     def __init__(self):
-        self.policy = PolicyEngine()
+        self.policy = ReasoningPlanner()
         self.decision_service = DecisionLogService()
         self.resolver = DeterministicResolver()
 
@@ -190,6 +205,10 @@ class AgentOrchestrator:
         # Store actor on instance for use by helper methods
         self._actor = actor
 
+        # Attach structured memory to context for cross-agent data sharing.
+        memory = AgentMemory()
+        ctx.memory = memory
+
         # 4. Execute LLM agents in sequence
         last_output = None
         for agent_type in llm_agents:
@@ -239,6 +258,10 @@ class AgentOrchestrator:
                 orch_result.agents_executed.append(agent_type)
                 orch_result.agent_runs.append(agent_run)
                 last_output = agent_run
+
+                # Update structured memory from this agent's output.
+                _output_proxy = _AgentRunOutputProxy(agent_run)
+                memory.record_agent_output(agent_type, _output_proxy)
 
                 # Record recommendation only for designated routing agents
                 output_payload = agent_run.output_payload or {}

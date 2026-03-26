@@ -94,3 +94,13 @@ class PerfLiveFeedView(APIView):
             filters=_get_perf_filters(request), user=request.user, limit=limit,
         )
         return Response(data)
+
+
+class PerfPlanComparisonView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        data = AgentPerformanceDashboardService.get_plan_comparison(
+            filters=_get_perf_filters(request), user=request.user, limit=20,
+        )
+        return Response(data)

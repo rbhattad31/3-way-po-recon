@@ -13,6 +13,7 @@ from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 
 from apps.agents.models import AgentEscalation, AgentRecommendation, AgentRun
+from apps.agents.services.policy_engine import PolicyEngine
 from apps.core.enums import AgentRunStatus, ToolCallStatus, UserRole
 from apps.tools.models import ToolCall
 
@@ -344,3 +345,114 @@ class AgentPerformanceDashboardService:
                 ),
             })
         return feed
+
+    # ------------------------------------------------------------------
+    # 9. Plan comparison -- actual vs deterministic PolicyEngine
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_plan_comparison(filters=None, user=None, limit=20) -> dict:
+        """Compare actual agent runs against what PolicyEngine would have planned.
+
+        Re-runs PolicyEngine.plan() on completed reconciliation results and
+        checks whether the actual agent types that ran match the deterministic
+        plan.  No new database models are required.
+        """
+        import logging
+        from apps.reconciliation.models import ReconciliationResult
+
+        logger = logging.getLogger(__name__)
+        try:
+            base_qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+
+            # Distinct result IDs that have at least one completed AgentRun,
+            # ordered by most recent run first, limited to <limit> results.
+            result_ids = (
+                base_qs.filter(status=AgentRunStatus.COMPLETED)
+                .exclude(reconciliation_result_id__isnull=True)
+                .order_by("-created_at")
+                .values_list("reconciliation_result_id", flat=True)
+                .distinct()
+            )[:limit]
+
+            result_ids = list(result_ids)
+
+            policy = PolicyEngine()
+            rows = []
+
+            for result_id in result_ids:
+                try:
+                    result = (
+                        ReconciliationResult.objects
+                        .select_related("invoice", "purchase_order")
+                        .prefetch_related("exceptions")
+                        .get(pk=result_id)
+                    )
+                except ReconciliationResult.DoesNotExist:
+                    continue
+
+                # Actual agents that ran for this result, ordered by start time.
+                actual_runs = (
+                    base_qs
+                    .filter(
+                        reconciliation_result_id=result_id,
+                        status=AgentRunStatus.COMPLETED,
+                    )
+                    .order_by("started_at")
+                    .values_list("agent_type", flat=True)
+                )
+                actual_plan = list(actual_runs)
+                run_count = len(actual_plan)
+
+                # Deterministic plan from PolicyEngine.
+                agent_plan = policy.plan(result)
+                policy_plan = list(agent_plan.agents) if agent_plan.agents else []
+
+                actual_set = set(actual_plan)
+                policy_set = set(policy_plan)
+
+                plans_match = actual_plan == policy_plan
+                added_by_actual = sorted(actual_set - policy_set)
+                removed_by_actual = sorted(policy_set - actual_set)
+
+                inv = getattr(result, "invoice", None)
+                rows.append({
+                    "result_id": result_id,
+                    "invoice_number": getattr(inv, "invoice_number", "") or "",
+                    "invoice_id": getattr(inv, "id", None),
+                    "match_status": result.match_status,
+                    "policy_plan": policy_plan,
+                    "actual_plan": actual_plan,
+                    "plans_match": plans_match,
+                    "added_by_actual": added_by_actual,
+                    "removed_by_actual": removed_by_actual,
+                    "run_count": run_count,
+                })
+
+            total_compared = len(rows)
+            plans_matched = sum(1 for r in rows if r["plans_match"])
+            plans_differed = total_compared - plans_matched
+            match_rate = (
+                round(plans_matched / total_compared * 100, 1)
+                if total_compared
+                else 0
+            )
+
+            return {
+                "rows": rows,
+                "total_compared": total_compared,
+                "plans_matched": plans_matched,
+                "plans_differed": plans_differed,
+                "match_rate": match_rate,
+            }
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "get_plan_comparison failed: %s", exc, exc_info=True
+            )
+            return {
+                "rows": [],
+                "total_compared": 0,
+                "plans_matched": 0,
+                "plans_differed": 0,
+                "match_rate": 0,
+            }

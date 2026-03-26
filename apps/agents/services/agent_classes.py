@@ -126,6 +126,20 @@ class ExceptionAnalysisAgent(BaseAgent):
 
     def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
         data = _parse_agent_json(content)
+
+        # Validate recommendation_type against the enum.
+        valid_rec_types = {rt.value for rt in RecommendationType}
+        rec_type = data.get("recommendation_type")
+        if rec_type is not None and rec_type not in valid_rec_types:
+            data["recommendation_type"] = RecommendationType.SEND_TO_AP_REVIEW.value
+            data["confidence"] = min(data.get("confidence") or 0.0, 0.6)
+
+        # Clamp confidence to [0.0, 1.0].
+        try:
+            data["confidence"] = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
+        except (TypeError, ValueError):
+            data["confidence"] = 0.0
+
         return _to_agent_output(data, content)
 
     # ------------------------------------------------------------------
@@ -353,8 +367,22 @@ class PORetrievalAgent(BaseAgent):
     def allowed_tools(self) -> List[str]:
         return ["po_lookup", "vendor_search", "invoice_details"]
 
+    _PO_EVIDENCE_FALLBACK_KEYS = ("po_number", "matched_po", "result", "found", "po")
+
     def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
         data = _parse_agent_json(content)
+
+        # Normalise evidence so the orchestrator feedback loop always finds
+        # the PO number under the canonical "found_po" key.
+        evidence = data.get("evidence") or {}
+        if "found_po" not in evidence:
+            for key in self._PO_EVIDENCE_FALLBACK_KEYS:
+                value = evidence.get(key)
+                if isinstance(value, str) and value.strip():
+                    evidence["found_po"] = value.strip()
+                    break
+            data["evidence"] = evidence
+
         return _to_agent_output(data, content)
 
 
@@ -375,6 +403,12 @@ class GRNRetrievalAgent(BaseAgent):
         return PromptRegistry.get("agent.grn_retrieval")
 
     def build_user_message(self, ctx: AgentContext) -> str:
+        # Guard: this agent is only applicable in THREE_WAY mode.
+        if ctx.reconciliation_mode == "TWO_WAY":
+            return (
+                '{"reasoning": "Agent not applicable in TWO_WAY mode", '
+                '"recommendation_type": null, "confidence": 0.0, "decisions": [], "evidence": {}}'
+            )
         return (
             _mode_context(ctx)
             + f"Invoice ID: {ctx.invoice_id}\n"

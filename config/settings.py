@@ -212,6 +212,9 @@ AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+# Set to True to activate the LLM-backed ReasoningPlanner for agent pipeline planning.
+# When False (default), the deterministic PolicyEngine is always used.
+AGENT_REASONING_ENGINE_ENABLED = os.getenv("AGENT_REASONING_ENGINE_ENABLED", "false").lower() == "true"
 
 # Azure Document Intelligence (OCR)
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")

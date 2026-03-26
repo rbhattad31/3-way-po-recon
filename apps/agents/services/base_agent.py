@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from apps.agents.models import (
     AgentStep,
     DecisionLog,
 )
+from apps.agents.services.agent_memory import AgentMemory
 from apps.agents.services.llm_client import LLMClient, LLMMessage, LLMResponse
 from apps.core.constants import AGENT_MAX_RETRIES, AGENT_TIMEOUT_SECONDS
 from apps.core.enums import AgentRunStatus, AgentType
@@ -54,6 +56,8 @@ class AgentContext:
     access_granted: bool = False
     trace_id: str = ""
     span_id: str = ""
+    # Structured in-process memory shared across all agents in the pipeline.
+    memory: Optional[AgentMemory] = None
 
 
 @dataclass
@@ -273,7 +277,7 @@ class BaseAgent(ABC):
             "confidence": output.confidence,
             "evidence": output.evidence,
         }
-        agent_run.summarized_reasoning = output.reasoning[:2000]
+        agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
         agent_run.confidence = output.confidence
         agent_run.save()
 
@@ -286,6 +290,27 @@ class BaseAgent(ABC):
                 confidence=d.get("confidence"),
                 evidence_refs=d.get("evidence"),
             )
+
+    @staticmethod
+    def _sanitise_text(text: str) -> str:
+        """Replace common Unicode characters with ASCII equivalents and
+        strip any remaining non-ASCII characters."""
+        replacements = {
+            "\u2018": "'",   # left single curly quote
+            "\u2019": "'",   # right single curly quote
+            "\u201c": '"',   # left double curly quote
+            "\u201d": '"',   # right double curly quote
+            "\u2014": "--",  # em-dash
+            "\u2013": "-",   # en-dash
+            "\u2026": "...", # horizontal ellipsis
+            "\u2192": "->",  # right arrow
+            "\u2190": "<-",  # left arrow
+            "\u21d2": "=>",  # double right arrow
+            "\u2022": "-",   # bullet point
+        }
+        for char, ascii_eq in replacements.items():
+            text = text.replace(char, ascii_eq)
+        return re.sub(r"[^\x00-\x7F]", "", text)
 
     @staticmethod
     def _save_message(

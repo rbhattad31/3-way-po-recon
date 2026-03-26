@@ -119,7 +119,16 @@ class AgentContext:
     access_granted: bool
     trace_id: str
     span_id: str
+    # Structured cross-agent memory (None for legacy callers)
+    memory: Optional[AgentMemory] = None
 ```
+
+The `memory` field carries an `AgentMemory` instance created by the orchestrator
+at the start of each pipeline run. It accumulates findings (resolved PO, GRN
+numbers, agent reasoning summaries, running recommendation) so that later agents
+have structured access to what earlier agents discovered -- replacing the
+previous plain-string `ctx.extra["prior_reasoning"]` approach.
+Both mechanisms are kept in parallel for backward compatibility.
 
 ### AgentOutput
 
@@ -175,9 +184,11 @@ class OrchestrationResult:
 | Component | File | Role |
 |---|---|---|
 | `AgentContext` / `AgentOutput` | `base_agent.py` | Data contracts |
-| `BaseAgent` | `base_agent.py` | ReAct loop, message persistence |
+| `AgentMemory` | `agent_memory.py` | Structured cross-agent findings store |
+| `BaseAgent` | `base_agent.py` | ReAct loop, message persistence, `_sanitise_text()` |
 | `LLMClient` | `llm_client.py` | Azure OpenAI / OpenAI wrapper |
 | `PolicyEngine` | `policy_engine.py` | Decide which agents to run (no LLM) |
+| `ReasoningPlanner` | `reasoning_planner.py` | LLM-backed planner; wraps PolicyEngine as fallback |
 | `DeterministicResolver` | `deterministic_resolver.py` | Rule-based exception routing |
 | `AgentOrchestrator` | `orchestrator.py` | Sequence execution, feedback, post-policy |
 | `AgentGuardrailsService` | `guardrails_service.py` | RBAC enforcement |
@@ -187,6 +198,7 @@ class OrchestrationResult:
 | Concrete tools (6) | `tools/registry/tools.py` | PO, GRN, vendor, invoice lookups |
 | Concrete agents (8) | `agent_classes.py` | Specialised implementations |
 | `AGENT_CLASS_REGISTRY` | `agent_classes.py` | AgentType -> class map |
+| `_AgentRunOutputProxy` | `orchestrator.py` | Adapts `AgentRun` DB record to `AgentMemory` interface |
 
 ---
 
@@ -349,6 +361,37 @@ class MyNewAgent(BaseAgent):
         return _to_agent_output(data, content)
 ```
 
+### `_sanitise_text()` -- ASCII Safety on All Stored Output
+
+`BaseAgent` exposes a static method that must be applied to any LLM-generated
+text before it is persisted:
+
+```python
+@staticmethod
+def _sanitise_text(text: str) -> str:
+    replacements = {
+        "\u2018": "'", "\u2019": "'",       # curly single quotes
+        "\u201c": '"', "\u201d": '"',       # curly double quotes
+        "\u2014": "--", "\u2013": "-",      # em/en dash
+        "\u2026": "...",                    # ellipsis
+        "\u2192": "->", "\u2190": "<-", "\u21d2": "=>",  # arrows
+        "\u2022": "-",                      # bullet
+    }
+    for char, ascii_eq in replacements.items():
+        text = text.replace(char, ascii_eq)
+    return re.sub(r"[^\x00-\x7F]", "", text)
+```
+
+`_finalise_run()` calls it before writing `agent_run.summarized_reasoning`:
+
+```python
+agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
+```
+
+This satisfies the project-wide rule that `AgentRun.summarized_reasoning`,
+`ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, and
+`DecisionLog.rationale` must contain only ASCII characters.
+
 Then:
 1. Add `AgentType.MY_NEW_TYPE` to `apps/core/enums.py`.
 2. Register in `AGENT_CLASS_REGISTRY` in `agent_classes.py`.
@@ -364,11 +407,11 @@ Then:
 
 | Agent | Type Enum | LLM Used | Tools | Notes |
 |---|---|---|---|---|
-| `ExceptionAnalysisAgent` | `EXCEPTION_ANALYSIS` | Yes | po_lookup, grn_lookup, invoice_details, exception_list, recon_summary | Also emits `<reviewer_summary>` block for ReviewAssignment |
+| `ExceptionAnalysisAgent` | `EXCEPTION_ANALYSIS` | Yes | po_lookup, grn_lookup, invoice_details, exception_list, recon_summary | Also emits `<reviewer_summary>` block for ReviewAssignment; validates recommendation_type against enum; clamps confidence to [0.0, 1.0] |
 | `InvoiceExtractionAgent` | `INVOICE_EXTRACTION` | Yes (temp=0, json_object) | None | Single-shot extraction; runs during upload, not reconciliation pipeline |
 | `InvoiceUnderstandingAgent` | `INVOICE_UNDERSTANDING` | Yes | invoice_details, po_lookup, vendor_search | Runs when extraction confidence < threshold |
-| `PORetrievalAgent` | `PO_RETRIEVAL` | Yes | po_lookup, vendor_search, invoice_details | Triggers feedback loop if PO found |
-| `GRNRetrievalAgent` | `GRN_RETRIEVAL` | Yes | grn_lookup, po_lookup, invoice_details | 3-way mode only; suppressed in TWO_WAY |
+| `PORetrievalAgent` | `PO_RETRIEVAL` | Yes | po_lookup, vendor_search, invoice_details | Triggers feedback loop if PO found; `interpret_response` normalises evidence to `found_po` from fallback keys |
+| `GRNRetrievalAgent` | `GRN_RETRIEVAL` | Yes | grn_lookup, po_lookup, invoice_details | 3-way mode only; `build_user_message` returns a no-op JSON payload immediately when `ctx.reconciliation_mode == "TWO_WAY"` |
 | `ReviewRoutingAgent` | `REVIEW_ROUTING` | **No (deterministic)** | reconciliation_summary, exception_list | Replaced by DeterministicResolver |
 | `CaseSummaryAgent` | `CASE_SUMMARY` | **No (deterministic)** | invoice_details, po_lookup, grn_lookup, etc. | Replaced by DeterministicResolver |
 | `ReconciliationAssistAgent` | `RECONCILIATION_ASSIST` | Yes | invoice_details, po_lookup, grn_lookup, etc. | Handles PARTIAL_MATCH analysis |
@@ -384,6 +427,11 @@ records use `llm_model_used="deterministic"` and zero token counts.
 
 `PolicyEngine.plan(result)` maps reconciliation state to an ordered agent list.
 It is purely deterministic (no LLM, no I/O aside from DB reads).
+
+> **Note:** `AgentOrchestrator` now uses `ReasoningPlanner` instead of
+> `PolicyEngine` directly. `ReasoningPlanner` wraps `PolicyEngine` as its
+> deterministic fallback and calls the LLM only when
+> `AGENT_REASONING_ENGINE_ENABLED=True`. See Section 16 for details.
 
 ### Decision Matrix
 
@@ -446,38 +494,48 @@ point for the entire agentic pipeline.
 1. resolve_actor(request_user)              # user or SYSTEM_AGENT
 2. authorize_orchestration(actor)           # agents.orchestrate permission
 3. build_trace_context_for_agent(actor)     # set TraceContext thread-local
-4. policy.plan(result)                      # get AgentPlan
+4. policy.plan(result)                      # ReasoningPlanner -> PolicyEngine fallback
 5. if plan.skip_agents -> auto-close or skip, return
 6. partition plan.agents:
      llm_agents       = plan.agents - REPLACED_AGENTS
      deterministic_tail = plan.agents & REPLACED_AGENTS
 7. build AgentContext (exceptions, extra, RBAC fields, trace IDs)
-8. for agent_type in llm_agents:
+8. create AgentMemory() and assign ctx.memory = memory
+9. for agent_type in llm_agents:
      a. authorize_agent(actor, agent_type)
      b. agent_cls().run(ctx)
      c. pass forward: ctx.extra["prior_reasoning"], ctx.extra["recommendation_type"]
-     d. if EXCEPTION_ANALYSIS: write reviewer summary to ReviewAssignment
-     e. if agent in _RECOMMENDING_AGENTS: log_recommendation()
-     f. if agent in _FEEDBACK_AGENTS: _apply_agent_findings() -> re-reconcile
-9. if deterministic_tail: _apply_deterministic_resolution()
-10. _resolve_final_recommendation()         # highest-confidence AgentRecommendation
-11. _apply_post_policies():
+     d. memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
+     e. if EXCEPTION_ANALYSIS: write reviewer summary to ReviewAssignment
+     f. if agent in _RECOMMENDING_AGENTS: log_recommendation()
+     g. if agent in _FEEDBACK_AGENTS: _apply_agent_findings() -> re-reconcile
+10. if deterministic_tail: _apply_deterministic_resolution()
+11. _resolve_final_recommendation()         # highest-confidence AgentRecommendation
+12. _apply_post_policies():
      - should_auto_close() -> result.match_status = MATCHED
      - should_escalate()   -> create AgentEscalation
 ```
 
 ### Context Forwarding Between Agents
 
-After each LLM agent completes, the orchestrator injects its output into
-`ctx.extra` before the next agent runs:
+After each LLM agent completes, the orchestrator forwards output via two
+mechanisms:
 
+**Legacy string approach** (kept for backward compatibility):
 ```python
 ctx.extra["prior_reasoning"] = last_output.summarized_reasoning or ""
 ctx.extra["recommendation_type"] = (last_output.output_payload or {}).get("recommendation_type", "")
 ```
 
-This gives each successive agent awareness of prior analysis without
-re-running them.
+**Structured memory** (new -- see `AgentMemory` in Section 2):
+```python
+memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
+```
+
+`_AgentRunOutputProxy` is an internal adapter that reads `.summarized_reasoning`,
+`.output_payload`, and `.confidence` from an `AgentRun` DB record and presents
+them as `.reasoning`, `.recommendation_type`, `.confidence`, and `.evidence` --
+the interface expected by `AgentMemory.record_agent_output()`.
 
 ---
 
@@ -522,8 +580,14 @@ an admin bypass.
 ## 13. Agent Feedback Loop
 
 When the `PORetrievalAgent` (the only current `_FEEDBACK_AGENTS` member)
-completes, the orchestrator checks its output for evidence keys `found_po`,
-`po_number`, or `matched_po`. If a PO number is found:
+completes, the orchestrator checks its output for a PO number.
+`PORetrievalAgent.interpret_response()` normalises the evidence dict so the
+feedback loop can always find the PO regardless of which key the LLM used.
+The normalisation checks keys in this priority order:
+`"found_po"` (canonical) → `"po_number"` → `"matched_po"` → `"result"` → `"found"` → `"po"`.
+The first non-empty string is copied to `evidence["found_po"]`.
+
+If a PO number is found:
 
 ```
 1. Lookup PurchaseOrder by po_number (or normalized variant)
@@ -538,7 +602,9 @@ completes, the orchestrator checks its output for evidence keys `found_po`,
    - ctx.extra["grn_available"], ["grn_fully_received"] updated
 ```
 
-Subsequent agents in the pipeline then see the updated state.
+Subsequent agents in the pipeline then see the updated state. The resolved PO
+number is also stored in `ctx.memory.resolved_po_number` when `AgentMemory` is
+available.
 
 ---
 
@@ -621,8 +687,14 @@ flow as the safe fallback.
 | Agent order is fixed (list from PolicyEngine) | Cannot react to mid-pipeline discoveries |
 | Each agent runs exactly once | Cannot retry or branch based on findings |
 | DeterministicResolver always handles tail agents | LLM cannot override routing in edge cases |
-| No cross-agent memory beyond `ctx.extra["prior_reasoning"]` | Later agents lack structured access to earlier findings |
 | No planning step -- just a rule lookup | Cannot handle novel exception combinations |
+
+> **Implementation status:** Phases 1 and 2 are **fully implemented** and
+> merged. `AgentMemory` is live in `agent_memory.py`. `ReasoningPlanner` is
+> live in `reasoning_planner.py` and is what `AgentOrchestrator.__init__()`
+> instantiates. The deterministic `PolicyEngine` remains as the internal
+> fallback. Set `AGENT_REASONING_ENGINE_ENABLED=True` in `.env` to activate
+> the LLM planning path (Phase 3). Phases 4 and 5 remain optional/future.
 
 ### Target Architecture: Planner + Executor
 
@@ -900,13 +972,13 @@ def _is_complex_case(self, result, exceptions) -> bool:
 
 ### Migration Strategy
 
-| Phase | What Changes | Existing Flow |
-|---|---|---|
-| Phase 1: SharedMemory | Add `AgentMemory` dataclass to `AgentContext` | Unchanged (field ignored) |
-| Phase 2: ReasoningPlanner | `AgentOrchestrator` uses `ReasoningPlanner` (flag off) | Identical -- `PolicyEngine` runs as fallback |
-| Phase 3: Enable planner | Set `AGENT_REASONING_ENGINE_ENABLED=True` | LLM plans the pipeline; deterministic still handles tail |
-| Phase 4: Reflection | Add reflection hook after each agent | Optional inserts only; DeterministicResolver unchanged |
-| Phase 5: LLM tail | Complex cases use LLM terminal agents | DeterministicResolver still handles standard cases |
+| Phase | What Changes | Status | Existing Flow |
+|---|---|---|---|
+| Phase 1: SharedMemory | Add `AgentMemory` dataclass to `AgentContext` | **DONE** | Unchanged (field ignored by legacy callers) |
+| Phase 2: ReasoningPlanner | `AgentOrchestrator` uses `ReasoningPlanner` (flag off) | **DONE** | Identical -- `PolicyEngine` runs as fallback |
+| Phase 3: Enable planner | Set `AGENT_REASONING_ENGINE_ENABLED=True` | Ready to enable | LLM plans the pipeline; deterministic still handles tail |
+| Phase 4: Reflection | Add reflection hook after each agent | Not started | Optional inserts only; DeterministicResolver unchanged |
+| Phase 5: LLM tail | Complex cases use LLM terminal agents | Not started | DeterministicResolver still handles standard cases |
 
 ### What Must Never Change
 
@@ -953,7 +1025,7 @@ breaking anything that already works.
 | Retry with backoff | Transient LLM failures should retry before failing the run | `AgentDefinition.max_retries=2` field exists but `BaseAgent.run()` does not read it | Wire `max_retries` into the try/except block in `BaseAgent.run()` |
 | Minimal tool surface | Each agent should only see the tools it actually needs | `allowed_tools` is correctly scoped per agent | No change needed -- already correct |
 | Human-readable reasoning | `summarized_reasoning` must be meaningful to a non-technical reviewer | Content is taken directly from LLM output; quality varies | Add a reasoning quality check: minimum 50 characters, must mention at least one invoice or PO reference |
-| No special characters in output | Agent-generated strings that are stored to DB or shown in UI must use ASCII only | LLM may return Unicode arrows, fancy quotes, em-dashes | Add an output sanitiser in `_finalise_run()` that strips non-ASCII characters from `summarized_reasoning` and `case_summary` |
+| No special characters in output | Agent-generated strings that are stored to DB or shown in UI must use ASCII only | **DONE** -- `BaseAgent._sanitise_text()` is implemented and called in `_finalise_run()` | No further action required |
 
 ---
 
@@ -976,18 +1048,9 @@ Recommended upgrades:
    None, generate a minimal summary from the main JSON output rather than
    leaving `reviewer_summary` empty on the `ReviewAssignment`.
 
-3. **Validate recommendation_type against enum.** Before calling
-   `interpret_response`, assert the value is one of the known
-   `RecommendationType` values; default to `SEND_TO_AP_REVIEW` if not.
-
-```python
-# In interpret_response, after _parse_agent_json:
-VALID_REC_TYPES = {rt.value for rt in RecommendationType}
-rec = data.get("recommendation_type")
-if rec not in VALID_REC_TYPES:
-    data["recommendation_type"] = RecommendationType.SEND_TO_AP_REVIEW
-    data["confidence"] = min(float(data.get("confidence", 0.5)), 0.6)
-```
+3. **Validate recommendation_type against enum.** **DONE** -- implemented in
+   `interpret_response()`. Invalid values are replaced with `SEND_TO_AP_REVIEW`
+   and confidence is capped at 0.6. Confidence is always clamped to [0.0, 1.0].
 
 ---
 
@@ -1037,59 +1100,24 @@ Current gaps:
 - If the LLM puts the PO number in `evidence["result"]` or similar, the
   feedback loop silently does nothing.
 
-Recommended upgrade:
-
-Add explicit instruction to the system prompt:
-
-```
-When you find a PO, you MUST include it in the evidence JSON with the key
-"found_po": "<po_number>". This key is required for the reconciliation
-feedback loop to function.
-```
-
-Also add a post-process check in `interpret_response`:
-
-```python
-def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
-    data = _parse_agent_json(content)
-    # Normalise PO evidence key so feedback loop always finds it
-    evidence = data.get("evidence", {})
-    for key in ("po_number", "matched_po", "result", "found"):
-        if key in evidence and "found_po" not in evidence:
-            evidence["found_po"] = evidence[key]
-            break
-    data["evidence"] = evidence
-    return _to_agent_output(data, content)
-```
+**DONE** -- `interpret_response()` now normalises the evidence dict.
+Fallback keys checked in priority order: `po_number` -> `matched_po` ->
+`result` -> `found` -> `po`. The first non-empty string value is copied to
+`evidence["found_po"]`. The system prompt upgrade (instructing the LLM to use
+`found_po` explicitly) is the remaining recommended action.
 
 ---
 
 #### GRNRetrievalAgent
 
 Current gaps:
-- No mode guard inside the agent itself; it relies entirely on the
-  `PolicyEngine` never scheduling it in TWO_WAY mode. If an agent is
-  triggered directly (e.g. from a test), it may produce irrelevant output.
+- No mode guard inside the agent itself; it relied entirely on the
+  `PolicyEngine` never scheduling it in TWO_WAY mode.
 
-Recommended upgrade:
-
-Add a mode guard at the top of `build_user_message()`:
-
-```python
-def build_user_message(self, ctx: AgentContext) -> str:
-    if ctx.reconciliation_mode == "TWO_WAY":
-        return (
-            "ERROR: GRN retrieval was called in TWO_WAY mode. "
-            "This agent should not run in 2-way reconciliation. "
-            "Respond with: {\"reasoning\": \"Agent not applicable in TWO_WAY mode\", "
-            "\"recommendation_type\": null, \"confidence\": 0.0, \"decisions\": [], \"evidence\": {}}"
-        )
-    return (
-        _mode_context(ctx)
-        + f"Invoice ID: {ctx.invoice_id}\n"
-        # ... rest of message
-    )
-```
+**DONE** -- `build_user_message()` now returns a machine-parseable JSON
+no-op string immediately when `ctx.reconciliation_mode == "TWO_WAY"`.
+`interpret_response` / `_to_agent_output` handle this gracefully (zero
+confidence, empty decisions, empty evidence).
 
 ---
 
@@ -1130,36 +1158,11 @@ Recommended upgrades:
 
 These can be implemented once in `BaseAgent` and all agents inherit them.
 
-#### Output Sanitiser (no special characters in stored content)
+#### Output Sanitiser -- DONE
 
-```python
-# In base_agent.py _finalise_run(), before saving:
-import re
-
-def _sanitise_text(text: str) -> str:
-    """Strip non-ASCII characters from agent-generated text before storing."""
-    # Replace common Unicode substitutes with ASCII equivalents
-    replacements = {
-        "\u2019": "'", "\u2018": "'",  # curly quotes
-        "\u201c": '"', "\u201d": '"',  # curly double quotes
-        "\u2014": "--", "\u2013": "-", # em/en dash
-        "\u2026": "...",               # ellipsis
-        "\u2192": "->", "\u2190": "<-", "\u21d2": "=>",  # arrows
-        "\u2022": "-",                 # bullet
-    }
-    for char, replacement in replacements.items():
-        text = text.replace(char, replacement)
-    # Strip anything else outside printable ASCII
-    return re.sub(r"[^\x00-\x7F]", "", text)
-```
-
-Apply in `_finalise_run()`:
-
-```python
-agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
-```
-
-And in `DeterministicResolver._build_case_summary()` before returning.
+`BaseAgent._sanitise_text()` is implemented and called in `_finalise_run()`.
+See Section 7 for the full method. No further action required for existing
+agents. New agents inherit this automatically.
 
 #### Prompt Version Capture
 
