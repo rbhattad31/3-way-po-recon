@@ -58,12 +58,20 @@ def _parse_agent_json(content: str) -> Dict[str, Any]:
 
 
 def _to_agent_output(data: Dict[str, Any], raw: str) -> AgentOutput:
+    from apps.agents.services.agent_output_schema import AgentOutputSchema
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+    try:
+        validated = AgentOutputSchema.model_validate(data)
+    except Exception as exc:
+        _logger.warning("AgentOutputSchema validation failed (%s) -- using defaults", exc)
+        validated = AgentOutputSchema()
     return AgentOutput(
-        reasoning=data.get("reasoning", raw[:500]),
-        recommendation_type=data.get("recommendation_type"),
-        confidence=float(data.get("confidence", 0.0)),
-        evidence=data.get("evidence", {}),
-        decisions=data.get("decisions", []),
+        reasoning=validated.reasoning or raw[:500],
+        recommendation_type=validated.recommendation_type,
+        confidence=validated.confidence,
+        evidence=validated.evidence,
+        decisions=[d.model_dump() for d in validated.decisions],
         raw_content=raw,
     )
 
@@ -222,6 +230,7 @@ class InvoiceExtractionAgent(BaseAgent):
     """
 
     agent_type = AgentType.INVOICE_EXTRACTION
+    enforce_json_response = False  # Handles its own response_format in run()
 
     def __init__(self):
         from apps.agents.services.llm_client import LLMClient
@@ -320,16 +329,27 @@ class InvoiceUnderstandingAgent(BaseAgent):
 
     def build_user_message(self, ctx: AgentContext) -> str:
         rr = ctx.reconciliation_result
-        extraction_conf = rr.extraction_confidence if rr else ctx.extra.get("extraction_confidence", "N/A")
-        match_status = rr.match_status if rr else ctx.extra.get("match_status", "PRE_RECONCILIATION")
+        extraction_conf = (
+            rr.extraction_confidence
+            if rr
+            else (ctx.memory.facts.get("extraction_confidence", "N/A") if ctx.memory else "N/A")
+        )
+        match_status = (
+            rr.match_status
+            if rr
+            else (ctx.memory.facts.get("match_status", "PRE_RECONCILIATION") if ctx.memory else "PRE_RECONCILIATION")
+        )
         lines = [
             f"Invoice ID: {ctx.invoice_id}",
             f"PO Number: {ctx.po_number or 'N/A'}",
             f"Extraction Confidence: {extraction_conf}",
             f"Match Status: {match_status}",
         ]
-        if ctx.extra.get("validation_warnings"):
-            lines.append(f"Validation Warnings: {ctx.extra['validation_warnings']}")
+        validation_warnings = (
+            ctx.memory.facts.get("validation_warnings") if ctx.memory else None
+        ) or ctx.extra.get("validation_warnings")
+        if validation_warnings:
+            lines.append(f"Validation Warnings: {validation_warnings}")
         lines.append("\nRetrieve invoice details using the invoice_details tool, then analyse quality.")
         return "\n".join(lines)
 
@@ -409,12 +429,20 @@ class GRNRetrievalAgent(BaseAgent):
                 '{"reasoning": "Agent not applicable in TWO_WAY mode", '
                 '"recommendation_type": null, "confidence": 0.0, "decisions": [], "evidence": {}}'
             )
+        grn_available = (
+            ctx.memory.facts.get("grn_available", ctx.extra.get("grn_available", "unknown"))
+            if ctx.memory else ctx.extra.get("grn_available", "unknown")
+        )
+        grn_fully_received = (
+            ctx.memory.facts.get("grn_fully_received", ctx.extra.get("grn_fully_received", "unknown"))
+            if ctx.memory else ctx.extra.get("grn_fully_received", "unknown")
+        )
         return (
             _mode_context(ctx)
             + f"Invoice ID: {ctx.invoice_id}\n"
             f"PO Number: {ctx.po_number or 'N/A'}\n"
-            f"GRN Available: {ctx.extra.get('grn_available', 'unknown')}\n"
-            f"GRN Fully Received: {ctx.extra.get('grn_fully_received', 'unknown')}\n"
+            f"GRN Available: {grn_available}\n"
+            f"GRN Fully Received: {grn_fully_received}\n"
             "\nInvestigate GRN data for this PO."
         )
 

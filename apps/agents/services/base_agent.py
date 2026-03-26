@@ -75,6 +75,8 @@ class BaseAgent(ABC):
     """Abstract base for all reconciliation agents."""
 
     agent_type: str = ""  # Must match AgentType enum value
+    # Subclasses may override to False (e.g. for free-text streaming agents).
+    enforce_json_response: bool = True
 
     def __init__(self):
         self.llm = LLMClient()
@@ -124,18 +126,44 @@ class BaseAgent(ABC):
             span_id=ctx.span_id,
         )
 
+        # Stamp the current prompt version on the run for auditability.
+        from apps.core.prompt_registry import PromptRegistry
+        pv = PromptRegistry.version_for(self.agent_type) or ""
+        if pv:
+            agent_run.prompt_version = pv
+            agent_run.save(update_fields=["prompt_version"])
+
         # Resolve actor for tool-level authorization
         self._actor_user = self._resolve_actor(ctx)
         start = time.monotonic()
         step_counter = 0
+        timeout_s = (
+            agent_def.timeout_seconds
+            if agent_def and agent_def.timeout_seconds
+            else AGENT_TIMEOUT_SECONDS
+        )
+        max_retries = (
+            agent_def.max_retries
+            if agent_def and agent_def.max_retries is not None
+            else AGENT_MAX_RETRIES
+        )
 
         try:
             messages = self._init_messages(ctx, agent_run)
             tool_specs = ToolRegistry.get_specs(self.allowed_tools)
 
+            failed_tool_count = 0
+            total_tool_calls = 0
             for round_idx in range(MAX_TOOL_ROUNDS):
+                # Deadline check before each LLM call
+                if self._elapsed_seconds(start) > timeout_s:
+                    raise TimeoutError(
+                        f"Agent {self.agent_type} exceeded timeout of {timeout_s}s after "
+                        f"{step_counter} steps"
+                    )
                 # LLM call (with retry on transient errors)
                 step_counter += 1
+                response_format = {"type": "json_object"} if self.enforce_json_response else None
                 llm_resp = self._call_llm_with_retry(
                     self.llm,
                     [
@@ -149,6 +177,8 @@ class BaseAgent(ABC):
                         for m in messages
                     ],
                     tool_specs if tool_specs else None,
+                    response_format=response_format,
+                    max_retries=max_retries,
                 )
 
                 # Track token usage
@@ -162,6 +192,38 @@ class BaseAgent(ABC):
                 # If no tool calls, we're done
                 if not llm_resp.tool_calls:
                     output = self.interpret_response(llm_resp.content or "", ctx)
+                    # Replace the simple penalty block with composite confidence.
+                    composite = self._compute_composite_confidence(
+                        llm_confidence=output.confidence,
+                        failed_tool_count=failed_tool_count,
+                        total_tool_calls=total_tool_calls,
+                        evidence=output.evidence or {},
+                    )
+                    if composite != output.confidence:
+                        logger.info(
+                            "Agent %s: composite confidence %.2f (llm=%.2f tools=%d/%d evidence=%s)",
+                            self.agent_type, composite, output.confidence,
+                            total_tool_calls - failed_tool_count, total_tool_calls,
+                            bool(output.evidence),
+                        )
+                    output.confidence = composite
+
+                    # AUTO_CLOSE enforcement (keep this after composite calculation)
+                    if failed_tool_count > 0 and output.recommendation_type == "AUTO_CLOSE":
+                        output.recommendation_type = "SEND_TO_AP_REVIEW"
+                        output.confidence = min(output.confidence, 0.5)
+                        logger.warning(
+                            "Agent %s: AUTO_CLOSE blocked due to %d tool failure(s)",
+                            self.agent_type, failed_tool_count,
+                        )
+                    # Enforce output-level evidence.
+                    if not output.evidence:
+                        output.evidence = {"_provenance": "no_evidence_supplied"}
+                        output.confidence = min(output.confidence, 0.5)
+                        logger.warning(
+                            "Agent %s returned no evidence in output -- confidence capped at 0.5",
+                            self.agent_type,
+                        )
                     self._finalise_run(agent_run, output, start)
                     return agent_run
 
@@ -185,12 +247,47 @@ class BaseAgent(ABC):
                 for tc in llm_resp.tool_calls:
                     step_counter += 1
                     tool_result = self._execute_tool(tc.name, tc.arguments, agent_run, step_counter)
+                    if not tool_result.success:
+                        failed_tool_count += 1
+                    total_tool_calls += 1
                     tool_msg = json.dumps(tool_result.data if tool_result.success else {"error": tool_result.error})
                     messages.append({"role": "tool", "content": tool_msg, "tool_call_id": tc.id, "name": tc.name})
                     self._save_message(agent_run, "tool", tool_msg, len(messages), name=tc.name)
 
             # Exhausted rounds — use last content
             output = self.interpret_response(llm_resp.content or "", ctx)
+            # Replace the simple penalty block with composite confidence.
+            composite = self._compute_composite_confidence(
+                llm_confidence=output.confidence,
+                failed_tool_count=failed_tool_count,
+                total_tool_calls=total_tool_calls,
+                evidence=output.evidence or {},
+            )
+            if composite != output.confidence:
+                logger.info(
+                    "Agent %s: composite confidence %.2f (llm=%.2f tools=%d/%d evidence=%s)",
+                    self.agent_type, composite, output.confidence,
+                    total_tool_calls - failed_tool_count, total_tool_calls,
+                    bool(output.evidence),
+                )
+            output.confidence = composite
+
+            # AUTO_CLOSE enforcement (keep this after composite calculation)
+            if failed_tool_count > 0 and output.recommendation_type == "AUTO_CLOSE":
+                output.recommendation_type = "SEND_TO_AP_REVIEW"
+                output.confidence = min(output.confidence, 0.5)
+                logger.warning(
+                    "Agent %s: AUTO_CLOSE blocked due to %d tool failure(s)",
+                    self.agent_type, failed_tool_count,
+                )
+            # Enforce output-level evidence.
+            if not output.evidence:
+                output.evidence = {"_provenance": "no_evidence_supplied"}
+                output.confidence = min(output.confidence, 0.5)
+                logger.warning(
+                    "Agent %s returned no evidence in output -- confidence capped at 0.5",
+                    self.agent_type,
+                )
             self._finalise_run(agent_run, output, start)
 
         except Exception as exc:
@@ -284,12 +381,26 @@ class BaseAgent(ABC):
 
         # Persist decisions
         for d in output.decisions:
+            evidence = d.get("evidence") or {}
+            decision_conf = d.get("confidence")
+
+            # Downgrade confidence and flag if no evidence is attached.
+            if not evidence:
+                if decision_conf is not None:
+                    decision_conf = min(float(decision_conf), 0.5)
+                logger.warning(
+                    "Agent %s produced decision with no evidence_refs: '%s'",
+                    self.agent_type,
+                    str(d.get("decision", ""))[:100],
+                )
+                evidence = {"_provenance": "no_evidence_supplied"}
+
             DecisionLog.objects.create(
                 agent_run=agent_run,
                 decision=d.get("decision", "")[:500],
                 rationale=d.get("rationale", ""),
-                confidence=d.get("confidence"),
-                evidence_refs=d.get("evidence"),
+                confidence=decision_conf,
+                evidence_refs=evidence,
             )
 
     @staticmethod
@@ -312,6 +423,42 @@ class BaseAgent(ABC):
         for char, ascii_eq in replacements.items():
             text = text.replace(char, ascii_eq)
         return re.sub(r"[^\x00-\x7F]", "", text)
+
+    @staticmethod
+    def _truncate_exceptions(
+        exceptions: list,
+        max_exceptions: int = 20,
+    ) -> list:
+        """Return a severity- and recency-ordered subset of exceptions.
+
+        Keeps HIGH severity first, then MEDIUM, then LOW. Within each band,
+        preserves the original order (most recent first from the DB query).
+        If the list is within max_exceptions it is returned unchanged.
+
+        Args:
+            exceptions: List of exception dicts from the DB values() query.
+            max_exceptions: Hard upper limit. Default 20 covers typical GPT-4o
+                            context limits without truncation risk.
+        Returns:
+            Possibly shortened list, highest priority exceptions first.
+        """
+        if len(exceptions) <= max_exceptions:
+            return exceptions
+
+        _SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
+        sorted_excs = sorted(
+            exceptions,
+            key=lambda e: _SEVERITY_ORDER.get(str(e.get("severity", "LOW")).upper(), 4),
+        )
+        truncated = sorted_excs[:max_exceptions]
+        logger.warning(
+            "Exception list truncated from %d to %d for token budget "
+            "(dropped %d LOW/INFO exceptions)",
+            len(exceptions),
+            max_exceptions,
+            len(exceptions) - max_exceptions,
+        )
+        return truncated
 
     @staticmethod
     def _save_message(
@@ -338,7 +485,11 @@ class BaseAgent(ABC):
         }
 
     @staticmethod
-    def _call_llm_with_retry(llm, messages, tools, max_retries=3, base_delay=2):
+    def _elapsed_seconds(start: float) -> float:
+        return time.monotonic() - start
+
+    @staticmethod
+    def _call_llm_with_retry(llm, messages, tools, max_retries=3, base_delay=2, response_format=None):
         """Call llm.chat() with exponential-backoff retry on transient OpenAI errors.
 
         Retries on: RateLimitError, APIConnectionError, InternalServerError.
@@ -350,7 +501,11 @@ class BaseAgent(ABC):
         last_exc = None
         for attempt in range(max_retries + 1):
             try:
-                return llm.chat(messages=messages, tools=tools if tools else None)
+                return llm.chat(
+                    messages=messages,
+                    tools=tools if tools else None,
+                    response_format=response_format,
+                )
             except (
                 openai.RateLimitError,
                 openai.APIConnectionError,
@@ -365,6 +520,43 @@ class BaseAgent(ABC):
                     )
                     _time.sleep(delay)
         raise last_exc
+
+    @staticmethod
+    def _compute_composite_confidence(
+        llm_confidence: float,
+        failed_tool_count: int,
+        total_tool_calls: int,
+        evidence: dict,
+    ) -> float:
+        """Blend LLM confidence with tool-success and evidence scores.
+
+        Formula:
+            tool_score    = 1.0 if no tools called, else (successes / total)
+            evidence_score = 0.5 if evidence is empty or only has _provenance key,
+                             else 1.0
+            composite = (llm_confidence * 0.6) + (tool_score * 0.25) + (evidence_score * 0.15)
+
+        Clamped to [0.0, 1.0].
+        """
+        # Tool success score
+        if total_tool_calls == 0:
+            tool_score = 1.0
+        else:
+            successful = max(0, total_tool_calls - failed_tool_count)
+            tool_score = successful / total_tool_calls
+
+        # Evidence quality score
+        if not evidence or list(evidence.keys()) == ["_provenance"]:
+            evidence_score = 0.5
+        else:
+            evidence_score = 1.0
+
+        composite = (
+            float(llm_confidence) * 0.6
+            + tool_score * 0.25
+            + evidence_score * 0.15
+        )
+        return max(0.0, min(1.0, composite))
 
     @staticmethod
     def _resolve_actor(ctx: AgentContext):

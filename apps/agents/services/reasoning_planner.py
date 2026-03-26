@@ -1,14 +1,24 @@
 """LLM-backed agent execution planner.
 
-ReasoningPlanner wraps PolicyEngine and always uses the LLM to decide
-which agents to run and in what order. The deterministic PolicyEngine always
-runs first as a baseline; the LLM then produces the final plan and falls
-back to the deterministic plan on any error.
+CONTRACT (immutable):
+  - The LLM planner ALWAYS runs for every non-clean result.
+  - PolicyEngine always runs first as a baseline (fast, no LLM).
+  - If the LLM call fails for any reason, the deterministic PolicyEngine
+    result is returned as a safe fallback (plan_source = "deterministic").
+  - There is NO feature flag that gates the planner. It is always active.
 
-Usage::
+Reflection (insertion of extra agents after each run) is part of the
+orchestrator, not the planner. It is always active and requires no flag.
 
-    planner = ReasoningPlanner()
-    plan = planner.plan(reconciliation_result)
+LLM planner is responsible for:
+  - Choosing which agents to run and in what order
+  - Validating the chosen agent sequence
+  - Returning plan_source="llm" and plan_confidence from the LLM response
+
+PolicyEngine fallback is responsible for:
+  - Rule-based agent selection (no LLM)
+  - post-run should_auto_close() and should_escalate() checks
+    (delegated from ReasoningPlanner.should_auto_close/should_escalate)
 """
 from __future__ import annotations
 

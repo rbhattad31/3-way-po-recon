@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 # In-process cache: slug -> content string
 _cache: Dict[str, str] = {}
 
+# Maps AgentType values to their prompt registry slug.
+_AGENT_TYPE_TO_PROMPT_KEY: Dict[str, str] = {
+    "INVOICE_EXTRACTION":    "extraction.invoice_system",
+    "INVOICE_UNDERSTANDING": "agent.invoice_understanding",
+    "PO_RETRIEVAL":          "agent.po_retrieval",
+    "GRN_RETRIEVAL":         "agent.grn_retrieval",
+    "RECONCILIATION_ASSIST": "agent.reconciliation_assist",
+    "EXCEPTION_ANALYSIS":    "agent.exception_analysis",
+    "REVIEW_ROUTING":        "agent.review_routing",
+    "CASE_SUMMARY":          "agent.case_summary",
+}
+
 
 def _load_from_db(slug: str) -> Optional[str]:
     """Try to load prompt from the database."""
@@ -82,6 +94,24 @@ class PromptRegistry:
             _cache.pop(slug, None)
         else:
             _cache.clear()
+
+    @classmethod
+    def version_for(cls, agent_type: str) -> str:
+        """Return a version tag for the prompt associated with an agent type.
+
+        Returns the prompt's version field if present, else empty string.
+        """
+        key = _AGENT_TYPE_TO_PROMPT_KEY.get(agent_type, "")
+        if not key:
+            return ""
+        try:
+            from apps.core.models import PromptTemplate
+            pt = PromptTemplate.objects.filter(slug=key, is_active=True).only("version").first()
+            if pt:
+                return str(pt.version)
+        except Exception:
+            pass
+        return ""
 
     @classmethod
     def _resolve(cls, slug: str, use_cache: bool) -> str:

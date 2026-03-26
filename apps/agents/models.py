@@ -103,6 +103,73 @@ class AgentRun(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Agent Orchestration Run (top-level pipeline invocation record)
+# ---------------------------------------------------------------------------
+class AgentOrchestrationRun(BaseModel):
+    """Top-level record for one invocation of AgentOrchestrator.execute().
+
+    Lifetime: created before any agent runs, updated as agents complete,
+    marked COMPLETED or FAILED when the pipeline exits.
+    """
+
+    class Status(models.TextChoices):
+        PLANNED = "PLANNED", "Planned"
+        RUNNING = "RUNNING", "Running"
+        COMPLETED = "COMPLETED", "Completed"
+        PARTIAL = "PARTIAL", "Partial (some agents failed)"
+        FAILED = "FAILED", "Failed"
+
+    reconciliation_result = models.ForeignKey(
+        "reconciliation.ReconciliationResult",
+        on_delete=models.CASCADE,
+        related_name="orchestration_runs",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PLANNED,
+        db_index=True,
+    )
+    plan_source = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="deterministic or llm",
+    )
+    plan_confidence = models.FloatField(null=True, blank=True)
+    planned_agents = models.JSONField(
+        null=True, blank=True,
+        help_text="Ordered list of agent types the planner chose",
+    )
+    executed_agents = models.JSONField(
+        null=True, blank=True,
+        help_text="Agent types actually executed (updated as each agent completes)",
+    )
+    final_recommendation = models.CharField(max_length=60, blank=True, default="")
+    final_confidence = models.FloatField(null=True, blank=True)
+    skip_reason = models.CharField(max_length=500, blank=True, default="")
+    error_message = models.TextField(blank=True, default="")
+    actor_user_id = models.PositiveIntegerField(null=True, blank=True)
+    trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = "agents_orchestration_run"
+        ordering = ["-created_at"]
+        verbose_name = "Orchestration Run"
+        verbose_name_plural = "Orchestration Runs"
+        indexes = [
+            models.Index(
+                fields=["reconciliation_result", "status"],
+                name="idx_orchrun_result_status",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"OrchRun #{self.pk} result={self.reconciliation_result_id} {self.status}"
+
+
+# ---------------------------------------------------------------------------
 # Agent Step (substep within a run)
 # ---------------------------------------------------------------------------
 class AgentStep(TimestampMixin):
@@ -245,6 +312,12 @@ class AgentRecommendation(TimestampMixin):
             models.Index(fields=["recommendation_type"], name="idx_agentrec_type"),
             models.Index(fields=["reconciliation_result"], name="idx_agentrec_result"),
             models.Index(fields=["invoice"], name="idx_agentrec_invoice"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reconciliation_result", "recommendation_type", "agent_run"],
+                name="uq_rec_result_type_run",
+            ),
         ]
 
     def __str__(self) -> str:

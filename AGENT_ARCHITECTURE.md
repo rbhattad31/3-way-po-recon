@@ -28,6 +28,7 @@
 16. [Upgrade Path: Reasoning Engine](#16-upgrade-path-reasoning-engine)
 17. [Upgrading Existing Agents to Best Agentic Practices](#17-upgrading-existing-agents-to-best-agentic-practices)
 18. [Open Source Tools for Agent Performance and Inter-Agent Tracing](#18-open-source-tools-for-agent-performance-and-inter-agent-tracing)
+19. [Design Requirements and Enforcement Rules](#19-design-requirements-and-enforcement-rules)
     - 18.1 Open Source vs. SaaS Clarification
     - 18.2 Recommended Combination for This Stack
     - 18.3 Coverage Matrix
@@ -181,6 +182,50 @@ class OrchestrationResult:
     plan_confidence: float = 0.0  # planner self-reported confidence; 0.0 for deterministic
 ```
 
+### AgentOrchestrationRun (DB Model)
+
+Persisted state record for one full invocation of `AgentOrchestrator.execute()`.
+Created before any agent runs. Updated incrementally as agents complete.
+Serves three purposes: (1) duplicate-run protection, (2) visibility into
+incomplete/failed pipelines, (3) foundation for future partial resume.
+
+```python
+class AgentOrchestrationRun(BaseModel):
+    class Status(models.TextChoices):
+        PLANNED   = "PLANNED"    # not yet started
+        RUNNING   = "RUNNING"    # pipeline is executing
+        COMPLETED = "COMPLETED"  # all agents finished successfully
+        PARTIAL   = "PARTIAL"    # some agents failed but pipeline reached the end
+        FAILED    = "FAILED"     # pipeline crashed before completing
+
+    reconciliation_result  # FK -> ReconciliationResult
+    status                 # PLANNED | RUNNING | COMPLETED | PARTIAL | FAILED
+    plan_source            # "deterministic" or "llm"
+    plan_confidence        # float 0-1 from planner
+    planned_agents         # JSON list of agent types from planner
+    executed_agents        # JSON list updated after each agent finishes
+    final_recommendation   # copied from OrchestrationResult on completion
+    final_confidence       # copied from OrchestrationResult on completion
+    skip_reason            # populated on COMPLETED skipped runs
+    error_message          # populated on FAILED runs
+    actor_user_id          # PK of triggering user (or SYSTEM_AGENT)
+    trace_id               # links to TraceContext for distributed tracing
+    started_at / completed_at / duration_ms
+```
+
+**Duplicate-run protection:** if a `RUNNING` record already exists for a
+`ReconciliationResult`, `execute()` logs a warning and returns early with
+`orch_result.skipped=True` before any agent runs.
+
+**Lifecycle transitions:**
+```
+create(RUNNING) -> [per agent: save executed_agents] -> save(COMPLETED | PARTIAL)
+                                                   \-> on exception: save(FAILED)
+skip_agents=True -> create(COMPLETED, skip_reason=plan.reason)
+```
+
+DB table: `agents_orchestration_run`. Migration: `0006_add_orchestration_run`.
+
 ---
 
 ## 3. Component Inventory
@@ -189,12 +234,14 @@ class OrchestrationResult:
 |---|---|---|
 | `AgentContext` / `AgentOutput` | `base_agent.py` | Data contracts |
 | `AgentMemory` | `agent_memory.py` | Structured cross-agent findings store |
-| `BaseAgent` | `base_agent.py` | ReAct loop, message persistence, `_sanitise_text()`, `_call_llm_with_retry()` |
+| `BaseAgent` | `base_agent.py` | ReAct loop, message persistence, `_sanitise_text()`, `_truncate_exceptions()`, `_compute_composite_confidence()`, `_call_llm_with_retry()`, `enforce_json_response` |
+| `AgentOutputSchema` | `agent_output_schema.py` | Pydantic v2 validation of all standard agent JSON output |
 | `LLMClient` | `llm_client.py` | Azure OpenAI / OpenAI wrapper |
 | `PolicyEngine` | `policy_engine.py` | Decide which agents to run (no LLM) |
-| `ReasoningPlanner` | `reasoning_planner.py` | LLM-backed planner; wraps PolicyEngine as fallback |
+| `ReasoningPlanner` | `reasoning_planner.py` | LLM-backed planner; wraps PolicyEngine as fallback; delegates `should_auto_close` / `should_escalate` |
 | `DeterministicResolver` | `deterministic_resolver.py` | Rule-based exception routing |
-| `AgentOrchestrator` | `orchestrator.py` | Sequence execution, feedback, post-policy |
+| `AgentOrchestrator` | `orchestrator.py` | Sequence execution, feedback, post-policy; writes `AgentOrchestrationRun` |
+| `AgentOrchestrationRun` | `agents/models.py` | DB record for one full pipeline invocation (state machine) |
 | `AgentGuardrailsService` | `guardrails_service.py` | RBAC enforcement |
 | `AgentTraceService` | `agent_trace_service.py` | Unified governance writes |
 | `DecisionLogService` | `decision_log_service.py` | Recommendation lifecycle |
@@ -498,36 +545,92 @@ point for the entire agentic pipeline.
 1. resolve_actor(request_user)              # user or SYSTEM_AGENT
 2. authorize_orchestration(actor)           # agents.orchestrate permission
 3. build_trace_context_for_agent(actor)     # set TraceContext thread-local
-3a. idempotency guard: query AgentRun.objects for RUNNING runs on this result;
-    if found -> set orch_result.skipped=True / skip_reason and return early
 4. policy.plan(result)                      # ReasoningPlanner -> PolicyEngine fallback
 4a. orch_result.plan_source = plan.plan_source
     orch_result.plan_confidence = plan.plan_confidence
-5. if plan.skip_agents -> auto-close or skip, return
-6. partition plan.agents:
-     llm_agents       = plan.agents - REPLACED_AGENTS
+4b. duplicate-run guard: query AgentOrchestrationRun for RUNNING record on this result;
+    if found -> log warning, set orch_result.skipped=True / skip_reason, return early
+5. if plan.skip_agents:
+     -> create AgentOrchestrationRun(COMPLETED, skip_reason=plan.reason)
+     -> auto-close or log skip
+     -> return
+6. create AgentOrchestrationRun(RUNNING, planned_agents=plan.agents, executed_agents=[])
+   start _orch_start timer
+7. partition plan.agents:
+     llm_agents         = plan.agents - REPLACED_AGENTS
      deterministic_tail = plan.agents & REPLACED_AGENTS
-7. build AgentContext (exceptions, extra, RBAC fields, trace IDs)
-8. create AgentMemory() and assign ctx.memory = memory
-9. for agent_type in llm_agents:
+8. build AgentContext (exceptions, extra, RBAC fields, trace IDs)
+   exceptions are immediately truncated via `BaseAgent._truncate_exceptions()` (max 20, sorted HIGH->MEDIUM->LOW->INFO)
+9. create AgentMemory() and assign ctx.memory = memory
+10. for agent_type in llm_agents:
      a. authorize_agent(actor, agent_type)
-     b. agent_cls().run(ctx)
-     c. memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
-     d. if EXCEPTION_ANALYSIS: write reviewer summary to ReviewAssignment
-     e. if agent in _RECOMMENDING_AGENTS: log_recommendation()
-     f. if agent in _FEEDBACK_AGENTS: _apply_agent_findings() -> re-reconcile;
-           refresh ctx.po_number, ctx.exceptions, ctx.memory.resolved_po_number,
-           ctx.memory.facts["grn_available"], ctx.memory.facts["grn_fully_received"]
-     g. _reflect(agent_type, agent_run, result, remaining, ctx)
-           -> may insert new agents into llm_agents immediately after current position
-     h. on first iteration only: stamp plan metadata onto agent_run.input_payload
+     b. agent_cls().run(ctx)             # uses enforce_json_response=True by default
+     c. orch_db_run.executed_agents = list(orch_result.agents_executed); save()
+     d. memory.record_agent_output(agent_type, _AgentRunOutputProxy(agent_run))
+     e. if EXCEPTION_ANALYSIS: write reviewer summary to ReviewAssignment
+     f. if agent in _RECOMMENDING_AGENTS: `log_recommendation()` wrapped with `IntegrityError` guard -- duplicate skipped with warning, pipeline continues
+     g. if agent in _FEEDBACK_AGENTS: `_apply_agent_findings()` -> re-reconcile;
+           refresh `ctx.po_number`, `ctx.exceptions` (re-truncated via `_truncate_exceptions()`),
+           `ctx.memory.resolved_po_number`, `ctx.memory.facts["grn_available"]`, `ctx.memory.facts["grn_fully_received"]`
+     h. `_reflect(agent_type, agent_run, result, remaining, ctx, already_executed=list(orch_result.agents_executed))`
+           -> may insert new agents; guards against re-inserting an agent already in `agents_executed`
+     i. on first iteration only: stamp plan metadata onto agent_run.input_payload
            (plan_source, plan_confidence, planned_agents) and save(update_fields=...)
-10. if deterministic_tail: _apply_deterministic_resolution()
-11. _resolve_final_recommendation()         # highest-confidence AgentRecommendation
-12. _apply_post_policies():
+11. if deterministic_tail: _apply_deterministic_resolution()
+12. _resolve_final_recommendation()         # highest-confidence AgentRecommendation
+13. _apply_post_policies():
      - should_auto_close() -> result.match_status = MATCHED
      - should_escalate()   -> create AgentEscalation
+14. finalize AgentOrchestrationRun:
+     status = PARTIAL if orch_result.error else COMPLETED
+     final_recommendation, final_confidence, completed_at, duration_ms -> save()
 ```
+
+### Orchestration State Machine
+
+`AgentOrchestrationRun.status` follows a strict finite state machine.
+Terminal states (`COMPLETED`, `PARTIAL`, `FAILED`) are never re-entered.
+Only a fresh `AgentOrchestrationRun` record represents a new attempt.
+
+```
+Initial
+  |
+  v
+PLANNED --[execute() called]---> RUNNING
+                                    |
+                                    |-- all agents done, no error -------> COMPLETED (terminal)
+                                    |
+                                    |-- all agents done, some errors ----> PARTIAL  (terminal)
+                                    |
+                                    |-- unhandled exception in execute --> FAILED   (terminal)
+                                    |
+                                    |-- plan.skip_agents=True -----------> [RUNNING skipped]
+                                         create separate COMPLETED record with skip_reason
+
+Duplicate guard:
+  RUNNING already exists for same reconciliation_result
+    -> new execute() call returns early (orch_result.skipped=True)
+    -> NO new AgentOrchestrationRun record is created
+    -> NO agents are run
+```
+
+**Terminal state rules:**
+- `COMPLETED`: `final_recommendation` and `final_confidence` are always set.
+- `PARTIAL`: at least one agent raised an exception; `error_message` is set;
+  `final_recommendation` may be empty if the pipeline did not reach
+  `_resolve_final_recommendation()`.
+- `FAILED`: pipeline crashed before step 13; `completed_at` is set, all
+  agent-level fields (executed_agents, final_recommendation) may be empty.
+
+**Retry safety:**
+- Celery retries produce a new `execute()` call on the same result. If the
+  previous run is still `RUNNING` the duplicate guard blocks the retry.
+  If the previous run reached a terminal state the new call proceeds normally,
+  creating a new `AgentOrchestrationRun` record.
+- The duplicate guard uses `status=RUNNING` only -- terminal states never block
+  a fresh attempt. This means stale `RUNNING` records (e.g. from a worker
+  crash) will block retries until manually set to `FAILED`. Monitor for
+  long-lived `RUNNING` records with the governance API.
 
 ### Context Forwarding Between Agents
 
@@ -559,6 +662,8 @@ agent reads in its `build_user_message()` method:
 | `ReviewRoutingAgent` | `agent_summaries` (all prior summaries), `current_recommendation`, `current_confidence` |
 | `CaseSummaryAgent` | `agent_summaries` (pipe-joined, 100 chars each), `current_recommendation`, `current_confidence` |
 | `ReconciliationAssistAgent` | `resolved_po_number` (appended to prompt when not None) |
+| `GRNRetrievalAgent` | `facts["grn_available"]`, `facts["grn_fully_received"]` (with `ctx.extra` as secondary fallback) |
+| `InvoiceUnderstandingAgent` | `facts["extraction_confidence"]`, `facts["match_status"]` (when `rr` is None); `facts["validation_warnings"]` (primary, `ctx.extra` secondary) |
 
 All other agents do not currently read from `ctx.memory` in `build_user_message()`;
 they receive context exclusively through `AgentContext` fields (`po_number`,
@@ -594,6 +699,77 @@ When no human user is available (Celery async trigger, scheduled jobs),
 `SYSTEM_AGENT` role (rank 100, `is_system_role=True`). This identity has
 exactly the permissions seeded in `seed_rbac` for that role -- it is never
 an admin bypass.
+
+### Post-Policy Idempotency Guards
+
+`_apply_post_policies()` runs at the end of every pipeline invocation. Because
+Celery tasks can be retried on failure, and because the same result may be
+processed by both the sync view path and an async task, these actions must be
+idempotent.
+
+**Current state (enforcement required):**
+
+| Action | Risk | Required Guard |
+|---|---|---|
+| Auto-close (`match_status = MATCHED`) | Re-running sets the same value, no harm -- but wastes a DB write | Check `result.match_status != MATCHED` before writing |
+| Create `AgentEscalation` | Retries create duplicate escalation records for the same result | Check `AgentEscalation.objects.filter(reconciliation_result=result, resolved=False).exists()` before creating |
+| Write `ReconciliationResult.summary` | Idempotent (overwrite) | No guard needed |
+
+**Rule:** Any `_apply_post_policies()` action that creates a new DB record
+must first check whether an equivalent unresolved record already exists.
+
+Example guard for escalation:
+
+```python
+# In _apply_post_policies(), before AgentEscalation.objects.create():
+already_escalated = AgentEscalation.objects.filter(
+    reconciliation_result=result,
+    resolved=False,
+).exists()
+if already_escalated:
+    logger.info("Escalation skipped for result %s -- unresolved escalation exists", result.pk)
+    return
+```
+
+### Data-Scope Authorization
+
+The current RBAC layer controls **what** an actor may do (permission codes).
+Enterprise finance workflows also need to control **which records** an actor
+may act on -- by entity, vendor, business unit, country, or cost centre.
+
+**Current gap:** `AgentGuardrailsService` checks action permissions but does
+not enforce data scope. A FINANCE_MANAGER role today can trigger the pipeline
+for any `ReconciliationResult` regardless of entity or business unit.
+
+**Design requirements for a future scope layer:**
+
+| Scope Dimension | Check Location | Example Rule |
+|---|---|---|
+| Business unit | `authorize_orchestration()` | Actor's assigned BUs must include `result.invoice.business_unit` |
+| Vendor | `authorize_tool()` for `vendor_search` | AP_PROCESSOR may only search vendors linked to their uploaded invoices |
+| Country / entity | `authorize_agent()` or orchestrator pre-check | REVIEWER scoped to country `GB` may not process invoices with `country_code != "GB"` |
+| Cost centre | `authorize_action()` for auto-close | Auto-close only permitted when actor's cost centre matches the invoice's cost centre |
+
+**Implementation pattern (when required):**
+
+```python
+class AgentGuardrailsService:
+    @staticmethod
+    def authorize_data_scope(actor, result) -> bool:
+        """Return True if actor is permitted to operate on this result's entity scope."""
+        # Example: business unit scope check
+        actor_bus = set(actor.userrole_set.values_list("business_unit", flat=True))
+        if actor_bus and result.invoice.business_unit not in actor_bus:
+            return False
+        return True
+```
+
+Add a call to `authorize_data_scope()` immediately after
+`authorize_orchestration()` in `execute()`. Use the same
+`log_guardrail_decision()` pattern for audit.
+
+**Until implemented:** document which roles have unrestricted data scope in
+`seed_rbac.py` comments so the gap is visible in code review.
 
 ### Fail-Closed Behaviour
 
@@ -641,6 +817,7 @@ available.
 
 | Record | Written By | Content |
 |---|---|---|
+| `AgentOrchestrationRun` | `AgentOrchestrator.execute()` | Pipeline-level state machine record; created before any agent runs |
 | `AgentRun` | `BaseAgent.run()` start | Agent type, status, tokens, RBAC fields, trace ID |
 | `AgentMessage` | `_save_message()` | Every system/user/assistant/tool message |
 | `AgentStep` | `_execute_tool()` | Every tool call: input, output, duration, success |
@@ -681,6 +858,52 @@ This renders a Bootstrap 5 card with a table:
 The card shows "No plan data yet." when no plan metadata has been stored
 (e.g., before any LLM planner runs or before any `AgentRun.input_payload`
 records are populated).
+
+### Decision Provenance Rule
+
+Every recommendation or decision stored in the system **must** state which
+concrete evidence supports it. Vague or self-referential rationales are not
+acceptable for a financial audit trail.
+
+**Minimum required provenance per record:**
+
+| Record | Mandatory provenance field | Acceptable sources |
+|---|---|---| 
+| `DecisionLog.rationale` | `rule_name` OR `evidence_refs` (JSON list) | Tool name + output key, exception type code, deterministic rule identifier |
+| `AgentRecommendation.reasoning` | At least one sentence referencing a tool output, exception type, or rule name | Free text, minimum 20 chars, must not be empty |
+| `AgentEscalation.notes` | Exception type or threshold that triggered escalation | `EscalationReason` enum value + numeric threshold |
+
+**Enforcement rules for code review:**
+
+1. `DecisionLogService.log_decision()` must reject entries where both
+   `rule_name` is blank and `evidence_refs` is null or empty. Raise
+   `ValueError("DecisionLog requires at least one provenance source")`.
+2. `DecisionLogService.log_recommendation()` must reject entries where
+   `reasoning` is empty or fewer than 20 characters.
+3. LLM-agent `_finalise_run()` calls must pass all tool outputs that reached
+   the `AgentContext.memory.facts` dict as `evidence_refs` to each
+   `DecisionLog` entry.
+
+**Convention for naming provenance sources:**
+
+```
+<tool_name>.<output_key>              e.g.  po_lookup.matched_line_count
+<exception_type_code>                 e.g.  PRICE_VARIANCE_EXCEEDED
+<deterministic_rule>.<rule_id>        e.g.  DeterministicResolver.UNIT_PRICE_WITHIN_TOLERANCE
+```
+
+**Example `DecisionLog` with correct provenance:**
+
+```python
+DecisionLog.objects.create(
+    agent_run=agent_run,
+    decision="Approve partial match for PO-2024-001",
+    rationale="Price variance 1.8% is within the 2% auto-close band",
+    confidence=0.88,
+    rule_name="DeterministicResolver.PRICE_WITHIN_AUTO_CLOSE",
+    evidence_refs=["po_lookup.unit_price_variance_pct", "PRICE_VARIANCE_EXCEEDED"],
+)
+```
 
 ---
 
@@ -907,6 +1130,7 @@ if last_output:
         result,
         llm_agents[llm_agents.index(agent_type) + 1:],
         ctx,
+        already_executed=list(orch_result.agents_executed),
     )
     if extra_agents:
         insert_pos = llm_agents.index(agent_type) + 1
@@ -918,14 +1142,26 @@ if last_output:
         )
 
 
-def _reflect(self, completed_agent_type, agent_run, result, remaining_agents, ctx):
+def _reflect(
+    self,
+    completed_agent_type,
+    agent_run,
+    result,
+    remaining_agents,
+    ctx,
+    already_executed=None,         # set of agent types already run in this pipeline
+):
     """Inspect the just-completed agent run and return agent types to insert.
 
     Returns a list of agent_type strings (possibly empty). Never raises.
+    `already_executed` prevents reflection from re-inserting an agent that
+    has already run in this orchestration.
     """
     try:
         if ctx.memory is None:
             return []
+
+        already_executed = set(already_executed or [])
 
         # Rule 1: PO was just found in a 3-way case -- check for GRN next.
         if (
@@ -933,6 +1169,7 @@ def _reflect(self, completed_agent_type, agent_run, result, remaining_agents, ct
             and ctx.memory.resolved_po_number is not None
             and getattr(result, "reconciliation_mode", "") != "TWO_WAY"
             and AgentType.GRN_RETRIEVAL not in remaining_agents
+            and AgentType.GRN_RETRIEVAL not in already_executed
         ):
             return [AgentType.GRN_RETRIEVAL]
 
@@ -942,6 +1179,7 @@ def _reflect(self, completed_agent_type, agent_run, result, remaining_agents, ct
             and agent_run.confidence is not None
             and agent_run.confidence < 0.5
             and AgentType.RECONCILIATION_ASSIST not in remaining_agents
+            and AgentType.RECONCILIATION_ASSIST not in already_executed
         ):
             return [AgentType.RECONCILIATION_ASSIST]
 
@@ -959,8 +1197,8 @@ Reflection rules:
 
 | Trigger | Condition | Agent Inserted |
 |---|---|---|
-| `PO_RETRIEVAL` succeeds | `ctx.memory.resolved_po_number is not None` and mode != TWO_WAY and GRN_RETRIEVAL not already queued | `GRN_RETRIEVAL` |
-| `INVOICE_UNDERSTANDING` finishes | `agent_run.confidence < 0.5` and RECONCILIATION_ASSIST not already queued | `RECONCILIATION_ASSIST` |
+| `PO_RETRIEVAL` succeeds | `ctx.memory.resolved_po_number is not None` and mode != TWO_WAY and GRN_RETRIEVAL not in remaining_agents and not in already_executed | `GRN_RETRIEVAL` |
+| `INVOICE_UNDERSTANDING` finishes | `agent_run.confidence < 0.5` and RECONCILIATION_ASSIST not in remaining_agents and not in already_executed | `RECONCILIATION_ASSIST` |
 
 #### Step 3b -- BaseAgent LLM Retry Wrapper
 
@@ -970,13 +1208,17 @@ errors with exponential backoff (2s, 4s, 8s), then re-raises on exhaustion:
 
 ```python
 @staticmethod
-def _call_llm_with_retry(llm, messages, tools, max_retries=3, base_delay=2):
+def _call_llm_with_retry(llm, messages, tools, max_retries=3, base_delay=2, response_format=None):
     import time as _time
     import openai
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
-            return llm.chat(messages=messages, tools=tools if tools else None)
+            return llm.chat(
+                messages=messages,
+                tools=tools if tools else None,
+                response_format=response_format,
+            )
         except (
             openai.RateLimitError,
             openai.APIConnectionError,
@@ -1036,10 +1278,10 @@ def _is_complex_case(self, result, exceptions) -> bool:
 | Phase | What Changes | Status | Existing Flow |
 |---|---|---|---|
 | Phase 1: SharedMemory | Add `AgentMemory` dataclass to `AgentContext` | **DONE** | Unchanged (field ignored by legacy callers) |
-| Phase 2: ReasoningPlanner | `AgentOrchestrator` uses `ReasoningPlanner` (flag off) | **DONE** | Identical -- `PolicyEngine` runs as fallback |
-| Phase 3: Enable planner | Set `AGENT_REASONING_ENGINE_ENABLED=True` | Ready to enable | LLM plans the pipeline; deterministic still handles tail |
-| Phase 4: Reflection | Add reflection hook after each agent | Not started | Optional inserts only; DeterministicResolver unchanged |
-| Phase 5: LLM tail | Complex cases use LLM terminal agents | Not started | DeterministicResolver still handles standard cases |
+| Phase 2: ReasoningPlanner | `AgentOrchestrator` uses `ReasoningPlanner` | **DONE** | Identical -- `PolicyEngine` runs as fallback |
+| Phase 3: LLM planner always active | No flag -- planner runs unconditionally; PolicyEngine is internal fallback on error | **DONE** | LLM plans the pipeline; PolicyEngine fallback on any LLM failure |
+| Phase 4: Reflection | `_reflect()` runs after every agent with `already_executed` dedup guard | **DONE** | Inserts GRN_RETRIEVAL or RECONCILIATION_ASSIST only when not already run in this pipeline |
+| Phase 5: LLM tail | Complex cases use LLM terminal agents instead of DeterministicResolver | Not started | DeterministicResolver still handles standard cases |
 
 ### What Must Never Change
 
@@ -1057,12 +1299,13 @@ def _is_complex_case(self, result, exceptions) -> bool:
 
 | Setting | Default | Effect |
 |---|---|---|
-| `AGENT_REASONING_ENGINE_ENABLED` | `False` | When True, enables LLM planner + optional reflection |
-| `AGENT_REASONING_REFLECTION_ENABLED` | `False` | When True, enables per-agent reflection step |
-| `AGENT_REASONING_LLM_TAIL_ENABLED` | `False` | When True, complex cases use LLM terminal agents |
+| `AGENT_REASONING_ENGINE_ENABLED` | N/A | **Removed.** The LLM planner has no feature flag -- it is always active. `PolicyEngine` is the built-in fallback on any LLM error. |
+| `AGENT_REASONING_REFLECTION_ENABLED` | N/A | **Removed.** Reflection (`_reflect()`) runs unconditionally after every agent in the loop. |
+| `AGENT_REASONING_LLM_TAIL_ENABLED` | `False` | When True, complex cases use LLM terminal agents instead of `DeterministicResolver`. |
 
-All three flags are independent. They can be enabled incrementally. When all
-are False the system behaves exactly as it does today.
+`AGENT_REASONING_LLM_TAIL_ENABLED` is the only remaining optional flag.
+Do not add code guards for the first two -- they are redundant because both
+features are now unconditionally active.
 
 ---
 
@@ -1077,13 +1320,14 @@ breaking anything that already works.
 
 | Practice | Standard | Current State | Action Required |
 |---|---|---|---|
-| Structured output enforcement | Use `response_format={"type":"json_object"}` or explicit JSON-only instruction | Only `InvoiceExtractionAgent` uses `json_object`; others rely on prompt instructions | Upgrade ReAct agents to use json_object mode or schema validation |
-| Idempotent runs | Re-running the same agent twice on the same input should produce safe, identical-or-compatible results | Agents create new `AgentRun` records each time but do not deduplicate | Add idempotency key check at orchestrator level |
+| Structured output enforcement | Use `response_format={"type":"json_object"}` or explicit JSON-only instruction | **DONE** -- `BaseAgent.enforce_json_response=True` passes json_object to every ReAct-loop LLM call; `AgentOutputSchema` validates with Pydantic v2 | No further action required; `InvoiceExtractionAgent` sets `enforce_json_response=False` and handles its own format |
+| Output schema validation | Validate LLM JSON output against a schema before storing | **DONE** -- `AgentOutputSchema` (Pydantic v2, `agent_output_schema.py`) validates `recommendation_type`, `confidence`, `decisions`, `evidence`; invalid `recommendation_type` coerced to `SEND_TO_AP_REVIEW`; confidence clamped to [0.0, 1.0] | No further action required |
+| Idempotent runs | Re-running the same agent twice on the same input should produce safe, identical-or-compatible results | **DONE** -- `AgentOrchestrationRun` RUNNING guard prevents duplicate pipeline invocations | Agent-level deduplication (same `AgentRun` content) remains optional future work |
 | Tool error resilience | Agents must handle tool failures gracefully and not hallucinate when a tool returns an error | `_execute_tool` returns a `ToolResult(success=False)` but the LLM still sees the error string -- it may try to guess the answer | Add explicit "if tool fails, escalate rather than guess" instruction to system prompts |
 | Prompt versioning | Every agent run should record which prompt version was used | `AgentRun.prompt_version` field exists but is never written | Populate from `PromptTemplate.version` during `_init_messages()` |
-| Token budget awareness | Agent should not silently truncate context | No context-length guard; very large exception lists could overflow | Add a pre-flight token estimator and truncate `ctx.exceptions` to the N highest-severity ones when over budget |
-| Confidence calibration | Confidence scores must be grounded in evidence, not just stated | Agents produce confidence from LLM output; no post-hoc calibration | Add a cross-check: if confidence > 0.9 but tool calls failed, cap at 0.75 |
-| Retry with backoff | Transient LLM failures should retry before failing the run | `AgentDefinition.max_retries=2` field exists but `BaseAgent.run()` does not read it | Wire `max_retries` into the try/except block in `BaseAgent.run()` |
+| Token budget awareness | Agent should not silently truncate context | **DONE** -- `BaseAgent._truncate_exceptions()` truncates `ctx.exceptions` to the 20 highest-severity entries (HIGH -> MEDIUM -> LOW -> INFO) at three call sites in the orchestrator: initial context build, feedback-loop refresh, and `_apply_deterministic_resolution()`. Logs a warning with the count dropped. | No further action required |
+| Confidence calibration | Confidence scores must be grounded in evidence, not just stated | **DONE** -- `BaseAgent._compute_composite_confidence()` blends LLM confidence (60%), tool success rate (25%), and evidence quality (15%) into a composite score clamped to [0.0, 1.0]. AUTO_CLOSE is suppressed when any tool failed (downgraded to SEND_TO_AP_REVIEW, confidence capped at 0.5). Per-decision evidence is also enforced in `_finalise_run()` -- decisions with no evidence have confidence capped at 0.5 and `evidence_refs` set to `{"_provenance": "no_evidence_supplied"}`. | No further action required |
+| Retry with backoff | Transient LLM failures should retry before failing the run | **DONE** -- `BaseAgent.run()` now reads `agent_def.max_retries` (falling back to `AGENT_MAX_RETRIES` constant) and passes it to `_call_llm_with_retry()`. | No further action required |
 | Minimal tool surface | Each agent should only see the tools it actually needs | `allowed_tools` is correctly scoped per agent | No change needed -- already correct |
 | Human-readable reasoning | `summarized_reasoning` must be meaningful to a non-technical reviewer | Content is taken directly from LLM output; quality varies | Add a reasoning quality check: minimum 50 characters, must mention at least one invoice or PO reference |
 | No special characters in output | Agent-generated strings that are stored to DB or shown in UI must use ASCII only | **DONE** -- `BaseAgent._sanitise_text()` is implemented and called in `_finalise_run()` | No further action required |
@@ -1261,19 +1505,115 @@ for attempt in range(MAX_LLM_RETRIES + 1):
         raise
 ```
 
-#### Token Budget Pre-flight
+#### Token Budget Pre-flight -- DONE
+
+`BaseAgent._truncate_exceptions()` is implemented and called at three points
+in `AgentOrchestrator`:
+
+1. After the initial `exceptions = list(result.exceptions.values(...))` build in `execute()`.
+2. After the feedback-loop `ctx.exceptions = list(...)` refresh.
+3. After `fresh_exceptions = list(...)` in `_apply_deterministic_resolution()`.
+
+The static method sorts by severity (`HIGH -> MEDIUM -> LOW -> INFO`), caps at
+`max_exceptions=20`, and logs a warning with the count dropped.
 
 ```python
-# In AgentOrchestrator.execute(), before building AgentContext:
-MAX_EXCEPTION_CONTEXT = 20  # keep only the 20 highest-severity exceptions
-
-if len(exceptions) > MAX_EXCEPTION_CONTEXT:
-    severity_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-    exceptions = sorted(
+# BaseAgent._truncate_exceptions() -- implemented in base_agent.py
+@staticmethod
+def _truncate_exceptions(exceptions: list, max_exceptions: int = 20) -> list:
+    if len(exceptions) <= max_exceptions:
+        return exceptions
+    _SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
+    sorted_excs = sorted(
         exceptions,
-        key=lambda e: severity_order.get(e.get("severity", "LOW"), 3)
-    )[:MAX_EXCEPTION_CONTEXT]
+        key=lambda e: _SEVERITY_ORDER.get(str(e.get("severity", "LOW")).upper(), 4),
+    )
+    truncated = sorted_excs[:max_exceptions]
+    logger.warning(
+        "Exception list truncated from %d to %d for token budget "
+        "(dropped %d LOW/INFO exceptions)",
+        len(exceptions), max_exceptions, len(exceptions) - max_exceptions,
+    )
+    return truncated
 ```
+
+The call sites in the orchestrator use a deferred local import to avoid a
+circular import at module level:
+
+```python
+from apps.agents.services.base_agent import BaseAgent as _BA
+exceptions = _BA._truncate_exceptions(exceptions)
+```
+
+#### Composite Confidence Scoring -- DONE
+
+`BaseAgent._compute_composite_confidence()` replaces the simple fixed-penalty
+(`penalty = 0.15 * failed_tool_count`) in both exit paths of the ReAct loop.
+
+```python
+@staticmethod
+def _compute_composite_confidence(
+    llm_confidence: float,
+    failed_tool_count: int,
+    total_tool_calls: int,
+    evidence: dict,
+) -> float:
+    # Tool success score: 1.0 if no tools called; else successful / total
+    if total_tool_calls == 0:
+        tool_score = 1.0
+    else:
+        tool_score = max(0, total_tool_calls - failed_tool_count) / total_tool_calls
+
+    # Evidence quality score: 0.5 if empty or only _provenance key; else 1.0
+    evidence_score = 0.5 if not evidence or list(evidence.keys()) == ["_provenance"] else 1.0
+
+    composite = float(llm_confidence) * 0.6 + tool_score * 0.25 + evidence_score * 0.15
+    return max(0.0, min(1.0, composite))
+```
+
+Weight rationale:
+- LLM confidence (60%): the primary signal, but alone it cannot be trusted.
+- Tool success (25%): failed tool calls mean the LLM may have reasoned on incomplete data.
+- Evidence quality (15%): distinguishes grounded decisions from no-evidence guesses.
+
+`total_tool_calls` is tracked alongside `failed_tool_count` in `BaseAgent.run()`
+and incremented unconditionally after every tool execution.
+
+#### Evidence Enforcement on Decisions -- DONE
+
+`_finalise_run()` now enforces that every `DecisionLog` entry has non-empty
+`evidence_refs`. Decisions with no evidence are:
+- Confidence capped at 0.5.
+- `evidence_refs` set to `{"_provenance": "no_evidence_supplied"}`.
+- A `logger.warning` is emitted naming the decision text (truncated to 100 chars).
+
+Output-level evidence is also enforced in both the clean-exit path and the
+exhausted-rounds path. When `output.evidence` is empty or falsy after the
+ReAct loop completes:
+- `output.evidence` set to `{"_provenance": "no_evidence_supplied"}`.
+- `output.confidence` capped at 0.5.
+- A `logger.warning` is emitted.
+
+This propagates to `agent_run.output_payload["evidence"]` and all downstream
+`DecisionLog` entries created by `_finalise_run()`.
+
+#### AUTO_CLOSE Suppression on Tool Failures -- DONE
+
+In both exit paths of the ReAct loop, after the composite confidence is
+calculated, if any tool failed and the LLM returned `AUTO_CLOSE`:
+
+```python
+if failed_tool_count > 0 and output.recommendation_type == "AUTO_CLOSE":
+    output.recommendation_type = "SEND_TO_AP_REVIEW"
+    output.confidence = min(output.confidence, 0.5)
+    logger.warning(
+        "Agent %s: AUTO_CLOSE blocked due to %d tool failure(s)",
+        self.agent_type, failed_tool_count,
+    )
+```
+
+This ensures that AUTO_CLOSE is never recommended when the agent used
+incomplete tool data to form its conclusion.
 
 ---
 
@@ -1461,6 +1801,170 @@ class LangfuseTracer:
         except Exception:
             pass  # Never let tracing break the agent run
 ```
+
+---
+
+## 19. Design Requirements and Enforcement Rules
+
+This section consolidates the four core design requirements introduced during
+the Q3 architecture hardening pass. Each requirement has a status tag:
+`[CODE DONE]` = enforced in code; `[DOC ONLY]` = required by architecture but
+not yet implemented; `[PARTIAL]` = guard exists in one path only.
+
+---
+
+### 19.1 Orchestration State Machine [CODE DONE]
+
+`AgentOrchestrationRun` is a DB-backed state machine. Every call to
+`AgentOrchestrator.execute()` creates exactly one record.
+
+**Allowed transitions:**
+
+```
+PLANNED -> RUNNING -> COMPLETED   (all agents succeeded)
+                   -> PARTIAL     (at least one agent error, pipeline continued)
+                   -> FAILED      (unhandled exception before agent loop completes)
+PLANNED -> COMPLETED              (skip_agents=True; no agents run)
+```
+
+**Terminal states:** `COMPLETED`, `PARTIAL`, `FAILED` -- never re-entered.
+
+**Duplicate guard:** If a `RUNNING` record already exists for the same
+`reconciliation_result`, `execute()` returns immediately without creating a
+new record or running any agents.
+
+**Stale RUNNING records:** A worker crash leaves a `RUNNING` record that
+blocks all retries. Resolution: set `status=FAILED` manually via Django admin
+or the governance API. Monitor for `started_at < now() - 10 min` AND
+`status=RUNNING` records in alerting.
+
+---
+
+### 19.2 Decision Provenance [DOC ONLY]
+
+Every `DecisionLog` and `AgentRecommendation` must cite at least one
+provenance source using the naming convention below.
+
+**Provenance source naming convention:**
+
+```
+<tool_name>.<output_key>              po_lookup.matched_line_count
+<exception_type_code>                 PRICE_VARIANCE_EXCEEDED
+<deterministic_rule>.<rule_id>        DeterministicResolver.PRICE_WITHIN_AUTO_CLOSE
+```
+
+**Enforcement (to implement in `DecisionLogService`):**
+
+```python
+if not record.rule_name and not record.evidence_refs:
+    raise ValueError("DecisionLog requires at least one provenance source")
+if not record.reasoning or len(record.reasoning) < 20:
+    raise ValueError("AgentRecommendation.reasoning must be at least 20 characters")
+```
+
+**LLM agents:** must pass `ctx.memory.facts` keys as `evidence_refs` entries
+in every `DecisionLog` written by `_finalise_run()`.
+
+---
+
+### 19.3 Post-Policy Action Idempotency [PARTIAL]
+
+`_apply_post_policies()` can be called multiple times on the same result due
+to Celery retries. Actions that create new DB records must be idempotent.
+
+| Action | Guard | Status |
+|---|---|---|
+| Auto-close write | Check `result.match_status != MATCHED` before writing | [PARTIAL] -- check present but no explicit guard |
+| Create `AgentEscalation` | Filter on `(reconciliation_result, resolved=False)` before create | [DOC ONLY] |
+| Write `ReconciliationResult.summary` | Overwrite is safe | [CODE DONE] |
+
+**Implementation target for `AgentEscalation` guard:**
+
+```python
+already_escalated = AgentEscalation.objects.filter(
+    reconciliation_result=result,
+    resolved=False,
+).exists()
+if not already_escalated:
+    AgentEscalation.objects.create(...)
+```
+
+---
+
+### 19.4 Data-Scope Authorization [DOC ONLY]
+
+The current permission layer controls **what** an actor may do. A scope layer
+controls **which records** they may operate on.
+
+**Scope dimensions:**
+
+| Dimension | Check Point | Example Restriction |
+|---|---|---|
+| Business unit | Before `execute()`, inside `authorize_orchestration()` | REVIEWER for BU "APAC" cannot trigger pipeline for a "EMEA" invoice |
+| Vendor | `authorize_tool()` for `vendor_search` | AP_PROCESSOR sees only vendors linked to their own invoices |
+| Country / Entity | Orchestrator pre-check | Finance staff scoped to country "GB" cannot act on "US" invoices |
+| Cost centre | `authorize_action()` for auto-close | Auto-close blocked when actor's cost centre set does not include the invoice cost centre |
+
+**Target implementation pattern:**
+
+```python
+@staticmethod
+def authorize_data_scope(actor, result) -> bool:
+    actor_bus = set(actor.userrole_set.values_list("business_unit", flat=True))
+    if actor_bus and result.invoice.business_unit not in actor_bus:
+        AgentGuardrailsService.log_guardrail_decision(
+            actor, result, granted=False,
+            reason="DATA_SCOPE_BU_MISMATCH",
+        )
+        return False
+    return True
+```
+
+Call `authorize_data_scope()` immediately after `authorize_orchestration()`
+in `AgentOrchestrator.execute()`.
+
+**Until this is implemented:** annotate roles that have unrestricted data
+scope in `seed_rbac.py` with `# DATA_SCOPE: unrestricted` so the gap is
+visible in code review and security audits.
+
+---
+
+### 19.5 Duplicate Recommendation Prevention [CODE DONE]
+
+`AgentRecommendation` carries a `UniqueConstraint` on
+`(reconciliation_result, recommendation_type, agent_run)`:
+
+```python
+# apps/agents/models.py -- AgentRecommendation.Meta
+constraints = [
+    models.UniqueConstraint(
+        fields=["reconciliation_result", "recommendation_type", "agent_run"],
+        name="uq_rec_result_type_run",
+    ),
+]
+```
+
+Both `log_recommendation()` call sites in `AgentOrchestrator` (LLM loop and
+`_apply_deterministic_resolution()`) are wrapped with an `IntegrityError` guard:
+
+```python
+try:
+    rec = self.decision_service.log_recommendation(...)
+except IntegrityError:
+    logger.warning(
+        "Duplicate recommendation skipped: result=%s type=%s agent_run=%s",
+        result.pk, rec_type, agent_run.pk,
+    )
+```
+
+The `else` branch runs only when the insert succeeded, so the backfill of
+`rec.invoice_id` and the `AuditEvent` write are skipped cleanly on duplicates.
+
+This prevents duplicate records when an agent is retried or run multiple times
+within one orchestration. The constraint is enforced at both the Python level
+(IntegrityError catch) and the database level (unique index on the `agents_recommendation`
+table, migration `0007_add_recommendation_unique_constraint`).
+
 
 Wire into `BaseAgent.run()` after each LLM call:
 
