@@ -130,7 +130,7 @@ class ExtractionPipeline:
         )
 
         try:
-            run.status = ExtractionRunStatus.JURISDICTION_RESOLUTION
+            run.status = ExtractionRunStatus.JURISDICTION_RESOLVED
             run.save(update_fields=["status", "updated_at"])
 
             # ── Step 1: Resolve jurisdiction ─────────────────────────
@@ -143,7 +143,7 @@ class ExtractionPipeline:
                 )
 
             # ── Step 2: Select schema ────────────────────────────────
-            run.status = ExtractionRunStatus.SCHEMA_SELECTION
+            run.status = ExtractionRunStatus.SCHEMA_SELECTED
             run.save(update_fields=["status", "updated_at"])
 
             schema = cls._select_schema(run, resolution, document_type, user)
@@ -156,7 +156,7 @@ class ExtractionPipeline:
                 )
 
             # ── Step 3: Build prompt ─────────────────────────────────
-            run.status = ExtractionRunStatus.PROMPT_BUILDING
+            run.status = ExtractionRunStatus.PROMPT_BUILT
             run.save(update_fields=["status", "updated_at"])
 
             prompt_payload = cls._build_prompt(

@@ -251,11 +251,11 @@ class CaseOrchestrator:
         self._run_common_tail()
 
     def _run_common_tail(self):
-        """Execute the common tail stages: exception analysis → routing → summary."""
+        """Execute the common tail stages: exception analysis -> routing -> summary."""
         self._execute_stage(CaseStageType.EXCEPTION_ANALYSIS)
-        if CaseStateMachine.is_terminal(self.case.status):
-            return
-        self._execute_stage(CaseStageType.REVIEW_ROUTING)
+        if not CaseStateMachine.is_terminal(self.case.status):
+            self._execute_stage(CaseStageType.REVIEW_ROUTING)
+        # Always run case summary so stale data is refreshed, even on auto-close
         self._execute_stage(CaseStageType.CASE_SUMMARY)
 
     def _execute_stage(self, stage_name: str):

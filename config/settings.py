@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "apps.extraction_documents",
     "apps.posting",
     "apps.posting_core",
+    "apps.erp_integration",
 ]
 
 MIDDLEWARE = [
@@ -192,6 +193,14 @@ CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "True").lower()
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 
 # ---------------------------------------------------------------------------
+# ERP Integration
+# ---------------------------------------------------------------------------
+ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD = float(
+    os.getenv("ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD", "0.8")
+)
+ERP_CACHE_TTL_SECONDS = int(os.getenv("ERP_CACHE_TTL_SECONDS", "3600"))
+
+# ---------------------------------------------------------------------------
 # LLM / AI service configuration
 # ---------------------------------------------------------------------------
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "azure_openai")
@@ -203,6 +212,9 @@ AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+# Set to True to activate the LLM-backed ReasoningPlanner for agent pipeline planning.
+# When False (default), the deterministic PolicyEngine is always used.
+AGENT_REASONING_ENGINE_ENABLED = os.getenv("AGENT_REASONING_ENGINE_ENABLED", "false").lower() == "true"
 
 # Bing Web Search API (for benchmark market research)
 BING_SEARCH_API_KEY = os.getenv("BING_SEARCH_API_KEY", "")

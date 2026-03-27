@@ -507,6 +507,59 @@
       </div>
       {% endfor %}
     </div>
+
+    <!-- Tool-Grounded Agents & Runtime Confidence Guards -->
+    <hr class="my-4">
+    <h5 class="mb-3"><i class="bi bi-shield-exclamation me-1"></i> Tool-Grounded Agents &amp; Confidence Guards</h5>
+    <div class="alert alert-warning border-0 mb-3">
+      <i class="bi bi-exclamation-triangle me-1"></i>
+      <strong>Runtime enforcement:</strong> For tool-grounded agents, the ReAct loop applies
+      automatic confidence caps when tools fail or are never called. This prevents over-confident
+      <code>AUTO_CLOSE</code> decisions when evidence is unavailable.
+    </div>
+    <div class="row g-3 mb-4">
+      <div class="col-md-5">
+        <div class="card h-100">
+          <div class="card-header bg-white">
+            <strong>Tool-Grounded Agent Types</strong>
+            <span class="badge bg-primary ms-2">{{ tool_grounded_agents|length }}</span>
+          </div>
+          <div class="card-body">
+            <p class="text-muted small mb-2">
+              These agents must call at least one tool to be considered fully grounded.
+              With zero tool calls the ReAct loop applies a confidence cap automatically.
+            </p>
+            {% for agent_type in tool_grounded_agents %}
+            <span class="badge bg-primary me-1 mb-1">{{ agent_type }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <div class="col-md-7">
+        <div class="card h-100">
+          <div class="card-header bg-white"><strong>Confidence Cap Rules</strong></div>
+          <div class="card-body p-0">
+            <table class="table table-sm table-bordered mb-0">
+              <thead class="table-light">
+                <tr><th>Condition</th><th>Cap</th><th>Extra Effect</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="small">Any tool call returns an error (applies to all agent types)</td>
+                  <td><span class="badge bg-warning text-dark">0.50</span></td>
+                  <td class="small"><code>AUTO_CLOSE</code> recommendation downgraded to <code>SEND_TO_AP_REVIEW</code></td>
+                </tr>
+                <tr>
+                  <td class="small">Tool-grounded agent completes with 0 tool calls</td>
+                  <td><span class="badge bg-secondary">0.60</span></td>
+                  <td class="small">No recommendation downgrade; confidence cap only</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -605,6 +658,29 @@
           <li>Multiple agents may run in sequence (e.g., Exception Analysis &rarr; Review Routing &rarr; Case Summary).</li>
           <li>The <strong>Policy Engine</strong> may <strong>auto-close</strong> cases that fall within auto-close tolerance bands (qty: 5%, price: 3%, amount: 3%).</li>
         </ul>
+      </div>
+    </div>
+
+    <h5 class="mb-3"><i class="bi bi-arrow-repeat me-1"></i> Recommendation Idempotency</h5>
+    <div class="card mb-4">
+      <div class="card-body">
+        <p class="text-muted mb-2">
+          Two layers prevent duplicate recommendations from being created on retries or cross-run agent re-executions:
+        </p>
+        <ol class="mb-0 small">
+          <li class="mb-2">
+            <strong>Service-layer check</strong> (<code>DecisionLogService.log_recommendation()</code>) —
+            Before inserting a new <code>AgentRecommendation</code>, the service queries for an existing
+            <em>pending</em> record with the same
+            <code>(reconciliation_result, recommendation_type, accepted=None)</code>.
+            If found, the existing record is returned without creating a duplicate — even across different agent runs.
+          </li>
+          <li>
+            <strong>DB unique constraint</strong> (<code>uq_rec_result_type_run</code>) —
+            Enforces uniqueness at <code>(reconciliation_result, recommendation_type, agent_run)</code>
+            as a last-resort safeguard against race conditions within the same run.
+          </li>
+        </ol>
       </div>
     </div>
   </div>
@@ -1190,7 +1266,8 @@
   │
   ├──< <strong>RolePermission</strong> ──> <strong>Permission</strong> (code: "module.action", e.g. invoices.view)
   │
-  └──< <strong>UserRole</strong> (is_primary, assigned_by, expires_at, is_active)
+  └──< <strong>UserRole</strong> (is_primary, assigned_by, expires_at, is_active, scope_json)
+        │   scope_json: {allowed_business_units?: str[], allowed_vendor_ids?: int[]}
         │
         └──> <strong>User</strong>
                │
@@ -1377,6 +1454,68 @@
       {% endfor %}
     </div>
 
+    <!-- Data-Scope Authorization detail -->
+    <h5 class="mb-3"><i class="bi bi-funnel me-1"></i> Data-Scope Authorization</h5>
+    <div class="alert alert-info border-0 mb-3">
+      <i class="bi bi-info-circle me-1"></i>
+      Beyond role/permission checks, the orchestrator enforces <strong>data-scope boundaries</strong>.
+      Even if an actor has the correct permissions, they can only trigger agents for reconciliation
+      results that fall within their assigned business-unit and vendor scope.
+      Denial is recorded as a <code>GUARDRAIL_DENIED</code> AuditEvent. Admins and
+      <code>SYSTEM_AGENT</code> are always unrestricted.
+    </div>
+    <div class="card mb-3">
+      <div class="card-body p-0">
+        <table class="table table-sm table-bordered mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:18%">Dimension</th>
+              <th style="width:22%">Scope Key (UserRole.scope_json)</th>
+              <th>Actor Source</th>
+              <th>Result Source</th>
+              <th style="width:10%">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for dim in data_scope_dimensions %}
+            <tr>
+              <td><strong>{{ dim.dimension }}</strong></td>
+              <td><code>{{ dim.scope_key }}</code></td>
+              <td class="small text-muted">{{ dim.source_actor }}</td>
+              <td class="small text-muted">{{ dim.source_result }}</td>
+              <td>
+                {% if dim.status == "enforced" %}
+                  <span class="badge bg-success">Enforced</span>
+                {% else %}
+                  <span class="badge bg-secondary">Pending</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card mb-4">
+      <div class="card-header bg-white"><strong>Assigning scope to a UserRole</strong></div>
+      <div class="card-body small text-muted">
+        <p class="mb-2">
+          Each <code>UserRole</code> record may carry an optional <code>scope_json</code>
+          (JSONField, nullable). Supported keys:
+        </p>
+        <pre class="bg-light border rounded p-2 mb-2" style="font-size:.8rem">{
+  "allowed_business_units": ["EU-RETAIL", "APAC-DISTRIB"],
+  "allowed_vendor_ids": [42, 107, 250]
+}</pre>
+        <p class="mb-0">
+          The effective scope is the <strong>union</strong> of <code>scope_json</code> entries across
+          all of the user's active roles. A user with no scope entries on any role (or with
+          <code>scope_json=null</code>) is considered <strong>unrestricted</strong>.
+          Admins and <code>SYSTEM_AGENT</code> bypass scope checks entirely.
+        </p>
+      </div>
+    </div>
+
     <!-- Agent Permission Map -->
     <h5 class="mb-3"><i class="bi bi-robot me-1"></i> Agent Permission Map</h5>
     <div class="card mb-4">
@@ -1473,6 +1612,7 @@
             <tr><td><code>actor_roles_snapshot_json</code></td><td>JSON snapshot of all active roles the actor held</td></tr>
             <tr><td><code>permission_source</code></td><td>How permission was resolved: ROLE, ADMIN_BYPASS, USER_OVERRIDE, SYSTEM_AGENT</td></tr>
             <tr><td><code>access_granted</code></td><td>Boolean — whether the guardrail check granted access</td></tr>
+            <tr><td><code>prompt_version</code></td><td>Prompt template version used for this run — always written (empty string if version unavailable); a warning is logged when the version is missing</td></tr>
           </tbody>
         </table>
       </div>

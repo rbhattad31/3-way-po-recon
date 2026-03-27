@@ -9,6 +9,7 @@
   let _charts = {};
   let _feedInterval = null;
   let _filters = {};
+  let _cacheCounter = 0;
 
   // ── Agent type labels & colors ──
   const AGENT_LABELS = {
@@ -195,24 +196,31 @@
 
   // ── 4. Latency chart ──
   async function loadLatencyWidgets() {
-    var d = await apiFetch(BASE + "/latency/" + qs(_filters));
+    _cacheCounter++;
+    var filterStr = qs(_filters);
+    var sep = filterStr ? "&" : "?";
+    var d = await apiFetch(BASE + "/latency/" + filterStr + sep + "cb=" + _cacheCounter);
     if (!d) return;
 
-    var agents = (d.per_agent || []);
-    destroyChart("latency");
-    var ctx = document.getElementById("chartLatency")?.getContext("2d");
-    if (ctx) {
-      _charts.latency = new Chart(ctx, {
-        type: "bar",
-        data: {
-          labels: agents.map(function(r) { return shortLabel(r.agent_type); }),
-          datasets: [
-            { label: "Avg (ms)", data: agents.map(function(r) { return Math.round(r.avg_duration || 0); }), backgroundColor: "rgba(13,110,253,.6)", borderRadius: 4, maxBarThickness: 30 },
-            { label: "Max (ms)", data: agents.map(function(r) { return r.max_duration || 0; }), backgroundColor: "rgba(220,53,69,.4)", borderRadius: 4, maxBarThickness: 30 },
-          ],
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { y: { beginAtZero: true } } },
-      });
+    var tbody = document.getElementById("slowestRunsBody");
+    if (tbody) {
+      var runs = d.slowest_runs || [];
+      if (!runs.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No data in selected period.</td></tr>';
+      } else {
+        tbody.innerHTML = runs.map(function(r) {
+          var invoiceCell = r.invoice_id
+            ? '<a href="/governance/invoices/' + r.invoice_id + '/">' + (r.invoice_number || r.id) + '</a>'
+            : (r.invoice_number || "-");
+          return '<tr>' +
+            '<td>' + shortLabel(r.agent_type) + '</td>' +
+            '<td>' + invoiceCell + '</td>' +
+            '<td class="text-end">' + fmtMs(r.duration_ms) + '</td>' +
+            '<td class="text-center">' + statusBadge(r.status) + '</td>' +
+            '<td>' + timeAgo(r.started_at) + '</td>' +
+          '</tr>';
+        }).join("");
+      }
     }
   }
 
@@ -297,27 +305,97 @@
     '</tr>'; }).join("");
   }
 
-  // ── 8. Live feed ──
-  async function loadLiveFeed() {
-    var d = await apiFetch(BASE + "/live-feed/" + qs(_filters));
-    var el = document.getElementById("liveFeed");
-    if (!el) return;
-    if (!d || !d.length) { el.innerHTML = '<div class="text-center text-muted py-4">No recent agent runs</div>'; return; }
+  // -- 9. Plan Comparison --
+  async function loadPlanComparison() {
+    var d = await apiFetch(BASE + "/plan-comparison/" + qs(_filters));
+    if (!d) return;
 
-    el.innerHTML = d.map(function(r) {
-      var roleInfo = r.actor_role ? '<span class="badge bg-secondary bg-opacity-25 text-secondary" style="font-size:.6rem">' + r.actor_role + '</span>' : "";
-      return '<div class="ap-feed-item">' +
-        '<div class="ap-feed-icon"><i class="bi bi-robot"></i></div>' +
-        '<div class="ap-feed-body">' +
-          '<div class="ap-feed-title">' + shortLabel(r.agent_type) + (r.invoice_number ? " · " + r.invoice_number : "") + '</div>' +
-          '<div class="ap-feed-sub">' + (r.summary || "—") + ' ' + roleInfo + '</div>' +
-        '</div>' +
-        '<div class="ap-feed-meta">' +
-          '<div>' + statusBadge(r.status) + '</div>' +
-          '<div class="ap-feed-time">' + r.confidence + '% · ' + fmtMs(r.duration_ms) + '</div>' +
-          '<div class="ap-feed-time">' + timeAgo(r.created_at) + '</div>' +
-        '</div>' +
-      '</div>';
+    var el = document.getElementById("planTotal");
+    if (el) el.textContent = fmt(d.total_compared);
+    el = document.getElementById("planMatched");
+    if (el) el.textContent = fmt(d.plans_matched);
+    el = document.getElementById("planRate");
+    if (el) el.textContent = (d.match_rate != null ? d.match_rate + "%" : "--");
+
+    var tbody = document.getElementById("planCompTableBody");
+    if (!tbody) return;
+
+    var rows = d.rows || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No data in selected period.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(function(r) {
+      var invoiceCell;
+      if (r.invoice_id) {
+        invoiceCell = '<a href="/governance/invoices/' + r.invoice_id + '/">' +
+          (r.invoice_number || r.result_id) + '</a>';
+      } else {
+        invoiceCell = String(r.result_id);
+      }
+
+      var msClass = "text-muted";
+      if (r.match_status === "MATCHED") { msClass = "text-success"; }
+      else if (r.match_status === "PARTIAL_MATCH") { msClass = "text-warning"; }
+      else if (r.match_status === "UNMATCHED") { msClass = "text-danger"; }
+      var statusCell = '<small class="' + msClass + ' fw-semibold">' + (r.match_status || "") + '</small>';
+
+      var policyCell = (r.policy_plan || []).map(function(a) { return shortLabel(a); }).join(" -> ");
+      var actualCell = (r.actual_plan || []).map(function(a) { return shortLabel(a); }).join(" -> ");
+
+      var matchCell = r.plans_match
+        ? '<i class="bi bi-check-circle-fill text-success"></i>'
+        : '<i class="bi bi-exclamation-triangle-fill text-warning"></i>';
+
+      var changes = [];
+      if (r.added_by_actual && r.added_by_actual.length) {
+        changes.push('<span class="text-success">+' +
+          r.added_by_actual.map(function(a) { return shortLabel(a); }).join(", +") +
+        '</span>');
+      }
+      if (r.removed_by_actual && r.removed_by_actual.length) {
+        changes.push('<span class="text-danger">-' +
+          r.removed_by_actual.map(function(a) { return shortLabel(a); }).join(", -") +
+        '</span>');
+      }
+      var changesCell = changes.length ? changes.join(" ") : "-";
+
+      return '<tr>' +
+        '<td>' + invoiceCell + '</td>' +
+        '<td>' + statusCell + '</td>' +
+        '<td style="font-size:.73rem">' + (policyCell || "-") + '</td>' +
+        '<td style="font-size:.73rem">' + (actualCell || "-") + '</td>' +
+        '<td class="text-center">' + matchCell + '</td>' +
+        '<td style="font-size:.73rem">' + changesCell + '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  // -- 8. Recent Runs --
+  async function loadLiveFeed() {
+    _cacheCounter++;
+    var filterStr2 = qs(_filters);
+    var sep2 = filterStr2 ? "&" : "?";
+    var d = await apiFetch(BASE + "/live-feed/" + filterStr2 + sep2 + "cb=" + _cacheCounter);
+    var tbody = document.getElementById("recentRunsBody");
+    if (!tbody) return;
+    if (!d || !d.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No recent agent runs</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.map(function(r) {
+      var invoiceCell = r.invoice_id
+        ? '<a href="/governance/invoices/' + r.invoice_id + '/">' + (r.invoice_number || r.invoice_id) + '</a>'
+        : (r.invoice_number || "-");
+      return '<tr>' +
+        '<td>' + shortLabel(r.agent_type) + '</td>' +
+        '<td>' + invoiceCell + '</td>' +
+        '<td class="text-end">' + r.confidence + '%</td>' +
+        '<td class="text-end">' + fmtMs(r.duration_ms) + '</td>' +
+        '<td class="text-center">' + statusBadge(r.status) + '</td>' +
+        '<td>' + timeAgo(r.created_at) + '</td>' +
+      '</tr>';
     }).join("");
   }
 
@@ -335,6 +413,7 @@
       loadToolCharts(),
       loadRecommendationCharts(),
       loadLiveFeed(),
+      loadPlanComparison(),
     ]);
   }
 

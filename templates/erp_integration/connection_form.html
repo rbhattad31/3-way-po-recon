@@ -1,0 +1,435 @@
+{% extends "base.html" %}
+{% block title %}{% if mode == 'create' %}New ERP Connection{% else %}Edit ERP Connection{% endif %}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'erp_integration:erp_connection_list' %}" class="text-decoration-none">ERP Connections</a></li>
+    <li class="breadcrumb-item active">{% if mode == 'create' %}New Connection{% else %}Edit{% endif %}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+
+    <h5 class="mb-3 fw-bold">
+      <i class="bi bi-{% if mode == 'create' %}plus-circle{% else %}pencil{% endif %} me-2"></i>
+      {% if mode == 'create' %}New ERP Connection{% else %}Edit Connection{% endif %}
+    </h5>
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      {% if form.errors %}
+      <div class="alert alert-danger py-2 small">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        <strong>Please fix the errors below:</strong>
+        <ul class="mb-0 mt-1">
+          {% for field, errors in form.errors.items %}
+            {% for error in errors %}<li><strong>{{ field }}:</strong> {{ error }}</li>{% endfor %}
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      {# ── Section 1: General ── #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-semibold">
+          <i class="bi bi-info-circle me-1"></i>General
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Connection Name <span class="text-danger">*</span></label>
+              {{ form.name }}
+              <small class="text-muted">Unique identifier (e.g. "erp-prod")</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Connector Type <span class="text-danger">*</span></label>
+              {{ form.connector_type }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Status</label>
+              {{ form.status }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Timeout (seconds)</label>
+              {{ form.timeout_seconds }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold d-block">Default Connector</label>
+              <div class="form-check mt-2">
+                {{ form.is_default }}
+                <label class="form-check-label" for="id_is_default">Use as default</label>
+              </div>
+              <small class="text-muted">Checking this will unset the current default.</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Section 2: REST API (CUSTOM, DYNAMICS, ZOHO, SALESFORCE) ── #}
+      <div class="card border-0 shadow-sm mb-3 conn-section" id="section-rest" style="display:none">
+        <div class="card-header bg-white fw-semibold">
+          <i class="bi bi-globe me-1"></i>REST API Configuration
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label fw-semibold">Base URL <span class="text-danger">*</span></label>
+              {{ form.base_url }}
+              <small class="text-muted">ERP API root endpoint (e.g. https://erp.company.com/api/v1)</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Auth Type</label>
+              {{ form.auth_type }}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">API Key Env Variable</label>
+              {{ form.api_key_env }}
+              <small class="text-muted">Name of the env variable holding your API key or bearer token. Never paste secrets here.</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Section 3: Database Direct (SQLSERVER / MYSQL) ── #}
+      <div class="card border-0 shadow-sm mb-3 conn-section" id="section-sql" style="display:none">
+        <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-database me-1"></i><span id="sql-section-title">Database Configuration</span></span>
+          <div class="btn-group btn-group-sm" role="group">
+            <input type="radio" class="btn-check" name="sql_mode" id="sql_mode_builder" value="builder" checked>
+            <label class="btn btn-outline-secondary" for="sql_mode_builder"><i class="bi bi-ui-checks me-1"></i>Build</label>
+            <input type="radio" class="btn-check" name="sql_mode" id="sql_mode_env" value="env">
+            <label class="btn btn-outline-secondary" for="sql_mode_env"><i class="bi bi-terminal me-1"></i>Env Variable</label>
+          </div>
+        </div>
+        <div class="card-body">
+          {# Builder mode #}
+          <div id="sql-builder" class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label fw-semibold">Server Host <span class="text-danger">*</span></label>
+              {{ form.db_host }}
+              <small class="text-muted">Hostname or IP (e.g. erp-db.company.com)</small>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Port</label>
+              {{ form.db_port }}
+              <small class="text-muted">Default: 1433</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Database Name <span class="text-danger">*</span></label>
+              {{ form.database_name }}
+            </div>
+            <div class="col-md-6 sqlserver-only">
+              <label class="form-label fw-semibold">ODBC Driver</label>
+              {{ form.db_driver }}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Username</label>
+              {{ form.db_username }}
+              <small class="text-muted sqlserver-only">Leave blank for Windows Integrated Auth</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Password</label>
+              {{ form.db_password }}
+            </div>
+            <div class="col-md-6 sqlserver-only">
+              <div class="form-check mt-4">
+                {{ form.db_trust_cert }}
+                <label class="form-check-label" for="id_db_trust_cert">Trust server certificate</label>
+              </div>
+              <small class="text-muted">Enable for on-prem servers with self-signed SSL certs (adds TrustServerCertificate=yes).</small>
+            </div>
+            <div class="col-12">
+              <div class="alert alert-success py-2 small mb-0">
+                <i class="bi bi-shield-lock me-1"></i>
+                Password is <strong>AES-encrypted</strong> before storage. It is never stored in plaintext.
+              </div>
+            </div>
+          </div>
+          {# Env var mode #}
+          <div id="sql-env" class="row g-3" style="display:none">
+            <div class="col-12">
+              <label class="form-label fw-semibold">Connection String Env Variable <span class="text-danger">*</span></label>
+              {{ form.connection_string_env }}
+              <small class="text-muted">Name of the environment variable holding your full ODBC connection string.</small>
+            </div>
+            <div class="col-12">
+              <div class="alert alert-info py-2 small mb-0">
+                <i class="bi bi-lightbulb me-1"></i>
+                <strong>Example env variable value:</strong><br>
+                <code>Driver={ODBC Driver 17 for SQL Server};Server=erp-db.company.com;Database=ERP_PROD;Trusted_Connection=yes;</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Section 4: OAuth (DYNAMICS, ZOHO, SALESFORCE) ── #}
+      <div class="card border-0 shadow-sm mb-3 conn-section" id="section-oauth" style="display:none">
+        <div class="card-header bg-white fw-semibold">
+          <i class="bi bi-shield-lock me-1"></i>OAuth / Cloud Credentials
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Tenant / Org ID</label>
+              {{ form.tenant_id }}
+              <small class="text-muted">Azure AD tenant ID, Zoho org ID, etc.</small>
+            </div>
+            <div class="col-md-6">&nbsp;</div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Client ID Env Variable</label>
+              {{ form.client_id_env }}
+              <small class="text-muted">Env var name for OAuth client / app ID</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Client Secret Env Variable</label>
+              {{ form.client_secret_env }}
+              <small class="text-muted">Env var name for OAuth client secret</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Section 5: Advanced / Metadata ── #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-semibold">
+          <i class="bi bi-sliders me-1"></i>Advanced Configuration
+          <span class="badge bg-light text-muted ms-1">Optional</span>
+        </div>
+        <div class="card-body">
+          <label class="form-label fw-semibold">Metadata (JSON)</label>
+          {{ form.metadata_json }}
+          <small class="text-muted" id="metadata-hint">Override endpoint paths or SQL queries. Missing keys use built-in defaults.</small>
+          <div class="mt-2">
+            <a class="small text-decoration-none" data-bs-toggle="collapse" href="#sampleMetadata" role="button">
+              <i class="bi bi-code-slash me-1"></i>Show sample metadata_json
+            </a>
+            <div class="collapse mt-2" id="sampleMetadata">
+              <div class="card card-body bg-light py-2 px-3 font-monospace small" style="white-space:pre-wrap"><strong>Custom ERP (REST API) -- override endpoint paths:</strong>
+{
+  "endpoints": {
+    "vendor_lookup":      "/api/vendors/lookup",
+    "item_lookup":        "/api/items/lookup",
+    "po_lookup":          "/api/purchase-orders/lookup",
+    "grn_lookup":         "/api/grns/lookup",
+    "duplicate_check":    "/api/invoices/duplicate-check"
+  }
+}
+
+<strong>SQL Server (Direct DB) -- override SQL queries:</strong>
+{
+  "queries": {
+    "vendor_lookup": "SELECT TOP 1 vendor_code, vendor_name FROM AP_Vendors WHERE vendor_code = ?",
+    "item_lookup":   "SELECT TOP 1 item_code, description FROM INV_Items WHERE item_code = ?",
+    "po_lookup":     "SELECT TOP 1 po_number, vendor_code, status FROM PO_Headers WHERE po_number = ?"
+  },
+  "query_timeout": 30
+}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Test & Submit ── #}
+      <div class="card border-0 shadow-sm mb-3" id="test-section">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-3">
+            <button type="button" class="btn btn-outline-primary btn-sm" id="btn-test">
+              <i class="bi bi-plug me-1"></i>Test Connection
+            </button>
+            <div id="test-result" style="display:none"></div>
+            <span id="test-spinner" class="spinner-border spinner-border-sm text-primary" style="display:none" role="status"></span>
+          </div>
+          <small class="text-muted d-block mt-2">You must test the connection before saving.</small>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm" id="btn-submit" disabled>
+          <i class="bi bi-check-lg me-1"></i>{% if mode == 'create' %}Create Connection{% else %}Save Changes{% endif %}
+        </button>
+        <a href="{% url 'erp_integration:erp_connection_list' %}" class="btn btn-outline-secondary btn-sm">Cancel</a>
+      </div>
+    </form>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  var typeSelect = document.getElementById('id_connector_type');
+  if (!typeSelect) return;
+
+  // ── Section toggle ──
+  var SECTIONS = {
+    CUSTOM:     ['section-rest'],
+    SQLSERVER:  ['section-sql'],
+    MYSQL:      ['section-sql'],
+    DYNAMICS:   ['section-rest', 'section-oauth'],
+    ZOHO:       ['section-rest', 'section-oauth'],
+    SALESFORCE: ['section-rest', 'section-oauth']
+  };
+
+  function toggleSections() {
+    var val = typeSelect.value;
+    var show = SECTIONS[val] || [];
+    var cards = document.querySelectorAll('.conn-section');
+    for (var i = 0; i < cards.length; i++) {
+      cards[i].style.display = show.indexOf(cards[i].id) !== -1 ? '' : 'none';
+    }
+    // Toggle SQL Server-only fields (ODBC driver, trust cert, integrated auth hint)
+    var sqlOnly = document.querySelectorAll('.sqlserver-only');
+    for (var j = 0; j < sqlOnly.length; j++) {
+      sqlOnly[j].style.display = (val === 'SQLSERVER') ? '' : 'none';
+    }
+    // Update section title and port hint
+    var titleEl = document.getElementById('sql-section-title');
+    var portField = document.getElementById('id_db_port');
+    if (val === 'MYSQL') {
+      if (titleEl) titleEl.textContent = 'MySQL / MariaDB Configuration';
+      if (portField) portField.placeholder = '3306';
+    } else {
+      if (titleEl) titleEl.textContent = 'SQL Server Configuration';
+      if (portField) portField.placeholder = '1433';
+    }
+  }
+
+  typeSelect.addEventListener('change', function() {
+    toggleSections();
+    resetTest();
+  });
+  toggleSections();
+
+  // ── SQL mode toggle (Build vs Env Variable) ──
+  var sqlBuilder = document.getElementById('sql-builder');
+  var sqlEnv = document.getElementById('sql-env');
+  var modeBuilder = document.getElementById('sql_mode_builder');
+  var modeEnv = document.getElementById('sql_mode_env');
+
+  function toggleSqlMode() {
+    if (!sqlBuilder) return;
+    var isBuilder = modeBuilder && modeBuilder.checked;
+    sqlBuilder.style.display = isBuilder ? '' : 'none';
+    sqlEnv.style.display = isBuilder ? 'none' : '';
+  }
+
+  if (modeBuilder) modeBuilder.addEventListener('change', function() { toggleSqlMode(); resetTest(); });
+  if (modeEnv) modeEnv.addEventListener('change', function() { toggleSqlMode(); resetTest(); });
+
+  // Auto-select mode based on existing data on edit.
+  var connStrEnvField = document.getElementById('id_connection_string_env');
+  var dbHostField = document.getElementById('id_db_host');
+  if (connStrEnvField && connStrEnvField.value && !(dbHostField && dbHostField.value)) {
+    if (modeEnv) { modeEnv.checked = true; }
+  }
+  toggleSqlMode();
+
+  // ── Test connection ──
+  var btnTest = document.getElementById('btn-test');
+  var btnSubmit = document.getElementById('btn-submit');
+  var testResult = document.getElementById('test-result');
+  var testSpinner = document.getElementById('test-spinner');
+  var testPassed = false;
+
+  // Reset test state when any connection field changes.
+  var watchFields = [
+    'id_connector_type', 'id_base_url', 'id_auth_type', 'id_api_key_env',
+    'id_connection_string_env', 'id_database_name',
+    'id_db_host', 'id_db_port', 'id_db_username', 'id_db_password', 'id_db_driver', 'id_db_trust_cert',
+    'id_tenant_id', 'id_client_id_env', 'id_client_secret_env',
+    'id_metadata_json'
+  ];
+  watchFields.forEach(function(fid) {
+    var el = document.getElementById(fid);
+    if (el) el.addEventListener('input', resetTest);
+  });
+
+  function resetTest() {
+    testPassed = false;
+    btnSubmit.disabled = true;
+    testResult.style.display = 'none';
+    testResult.innerHTML = '';
+  }
+
+  btnTest.addEventListener('click', function() {
+    testResult.style.display = 'none';
+    testSpinner.style.display = '';
+    btnTest.disabled = true;
+
+    var payload = {
+      connector_type: val('id_connector_type'),
+      base_url: val('id_base_url'),
+      timeout_seconds: val('id_timeout_seconds'),
+      auth_type: val('id_auth_type'),
+      api_key_env: val('id_api_key_env'),
+      connection_string_env: val('id_connection_string_env'),
+      database_name: val('id_database_name'),
+      db_host: val('id_db_host'),
+      db_port: val('id_db_port'),
+      db_username: val('id_db_username'),
+      db_password: val('id_db_password'),
+      db_driver: val('id_db_driver'),
+      db_trust_cert: chk('id_db_trust_cert'),
+      tenant_id: val('id_tenant_id'),
+      client_id_env: val('id_client_id_env'),
+      client_secret_env: val('id_client_secret_env'),
+      metadata_json: val('id_metadata_json')
+    };
+
+    fetch('{% url "erp_integration:erp_connection_test_ajax" %}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+      },
+      body: JSON.stringify(payload)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      testSpinner.style.display = 'none';
+      btnTest.disabled = false;
+      testResult.style.display = '';
+      if (data.success) {
+        testPassed = true;
+        btnSubmit.disabled = false;
+        testResult.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>' + escapeHtml(data.message) + '</span>';
+      } else {
+        testPassed = false;
+        btnSubmit.disabled = true;
+        testResult.innerHTML = '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>' + escapeHtml(data.message) + '</span>';
+      }
+    })
+    .catch(function(err) {
+      testSpinner.style.display = 'none';
+      btnTest.disabled = false;
+      testResult.style.display = '';
+      testResult.innerHTML = '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Network error</span>';
+    });
+  });
+
+  function val(id) {
+    var el = document.getElementById(id);
+    return el ? el.value : '';
+  }
+
+  function chk(id) {
+    var el = document.getElementById(id);
+    return el ? el.checked : false;
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
+  }
+})();
+</script>
+{% endblock %}

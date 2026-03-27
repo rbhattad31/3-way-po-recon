@@ -1,7 +1,10 @@
 """Dashboard template views."""
+import datetime
+
 from django.contrib.auth.decorators import login_required
 from django.db.models import Avg, Count, F, Q, Sum
 from django.shortcuts import render
+from django.utils import timezone
 
 from apps.agents.models import AgentRun
 from apps.cases.models import APCase, APCaseStage
@@ -180,13 +183,29 @@ def agent_monitor(request):
 
 @login_required
 def agent_performance(request):
-    """Agent Performance Dashboard — operational metrics & observability."""
+    """Agent Performance Dashboard -- operational metrics & observability."""
     user_role = getattr(request.user, "role", "")
+
+    start_date = timezone.now() - datetime.timedelta(days=7)
+    plan_rows = (
+        AgentRun.objects
+        .filter(
+            started_at__gte=start_date,
+            input_payload__plan_source__isnull=False,
+        )
+        .values("input_payload__plan_source")
+        .annotate(
+            count=Count("id"),
+            avg_confidence=Avg("confidence"),
+        )
+        .order_by("input_payload__plan_source")
+    )
 
     return render(request, "dashboard/agent_performance.html", {
         "user_role": user_role,
         "agent_types": AgentType.choices,
         "agent_statuses": AgentRunStatus.choices,
+        "plan_comparison": list(plan_rows),
     })
 
 

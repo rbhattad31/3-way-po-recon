@@ -1,0 +1,64 @@
+/* PO Reconciliation – Custom styles */
+body {
+  padding-top: 56px;
+  background: #f5f6fa;
+}
+.card-metric {
+  border-left: 4px solid;
+  transition: transform 0.15s;
+}
+.card-metric:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,.08);
+}
+.card-metric.matched { border-color: #198754; }
+.card-metric.review  { border-color: #ffc107; }
+.card-metric.error   { border-color: #dc3545; }
+.card-metric.info    { border-color: #0d6efd; }
+
+.status-badge { font-size: .8rem; }
+.status-MATCHED,
+.status-APPROVED,
+.status-RECONCILED,
+.status-COMPLETED  { color: #fff; background: #198754; }
+.status-PARTIAL_MATCH,
+.status-ASSIGNED,
+.status-IN_REVIEW,
+.status-VALIDATED,
+.status-READY_FOR_RECON { color: #000; background: #ffc107; }
+.status-UNMATCHED,
+.status-REJECTED,
+.status-ERROR,
+.status-INVALID,
+.status-FAILED     { color: #fff; background: #dc3545; }
+.status-REQUIRES_REVIEW,
+.status-PENDING,
+.status-UPLOADED,
+.status-SKIPPED    { color: #fff; background: #6c757d; }
+.status-EXTRACTION_IN_PROGRESS,
+.status-EXTRACTED,
+.status-RUNNING    { color: #fff; background: #0d6efd; }
+
+.severity-LOW      { color: #198754; }
+.severity-MEDIUM   { color: #ffc107; }
+.severity-HIGH     { color: #fd7e14; }
+.severity-CRITICAL { color: #dc3545; }
+
+.table-fixed-header thead th {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 1;
+}
+
+#sidebar .nav-link.active {
+  color: #0d6efd;
+}
+#sidebar .nav-link {
+  color: #495057;
+  border-radius: .375rem;
+  padding: .5rem .75rem;
+}
+#sidebar .nav-link:hover {
+  background: #e9ecef;
+}
