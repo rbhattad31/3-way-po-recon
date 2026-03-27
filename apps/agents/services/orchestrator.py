@@ -267,6 +267,12 @@ class AgentOrchestrator:
         # Attach structured memory to context for cross-agent data sharing.
         memory = AgentMemory()
         ctx.memory = memory
+        # Pre-seed facts so all agents start with consistent base context.
+        ctx.memory.facts["grn_available"] = bool(getattr(result, "grn_available", False))
+        ctx.memory.facts["grn_fully_received"] = bool(getattr(result, "grn_fully_received", False))
+        ctx.memory.facts["is_two_way"] = (ctx.reconciliation_mode == "TWO_WAY")
+        ctx.memory.facts["vendor_name"] = getattr(result, "vendor_name", "") or ""
+        ctx.memory.facts["match_status"] = str(getattr(result, "match_status", "") or "")
 
         # 4. Execute LLM agents in sequence
         last_output = None
@@ -366,7 +372,7 @@ class AgentOrchestrator:
                 # Continue with remaining agents
 
             # --- Agent feedback loop: apply findings back to reconciliation ---
-            if agent_type in _FEEDBACK_AGENTS and last_output:
+            if agent_type in _FEEDBACK_AGENTS and last_output and last_output.status == AgentRunStatus.COMPLETED:
                 new_status = self._apply_agent_findings(
                     agent_type, last_output, result, ctx,
                 )
@@ -389,7 +395,7 @@ class AgentOrchestrator:
                     ctx.memory.facts["grn_fully_received"] = bool(result.grn_fully_received)
 
             # --- Reflection: dynamically insert agents based on findings ---
-            if last_output:
+            if last_output and last_output.status == AgentRunStatus.COMPLETED:
                 extra_agents = self._reflect(
                     agent_type,
                     last_output,
@@ -413,6 +419,7 @@ class AgentOrchestrator:
             self._apply_deterministic_resolution(
                 result, orch_result, deterministic_tail, last_output,
             )
+            orch_db_run.executed_agents = orch_result.agents_executed
 
         # 6. Determine final recommendation (from last agent with a recommendation)
         self._resolve_final_recommendation(orch_result, result)
@@ -431,7 +438,7 @@ class AgentOrchestrator:
         orch_db_run.duration_ms = int((_time.monotonic() - _orch_start) * 1000)
         orch_db_run.save(update_fields=[
             "status", "final_recommendation", "final_confidence",
-            "completed_at", "duration_ms",
+            "completed_at", "duration_ms", "executed_agents",
         ])
 
         logger.info(

@@ -529,8 +529,12 @@ def agent_reference(request):
     ]
 
     # ---- Hardening: tool-failure runtime guards ----
-    from apps.agents.services.base_agent import _TOOL_GROUNDED_AGENT_TYPES
-    tool_grounded_agents = sorted(_TOOL_GROUNDED_AGENT_TYPES)
+    # Derived from catalog: agents with requires_tool_grounding=True
+    from apps.agents.models import AgentDefinition as _AD
+    tool_grounded_agents = sorted(
+        _AD.objects.filter(requires_tool_grounding=True, enabled=True)
+        .values_list("agent_type", flat=True)
+    )
 
     # ---- Hardening: data-scope authorization dimensions ----
     data_scope_dimensions = [

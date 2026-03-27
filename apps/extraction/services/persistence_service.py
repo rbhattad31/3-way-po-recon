@@ -270,6 +270,7 @@ class ExtractionResultPersistenceService:
             ocr_page_count=getattr(extraction_response, 'ocr_page_count', 0),
             ocr_duration_ms=getattr(extraction_response, 'ocr_duration_ms', None),
             ocr_char_count=getattr(extraction_response, 'ocr_char_count', 0),
+            ocr_text=getattr(extraction_response, 'ocr_text', '') or '',
         )
 
         # Reuse existing ExtractionResult for same upload (reprocessing)

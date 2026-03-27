@@ -37,16 +37,6 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 6  # Safety cap on tool-call loops
 
-# Agents that MUST call at least one tool to produce a reliable recommendation.
-# If none are called, confidence is capped to signal unreliability.
-_TOOL_GROUNDED_AGENT_TYPES = frozenset({
-    "PO_RETRIEVAL",
-    "GRN_RETRIEVAL",
-    "RECONCILIATION_ASSIST",
-    "INVOICE_UNDERSTANDING",
-    "EXCEPTION_ANALYSIS",
-})
-
 
 @dataclass
 class AgentContext:
@@ -240,6 +230,20 @@ class BaseAgent(ABC):
                             bool(output.evidence),
                         )
                     output.confidence = composite
+                    # Soft enforcement: min_tool_calls catalog contract
+                    if (
+                        agent_def
+                        and agent_def.min_tool_calls
+                        and total_tool_calls < agent_def.min_tool_calls
+                    ):
+                        logger.warning(
+                            "Agent %s: min_tool_calls=%d but only %d tool(s) called. "
+                            "Capping confidence at 0.5.",
+                            self.agent_type, agent_def.min_tool_calls, total_tool_calls,
+                        )
+                        output.confidence = min(output.confidence, 0.5)
+                        if isinstance(output.evidence, dict):
+                            output.evidence["_min_tool_calls_not_met"] = True
                     # Apply grounding cap (Check 1).
                     if _grounding_cap_active:
                         output.confidence = min(output.confidence, 0.4)
@@ -329,6 +333,20 @@ class BaseAgent(ABC):
                     bool(output.evidence),
                 )
             output.confidence = composite
+            # Soft enforcement: min_tool_calls catalog contract
+            if (
+                agent_def
+                and agent_def.min_tool_calls
+                and total_tool_calls < agent_def.min_tool_calls
+            ):
+                logger.warning(
+                    "Agent %s: min_tool_calls=%d but only %d tool(s) called. "
+                    "Capping confidence at 0.5.",
+                    self.agent_type, agent_def.min_tool_calls, total_tool_calls,
+                )
+                output.confidence = min(output.confidence, 0.5)
+                if isinstance(output.evidence, dict):
+                    output.evidence["_min_tool_calls_not_met"] = True
             # Apply grounding cap (Check 1).
             if _grounding_cap_active:
                 output.confidence = min(output.confidence, 0.4)
@@ -473,14 +491,10 @@ class BaseAgent(ABC):
         ):
             logger.warning(
                 "Agent %s: recommendation_type '%s' is in prohibited_actions. "
-                "Overriding with fallback.",
+                "Overriding with hardcoded safe fallback SEND_TO_AP_REVIEW.",
                 self.agent_type, output.recommendation_type,
             )
-            fallback = (
-                agent_def.default_fallback_recommendation
-                or "SEND_TO_AP_REVIEW"
-            )
-            output.recommendation_type = fallback
+            output.recommendation_type = "SEND_TO_AP_REVIEW"
             output.confidence = min(output.confidence, 0.5)
 
         # Phase 2: Normalise required evidence structure keys (_tools_used, _grounding,
@@ -527,6 +541,11 @@ class BaseAgent(ABC):
                 rationale=d.get("rationale", ""),
                 confidence=decision_conf,
                 evidence_refs=evidence,
+                trace_id=getattr(agent_run, "trace_id", "") or "",
+                span_id=getattr(agent_run, "span_id", "") or "",
+                invoice_id=getattr(agent_run, "invoice_id", None),
+                recommendation_type=output.recommendation_type or "",
+                prompt_version=getattr(agent_run, "prompt_version", "") or "",
             )
 
     @staticmethod
@@ -811,17 +830,6 @@ class BaseAgent(ABC):
                 output.evidence = {"_provenance": "tool_failures"}
             else:
                 output.evidence.setdefault("_provenance", "tool_failures_partial")
-
-        if self.agent_type in _TOOL_GROUNDED_AGENT_TYPES and total_tool_calls == 0:
-            output.confidence = min(output.confidence, 0.6)
-            if not output.evidence:
-                output.evidence = {"_provenance": "no_tools_called"}
-            else:
-                output.evidence.setdefault("_provenance", "no_tools_called")
-            logger.warning(
-                "Agent %s is tool-grounded but called no tools -- confidence capped at 0.6",
-                self.agent_type,
-            )
 
         return output
 

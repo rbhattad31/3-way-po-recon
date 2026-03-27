@@ -596,7 +596,3 @@ AGENT_CLASS_REGISTRY: Dict[str, type] = {
     AgentType.CASE_SUMMARY: CaseSummaryAgent,
     AgentType.RECONCILIATION_ASSIST: ReconciliationAssistAgent,
 }
-
-
-# Need the import for the type hint in AGENT_CLASS_REGISTRY
-from typing import Dict  # noqa: E402

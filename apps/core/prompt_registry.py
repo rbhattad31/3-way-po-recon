@@ -158,7 +158,7 @@ Extract ALL relevant fields and return a JSON object with EXACTLY this structure
 {{
   "confidence": <float 0.0-1.0 representing your overall confidence>,
   "vendor_name": "<vendor/supplier company name>",
-  "invoice_number": "<invoice number/ID>",
+  "invoice_number": "<invoice number — the unique document identifier assigned by the supplier>",
   "invoice_date": "<invoice date in YYYY-MM-DD format>",
   "po_number": "<purchase order number referenced on the invoice>",
   "currency": "<3-letter ISO currency code e.g. USD, EUR, INR>",
@@ -184,6 +184,18 @@ Rules:
 - Parse dates into YYYY-MM-DD format.
 - If the PO number is referenced anywhere (header, footer, reference fields), extract it.
 - Return ONLY valid JSON, no markdown or explanation.
+- ## Strictly For the invoice_number field ##:
+    - This is the UNIQUE DOCUMENT IDENTIFIER assigned by the supplier/vendor. It is NOT the PO number.
+    - Search the ENTIRE document — header, top-right box, reference section, footer, and stamp areas.
+    - Common labels (all equivalent): Invoice No., Invoice #, Inv No., Inv. No, Tax Invoice No.,
+      Tax Inv. No., Bill No., Bill Number, Document No., Doc No., Reference No., Ref No.,
+      Voucher No., Serial No., Sr. No., Invoice Number, Invoice ID, Receipt No., GST Invoice No.
+    - If you see a number immediately following any of these labels, that is the invoice_number.
+    - Do NOT leave invoice_number empty if ANY document identifier number is visible on the invoice.
+    - Do NOT confuse invoice_number with: quantity, line number, HSN/SAC code, bank account number,
+      GSTIN, phone number, or PO number.
+    - If multiple candidate numbers exist, prefer the one explicitly labeled with "Invoice" or "Bill".
+    - Return the value exactly as printed (e.g. "INV/2024/0042", "TI-10023", "2024-INV-007").
 - ## Strictly For the vendor_name field ##:
     - The value in vendor_name MUST be in English characters only.
     - If OCR contains Arabic/Urdu/other non-English script, convert vendor_name to the official English company name.
