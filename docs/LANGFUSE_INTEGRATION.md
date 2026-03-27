@@ -10,8 +10,9 @@ or misconfigured, the application continues to work without any impact.
 - **Prompt management**: prompts are stored in Langfuse and fetched at runtime
   (60-second cache TTL). The `PromptRegistry` falls back to hardcoded defaults
   if Langfuse is unavailable.
-- **Tracing**: every agent pipeline, extraction run, and reviewer summary call
-  is recorded as a Langfuse trace with child spans and LLM generation logs.
+- **Tracing**: every agent pipeline, extraction run, bulk extraction job, and
+  reviewer summary call is recorded as a Langfuse trace with child spans and
+  LLM generation logs.
 - **Scores**: numeric quality scores are attached to traces after reconciliation
   match classification, posting confidence calculation, extraction pipeline
   routing, and review assignment / decision events.
@@ -85,6 +86,22 @@ root trace  (start_trace)
 
   -- erp_status_check        (PostingSubmitResolver.get_posting_status())
      (closed immediately with status/error output)
+
+  -- reconciliation_task     (run_reconciliation_task Celery task wrapper)
+     -- reconciliation_run   (ReconciliationRunnerService.run() -- one per batch)
+        -- recon_mode_resolution  (per invoice)
+        -- recon_matching         (per invoice -- router + classifier)
+        -- recon_result_persist   (per invoice -- result_service.save)
+        -- recon_exception_build  (per invoice -- exception_builder.build)
+        -- recon_mode_resolution  (next invoice...)
+        -- ...
+
+  -- bulk_extraction_job     (run_bulk_job_task -- one per BulkExtractionJob)
+     -- bulk_item_extraction (one per eligible item in BulkExtractionJob)
+     -- gdrive_test_connection / gdrive_list_files / gdrive_download_file
+        (GoogleDriveBulkSourceAdapter -- only when lf_trace is set)
+     -- onedrive_test_connection / onedrive_list_files / onedrive_download_file
+        (OneDriveBulkSourceAdapter -- only when lf_trace is set)
 
 ```
 
@@ -203,17 +220,51 @@ which is forwarded into `AgentContext`. The Celery task passes it from the uploa
 extraction_resp = adapter.extract(file_path, actor_user_id=upload.uploaded_by_id)
 ```
 
-### 5. Reconciliation match score (`apps/reconciliation/services/runner_service.py`)
+### 5. Reconciliation pipeline (`apps/reconciliation/tasks.py` + `apps/reconciliation/services/runner_service.py`)
 
-After `_reconcile_single()` classifies the match result and transitions the
-invoice status, a `score_trace` is emitted before returning:
+The reconciliation pipeline is fully instrumented with a root trace and four
+child spans per invoice, plus a `reconciliation_match` quality score.
+
+#### Root traces
+
+**Task-level span** (`run_reconciliation_task`): after the runner returns,
+a `"reconciliation_task"` span is opened and immediately closed with the final
+`run.status`. Trace ID: `run.trace_id or str(run.pk)`.
+
+**Service-level trace** (`ReconciliationRunnerService.run()`): opened after
+`ReconciliationRun.objects.create()` using the same trace ID convention.
+Name: `"reconciliation_run"`. Closed after `recon_run.save()` with match-count
+summary `{matched, partial, unmatched, errors, review}`. If an external caller
+already passes `lf_trace`, that handle is used and the service does **not**
+open its own trace (`_lf_run_trace_is_mine = False`).
+
+`run()` accepts `lf_trace=None` as an optional kwarg — existing callers
+(template view, management commands, tests) are unaffected.
+
+#### Per-invoice child spans (`_reconcile_single`)
+
+Four spans are opened and closed around each deterministic pipeline stage:
+
+| Span name | Wraps | Output keys |
+|---|---|---|
+| `recon_mode_resolution` | `ModeResolutionResolver.resolve()` | `mode` |
+| `recon_matching` | `ReconciliationExecutionRouter.execute()` + `ClassificationService.classify()` | `match_status` |
+| `recon_result_persist` | `ReconciliationResultService.save()` + `result_line_map` build | `result_id` |
+| `recon_exception_build` | `ExceptionBuilderService.build()` + `bulk_create` | `exception_count` |
+
+Each span is opened in its own `try/except`, and `end_span` is always called
+in a `finally` block. A failure in span creation never affects the matching logic.
+
+#### `reconciliation_match` score
+
+Emitted at the end of `_reconcile_single()`, before returning:
 
 ```python
 score_trace(
     _trace_id,               # run.trace_id or str(run.pk)
     "reconciliation_match",
     _score_value,            # MATCHED=1.0, PARTIAL_MATCH=0.5, REQUIRES_REVIEW=0.3, UNMATCHED=0.0
-    comment=f"invoice={invoice.pk} status={match_status}",
+    comment=f"mode={reconciliation_mode} match_status={match_status} invoice={invoice.pk}",
 )
 ```
 
@@ -227,8 +278,8 @@ Score mapping:
 | `UNMATCHED` | `0.0` |
 
 `trace_id` is taken from `run.trace_id` if present, otherwise falls back to
-`str(run.pk)`. If the reconciliation run has no linked Langfuse root trace the
-score is recorded as an unlinked score — this is acceptable for now.
+`str(run.pk)`. The root trace is now always created before `_reconcile_single`
+runs, so the score is always attached to a linked trace.
 
 ### 6. Posting confidence score (`apps/posting_core/services/posting_pipeline.py`)
 
@@ -459,6 +510,80 @@ if not granted:
     )
 ```
 
+### 14. Bulk extraction job (`apps/extraction/bulk_tasks.py` + `apps/extraction/services/bulk_service.py` + `apps/extraction/services/bulk_source_adapters.py`)
+
+The bulk extraction pipeline is fully traced with a root trace, per-item child
+spans, and connector-level spans for Google Drive and OneDrive.
+
+#### Root trace (`run_bulk_job_task`)
+
+Opened before `BulkExtractionService.run_job()` and closed in a `finally` block:
+
+```python
+_trace_id = getattr(job, "trace_id", None) or str(job.pk)
+_lf_trace = start_trace(
+    _trace_id,
+    "bulk_extraction_job",
+    metadata={
+        "task_id": self.request.id,
+        "job_pk": job.pk,
+        "source_type": job.source_connection.source_type,
+        "total_found": job.total_found,
+    },
+)
+```
+
+After the job completes, a `bulk_job_success_rate` score is emitted and the
+trace is closed:
+
+```python
+score_trace(
+    _trace_id,
+    "bulk_job_success_rate",
+    job.total_success / (job.total_found or 1),
+    comment=f"processed={job.total_success} total={job.total_found}",
+)
+end_span(_lf_trace, output={"status": job.status, "processed": job.total_success})
+```
+
+#### Per-item spans (`BulkExtractionService._process_item`)
+
+The `lf_trace` handle is forwarded from `run_job()` into `_process_item(lf_parent=)`.
+Each eligible item opens a `"bulk_item_extraction"` child span:
+
+```python
+_lf_item_span = start_span(
+    lf_parent,
+    name="bulk_item_extraction",
+    metadata={"file_name": item.source_name, "item_pk": item.pk},
+)
+```
+
+The span is closed before each early-return path (DUPLICATE, CREDIT_BLOCKED,
+download FAILED) and in the `finally` cleanup block. Items that finish with
+`status == FAILED` are closed with `level="ERROR"`.
+
+#### Connector spans (source adapters)
+
+`run_job()` sets `adapter.lf_trace = lf_trace` on every adapter instance before
+calling any adapter method. The adapter base class initialises `self.lf_trace = None`
+so existing callers (management commands, tests) are unaffected.
+
+Both `GoogleDriveBulkSourceAdapter` and `OneDriveBulkSourceAdapter` wrap all
+network-bound methods:
+
+| Adapter | Span name | Key output |
+|---|---|---|
+| Google Drive | `gdrive_test_connection` | -- |
+| Google Drive | `gdrive_list_files` | `file_count` |
+| Google Drive | `gdrive_download_file` | -- |
+| OneDrive | `onedrive_test_connection` | -- |
+| OneDrive | `onedrive_list_files` | `file_count` |
+| OneDrive | `onedrive_download_file` | -- |
+
+`LocalFolderBulkSourceAdapter` is not wrapped (local I/O latency is negligible
+and there are no auth failures to surface).
+
 ---
 
 ## Scores reference
@@ -478,6 +603,7 @@ if not granted:
 | `extraction_corrections_count` | 0.0+ (raw count) | `approval_service.py` `approve()` | `f"approval-{approval.pk}"` |
 | `rbac_guardrail` | 0.0 or 1.0 | `guardrails_service.py` `log_guardrail_decision()` | active agent pipeline `trace_id` |
 | `rbac_data_scope` | 0.0 (deny only) | `guardrails_service.py` `authorize_data_scope()` | `TraceContext.get_current().trace_id` |
+| `bulk_job_success_rate` | 0.0 – 1.0 | `bulk_tasks.py` `run_bulk_job_task` | `job.trace_id` or `str(job.pk)` |
 
 ---
 
@@ -552,25 +678,29 @@ if otel_span is not None:
 The constants `TRACE_USER_ID = "user.id"` and `TRACE_SESSION_ID = "session.id"`
 are defined in `langfuse._client.attributes`.
 
-### Issue 2 — Bulk extraction had no Langfuse traces
+### Issue 2 — Bulk extraction job pipeline had no Langfuse traces
 
-**Symptom**: Individual invoice uploads created traces; bulk extraction jobs did not.
+**Symptom**: Individual invoice uploads created traces via the agent pipeline;
+bulk extraction jobs (`BulkExtractionJob`) produced no traces in Langfuse even
+when Langfuse was fully configured.
 
-**Root cause**: `InvoiceExtractionAdapter._agent_extract()` built an `AgentContext`
-with `actor_user_id=None` and `invoice_id=0`. Because `session_id` is computed as
-`f"invoice-{ctx.invoice_id}"`, a zero `invoice_id` produced an ugly `"invoice-0"`
-session or was suppressed. More importantly, no `actor_user_id` meant the traces
-were not attributed to any user.
-
-The deeper problem was Issue 1 above — `start_trace` was returning `None`, so
-traces were not created at all regardless.
+**Root cause**: `run_bulk_job_task` called `BulkExtractionService.run_job()` with
+no Langfuse context. The service and adapters had no tracing hook points.
 
 **Fix**:
 
-- `InvoiceExtractionAdapter.extract(file_path, *, actor_user_id=None)` — new kwarg.
-- `InvoiceExtractionAdapter._agent_extract(ocr_text, *, actor_user_id=None)` — forwarded into `AgentContext(actor_user_id=actor_user_id)`.
-- `process_invoice_upload_task` — passes `actor_user_id=upload.uploaded_by_id`.
-- `InvoiceExtractionAgent.run()` — already passes `ctx.actor_user_id` and `ctx.invoice_id` to `start_trace` after the previous session's changes.
+- `run_bulk_job_task` — opens a `"bulk_extraction_job"` root trace using
+  `job.trace_id or str(job.pk)`, passes the handle to `run_job(lf_trace=)`,
+  and closes it in a `finally` block with a `bulk_job_success_rate` score.
+- `BulkExtractionService.run_job(lf_trace=None)` — propagates trace to
+  `adapter.lf_trace` and forwards it as `lf_parent` to `_process_item()`.
+- `BulkExtractionService._process_item(lf_parent=None)` — opens a
+  `"bulk_item_extraction"` child span per item; closes with `level="ERROR"`
+  on `FAILED` status.
+- `BaseBulkSourceAdapter.__init__` — adds `self.lf_trace = None`.
+- `GoogleDriveBulkSourceAdapter` and `OneDriveBulkSourceAdapter` — all three
+  network-bound methods (`test_connection`, `list_files`, `download_file`) are
+  wrapped with start/end span pairs. `LocalFolderBulkSourceAdapter` is unchanged.
 
 ### Issue 3 — Prompt names mismatched in Langfuse
 
@@ -595,4 +725,4 @@ existing prompts and reseed with the correct names.
 | Prompt 404 warning in logs | Run `push_prompts_to_langfuse`. If names are wrong, run with `--purge`. |
 | Old prompt content being served | Langfuse client caches prompts for 60 seconds. Wait or restart to force refresh. |
 | `start_trace` returns None | Set `LANGFUSE_LOG_LEVEL=debug` and check for exceptions in the client init. Ensure host URL has no trailing slash. |
-| Scores appear in Langfuse but not linked to a trace | The pipeline (reconciliation/posting) does not yet create a root trace — score is recorded as unlinked. This is expected until root traces are added to those pipelines. |
+| Scores appear in Langfuse but not linked to a trace | The posting pipeline does not yet create a root Langfuse trace -- its scores are recorded as unlinked. This is expected until a root trace is added to `posting_pipeline.py`. Reconciliation and bulk extraction scores are now always linked. |

@@ -55,12 +55,30 @@ def run_reconciliation_task(
 
     runner = ReconciliationRunnerService(config=config)
 
+    run = None
     try:
-        run = runner.run(invoices=invoices, triggered_by=triggered_by)
+        run = runner.run(invoices=invoices, triggered_by=triggered_by, lf_trace=None)
     except Exception as exc:
         logger.exception("Reconciliation task failed")
         from apps.core.utils import safe_retry
         safe_retry(self, exc)
+    finally:
+        try:
+            if run is not None:
+                from apps.core.langfuse_client import start_trace, end_span
+                _trace_id = getattr(run, "trace_id", None) or str(run.pk)
+                _lf_trace = start_trace(
+                    _trace_id,
+                    "reconciliation_task",
+                    metadata={
+                        "task_id": self.request.id,
+                        "run_pk": run.pk,
+                        "total_invoices": run.total_invoices,
+                    },
+                )
+                end_span(_lf_trace, output={"run_status": run.status})
+        except Exception:
+            pass
 
     # Chain agent pipeline for non-matched results
     from apps.agents.tasks import run_agent_pipeline_task

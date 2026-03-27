@@ -63,6 +63,7 @@ class ReconciliationRunnerService:
         self,
         invoices: Optional[List[Invoice]] = None,
         triggered_by=None,
+        lf_trace=None,
     ) -> ReconciliationRun:
         """Execute reconciliation for a set of invoices.
 
@@ -82,6 +83,26 @@ class ReconciliationRunnerService:
             total_invoices=len(invoices),
             triggered_by=triggered_by,
         )
+
+        # Langfuse: open root trace for this reconciliation run
+        _trace_id = getattr(recon_run, "trace_id", None) or str(recon_run.pk)
+        _lf_run_trace = lf_trace
+        _lf_run_trace_is_mine = False
+        try:
+            if _lf_run_trace is None:
+                from apps.core.langfuse_client import start_trace
+                _lf_run_trace = start_trace(
+                    _trace_id,
+                    "reconciliation_run",
+                    metadata={
+                        "run_pk": recon_run.pk,
+                        "total_invoices": len(invoices),
+                        "config": self.config.name,
+                    },
+                )
+                _lf_run_trace_is_mine = True
+        except Exception:
+            pass
 
         # Audit: reconciliation started
         from apps.auditlog.services import AuditService
@@ -104,7 +125,7 @@ class ReconciliationRunnerService:
 
         for invoice in invoices:
             try:
-                status = self._reconcile_single(recon_run, invoice)
+                status = self._reconcile_single(recon_run, invoice, lf_trace=_lf_run_trace)
                 if status == MatchStatus.MATCHED:
                     matched += 1
                 elif status == MatchStatus.PARTIAL_MATCH:
@@ -128,6 +149,23 @@ class ReconciliationRunnerService:
         recon_run.error_count = errors
         recon_run.review_count = review
         recon_run.save()
+
+        # Langfuse: close root trace
+        try:
+            if _lf_run_trace_is_mine and _lf_run_trace:
+                from apps.core.langfuse_client import end_span
+                end_span(
+                    _lf_run_trace,
+                    output={
+                        "matched": matched,
+                        "partial": partial,
+                        "unmatched": unmatched,
+                        "errors": errors,
+                        "review": review,
+                    },
+                )
+        except Exception:
+            pass
 
         # Audit: reconciliation completed for each invoice
         for inv in invoices:
@@ -153,7 +191,7 @@ class ReconciliationRunnerService:
     # Single-invoice pipeline
     # ------------------------------------------------------------------
     def _reconcile_single(
-        self, run: ReconciliationRun, invoice: Invoice
+        self, run: ReconciliationRun, invoice: Invoice, lf_trace=None
     ) -> MatchStatus:
         """Run the deterministic match for one invoice (2-way or 3-way)."""
 
@@ -184,7 +222,25 @@ class ReconciliationRunnerService:
                 },
             )
         po_for_resolver = po_result.purchase_order if po_result.found else None
-        mode_resolution = self.mode_resolver.resolve(invoice, po_for_resolver)
+
+        # Langfuse span: mode resolution
+        _lf_span_mode = None
+        try:
+            if lf_trace:
+                from apps.core.langfuse_client import start_span
+                _lf_span_mode = start_span(lf_trace, name="recon_mode_resolution", metadata={"invoice_id": invoice.pk})
+        except Exception:
+            pass
+        mode_resolution = None
+        try:
+            mode_resolution = self.mode_resolver.resolve(invoice, po_for_resolver)
+        finally:
+            try:
+                if _lf_span_mode:
+                    from apps.core.langfuse_client import end_span
+                    end_span(_lf_span_mode, output={"mode": str(mode_resolution.mode) if mode_resolution else "unknown"})
+            except Exception:
+                pass
 
         # Audit: mode resolved
         from apps.auditlog.services import AuditService
@@ -204,58 +260,106 @@ class ReconciliationRunnerService:
             },
         )
 
-        # 3. Execute via router (dispatches to 2-way or 3-way pipeline)
-        routed = self.router.execute(invoice, po_result, mode_resolution)
-
-        # 4. Mode-aware Classification
+        # 3. Execute via router (dispatches to 2-way or 3-way pipeline) + classification
         reconciliation_mode = mode_resolution.mode
-        match_status = self.classifier.classify(
-            po_result=routed.po_result,
-            header_result=routed.header_result,
-            line_result=routed.line_result,
-            grn_result=routed.grn_result,
-            extraction_confidence=invoice.extraction_confidence,
-            confidence_threshold=self.config.extraction_confidence_threshold,
-            reconciliation_mode=reconciliation_mode,
-            invoice=invoice,
-        )
+        _lf_span_match = None
+        try:
+            if lf_trace:
+                from apps.core.langfuse_client import start_span
+                _lf_span_match = start_span(lf_trace, name="recon_matching", metadata={"invoice_id": invoice.pk, "mode": str(reconciliation_mode)})
+        except Exception:
+            pass
+        match_status = None
+        try:
+            routed = self.router.execute(invoice, po_result, mode_resolution)
+
+            # 4. Mode-aware Classification
+            match_status = self.classifier.classify(
+                po_result=routed.po_result,
+                header_result=routed.header_result,
+                line_result=routed.line_result,
+                grn_result=routed.grn_result,
+                extraction_confidence=invoice.extraction_confidence,
+                confidence_threshold=self.config.extraction_confidence_threshold,
+                reconciliation_mode=reconciliation_mode,
+                invoice=invoice,
+            )
+        finally:
+            try:
+                if _lf_span_match:
+                    from apps.core.langfuse_client import end_span
+                    end_span(_lf_span_match, output={"match_status": str(match_status) if match_status else "unknown"})
+            except Exception:
+                pass
 
         # 5. Save result with mode metadata
-        result = self.result_service.save(
-            run=run,
-            invoice=invoice,
-            match_status=match_status,
-            po_result=routed.po_result,
-            header_result=routed.header_result,
-            line_result=routed.line_result,
-            grn_result=routed.grn_result,
-            exceptions=[],  # Build separately below to get result_line references
-            reconciliation_mode=reconciliation_mode,
-            mode_resolution=mode_resolution,
-        )
+        _lf_span_persist = None
+        try:
+            if lf_trace:
+                from apps.core.langfuse_client import start_span
+                _lf_span_persist = start_span(lf_trace, name="recon_result_persist", metadata={"invoice_id": invoice.pk, "match_status": str(match_status)})
+        except Exception:
+            pass
+        result = None
+        try:
+            result = self.result_service.save(
+                run=run,
+                invoice=invoice,
+                match_status=match_status,
+                po_result=routed.po_result,
+                header_result=routed.header_result,
+                line_result=routed.line_result,
+                grn_result=routed.grn_result,
+                exceptions=[],  # Build separately below to get result_line references
+                reconciliation_mode=reconciliation_mode,
+                mode_resolution=mode_resolution,
+            )
 
-        # Build result_line map from saved result
-        result_line_map = {
-            rl.invoice_line_id: rl
-            for rl in result.line_results.all()
-            if rl.invoice_line_id
-        }
+            # Build result_line map from saved result
+            result_line_map = {
+                rl.invoice_line_id: rl
+                for rl in result.line_results.all()
+                if rl.invoice_line_id
+            }
+        finally:
+            try:
+                if _lf_span_persist:
+                    from apps.core.langfuse_client import end_span
+                    end_span(_lf_span_persist, output={"result_id": result.pk if result else None})
+            except Exception:
+                pass
 
         # 6. Mode-aware Exception building
-        exceptions = self.exception_builder.build(
-            result=result,
-            po_result=routed.po_result,
-            header_result=routed.header_result,
-            line_result=routed.line_result,
-            grn_result=routed.grn_result,
-            result_line_map=result_line_map,
-            extraction_confidence=invoice.extraction_confidence,
-            confidence_threshold=self.config.extraction_confidence_threshold,
-            reconciliation_mode=reconciliation_mode,
-        )
-        if exceptions:
-            from apps.reconciliation.models import ReconciliationException
-            ReconciliationException.objects.bulk_create(exceptions)
+        _lf_span_exc = None
+        try:
+            if lf_trace:
+                from apps.core.langfuse_client import start_span
+                _lf_span_exc = start_span(lf_trace, name="recon_exception_build", metadata={"invoice_id": invoice.pk})
+        except Exception:
+            pass
+        exceptions = []
+        try:
+            exceptions = self.exception_builder.build(
+                result=result,
+                po_result=routed.po_result,
+                header_result=routed.header_result,
+                line_result=routed.line_result,
+                grn_result=routed.grn_result,
+                result_line_map=result_line_map,
+                extraction_confidence=invoice.extraction_confidence,
+                confidence_threshold=self.config.extraction_confidence_threshold,
+                reconciliation_mode=reconciliation_mode,
+            )
+            if exceptions:
+                from apps.reconciliation.models import ReconciliationException
+                ReconciliationException.objects.bulk_create(exceptions)
+        finally:
+            try:
+                if _lf_span_exc:
+                    from apps.core.langfuse_client import end_span
+                    end_span(_lf_span_exc, output={"exception_count": len(exceptions)})
+            except Exception:
+                pass
 
         # 7. Auto-create review assignment for items needing human review
         if match_status == MatchStatus.REQUIRES_REVIEW:
@@ -282,7 +386,7 @@ class ReconciliationRunnerService:
                 _trace_id,
                 "reconciliation_match",
                 _score_value,
-                comment=f"invoice={invoice.pk} status={match_status}",
+                comment=f"mode={reconciliation_mode} match_status={match_status} invoice={invoice.pk}",
             )
         except Exception:
             pass
