@@ -73,20 +73,27 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Setting**: `POSTING_REFERENCE_FRESHNESS_HOURS` (default 168h / 7 days).
 
 ### Agent System
+- **Full architecture reference:** See [AGENT_ARCHITECTURE.md](../AGENT_ARCHITECTURE.md) for the complete agentic layer documentation, including all agent implementations, the PolicyEngine decision matrix, the DeterministicResolver rule table, RBAC guardrails, the reasoning engine upgrade path, best-practice upgrade guide per agent, and open source observability tool recommendations.
+- **No special characters in agent output stored to DB** -- this rule extends beyond source code. LLM-generated text written to `AgentRun.summarized_reasoning`, `ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, and `DecisionLog.rationale` must use ASCII only. Apply the `_sanitise_text()` helper (defined in `AGENT_ARCHITECTURE.md` Section 17.3) before any `.save()` call on agent-generated content.
 - All agents extend `BaseAgent` (in `apps/agents/services/`).
-- Agents use **ReAct loop**: LLM → parse tool calls → execute tools → loop (max 6 iterations).
+- Agents use **ReAct loop**: LLM -> parse tool calls -> execute tools -> loop (max 6 iterations).
 - Tool-calling uses **OpenAI-compliant format**: `tool_calls` array on assistant messages, `tool_call_id` + `name` on tool response messages.
 - Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`. Each tool declares `required_permission` (e.g., `"purchase_orders.view"`).
-- `AgentOrchestrator` is the entry point; `PolicyEngine` decides which agents to run based on match status + exception types.
-- `PolicyEngine` also handles **auto-close logic**: `should_auto_close()` and `_within_auto_close_band()` check if PARTIAL_MATCH falls within wider auto-close thresholds (qty: 5%, price: 3%, amount: 3%).
+- **`ReasoningPlanner`** is the entry point for planning: always makes a single LLM call to decide which agents to run and in what order; falls back to `PolicyEngine` (deterministic) on any LLM error. There is no feature flag -- the LLM planner is always active.
+- `PolicyEngine` handles **auto-close logic**: `should_auto_close()` and `_within_auto_close_band()` check if PARTIAL_MATCH falls within wider auto-close thresholds (qty: 5%, price: 3%, amount: 3%).
+- **`AgentOrchestrationRun`** (`apps/agents/models.py`): Top-level DB record for one `AgentOrchestrator.execute()` invocation. Status machine: PLANNED -> RUNNING -> COMPLETED | PARTIAL | FAILED. Acts as duplicate-run guard: a RUNNING record blocks re-entry for the same `ReconciliationResult`.
 - Agent pipeline is **wired to run automatically** after reconciliation for non-MATCHED results (sync via `start_reconciliation` view, async via `run_agent_pipeline_task`).
-- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations — orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` × 8), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` × 6), and post-policy authorization (auto-close, escalation).
+- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations — orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` × 8), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` × 6), post-policy authorization (auto-close, escalation), and **data-scope authorization** (`authorize_data_scope()` checks business-unit and vendor-id scope from `UserRole.scope_json`; called immediately after `authorize_orchestration()`).
+- **`UserRole.scope_json`** (nullable JSON on `rbac_models.py`): Per-assignment scope restrictions. Supported keys: `allowed_business_units` (list[str]), `allowed_vendor_ids` (list[int]). Null means unrestricted. ADMIN and SYSTEM_AGENT always bypass scope checks.
 - **SYSTEM_AGENT** identity: When no human user context is available (Celery async, system-triggered), `AgentGuardrailsService.resolve_actor()` returns a dedicated service account (`system-agent@internal`) with the `SYSTEM_AGENT` role (rank 100, `is_system_role=True`).
 - Every agent run, message, tool call, and decision is persisted for auditability via `AgentTraceService`.
 - `AgentRun` carries RBAC fields: `actor_primary_role`, `actor_roles_snapshot_json`, `permission_source`, `access_granted` — populated on every run.
 - All guardrail decisions (grant/deny) are logged as `AuditEvent` records (9 event types: `GUARDRAIL_GRANTED/DENIED`, `TOOL_CALL_AUTHORIZED/DENIED`, `RECOMMENDATION_ACCEPTED/DENIED`, `AUTO_CLOSE_AUTHORIZED/DENIED`, `SYSTEM_AGENT_USED`).
 - `RecommendationService` manages agent recommendations (`AgentRecommendation` model) with acceptance tracking; `mark_recommendation_accepted()` checks `authorize_recommendation()` before allowing accept/reject.
-- `AgentFeedbackService` handles PO/GRN re-reconciliation when an agent recovers a missing document (atomic re-linking + re-matching).
+- **Idempotent recommendations**: two-layer dedup -- `DecisionLogService.log_recommendation()` filters for any PENDING rec of the same `(reconciliation_result, recommendation_type)` before creating; model `UniqueConstraint` on `(reconciliation_result, recommendation_type, agent_run)` + `IntegrityError` guard at both orchestrator call sites.
+- `AgentFeedbackService` handles PO/GRN re-reconciliation when an agent recovers a missing document (atomic re-linking + re-matching). Only runs when `last_output.status == COMPLETED`.
+- **`AgentOutputSchema`** (`apps/agents/services/agent_output_schema.py`): Pydantic v2 schema for all standard agent JSON output. Validates `recommendation_type` (coerces invalid values to `SEND_TO_AP_REVIEW`), clamps `confidence` to [0.0, 1.0]. Applied via `enforce_json_response=True` on `BaseAgent`.
+- **`AgentDefinition` catalog fields**: `purpose`, `entry_conditions`, `success_criteria`, `prohibited_actions`, `allowed_recommendation_types`, `default_fallback_recommendation`, `requires_tool_grounding`, `min_tool_calls`, `tool_failure_confidence_cap`, `output_schema_name`, `output_schema_version`, `lifecycle_status`, `owner_team`, `capability_tags`, `domain_tags`, `human_review_required_conditions`. All are first-class DB columns (not in `config_json`). Seed/update via `seed_agent_contracts` command.
 - LLM client supports both OpenAI and Azure OpenAI (configurable via env vars).
 - Agent definitions include `config_json` with `allowed_tools` per agent type.
 
@@ -97,6 +104,12 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Decorators** (`apps/core/decorators.py`): `@observed_service` (service methods), `@observed_action` (FBV views), `@observed_task` (Celery tasks). All create child spans, measure duration, write `ProcessingLog`/`AuditEvent`.
 - **RequestTraceMiddleware** (`apps/core/middleware.py`): Creates root `TraceContext` per request, enriches with RBAC, sets `X-Trace-ID`/`X-Request-ID` headers.
 - When adding new services or views, decorate entry-point methods with the appropriate `@observed_*` decorator.
+- **External agent observability tools** (Langfuse, Phoenix, openinference, OpenLLMetry): See `AGENT_ARCHITECTURE.md` Section 18 for the full comparison, integration code, and Windows-specific setup. Key points for this Windows 11 dev environment:
+  - **Phoenix** (`arize-phoenix` + `openinference-instrumentation-openai`): pure Python, no Docker needed. Start with `python -m phoenix.server.main serve` on port 6006. Use the `threading.Event` guard in `AgentConfig.ready()` to prevent duplicate launches on Django `runserver --reload`.
+  - **Langfuse SDK** (`langfuse`): pure Python, installs directly via pip. Self-hosted Langfuse server needs Docker Desktop with the WSL2 backend (Windows 11 default). Set `LANGFUSE_ENABLED`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` in `.env`.
+  - **openinference / OTel SDK** (`opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`): pure Python, works on Windows. Point `OTLPSpanExporter` at `http://localhost:6006` (Phoenix) -- no separate collector needed.
+  - **Weave/W&B and LangSmith are not self-hostable** -- do not use for financial/PO data. LangSmith is not open source despite common misconceptions; the server is closed SaaS only.
+  - All agent-observable content stored to DB (`AgentRun.summarized_reasoning`, `ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, `DecisionLog.rationale`) must be passed through `_sanitise_text()` (defined in `AGENT_ARCHITECTURE.md` Section 17.3) before saving to strip non-ASCII characters that LLMs may generate.
 
 ### Governance & Audit
 - `AuditEvent` model has 20+ fields: trace IDs, RBAC snapshot (actor_primary_role, actor_email, actor_roles_snapshot), permission tracking (permission_checked, permission_source, access_granted), cross-references (invoice_id, case_id, reconciliation_result_id), status_before/after, duration_ms, error_code.
@@ -186,9 +199,10 @@ ReconciliationRun ──< ReconciliationResult ──< ReconciliationResultLine
                                             ──< ReconciliationException
 ReconciliationResult ── linked to Invoice + PurchaseOrder (reconciliation_mode, mode_resolved_by)
 
-AgentDefinition (agents)
+AgentDefinition (agents) — catalog fields: purpose, entry_conditions, prohibited_actions, tool_grounding contract, lifecycle_status
+AgentOrchestrationRun (agents) — top-level pipeline invocation; status PLANNED/RUNNING/COMPLETED/PARTIAL/FAILED; duplicate-run guard
 AgentRun ──< AgentStep, AgentMessage, DecisionLog
-AgentRun ──< AgentRecommendation (with acceptance tracking)
+AgentRun ──< AgentRecommendation (with acceptance tracking + UniqueConstraint on result+type+run)
 AgentRun ──< AgentEscalation (severity-based, suggested assignee)
 AgentRun ── linked to ReconciliationResult
 AgentRun ── RBAC fields: actor_primary_role, actor_roles_snapshot_json, permission_source, access_granted

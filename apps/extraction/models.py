@@ -45,6 +45,11 @@ class ExtractionResult(BaseModel):
     ocr_page_count = models.PositiveIntegerField(default=0, help_text="Number of pages processed by OCR")
     ocr_duration_ms = models.PositiveIntegerField(null=True, blank=True, help_text="OCR processing time in ms")
     ocr_char_count = models.PositiveIntegerField(default=0, help_text="Characters extracted by OCR")
+    ocr_text = models.TextField(
+        blank=True,
+        default="",
+        help_text="Raw OCR text sent to the LLM — preserved for debugging missed extractions",
+    )
 
     class Meta:
         db_table = "extraction_result"

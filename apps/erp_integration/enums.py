@@ -13,6 +13,8 @@ class ERPSourceType(models.TextChoices):
 class ERPConnectorType(models.TextChoices):
     """Supported ERP connector types."""
     CUSTOM = "CUSTOM", "Custom ERP"
+    SQLSERVER = "SQLSERVER", "SQL Server (Direct DB)"
+    MYSQL = "MYSQL", "MySQL / MariaDB (Direct DB)"
     DYNAMICS = "DYNAMICS", "Microsoft Dynamics"
     ZOHO = "ZOHO", "Zoho"
     SALESFORCE = "SALESFORCE", "Salesforce"
@@ -49,3 +51,11 @@ class ERPSubmissionStatus(models.TextChoices):
     FAILED = "FAILED", "Failed"
     TIMEOUT = "TIMEOUT", "Timeout"
     UNSUPPORTED = "UNSUPPORTED", "Unsupported"
+
+
+class ERPAuthType(models.TextChoices):
+    """Authentication method for REST-based ERP connectors."""
+    BEARER = "BEARER", "Bearer Token"
+    BASIC = "BASIC", "Basic Auth"
+    API_KEY = "API_KEY", "API Key Header"
+    OAUTH2 = "OAUTH2", "OAuth 2.0"

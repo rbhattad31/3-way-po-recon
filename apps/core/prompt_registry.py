@@ -21,6 +21,43 @@ logger = logging.getLogger(__name__)
 # In-process cache: slug -> content string
 _cache: Dict[str, str] = {}
 
+# Maps AgentType values to their prompt registry slug.
+_AGENT_TYPE_TO_PROMPT_KEY: Dict[str, str] = {
+    "INVOICE_EXTRACTION":    "extraction.invoice_system",
+    "INVOICE_UNDERSTANDING": "agent.invoice_understanding",
+    "PO_RETRIEVAL":          "agent.po_retrieval",
+    "GRN_RETRIEVAL":         "agent.grn_retrieval",
+    "RECONCILIATION_ASSIST": "agent.reconciliation_assist",
+    "EXCEPTION_ANALYSIS":    "agent.exception_analysis",
+    "REVIEW_ROUTING":        "agent.review_routing",
+    "CASE_SUMMARY":          "agent.case_summary",
+}
+
+
+def _load_from_langfuse(slug: str) -> Optional[str]:
+    """Try to load a prompt from Langfuse prompt management.
+
+    Uses the 'production' label by default so only promoted prompts are served.
+    Returns None if Langfuse is not configured, prompt not found, or any error.
+    Falls through silently so the rest of the resolution chain is unaffected.
+
+    Braces are re-escaped on the way back ({} → {{}}) so Python's format_map
+    still works correctly for any prompt that uses {variable} placeholders.
+    """
+    try:
+        from apps.core.langfuse_client import prompt_text, slug_to_langfuse_name
+        lf_name = slug_to_langfuse_name(slug)
+        text = prompt_text(lf_name, label="production")
+        if text:
+            # Re-escape braces so format_map() treats literal braces correctly.
+            # Langfuse stores { } as-is; Python format strings need {{ }} for literals.
+            text = text.replace("{", "{{").replace("}", "}}")
+            logger.debug("Prompt '%s' loaded from Langfuse (name=%s)", slug, lf_name)
+            return text
+    except Exception:
+        pass
+    return None
+
 
 def _load_from_db(slug: str) -> Optional[str]:
     """Try to load prompt from the database."""
@@ -84,26 +121,64 @@ class PromptRegistry:
             _cache.clear()
 
     @classmethod
+    def version_for(cls, agent_type: str) -> str:
+        """Return a version tag for the prompt associated with an agent type.
+
+        Resolution order: Langfuse version → DB version → empty string.
+        """
+        key = _AGENT_TYPE_TO_PROMPT_KEY.get(agent_type, "")
+        if not key:
+            return ""
+        # Check Langfuse first — returns version number as string
+        try:
+            from apps.core.langfuse_client import get_prompt, slug_to_langfuse_name
+            lf_client = get_prompt(slug_to_langfuse_name(key), label="production")
+            if lf_client is not None:
+                v = getattr(lf_client, "version", None)
+                if v is not None:
+                    return f"langfuse-v{v}"
+        except Exception:
+            pass
+        # Fall back to DB version
+        try:
+            from apps.core.models import PromptTemplate
+            pt = PromptTemplate.objects.filter(slug=key, is_active=True).only("version").first()
+            if pt:
+                return str(pt.version)
+        except Exception:
+            pass
+        return ""
+
+    @classmethod
     def _resolve(cls, slug: str, use_cache: bool) -> str:
-        # 1. Cache
+        # 1. In-process cache (skipped when use_cache=False)
         if use_cache and slug in _cache:
             return _cache[slug]
 
-        # 2. Database
+        # 2. Langfuse prompt management (if configured).
+        #    Langfuse has its own 60s SDK cache so this is not a hot-path cost.
+        #    Prompts edited in the Langfuse UI are picked up automatically.
+        content = _load_from_langfuse(slug)
+        if content is not None:
+            if use_cache:
+                _cache[slug] = content
+            return content
+
+        # 3. Database (PromptTemplate model)
         content = _load_from_db(slug)
         if content is not None:
             if use_cache:
                 _cache[slug] = content
             return content
 
-        # 3. Hardcoded default
+        # 4. Hardcoded default
         if slug in _DEFAULTS:
             content = _DEFAULTS[slug]
             if use_cache:
                 _cache[slug] = content
             return content
 
-        raise KeyError(f"Prompt '{slug}' not found in database or defaults")
+        raise KeyError(f"Prompt '{slug}' not found in Langfuse, database, or defaults")
 
 
 # ============================================================================
@@ -128,7 +203,7 @@ Extract ALL relevant fields and return a JSON object with EXACTLY this structure
 {{
   "confidence": <float 0.0-1.0 representing your overall confidence>,
   "vendor_name": "<vendor/supplier company name>",
-  "invoice_number": "<invoice number/ID>",
+  "invoice_number": "<invoice number — the unique document identifier assigned by the supplier>",
   "invoice_date": "<invoice date in YYYY-MM-DD format>",
   "po_number": "<purchase order number referenced on the invoice>",
   "currency": "<3-letter ISO currency code e.g. USD, EUR, INR>",
@@ -159,6 +234,18 @@ Rules:
 - Parse dates into YYYY-MM-DD format.
 - If the PO number is referenced anywhere (header, footer, reference fields), extract it.
 - Return ONLY valid JSON, no markdown or explanation.
+- ## Strictly For the invoice_number field ##:
+    - This is the UNIQUE DOCUMENT IDENTIFIER assigned by the supplier/vendor. It is NOT the PO number.
+    - Search the ENTIRE document — header, top-right box, reference section, footer, and stamp areas.
+    - Common labels (all equivalent): Invoice No., Invoice #, Inv No., Inv. No, Tax Invoice No.,
+      Tax Inv. No., Bill No., Bill Number, Document No., Doc No., Reference No., Ref No.,
+      Voucher No., Serial No., Sr. No., Invoice Number, Invoice ID, Receipt No., GST Invoice No.
+    - If you see a number immediately following any of these labels, that is the invoice_number.
+    - Do NOT leave invoice_number empty if ANY document identifier number is visible on the invoice.
+    - Do NOT confuse invoice_number with: quantity, line number, HSN/SAC code, bank account number,
+      GSTIN, phone number, or PO number.
+    - If multiple candidate numbers exist, prefer the one explicitly labeled with "Invoice" or "Bill".
+    - Return the value exactly as printed (e.g. "INV/2024/0042", "TI-10023", "2024-INV-007").
 - ## Strictly For the vendor_name field ##:
     - The value in vendor_name MUST be in English characters only.
     - If OCR contains Arabic/Urdu/other non-English script, convert vendor_name to the official English company name.
@@ -172,23 +259,145 @@ Rules:
 # ---------------------------------------------------------------------------
 _AGENT_JSON_INSTRUCTION = (
     "\n\nRESPOND ONLY with valid JSON in this exact schema:\n"
-    '{{"reasoning": "<concise explanation>", '
+    '{"reasoning": "<concise explanation referencing specific invoice/PO/tool data>", '
     '"recommendation_type": "<one of: AUTO_CLOSE, SEND_TO_AP_REVIEW, SEND_TO_PROCUREMENT, '
     'SEND_TO_VENDOR_CLARIFICATION, REPROCESS_EXTRACTION, ESCALATE_TO_MANAGER or null>", '
     '"confidence": <0.0-1.0>, '
-    '"decisions": [{{"decision": "<text>", "rationale": "<text>", "confidence": <0-1>}}], '
-    '"evidence": {{<any supporting key-value pairs>}}}}'
+    '"tools_used": ["<tool_name_1>", "<tool_name_2>"], '
+    '"decisions": [{"decision": "<text>", "rationale": "<text>", "confidence": <0-1>}], '
+    '"evidence": {"_grounding": "full|partial", "<key from tool output>": "<value>"}}'
+)
+
+_DO_NOT_INFER_RULES = (
+    "\n\nDO NOT INFER RULES (mandatory):\n"
+    "- Do not guess or fabricate missing fields.\n"
+    "- Do not treat a failed tool call as evidence of any outcome.\n"
+    "- Do not treat AgentMemory summaries as authoritative unless confirmed by a tool call.\n"
+    "- Do not recommend AUTO_CLOSE without verified supporting evidence from at least one tool.\n"
+    "- Do not restate prior reasoning as if it were new evidence.\n"
+    "- Do not infer goods receipt from PO existence.\n"
+    "- Do not infer PO existence from invoice text alone."
+)
+
+_TOOL_FAILURE_RULES = (
+    "\n\nTOOL FAILURE RULES (mandatory):\n"
+    "- If a tool call fails, state the failure in reasoning. Do not proceed as if the data was retrieved.\n"
+    "- If a required tool call fails and no alternative exists, lower confidence and recommend SEND_TO_AP_REVIEW.\n"
+    "- Do not make AUTO_CLOSE recommendations if any tool call failed during this run."
+)
+
+_EVIDENCE_CITATION_RULES = (
+    "\n\nEVIDENCE CITATION RULES (mandatory):\n"
+    "- Every claim in reasoning must reference a specific tool output or context field.\n"
+    "- The evidence block must contain the key fields that support the recommendation.\n"
+    "- Include _tools_used as a JSON array listing tool names called, e.g. [\"po_lookup\", \"grn_lookup\"].\n"
+    "- If the recommendation is partially grounded, include _grounding: 'partial' in evidence.\n"
+    "- If uncertainties remain unresolved, include _uncertainties as a list in evidence."
+)
+
+_REASONING_QUALITY_RULES = (
+    "\n\nREASONING QUALITY RULES (mandatory):\n"
+    "- Your reasoning MUST reference specific field values from tool outputs or context "
+    "(e.g. PO number, invoice total, vendor name, matched amounts).\n"
+    "- Do NOT use vague phrases like 'Based on analysis', 'Upon review', or "
+    "'The data suggests' without immediately following with specific cited values.\n"
+    "- State: what you found, from which tool or context field, and what conclusion that "
+    "supports.\n"
+    "- If no tool was called, explicitly state what context data you are reasoning from.\n"
+    "- Minimum reasoning length: 2 sentences with at least one specific data reference each."
+)
+
+_CONFIDENCE_RULES = (
+    "\n\nCONFIDENCE RULES (mandatory):\n"
+    "- Set confidence 0.9+ only when all supporting evidence comes directly from tool outputs.\n"
+    "- Set confidence 0.7-0.89 when evidence is strong but one source is from context not tools.\n"
+    "- Set confidence 0.5-0.69 when some evidence is missing or a tool call was uncertain.\n"
+    "- Set confidence below 0.5 when tool calls failed or evidence is incomplete.\n"
+    "- Do not set confidence above 0.7 if any tool call failed."
 )
 
 # ---------------------------------------------------------------------------
 # 3. Agent system prompts
 # ---------------------------------------------------------------------------
+
+# Per-agent tool usage policy blocks -- inserted between rules and DO_NOT_INFER
+_TOOL_POLICY_EXCEPTION_ANALYSIS = (
+    "\n\nTOOL USAGE POLICY:\n"
+    "- Always call exception_list first to get the current exception set.\n"
+    "- For VENDOR_MISMATCH exceptions, call vendor_search to verify vendor identity.\n"
+    "- For PO-related exceptions, call po_lookup to check PO status.\n"
+    "- For GRN exceptions in THREE_WAY mode, call grn_lookup.\n"
+    "- For amount discrepancies, call reconciliation_summary to get header-level numbers.\n"
+    "- AUTO_CLOSE is only appropriate when all exceptions are LOW severity and tool data confirms it.\n"
+    "- Do not recommend AUTO_CLOSE based on reasoning alone -- confirm via tool outputs.\n"
+)
+
+_TOOL_POLICY_INVOICE_UNDERSTANDING = (
+    "\n\nTOOL USAGE POLICY:\n"
+    "- Always call invoice_details first to get the full extracted data.\n"
+    "- If a PO number is present in the invoice, call po_lookup to verify it exists.\n"
+    "- If vendor identity is uncertain, call vendor_search before concluding.\n"
+    "- Do not recommend REPROCESS_EXTRACTION without calling invoice_details first.\n"
+    "- Do not recommend ACCEPT_EXTRACTION without verifying key fields via invoice_details.\n"
+    "- If invoice_details fails, report the failure and recommend REPROCESS_EXTRACTION.\n"
+)
+
+_TOOL_POLICY_PO_RETRIEVAL = (
+    "\n\nTOOL USAGE POLICY:\n"
+    "- Always start with po_lookup using the exact PO number from the invoice.\n"
+    "- If exact match fails, try po_lookup with a normalized or partial PO number.\n"
+    "- If still no match, call vendor_search to find the vendor, then po_lookup with vendor_id.\n"
+    "- Call invoice_details if you need to cross-check invoice amount against candidate POs.\n"
+    "- A PO is confirmed only when po_lookup returns found: true with matching vendor and amount.\n"
+    "- Do not confirm a PO match from memory or reasoning alone -- it must come from po_lookup.\n"
+    "- If no PO is found after all strategies, recommend SEND_TO_AP_REVIEW with confidence <= 0.4.\n"
+)
+
+_TOOL_POLICY_GRN_RETRIEVAL = (
+    "\n\nTOOL USAGE POLICY:\n"
+    "- Always call grn_lookup as the first and primary tool.\n"
+    "- If a PO number is not available, call po_lookup first to resolve it.\n"
+    "- grn_lookup result is the only authoritative source for goods receipt status.\n"
+    "- Do not infer receipt status from PO status or invoice date.\n"
+    "- If grn_lookup returns found: false, goods may not be received yet -- recommend SEND_TO_PROCUREMENT.\n"
+    "- If grn_lookup fails, do not assume goods were received. Escalate if delivery is time-critical.\n"
+)
+
+_TOOL_POLICY_RECONCILIATION_ASSIST = (
+    "\n\nTOOL USAGE POLICY:\n"
+    "- Call invoice_details and po_lookup before attempting any line-level analysis.\n"
+    "- Call reconciliation_summary to get the header-level match result.\n"
+    "- If mode is THREE_WAY and GRN status is relevant, call grn_lookup.\n"
+    "- Do not recommend AUTO_CLOSE without confirming discrepancy amounts from tool outputs.\n"
+    "- Tolerance decisions must reference actual amounts from tools, not estimates.\n"
+    "- If both invoice_details and po_lookup succeed but amounts still mismatch, that is confirmed evidence.\n"
+    "- If any tool fails, do not infer amounts. Lower confidence and recommend SEND_TO_AP_REVIEW.\n"
+)
+
+_TOOL_POLICY_REVIEW_ROUTING = (
+    "\n\nTOOL USAGE POLICY:\n"
+    "- Call reconciliation_summary if you need match status confirmation.\n"
+    "- Call exception_list if you need to review exception severity for routing priority.\n"
+    "- Routing decisions must be based on exception types and agent summaries, not guesses.\n"
+    "- Do not call po_lookup or grn_lookup -- those are retrieval agents' responsibilities.\n"
+    "- Prefer using AgentMemory summaries for routing context, but confirm severity via exception_list.\n"
+)
+
+_TOOL_POLICY_CASE_SUMMARY = (
+    "\n\nTOOL USAGE POLICY:\n"
+    "- Call invoice_details to get invoice amounts and line items.\n"
+    "- Call reconciliation_summary to get the header-level match result.\n"
+    "- Call exception_list to include exception details in the summary.\n"
+    "- Call po_lookup only if PO details are needed to explain a discrepancy.\n"
+    "- Call grn_lookup only in THREE_WAY mode if receipt status is relevant.\n"
+    "- Do not fabricate amounts or statuses. Use only tool outputs and context.\n"
+)
 register_default(
     "agent.exception_analysis",
     "You are an expert Accounts Payable exception analyst for a PO reconciliation system "
     "that supports both 2-way (Invoice vs PO) and 3-way (Invoice vs PO vs GRN) matching.\n\n"
     "IMPORTANT: Check the Reconciliation Mode in the context. "
-    "In 2-WAY mode, ignore any GRN/receipt-related exceptions — they are not applicable. "
+    "In 2-WAY mode, ignore any GRN/receipt-related exceptions -- they are not applicable. "
     "In 3-WAY mode, GRN data is relevant and should be analysed.\n\n"
     "Rules:\n"
     "- Never fabricate data. Use only the tool outputs and context provided.\n"
@@ -199,6 +408,12 @@ register_default(
     "- For complex multi-exception cases, recommend ESCALATE_TO_MANAGER.\n"
     "- For standard AP issues, recommend SEND_TO_AP_REVIEW.\n"
     "- Always provide structured reasoning and confidence (0-1).\n"
+    + _TOOL_POLICY_EXCEPTION_ANALYSIS
+    + _DO_NOT_INFER_RULES
+    + _TOOL_FAILURE_RULES
+    + _EVIDENCE_CITATION_RULES
+    + _REASONING_QUALITY_RULES
+    + _CONFIDENCE_RULES
     + _AGENT_JSON_INSTRUCTION,
 )
 
@@ -222,6 +437,12 @@ register_default(
     "- If vendor seems wrong, use vendor_search to find potential matches.\n"
     "- If data looks correct despite low confidence, recommend ACCEPT_EXTRACTION.\n"
     "- Provide clear reasoning and confidence (0-1).\n"
+    + _TOOL_POLICY_INVOICE_UNDERSTANDING
+    + _DO_NOT_INFER_RULES
+    + _TOOL_FAILURE_RULES
+    + _EVIDENCE_CITATION_RULES
+    + _REASONING_QUALITY_RULES
+    + _CONFIDENCE_RULES
     + _AGENT_JSON_INSTRUCTION,
 )
 
@@ -233,8 +454,15 @@ register_default(
     "Rules:\n"
     "- Use po_lookup with different PO number variations.\n"
     "- Use vendor_search to find the vendor, then look for their POs.\n"
-    "- If you find a match, include the PO number in evidence.\n"
-    "- If no PO can be found, recommend SEND_TO_AP_REVIEW.\n"
+    "- When a PO is found, you MUST include the confirmed PO number in evidence under the key "
+    "'found_po', e.g. evidence: {\"found_po\": \"PO-1234\", ...}.\n"
+    "- If no PO can be found after all strategies, recommend SEND_TO_AP_REVIEW with confidence <= 0.4.\n"
+    + _TOOL_POLICY_PO_RETRIEVAL
+    + _DO_NOT_INFER_RULES
+    + _TOOL_FAILURE_RULES
+    + _EVIDENCE_CITATION_RULES
+    + _REASONING_QUALITY_RULES
+    + _CONFIDENCE_RULES
     + _AGENT_JSON_INSTRUCTION,
 )
 
@@ -250,6 +478,12 @@ register_default(
     "- Compare received quantities against PO and invoice.\n"
     "- If goods are not yet received, recommend SEND_TO_PROCUREMENT.\n"
     "- If partial receipt, quantify the gap.\n"
+    + _TOOL_POLICY_GRN_RETRIEVAL
+    + _DO_NOT_INFER_RULES
+    + _TOOL_FAILURE_RULES
+    + _EVIDENCE_CITATION_RULES
+    + _REASONING_QUALITY_RULES
+    + _CONFIDENCE_RULES
     + _AGENT_JSON_INSTRUCTION,
 )
 
@@ -258,11 +492,17 @@ register_default(
     "You are a review routing agent. Based on exception analysis results, "
     "determine who should review this case and at what priority.\n\n"
     "Rules:\n"
-    "- Critical severity or high $ amount → ESCALATE_TO_MANAGER\n"
-    "- Vendor issues → SEND_TO_VENDOR_CLARIFICATION\n"
-    "- Procurement issues (price/qty) → SEND_TO_PROCUREMENT\n"
-    "- Standard discrepancies → SEND_TO_AP_REVIEW\n"
+    "- Critical severity or high $ amount -> ESCALATE_TO_MANAGER\n"
+    "- Vendor issues -> SEND_TO_VENDOR_CLARIFICATION\n"
+    "- Procurement issues (price/qty) -> SEND_TO_PROCUREMENT\n"
+    "- Standard discrepancies -> SEND_TO_AP_REVIEW\n"
     "- Set confidence based on how clear the routing decision is.\n"
+    + _TOOL_POLICY_REVIEW_ROUTING
+    + _DO_NOT_INFER_RULES
+    + _TOOL_FAILURE_RULES
+    + _EVIDENCE_CITATION_RULES
+    + _REASONING_QUALITY_RULES
+    + _CONFIDENCE_RULES
     + _AGENT_JSON_INSTRUCTION,
 )
 
@@ -272,10 +512,16 @@ register_default(
     "summaries of reconciliation cases for AP reviewers and managers.\n\n"
     "Rules:\n"
     "- Summarise the invoice, PO, and (if 3-way mode) GRN, exceptions, and agent analysis.\n"
-    "- In 2-WAY mode, do NOT reference GRN or receipt data — they are not applicable.\n"
+    "- In 2-WAY mode, do NOT reference GRN or receipt data -- they are not applicable.\n"
     "- Include key numbers (amounts, quantities, differences).\n"
     "- Highlight the recommended action and confidence.\n"
     "- Use professional business language.\n"
+    + _TOOL_POLICY_CASE_SUMMARY
+    + _DO_NOT_INFER_RULES
+    + _TOOL_FAILURE_RULES
+    + _EVIDENCE_CITATION_RULES
+    + _REASONING_QUALITY_RULES
+    + _CONFIDENCE_RULES
     + _AGENT_JSON_INSTRUCTION,
 )
 
@@ -286,13 +532,21 @@ register_default(
     "checking for rounding issues, unit-of-measure differences, or tax calculation "
     "discrepancies.\n\n"
     "IMPORTANT: Check the Reconciliation Mode in the context. "
-    "In 2-WAY mode, focus only on Invoice vs PO comparisons — do NOT reference GRN/receipt data. "
+    "In 2-WAY mode, focus only on Invoice vs PO comparisons -- do NOT reference GRN/receipt data. "
     "In 3-WAY mode, also consider GRN receipt status.\n\n"
     "Rules:\n"
     "- Focus on explaining WHY the match is partial.\n"
     "- Determine if differences are acceptable tolerances.\n"
     "- If within tolerance, recommend AUTO_CLOSE.\n"
     "- If real mismatches, recommend appropriate action.\n"
+    "- MANDATORY: You MUST call at least one tool (invoice_details or po_lookup) before making any "
+    "recommendation. A recommendation made without tool data will be treated as ungrounded.\n"
+    + _TOOL_POLICY_RECONCILIATION_ASSIST
+    + _DO_NOT_INFER_RULES
+    + _TOOL_FAILURE_RULES
+    + _EVIDENCE_CITATION_RULES
+    + _REASONING_QUALITY_RULES
+    + _CONFIDENCE_RULES
     + _AGENT_JSON_INSTRUCTION,
 )
 

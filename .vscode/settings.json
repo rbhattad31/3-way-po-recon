@@ -12,5 +12,6 @@
     },
     "accessibility.signals.chatResponseReceived": {
         "sound": "off"
-    }
+    },
+    "python.terminal.activateEnvironment": false
 }

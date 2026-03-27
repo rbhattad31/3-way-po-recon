@@ -83,6 +83,8 @@ class LLMClient:
             self.model = getattr(settings, "AZURE_OPENAI_DEPLOYMENT", "") or self.model
         else:
             self._client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        self._langfuse_span: Any = None
+        self._langfuse_metadata: dict = {}
 
     # ------------------------------------------------------------------
     # Chat completions
@@ -113,7 +115,31 @@ class LLMClient:
         logger.debug("LLM request: model=%s messages=%d tools=%d", self.model, len(messages), len(tools or []))
 
         raw = self._client.chat.completions.create(**kwargs)
-        return self._parse_response(raw)
+        parsed = self._parse_response(raw)
+        if self._langfuse_span is not None:
+            try:
+                from apps.core.langfuse_client import log_generation
+                log_generation(
+                    span=self._langfuse_span,
+                    name="llm_chat",
+                    model=self.model,
+                    prompt_messages=[
+                        {"role": m.role, "content": (m.content or "").replace("{{", "{").replace("}}", "}")}
+                        for m in messages
+                    ],
+                    completion=parsed.content or "",
+                    prompt_tokens=parsed.prompt_tokens,
+                    completion_tokens=parsed.completion_tokens,
+                    total_tokens=parsed.total_tokens,
+                    metadata={
+                        "tools_count": len(tools or []),
+                        "finish_reason": parsed.finish_reason,
+                        **self._langfuse_metadata,
+                    },
+                )
+            except Exception:
+                pass
+        return parsed
 
     # ------------------------------------------------------------------
     # Serialisation helpers

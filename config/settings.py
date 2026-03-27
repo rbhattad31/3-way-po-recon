@@ -212,6 +212,9 @@ AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+# Set to True to activate the LLM-backed ReasoningPlanner for agent pipeline planning.
+# When False (default), the deterministic PolicyEngine is always used.
+AGENT_REASONING_ENGINE_ENABLED = os.getenv("AGENT_REASONING_ENGINE_ENABLED", "false").lower() == "true"
 
 # Azure Document Intelligence (OCR)
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
@@ -240,9 +243,16 @@ EXTRACTION_CONFIDENCE_THRESHOLD = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHO
 EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "1.1"))
 EXTRACTION_AUTO_APPROVE_ENABLED = os.getenv("EXTRACTION_AUTO_APPROVE_ENABLED", "false").lower() == "true"
 
+LOKI_ENABLED = os.getenv("LOKI_ENABLED", "false").lower() == "true"
+LOKI_URL = os.getenv("LOKI_URL", "http://localhost:3100/loki/api/v1/push")
+LOKI_APP_LABEL = os.getenv("LOKI_APP_LABEL", "po-recon")
+DJANGO_ENV = os.getenv("DJANGO_ENV", "dev")
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+_active_handlers = ["console", "file"]
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -274,18 +284,38 @@ LOGGING = {
             "filename": BASE_DIR / "logs" / "po_recon.log",
             "maxBytes": 10 * 1024 * 1024,
             "backupCount": 5,
-            "formatter": "verbose" if DEBUG else "json",
+            "formatter": "json",
         },
     },
     "root": {
-        "handlers": ["console", "file"],
+        "handlers": _active_handlers,
         "level": "INFO",
     },
     "loggers": {
-        "django": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
-        "apps": {"handlers": ["console", "file"], "level": "DEBUG", "propagate": False},
-        "apps.observed": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
-        "apps.action": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
-        "apps.task": {"handlers": ["console", "file"], "level": "INFO", "propagate": False},
+        "django": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
+        "apps": {"handlers": _active_handlers, "level": "DEBUG", "propagate": False},
+        "apps.observed": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
+        "apps.action": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
+        "apps.task": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
     },
 }
+
+if LOKI_ENABLED:
+    LOGGING["handlers"]["loki"] = {
+        "class": "logging_loki.LokiHandler",
+        "url": LOKI_URL,
+        "tags": {
+            "service": LOKI_APP_LABEL,
+            "env": DJANGO_ENV,
+        },
+        "auth": (
+            os.getenv("LOKI_USER", ""),
+            os.getenv("LOKI_PASSWORD", ""),
+        ),
+        "version": "1",
+        "formatter": "json",
+    }
+    _active_handlers.append("loki")
+    LOGGING["root"]["handlers"] = _active_handlers
+    for _logger_name in LOGGING.get("loggers", {}):
+        LOGGING["loggers"][_logger_name]["handlers"] = _active_handlers

@@ -7,7 +7,7 @@
   <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
     <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
     <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Extraction</a></li>
-    <li class="breadcrumb-item"><a href="{% url 'extraction:credit_list' %}" class="text-decoration-none">Credits</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:credit_account_list' %}" class="text-decoration-none">Credits</a></li>
     <li class="breadcrumb-item active">{{ target_user.get_full_name|default:target_user.email }}</li>
   </ol>
 </nav>
@@ -23,7 +23,7 @@
       {{ target_user.email }} · Credit account management
     </p>
   </div>
-  <a href="{% url 'extraction:credit_list' %}" class="btn btn-sm btn-outline-secondary">
+  <a href="{% url 'extraction:credit_account_list' %}" class="btn btn-sm btn-outline-secondary">
     <i class="bi bi-arrow-left me-1"></i>Back to List
   </a>
 </div>

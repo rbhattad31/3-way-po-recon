@@ -474,21 +474,49 @@ class StageExecutor:
             # the result is MATCHED or within the auto-close tolerance band,
             # the result's match_status is already upgraded to MATCHED.
             # Summary refresh is handled by CASE_SUMMARY stage which always runs.
+            auto_closed = False
             if orch_result.skipped and case.reconciliation_result.match_status == MatchStatus.MATCHED:
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
+                auto_closed = True
             elif orch_result.final_recommendation == "AUTO_CLOSE":
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.AGENT)
+                auto_closed = True
             elif orch_result.final_recommendation == "ESCALATE_TO_MANAGER":
                 CaseStateMachine.transition(case, CaseStatus.ESCALATED, PerformedByType.AGENT)
             else:
                 CaseStateMachine.transition(case, CaseStatus.READY_FOR_REVIEW, PerformedByType.AGENT)
+
+            # When auto-closing on a clean match, mark eligible for posting
+            # and enqueue the posting pipeline so the invoice appears on the
+            # posting workbench.
+            if auto_closed:
+                case.eligible_for_posting = True
+                case.save(update_fields=["eligible_for_posting", "updated_at"])
+                try:
+                    from apps.core.utils import dispatch_task
+                    from apps.posting.tasks import prepare_posting_task
+                    dispatch_task(
+                        prepare_posting_task,
+                        invoice_id=case.invoice_id,
+                        trigger="case_auto_close",
+                    )
+                    logger.info(
+                        "Posting pipeline enqueued for case %s (invoice %s) after auto-close",
+                        case.case_number, case.invoice_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to enqueue posting pipeline for case %s after auto-close",
+                        case.case_number,
+                    )
 
             return {
                 "agents_executed": orch_result.agents_executed,
                 "final_recommendation": orch_result.final_recommendation,
                 "confidence": orch_result.final_confidence,
                 "skipped": orch_result.skipped,
-                "auto_closed": orch_result.skipped and case.reconciliation_result.match_status == MatchStatus.MATCHED,
+                "auto_closed": auto_closed,
+                "posting_enqueued": auto_closed,
             }
 
         # Non-PO cases without reconciliation result — send to review deterministically

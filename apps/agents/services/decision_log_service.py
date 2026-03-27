@@ -41,6 +41,30 @@ class DecisionLogService:
         reasoning: str = "",
         evidence: Optional[dict] = None,
     ) -> AgentRecommendation:
+        """Create a recommendation record, or return the existing pending one.
+
+        Idempotency rule: if a PENDING (accepted=None) recommendation of the
+        same type already exists for this reconciliation_result (from any prior
+        agent_run), return it without creating a duplicate.  This prevents
+        retry storms and pipeline re-runs from producing multiple identical
+        recommendations in the review queue.
+
+        Intentionally distinct decisions (e.g. a human accepts one and a new
+        cycle creates a fresh recommendation) are allowed because the accepted
+        filter ensures only the pending record is de-duped.
+        """
+        existing = AgentRecommendation.objects.filter(
+            reconciliation_result=reconciliation_result,
+            recommendation_type=recommendation_type,
+            accepted__isnull=True,  # pending only; accepted/rejected recs are not affected
+        ).first()
+        if existing:
+            logger.info(
+                "Idempotent recommendation: result=%s type=%s -- pending rec #%s already exists, skipping create",
+                reconciliation_result.pk, recommendation_type, existing.pk,
+            )
+            return existing
+
         return AgentRecommendation.objects.create(
             agent_run=agent_run,
             reconciliation_result=reconciliation_result,

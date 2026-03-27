@@ -214,15 +214,6 @@
         <option value="success">Success</option>
         <option value="failed">Failed</option>
       </select>
-      {# Review queue #}
-      <select id="filterQueue" class="form-select form-select-sm" style="max-width:140px">
-        <option value="">All Queues</option>
-        <option value="AP_REVIEW">AP Review</option>
-        <option value="TAX_REVIEW">Tax Review</option>
-        <option value="MASTER_DATA_REVIEW">Master Data</option>
-        <option value="EXCEPTION_OPS">Exception Ops</option>
-        <option value="COMPLIANCE">Compliance</option>
-      </select>
       {# Quick confidence buttons #}
       <div class="btn-group btn-group-sm" role="group" aria-label="Confidence filter">
         <button type="button" class="btn btn-outline-secondary conf-btn active" data-conf="">All</button>
@@ -269,7 +260,6 @@
           <th style="text-align:right">Amount</th>
           <th style="width:110px">Confidence</th>
           <th style="width:80px">Status</th>
-          <th style="width:100px">Queue</th>
           <th style="width:100px">Approval</th>
           <th style="width:130px">Processed</th>
           <th style="width:60px"></th>
@@ -277,7 +267,7 @@
       </thead>
       <tbody id="resultsTableBody">
         {% for r in results %}
-        <tr>
+        <tr{% if r.invoice and r.invoice.status == 'EXTRACTION_IN_PROGRESS' or r.invoice and r.invoice.status == 'UPLOADED' %} data-processing="true"{% endif %}>
           <td>
             {% if r.invoice %}
             <a href="{% url 'extraction:console' r.pk %}" class="text-decoration-none fw-medium">
@@ -308,23 +298,22 @@
           </td>
           <td>
             {% if r.invoice %}
-            <span class="ap-badge {% if r.invoice.status == 'RECONCILED' or r.invoice.status == 'READY_FOR_RECON' %}ap-badge-success{% elif r.invoice.status == 'PENDING_APPROVAL' %}ap-badge-warning{% elif r.invoice.status == 'FAILED' or r.invoice.status == 'INVALID' %}ap-badge-danger{% elif r.invoice.status == 'VALIDATED' or r.invoice.status == 'EXTRACTED' %}ap-badge-info{% else %}ap-badge-muted{% endif %}" style="font-size:.65rem">
-              {{ r.invoice.status }}
-            </span>
-            {% if r.invoice.is_duplicate %}
-            <span class="ap-badge ap-badge-danger ms-1" title="Duplicate invoice" style="font-size:.6rem"><i class="bi bi-exclamation-triangle-fill"></i></span>
-            {% endif %}
+              {% if r.invoice.status == 'EXTRACTION_IN_PROGRESS' or r.invoice.status == 'UPLOADED' %}
+              <span class="ap-badge ap-badge-muted" style="font-size:.65rem">
+                <span class="spinner-border spinner-border-sm me-1" style="width:.65rem;height:.65rem;border-width:2px" role="status" aria-hidden="true"></span>{% if r.invoice.status == 'EXTRACTION_IN_PROGRESS' %}Processing{% else %}Queued{% endif %}
+              </span>
+              {% else %}
+              <span class="ap-badge {% if r.invoice.status == 'RECONCILED' or r.invoice.status == 'READY_FOR_RECON' %}ap-badge-success{% elif r.invoice.status == 'PENDING_APPROVAL' %}ap-badge-warning{% elif r.invoice.status == 'FAILED' or r.invoice.status == 'INVALID' %}ap-badge-danger{% elif r.invoice.status == 'VALIDATED' or r.invoice.status == 'EXTRACTED' %}ap-badge-info{% else %}ap-badge-muted{% endif %}" style="font-size:.65rem">
+                {{ r.invoice.status }}
+              </span>
+              {% if r.invoice.is_duplicate %}
+              <span class="ap-badge ap-badge-danger ms-1" title="Duplicate invoice" style="font-size:.6rem"><i class="bi bi-exclamation-triangle-fill"></i></span>
+              {% endif %}
+              {% endif %}
             {% elif r.success %}
             <span class="ap-badge ap-badge-success">OK</span>
             {% else %}
             <span class="ap-badge ap-badge-danger">FAIL</span>
-            {% endif %}
-          </td>
-          <td style="font-size:var(--ap-font-size-xs)">
-            {% if r.review_queue %}
-            <span class="ap-badge ap-badge-info">{{ r.review_queue }}</span>
-            {% else %}
-            <span style="color:var(--ap-text-muted)">—</span>
             {% endif %}
           </td>
           <td>
@@ -360,7 +349,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
+          <td colspan="8" class="text-center py-5" style="color:var(--ap-text-muted)">
             <i class="bi bi-robot d-block mb-2" style="font-size:2rem"></i>
             No agent runs yet. Upload an invoice to run the extraction agent.
           </td>
@@ -768,7 +757,7 @@
   // ── Render table rows from JSON ──────────────────────────
   function renderRows(rows) {
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-5" style="color:var(--ap-text-muted)">
         <i class="bi bi-funnel d-block mb-2" style="font-size:2rem"></i>No results match your filters.</td></tr>`;
       return;
     }
@@ -778,9 +767,16 @@
       const confBar = confPct !== null
         ? `<div class="ap-confidence"><div class="ap-confidence-bar"><div class="ap-confidence-fill ${confClass}" style="width:${confPct}%"></div></div><span>${confPct}%</span></div>`
         : '—';
-      const statusBadge = r.success
-        ? '<span class="ap-badge ap-badge-success">OK</span>'
-        : '<span class="ap-badge ap-badge-danger">FAIL</span>';
+      const isProc = r.invoice_status === 'EXTRACTION_IN_PROGRESS' || r.invoice_status === 'UPLOADED';
+      let statusBadge;
+      if (isProc) {
+        const lbl = r.invoice_status === 'EXTRACTION_IN_PROGRESS' ? 'Processing' : 'Queued';
+        statusBadge = `<span class="ap-badge ap-badge-muted" style="font-size:.65rem"><span class="spinner-border spinner-border-sm me-1" style="width:.65rem;height:.65rem;border-width:2px" role="status" aria-hidden="true"></span>${lbl}</span>`;
+      } else if (r.success) {
+        statusBadge = '<span class="ap-badge ap-badge-success">OK</span>';
+      } else {
+        statusBadge = '<span class="ap-badge ap-badge-danger">FAIL</span>';
+      }
       const invLink = r.invoice_number
         ? `<a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="text-decoration-none fw-medium">${escHtml(r.invoice_number)}</a>`
         : '<span style="color:var(--ap-text-muted)">—</span>';
@@ -789,13 +785,12 @@
         : '—';
       const vendorName = r.vendor ? (r.vendor.length > 25 ? r.vendor.substring(0, 22) + '…' : r.vendor) : '—';
 
-      return `<tr>
+      return `<tr${isProc ? ' data-processing="true"' : ''}>
         <td>${invLink}</td>
         <td style="font-size:var(--ap-font-size-sm)">${escHtml(vendorName)}</td>
         <td style="text-align:right">${amount}</td>
         <td>${confBar}</td>
         <td>${statusBadge}</td>
-        <td style="font-size:var(--ap-font-size-xs)"><span style="color:var(--ap-text-muted)">—</span></td>
         <td><span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span></td>
         <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">${escHtml(r.created_at)}</td>
         <td><a href="${DETAIL_URL.replace('{pk}', r.pk)}" class="btn btn-sm btn-outline-primary py-0" style="font-size:.7rem">View</a></td>
@@ -820,6 +815,7 @@
     .then(function(data) {
       renderRows(data.results);
       countEl.textContent = data.total + ' result' + (data.total === 1 ? '' : 's');
+      if (pollInterval && !hasProcessingRows()) { stopPolling(); }
     })
     .catch(function(err) {
       console.error('Filter error:', err);
@@ -893,6 +889,33 @@
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Agent processing…';
   });
+
+  // ── Auto-polling for in-progress extractions ─────────────────────────────
+  var pollInterval = null;
+  var pollBanner = null;
+
+  function hasProcessingRows() {
+    return tbody.querySelectorAll('[data-processing]').length > 0;
+  }
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollBanner = document.createElement('div');
+    pollBanner.className = 'alert alert-info py-2 px-3 mb-3 d-flex align-items-center gap-2';
+    pollBanner.style.cssText = 'font-size:var(--ap-font-size-xs)';
+    pollBanner.innerHTML = '<span class="spinner-border spinner-border-sm flex-shrink-0" role="status" aria-hidden="true"></span>' +
+      '<span>Extraction in progress &mdash; table refreshes automatically every 8 seconds.</span>';
+    var resultsCard = document.getElementById('resultsTable').closest('.ap-card');
+    resultsCard.parentNode.insertBefore(pollBanner, resultsCard);
+    pollInterval = setInterval(fetchFiltered, 8000);
+  }
+
+  function stopPolling() {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (pollBanner) { pollBanner.remove(); pollBanner = null; }
+  }
+
+  if (hasProcessingRows()) { startPolling(); }
 })();
 </script>
 {% endblock %}

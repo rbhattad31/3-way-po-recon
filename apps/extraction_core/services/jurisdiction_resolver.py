@@ -478,7 +478,7 @@ class JurisdictionResolverService:
                 best_method = cc_signals[0].method
 
         logger.info(
-            "Jurisdiction scoring: %s → winner=%s (%.4f)",
+            "Jurisdiction scoring: %s -> winner=%s (%.4f)",
             scores, best_cc, best_score,
         )
 

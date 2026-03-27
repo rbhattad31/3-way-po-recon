@@ -772,6 +772,7 @@ def extraction_ajax_filter(request):
             "success": r.success,
             "duration_ms": r.duration_ms,
             "engine_name": r.engine_name or "azure_di_gpt4o",
+            "invoice_status": inv.status if inv else "",
             "created_at": r.created_at.strftime("%d %b %Y %H:%M") if r.created_at else "",
         })
 
