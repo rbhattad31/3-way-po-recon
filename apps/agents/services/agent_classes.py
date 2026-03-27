@@ -289,6 +289,44 @@ class InvoiceExtractionAgent(BaseAgent):
         import time as _time
         start = _time.monotonic()
 
+        # Open a Langfuse trace + span for this extraction run.
+        # OCR text is stored as span input so it can be copied into
+        # the Langfuse playground for prompt testing.
+        _lf_trace = getattr(ctx, "_langfuse_trace", None)
+        _lf_span = None
+        _own_trace = False
+        ocr_text = ctx.extra.get("ocr_text", "")
+        try:
+            from apps.core.langfuse_client import start_trace, start_span, end_span, score_trace
+            if _lf_trace is None:
+                # Extraction runs standalone (no orchestration trace) — create root trace.
+                import uuid
+                _trace_id = ctx.trace_id or uuid.uuid4().hex
+                _lf_trace = start_trace(
+                    _trace_id,
+                    "invoice_extraction",
+                    invoice_id=ctx.invoice_id or None,
+                    metadata={"agent_run_id": agent_run.pk},
+                )
+                _own_trace = True
+            _lf_span = start_span(
+                _lf_trace,
+                name="INVOICE_EXTRACTION",
+                metadata={
+                    "agent_run_id": agent_run.pk,
+                    "invoice_id": ctx.invoice_id,
+                    "ocr_char_count": len(ocr_text),
+                    # Store first 2000 chars of OCR text so it is searchable
+                    # in Langfuse and can be copied into the playground.
+                    "ocr_text_preview": ocr_text[:2000],
+                },
+            )
+            if _lf_span:
+                _lf_span.update(input={"ocr_text": ocr_text[:3000]})
+        except Exception:
+            _lf_span = None
+        self.llm._langfuse_span = _lf_span
+
         try:
             messages = self._init_messages(ctx, agent_run)
 
@@ -309,6 +347,26 @@ class InvoiceExtractionAgent(BaseAgent):
             output = self.interpret_response(llm_resp.content or "", ctx)
             self._finalise_run(agent_run, output, start, agent_def=agent_def)
 
+            # Close Langfuse span with extraction output.
+            if _lf_span is not None:
+                try:
+                    end_span(_lf_span, output={
+                        "confidence": output.confidence,
+                        "vendor_name": output.evidence.get("vendor_name", ""),
+                        "invoice_number": output.evidence.get("invoice_number", ""),
+                        "total_amount": output.evidence.get("total_amount", ""),
+                        "line_items_count": len(output.evidence.get("line_items", [])),
+                    })
+                    if _own_trace and _lf_trace:
+                        score_trace(
+                            getattr(_lf_trace, "trace_id", ""),
+                            "extraction_confidence",
+                            output.confidence,
+                        )
+                        end_span(_lf_trace, output={"confidence": output.confidence})
+                except Exception:
+                    pass
+
         except Exception as exc:
             logger.exception("InvoiceExtractionAgent failed")
             agent_run.status = AgentRunStatus.FAILED
@@ -316,6 +374,15 @@ class InvoiceExtractionAgent(BaseAgent):
             agent_run.duration_ms = int((_time.monotonic() - start) * 1000)
             agent_run.completed_at = timezone.now()
             agent_run.save()
+            if _lf_span is not None:
+                try:
+                    end_span(_lf_span, output={"error": str(exc)[:200]}, level="ERROR")
+                    if _own_trace and _lf_trace:
+                        end_span(_lf_trace, output={"error": str(exc)[:200]}, level="ERROR")
+                except Exception:
+                    pass
+        finally:
+            self.llm._langfuse_span = None
 
         return agent_run
 

@@ -34,6 +34,31 @@ _AGENT_TYPE_TO_PROMPT_KEY: Dict[str, str] = {
 }
 
 
+def _load_from_langfuse(slug: str) -> Optional[str]:
+    """Try to load a prompt from Langfuse prompt management.
+
+    Uses the 'production' label by default so only promoted prompts are served.
+    Returns None if Langfuse is not configured, prompt not found, or any error.
+    Falls through silently so the rest of the resolution chain is unaffected.
+
+    Braces are re-escaped on the way back ({} → {{}}) so Python's format_map
+    still works correctly for any prompt that uses {variable} placeholders.
+    """
+    try:
+        from apps.core.langfuse_client import prompt_text, slug_to_langfuse_name
+        lf_name = slug_to_langfuse_name(slug)
+        text = prompt_text(lf_name, label="production")
+        if text:
+            # Re-escape braces so format_map() treats literal braces correctly.
+            # Langfuse stores { } as-is; Python format strings need {{ }} for literals.
+            text = text.replace("{", "{{").replace("}", "}}")
+            logger.debug("Prompt '%s' loaded from Langfuse (name=%s)", slug, lf_name)
+            return text
+    except Exception:
+        pass
+    return None
+
+
 def _load_from_db(slug: str) -> Optional[str]:
     """Try to load prompt from the database."""
     try:
@@ -99,11 +124,22 @@ class PromptRegistry:
     def version_for(cls, agent_type: str) -> str:
         """Return a version tag for the prompt associated with an agent type.
 
-        Returns the prompt's version field if present, else empty string.
+        Resolution order: Langfuse version → DB version → empty string.
         """
         key = _AGENT_TYPE_TO_PROMPT_KEY.get(agent_type, "")
         if not key:
             return ""
+        # Check Langfuse first — returns version number as string
+        try:
+            from apps.core.langfuse_client import get_prompt, slug_to_langfuse_name
+            lf_client = get_prompt(slug_to_langfuse_name(key), label="production")
+            if lf_client is not None:
+                v = getattr(lf_client, "version", None)
+                if v is not None:
+                    return f"langfuse-v{v}"
+        except Exception:
+            pass
+        # Fall back to DB version
         try:
             from apps.core.models import PromptTemplate
             pt = PromptTemplate.objects.filter(slug=key, is_active=True).only("version").first()
@@ -115,25 +151,34 @@ class PromptRegistry:
 
     @classmethod
     def _resolve(cls, slug: str, use_cache: bool) -> str:
-        # 1. Cache
+        # 1. In-process cache (skipped when use_cache=False)
         if use_cache and slug in _cache:
             return _cache[slug]
 
-        # 2. Database
+        # 2. Langfuse prompt management (if configured).
+        #    Langfuse has its own 60s SDK cache so this is not a hot-path cost.
+        #    Prompts edited in the Langfuse UI are picked up automatically.
+        content = _load_from_langfuse(slug)
+        if content is not None:
+            if use_cache:
+                _cache[slug] = content
+            return content
+
+        # 3. Database (PromptTemplate model)
         content = _load_from_db(slug)
         if content is not None:
             if use_cache:
                 _cache[slug] = content
             return content
 
-        # 3. Hardcoded default
+        # 4. Hardcoded default
         if slug in _DEFAULTS:
             content = _DEFAULTS[slug]
             if use_cache:
                 _cache[slug] = content
             return content
 
-        raise KeyError(f"Prompt '{slug}' not found in database or defaults")
+        raise KeyError(f"Prompt '{slug}' not found in Langfuse, database, or defaults")
 
 
 # ============================================================================

@@ -148,6 +148,16 @@ class AgentMemory:
             self.resolved_po_number = evidence["found_po"]
 ```
 
+**Facts pre-seeded by the orchestrator before any agent runs:**
+
+| Key | Value | Consumer |
+|---|---|---|
+| `facts["grn_available"]` | `bool(result.grn_available)` | `GRNRetrievalAgent`, post-feedback refresh |
+| `facts["grn_fully_received"]` | `bool(result.grn_fully_received)` | `GRNRetrievalAgent`, post-feedback refresh |
+| `facts["is_two_way"]` | `ctx.reconciliation_mode == "TWO_WAY"` | Mode-aware agents |
+| `facts["vendor_name"]` | `result.vendor_name or ""` | Prompt context enrichment |
+| `facts["match_status"]` | `str(result.match_status or "")` | `InvoiceUnderstandingAgent`, `ReconciliationAssistAgent` |
+
 **What each agent reads from `ctx.memory`:**
 
 | Agent | Fields read |
@@ -288,6 +298,7 @@ point for the entire agentic pipeline.
 7.  build AgentContext (exceptions, extra, RBAC fields, trace IDs)
         ctx.exceptions = _truncate_exceptions(exceptions, max=20)
 8.  ctx.memory = AgentMemory()
+    ctx.memory.facts pre-seeded: grn_available, grn_fully_received, is_two_way, vendor_name, match_status
 9.  for agent_type in llm_agents:
         a. authorize_agent(actor, agent_type)
         b. agent_cls().run(ctx)
@@ -391,8 +402,10 @@ agents immediately after the current position:
 | PO_RETRIEVAL completes | `ctx.memory.resolved_po_number` is set AND mode != TWO_WAY AND GRN_RETRIEVAL not already run or in remaining | `GRN_RETRIEVAL` |
 | INVOICE_UNDERSTANDING completes | `agent_run.confidence < 0.5` AND RECONCILIATION_ASSIST not already run or in remaining | `RECONCILIATION_ASSIST` |
 
-`_reflect()` never raises; all exceptions are caught and logged.
-The `already_executed` set prevents re-inserting an agent that has already run.
+`_reflect()` only runs when `last_output.status == AgentRunStatus.COMPLETED` -- FAILED or SKIPPED
+runs do not trigger reflection. `_reflect()` never raises; all exceptions are caught and logged.
+The `already_executed` set prevents re-inserting an agent that has already run in this pipeline
+invocation (prevents duplicate GRN_RETRIEVAL or RECONCILIATION_ASSIST insertions on retry).
 
 ### 3.6 Agent Feedback Loop
 
@@ -409,6 +422,10 @@ When `PORetrievalAgent` (the only `_FEEDBACK_AGENTS` member) finds a PO:
      ctx.exceptions = refreshed from DB (_truncate_exceptions applied)
      ctx.memory.resolved_po_number, facts["grn_available"], facts["grn_fully_received"] updated
 ```
+
+**Status guard:** The feedback loop (`_apply_agent_findings`) only executes when
+`last_output.status == AgentRunStatus.COMPLETED`. A FAILED agent run does not
+trigger re-reconciliation, preventing partial/corrupt PO links.
 
 **Evidence normalisation:** `PORetrievalAgent.interpret_response()` always
 copies the PO number to `evidence["found_po"]`. Fallback key priority:
@@ -1060,7 +1077,7 @@ Both orchestrator call sites are wrapped with an `IntegrityError` guard.
 | `AgentRun` | `BaseAgent.run()` | Agent type, status, tokens, RBAC fields, trace ID |
 | `AgentMessage` | `_save_message()` | Every system/user/assistant/tool message |
 | `AgentStep` | `_execute_tool()` | Every tool call: input, output, duration, success |
-| `DecisionLog` | `_finalise_run()` | Every `decisions` entry from AgentOutput |
+| `DecisionLog` | `_finalise_run()` | Every `decisions` entry; fields: `decision`, `rationale`, `confidence`, `evidence_refs`, `trace_id`, `span_id`, `invoice_id`, `recommendation_type`, `prompt_version` |
 | `AgentRecommendation` | `DecisionLogService.log_recommendation()` | Per-recommending-agent recommendation |
 | `AgentEscalation` | `_apply_post_policies()` | When escalation is triggered |
 | `AuditEvent` (guardrail) | `log_guardrail_decision()` | Every RBAC allow/deny |

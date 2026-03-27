@@ -141,6 +141,23 @@ class AgentOrchestrator:
         from apps.core.trace import TraceContext
         TraceContext.set_current(trace_ctx)
 
+        _lf_trace = None
+        try:
+            from apps.core.langfuse_client import start_trace
+            _lf_trace = start_trace(
+                trace_id=trace_ctx.trace_id,
+                name="agent_pipeline",
+                invoice_id=result.invoice_id,
+                result_id=result.pk,
+                user_id=actor.pk if actor else None,
+                metadata={
+                    "reconciliation_mode": getattr(result, "reconciliation_mode", ""),
+                    "match_status": str(getattr(result, "match_status", "")),
+                },
+            )
+        except Exception:
+            _lf_trace = None
+
         # 1. Build the plan
         plan = self.policy.plan(result)
         orch_result.plan_source = plan.plan_source
@@ -273,6 +290,7 @@ class AgentOrchestrator:
         ctx.memory.facts["is_two_way"] = (ctx.reconciliation_mode == "TWO_WAY")
         ctx.memory.facts["vendor_name"] = getattr(result, "vendor_name", "") or ""
         ctx.memory.facts["match_status"] = str(getattr(result, "match_status", "") or "")
+        ctx._langfuse_trace = _lf_trace
 
         # 4. Execute LLM agents in sequence
         last_output = None
@@ -440,6 +458,25 @@ class AgentOrchestrator:
             "status", "final_recommendation", "final_confidence",
             "completed_at", "duration_ms", "executed_agents",
         ])
+
+        if _lf_trace is not None:
+            try:
+                from apps.core.langfuse_client import end_span, score_trace
+                end_span(_lf_trace, output={
+                    "final_recommendation": orch_result.final_recommendation,
+                    "final_confidence": orch_result.final_confidence,
+                    "agents_executed": orch_result.agents_executed,
+                    "error": orch_result.error or None,
+                })
+                if orch_result.final_confidence:
+                    score_trace(
+                        trace_ctx.trace_id,
+                        "final_confidence",
+                        orch_result.final_confidence,
+                        comment=orch_result.final_recommendation or "",
+                    )
+            except Exception:
+                pass
 
         logger.info(
             "Orchestration complete for result %s: agents=%s recommendation=%s confidence=%.2f",

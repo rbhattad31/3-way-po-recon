@@ -58,6 +58,7 @@ class AgentContext:
     span_id: str = ""
     # Structured in-process memory shared across all agents in the pipeline.
     memory: Optional[AgentMemory] = None
+    _langfuse_trace: Any = None
 
 
 @dataclass
@@ -139,6 +140,30 @@ class BaseAgent(ABC):
                 self.agent_type,
             )
         agent_run.save(update_fields=["prompt_version"])
+
+        _lf_span = None
+        _lf_trace = getattr(ctx, "_langfuse_trace", None)
+        if _lf_trace is not None:
+            try:
+                from apps.core.langfuse_client import start_span
+                _lf_span = start_span(
+                    _lf_trace,
+                    name=str(self.agent_type),
+                    span_id=ctx.span_id or None,
+                    parent_span_id=ctx.trace_id or None,
+                    metadata={
+                        "agent_run_id": agent_run.pk,
+                        "invoice_id": ctx.invoice_id,
+                        "result_id": (
+                            ctx.reconciliation_result.pk
+                            if ctx.reconciliation_result else None
+                        ),
+                        "prompt_version": getattr(agent_run, "prompt_version", ""),
+                    },
+                )
+            except Exception:
+                _lf_span = None
+        self.llm._langfuse_span = _lf_span
 
         # Resolve actor for tool-level authorization
         self._actor_user = self._resolve_actor(ctx)
@@ -273,6 +298,23 @@ class BaseAgent(ABC):
                             self.agent_type,
                         )
                     self._finalise_run(agent_run, output, start, agent_def=agent_def)
+                    if _lf_span is not None:
+                        try:
+                            from apps.core.langfuse_client import end_span, score_trace
+                            end_span(_lf_span, output={
+                                "recommendation": output.recommendation_type,
+                                "confidence": output.confidence,
+                                "tools_used": output.tools_used,
+                            })
+                            if ctx.trace_id:
+                                score_trace(
+                                    ctx.trace_id,
+                                    "agent_confidence",
+                                    output.confidence,
+                                    comment=str(self.agent_type),
+                                )
+                        except Exception:
+                            pass
                     return agent_run
 
                 # Process tool calls — include tool_calls on the assistant msg
@@ -376,6 +418,23 @@ class BaseAgent(ABC):
                     self.agent_type,
                 )
             self._finalise_run(agent_run, output, start, agent_def=agent_def)
+            if _lf_span is not None:
+                try:
+                    from apps.core.langfuse_client import end_span, score_trace
+                    end_span(_lf_span, output={
+                        "recommendation": output.recommendation_type,
+                        "confidence": output.confidence,
+                        "tools_used": output.tools_used,
+                    })
+                    if ctx.trace_id:
+                        score_trace(
+                            ctx.trace_id,
+                            "agent_confidence",
+                            output.confidence,
+                            comment=str(self.agent_type),
+                        )
+                except Exception:
+                    pass
 
         except Exception as exc:
             rr_pk = ctx.reconciliation_result.pk if ctx.reconciliation_result else None
@@ -384,8 +443,19 @@ class BaseAgent(ABC):
             agent_run.error_message = str(exc)[:2000]
             agent_run.duration_ms = int((time.monotonic() - start) * 1000)
             agent_run.completed_at = timezone.now()
+            if _lf_span is not None:
+                try:
+                    from apps.core.langfuse_client import end_span
+                    end_span(
+                        _lf_span,
+                        output={"status": "FAILED", "error": str(exc)[:200]},
+                        level="ERROR",
+                    )
+                except Exception:
+                    pass
             agent_run.save()
 
+        self.llm._langfuse_span = None
         return agent_run
 
     # ------------------------------------------------------------------

@@ -79,16 +79,21 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - Agents use **ReAct loop**: LLM -> parse tool calls -> execute tools -> loop (max 6 iterations).
 - Tool-calling uses **OpenAI-compliant format**: `tool_calls` array on assistant messages, `tool_call_id` + `name` on tool response messages.
 - Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`. Each tool declares `required_permission` (e.g., `"purchase_orders.view"`).
-- `AgentOrchestrator` is the entry point; `PolicyEngine` decides which agents to run based on match status + exception types.
-- `PolicyEngine` also handles **auto-close logic**: `should_auto_close()` and `_within_auto_close_band()` check if PARTIAL_MATCH falls within wider auto-close thresholds (qty: 5%, price: 3%, amount: 3%).
+- **`ReasoningPlanner`** is the entry point for planning: always makes a single LLM call to decide which agents to run and in what order; falls back to `PolicyEngine` (deterministic) on any LLM error. There is no feature flag -- the LLM planner is always active.
+- `PolicyEngine` handles **auto-close logic**: `should_auto_close()` and `_within_auto_close_band()` check if PARTIAL_MATCH falls within wider auto-close thresholds (qty: 5%, price: 3%, amount: 3%).
+- **`AgentOrchestrationRun`** (`apps/agents/models.py`): Top-level DB record for one `AgentOrchestrator.execute()` invocation. Status machine: PLANNED -> RUNNING -> COMPLETED | PARTIAL | FAILED. Acts as duplicate-run guard: a RUNNING record blocks re-entry for the same `ReconciliationResult`.
 - Agent pipeline is **wired to run automatically** after reconciliation for non-MATCHED results (sync via `start_reconciliation` view, async via `run_agent_pipeline_task`).
-- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations — orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` × 8), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` × 6), and post-policy authorization (auto-close, escalation).
+- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations — orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` × 8), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` × 6), post-policy authorization (auto-close, escalation), and **data-scope authorization** (`authorize_data_scope()` checks business-unit and vendor-id scope from `UserRole.scope_json`; called immediately after `authorize_orchestration()`).
+- **`UserRole.scope_json`** (nullable JSON on `rbac_models.py`): Per-assignment scope restrictions. Supported keys: `allowed_business_units` (list[str]), `allowed_vendor_ids` (list[int]). Null means unrestricted. ADMIN and SYSTEM_AGENT always bypass scope checks.
 - **SYSTEM_AGENT** identity: When no human user context is available (Celery async, system-triggered), `AgentGuardrailsService.resolve_actor()` returns a dedicated service account (`system-agent@internal`) with the `SYSTEM_AGENT` role (rank 100, `is_system_role=True`).
 - Every agent run, message, tool call, and decision is persisted for auditability via `AgentTraceService`.
 - `AgentRun` carries RBAC fields: `actor_primary_role`, `actor_roles_snapshot_json`, `permission_source`, `access_granted` — populated on every run.
 - All guardrail decisions (grant/deny) are logged as `AuditEvent` records (9 event types: `GUARDRAIL_GRANTED/DENIED`, `TOOL_CALL_AUTHORIZED/DENIED`, `RECOMMENDATION_ACCEPTED/DENIED`, `AUTO_CLOSE_AUTHORIZED/DENIED`, `SYSTEM_AGENT_USED`).
 - `RecommendationService` manages agent recommendations (`AgentRecommendation` model) with acceptance tracking; `mark_recommendation_accepted()` checks `authorize_recommendation()` before allowing accept/reject.
-- `AgentFeedbackService` handles PO/GRN re-reconciliation when an agent recovers a missing document (atomic re-linking + re-matching).
+- **Idempotent recommendations**: two-layer dedup -- `DecisionLogService.log_recommendation()` filters for any PENDING rec of the same `(reconciliation_result, recommendation_type)` before creating; model `UniqueConstraint` on `(reconciliation_result, recommendation_type, agent_run)` + `IntegrityError` guard at both orchestrator call sites.
+- `AgentFeedbackService` handles PO/GRN re-reconciliation when an agent recovers a missing document (atomic re-linking + re-matching). Only runs when `last_output.status == COMPLETED`.
+- **`AgentOutputSchema`** (`apps/agents/services/agent_output_schema.py`): Pydantic v2 schema for all standard agent JSON output. Validates `recommendation_type` (coerces invalid values to `SEND_TO_AP_REVIEW`), clamps `confidence` to [0.0, 1.0]. Applied via `enforce_json_response=True` on `BaseAgent`.
+- **`AgentDefinition` catalog fields**: `purpose`, `entry_conditions`, `success_criteria`, `prohibited_actions`, `allowed_recommendation_types`, `default_fallback_recommendation`, `requires_tool_grounding`, `min_tool_calls`, `tool_failure_confidence_cap`, `output_schema_name`, `output_schema_version`, `lifecycle_status`, `owner_team`, `capability_tags`, `domain_tags`, `human_review_required_conditions`. All are first-class DB columns (not in `config_json`). Seed/update via `seed_agent_contracts` command.
 - LLM client supports both OpenAI and Azure OpenAI (configurable via env vars).
 - Agent definitions include `config_json` with `allowed_tools` per agent type.
 
@@ -194,9 +199,10 @@ ReconciliationRun ──< ReconciliationResult ──< ReconciliationResultLine
                                             ──< ReconciliationException
 ReconciliationResult ── linked to Invoice + PurchaseOrder (reconciliation_mode, mode_resolved_by)
 
-AgentDefinition (agents)
+AgentDefinition (agents) — catalog fields: purpose, entry_conditions, prohibited_actions, tool_grounding contract, lifecycle_status
+AgentOrchestrationRun (agents) — top-level pipeline invocation; status PLANNED/RUNNING/COMPLETED/PARTIAL/FAILED; duplicate-run guard
 AgentRun ──< AgentStep, AgentMessage, DecisionLog
-AgentRun ──< AgentRecommendation (with acceptance tracking)
+AgentRun ──< AgentRecommendation (with acceptance tracking + UniqueConstraint on result+type+run)
 AgentRun ──< AgentEscalation (severity-based, suggested assignee)
 AgentRun ── linked to ReconciliationResult
 AgentRun ── RBAC fields: actor_primary_role, actor_roles_snapshot_json, permission_source, access_granted

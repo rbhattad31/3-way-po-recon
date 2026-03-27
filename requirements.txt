@@ -22,6 +22,10 @@ langchain-core>=0.3
 langchain-openai>=0.3
 tiktoken>=0.7
 
+# Observability
+langfuse>=2.0
+python-logging-loki>=0.3.1
+
 # Extraction / document processing
 azure-ai-formrecognizer>=3.3
 azure-storage-blob>=12.19
