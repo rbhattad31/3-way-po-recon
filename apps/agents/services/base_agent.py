@@ -149,8 +149,6 @@ class BaseAgent(ABC):
                 _lf_span = start_span(
                     _lf_trace,
                     name=str(self.agent_type),
-                    span_id=ctx.span_id or None,
-                    parent_span_id=ctx.trace_id or None,
                     metadata={
                         "agent_run_id": agent_run.pk,
                         "invoice_id": ctx.invoice_id,
@@ -345,7 +343,40 @@ class BaseAgent(ABC):
                 })
                 for tc in llm_resp.tool_calls:
                     step_counter += 1
+                    _tool_span = None
+                    if _lf_span is not None:
+                        try:
+                            from apps.core.langfuse_client import start_span
+                            _tool_span = start_span(
+                                _lf_span,
+                                name=f"tool_{tc.name}",
+                                metadata={
+                                    "tool_name": tc.name,
+                                    "tool_call_id": tc.id,
+                                    "arguments": tc.arguments,
+                                },
+                            )
+                        except Exception:
+                            _tool_span = None
+
                     tool_result = self._execute_tool(tc.name, tc.arguments, agent_run, step_counter)
+
+                    if _tool_span is not None:
+                        try:
+                            from apps.core.langfuse_client import end_span
+                            end_span(
+                                _tool_span,
+                                output={
+                                    "success": tool_result.success,
+                                    "duration_ms": tool_result.duration_ms,
+                                    "data_keys": list(tool_result.data.keys()) if isinstance(tool_result.data, dict) else None,
+                                    "error": tool_result.error or None,
+                                },
+                                level="ERROR" if not tool_result.success else "DEFAULT",
+                            )
+                        except Exception:
+                            pass
+
                     if not tool_result.success:
                         failed_tool_count += 1
                     total_tool_calls += 1

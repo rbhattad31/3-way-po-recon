@@ -284,6 +284,24 @@ class AgentGuardrailsService:
             },
         )
 
+        try:
+            from apps.core.langfuse_client import score_trace
+            _trace_id = getattr(trace_ctx, "trace_id", "") or ""
+            if _trace_id:
+                score_trace(
+                    _trace_id,
+                    "rbac_guardrail",
+                    1.0 if granted else 0.0,
+                    comment=(
+                        f"action={action} "
+                        f"permission={permission_code} "
+                        f"role={snapshot.get('actor_primary_role', '')} "
+                        f"granted={granted}"
+                    ),
+                )
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # Data-scope authorization (action + data boundary enforcement)
     # ------------------------------------------------------------------
@@ -473,5 +491,23 @@ class AgentGuardrailsService:
                 getattr(result, "pk", "?"),
                 reason,
             )
+
+            try:
+                from apps.core.langfuse_client import score_trace
+                from apps.core.trace import TraceContext
+                _ctx = TraceContext.get_current()
+                _trace_id = getattr(_ctx, "trace_id", "") or ""
+                if _trace_id:
+                    score_trace(
+                        _trace_id,
+                        "rbac_data_scope",
+                        0.0,
+                        comment=(
+                            f"actor={getattr(actor, 'pk', None)} "
+                            f"result={getattr(result, 'pk', None)}"
+                        ),
+                    )
+            except Exception:
+                pass
 
         return granted

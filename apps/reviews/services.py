@@ -62,6 +62,23 @@ class ReviewWorkflowService:
         )
 
         logger.info("Created review assignment %s for result %s", assignment.pk, result.pk)
+
+        try:
+            from apps.core.langfuse_client import score_trace
+            _trace_id = f"review-{assignment.pk}"
+            score_trace(
+                _trace_id,
+                "review_priority",
+                float(priority) / 10.0,
+                comment=(
+                    f"assignment={assignment.pk} "
+                    f"invoice={result.invoice_id} "
+                    f"result={result.pk}"
+                ),
+            )
+        except Exception:
+            pass
+
         return assignment
 
     # ------------------------------------------------------------------
@@ -234,6 +251,32 @@ class ReviewWorkflowService:
         )
 
         logger.info("Review %s decided: %s by %s", assignment.pk, decision_status, user)
+
+        try:
+            from apps.core.langfuse_client import score_trace
+            _decision_score = {
+                ReviewStatus.APPROVED: 1.0,
+                ReviewStatus.REJECTED: 0.0,
+                ReviewStatus.REPROCESSED: 0.5,
+            }.get(decision_status, 0.5)
+            _invoice_id = getattr(
+                getattr(assignment, "reconciliation_result", None),
+                "invoice_id", None
+            )
+            _trace_id = f"review-{assignment.pk}"
+            score_trace(
+                _trace_id,
+                "review_decision",
+                _decision_score,
+                comment=(
+                    f"decision={decision_status} "
+                    f"invoice={_invoice_id} "
+                    f"reviewer={getattr(user, 'pk', None)}"
+                ),
+            )
+        except Exception:
+            pass
+
         return decision
 
     @staticmethod

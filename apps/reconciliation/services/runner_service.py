@@ -269,6 +269,24 @@ class ReconciliationRunnerService:
         # 8. Transition invoice status
         self._transition_invoice(invoice, match_status)
 
+        try:
+            from apps.core.langfuse_client import score_trace
+            _score_value = {
+                MatchStatus.MATCHED: 1.0,
+                MatchStatus.PARTIAL_MATCH: 0.5,
+                MatchStatus.UNMATCHED: 0.0,
+                MatchStatus.REQUIRES_REVIEW: 0.3,
+            }.get(match_status, 0.0)
+            _trace_id = getattr(run, "trace_id", "") or str(run.pk)
+            score_trace(
+                _trace_id,
+                "reconciliation_match",
+                _score_value,
+                comment=f"invoice={invoice.pk} status={match_status}",
+            )
+        except Exception:
+            pass
+
         return match_status
 
     # ------------------------------------------------------------------

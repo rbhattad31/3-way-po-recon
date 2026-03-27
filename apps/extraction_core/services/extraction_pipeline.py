@@ -275,6 +275,29 @@ class ExtractionPipeline:
             output.requires_review = routing.needs_review
             output.review_reasons = routing.reasons
 
+            try:
+                from apps.core.langfuse_client import score_trace
+                import uuid as _uuid
+                _trace_id = str(run.pk) or _uuid.uuid4().hex
+                score_trace(
+                    _trace_id,
+                    "extraction_confidence",
+                    float(output.overall_confidence or 0.0),
+                    comment=(
+                        f"document={extraction_document_id} "
+                        f"country={getattr(run, 'country_code', '')} "
+                        f"requires_review={routing.needs_review}"
+                    ),
+                )
+                score_trace(
+                    _trace_id,
+                    "extraction_requires_review",
+                    1.0 if routing.needs_review else 0.0,
+                    comment=f"reasons={routing.reasons[:3]}",
+                )
+            except Exception:
+                pass
+
             if routing.needs_review:
                 ExtractionAuditService.log_review_route_assigned(
                     extraction_run_id=run.pk,

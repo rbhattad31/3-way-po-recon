@@ -54,7 +54,7 @@ class InvoiceExtractionAdapter:
     """Two-step extraction: Azure Document Intelligence OCR -> Azure OpenAI LLM."""
 
     @observed_service("extraction.extract", entity_type="DocumentUpload", audit_event="EXTRACTION_STARTED")
-    def extract(self, file_path: str) -> ExtractionResponse:
+    def extract(self, file_path: str, *, actor_user_id: Optional[int] = None) -> ExtractionResponse:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
         try:
@@ -66,7 +66,7 @@ class InvoiceExtractionAdapter:
                 ocr_text, ocr_page_count, ocr_duration_ms = self._ocr_document(file_path)
             else:
                 # Step 1b: Native PDF text extraction (no Azure DI cost)
-                logger.info("OCR disabled — using native PDF text extraction for %s", file_path)
+                logger.info("OCR disabled -- using native PDF text extraction for %s", file_path)
                 ocr_text, ocr_page_count, ocr_duration_ms = self._extract_text_native(file_path)
 
             ocr_char_count = len(ocr_text)
@@ -83,7 +83,7 @@ class InvoiceExtractionAdapter:
             print("Document extraction results:", ocr_text)
 
             # Step 2: LLM structured extraction via Invoice Extraction Agent
-            raw_json, agent_run_id = self._agent_extract(ocr_text)
+            raw_json, agent_run_id = self._agent_extract(ocr_text, actor_user_id=actor_user_id)
             logger.info("Agent extraction completed (agent_run_id=%s)", agent_run_id)
             elapsed = int((time.time() - start) * 1000)
 
@@ -197,11 +197,11 @@ class InvoiceExtractionAdapter:
     # Step 2: Azure OpenAI LLM structured extraction
     # ------------------------------------------------------------------
     @staticmethod
-    def _agent_extract(ocr_text: str) -> tuple:
+    def _agent_extract(ocr_text: str, *, actor_user_id: Optional[int] = None) -> tuple:
         """Run the Invoice Extraction Agent on OCR text.
 
         Returns:
-            (raw_json_dict, agent_run_id) — extracted data and the AgentRun PK
+            (raw_json_dict, agent_run_id) -- extracted data and the AgentRun PK
             for traceability.
         """
         from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
@@ -215,6 +215,7 @@ class InvoiceExtractionAdapter:
         ctx = AgentContext(
             reconciliation_result=None,
             invoice_id=0,  # Invoice not yet created
+            actor_user_id=actor_user_id,
             extra={"ocr_text": ocr_text},
         )
 
@@ -247,11 +248,27 @@ class InvoiceExtractionAdapter:
         )
 
         deployment = getattr(settings, "AZURE_OPENAI_DEPLOYMENT", "") or getattr(settings, "LLM_MODEL_NAME", "gpt-4o")
+        system_prompt = InvoiceExtractionAdapter._get_extraction_prompt()
+
+        import uuid as _uuid
+        _trace_id = _uuid.uuid4().hex
+        _lf_trace = None
+        _lf_span = None
+        try:
+            from apps.core.langfuse_client import start_trace, start_span, log_generation, end_span
+            _lf_trace = start_trace(
+                _trace_id,
+                "llm_extract_fallback",
+                metadata={"ocr_char_count": len(ocr_text)},
+            )
+            _lf_span = start_span(_lf_trace, "LLM_EXTRACT_FALLBACK") if _lf_trace else None
+        except Exception:
+            pass
 
         response = client.chat.completions.create(
             model=deployment,
             messages=[
-                {"role": "system", "content": InvoiceExtractionAdapter._get_extraction_prompt()},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Extract invoice data from the following OCR text:\n\n{ocr_text}"},
             ],
             temperature=0.0,
@@ -260,11 +277,36 @@ class InvoiceExtractionAdapter:
         )
 
         content = response.choices[0].message.content
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+
         logger.info(
             "LLM extraction completed: tokens=%d/%d",
-            response.usage.prompt_tokens,
-            response.usage.completion_tokens,
+            prompt_tokens,
+            completion_tokens,
         )
+
+        if _lf_span is not None:
+            try:
+                from apps.core.langfuse_client import log_generation, end_span
+                log_generation(
+                    span=_lf_span,
+                    name="llm_extract_fallback_chat",
+                    model=deployment,
+                    prompt_messages=[
+                        {"role": "system", "content": system_prompt.replace("{{", "{").replace("}}", "}")},
+                        {"role": "user", "content": f"Extract invoice data from the following OCR text:\n\n{ocr_text}"},
+                    ],
+                    completion=content,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=prompt_tokens + completion_tokens,
+                )
+                end_span(_lf_span, output={"completion_length": len(content or "")})
+                if _lf_trace:
+                    end_span(_lf_trace)
+            except Exception:
+                pass
 
         return json.loads(content)
 

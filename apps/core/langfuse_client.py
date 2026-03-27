@@ -57,6 +57,7 @@ def start_trace(
     invoice_id: Optional[int] = None,
     result_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Open a root Langfuse trace span. Returns the span object or None.
@@ -70,7 +71,7 @@ def start_trace(
     try:
         from langfuse.types import TraceContext
         tc: TraceContext = {"trace_id": trace_id}
-        return lf.start_observation(
+        span = lf.start_observation(
             trace_context=tc,
             name=name,
             as_type="span",
@@ -86,6 +87,20 @@ def start_trace(
                 "django_trace_id": trace_id,
             },
         )
+        # Set user_id and session_id as OTel span attributes (Langfuse v4 API).
+        # These populate the Users and Sessions tabs in the Langfuse UI.
+        if span is not None:
+            try:
+                from langfuse._client.attributes import TRACE_USER_ID, TRACE_SESSION_ID
+                otel_span = getattr(span, "_otel_span", None)
+                if otel_span is not None:
+                    if user_id:
+                        otel_span.set_attribute(TRACE_USER_ID, str(user_id))
+                    if session_id:
+                        otel_span.set_attribute(TRACE_SESSION_ID, session_id)
+            except Exception:
+                pass  # Non-fatal — traces still work, just without user/session
+        return span
     except Exception as exc:
         logger.debug("Langfuse start_trace failed: %s", exc)
         return None

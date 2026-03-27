@@ -1148,11 +1148,99 @@ Before adding any external observability tool, note what is already provided:
 | RBAC / guardrail decisions | `AuditEvent` with GUARDRAIL_GRANTED/DENIED types |
 | Inter-agent context forwarding | `AgentMemory` + `ctx.extra["prior_reasoning"]` |
 
-### 9.5 External Observability (Future Direction)
+### 9.5 Langfuse Integration (Implemented)
 
-Two options are compatible with this stack and can be self-hosted:
+Langfuse is the active LLM observability backend. The integration uses
+`apps/core/langfuse_client.py` — a fail-silent singleton. All calls are
+wrapped in `try/except`; a Langfuse outage never affects agent execution.
 
-**Option A -- Phoenix (best for local dev):**
+**SDK**: `langfuse==4.0.1` (self-hosted or cloud). Configure via `.env`:
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://us.cloud.langfuse.com
+```
+
+**Full integration reference**: `docs/LANGFUSE_INTEGRATION.md`
+
+#### Agent pipeline tracing
+
+`AgentOrchestrator.execute()` opens a root trace before the first agent runs
+and passes it via `ctx._langfuse_trace`. Every child agent creates a child
+span underneath it:
+
+```python
+_lf_trace = start_trace(
+    trace_id=trace_ctx.trace_id,
+    name="agent_pipeline",
+    invoice_id=result.invoice_id,
+    result_id=result.pk,
+    user_id=actor.pk if actor else None,
+    session_id=f"invoice-{result.invoice_id}" if result.invoice_id else None,
+    metadata={...},
+)
+```
+
+Session ID convention `"invoice-{invoice_id}"` groups all LLM calls across
+pipeline re-runs for the same invoice in the Langfuse Sessions tab.
+
+#### Tool call spans
+
+Every tool execution in `BaseAgent.run()` (the ReAct loop) is wrapped in a
+child span:
+
+```python
+_tool_span = start_span(_lf_span, name=f"tool_{tc.name}", metadata={...})
+tool_result = self._execute_tool(...)
+end_span(_tool_span, output={"success": ..., "duration_ms": ..., "error": ...},
+         level="ERROR" if not tool_result.success else "DEFAULT")
+```
+
+Failed tool calls appear highlighted in red in the Langfuse UI.
+
+#### RBAC guardrail scores
+
+`log_guardrail_decision()` emits a `score_trace` for every guardrail decision
+when inside an active pipeline trace:
+
+| Score name | Value | Meaning |
+|---|---|---|
+| `rbac_guardrail` | `1.0` | Permission GRANTED |
+| `rbac_guardrail` | `0.0` | Permission DENIED |
+| `rbac_data_scope` | `0.0` | Data scope violation (deny path only) |
+
+Filter `score:rbac_guardrail = 0` in Langfuse to surface all authorization
+failures across any pipeline run.
+
+#### Prompt management
+
+Agent prompts are version-controlled in Langfuse. `PromptRegistry` fetches
+them at runtime (60-second TTL) and falls back to local defaults if Langfuse
+is unreachable. Push or reseed prompts:
+
+```powershell
+python manage.py push_prompts_to_langfuse            # push all
+python manage.py push_prompts_to_langfuse --purge    # delete + reseed
+```
+
+#### SDK v4 compatibility note
+
+Langfuse SDK v4 removed `user_id`/`session_id` from `start_observation()`.
+They are set post-creation via OTel span attributes:
+
+```python
+from langfuse._client.attributes import TRACE_USER_ID, TRACE_SESSION_ID
+otel_span = getattr(span, "_otel_span", None)
+if otel_span:
+    otel_span.set_attribute(TRACE_USER_ID, str(user_id))
+    otel_span.set_attribute(TRACE_SESSION_ID, session_id)
+```
+
+Do **not** pass `user_id`/`session_id` to `start_observation()` --
+it causes a silent `TypeError` that returns `None` and breaks all tracing.
+
+#### Phoenix (local dev alternative)
+
 Pure Python, no Docker needed. Stores traces in SQLite locally.
 
 ```python

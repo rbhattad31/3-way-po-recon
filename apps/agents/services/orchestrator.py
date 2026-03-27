@@ -150,6 +150,7 @@ class AgentOrchestrator:
                 invoice_id=result.invoice_id,
                 result_id=result.pk,
                 user_id=actor.pk if actor else None,
+                session_id=f"invoice-{result.invoice_id}" if result.invoice_id else None,
                 metadata={
                     "reconciliation_mode": getattr(result, "reconciliation_mode", ""),
                     "match_status": str(getattr(result, "match_status", "")),

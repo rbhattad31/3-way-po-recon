@@ -69,7 +69,10 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         file_path = download_blob_to_tempfile(upload.blob_path)
 
         try:
-            extraction_resp: ExtractionResponse = adapter.extract(file_path)
+            extraction_resp: ExtractionResponse = adapter.extract(
+                file_path,
+                actor_user_id=upload.uploaded_by_id,
+            )
         finally:
             import os
             try:

@@ -25,8 +25,13 @@ from apps.extraction.credit_views import (
 from apps.extraction.bulk_views import (
     bulk_job_detail,
     bulk_job_list,
+    bulk_job_retry,
     bulk_job_start,
     bulk_source_create,
+    bulk_source_delete,
+    bulk_source_edit,
+    bulk_source_list,
+    bulk_source_test,
 )
 
 app_name = "extraction"
@@ -55,6 +60,11 @@ urlpatterns = [
     # Bulk extraction
     path("bulk/", bulk_job_list, name="bulk_job_list"),
     path("bulk/start/", bulk_job_start, name="bulk_job_start"),
+    path("bulk/sources/", bulk_source_list, name="bulk_source_list"),
     path("bulk/source/create/", bulk_source_create, name="bulk_source_create"),
+    path("bulk/source/test/", bulk_source_test, name="bulk_source_test"),
+    path("bulk/source/<int:pk>/edit/", bulk_source_edit, name="bulk_source_edit"),
+    path("bulk/source/<int:pk>/delete/", bulk_source_delete, name="bulk_source_delete"),
     path("bulk/<int:job_id>/", bulk_job_detail, name="bulk_job_detail"),
+    path("bulk/<int:job_id>/retry/", bulk_job_retry, name="bulk_job_retry"),
 ]

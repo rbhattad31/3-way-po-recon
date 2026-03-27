@@ -96,6 +96,39 @@ class PostingSubmitResolver:
 
         result.duration_ms = int((time.monotonic() - start) * 1000)
 
+        try:
+            from apps.core.langfuse_client import start_trace, end_span
+            import uuid as _uuid
+            _trace_id = (
+                f"erp-{posting_run_id}" if posting_run_id
+                else f"erp-inv-{invoice_id}" if invoice_id
+                else _uuid.uuid4().hex
+            )
+            _lf_trace = start_trace(
+                _trace_id,
+                "erp_submission",
+                invoice_id=invoice_id,
+                metadata={
+                    "submission_type": submission_type,
+                    "connector_name": result.connector_name or "",
+                    "posting_run_id": posting_run_id,
+                },
+            )
+            if _lf_trace is not None:
+                end_span(
+                    _lf_trace,
+                    output={
+                        "success": result.success,
+                        "status": str(result.status),
+                        "erp_document_number": result.erp_document_number or "",
+                        "duration_ms": result.duration_ms,
+                        "error_message": result.error_message or "",
+                    },
+                    level="ERROR" if not result.success else "DEFAULT",
+                )
+        except Exception:
+            pass
+
         PostingSubmitResolver._log_submission(
             submission_type, result, payload, start,
             invoice_id=invoice_id, posting_run_id=posting_run_id,
@@ -132,6 +165,39 @@ class PostingSubmitResolver:
             )
 
         result.duration_ms = int((time.monotonic() - start) * 1000)
+
+        try:
+            from apps.core.langfuse_client import start_trace, end_span
+            import uuid as _uuid
+            _trace_id = (
+                f"erp-{posting_run_id}" if posting_run_id
+                else f"erp-inv-{invoice_id}" if invoice_id
+                else _uuid.uuid4().hex
+            )
+            _lf_trace = start_trace(
+                _trace_id,
+                "erp_status_check",
+                invoice_id=invoice_id,
+                metadata={
+                    "document_number": erp_document_number,
+                    "connector_name": result.connector_name or "",
+                    "posting_run_id": posting_run_id,
+                },
+            )
+            if _lf_trace is not None:
+                end_span(
+                    _lf_trace,
+                    output={
+                        "success": result.success,
+                        "status": str(result.status),
+                        "erp_document_number": result.erp_document_number or "",
+                        "duration_ms": result.duration_ms,
+                        "error_message": result.error_message or "",
+                    },
+                    level="ERROR" if not result.success else "DEFAULT",
+                )
+        except Exception:
+            pass
 
         PostingSubmitResolver._log_submission(
             ERPSubmissionType.GET_STATUS, result, {"document_number": erp_document_number},

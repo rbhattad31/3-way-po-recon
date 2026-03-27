@@ -334,6 +334,45 @@ Records individual field corrections for granular analytics.
 
 All extraction services are decorated with `@observed_service` from `apps/core/decorators.py`. This creates a child trace span, measures duration, writes a `ProcessingLog` entry, and optionally emits an `AuditEvent` for each service method invocation.
 
+#### Langfuse integration
+
+In addition to the Django-native `@observed_service` instrumentation, the
+extraction pipeline emits Langfuse traces, generations, and scores at three
+specific points. All calls are fail-silent (`try/except`) and never block
+extraction.
+
+| Call site | Location | What is emitted |
+|---|---|---|
+| Agent extraction trace | `InvoiceExtractionAgent.run()` | Root trace `"invoice_extraction"` with `user_id` + `session_id=f"invoice-{invoice_id}"` |
+| LLM fallback trace | `InvoiceExtractionAdapter._llm_extract()` | Root trace `"llm_extract_fallback"` + `log_generation` with token counts |
+| Extraction approval scores | `ExtractionApprovalService` | `score_trace` calls on auto-approve, human approve, and reject (see below) |
+
+**Approval lifecycle scores** (trace ID: `f"approval-{approval.pk}"`):
+
+| Score name | Value | When |
+|---|---|---|
+| `extraction_auto_approve_confidence` | 0.0--1.0 | `try_auto_approve()` fires |
+| `extraction_approval_decision` | `1.0` (approve) / `0.0` (reject) | Human approve or reject |
+| `extraction_approval_confidence` | 0.0--1.0 | Human approve (confidence snapshot) |
+| `extraction_corrections_count` | 0.0+ (raw count) | Human approve with corrections |
+
+**Extraction pipeline scores** (`extraction_pipeline.py` Step 9, trace ID: `str(run.pk)`):
+
+| Score name | Value | Meaning |
+|---|---|---|
+| `extraction_confidence` | 0.0--1.0 | `output.overall_confidence` (guarded with `or 0.0`) |
+| `extraction_requires_review` | 0.0 or 1.0 | `routing.needs_review` |
+
+**Bulk extraction user attribution**: `InvoiceExtractionAdapter.extract()` accepts
+`actor_user_id` kwarg forwarded from `process_invoice_upload_task`. This ensures
+bulk jobs appear under the correct user in the Langfuse Users tab:
+
+```python
+adapter.extract(file_path, actor_user_id=upload.uploaded_by_id)
+```
+
+Full Langfuse reference: `docs/LANGFUSE_INTEGRATION.md`
+
 ### 5.1 InvoiceExtractionAdapter
 
 **File**: `apps/extraction/services/extraction_adapter.py`  
@@ -2197,3 +2236,63 @@ Sidebar entry: "Bulk Extraction" under AI Agents section, gated by `extraction.b
 | `apps/extraction/bulk_views.py` | Template views (list, start, detail) |
 | `templates/extraction/bulk_job_list.html` | Job list + start modal |
 | `templates/extraction/bulk_job_detail.html` | Job detail + items table |
+
+---
+
+## 22. Langfuse Observability
+
+Full reference: `docs/LANGFUSE_INTEGRATION.md`
+
+### 22.1 Active trace call sites
+
+| # | Name | Location | Trace ID |
+|---|---|---|---|
+| 1 | `invoice_extraction` | `InvoiceExtractionAgent.run()` — standalone (no pipeline trace) | Django `trace_id` |
+| 2 | `llm_extract_fallback` | `InvoiceExtractionAdapter._llm_extract()` — direct Azure OpenAI fallback | `f"inv-{invoice_id}"` or uuid |
+| 3 | Extraction pipeline scores | `ExtractionPipeline.run()` Step 9 | `str(run.pk)` |
+| 4 | Approval scores | `ExtractionApprovalService` (auto-approve, approve, reject) | `f"approval-{approval.pk}"` |
+
+### 22.2 LLM fallback trace structure
+
+When `InvoiceExtractionAgent` is unavailable and `_llm_extract()` is called
+directly, a standalone root trace records the Azure OpenAI call:
+
+```
+llm_extract_fallback   (start_trace)
+  -- LLM_EXTRACT_FALLBACK   (start_span)
+     -- llm_extract_fallback_chat   (log_generation, with token counts)
+```
+
+The system prompt is fetched once via `_get_extraction_prompt()` and reused
+in both the `client.chat.completions.create()` call and `log_generation`.
+
+### 22.3 Approval score lifecycle
+
+All scores use `f"approval-{approval.pk}"` as trace ID, linking priority,
+confidence, and decision scores for the same approval record in Langfuse.
+
+```
+approval-42
+  score: extraction_auto_approve_confidence = 0.94   (try_auto_approve)
+    -- OR --
+  score: extraction_approval_decision        = 1.0    (approve)
+  score: extraction_approval_confidence      = 0.87   (approve)
+  score: extraction_corrections_count        = 3.0    (if corrections made)
+    -- OR --
+  score: extraction_approval_decision        = 0.0    (reject)
+```
+
+### 22.4 Session attribution
+
+Every standalone extraction trace uses `session_id=f"invoice-{invoice_id}"`.
+This groups all LLM calls for the same invoice across retries and re-runs
+into one Langfuse session. The `user_id` is set to `actor_user_id` (the
+Django `User.pk`) so you can filter traces per reviewer in the Users tab.
+
+### 22.5 Known SDK quirk (v4)
+
+Langfuse SDK v4 removed `user_id`/`session_id` from `start_observation()`.
+Both are set post-creation as OTel span attributes. Do **not** pass them
+directly to `start_observation()` -- this causes a silent `TypeError`
+that returns `None` and breaks all traces. See `docs/LANGFUSE_INTEGRATION.md`
+Issue 1 for the fix pattern.

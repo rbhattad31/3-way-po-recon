@@ -79,6 +79,10 @@ class BaseBulkSourceAdapter(ABC):
     def validate_config(self) -> ValidationResult:
         """Validate that the source configuration is correct and accessible."""
 
+    def test_connection(self) -> ValidationResult:
+        """Test live connectivity. Default delegates to validate_config."""
+        return self.validate_config()
+
     @abstractmethod
     def list_files(self) -> List[DiscoveredFile]:
         """List all files in the configured source folder.
@@ -168,6 +172,53 @@ class GoogleDriveBulkSourceAdapter(BaseBulkSourceAdapter):
             return ValidationResult(valid=False, message=f"Credentials file not found: {creds}")
         return ValidationResult(valid=True)
 
+    def test_connection(self) -> ValidationResult:
+        """Test Google Drive connectivity using raw service-account JSON (from form)."""
+        import json as _json
+
+        folder_id = self.config.get("folder_id", "").strip()
+        if not folder_id:
+            return ValidationResult(valid=False, message="Drive Folder ID is required.")
+
+        raw_creds = (
+            self.config.get("service_account_json", "")
+            or self.config.get("credentials_json", "")
+        ).strip()
+        if not raw_creds:
+            return ValidationResult(valid=False, message="Service account credentials are required.")
+
+        try:
+            from google.oauth2 import service_account
+            from googleapiclient.discovery import build
+        except ImportError:
+            return ValidationResult(
+                valid=False,
+                message=(
+                    "google-api-python-client is not installed. "
+                    "Run: pip install google-api-python-client google-auth"
+                ),
+            )
+
+        try:
+            if raw_creds.startswith("{"):
+                info = _json.loads(raw_creds)
+            else:
+                # Treat as file path fallback
+                if not os.path.isfile(raw_creds):
+                    return ValidationResult(valid=False, message=f"Credentials file not found: {raw_creds}")
+                with open(raw_creds) as fh:
+                    info = _json.load(fh)
+
+            creds = service_account.Credentials.from_service_account_info(
+                info,
+                scopes=["https://www.googleapis.com/auth/drive.readonly"],
+            )
+            svc = build("drive", "v3", credentials=creds)
+            svc.files().get(fileId=folder_id, fields="id,name").execute()
+            return ValidationResult(valid=True, message="Connected to Google Drive successfully.")
+        except Exception as exc:
+            return ValidationResult(valid=False, message=f"Google Drive connection failed: {exc}")
+
     def _get_service(self):
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
@@ -254,8 +305,8 @@ class OneDriveBulkSourceAdapter(BaseBulkSourceAdapter):
     GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
     def validate_config(self) -> ValidationResult:
-        for key in ("tenant_id", "client_id", "client_secret"):
-            if not self.config.get(key):
+        for key in ("tenant_id", "client_id", "client_secret", "drive_id"):
+            if not self.config.get(key, "").strip():
                 return ValidationResult(valid=False, message=f"{key} is required")
         if not self.config.get("folder_path") and not self.config.get("folder_id"):
             return ValidationResult(
@@ -263,6 +314,56 @@ class OneDriveBulkSourceAdapter(BaseBulkSourceAdapter):
                 message="Either folder_path or folder_id is required",
             )
         return ValidationResult(valid=True)
+
+    def test_connection(self) -> ValidationResult:
+        """Test OneDrive connectivity and verify the target folder is accessible."""
+        result = self.validate_config()
+        if not result.valid:
+            return result
+        drive_id = self.config.get("drive_id", "").strip()
+        if not drive_id:
+            return ValidationResult(valid=False, message="Drive ID is required for OneDrive (client credentials cannot use /me/drive).")
+        try:
+            import requests as _req
+            token = self._get_access_token()
+            headers = {"Authorization": f"Bearer {token}"}
+
+            # Resolve the specific target folder (supports nested paths e.g. Finance-Agents/Agents1)
+            folder_id = self.config.get("folder_id", "").strip()
+            folder_path = self.config.get("folder_path", "").strip("/")
+
+            if folder_id:
+                folder_url = f"{self.GRAPH_BASE}/drives/{drive_id}/items/{folder_id}"
+                display_target = folder_id
+            elif folder_path:
+                # Graph API path navigation: /drives/{id}/root:/path/to/folder
+                # Supports any depth e.g. Finance-Agents/Agents1
+                folder_url = f"{self.GRAPH_BASE}/drives/{drive_id}/root:/{folder_path}"
+                display_target = folder_path
+            else:
+                return ValidationResult(valid=False, message="Either folder_path or folder_id is required.")
+
+            folder_resp = _req.get(folder_url, headers=headers, timeout=15)
+            if folder_resp.status_code == 404:
+                return ValidationResult(
+                    valid=False,
+                    message=f"Folder not found: '{display_target}'. Check the path is correct (e.g. Finance-Agents/Agents1).",
+                )
+            folder_resp.raise_for_status()
+            data = folder_resp.json()
+            folder_name = data.get("name", display_target)
+            parent = data.get("parentReference", {}).get("path", "")
+            # Strip the /drives/{id}/root: prefix from the parent path for display
+            if "root:" in parent:
+                parent = parent.split("root:", 1)[-1].strip("/")
+            full_path = f"{parent}/{folder_name}".strip("/") if parent else folder_name
+
+            return ValidationResult(
+                valid=True,
+                message=f"Folder found: '{full_path}'.",
+            )
+        except Exception as exc:
+            return ValidationResult(valid=False, message=f"OneDrive connection failed: {exc}")
 
     def _get_access_token(self) -> str:
         import requests
@@ -286,13 +387,19 @@ class OneDriveBulkSourceAdapter(BaseBulkSourceAdapter):
         import requests
 
         headers = self._headers()
-        drive_user = self.config.get("drive_user", "")
+        drive_id = self.config.get("drive_id", "").strip()
+
+        if not drive_id:
+            raise ValueError(
+                "OneDrive source requires a Drive ID. "
+                "Find it via: Graph Explorer -> /me/drives or /sites/{site-id}/drives"
+            )
 
         if self.config.get("folder_id"):
-            url = f"{self.GRAPH_BASE}/drives/{drive_user}/items/{self.config['folder_id']}/children"
+            url = f"{self.GRAPH_BASE}/drives/{drive_id}/items/{self.config['folder_id']}/children"
         else:
             folder_path = self.config["folder_path"].strip("/")
-            url = f"{self.GRAPH_BASE}/me/drive/root:/{folder_path}:/children"
+            url = f"{self.GRAPH_BASE}/drives/{drive_id}/root:/{folder_path}:/children"
 
         discovered: List[DiscoveredFile] = []
         while url:
@@ -319,10 +426,10 @@ class OneDriveBulkSourceAdapter(BaseBulkSourceAdapter):
         import requests
 
         headers = self._headers()
-        drive_user = self.config.get("drive_user", "")
+        drive_id = self.config.get("drive_id", "").strip()
 
-        if drive_user:
-            url = f"{self.GRAPH_BASE}/drives/{drive_user}/items/{file_ref.file_id}/content"
+        if drive_id:
+            url = f"{self.GRAPH_BASE}/drives/{drive_id}/items/{file_ref.file_id}/content"
         else:
             url = f"{self.GRAPH_BASE}/me/drive/items/{file_ref.file_id}/content"
 

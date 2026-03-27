@@ -211,6 +211,8 @@ class ExceptionAnalysisAgent(BaseAgent):
                 "invoice_id": ctx.invoice_id,
                 "po_number": ctx.po_number or "",
                 "trace_id": ctx.trace_id or "",
+                "user_id": ctx.actor_user_id or "",
+                "session_id": f"invoice-{ctx.invoice_id}" if ctx.invoice_id else "",
             }
             try:
                 response = self.llm.chat(
@@ -317,6 +319,8 @@ class InvoiceExtractionAgent(BaseAgent):
                     _trace_id,
                     "invoice_extraction",
                     invoice_id=ctx.invoice_id or None,
+                    user_id=ctx.actor_user_id or None,
+                    session_id=f"invoice-{ctx.invoice_id}" if ctx.invoice_id else None,
                     metadata={"agent_run_id": agent_run.pk},
                 )
                 _own_trace = True
