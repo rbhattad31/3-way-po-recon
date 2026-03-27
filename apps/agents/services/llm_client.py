@@ -84,6 +84,7 @@ class LLMClient:
         else:
             self._client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self._langfuse_span: Any = None
+        self._langfuse_metadata: dict = {}
 
     # ------------------------------------------------------------------
     # Chat completions
@@ -133,6 +134,7 @@ class LLMClient:
                     metadata={
                         "tools_count": len(tools or []),
                         "finish_reason": parsed.finish_reason,
+                        **self._langfuse_metadata,
                     },
                 )
             except Exception:

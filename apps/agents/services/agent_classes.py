@@ -204,14 +204,25 @@ class ExceptionAnalysisAgent(BaseAgent):
                 "Produce the reviewer summary JSON now."
             )
 
-            response = self.llm.chat(
-                messages=[
-                    LLMMessage(role="system", content=self._REVIEWER_SUMMARY_SYSTEM_PROMPT),
-                    LLMMessage(role="user", content=user_msg),
-                ],
-                tools=None,
-                response_format={"type": "json_object"},
-            )
+            self.llm._langfuse_metadata = {
+                "agent_type": str(self.agent_type),
+                "call_type": "reviewer_summary",
+                "agent_run_id": agent_run.pk,
+                "invoice_id": ctx.invoice_id,
+                "po_number": ctx.po_number or "",
+                "trace_id": ctx.trace_id or "",
+            }
+            try:
+                response = self.llm.chat(
+                    messages=[
+                        LLMMessage(role="system", content=self._REVIEWER_SUMMARY_SYSTEM_PROMPT),
+                        LLMMessage(role="user", content=user_msg),
+                    ],
+                    tools=None,
+                    response_format={"type": "json_object"},
+                )
+            finally:
+                self.llm._langfuse_metadata = {}
 
             content = (response.content or "").strip()
             if not content:
@@ -323,6 +334,13 @@ class InvoiceExtractionAgent(BaseAgent):
         except Exception:
             _lf_span = None
         self.llm._langfuse_span = _lf_span
+        self.llm._langfuse_metadata = {
+            "agent_type": str(self.agent_type),
+            "invoice_id": ctx.invoice_id,
+            "trace_id": ctx.trace_id or "",
+            "agent_run_id": agent_run.pk,
+            "ocr_char_count": len(ocr_text),
+        }
 
         try:
             messages = self._init_messages(ctx, agent_run)
@@ -380,6 +398,7 @@ class InvoiceExtractionAgent(BaseAgent):
                     pass
         finally:
             self.llm._langfuse_span = None
+            self.llm._langfuse_metadata = {}
 
         return agent_run
 

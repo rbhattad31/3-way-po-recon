@@ -164,8 +164,17 @@ class BaseAgent(ABC):
             except Exception:
                 _lf_span = None
         self.llm._langfuse_span = _lf_span
-
-        # Resolve actor for tool-level authorization
+        self.llm._langfuse_metadata = {
+            "agent_type": str(self.agent_type),
+            "invoice_id": ctx.invoice_id,
+            "po_number": ctx.po_number or "",
+            "trace_id": ctx.trace_id or "",
+            "reconciliation_result_id": (
+                ctx.reconciliation_result.pk if ctx.reconciliation_result else None
+            ),
+            "agent_run_id": agent_run.pk,
+            "prompt_version": getattr(agent_run, "prompt_version", ""),
+        }
         self._actor_user = self._resolve_actor(ctx)
         start = time.monotonic()
         step_counter = 0
@@ -456,6 +465,7 @@ class BaseAgent(ABC):
             agent_run.save()
 
         self.llm._langfuse_span = None
+        self.llm._langfuse_metadata = {}
         return agent_run
 
     # ------------------------------------------------------------------
