@@ -63,6 +63,82 @@ def to_decimal(value, default: Decimal = Decimal("0.00")) -> Decimal:
         return default
 
 
+def parse_percentage(value) -> Optional[Decimal]:
+    """Parse a percentage-like value such as ``15`` or ``15%``."""
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+    try:
+        cleaned = cleaned.replace(",", "").replace("%", "")
+        cleaned = re.sub(r"[^0-9.\-]", "", cleaned)
+        if cleaned in {"", "-", ".", "-."}:
+            return None
+        return Decimal(cleaned).quantize(Decimal("0.01"))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def calculate_tax_percentage(tax_amount, base_amount) -> Optional[Decimal]:
+    """Return ``tax_amount / base_amount * 100`` when both values are valid."""
+    if tax_amount is None or base_amount is None:
+        return None
+    try:
+        tax = Decimal(str(tax_amount))
+        base = Decimal(str(base_amount))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if base == 0:
+        return None
+    return ((tax / base) * Decimal("100")).quantize(Decimal("0.01"))
+
+
+def resolve_tax_percentage(raw_percentage=None, tax_amount=None, base_amount=None) -> Optional[Decimal]:
+    """Prefer an extracted tax percentage, else derive it from amounts."""
+    parsed = parse_percentage(raw_percentage)
+    if parsed is not None:
+        return parsed
+    return calculate_tax_percentage(tax_amount, base_amount)
+
+
+def resolve_line_tax_percentage(
+    *,
+    raw_percentage=None,
+    tax_amount=None,
+    quantity=None,
+    unit_price=None,
+    line_amount=None,
+) -> Optional[Decimal]:
+    """Resolve a line tax percentage from extracted or derived values."""
+    base_amount = None
+    try:
+        if quantity is not None and unit_price is not None:
+            base_amount = Decimal(str(quantity)) * Decimal(str(unit_price))
+        elif line_amount is not None and tax_amount is not None:
+            gross = Decimal(str(line_amount))
+            tax = Decimal(str(tax_amount))
+            if gross > tax:
+                base_amount = gross - tax
+    except (InvalidOperation, TypeError, ValueError):
+        base_amount = None
+    return resolve_tax_percentage(
+        raw_percentage=raw_percentage,
+        tax_amount=tax_amount,
+        base_amount=base_amount,
+    )
+
+
+def normalize_category(value: Optional[str], fallback: str = "") -> str:
+    """Normalize a business category label for storage/display."""
+    if not value:
+        return fallback
+    cleaned = re.sub(r"\s+", " ", str(value)).strip()
+    if not cleaned:
+        return fallback
+    return cleaned.title()
+
+
 def pct_difference(a: Decimal, b: Decimal) -> Decimal:
     """Return absolute percentage difference: |a-b|/b * 100. Returns 100 if b is 0."""
     if b == 0:

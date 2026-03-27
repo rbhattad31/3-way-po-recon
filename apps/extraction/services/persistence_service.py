@@ -134,6 +134,7 @@ class InvoicePersistenceService:
                 raw_tax_amount=li.raw_tax_amount,
                 raw_line_amount=li.raw_line_amount,
                 description=li.description,
+                item_category=li.item_category,
                 normalized_description=li.normalized_description,
                 quantity=li.quantity,
                 unit_price=li.unit_price,

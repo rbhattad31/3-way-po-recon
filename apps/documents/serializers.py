@@ -1,6 +1,7 @@
 """Document API serializers — Invoices, POs, GRNs."""
 from rest_framework import serializers
 
+from apps.core.utils import normalize_category, resolve_line_tax_percentage, resolve_tax_percentage
 from apps.documents.models import (
     DocumentUpload,
     GoodsReceiptNote,
@@ -36,12 +37,38 @@ class DocumentUploadSerializer(serializers.ModelSerializer):
 # Invoice
 # ---------------------------------------------------------------------------
 class InvoiceLineItemSerializer(serializers.ModelSerializer):
+    item_category = serializers.SerializerMethodField()
+    tax_percentage = serializers.SerializerMethodField()
+
     class Meta:
         model = InvoiceLineItem
         fields = [
             "id", "line_number", "description", "quantity",
-            "unit_price", "tax_amount", "line_amount", "extraction_confidence",
+            "item_category", "unit_price", "tax_percentage", "tax_amount", "line_amount", "extraction_confidence",
         ]
+
+    def get_item_category(self, obj):
+        raw_line_items = ((obj.invoice.extraction_raw_json or {}).get("line_items") or [])
+        raw_line = raw_line_items[obj.line_number - 1] if obj.line_number - 1 < len(raw_line_items) and isinstance(raw_line_items[obj.line_number - 1], dict) else {}
+        return (
+            normalize_category(obj.item_category)
+            or normalize_category(raw_line.get("item_category") or raw_line.get("category"))
+            or ("Service" if obj.is_service_item else "")
+            or ("Stock" if obj.is_stock_item else "")
+            or "Other"
+        )
+
+    def get_tax_percentage(self, obj):
+        raw_line_items = ((obj.invoice.extraction_raw_json or {}).get("line_items") or [])
+        raw_line = raw_line_items[obj.line_number - 1] if obj.line_number - 1 < len(raw_line_items) and isinstance(raw_line_items[obj.line_number - 1], dict) else {}
+        value = resolve_line_tax_percentage(
+            raw_percentage=raw_line.get("tax_percentage"),
+            tax_amount=obj.tax_amount,
+            quantity=obj.quantity,
+            unit_price=obj.unit_price,
+            line_amount=obj.line_amount,
+        )
+        return str(value) if value is not None else None
 
 
 class InvoiceListSerializer(serializers.ModelSerializer):
@@ -60,6 +87,7 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
     vendor_name = serializers.CharField(source="vendor.name", read_only=True, default="")
     vendor_code = serializers.CharField(source="vendor.code", read_only=True, default="")
     line_items = InvoiceLineItemSerializer(many=True, read_only=True)
+    tax_percentage = serializers.SerializerMethodField()
     upload_filename = serializers.CharField(
         source="document_upload.original_filename", read_only=True, default=""
     )
@@ -72,7 +100,7 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
             "raw_vendor_name", "raw_invoice_number", "raw_invoice_date",
             "raw_po_number", "raw_currency", "raw_total_amount",
             "invoice_number", "invoice_date", "po_number", "currency",
-            "subtotal", "tax_amount", "total_amount",
+            "subtotal", "tax_percentage", "tax_amount", "total_amount",
             "status", "is_duplicate", "extraction_confidence",
             "extraction_remarks", "line_items",
             "created_at", "updated_at",
@@ -81,6 +109,14 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
             "id", "vendor_name", "vendor_code", "upload_filename",
             "created_at", "updated_at",
         ]
+
+    def get_tax_percentage(self, obj):
+        value = resolve_tax_percentage(
+            raw_percentage=(obj.extraction_raw_json or {}).get("tax_percentage"),
+            tax_amount=obj.tax_amount,
+            base_amount=obj.subtotal,
+        )
+        return str(value) if value is not None else None
 
 
 # ---------------------------------------------------------------------------

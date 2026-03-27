@@ -208,13 +208,16 @@ Extract ALL relevant fields and return a JSON object with EXACTLY this structure
   "po_number": "<purchase order number referenced on the invoice>",
   "currency": "<3-letter ISO currency code e.g. USD, EUR, INR>",
   "subtotal": "<subtotal amount before tax as a number>",
+    "tax_percentage": "<overall tax percentage as a number such as 15 or 5; use 0 if not available>",
   "tax_amount": "<total tax amount as a number>",
   "total_amount": "<grand total amount as a number>",
   "line_items": [
     {{
       "item_description": "<description of the line item>",
+            "item_category": "<concise business category for the line item, e.g. Food, Logistics, Packaging, Maintenance, Utilities, Equipment, Services, Materials, or Other>",
       "quantity": "<quantity as a number>",
       "unit_price": "<unit price as a number>",
+            "tax_percentage": "<tax percentage for this line as a number such as 15 or 5; use 0 if not available>",
       "tax_amount": "<tax for this line as a number or 0 if not available>",
       "line_amount": "<total amount for this line as a number>"
     }}
@@ -226,6 +229,8 @@ Rules:
 - Preserve values exactly as shown on the invoice for display fields.
 - If a currency symbol is present with an amount (e.g., $, €, ₹), keep that symbol in the returned amount string.
 - If a field is not found, return an empty string for text fields or 0 for numeric fields.
+- Return `tax_percentage` values as percentage numbers, not fractions (for example return `15`, not `0.15`).
+- For each `item_category`, infer a short business category from the description. Use labels like `Food`, `Logistics`, `Packaging`, `Maintenance`, `Utilities`, `Equipment`, `Services`, `Materials`, or `Other`.
 - Parse dates into YYYY-MM-DD format.
 - If the PO number is referenced anywhere (header, footer, reference fields), extract it.
 - Return ONLY valid JSON, no markdown or explanation.

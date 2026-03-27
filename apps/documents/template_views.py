@@ -1,5 +1,6 @@
 """Document template views (server-side rendered)."""
 import hashlib
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -12,6 +13,7 @@ from django.views.decorators.http import require_POST
 from apps.core.enums import DocumentType, InvoiceStatus, UserRole
 from apps.core.decorators import observed_action
 from apps.core.permissions import permission_required_code
+from apps.core.utils import normalize_category, parse_percentage, resolve_line_tax_percentage, resolve_tax_percentage
 from apps.documents.models import DocumentUpload, GoodsReceiptNote, Invoice, PurchaseOrder
 
 
@@ -65,6 +67,52 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
+
+
+def _resolve_display_category(line, raw_line: dict) -> str:
+    """Resolve the UI category label for an invoice line."""
+    return (
+        normalize_category(line.item_category)
+        or normalize_category(raw_line.get("item_category") or raw_line.get("category"))
+        or ("Service" if line.is_service_item else "")
+        or ("Stock" if line.is_stock_item else "")
+        or "Other"
+    )
+
+
+def _build_invoice_line_display(invoice):
+    """Return line items enriched for UI rendering."""
+    raw_json = invoice.extraction_raw_json or {}
+    raw_line_items = raw_json.get("line_items") or []
+    line_items = []
+    has_tax_details = False
+
+    for idx, line in enumerate(invoice.line_items.all(), start=1):
+        raw_line = raw_line_items[idx - 1] if idx - 1 < len(raw_line_items) and isinstance(raw_line_items[idx - 1], dict) else {}
+        tax_percentage = resolve_line_tax_percentage(
+            raw_percentage=raw_line.get("tax_percentage"),
+            tax_amount=line.tax_amount,
+            quantity=line.quantity,
+            unit_price=line.unit_price,
+            line_amount=line.line_amount,
+        )
+        if tax_percentage is not None or (line.tax_amount is not None and line.tax_amount != Decimal("0.00")):
+            has_tax_details = True
+        line_items.append({
+            "line_number": line.line_number,
+            "description": line.description,
+            "raw_description": line.raw_description,
+            "item_category": _resolve_display_category(line, raw_line),
+            "quantity": line.quantity,
+            "unit_price": line.unit_price,
+            "tax_percentage": tax_percentage,
+            "tax_amount": line.tax_amount,
+            "line_amount": line.line_amount,
+            "is_service_item": line.is_service_item,
+            "is_stock_item": line.is_stock_item,
+        })
+
+    return line_items, has_tax_details
 
 
 @login_required
@@ -297,14 +345,22 @@ def invoice_detail(request, pk):
     except Exception:
         pass
 
-    # Check if any line items have tax amounts (to conditionally show tax column)
-    has_line_tax = invoice.line_items.filter(tax_amount__isnull=False).exclude(tax_amount=0).exists()
+    raw_invoice_tax_percentage = parse_percentage((invoice.extraction_raw_json or {}).get("tax_percentage"))
+    invoice_tax_percentage = resolve_tax_percentage(
+        raw_percentage=raw_invoice_tax_percentage,
+        tax_amount=invoice.tax_amount,
+        base_amount=invoice.subtotal,
+    )
+    line_items_for_display, has_line_tax = _build_invoice_line_display(invoice)
 
     return render(request, "documents/invoice_detail.html", {
         "invoice": invoice,
         "recon_results": recon_results,
         "ap_case": ap_case,
         "has_line_tax": has_line_tax,
+        "invoice_tax_percentage": invoice_tax_percentage,
+        "raw_invoice_tax_percentage": raw_invoice_tax_percentage,
+        "line_items_for_display": line_items_for_display,
     })
 
 

@@ -8,6 +8,7 @@ from typing import List, Optional
 from datetime import date
 
 from apps.core.utils import (
+    normalize_category,
     normalize_invoice_number,
     normalize_po_number,
     normalize_string,
@@ -25,11 +26,13 @@ logger = logging.getLogger(__name__)
 class NormalizedLineItem:
     line_number: int = 1
     raw_description: str = ""
+    raw_item_category: str = ""
     raw_quantity: str = ""
     raw_unit_price: str = ""
     raw_tax_amount: str = ""
     raw_line_amount: str = ""
     description: str = ""
+    item_category: str = ""
     normalized_description: str = ""
     quantity: Optional[Decimal] = None
     unit_price: Optional[Decimal] = None
@@ -112,11 +115,13 @@ class NormalizationService:
         return NormalizedLineItem(
             line_number=li.line_number,
             raw_description=li.raw_description,
+            raw_item_category=li.raw_item_category,
             raw_quantity=li.raw_quantity,
             raw_unit_price=li.raw_unit_price,
             raw_tax_amount=li.raw_tax_amount,
             raw_line_amount=li.raw_line_amount,
             description=desc,
+            item_category=normalize_category(li.raw_item_category),
             normalized_description=normalize_string(desc),
             quantity=self._safe_decimal(li.raw_quantity, four_places=True),
             unit_price=self._safe_decimal(li.raw_unit_price, four_places=True),

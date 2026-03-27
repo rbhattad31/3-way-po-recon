@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from django.db import transaction
 
@@ -59,14 +59,19 @@ class RecommendationService:
             # Step 2: Apply deterministic rules
             rule_result = RecommendationService._apply_rules(request, attrs)
 
-            # Step 3: Invoke AI agent if rules are inconclusive
+            # Step 3: Invoke AI workflow if rules are inconclusive
             ai_result = None
             if use_ai and not rule_result.get("confident"):
-                from apps.procurement.agents.recommendation_agent import RecommendationAgent
-                ai_result = RecommendationAgent.execute(request, attrs, rule_result)
+                from apps.procurement.services.recommendation_graph_service import RecommendationGraphService
+                ai_result = RecommendationGraphService.run(
+                    request=request,
+                    run=run,
+                    attributes=attrs,
+                    rule_result=rule_result,
+                )
 
             # Merge results
-            final = ai_result if ai_result and ai_result.get("confident") else rule_result
+            final = RecommendationService._merge_recommendation_result(rule_result, ai_result)
 
             # Step 4: Compliance check
             compliance_status = ComplianceStatus.NOT_CHECKED
@@ -83,7 +88,7 @@ class RecommendationService:
                     recommended_option=final.get("recommended_option", "No recommendation"),
                     reasoning_summary=final.get("reasoning_summary", ""),
                     reasoning_details_json=final.get("reasoning_details"),
-                    confidence_score=final.get("confidence", 0.0),
+                    confidence_score=RecommendationService._normalize_confidence(final.get("confidence", 0.0)),
                     constraints_json=final.get("constraints"),
                     compliance_status=compliance_status,
                     output_payload_json=final,
@@ -138,6 +143,37 @@ class RecommendationService:
             "recommended_option": "",
             "reasoning_summary": "No deterministic rules matched. Deferring to AI analysis.",
             "confident": False,
+            "confidence": 0.0,
             "constraints": [],
             "reasoning_details": {"source": "rules_engine", "rules_evaluated": 0},
         }
+
+    @staticmethod
+    def _merge_recommendation_result(
+        rule_result: Dict[str, Any],
+        ai_result: Dict[str, Any] | None,
+    ) -> Dict[str, Any]:
+        """Prefer AI output whenever it produced a recommendation or meaningful reasoning."""
+        if not ai_result:
+            return rule_result
+
+        merged = {
+            **rule_result,
+            **ai_result,
+            "reasoning_details": {
+                **(rule_result.get("reasoning_details") or {}),
+                **(ai_result.get("reasoning_details") or {}),
+            },
+        }
+
+        if ai_result.get("recommended_option") or ai_result.get("reasoning_summary"):
+            return merged
+        return rule_result
+
+    @staticmethod
+    def _normalize_confidence(value: Any) -> float:
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, confidence))
