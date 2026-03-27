@@ -316,13 +316,10 @@ class InvoiceExtractionAgent(BaseAgent):
                     "agent_run_id": agent_run.pk,
                     "invoice_id": ctx.invoice_id,
                     "ocr_char_count": len(ocr_text),
-                    # Store first 2000 chars of OCR text so it is searchable
-                    # in Langfuse and can be copied into the playground.
-                    "ocr_text_preview": ocr_text[:2000],
                 },
             )
             if _lf_span:
-                _lf_span.update(input={"ocr_text": ocr_text[:3000]})
+                _lf_span.update(input={"ocr_text": ocr_text})
         except Exception:
             _lf_span = None
         self.llm._langfuse_span = _lf_span

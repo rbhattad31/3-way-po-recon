@@ -123,10 +123,10 @@ class LLMClient:
                     name="llm_chat",
                     model=self.model,
                     prompt_messages=[
-                        {"role": m.role, "content": (m.content or "")[:500]}
+                        {"role": m.role, "content": (m.content or "").replace("{{", "{").replace("}}", "}")}
                         for m in messages
                     ],
-                    completion=(parsed.content or "")[:1000],
+                    completion=parsed.content or "",
                     prompt_tokens=parsed.prompt_tokens,
                     completion_tokens=parsed.completion_tokens,
                     total_tokens=parsed.total_tokens,
