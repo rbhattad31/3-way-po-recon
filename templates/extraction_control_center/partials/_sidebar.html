@@ -1,0 +1,84 @@
+{% load rbac_tags %}
+<nav class="cc-sidebar">
+  <div class="cc-sidebar-header">
+    <i class="bi bi-sliders2 me-2"></i>
+    <span>Extraction Control Center</span>
+  </div>
+  <ul class="cc-sidebar-nav">
+    <li>
+      <a href="{% url 'extraction_control_center:overview' %}" class="{% if request.resolver_match.url_name == 'overview' %}active{% endif %}">
+        <i class="bi bi-grid-1x2"></i> Overview
+      </a>
+    </li>
+
+    <li class="cc-sidebar-section">Configuration</li>
+    {% has_permission "extraction.settings.view" as can_settings %}
+    {% if can_settings %}
+    <li>
+      <a href="{% url 'extraction_control_center:runtime_settings' %}" class="{% if request.resolver_match.url_name == 'runtime_settings' %}active{% endif %}">
+        <i class="bi bi-gear"></i> Runtime Settings
+      </a>
+    </li>
+    <li>
+      <a href="{% url 'extraction_control_center:entity_profiles' %}" class="{% if 'entity_profile' in request.resolver_match.url_name %}active{% endif %}">
+        <i class="bi bi-building"></i> Entity Profiles
+      </a>
+    </li>
+    {% endif %}
+
+    <li class="cc-sidebar-section">Prompt & Schema</li>
+    {% has_permission "extraction.prompts.view" as can_prompts %}
+    {% if can_prompts %}
+    <li>
+      <a href="{% url 'extraction_control_center:prompt_list' %}" class="{% if 'prompt' in request.resolver_match.url_name %}active{% endif %}">
+        <i class="bi bi-chat-square-text"></i> Prompt Registry
+      </a>
+    </li>
+    {% endif %}
+    {% has_permission "extraction.schemas.view" as can_schemas %}
+    {% if can_schemas %}
+    <li>
+      <a href="{% url 'extraction_control_center:schema_list' %}" class="{% if 'schema' in request.resolver_match.url_name %}active{% endif %}">
+        <i class="bi bi-diagram-3"></i> Schema Registry
+      </a>
+    </li>
+    {% endif %}
+
+    <li class="cc-sidebar-section">Governance</li>
+    <li>
+      <a href="{% url 'extraction_control_center:country_pack_list' %}" class="{% if 'country_pack' in request.resolver_match.url_name %}active{% endif %}">
+        <i class="bi bi-globe2"></i> Country Packs
+      </a>
+    </li>
+    {% if can_settings %}
+    <li>
+      <a href="{% url 'extraction_control_center:routing_rule_list' %}" class="{% if 'routing_rule' in request.resolver_match.url_name %}active{% endif %}">
+        <i class="bi bi-signpost-split"></i> Routing Rules
+      </a>
+    </li>
+    {% endif %}
+
+    <li class="cc-sidebar-section">Insights</li>
+    {% has_permission "extraction.analytics.view" as can_analytics %}
+    {% if can_analytics %}
+    <li>
+      <a href="{% url 'extraction_control_center:analytics_overview' %}" class="{% if request.resolver_match.url_name == 'analytics_overview' %}active{% endif %}">
+        <i class="bi bi-graph-up"></i> Analytics
+      </a>
+    </li>
+    <li>
+      <a href="{% url 'extraction_control_center:corrections_explorer' %}" class="{% if request.resolver_match.url_name == 'corrections_explorer' %}active{% endif %}">
+        <i class="bi bi-pencil-square"></i> Corrections
+      </a>
+    </li>
+    {% endif %}
+    {% has_permission "extraction.audit.view" as can_audit %}
+    {% if can_audit %}
+    <li>
+      <a href="{% url 'extraction_control_center:audit_log' %}" class="{% if request.resolver_match.url_name == 'audit_log' %}active{% endif %}">
+        <i class="bi bi-shield-lock"></i> Audit Log
+      </a>
+    </li>
+    {% endif %}
+  </ul>
+</nav>

@@ -15,6 +15,8 @@ from typing import Any, Dict, Optional
 
 from django.conf import settings
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 _VENDOR_ENGLISH_ENFORCEMENT = (
@@ -36,6 +38,10 @@ class ExtractionResponse:
     duration_ms: int = 0
     error_message: str = ""
     ocr_text: str = ""
+    agent_run_id: Optional[int] = None
+    ocr_page_count: int = 0
+    ocr_duration_ms: int = 0
+    ocr_char_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -47,20 +53,33 @@ class ExtractionResponse:
 class InvoiceExtractionAdapter:
     """Two-step extraction: Azure Document Intelligence OCR -> Azure OpenAI LLM."""
 
+    @observed_service("extraction.extract", entity_type="DocumentUpload", audit_event="EXTRACTION_STARTED")
     def extract(self, file_path: str) -> ExtractionResponse:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
         try:
-            # Step 1: OCR via Azure Document Intelligence
-            ocr_text = self._ocr_document(file_path)
+            # Check runtime setting for OCR mode
+            ocr_enabled = self._is_ocr_enabled()
+
+            if ocr_enabled:
+                # Step 1a: OCR via Azure Document Intelligence
+                ocr_text, ocr_page_count, ocr_duration_ms = self._ocr_document(file_path)
+            else:
+                # Step 1b: Native PDF text extraction (no Azure DI cost)
+                logger.info("OCR disabled — using native PDF text extraction for %s", file_path)
+                ocr_text, ocr_page_count, ocr_duration_ms = self._extract_text_native(file_path)
+
+            ocr_char_count = len(ocr_text)
             if not ocr_text.strip():
                 return ExtractionResponse(
                     success=False,
                     error_message="OCR returned no text from the document",
                     duration_ms=int((time.time() - start) * 1000),
+                    ocr_page_count=ocr_page_count,
+                    ocr_duration_ms=ocr_duration_ms,
                 )
 
-            logger.info("OCR completed: %d characters extracted from %s", len(ocr_text), file_path)
+            logger.info("OCR completed: %d characters, %d pages from %s", ocr_char_count, ocr_page_count, file_path)
             print("Document extraction results:", ocr_text)
 
             # Step 2: LLM structured extraction via Invoice Extraction Agent
@@ -73,10 +92,14 @@ class InvoiceExtractionAdapter:
                 success=True,
                 raw_json=raw_json,
                 confidence=float(raw_json.get("confidence", 0.0)),
-                engine_name="azure_di_gpt4o_agent",
+                engine_name="azure_di_gpt4o_agent" if ocr_enabled else "native_pdf_gpt4o_agent",
                 engine_version="2.0",
                 duration_ms=elapsed,
                 ocr_text=ocr_text,
+                agent_run_id=agent_run_id,
+                ocr_page_count=ocr_page_count,
+                ocr_duration_ms=ocr_duration_ms,
+                ocr_char_count=ocr_char_count,
             )
         except Exception as exc:
             elapsed = int((time.time() - start) * 1000)
@@ -88,11 +111,34 @@ class InvoiceExtractionAdapter:
             )
 
     # ------------------------------------------------------------------
-    # Step 1: Azure Document Intelligence OCR
+    # Runtime settings helper
     # ------------------------------------------------------------------
     @staticmethod
-    def _ocr_document(file_path: str) -> str:
-        """Use Azure Document Intelligence to extract text from a document."""
+    def _is_ocr_enabled() -> bool:
+        """Check ExtractionRuntimeSettings.ocr_enabled flag.
+
+        Falls back to settings.EXTRACTION_OCR_ENABLED (default True) if no
+        runtime settings record exists.
+        """
+        try:
+            from apps.extraction_core.models import ExtractionRuntimeSettings
+            active = ExtractionRuntimeSettings.get_active()
+            if active is not None:
+                return active.ocr_enabled
+        except Exception:
+            logger.debug("Could not read ExtractionRuntimeSettings; using settings fallback")
+        return getattr(settings, "EXTRACTION_OCR_ENABLED", True)
+
+    # ------------------------------------------------------------------
+    # Step 1a: Azure Document Intelligence OCR
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _ocr_document(file_path: str) -> tuple:
+        """Use Azure Document Intelligence to extract text from a document.
+
+        Returns:
+            (ocr_text, page_count, duration_ms)
+        """
         from azure.ai.formrecognizer import DocumentAnalysisClient
         from azure.core.credentials import AzureKeyCredential
 
@@ -107,19 +153,47 @@ class InvoiceExtractionAdapter:
             credential=AzureKeyCredential(key),
         )
 
+        ocr_start = time.time()
         with open(file_path, "rb") as f:
             #poller = client.begin_analyze_document("prebuilt-read", document=f)
             poller = client.begin_analyze_document("prebuilt-invoice", document=f)
 
         result = poller.result()
+        ocr_duration_ms = int((time.time() - ocr_start) * 1000)
 
         # Concatenate all pages' text
+        page_count = len(result.pages) if result.pages else 0
         lines = []
         for page in result.pages:
             for line in page.lines:
                 lines.append(line.content)
 
-        return "\n".join(lines)
+        return "\n".join(lines), page_count, ocr_duration_ms
+
+    # ------------------------------------------------------------------
+    # Step 1b: Native PDF text extraction (no OCR cost)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _extract_text_native(file_path: str) -> tuple:
+        """Extract text from a PDF using PyPDF2 (native text layer).
+
+        Returns:
+            (text, page_count, duration_ms) — same shape as _ocr_document.
+        """
+        import PyPDF2
+
+        native_start = time.time()
+        lines = []
+        page_count = 0
+        with open(file_path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            page_count = len(reader.pages)
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    lines.append(text)
+        duration_ms = int((time.time() - native_start) * 1000)
+        return "\n".join(lines), page_count, duration_ms
 
     # ------------------------------------------------------------------
     # Step 2: Azure OpenAI LLM structured extraction

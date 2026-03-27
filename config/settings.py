@@ -44,6 +44,13 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.cases",
     "apps.copilot",
+    "apps.procurement",
+    "apps.extraction_core",
+    "apps.extraction_configs",
+    "apps.extraction_documents",
+    "apps.posting",
+    "apps.posting_core",
+    "apps.erp_integration",
 ]
 
 MIDDLEWARE = [
@@ -74,6 +81,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.core.context_processors.pending_reviews",
                 "apps.core.context_processors.rbac_context",
+                "apps.core.context_processors.static_version",
             ],
         },
     },
@@ -131,6 +139,9 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# Cache-busting version counter — bump after static file changes
+STATIC_VERSION = "1.0.6"
+
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
@@ -182,6 +193,14 @@ CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "True").lower()
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 
 # ---------------------------------------------------------------------------
+# ERP Integration
+# ---------------------------------------------------------------------------
+ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD = float(
+    os.getenv("ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD", "0.8")
+)
+ERP_CACHE_TTL_SECONDS = int(os.getenv("ERP_CACHE_TTL_SECONDS", "3600"))
+
+# ---------------------------------------------------------------------------
 # LLM / AI service configuration
 # ---------------------------------------------------------------------------
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "azure_openai")
@@ -193,10 +212,22 @@ AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+# Set to True to activate the LLM-backed ReasoningPlanner for agent pipeline planning.
+# When False (default), the deterministic PolicyEngine is always used.
+AGENT_REASONING_ENGINE_ENABLED = os.getenv("AGENT_REASONING_ENGINE_ENABLED", "false").lower() == "true"
+
+# Bing Web Search API (for benchmark market research)
+BING_SEARCH_API_KEY = os.getenv("BING_SEARCH_API_KEY", "")
+BING_SEARCH_ENDPOINT = os.getenv(
+    "BING_SEARCH_ENDPOINT", "https://api.bing.microsoft.com/v7.0/search",
+)
 
 # Azure Document Intelligence (OCR)
 AZURE_DI_ENDPOINT = os.getenv("AZURE_DI_ENDPOINT", "")
 AZURE_DI_KEY = os.getenv("AZURE_DI_KEY", "")
+# Set to false to skip Azure DI and use native PDF text extraction (PyPDF2).
+# Useful for accuracy comparison. Runtime override via ExtractionRuntimeSettings.ocr_enabled.
+EXTRACTION_OCR_ENABLED = os.getenv("EXTRACTION_OCR_ENABLED", "true").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # Azure Blob Storage (document storage)
@@ -211,6 +242,12 @@ DEFAULT_QTY_TOLERANCE_PCT = float(os.getenv("DEFAULT_QTY_TOLERANCE_PCT", "2.0"))
 DEFAULT_PRICE_TOLERANCE_PCT = float(os.getenv("DEFAULT_PRICE_TOLERANCE_PCT", "1.0"))
 DEFAULT_AMOUNT_TOLERANCE_PCT = float(os.getenv("DEFAULT_AMOUNT_TOLERANCE_PCT", "1.0"))
 EXTRACTION_CONFIDENCE_THRESHOLD = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHOLD", "0.75"))
+
+# Extraction approval — human-in-the-loop gate
+# Set to 1.1 (above max confidence) to require human approval for ALL extractions.
+# Lower to e.g. 0.95 once confidence in the system grows, to auto-approve high-confidence results.
+EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "1.1"))
+EXTRACTION_AUTO_APPROVE_ENABLED = os.getenv("EXTRACTION_AUTO_APPROVE_ENABLED", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # Logging

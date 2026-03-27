@@ -1,6 +1,13 @@
 """Template context processors."""
+from django.conf import settings
+
 from apps.core.enums import ReviewStatus
 from apps.reviews.models import ReviewAssignment
+
+
+def static_version(request):
+    """Inject STATIC_VERSION into templates for cache-busting."""
+    return {"static_version": getattr(settings, "STATIC_VERSION", "1")}
 
 
 def pending_reviews(request):

@@ -36,11 +36,33 @@ class BaseTool(ABC):
     parameters_schema: Dict[str, Any] = {}
     required_permission: str = ""  # RBAC permission code for governance metadata
 
+    # LLM-guidance metadata -- optional, safe to leave empty on any tool
+    when_to_use: str = ""
+    when_not_to_use: str = ""
+    no_result_meaning: str = ""
+    failure_handling_instruction: str = ""
+    evidence_keys_produced: list = []
+    authoritative_fields: list = []
+
     def get_spec(self) -> ToolSpec:
-        """Return the JSON-Schema tool spec for the LLM."""
+        """Return the JSON-Schema tool spec for the LLM.
+
+        Composes a richer description from the base description plus any
+        guidance metadata defined on the subclass.
+        """
+        parts = [self.description]
+        if self.when_to_use:
+            parts.append("Use when: " + self.when_to_use)
+        if self.when_not_to_use:
+            parts.append("Do not use when: " + self.when_not_to_use)
+        if self.no_result_meaning:
+            parts.append("No result means: " + self.no_result_meaning)
+        if self.failure_handling_instruction:
+            parts.append("On failure: " + self.failure_handling_instruction)
+        composed = "\n".join(parts)
         return ToolSpec(
             name=self.name,
-            description=self.description,
+            description=composed,
             parameters=self.parameters_schema,
         )
 

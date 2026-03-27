@@ -1,0 +1,84 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}Corrections Explorer — Control Center{% endblock %}
+
+{% block cc_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="fw-bold mb-0"><i class="bi bi-pencil-square me-2 text-primary"></i>Corrections Explorer</h5>
+  <a href="{% url 'extraction_control_center:analytics_overview' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Analytics
+  </a>
+</div>
+
+{# Filters #}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-0">Field</label>
+        <input type="text" class="form-control form-control-sm" name="field_code" value="{{ filters.field_code }}" placeholder="e.g. invoice_number">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Country</label>
+        <input type="text" class="form-control form-control-sm" name="country_code" value="{{ filters.country_code }}" placeholder="IN, US…">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Regime</label>
+        <input type="text" class="form-control form-control-sm" name="regime_code" value="{{ filters.regime_code }}" placeholder="GST, VAT…">
+      </div>
+      <div class="col">
+        <label class="form-label small mb-0">Search</label>
+        <input type="text" class="form-control form-control-sm" name="search" value="{{ filters.search }}" placeholder="Original or corrected value…">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Filter</button>
+        <a href="{% url 'extraction_control_center:corrections_explorer' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# Table #}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">Field</th>
+          <th>Original Value</th>
+          <th>Corrected Value</th>
+          <th>Country</th>
+          <th>Corrected By</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in corrections %}
+        <tr>
+          <td class="ps-3 fw-semibold font-monospace small">{{ c.field_code }}</td>
+          <td>
+            <span class="text-decoration-line-through text-danger small">{{ c.original_value|truncatewords:10 }}</span>
+          </td>
+          <td>
+            <span class="text-success small">{{ c.corrected_value|truncatewords:10 }}</span>
+          </td>
+          <td>
+            {% if c.country_code %}
+            <span class="badge bg-light text-dark border">{{ c.country_code }}</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td class="text-muted small">{{ c.corrected_by|default:"—" }}</td>
+          <td class="text-muted small">{{ c.created_at|date:"M d, H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="text-center text-muted py-4">No corrections found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

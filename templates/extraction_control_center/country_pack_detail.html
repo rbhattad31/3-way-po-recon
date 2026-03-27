@@ -1,0 +1,220 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}{{ pack.jurisdiction.country_code }} Country Pack — Control Center{% endblock %}
+
+{% block cc_content %}
+<div class="mb-3">
+  <a href="{% url 'extraction_control_center:country_pack_list' %}" class="text-decoration-none text-muted small">
+    <i class="bi bi-arrow-left me-1"></i>Back to packs
+  </a>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="fw-bold mb-0">
+    <i class="bi bi-globe2 me-2 text-primary"></i>
+    {% if pack.jurisdiction %}{{ pack.jurisdiction.country_code }} — {{ pack.jurisdiction.regime_code }}{% endif %}
+  </h5>
+  {% if can_edit %}
+  <div class="btn-group btn-group-sm">
+    {% if pack.pack_status != "ACTIVE" %}
+    <form method="post" class="d-inline">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="activate">
+      <button type="submit" class="btn btn-outline-success"><i class="bi bi-check-circle me-1"></i>Activate</button>
+    </form>
+    {% endif %}
+    {% if pack.pack_status == "ACTIVE" %}
+    <form method="post" class="d-inline">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="deprecate">
+      <button type="submit" class="btn btn-outline-warning"><i class="bi bi-archive me-1"></i>Deprecate</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{# Status badge #}
+<div class="mb-3">
+  {% if pack.pack_status == "ACTIVE" %}
+  <span class="badge bg-success-subtle text-success fs-6">Active</span>
+  {% elif pack.pack_status == "DRAFT" %}
+  <span class="badge bg-warning-subtle text-warning fs-6">Draft</span>
+  {% elif pack.pack_status == "DEPRECATED" %}
+  <span class="badge bg-danger-subtle text-danger fs-6">Deprecated</span>
+  {% else %}
+  <span class="badge bg-secondary-subtle text-secondary fs-6">{{ pack.pack_status }}</span>
+  {% endif %}
+</div>
+
+<div class="row g-3">
+  {# Pack Details #}
+  <div class="col-md-8">
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="save">
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-transparent">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-info-circle me-2"></i>Pack Configuration</h6>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold text-muted">Schema Version</label>
+              <input type="text" class="form-control form-control-sm" name="schema_version"
+                     value="{{ pack.schema_version }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold text-muted">Validation Profile Version</label>
+              <input type="text" class="form-control form-control-sm" name="validation_profile_version"
+                     value="{{ pack.validation_profile_version }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold text-muted">Normalization Profile Version</label>
+              <input type="text" class="form-control form-control-sm" name="normalization_profile_version"
+                     value="{{ pack.normalization_profile_version }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold text-muted">Notes</label>
+              <textarea class="form-control form-control-sm" name="notes" rows="3"
+                        {% if not can_edit %}disabled{% endif %}>{{ pack.notes }}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% if can_edit %}
+      <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check-lg me-1"></i>Save Configuration</button>
+      {% endif %}
+    </form>
+  </div>
+
+  {# Readiness #}
+  <div class="col-md-4">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-transparent">
+        <h6 class="mb-0 fw-semibold"><i class="bi bi-clipboard-check me-2"></i>Readiness</h6>
+      </div>
+      <div class="card-body">
+        <ul class="list-unstyled mb-0">
+          <li class="mb-2">
+            {% if readiness.has_schema %}
+            <i class="bi bi-check-circle-fill text-success me-1"></i>
+            {% else %}
+            <i class="bi bi-x-circle-fill text-danger me-1"></i>
+            {% endif %}
+            Schema defined
+          </li>
+          <li class="mb-2">
+            {% if readiness.has_validation %}
+            <i class="bi bi-check-circle-fill text-success me-1"></i>
+            {% else %}
+            <i class="bi bi-x-circle-fill text-danger me-1"></i>
+            {% endif %}
+            Validation profile
+          </li>
+          <li class="mb-2">
+            {% if readiness.has_normalization %}
+            <i class="bi bi-check-circle-fill text-success me-1"></i>
+            {% else %}
+            <i class="bi bi-x-circle-fill text-danger me-1"></i>
+            {% endif %}
+            Normalization profile
+          </li>
+        </ul>
+        <hr>
+        <div class="text-center">
+          {% if readiness.ready %}
+          <span class="badge bg-success fs-6"><i class="bi bi-check2-all me-1"></i>Ready</span>
+          {% else %}
+          <span class="badge bg-warning fs-6"><i class="bi bi-exclamation-triangle me-1"></i>Not Ready</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# Timestamps #}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body small text-muted">
+        <div><strong>Created:</strong> {{ pack.created_at|date:"M d, Y H:i" }}</div>
+        <div><strong>Updated:</strong> {{ pack.updated_at|date:"M d, Y H:i" }}</div>
+        {% if pack.activated_at %}
+        <div><strong>Activated:</strong> {{ pack.activated_at|date:"M d, Y H:i" }}</div>
+        {% endif %}
+        {% if pack.deactivated_at %}
+        <div><strong>Deactivated:</strong> {{ pack.deactivated_at|date:"M d, Y H:i" }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Associated schemas #}
+{% if schemas %}
+<div class="card border-0 shadow-sm mt-3">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-diagram-3 me-2"></i>Active Schemas ({{ schemas.count }})</h6>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Code</th>
+            <th>Doc Type</th>
+            <th>Version</th>
+            <th class="text-end pe-3">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in schemas %}
+          <tr>
+            <td class="ps-3 fw-semibold">{{ s.schema_code }}</td>
+            <td>{{ s.document_type|default:"—" }}</td>
+            <td><span class="badge bg-dark">v{{ s.schema_version }}</span></td>
+            <td class="text-end pe-3">
+              <a href="{% url 'extraction_control_center:schema_detail' s.pk %}" class="btn btn-sm btn-outline-primary">View</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# Associated prompts #}
+{% if prompts %}
+<div class="card border-0 shadow-sm mt-3">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-chat-square-text me-2"></i>Active Prompts ({{ prompts.count }})</h6>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Code</th>
+            <th>Category</th>
+            <th>Version</th>
+            <th class="text-end pe-3">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in prompts %}
+          <tr>
+            <td class="ps-3 fw-semibold">{{ p.prompt_code }}</td>
+            <td>{{ p.prompt_category }}</td>
+            <td><span class="badge bg-dark">v{{ p.version }}</span></td>
+            <td class="text-end pe-3">
+              <a href="{% url 'extraction_control_center:prompt_detail' p.pk %}" class="btn btn-sm btn-outline-primary">View</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

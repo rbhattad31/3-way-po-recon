@@ -13,6 +13,7 @@ from apps.cases.state_machine.case_state_machine import CaseStateMachine
 from apps.core.enums import (
     CaseStageType,
     CaseStatus,
+    InvoiceStatus,
     MatchStatus,
     PerformedByType,
     ProcessingPath,
@@ -219,6 +220,7 @@ class StageExecutor:
         if po_result.found:
             case.purchase_order = po_result.purchase_order
             case.save(update_fields=["purchase_order", "updated_at"])
+            StageExecutor._enrich_invoice_lines_from_po(invoice, po_result.purchase_order)
             return {
                 "po_found": True,
                 "po_number": po_result.purchase_order.po_number,
@@ -235,6 +237,7 @@ class StageExecutor:
         if po_result.found:
             case.purchase_order = po_result.purchase_order
             case.save(update_fields=["purchase_order", "updated_at"])
+            StageExecutor._enrich_invoice_lines_from_po(invoice, po_result.purchase_order)
             logger.info(
                 "PO found via vendor+amount fallback for case %s: PO %s",
                 case.case_number, po_result.purchase_order.po_number,
@@ -287,13 +290,18 @@ class StageExecutor:
             # Parse agent output for a found PO number
             output = agent_run.output_payload or {}
             evidence = output.get("evidence", {})
-            found_po_number = evidence.get("po_number") or evidence.get("found_po_number")
+            found_po_number = (
+                evidence.get("po_number")
+                or evidence.get("found_po_number")
+                or evidence.get("matched_po_number")
+            )
 
             if found_po_number:
                 po = PurchaseOrder.objects.filter(po_number=found_po_number).first()
                 if po:
                     case.purchase_order = po
                     case.save(update_fields=["purchase_order", "updated_at"])
+                    StageExecutor._enrich_invoice_lines_from_po(case.invoice, po)
                     logger.info(
                         "PO Retrieval Agent found PO %s for case %s",
                         po.po_number, case.case_number,
@@ -314,14 +322,71 @@ class StageExecutor:
             return {"po_found": False, "agent_attempted": True, "agent_error": True}
 
     @staticmethod
+    def _enrich_invoice_lines_from_po(invoice, purchase_order) -> None:
+        """Copy is_service_item/is_stock_item/item_category from PO lines
+        to matching invoice lines when the invoice line flags are blank.
+        """
+        from apps.documents.models import InvoiceLineItem, PurchaseOrderLineItem
+
+        inv_lines = list(
+            InvoiceLineItem.objects.filter(invoice=invoice)
+            .filter(is_service_item__isnull=True, is_stock_item__isnull=True)
+        )
+        if not inv_lines:
+            return
+
+        po_lines = {
+            li.line_number: li
+            for li in PurchaseOrderLineItem.objects.filter(purchase_order=purchase_order)
+        }
+        updated = []
+        for il in inv_lines:
+            po_line = po_lines.get(il.line_number)
+            if not po_line:
+                continue
+            changed = False
+            if po_line.is_service_item is not None and il.is_service_item is None:
+                il.is_service_item = po_line.is_service_item
+                changed = True
+            if po_line.is_stock_item is not None and il.is_stock_item is None:
+                il.is_stock_item = po_line.is_stock_item
+                changed = True
+            if po_line.item_category and not il.item_category:
+                il.item_category = po_line.item_category
+                changed = True
+            if changed:
+                updated.append(il)
+
+        if updated:
+            InvoiceLineItem.objects.bulk_update(
+                updated, ["is_service_item", "is_stock_item", "item_category", "updated_at"],
+            )
+            logger.info(
+                "Enriched %d invoice line items from PO %s for invoice %s",
+                len(updated), purchase_order.po_number, invoice.pk,
+            )
+
+    @staticmethod
     def _execute_two_way_matching(case: APCase) -> Dict:
         """
         2-Way matching: reuses existing ReconciliationRunnerService.
         """
         from apps.reconciliation.services.runner_service import ReconciliationRunnerService
 
+        # Clear stale VALIDATION_RESULT artifacts from prior runs so the UI
+        # does not display outdated validation checks after reprocessing.
+        case.artifacts.filter(artifact_type="VALIDATION_RESULT").delete()
+
+        # Sync invoice PO number if the case has a linked PO from PO_RETRIEVAL
+        # so the runner's own PO lookup can find it.
+        invoice = case.invoice
+        if case.purchase_order and invoice.po_number != case.purchase_order.po_number:
+            invoice.po_number = case.purchase_order.po_number
+            invoice.normalized_po_number = case.purchase_order.normalized_po_number
+            invoice.save(update_fields=["po_number", "normalized_po_number", "updated_at"])
+
         runner = ReconciliationRunnerService()
-        run = runner.run(invoices=[case.invoice], triggered_by=case.created_by)
+        run = runner.run(invoices=[invoice], triggered_by=case.created_by)
 
         # Link result to case
         result = run.results.filter(invoice=case.invoice).first()
@@ -329,13 +394,13 @@ class StageExecutor:
             case.reconciliation_result = result
             case.save(update_fields=["reconciliation_result", "updated_at"])
 
-            if result.match_status == MatchStatus.MATCHED:
-                CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
-            else:
-                # Advance to exception analysis for non-matched results
-                CaseStateMachine.transition(
-                    case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
-                )
+            # Always advance to exception analysis — the full pipeline
+            # (exception analysis -> review routing -> case summary) runs
+            # for all results, including MATCHED. Auto-close decisions are
+            # made by the exception analysis stage, not here.
+            CaseStateMachine.transition(
+                case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
+            )
 
         return {
             "run_id": run.id,
@@ -374,6 +439,12 @@ class StageExecutor:
 
         result = NonPOValidationService.validate(case)
 
+        # Transition invoice status -- non-PO cases skip reconciliation,
+        # so we mark the invoice as RECONCILED here (validation complete).
+        if case.invoice and case.invoice.status != InvoiceStatus.RECONCILED:
+            case.invoice.status = InvoiceStatus.RECONCILED
+            case.invoice.save(update_fields=["status", "updated_at"])
+
         # Advance to exception analysis
         CaseStateMachine.transition(
             case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
@@ -399,17 +470,53 @@ class StageExecutor:
             # Note: request_user omitted — stage executor runs inside Celery
             # or system context, so the orchestrator resolves to system-agent.
 
-            if orch_result.final_recommendation == "AUTO_CLOSE":
+            # Handle auto-close: when the orchestrator skips agents because
+            # the result is MATCHED or within the auto-close tolerance band,
+            # the result's match_status is already upgraded to MATCHED.
+            # Summary refresh is handled by CASE_SUMMARY stage which always runs.
+            auto_closed = False
+            if orch_result.skipped and case.reconciliation_result.match_status == MatchStatus.MATCHED:
+                CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.DETERMINISTIC)
+                auto_closed = True
+            elif orch_result.final_recommendation == "AUTO_CLOSE":
                 CaseStateMachine.transition(case, CaseStatus.CLOSED, PerformedByType.AGENT)
+                auto_closed = True
             elif orch_result.final_recommendation == "ESCALATE_TO_MANAGER":
                 CaseStateMachine.transition(case, CaseStatus.ESCALATED, PerformedByType.AGENT)
             else:
                 CaseStateMachine.transition(case, CaseStatus.READY_FOR_REVIEW, PerformedByType.AGENT)
 
+            # When auto-closing on a clean match, mark eligible for posting
+            # and enqueue the posting pipeline so the invoice appears on the
+            # posting workbench.
+            if auto_closed:
+                case.eligible_for_posting = True
+                case.save(update_fields=["eligible_for_posting", "updated_at"])
+                try:
+                    from apps.core.utils import dispatch_task
+                    from apps.posting.tasks import prepare_posting_task
+                    dispatch_task(
+                        prepare_posting_task,
+                        invoice_id=case.invoice_id,
+                        trigger="case_auto_close",
+                    )
+                    logger.info(
+                        "Posting pipeline enqueued for case %s (invoice %s) after auto-close",
+                        case.case_number, case.invoice_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to enqueue posting pipeline for case %s after auto-close",
+                        case.case_number,
+                    )
+
             return {
                 "agents_executed": orch_result.agents_executed,
                 "final_recommendation": orch_result.final_recommendation,
                 "confidence": orch_result.final_confidence,
+                "skipped": orch_result.skipped,
+                "auto_closed": auto_closed,
+                "posting_enqueued": auto_closed,
             }
 
         # Non-PO cases without reconciliation result — send to review deterministically

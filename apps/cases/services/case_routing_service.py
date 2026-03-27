@@ -73,11 +73,22 @@ class CaseRoutingService:
         resolver = ReconciliationModeResolver()
         mode_result = resolver.resolve(invoice, po_result.purchase_order)
 
+        # If GRNs exist for this PO, force THREE_WAY regardless of mode resolver
+        from apps.documents.models import GoodsReceiptNote
+        if GoodsReceiptNote.objects.filter(purchase_order=po_result.purchase_order).exists():
+            if mode_result.mode == "TWO_WAY":
+                mode_result.mode = "THREE_WAY"
+                mode_result.grn_required = True
+
         # Link PO to case
         case.purchase_order = po_result.purchase_order
         case.reconciliation_mode = mode_result.mode
         case.invoice_type = InvoiceType.PO_BACKED
         case.save(update_fields=["purchase_order", "reconciliation_mode", "invoice_type", "updated_at"])
+
+        # Enrich invoice line item flags from PO data
+        from apps.cases.orchestrators.stage_executor import StageExecutor
+        StageExecutor._enrich_invoice_lines_from_po(invoice, po_result.purchase_order)
 
         if mode_result.mode == "TWO_WAY":
             path = ProcessingPath.TWO_WAY

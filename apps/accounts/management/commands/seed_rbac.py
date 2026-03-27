@@ -22,6 +22,10 @@ ROLES = [
     {"code": "FINANCE_MANAGER", "name": "Finance Manager", "description": "Manage reviews, override reconciliation, supervise AP operations", "is_system_role": True, "rank": 20},
     {"code": "AUDITOR", "name": "Auditor", "description": "Read-only access for audit and compliance review", "is_system_role": True, "rank": 30},
     {"code": "SYSTEM_AGENT", "name": "System Agent", "description": "Dedicated least-privilege identity for autonomous agent operations", "is_system_role": True, "rank": 100},
+    # Procurement roles
+    {"code": "PROCUREMENT_MANAGER", "name": "Procurement Manager", "description": "Supervise procurement operations, review high-risk results, full control", "is_system_role": True, "rank": 25},
+    {"code": "CATEGORY_MANAGER", "name": "Category Manager", "description": "Domain expert — manage category-specific rules, benchmarks, review results", "is_system_role": True, "rank": 35},
+    {"code": "PROCUREMENT_BUYER", "name": "Procurement Buyer", "description": "Create requests, upload quotations, trigger analysis — operational buyer", "is_system_role": True, "rank": 55},
 ]
 
 # ---------------------------------------------------------------------------
@@ -70,6 +74,8 @@ PERMISSIONS = [
     # Protected actions
     {"code": "cases.escalate", "name": "Escalate Cases", "module": "cases", "action": "escalate", "description": "Escalate AP cases to higher authority"},
     {"code": "extraction.reprocess", "name": "Reprocess Extraction", "module": "extraction", "action": "reprocess", "description": "Re-trigger invoice extraction"},
+    {"code": "extraction.approve", "name": "Approve Extraction", "module": "extraction", "action": "approve", "description": "Approve extracted invoice data before reconciliation"},
+    {"code": "extraction.reject", "name": "Reject Extraction", "module": "extraction", "action": "reject", "description": "Reject extracted data and request re-extraction"},
     # Document scoping
     {"code": "purchase_orders.view", "name": "View Purchase Orders", "module": "purchase_orders", "action": "view", "description": "View purchase order data"},
     {"code": "grns.view", "name": "View GRNs", "module": "grns", "action": "view", "description": "View goods receipt note data"},
@@ -80,6 +86,20 @@ PERMISSIONS = [
     {"code": "users.manage", "name": "Manage Users", "module": "users", "action": "manage", "description": "Create, edit, and deactivate user accounts"},
     # Role management
     {"code": "roles.manage", "name": "Manage Roles", "module": "roles", "action": "manage", "description": "Create, edit roles and manage role-permission matrix"},
+    # Procurement
+    {"code": "procurement.view", "name": "View Procurement Requests", "module": "procurement", "action": "view", "description": "View procurement requests, attributes, and quotations"},
+    {"code": "procurement.create", "name": "Create Procurement Requests", "module": "procurement", "action": "create", "description": "Create new procurement requests"},
+    {"code": "procurement.edit", "name": "Edit Procurement Requests", "module": "procurement", "action": "edit", "description": "Edit requests and manage attributes"},
+    {"code": "procurement.delete", "name": "Delete Procurement Requests", "module": "procurement", "action": "delete", "description": "Delete procurement requests"},
+    {"code": "procurement.run_analysis", "name": "Run Procurement Analysis", "module": "procurement", "action": "run_analysis", "description": "Trigger recommendation and benchmark analysis runs"},
+    {"code": "procurement.manage_quotations", "name": "Manage Quotations", "module": "procurement", "action": "manage_quotations", "description": "Upload and manage supplier quotations"},
+    {"code": "procurement.view_results", "name": "View Analysis Results", "module": "procurement", "action": "view_results", "description": "View recommendation, benchmark, and compliance results"},
+    # Credits
+    {"code": "credits.view", "name": "View Credits", "module": "credits", "action": "view", "description": "View credit accounts and balances"},
+    {"code": "credits.manage", "name": "Manage Credits", "module": "credits", "action": "manage", "description": "Allocate, adjust, and manage user credit accounts"},
+    # Bulk Extraction
+    {"code": "extraction.bulk_view", "name": "View Bulk Extraction", "module": "extraction", "action": "bulk_view", "description": "View bulk extraction jobs and items"},
+    {"code": "extraction.bulk_create", "name": "Create Bulk Extraction", "module": "extraction", "action": "bulk_create", "description": "Start new bulk extraction jobs"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -98,6 +118,8 @@ ROLE_MATRIX = {
         "reviews.view",
         "agents.view", "agents.use_copilot",
         "purchase_orders.view", "grns.view", "vendors.view",
+        "extraction.approve", "extraction.reject", "extraction.reprocess",
+        "extraction.bulk_view", "extraction.bulk_create",
     ],
     "REVIEWER": [
         "invoices.view",
@@ -123,6 +145,12 @@ ROLE_MATRIX = {
         "recommendations.auto_close", "recommendations.route_review",
         "recommendations.escalate", "recommendations.reprocess",
         "recommendations.route_procurement", "recommendations.vendor_clarification",
+        "extraction.approve", "extraction.reject", "extraction.reprocess",
+        "extraction.bulk_view", "extraction.bulk_create",
+        # Procurement oversight
+        "procurement.view", "procurement.view_results",
+        # Credits
+        "credits.view", "credits.manage",
     ],
     "AUDITOR": [
         "invoices.view",
@@ -132,6 +160,10 @@ ROLE_MATRIX = {
         "governance.view",
         "agents.view",
         "purchase_orders.view", "grns.view", "vendors.view",
+        # Procurement read-only
+        "procurement.view", "procurement.view_results",
+        # Bulk extraction read-only
+        "extraction.bulk_view",
     ],
     "SYSTEM_AGENT": [
         # Scoped agent orchestration + execution
@@ -148,7 +180,26 @@ ROLE_MATRIX = {
         "recommendations.escalate", "recommendations.reprocess",
         "recommendations.route_procurement", "recommendations.vendor_clarification",
         "cases.escalate", "extraction.reprocess",
+        "extraction.approve", "extraction.reject",
+        "extraction.bulk_view", "extraction.bulk_create",
         "reviews.assign",
+        # Procurement (automated pipeline)
+        "procurement.view", "procurement.run_analysis", "procurement.view_results",
+    ],
+    # --- Procurement roles ---
+    "PROCUREMENT_MANAGER": [
+        "procurement.view", "procurement.create", "procurement.edit",
+        "procurement.delete", "procurement.run_analysis",
+        "procurement.manage_quotations", "procurement.view_results",
+    ],
+    "CATEGORY_MANAGER": [
+        "procurement.view", "procurement.create", "procurement.edit",
+        "procurement.run_analysis", "procurement.view_results",
+    ],
+    "PROCUREMENT_BUYER": [
+        "procurement.view", "procurement.create", "procurement.edit",
+        "procurement.run_analysis", "procurement.manage_quotations",
+        "procurement.view_results",
     ],
 }
 

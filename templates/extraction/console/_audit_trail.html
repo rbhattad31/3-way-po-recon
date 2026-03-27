@@ -1,0 +1,92 @@
+{# extraction/console/_audit_trail.html — Audit trail tab #}
+
+<div class="p-3">
+  {% if audit_events %}
+  <div class="exc-audit-timeline">
+    {% for event in audit_events %}
+    <div class="exc-audit-entry d-flex mb-3">
+      {# Timeline indicator #}
+      <div class="exc-audit-indicator me-3 text-center">
+        <div class="exc-audit-dot exc-audit-dot-{{ event.event_type|default:'info' }}"></div>
+        {% if not forloop.last %}
+        <div class="exc-audit-line"></div>
+        {% endif %}
+      </div>
+
+      {# Event content #}
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <span class="fw-semibold small">{{ event.action }}</span>
+          <span class="badge bg-{{ event.badge_class|default:'secondary' }}-subtle text-{{ event.badge_class|default:'secondary' }} small">
+            {{ event.event_type|default:"event" }}
+          </span>
+          <small class="text-muted ms-auto">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
+        </div>
+
+        {# Actor #}
+        {% if event.actor %}
+        <div class="small text-muted mb-1">
+          <i class="bi bi-person me-1"></i>{{ event.actor }}
+          {% if event.actor_role %}
+          <span class="badge bg-light text-dark border ms-1 small">{{ event.actor_role }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {# Description #}
+        {% if event.description %}
+        <div class="small mb-1">{{ event.description }}</div>
+        {% endif %}
+
+        {# Before/After values #}
+        {% if event.before or event.after %}
+        <div class="exc-change-box p-2 rounded small">
+          {% if event.before %}
+          <div class="text-danger">
+            <i class="bi bi-dash-circle me-1"></i><strong>Before:</strong> {{ event.before }}
+          </div>
+          {% endif %}
+          {% if event.after %}
+          <div class="text-success">
+            <i class="bi bi-plus-circle me-1"></i><strong>After:</strong> {{ event.after }}
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {# Field changes (from manual edits) #}
+        {% if event.metadata.field_changes %}
+        <div class="mt-1">
+          {% for change in event.metadata.field_changes %}
+          <div class="d-flex align-items-center gap-2 small mb-1">
+            <code class="text-muted">{{ change.field }}</code>
+            <span class="text-decoration-line-through text-danger">{{ change.old|default:"(empty)" }}</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="fw-semibold text-success">{{ change.new|default:"(empty)" }}</span>
+            <span class="badge bg-light text-dark border" style="font-size:.65rem">{{ change.entity }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {# Metadata (excluding field_changes which is shown above) #}
+        {% if event.metadata %}
+        <div class="mt-1 small text-muted">
+          {% for mk, mv in event.metadata.items %}
+          {% if mk != "field_changes" %}
+          <span class="me-2">{{ mk }}: {{ mv }}</span>
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-center py-4">
+    <i class="bi bi-clock-history text-muted fs-1"></i>
+    <p class="text-muted mt-2 mb-0">No audit events recorded</p>
+  </div>
+  {% endif %}
+</div>

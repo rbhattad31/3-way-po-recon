@@ -1,0 +1,102 @@
+{# extraction/console/_raw_json_panel.html — Raw JSON + Document Details #}
+
+<div class="p-3">
+  <div class="row g-3">
+    {# ── Document Details ── #}
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <h6 class="fw-semibold mb-3" style="font-size:.85rem">
+            <i class="bi bi-file-earmark me-1"></i>Document Details
+          </h6>
+          <div style="font-size:.8rem">
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Filename</span>
+              <span class="fw-medium text-truncate ms-2" style="max-width:180px" title="{{ ext.document_upload.original_filename }}">{{ ext.document_upload.original_filename|truncatechars:28 }}</span>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">File Size</span>
+              <span>{{ ext.document_upload.file_size|filesizeformat }}</span>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Content Type</span>
+              <span>{{ ext.document_upload.content_type|default:"—" }}</span>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Uploaded By</span>
+              <span>{{ ext.document_upload.uploaded_by.email|default:"—" }}</span>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Hash</span>
+              <span style="font-family:var(--bs-font-monospace);font-size:.7rem" title="{{ ext.document_upload.file_hash }}">{{ ext.document_upload.file_hash|truncatechars:16 }}</span>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Engine</span>
+              <span>{{ ext.engine_name|default:"—" }}</span>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Duration</span>
+              <span>{% if ext.duration_ms %}{{ ext.duration_ms|floatformat:0 }} ms{% else %}—{% endif %}</span>
+            </div>
+            {% if ext.document_upload.blob_path %}
+            <div class="d-flex justify-content-between">
+              <span class="text-muted">Source</span>
+              <a href="{% url 'documents:document_download' ext.document_upload.pk %}" target="_blank" class="text-decoration-none" style="font-size:.75rem">
+                <i class="bi bi-file-earmark-pdf me-1"></i>View PDF
+              </a>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      {# ── Line Items Raw OCR Values ── #}
+      {% if line_items_raw %}
+      <div class="card mt-3">
+        <div class="card-body">
+          <h6 class="fw-semibold mb-3" style="font-size:.85rem">
+            <i class="bi bi-list-ul me-1"></i>Line Items — Raw OCR Values
+          </h6>
+          <div style="max-height:300px;overflow-y:auto">
+            {% for line in line_items_raw %}
+            <div class="mb-2 p-2 rounded" style="background:var(--bs-tertiary-bg);font-size:.72rem">
+              <div class="fw-semibold text-muted mb-1">Line {{ line.line_number }}</div>
+              <div><span class="text-muted">Desc:</span> <code>{{ line.raw_description|truncatechars:50|default:"—" }}</code></div>
+              <div><span class="text-muted">Qty:</span> <code>{{ line.raw_quantity|default:"—" }}</code> | <span class="text-muted">Price:</span> <code>{{ line.raw_unit_price|default:"—" }}</code> | <span class="text-muted">Amt:</span> <code>{{ line.raw_line_amount|default:"—" }}</code></div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── Raw JSON ── #}
+    <div class="col-lg-8">
+      {% if raw_json_pretty %}
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="fw-semibold mb-0" style="font-size:.85rem">
+              <i class="bi bi-code-slash me-1"></i>Raw Extraction JSON
+            </h6>
+            <a href="{% url 'extraction:result_json' ext.pk %}" class="btn btn-sm btn-outline-secondary py-0" style="font-size:.7rem">
+              <i class="bi bi-download me-1"></i>Download
+            </a>
+          </div>
+          <pre style="max-height:600px;overflow:auto;font-size:.72rem;background:var(--bs-tertiary-bg);padding:.75rem;border-radius:.375rem;margin:0"><code>{{ raw_json_pretty }}</code></pre>
+        </div>
+      </div>
+      {% else %}
+      <div class="card h-100">
+        <div class="card-body d-flex align-items-center justify-content-center text-muted">
+          <div class="text-center py-5">
+            <i class="bi bi-code-slash d-block mb-2" style="font-size:2rem"></i>
+            No raw extraction data available.
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>

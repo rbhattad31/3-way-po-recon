@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Optional
 
 from django.db import transaction
@@ -15,12 +16,15 @@ from apps.extraction.services.duplicate_detection_service import DuplicateCheckR
 from apps.extraction.services.validation_service import ValidationResult
 from apps.vendors.models import Vendor
 
+from apps.core.decorators import observed_service
+
 logger = logging.getLogger(__name__)
 
 
 class InvoicePersistenceService:
     """Persist a normalised, validated invoice and its line items."""
 
+    @observed_service("extraction.persist_invoice", entity_type="Invoice", audit_event="INVOICE_PERSISTED")
     @transaction.atomic
     def save(
         self,
@@ -43,8 +47,15 @@ class InvoicePersistenceService:
             for issue in validation_result.issues:
                 remarks_parts.append(f"[{issue.severity}] {issue.field}: {issue.message}")
 
-        invoice = Invoice(
-            document_upload=upload,
+        # Check for existing invoice on same upload (reprocessing case)
+        existing_invoice = (
+            Invoice.objects
+            .filter(document_upload=upload)
+            .order_by("-created_at")
+            .first()
+        )
+
+        field_values = dict(
             vendor=vendor,
             # Raw
             raw_vendor_name=normalized.raw_vendor_name,
@@ -72,6 +83,17 @@ class InvoicePersistenceService:
             extraction_raw_json=extraction_raw_json,
         )
 
+        if existing_invoice:
+            # Update existing invoice in-place
+            for attr, value in field_values.items():
+                setattr(existing_invoice, attr, value)
+            # Reset duplicate flags -- will be re-evaluated below
+            existing_invoice.is_duplicate = False
+            existing_invoice.duplicate_of_id = None
+            invoice = existing_invoice
+        else:
+            invoice = Invoice(document_upload=upload, **field_values)
+
         # Duplicate handling
         if duplicate_result and duplicate_result.is_duplicate:
             invoice.is_duplicate = True
@@ -79,6 +101,26 @@ class InvoicePersistenceService:
             invoice.extraction_remarks += f"\nDUPLICATE: {duplicate_result.reason}"
 
         invoice.save()
+
+        # On reprocess, remove old line items before creating fresh ones
+        if existing_invoice:
+            InvoiceLineItem.objects.filter(invoice=invoice).delete()
+
+        # Audit: duplicate detection
+        if duplicate_result and duplicate_result.is_duplicate:
+            self._log_audit(
+                invoice, "DUPLICATE_DETECTED",
+                f"Duplicate invoice detected: {duplicate_result.reason}",
+                {"duplicate_of_id": duplicate_result.duplicate_invoice_id},
+            )
+
+        # Audit: vendor resolution
+        if vendor:
+            self._log_audit(
+                invoice, "VENDOR_RESOLVED",
+                f"Vendor resolved: {vendor.name} (id={vendor.pk})",
+                {"vendor_id": vendor.pk, "vendor_name": vendor.name},
+            )
 
         # Line items
         line_objs = []
@@ -101,8 +143,73 @@ class InvoicePersistenceService:
         if line_objs:
             InvoiceLineItem.objects.bulk_create(line_objs)
 
+        # Recalculate subtotal/total from line items when they disagree
+        self._reconcile_totals(invoice, line_objs)
+
         logger.info("Invoice saved: id=%s number=%s lines=%d status=%s", invoice.pk, invoice.invoice_number, len(line_objs), status)
         return invoice
+
+    @staticmethod
+    def _log_audit(invoice, event_type, description, metadata=None):
+        """Log an audit event for persistence actions."""
+        try:
+            from apps.auditlog.services import AuditService
+            AuditService.log_event(
+                entity_type="Invoice",
+                entity_id=invoice.pk,
+                event_type=event_type,
+                description=description,
+                metadata=metadata or {},
+            )
+        except Exception:
+            logger.exception("Failed to log audit event for invoice %s", invoice.pk)
+
+    @staticmethod
+    def _reconcile_totals(invoice: Invoice, line_objs: list) -> None:
+        """Recalculate subtotal/total from line items if they disagree.
+
+        Only trusts line items over the header total when the line-item
+        sum is GREATER than the extracted total — this indicates the
+        header was misread.  When line items sum to LESS than the header
+        total, it usually means the LLM missed some line items, so we
+        keep the original header total.
+        """
+        if not line_objs:
+            return
+
+        computed_subtotal = sum(
+            (li.line_amount for li in line_objs if li.line_amount is not None),
+            Decimal("0.00"),
+        )
+        if computed_subtotal == Decimal("0.00"):
+            return
+
+        stored_subtotal = invoice.subtotal or Decimal("0.00")
+        if stored_subtotal == computed_subtotal:
+            return
+
+        # Only override when line items sum to MORE than header —
+        # this indicates the header was misread or truncated.
+        # When line items sum to LESS, the LLM likely missed items.
+        if computed_subtotal < stored_subtotal:
+            logger.info(
+                "Invoice %s: line items sum (%s) < extracted subtotal (%s) — "
+                "keeping header total (likely missing line items)",
+                invoice.pk, computed_subtotal, stored_subtotal,
+            )
+            return
+
+        tax = invoice.tax_amount or Decimal("0.00")
+        new_total = computed_subtotal + tax
+
+        logger.info(
+            "Invoice %s: recalculating subtotal from lines "
+            "(extracted=%s, computed=%s, new_total=%s)",
+            invoice.pk, stored_subtotal, computed_subtotal, new_total,
+        )
+        invoice.subtotal = computed_subtotal
+        invoice.total_amount = new_total
+        invoice.save(update_fields=["subtotal", "total_amount", "updated_at"])
 
     @staticmethod
     def _resolve_vendor(normalized_vendor_name: str) -> Optional[Vendor]:
@@ -121,18 +228,64 @@ class InvoicePersistenceService:
 
 
 class ExtractionResultPersistenceService:
-    """Persist extraction-engine-level metadata."""
+    """Persist extraction-engine-level metadata.
+
+    Sets extraction_run FK when a governed ExtractionRun exists for this
+    DocumentUpload, making ExtractionResult point back to the authoritative
+    execution record.
+    """
 
     @staticmethod
+    @observed_service("extraction.persist_result", entity_type="ExtractionResult", audit_event="EXTRACTION_RESULT_PERSISTED")
     def save(upload: DocumentUpload, invoice: Optional[Invoice], extraction_response) -> ExtractionResult:
-        return ExtractionResult.objects.create(
-            document_upload=upload,
+        # Resolve the ExtractionRun FK (governed pipeline)
+        extraction_run = None
+        try:
+            from apps.extraction_core.models import ExtractionRun
+            extraction_run = (
+                ExtractionRun.objects
+                .filter(document__document_upload=upload)
+                .order_by("-created_at")
+                .first()
+            )
+        except Exception:
+            pass
+
+        # Prefer deterministic confidence from invoice over LLM self-report
+        confidence = extraction_response.confidence
+        if invoice and invoice.extraction_confidence is not None:
+            confidence = invoice.extraction_confidence
+
+        field_vals = dict(
             invoice=invoice,
+            extraction_run=extraction_run,
             engine_name=extraction_response.engine_name,
             engine_version=extraction_response.engine_version,
             raw_response=extraction_response.raw_json,
-            confidence=extraction_response.confidence,
+            confidence=confidence,
             duration_ms=extraction_response.duration_ms,
             success=extraction_response.success,
             error_message=extraction_response.error_message,
+            agent_run_id=getattr(extraction_response, 'agent_run_id', None),
+            ocr_page_count=getattr(extraction_response, 'ocr_page_count', 0),
+            ocr_duration_ms=getattr(extraction_response, 'ocr_duration_ms', None),
+            ocr_char_count=getattr(extraction_response, 'ocr_char_count', 0),
+            ocr_text=getattr(extraction_response, 'ocr_text', '') or '',
+        )
+
+        # Reuse existing ExtractionResult for same upload (reprocessing)
+        existing = (
+            ExtractionResult.objects
+            .filter(document_upload=upload)
+            .order_by("-created_at")
+            .first()
+        )
+        if existing:
+            for attr, value in field_vals.items():
+                setattr(existing, attr, value)
+            existing.save()
+            return existing
+
+        return ExtractionResult.objects.create(
+            document_upload=upload, **field_vals
         )

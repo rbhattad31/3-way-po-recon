@@ -283,3 +283,195 @@ class AgentGuardrailsService:
                 "actor_roles_snapshot": snapshot["actor_roles_snapshot"],
             },
         )
+
+    # ------------------------------------------------------------------
+    # Data-scope authorization (action + data boundary enforcement)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def get_actor_scope(cls, actor) -> Dict[str, Any]:
+        """Return the data-scope restrictions attached to this actor's roles.
+
+        The returned dict has the following keys:
+          - allowed_business_units: list[str] or None (None = unrestricted)
+          - allowed_vendor_ids:     list[int] or None (None = unrestricted)
+
+        Scope values are read from UserRole.scope_json for each active,
+        non-expired role assignment.  The union of all allowed values across
+        all role assignments applies (i.e. multiple roles grant additive scope).
+
+        ADMIN and SYSTEM_AGENT actors are always unrestricted and return None
+        for every dimension.
+
+        Unsupported / pending dimensions (require schema extension on Invoice
+        or PurchaseOrder before they can be evaluated here):
+          - country / legal_entity
+          - cost_centre
+        """
+        from apps.accounts.rbac_models import UserRole
+
+        # ADMIN and SYSTEM_AGENT bypass all scope checks
+        role_codes: List[str] = []
+        try:
+            role_codes = list(actor.get_role_codes())
+        except Exception:
+            pass
+        if "ADMIN" in role_codes or getattr(actor, "email", "") == SYSTEM_AGENT_EMAIL:
+            return {"allowed_business_units": None, "allowed_vendor_ids": None}
+
+        allowed_bus: set = set()
+        allowed_vendor_ids: set = set()
+        any_bus_restriction = False
+        any_vendor_restriction = False
+
+        active_roles = (
+            UserRole.objects.filter(user=actor, is_active=True)
+            .select_related("role")
+        )
+        for ur in active_roles:
+            # Respect expiry without hitting the DB again
+            if ur.expires_at and ur.expires_at < timezone.now():
+                continue
+            scope = ur.scope_json or {}
+            bus = scope.get("allowed_business_units")
+            vids = scope.get("allowed_vendor_ids")
+            if bus is not None:
+                any_bus_restriction = True
+                allowed_bus.update(str(b) for b in bus)
+            if vids is not None:
+                any_vendor_restriction = True
+                allowed_vendor_ids.update(int(v) for v in vids)
+
+        return {
+            "allowed_business_units": sorted(allowed_bus) if any_bus_restriction else None,
+            "allowed_vendor_ids": sorted(allowed_vendor_ids) if any_vendor_restriction else None,
+        }
+
+    @classmethod
+    def get_result_scope(cls, result) -> Dict[str, Any]:
+        """Extract data-scope dimensions available on a ReconciliationResult.
+
+        Dimensions extracted from current schema:
+          - business_unit: ReconciliationPolicy.business_unit (via result.policy_applied)
+          - vendor_id:     result.invoice.vendor_id
+
+        Dimensions NOT available in current schema (documented for future extension):
+          - country / legal_entity: no country_code field on Invoice or PurchaseOrder
+          - cost_centre: no cost_centre field on Invoice or PurchaseOrder
+        """
+        scope: Dict[str, Any] = {
+            "business_unit": None,
+            "vendor_id": None,
+        }
+
+        # Business unit from the applied reconciliation policy
+        if getattr(result, "policy_applied", None):
+            try:
+                from apps.reconciliation.models import ReconciliationPolicy
+                policy = (
+                    ReconciliationPolicy.objects
+                    .filter(policy_code=result.policy_applied)
+                    .values("business_unit")
+                    .first()
+                )
+                if policy and policy["business_unit"]:
+                    scope["business_unit"] = policy["business_unit"]
+            except Exception:
+                pass
+
+        # Vendor scope from the linked invoice
+        try:
+            scope["vendor_id"] = result.invoice.vendor_id
+        except Exception:
+            pass
+
+        return scope
+
+    @classmethod
+    def _scope_value_allowed(cls, allowed_values, result_value) -> bool:
+        """Return True if result_value is permitted by the actor scope list.
+
+        Semantics:
+          - allowed_values = None  -> no restriction on this dimension (pass)
+          - result_value = None    -> result has no value for dim (pass-through)
+          - otherwise              -> result_value must be in allowed_values
+        """
+        if allowed_values is None:
+            return True
+        if result_value is None:
+            return True
+        return result_value in allowed_values
+
+    @classmethod
+    def authorize_data_scope(cls, actor, result) -> bool:
+        """Check whether *actor* may operate on result's data scope.
+
+        Called immediately after action-level authorization in the orchestrator.
+        Fails closed only when scope metadata is configured on the actor AND
+        the result -- if neither side carries scope metadata, existing behavior
+        is preserved (all pass).
+
+        Currently enforced dimensions:
+          - business_unit (from ReconciliationPolicy linked via result.policy_applied)
+          - vendor_id     (from result.invoice.vendor_id)
+
+        Pending dimensions (schema extension required before enforcement):
+          - country / legal_entity
+          - cost_centre
+
+        Every allow/deny decision is written as an AuditEvent for the
+        governance trail.
+        """
+        actor_scope = cls.get_actor_scope(actor)
+        result_scope = cls.get_result_scope(result)
+
+        denial_reasons: List[str] = []
+
+        if not cls._scope_value_allowed(
+            actor_scope.get("allowed_business_units"),
+            result_scope.get("business_unit"),
+        ):
+            denial_reasons.append(
+                "business_unit '{}' not in actor allowed set {}".format(
+                    result_scope["business_unit"],
+                    actor_scope["allowed_business_units"],
+                )
+            )
+
+        if not cls._scope_value_allowed(
+            actor_scope.get("allowed_vendor_ids"),
+            result_scope.get("vendor_id"),
+        ):
+            denial_reasons.append(
+                "vendor_id {} not in actor allowed set {}".format(
+                    result_scope["vendor_id"],
+                    actor_scope["allowed_vendor_ids"],
+                )
+            )
+
+        granted = not denial_reasons
+        reason = "; ".join(denial_reasons) if denial_reasons else "all scope checks passed"
+
+        cls.log_guardrail_decision(
+            user=actor,
+            action="data_scope_check",
+            permission_code="agents.data_scope",
+            granted=granted,
+            entity_type="ReconciliationResult",
+            entity_id=getattr(result, "pk", None),
+            metadata={
+                "actor_scope": actor_scope,
+                "result_scope": result_scope,
+                "denial_reason": reason,
+            },
+        )
+
+        if not granted:
+            logger.warning(
+                "Data scope denied: actor=%s result=%s -- %s",
+                getattr(actor, "email", actor.pk),
+                getattr(result, "pk", "?"),
+                reason,
+            )
+
+        return granted

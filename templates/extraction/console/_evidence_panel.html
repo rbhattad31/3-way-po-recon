@@ -1,0 +1,66 @@
+{# extraction/console/_evidence_panel.html — Field evidence tab #}
+
+<div class="p-3">
+  {% if evidence_entries %}
+  {# Field selector #}
+  <div class="mb-3">
+    <select class="form-select form-select-sm" id="evidenceFieldFilter">
+      <option value="">All Fields</option>
+      {% for entry in evidence_entries %}
+      <option value="{{ entry.field_key }}">{{ entry.field_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  {# Evidence cards #}
+  {% for entry in evidence_entries %}
+  <div class="card exc-evidence-card mb-2" data-evidence-field="{{ entry.field_key }}">
+    <div class="card-body p-2">
+      <div class="d-flex align-items-start">
+        <div class="flex-grow-1">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="fw-semibold small">{{ entry.field_name }}</span>
+            {% include "extraction/console/_confidence_badge.html" with confidence=entry.confidence %}
+            <span class="badge bg-light text-dark border small">{{ entry.method|default:"DET" }}</span>
+          </div>
+
+          {# Extracted value #}
+          <div class="mb-1">
+            <span class="small text-muted">Value:</span>
+            <code class="ms-1">{{ entry.value|default:"—" }}</code>
+          </div>
+
+          {# Source snippet #}
+          {% if entry.source_text %}
+          <div class="exc-source-snippet p-2 rounded small mb-1">
+            <i class="bi bi-quote me-1 text-muted"></i>
+            <span class="fst-italic">{{ entry.source_text }}</span>
+          </div>
+          {% endif %}
+
+          {# Location metadata #}
+          <div class="d-flex gap-3 small text-muted">
+            {% if entry.page_number %}
+            <span>
+              <i class="bi bi-file-earmark me-1"></i>Page {{ entry.page_number }}
+            </span>
+            {% endif %}
+            {% if entry.table_index is not None %}
+            <span><i class="bi bi-table me-1"></i>Table {{ entry.table_index|add:1 }}, Row {{ entry.row_index|add:1 }}</span>
+            {% endif %}
+            {% if entry.bbox %}
+            <span><i class="bi bi-bounding-box me-1"></i>Bounding box</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="text-center py-4">
+    <i class="bi bi-search text-muted fs-1"></i>
+    <p class="text-muted mt-2 mb-0">No evidence data available</p>
+  </div>
+  {% endif %}
+</div>

@@ -19,7 +19,7 @@ class DocumentUpload(BaseModel):
     file_size = models.PositiveIntegerField(default=0, help_text="Bytes")
     file_hash = models.CharField(max_length=64, blank=True, db_index=True, help_text="SHA-256")
     content_type = models.CharField(max_length=100, blank=True)
-    document_type = models.CharField(max_length=20, choices=DocumentType.choices, default=DocumentType.INVOICE)
+    document_type = models.CharField(max_length=30, choices=DocumentType.choices, default=DocumentType.INVOICE)
     processing_state = models.CharField(
         max_length=20, choices=FileProcessingState.choices, default=FileProcessingState.QUEUED
     )

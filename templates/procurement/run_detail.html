@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Analysis Run — {{ run.run_type }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Home</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}">Procurement</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_workspace' pk=run.request.pk %}">{{ run.request.title|truncatechars:30 }}</a></li>
+    <li class="breadcrumb-item active">Run {{ run.run_id|truncatechars:12 }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# Run Summary #}
+<div class="card mb-4">
+  <div class="card-header">
+    <h5 class="mb-0">
+      {% if run.run_type == "RECOMMENDATION" %}<i class="bi bi-lightbulb me-2 text-info"></i>
+      {% else %}<i class="bi bi-bar-chart me-2 text-warning"></i>{% endif %}
+      {{ run.run_type }} Analysis Run
+    </h5>
+  </div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-6">
+        <table class="table table-sm table-borderless" style="font-size:var(--ap-font-size-sm)">
+          <tr><td class="text-muted" style="width:130px">Run ID</td><td><code>{{ run.run_id }}</code></td></tr>
+          <tr><td class="text-muted">Status</td><td>
+            {% if run.status == "COMPLETED" %}<span class="badge bg-success">Completed</span>
+            {% elif run.status == "FAILED" %}<span class="badge bg-danger">Failed</span>
+            {% elif run.status == "RUNNING" %}<span class="badge bg-primary">Running</span>
+            {% elif run.status == "QUEUED" %}<span class="badge bg-secondary">Queued</span>
+            {% endif %}
+          </td></tr>
+          <tr><td class="text-muted">Confidence</td><td>{% if run.confidence_score is not None %}{% widthratio run.confidence_score 1 100 %}%{% else %}—{% endif %}</td></tr>
+          <tr><td class="text-muted">Started</td><td>{{ run.started_at|date:"M d, Y H:i:s"|default:"—" }}</td></tr>
+          <tr><td class="text-muted">Completed</td><td>{{ run.completed_at|date:"M d, Y H:i:s"|default:"—" }}</td></tr>
+          {% if run.duration_ms %}<tr><td class="text-muted">Duration</td><td>{{ run.duration_ms }} ms</td></tr>{% endif %}
+          {% if run.triggered_by %}<tr><td class="text-muted">Triggered by</td><td>{{ run.triggered_by.email }}</td></tr>{% endif %}
+          {% if run.trace_id %}<tr><td class="text-muted">Trace ID</td><td><code style="font-size:0.7rem">{{ run.trace_id }}</code></td></tr>{% endif %}
+        </table>
+      </div>
+      <div class="col-md-6">
+        {% if run.output_summary %}
+        <div class="alert alert-light py-2" style="font-size:var(--ap-font-size-sm)">
+          <strong>Summary:</strong> {{ run.output_summary }}
+        </div>
+        {% endif %}
+        {% if run.error_message %}
+        <div class="alert alert-danger py-2" style="font-size:var(--ap-font-size-sm)">
+          <strong>Error:</strong> {{ run.error_message }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Input Snapshot #}
+{% if run.input_snapshot_json %}
+<div class="card mb-4">
+  <div class="card-header"><h6 class="mb-0"><i class="bi bi-arrow-right-circle me-2"></i>Input Snapshot</h6></div>
+  <div class="card-body">
+    <pre class="mb-0 bg-light p-3 rounded" style="font-size:0.75rem; max-height:300px; overflow:auto">{{ run.input_snapshot_json|pprint }}</pre>
+  </div>
+</div>
+{% endif %}
+
+{# Recommendation Output #}
+{% if recommendation %}
+<div class="card mb-4 border-info">
+  <div class="card-header bg-info bg-opacity-10"><h6 class="mb-0"><i class="bi bi-lightbulb me-2"></i>Recommendation Result</h6></div>
+  <div class="card-body">
+    <h6>{{ recommendation.recommended_option }}</h6>
+    <p class="text-muted">{{ recommendation.reasoning_summary }}</p>
+    <div class="d-flex gap-3 mb-3">
+      <span class="badge bg-primary">Confidence: {% widthratio recommendation.confidence_score 1 100 %}%</span>
+      <span class="badge {% if recommendation.compliance_status == 'PASS' %}bg-success{% elif recommendation.compliance_status == 'FAIL' %}bg-danger{% else %}bg-secondary{% endif %}">
+        Compliance: {{ recommendation.compliance_status }}
+      </span>
+    </div>
+    {% if recommendation.reasoning_details_json %}
+    <details>
+      <summary class="text-muted small">Reasoning Details</summary>
+      <pre class="bg-light p-2 rounded mt-2" style="font-size:0.7rem">{{ recommendation.reasoning_details_json|pprint }}</pre>
+    </details>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# Benchmark Output #}
+{% if benchmarks %}
+{% for bm in benchmarks %}
+<div class="card mb-4 border-warning">
+  <div class="card-header bg-warning bg-opacity-10">
+    <h6 class="mb-0"><i class="bi bi-bar-chart me-2"></i>Benchmark: {{ bm.quotation.vendor_name }}</h6>
+  </div>
+  <div class="card-body">
+    <div class="row text-center mb-3">
+      <div class="col-3">
+        <div class="text-muted small">Quoted</div>
+        <div class="fw-bold">{{ bm.total_quoted_amount|floatformat:2 }}</div>
+      </div>
+      <div class="col-3">
+        <div class="text-muted small">Benchmark</div>
+        <div class="fw-bold">{{ bm.total_benchmark_amount|floatformat:2 }}</div>
+      </div>
+      <div class="col-3">
+        <div class="text-muted small">Variance</div>
+        <div class="fw-bold {% if bm.variance_pct > 15 %}text-danger{% elif bm.variance_pct > 5 %}text-warning{% else %}text-success{% endif %}">{{ bm.variance_pct|floatformat:1 }}%</div>
+      </div>
+      <div class="col-3">
+        <div class="text-muted small">Risk</div>
+        <span class="badge {% if bm.risk_level == 'LOW' %}bg-success{% elif bm.risk_level == 'MEDIUM' %}bg-warning text-dark{% elif bm.risk_level == 'HIGH' %}bg-danger{% else %}bg-dark{% endif %}">{{ bm.risk_level }}</span>
+      </div>
+    </div>
+    {% if bm.lines.all %}
+    <table class="table table-sm" style="font-size:0.75rem">
+      <thead class="table-light"><tr><th>#</th><th>Description</th><th>Quoted</th><th>Min</th><th>Avg</th><th>Max</th><th>Var%</th><th>Status</th><th>Source</th></tr></thead>
+      <tbody>
+      {% for line in bm.lines.all %}
+      <tr>
+        <td>{{ line.quotation_line.line_number }}</td>
+        <td>{{ line.quotation_line.description|truncatechars:35 }}</td>
+        <td>{{ line.quoted_value|floatformat:2 }}</td>
+        <td>{% if line.benchmark_min is not None %}{{ line.benchmark_min|floatformat:2 }}{% else %}—{% endif %}</td>
+        <td>{% if line.benchmark_avg is not None %}{{ line.benchmark_avg|floatformat:2 }}{% else %}—{% endif %}</td>
+        <td>{% if line.benchmark_max is not None %}{{ line.benchmark_max|floatformat:2 }}{% else %}—{% endif %}</td>
+        <td>{% if line.variance_pct is not None %}{{ line.variance_pct|floatformat:1 }}%{% else %}—{% endif %}</td>
+        <td>
+          {% if line.variance_status == "WITHIN_RANGE" %}<span class="badge bg-success">OK</span>
+          {% elif line.variance_status == "ABOVE_BENCHMARK" %}<span class="badge bg-warning text-dark">Above</span>
+          {% elif line.variance_status == "SIGNIFICANTLY_ABOVE" %}<span class="badge bg-danger">High</span>
+          {% elif line.variance_status == "BELOW_BENCHMARK" %}<span class="badge bg-info text-dark">Below</span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge bg-light text-dark">{{ line.source_type }}</span>
+          {% if line.source_urls %}
+            {% for url in line.source_urls %}
+              <a href="{{ url }}" target="_blank" rel="noopener" class="ms-1" title="{{ url }}"><i class="bi bi-link-45deg"></i></a>
+            {% endfor %}
+          {% endif %}
+          {% if line.reasoning %}<br><details class="d-inline"><summary class="text-muted small" style="cursor:pointer">View reasoning</summary><small class="text-muted">{{ line.reasoning }}</small></details>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{# Compliance #}
+{% if compliance %}
+<div class="card mb-4">
+  <div class="card-header"><h6 class="mb-0"><i class="bi bi-shield-check me-2"></i>Compliance Check</h6></div>
+  <div class="card-body">
+    <span class="badge {% if compliance.compliance_status == 'PASS' %}bg-success{% elif compliance.compliance_status == 'FAIL' %}bg-danger{% else %}bg-warning text-dark{% endif %} mb-2">{{ compliance.compliance_status }}</span>
+    {% if compliance.rules_checked_json %}
+    <p class="small text-muted mb-1">{{ compliance.rules_checked_json|length }} rules checked</p>
+    {% endif %}
+    {% if compliance.violations_json %}
+    <ul class="list-group list-group-flush" style="font-size:0.75rem">
+      {% for v in compliance.violations_json %}
+      <li class="list-group-item py-1"><i class="bi bi-exclamation-triangle text-danger me-1"></i>{{ v.detail }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# Audit Trail #}
+{% if audit_events %}
+<div class="card mb-4">
+  <div class="card-header"><h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Run Audit Trail</h6></div>
+  <div class="list-group list-group-flush" style="font-size:0.75rem">
+    {% for event in audit_events %}
+    <div class="list-group-item py-2">
+      <div class="d-flex justify-content-between">
+        <span class="fw-medium">{{ event.event_type }}</span>
+        <small class="text-muted">{{ event.created_at|date:"M d, H:i:s" }}</small>
+      </div>
+      <small class="text-muted">{{ event.description|truncatechars:100 }}</small>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

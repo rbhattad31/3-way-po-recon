@@ -24,12 +24,20 @@ urlpatterns = [
     path("dashboard/", include("apps.dashboard.urls")),
     path("invoices/", include("apps.documents.urls")),
     path("extraction/", include("apps.extraction.urls")),
+    path("extraction/control-center/", include("apps.extraction_core.urls")),
     path("reconciliation/", include("apps.reconciliation.urls")),
     path("reviews/", include("apps.reviews.urls")),
     path("reports/", include("apps.reports.urls")),
     path("agents/", include("apps.agents.urls")),
     path("vendors/", include("apps.vendors.urls")),
     path("governance/", include("apps.auditlog.urls")),
+    path("procurement/", include("apps.procurement.urls")),
+    path("api/v1/procurement/", include("apps.procurement.api_urls")),
+    path("posting/", include("apps.posting.urls")),
+    path("api/v1/posting/", include("apps.posting.api_urls")),
+    path("api/v1/posting-core/", include("apps.posting_core.api_urls")),
+    path("erp/", include("apps.erp_integration.api_urls")),
+    path("erp-connections/", include("apps.erp_integration.urls")),
 ]
 
 

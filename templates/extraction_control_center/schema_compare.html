@@ -1,0 +1,118 @@
+{% extends "extraction_control_center/base.html" %}
+
+{% block title %}Compare Schemas — Control Center{% endblock %}
+
+{% block cc_content %}
+<div class="mb-3">
+  <a href="{% url 'extraction_control_center:schema_list' %}" class="text-decoration-none text-muted small">
+    <i class="bi bi-arrow-left me-1"></i>Back to registry
+  </a>
+</div>
+
+<h5 class="fw-bold mb-4"><i class="bi bi-layout-split me-2 text-primary"></i>Compare Schema Versions</h5>
+
+{# Version selector #}
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label small fw-semibold text-muted">Schema A</label>
+        <select class="form-select form-select-sm" name="v1">
+          <option value="">Select…</option>
+          {% for s in schemas %}
+          <option value="{{ s.pk }}" {% if v1 and v1 == s.pk|stringformat:"d" %}selected{% endif %}>
+            {{ s.schema_code }} v{{ s.schema_version }}{% if s.jurisdiction %} ({{ s.jurisdiction.country_code }}){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label small fw-semibold text-muted">Schema B</label>
+        <select class="form-select form-select-sm" name="v2">
+          <option value="">Select…</option>
+          {% for s in schemas %}
+          <option value="{{ s.pk }}" {% if v2 and v2 == s.pk|stringformat:"d" %}selected{% endif %}>
+            {{ s.schema_code }} v{{ s.schema_version }}{% if s.jurisdiction %} ({{ s.jurisdiction.country_code }}){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-arrow-left-right me-1"></i>Compare</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if comparison %}
+{# Header fields diff #}
+{% if comparison.header_diff %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-card-heading me-2"></i>Header Fields Diff</h6>
+  </div>
+  <div class="card-body">
+    <pre class="bg-dark text-light p-3 rounded small" style="white-space: pre-wrap; max-height: 400px; overflow-y: auto;">{{ comparison.header_diff }}</pre>
+  </div>
+</div>
+{% endif %}
+
+{# Line item fields diff #}
+{% if comparison.line_diff %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-list-ul me-2"></i>Line Item Fields Diff</h6>
+  </div>
+  <div class="card-body">
+    <pre class="bg-dark text-light p-3 rounded small" style="white-space: pre-wrap; max-height: 400px; overflow-y: auto;">{{ comparison.line_diff }}</pre>
+  </div>
+</div>
+{% endif %}
+
+{# Tax fields diff #}
+{% if comparison.tax_diff %}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-percent me-2"></i>Tax Fields Diff</h6>
+  </div>
+  <div class="card-body">
+    <pre class="bg-dark text-light p-3 rounded small" style="white-space: pre-wrap; max-height: 400px; overflow-y: auto;">{{ comparison.tax_diff }}</pre>
+  </div>
+</div>
+{% endif %}
+
+{# Metadata comparison #}
+{% if comparison.metadata %}
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-transparent">
+    <h6 class="mb-0 fw-semibold"><i class="bi bi-info-circle me-2"></i>Metadata</h6>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Field</th>
+            <th>Schema A</th>
+            <th>Schema B</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for field, vals in comparison.metadata.items %}
+          <tr {% if vals.0 != vals.1 %}class="table-warning"{% endif %}>
+            <td class="ps-3 text-muted small fw-semibold">{{ field }}</td>
+            <td>{{ vals.0|default:"—" }}</td>
+            <td>{{ vals.1|default:"—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% elif v1 or v2 %}
+<div class="alert alert-info"><i class="bi bi-info-circle me-1"></i>Select both schemas to compare.</div>
+{% endif %}
+{% endblock %}

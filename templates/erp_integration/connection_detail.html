@@ -1,0 +1,661 @@
+{% extends "base.html" %}
+{% block title %}{{ connection.name }} -- ERP Connection{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'erp_integration:erp_connection_list' %}" class="text-decoration-none">ERP Connections</a></li>
+    <li class="breadcrumb-item active">{{ connection.name }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# ── Header ── #}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h5 class="mb-1 fw-bold">
+      <i class="bi bi-cloud-check me-2"></i>{{ connection.name }}
+      {% if connection.is_default %}
+        <span class="badge bg-warning text-dark ms-2"><i class="bi bi-star-fill me-1"></i>Default</span>
+      {% endif %}
+    </h5>
+    <p class="mb-0 text-muted small">
+      <span class="badge {% if connection.connector_type == 'CUSTOM' %}bg-secondary{% elif connection.connector_type == 'SQLSERVER' %}bg-dark{% elif connection.connector_type == 'MYSQL' %}bg-dark{% elif connection.connector_type == 'DYNAMICS' %}bg-primary{% else %}bg-info{% endif %}">
+        {{ connection.get_connector_type_display }}
+      </span>
+      <span class="mx-1">|</span>
+      {% if connection.status == 'ACTIVE' %}
+        <span class="badge bg-success">Active</span>
+      {% elif connection.status == 'INACTIVE' %}
+        <span class="badge bg-secondary">Inactive</span>
+      {% else %}
+        <span class="badge bg-danger">Error</span>
+      {% endif %}
+      <span class="mx-1">|</span>
+      {% if connection.base_url %}
+        <code>{{ connection.base_url }}</code>
+      {% elif connection.database_name %}
+        <code>{{ connection.database_name }}</code>
+      {% else %}
+        <span class="text-muted">--</span>
+      {% endif %}
+    </p>
+  </div>
+  <div class="d-flex gap-2">
+    <form method="post" action="{% url 'erp_integration:erp_connection_test' connection.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-outline-primary btn-sm"><i class="bi bi-plug me-1"></i>Test Connection</button>
+    </form>
+    <form method="post" action="{% url 'erp_integration:erp_connection_delete' connection.pk %}" onsubmit="return confirm('Deactivate this connection?')">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash me-1"></i>Deactivate</button>
+    </form>
+  </div>
+</div>
+
+{# ── KPI Strip ── #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body py-2 px-3">
+        <div class="text-muted small">Connector Type</div>
+        <div class="fs-5 fw-bold">{{ connection.get_connector_type_display }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body py-2 px-3">
+        <div class="text-muted small">Timeout</div>
+        <div class="fs-4 fw-bold">{{ connection.timeout_seconds }}s</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body py-2 px-3">
+        <div class="text-muted small">Resolution Logs</div>
+        <div class="fs-4 fw-bold">{{ recent_logs|length }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body py-2 px-3">
+        <div class="text-muted small">Cached Entries</div>
+        <div class="fs-4 fw-bold">{{ cache_entries|length }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Tabs ── #}
+<ul class="nav nav-tabs mb-3" id="connTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="tab-config-btn" data-bs-toggle="tab" data-bs-target="#tab-config" type="button" role="tab">
+      <i class="bi bi-gear me-1"></i>Configuration
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-logs-btn" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button" role="tab">
+      <i class="bi bi-journal-text me-1"></i>Resolution Logs
+      {% if recent_logs %}<span class="badge bg-secondary ms-1">{{ recent_logs|length }}</span>{% endif %}
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-cache-btn" data-bs-toggle="tab" data-bs-target="#tab-cache" type="button" role="tab">
+      <i class="bi bi-hdd me-1"></i>Cache
+      {% if cache_entries %}<span class="badge bg-secondary ms-1">{{ cache_entries|length }}</span>{% endif %}
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="connTabContent">
+
+  {# ── Tab: Configuration (Edit Form) ── #}
+  <div class="tab-pane fade show active" id="tab-config" role="tabpanel">
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      {% if form.errors %}
+      <div class="alert alert-danger py-2 small">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        <strong>Please fix the errors below:</strong>
+        <ul class="mb-0 mt-1">
+          {% for field, errors in form.errors.items %}
+            {% for error in errors %}<li><strong>{{ field }}:</strong> {{ error }}</li>{% endfor %}
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      {# ── General ── #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-semibold"><i class="bi bi-info-circle me-1"></i>General</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Connection Name <span class="text-danger">*</span></label>
+              {{ form.name }}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Connector Type <span class="text-danger">*</span></label>
+              {{ form.connector_type }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Status</label>
+              {{ form.status }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Timeout (seconds)</label>
+              {{ form.timeout_seconds }}
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold d-block">Default Connector</label>
+              <div class="form-check mt-2">
+                {{ form.is_default }}
+                <label class="form-check-label" for="id_is_default">Use as default</label>
+              </div>
+              <small class="text-muted">Checking this will unset the current default.</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── REST API (CUSTOM, DYNAMICS, ZOHO, SALESFORCE) ── #}
+      <div class="card border-0 shadow-sm mb-3 conn-section" id="section-rest" style="display:none">
+        <div class="card-header bg-white fw-semibold"><i class="bi bi-globe me-1"></i>REST API Configuration</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label fw-semibold">Base URL <span class="text-danger">*</span></label>
+              {{ form.base_url }}
+              <small class="text-muted">ERP API root endpoint (e.g. https://erp.company.com/api/v1)</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Auth Type</label>
+              {{ form.auth_type }}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">API Key Env Variable</label>
+              {{ form.api_key_env }}
+              <small class="text-muted">Name of the env variable holding your API key or bearer token.</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Database Direct (SQLSERVER / MYSQL) ── #}
+      <div class="card border-0 shadow-sm mb-3 conn-section" id="section-sql" style="display:none">
+        <div class="card-header bg-white fw-semibold"><i class="bi bi-database me-1"></i><span id="sql-section-title">Database Configuration</span></div>
+        <div class="card-body">
+          {# Connection method toggle #}
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Connection Method</label>
+            <div class="d-flex gap-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="sql_mode" id="sql_mode_builder" value="builder" checked>
+                <label class="form-check-label" for="sql_mode_builder">Build from fields</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="sql_mode" id="sql_mode_env" value="env">
+                <label class="form-check-label" for="sql_mode_env">Use env variable</label>
+              </div>
+            </div>
+          </div>
+
+          {# Builder mode #}
+          <div id="sql-builder-fields">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Host / Server</label>
+                {{ form.db_host }}
+                <small class="text-muted">e.g. myserver.database.windows.net or 192.168.1.100\SQLEXPRESS</small>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-semibold">Port</label>
+                {{ form.db_port }}
+                <small class="text-muted">Default: 1433</small>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-semibold">Database Name</label>
+                {{ form.database_name }}
+              </div>
+              <div class="col-md-6 sqlserver-only">
+                <label class="form-label fw-semibold">ODBC Driver</label>
+                {{ form.db_driver }}
+              </div>
+              <div class="col-md-6 sqlserver-only">&nbsp;</div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Username</label>
+                {{ form.db_username }}
+                <small class="text-muted sqlserver-only">Leave blank for Windows Integrated Auth (Trusted_Connection=yes)</small>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Password</label>
+                {{ form.db_password }}
+                <small class="text-muted">
+                  <i class="bi bi-shield-lock me-1"></i>Encrypted at rest (AES-128 / Fernet).
+                  {% if connection.db_password_encrypted %}
+                    Password is stored. Leave blank to keep current.
+                  {% endif %}
+                </small>
+              </div>
+              <div class="col-md-6 sqlserver-only">
+                <div class="form-check mt-4">
+                  {{ form.db_trust_cert }}
+                  <label class="form-check-label" for="id_db_trust_cert">Trust server certificate</label>
+                </div>
+                <small class="text-muted">Enable for on-prem servers with self-signed SSL certs (adds TrustServerCertificate=yes).</small>
+              </div>
+            </div>
+          </div>
+
+          {# Env-var mode #}
+          <div id="sql-env-fields" style="display:none">
+            <div class="row g-3">
+              <div class="col-md-8">
+                <label class="form-label fw-semibold">Connection String Env Variable</label>
+                {{ form.connection_string_env }}
+                <small class="text-muted">Name of the env variable holding your ODBC connection string.</small>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-semibold">Database Name</label>
+                {{ form.database_name }}
+                <small class="text-muted">For display only</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── OAuth (DYNAMICS, ZOHO, SALESFORCE) ── #}
+      <div class="card border-0 shadow-sm mb-3 conn-section" id="section-oauth" style="display:none">
+        <div class="card-header bg-white fw-semibold"><i class="bi bi-shield-lock me-1"></i>OAuth / Cloud Credentials</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Tenant / Org ID</label>
+              {{ form.tenant_id }}
+              <small class="text-muted">Azure AD tenant ID, Zoho org ID, etc.</small>
+            </div>
+            <div class="col-md-6">&nbsp;</div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Client ID Env Variable</label>
+              {{ form.client_id_env }}
+              <small class="text-muted">Env var name for OAuth client / app ID</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Client Secret Env Variable</label>
+              {{ form.client_secret_env }}
+              <small class="text-muted">Env var name for OAuth client secret</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Advanced ── #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-semibold">
+          <i class="bi bi-sliders me-1"></i>Advanced Configuration
+          <span class="badge bg-light text-muted ms-1">Optional</span>
+        </div>
+        <div class="card-body">
+          <label class="form-label fw-semibold">Metadata (JSON)</label>
+          {{ form.metadata_json }}
+          <small class="text-muted">Override endpoint paths or SQL queries. Missing keys use built-in defaults.</small>
+          <div class="mt-2">
+            <a class="small text-decoration-none" data-bs-toggle="collapse" href="#sampleMetadataDetail" role="button">
+              <i class="bi bi-code-slash me-1"></i>Show sample metadata_json
+            </a>
+            <div class="collapse mt-2" id="sampleMetadataDetail">
+              <div class="card card-body bg-light py-2 px-3 font-monospace small" style="white-space:pre-wrap"><strong>Custom ERP (REST API) -- override endpoint paths:</strong>
+{
+  "endpoints": {
+    "vendor_lookup":      "/api/vendors/lookup",
+    "item_lookup":        "/api/items/lookup",
+    "po_lookup":          "/api/purchase-orders/lookup",
+    "grn_lookup":         "/api/grns/lookup",
+    "duplicate_check":    "/api/invoices/duplicate-check"
+  }
+}
+
+<strong>SQL Server (Direct DB) -- override SQL queries:</strong>
+{
+  "queries": {
+    "vendor_lookup": "SELECT TOP 1 vendor_code, vendor_name FROM AP_Vendors WHERE vendor_code = ?",
+    "item_lookup":   "SELECT TOP 1 item_code, description FROM INV_Items WHERE item_code = ?",
+    "po_lookup":     "SELECT TOP 1 po_number, vendor_code, status FROM PO_Headers WHERE po_number = ?"
+  },
+  "query_timeout": 30
+}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Test & Submit ── #}
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-3">
+            <button type="button" class="btn btn-outline-primary btn-sm" id="btn-test">
+              <i class="bi bi-plug me-1"></i>Test Connection
+            </button>
+            <div id="test-result" style="display:none"></div>
+            <span id="test-spinner" class="spinner-border spinner-border-sm text-primary" style="display:none" role="status"></span>
+          </div>
+          <small class="text-muted d-block mt-2">Test before saving changes to connection settings.</small>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm" id="btn-submit" disabled><i class="bi bi-check-lg me-1"></i>Save Changes</button>
+        <a href="{% url 'erp_integration:erp_connection_list' %}" class="btn btn-outline-secondary btn-sm">Back to List</a>
+      </div>
+    </form>
+
+    {# Meta info #}
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white fw-semibold"><i class="bi bi-info-circle me-1"></i>Record Info</div>
+      <div class="card-body">
+        <div class="row g-3 small">
+          <div class="col-md-3"><span class="text-muted">ID:</span><br><strong>{{ connection.pk }}</strong></div>
+          <div class="col-md-3"><span class="text-muted">Created:</span><br><strong>{{ connection.created_at|date:"d M Y H:i" }}</strong></div>
+          <div class="col-md-3"><span class="text-muted">Updated:</span><br><strong>{{ connection.updated_at|date:"d M Y H:i" }}</strong></div>
+          <div class="col-md-3"><span class="text-muted">Created By:</span><br><strong>{{ connection.created_by.email|default:"--" }}</strong></div>
+        </div>
+      </div>
+    </div>
+  </div>{# /tab-config #}
+
+  {# ── Tab: Resolution Logs ── #}
+  <div class="tab-pane fade" id="tab-logs" role="tabpanel">
+    {% if recent_logs %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold">
+        <i class="bi bi-journal-text me-1"></i>Recent Resolution Logs
+        <span class="badge bg-light text-dark ms-2">Last 20</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Type</th>
+              <th>Resolved</th>
+              <th>Source</th>
+              <th>Confidence</th>
+              <th>Fallback</th>
+              <th>Duration</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for log in recent_logs %}
+            <tr>
+              <td><span class="badge bg-light text-dark">{{ log.resolution_type }}</span></td>
+              <td>
+                {% if log.resolved %}
+                  <i class="bi bi-check-circle-fill text-success"></i>
+                {% else %}
+                  <i class="bi bi-x-circle-fill text-danger"></i>
+                {% endif %}
+              </td>
+              <td>
+                <span class="badge {% if log.source_type == 'API' %}bg-success{% elif log.source_type == 'CACHE' %}bg-info{% elif log.source_type == 'DB_FALLBACK' %}bg-secondary{% else %}bg-light text-dark{% endif %}">
+                  {{ log.source_type }}
+                </span>
+              </td>
+              <td>
+                {% if log.confidence is not None %}
+                  {% widthratio log.confidence 1 100 as log_pct %}
+                  <span class="{% if log.confidence >= 0.8 %}text-success{% elif log.confidence >= 0.6 %}text-warning{% else %}text-danger{% endif %}">{{ log_pct }}%</span>
+                {% else %}--{% endif %}
+              </td>
+              <td>
+                {% if log.fallback_used %}
+                  <span class="badge bg-warning text-dark">Yes</span>
+                {% else %}
+                  <span class="text-muted">No</span>
+                {% endif %}
+              </td>
+              <td class="small text-muted">{% if log.duration_ms %}{{ log.duration_ms }} ms{% else %}--{% endif %}</td>
+              <td class="text-muted small">{{ log.created_at|date:"d M H:i:s" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-journal-x fs-1 d-block mb-2"></i>
+      No resolution logs for this connector yet.
+    </div>
+    {% endif %}
+  </div>{# /tab-logs #}
+
+  {# ── Tab: Cache ── #}
+  <div class="tab-pane fade" id="tab-cache" role="tabpanel">
+    {% if cache_entries %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold">
+        <i class="bi bi-hdd me-1"></i>Cached Lookups
+        <span class="badge bg-light text-dark ms-2">Last 20</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Resolution Type</th>
+              <th>Source</th>
+              <th>Cache Key</th>
+              <th>Expires</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in cache_entries %}
+            <tr>
+              <td><span class="badge bg-light text-dark">{{ entry.resolution_type }}</span></td>
+              <td>
+                <span class="badge {% if entry.source_type == 'API' %}bg-success{% elif entry.source_type == 'DB_FALLBACK' %}bg-secondary{% else %}bg-info{% endif %}">
+                  {{ entry.source_type }}
+                </span>
+              </td>
+              <td class="font-monospace small text-muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ entry.cache_key }}">
+                {{ entry.cache_key|truncatechars:30 }}
+              </td>
+              <td class="small">{{ entry.expires_at|date:"d M Y H:i" }}</td>
+              <td class="text-muted small">{{ entry.created_at|date:"d M H:i:s" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-hdd fs-1 d-block mb-2"></i>
+      No cached entries for this connector.
+    </div>
+    {% endif %}
+  </div>{# /tab-cache #}
+
+</div>{# /tab-content #}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  var typeSelect = document.getElementById('id_connector_type');
+  if (!typeSelect) return;
+
+  // ── Section toggle ──
+  var SECTIONS = {
+    CUSTOM:     ['section-rest'],
+    SQLSERVER:  ['section-sql'],
+    MYSQL:      ['section-sql'],
+    DYNAMICS:   ['section-rest', 'section-oauth'],
+    ZOHO:       ['section-rest', 'section-oauth'],
+    SALESFORCE: ['section-rest', 'section-oauth']
+  };
+
+  function toggleSections() {
+    var val = typeSelect.value;
+    var show = SECTIONS[val] || [];
+    var cards = document.querySelectorAll('.conn-section');
+    for (var i = 0; i < cards.length; i++) {
+      cards[i].style.display = show.indexOf(cards[i].id) !== -1 ? '' : 'none';
+    }
+    // Toggle SQL Server-only fields
+    var sqlOnly = document.querySelectorAll('.sqlserver-only');
+    for (var j = 0; j < sqlOnly.length; j++) {
+      sqlOnly[j].style.display = (val === 'SQLSERVER') ? '' : 'none';
+    }
+    // Update section title and port hint
+    var titleEl = document.getElementById('sql-section-title');
+    var portField = document.getElementById('id_db_port');
+    if (val === 'MYSQL') {
+      if (titleEl) titleEl.textContent = 'MySQL / MariaDB Configuration';
+      if (portField) portField.placeholder = '3306';
+    } else {
+      if (titleEl) titleEl.textContent = 'SQL Server Configuration';
+      if (portField) portField.placeholder = '1433';
+    }
+    if (val === 'SQLSERVER' || val === 'MYSQL') initSqlMode();
+  }
+
+  typeSelect.addEventListener('change', function() {
+    toggleSections();
+    resetTest();
+  });
+  toggleSections();
+
+  // ── SQL mode toggle (builder vs env) ──
+  var sqlModeBuilder = document.getElementById('sql_mode_builder');
+  var sqlModeEnv = document.getElementById('sql_mode_env');
+  var sqlBuilderFields = document.getElementById('sql-builder-fields');
+  var sqlEnvFields = document.getElementById('sql-env-fields');
+
+  function initSqlMode() {
+    // Auto-select env mode if connection_string_env has a value but builder fields are empty
+    var csEnv = document.getElementById('id_connection_string_env');
+    var dbHost = document.getElementById('id_db_host');
+    if (csEnv && csEnv.value && (!dbHost || !dbHost.value)) {
+      sqlModeEnv.checked = true;
+    }
+    applySqlMode();
+  }
+
+  function applySqlMode() {
+    if (!sqlBuilderFields) return;
+    if (sqlModeBuilder.checked) {
+      sqlBuilderFields.style.display = '';
+      sqlEnvFields.style.display = 'none';
+    } else {
+      sqlBuilderFields.style.display = 'none';
+      sqlEnvFields.style.display = '';
+    }
+  }
+
+  if (sqlModeBuilder) sqlModeBuilder.addEventListener('change', function() { applySqlMode(); resetTest(); });
+  if (sqlModeEnv) sqlModeEnv.addEventListener('change', function() { applySqlMode(); resetTest(); });
+
+  // ── Test connection ──
+  var btnTest = document.getElementById('btn-test');
+  var btnSubmit = document.getElementById('btn-submit');
+  var testResult = document.getElementById('test-result');
+  var testSpinner = document.getElementById('test-spinner');
+  var testPassed = false;
+
+  var watchFields = [
+    'id_connector_type', 'id_base_url', 'id_auth_type', 'id_api_key_env',
+    'id_connection_string_env', 'id_database_name',
+    'id_tenant_id', 'id_client_id_env', 'id_client_secret_env',
+    'id_metadata_json',
+    'id_db_host', 'id_db_port', 'id_db_username', 'id_db_password', 'id_db_driver', 'id_db_trust_cert',
+  ];
+  watchFields.forEach(function(fid) {
+    var el = document.getElementById(fid);
+    if (el) el.addEventListener('input', resetTest);
+  });
+
+  function resetTest() {
+    testPassed = false;
+    btnSubmit.disabled = true;
+    testResult.style.display = 'none';
+    testResult.innerHTML = '';
+  }
+
+  btnTest.addEventListener('click', function() {
+    testResult.style.display = 'none';
+    testSpinner.style.display = '';
+    btnTest.disabled = true;
+
+    var payload = {
+      connector_type: fval('id_connector_type'),
+      base_url: fval('id_base_url'),
+      timeout_seconds: fval('id_timeout_seconds'),
+      auth_type: fval('id_auth_type'),
+      api_key_env: fval('id_api_key_env'),
+      connection_string_env: fval('id_connection_string_env'),
+      database_name: fval('id_database_name'),
+      tenant_id: fval('id_tenant_id'),
+      client_id_env: fval('id_client_id_env'),
+      client_secret_env: fval('id_client_secret_env'),
+      metadata_json: fval('id_metadata_json'),
+      db_host: fval('id_db_host'),
+      db_port: fval('id_db_port'),
+      db_username: fval('id_db_username'),
+      db_password: fval('id_db_password'),
+      db_driver: fval('id_db_driver'),
+      db_trust_cert: (function(){ var e = document.getElementById('id_db_trust_cert'); return e ? e.checked : false; })()
+    };
+
+    fetch('{% url "erp_integration:erp_connection_test_ajax" %}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+      },
+      body: JSON.stringify(payload)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      testSpinner.style.display = 'none';
+      btnTest.disabled = false;
+      testResult.style.display = '';
+      if (data.success) {
+        testPassed = true;
+        btnSubmit.disabled = false;
+        testResult.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>' + escapeHtml(data.message) + '</span>';
+      } else {
+        testPassed = false;
+        btnSubmit.disabled = true;
+        testResult.innerHTML = '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>' + escapeHtml(data.message) + '</span>';
+      }
+    })
+    .catch(function(err) {
+      testSpinner.style.display = 'none';
+      btnTest.disabled = false;
+      testResult.style.display = '';
+      testResult.innerHTML = '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Network error</span>';
+    });
+  });
+
+  function fval(id) {
+    var el = document.getElementById(id);
+    return el ? el.value : '';
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
+  }
+})();
+</script>
+{% endblock %}

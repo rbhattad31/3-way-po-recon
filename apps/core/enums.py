@@ -8,9 +8,18 @@ class InvoiceStatus(models.TextChoices):
     EXTRACTED = "EXTRACTED", "Extracted"
     VALIDATED = "VALIDATED", "Validated"
     INVALID = "INVALID", "Invalid"
+    PENDING_APPROVAL = "PENDING_APPROVAL", "Pending Approval"
     READY_FOR_RECON = "READY_FOR_RECON", "Ready for Reconciliation"
     RECONCILED = "RECONCILED", "Reconciled"
+    SUPERSEDED = "SUPERSEDED", "Superseded"
     FAILED = "FAILED", "Failed"
+
+
+class ExtractionApprovalStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    APPROVED = "APPROVED", "Approved"
+    REJECTED = "REJECTED", "Rejected"
+    AUTO_APPROVED = "AUTO_APPROVED", "Auto-Approved"
 
 
 class ReconciliationMode(models.TextChoices):
@@ -123,8 +132,14 @@ class UserRole(models.TextChoices):
 
 class DocumentType(models.TextChoices):
     INVOICE = "INVOICE", "Invoice"
+    CREDIT_NOTE = "CREDIT_NOTE", "Credit Note"
+    DEBIT_NOTE = "DEBIT_NOTE", "Debit Note"
+    DELIVERY_NOTE = "DELIVERY_NOTE", "Delivery Note"
+    STATEMENT = "STATEMENT", "Statement"
     PURCHASE_ORDER = "PO", "Purchase Order"
     GRN = "GRN", "Goods Receipt Note"
+    PROCUREMENT_RFQ = "PROCUREMENT_RFQ", "Procurement RFQ"
+    PROCUREMENT_QUOTATION = "PROCUREMENT_QUOTATION", "Procurement Quotation"
 
 
 class FileProcessingState(models.TextChoices):
@@ -210,6 +225,72 @@ class AuditEventType(models.TextChoices):
     COPILOT_GOVERNANCE_CONTEXT_VIEWED = "COPILOT_GOVERNANCE_CONTEXT_VIEWED", "Copilot Governance Context Viewed"
     COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST = "COPILOT_UNAUTHORIZED_GOVERNANCE_REQUEST", "Copilot Unauthorized Governance Request"
     COPILOT_SENSITIVE_FIELD_REDACTED = "COPILOT_SENSITIVE_FIELD_REDACTED", "Copilot Sensitive Field Redacted"
+    # Extraction pipeline events
+    EXTRACTION_STARTED = "EXTRACTION_STARTED", "Extraction Started"
+    INVOICE_PERSISTED = "INVOICE_PERSISTED", "Invoice Persisted"
+    EXTRACTION_RESULT_PERSISTED = "EXTRACTION_RESULT_PERSISTED", "Extraction Result Persisted"
+    DUPLICATE_DETECTED = "DUPLICATE_DETECTED", "Duplicate Detected"
+    VENDOR_RESOLVED = "VENDOR_RESOLVED", "Vendor Resolved"
+    # Extraction approval events
+    EXTRACTION_APPROVAL_PENDING = "EXTRACTION_APPROVAL_PENDING", "Extraction Approval Pending"
+    EXTRACTION_APPROVED = "EXTRACTION_APPROVED", "Extraction Approved"
+    EXTRACTION_REJECTED = "EXTRACTION_REJECTED", "Extraction Rejected"
+    EXTRACTION_AUTO_APPROVED = "EXTRACTION_AUTO_APPROVED", "Extraction Auto-Approved"
+    EXTRACTION_FIELD_CORRECTED = "EXTRACTION_FIELD_CORRECTED", "Extraction Field Corrected"
+    # Extraction platform governance events
+    JURISDICTION_RESOLVED = "JURISDICTION_RESOLVED", "Jurisdiction Resolved"
+    SCHEMA_SELECTED = "SCHEMA_SELECTED", "Schema Selected"
+    PROMPT_SELECTED = "PROMPT_SELECTED", "Prompt Selected"
+    NORMALIZATION_COMPLETED = "NORMALIZATION_COMPLETED", "Normalization Completed"
+    VALIDATION_COMPLETED = "VALIDATION_COMPLETED", "Validation Completed"
+    EVIDENCE_CAPTURED = "EVIDENCE_CAPTURED", "Evidence Captured"
+    REVIEW_ROUTE_ASSIGNED = "REVIEW_ROUTE_ASSIGNED", "Review Route Assigned"
+    EXTRACTION_REPROCESSED = "EXTRACTION_REPROCESSED", "Extraction Reprocessed"
+    EXTRACTION_ESCALATED = "EXTRACTION_ESCALATED", "Extraction Escalated"
+    EXTRACTION_COMMENT_ADDED = "EXTRACTION_COMMENT_ADDED", "Extraction Comment Added"
+    SETTINGS_UPDATED = "SETTINGS_UPDATED", "Settings Updated"
+    SCHEMA_UPDATED = "SCHEMA_UPDATED", "Schema Updated"
+    PROMPT_UPDATED = "PROMPT_UPDATED", "Prompt Updated"
+    ROUTING_RULE_UPDATED = "ROUTING_RULE_UPDATED", "Routing Rule Updated"
+    ANALYTICS_SNAPSHOT_CREATED = "ANALYTICS_SNAPSHOT_CREATED", "Analytics Snapshot Created"
+    # Credit management events
+    CREDIT_CHECKED = "CREDIT_CHECKED", "Credit Checked"
+    CREDIT_RESERVED = "CREDIT_RESERVED", "Credit Reserved"
+    CREDIT_CONSUMED = "CREDIT_CONSUMED", "Credit Consumed"
+    CREDIT_REFUNDED = "CREDIT_REFUNDED", "Credit Refunded"
+    CREDIT_ALLOCATION_UPDATED = "CREDIT_ALLOCATION_UPDATED", "Credit Allocation Updated"
+    CREDIT_LIMIT_EXCEEDED = "CREDIT_LIMIT_EXCEEDED", "Credit Limit Exceeded"
+    CREDIT_MONTHLY_RESET = "CREDIT_MONTHLY_RESET", "Credit Monthly Reset"
+    # Bulk extraction events
+    BULK_JOB_CREATED = "BULK_JOB_CREATED", "Bulk Job Created"
+    BULK_JOB_STARTED = "BULK_JOB_STARTED", "Bulk Job Started"
+    BULK_ITEM_REGISTERED = "BULK_ITEM_REGISTERED", "Bulk Item Registered"
+    BULK_ITEM_SKIPPED = "BULK_ITEM_SKIPPED", "Bulk Item Skipped"
+    BULK_ITEM_CREDIT_BLOCKED = "BULK_ITEM_CREDIT_BLOCKED", "Bulk Item Credit Blocked"
+    BULK_JOB_COMPLETED = "BULK_JOB_COMPLETED", "Bulk Job Completed"
+    BULK_JOB_FAILED = "BULK_JOB_FAILED", "Bulk Job Failed"
+    # Posting events
+    POSTING_STARTED = "POSTING_STARTED", "Posting Started"
+    POSTING_ELIGIBILITY_PASSED = "POSTING_ELIGIBILITY_PASSED", "Posting Eligibility Passed"
+    POSTING_ELIGIBILITY_FAILED = "POSTING_ELIGIBILITY_FAILED", "Posting Eligibility Failed"
+    POSTING_MAPPING_COMPLETED = "POSTING_MAPPING_COMPLETED", "Posting Mapping Completed"
+    POSTING_MAPPING_REVIEW_REQUIRED = "POSTING_MAPPING_REVIEW_REQUIRED", "Posting Mapping Review Required"
+    POSTING_VALIDATION_COMPLETED = "POSTING_VALIDATION_COMPLETED", "Posting Validation Completed"
+    POSTING_READY_TO_SUBMIT = "POSTING_READY_TO_SUBMIT", "Posting Ready to Submit"
+    POSTING_SUBMITTED = "POSTING_SUBMITTED", "Posting Submitted"
+    POSTING_SUCCEEDED = "POSTING_SUCCEEDED", "Posting Succeeded"
+    POSTING_FAILED = "POSTING_FAILED", "Posting Failed"
+    POSTING_APPROVED = "POSTING_APPROVED", "Posting Approved"
+    POSTING_REJECTED = "POSTING_REJECTED", "Posting Rejected"
+    POSTING_FIELD_CORRECTED = "POSTING_FIELD_CORRECTED", "Posting Field Corrected"
+    ERP_REFERENCE_IMPORT_STARTED = "ERP_REFERENCE_IMPORT_STARTED", "ERP Reference Import Started"
+    ERP_REFERENCE_IMPORT_COMPLETED = "ERP_REFERENCE_IMPORT_COMPLETED", "ERP Reference Import Completed"
+    ERP_REFERENCE_IMPORT_FAILED = "ERP_REFERENCE_IMPORT_FAILED", "ERP Reference Import Failed"
+    # Auth events
+    USER_LOGIN = "USER_LOGIN", "User Login"
+    USER_LOGOUT = "USER_LOGOUT", "User Logout"
+    USER_LOGIN_FAILED = "USER_LOGIN_FAILED", "User Login Failed"
+    PASSWORD_CHANGED = "PASSWORD_CHANGED", "Password Changed"
 
 
 class PermissionOverrideType(models.TextChoices):
@@ -395,3 +476,422 @@ class CopilotArtifactType(models.TextChoices):
     EVIDENCE_CARD = "EVIDENCE_CARD", "Evidence Card"
     RECOMMENDATION = "RECOMMENDATION", "Recommendation"
     GOVERNANCE_TRACE = "GOVERNANCE_TRACE", "Governance Trace"
+
+
+# ---------------------------------------------------------------------------
+# Procurement Intelligence enums
+# ---------------------------------------------------------------------------
+
+
+class ProcurementRequestType(models.TextChoices):
+    RECOMMENDATION = "RECOMMENDATION", "Product / Solution Recommendation"
+    BENCHMARK = "BENCHMARK", "Should-Cost Benchmarking"
+    BOTH = "BOTH", "Recommendation + Benchmarking"
+
+
+class ProcurementRequestStatus(models.TextChoices):
+    DRAFT = "DRAFT", "Draft"
+    READY = "READY", "Ready"
+    PROCESSING = "PROCESSING", "Processing"
+    COMPLETED = "COMPLETED", "Completed"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED", "Review Required"
+    FAILED = "FAILED", "Failed"
+
+
+class AnalysisRunType(models.TextChoices):
+    RECOMMENDATION = "RECOMMENDATION", "Recommendation"
+    BENCHMARK = "BENCHMARK", "Benchmark"
+    VALIDATION = "VALIDATION", "Validation"
+
+
+class AnalysisRunStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    RUNNING = "RUNNING", "Running"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+
+
+class ExtractionStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    IN_PROGRESS = "IN_PROGRESS", "In Progress"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+
+
+class ComplianceStatus(models.TextChoices):
+    PASS = "PASS", "Pass"
+    FAIL = "FAIL", "Fail"
+    PARTIAL = "PARTIAL", "Partial"
+    NOT_CHECKED = "NOT_CHECKED", "Not Checked"
+
+
+class VarianceStatus(models.TextChoices):
+    WITHIN_RANGE = "WITHIN_RANGE", "Within Range"
+    ABOVE_BENCHMARK = "ABOVE_BENCHMARK", "Above Benchmark"
+    BELOW_BENCHMARK = "BELOW_BENCHMARK", "Below Benchmark"
+    SIGNIFICANTLY_ABOVE = "SIGNIFICANTLY_ABOVE", "Significantly Above"
+
+
+class BenchmarkRiskLevel(models.TextChoices):
+    LOW = "LOW", "Low"
+    MEDIUM = "MEDIUM", "Medium"
+    HIGH = "HIGH", "High"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+# ---------------------------------------------------------------------------
+# Validation Framework enums
+# ---------------------------------------------------------------------------
+
+
+class ValidationType(models.TextChoices):
+    ATTRIBUTE_COMPLETENESS = "ATTRIBUTE_COMPLETENESS", "Attribute Completeness"
+    DOCUMENT_COMPLETENESS = "DOCUMENT_COMPLETENESS", "Document Completeness"
+    SCOPE_COVERAGE = "SCOPE_COVERAGE", "Scope Coverage"
+    AMBIGUITY_CHECK = "AMBIGUITY_CHECK", "Ambiguity Check"
+    COMMERCIAL_COMPLETENESS = "COMMERCIAL_COMPLETENESS", "Commercial Completeness"
+    COMPLIANCE_READINESS = "COMPLIANCE_READINESS", "Compliance Readiness"
+
+
+class ValidationOverallStatus(models.TextChoices):
+    PASS = "PASS", "Pass"
+    PASS_WITH_WARNINGS = "PASS_WITH_WARNINGS", "Pass with Warnings"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED", "Review Required"
+    FAIL = "FAIL", "Fail"
+
+
+class ValidationRuleType(models.TextChoices):
+    REQUIRED_ATTRIBUTE = "REQUIRED_ATTRIBUTE", "Required Attribute"
+    REQUIRED_DOCUMENT = "REQUIRED_DOCUMENT", "Required Document"
+    REQUIRED_CATEGORY = "REQUIRED_CATEGORY", "Required Category"
+    AMBIGUITY_PATTERN = "AMBIGUITY_PATTERN", "Ambiguity Pattern"
+    COMMERCIAL_CHECK = "COMMERCIAL_CHECK", "Commercial Check"
+    COMPLIANCE_CHECK = "COMPLIANCE_CHECK", "Compliance Check"
+
+
+class ValidationSeverity(models.TextChoices):
+    INFO = "INFO", "Info"
+    WARNING = "WARNING", "Warning"
+    ERROR = "ERROR", "Error"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class ValidationEvaluationMode(models.TextChoices):
+    DETERMINISTIC = "DETERMINISTIC", "Deterministic"
+    AGENT_ASSISTED = "AGENT_ASSISTED", "Agent-Assisted"
+
+
+class ValidationItemStatus(models.TextChoices):
+    PRESENT = "PRESENT", "Present"
+    MISSING = "MISSING", "Missing"
+    WARNING = "WARNING", "Warning"
+    AMBIGUOUS = "AMBIGUOUS", "Ambiguous"
+    FAILED = "FAILED", "Failed"
+
+
+class ValidationSourceType(models.TextChoices):
+    ATTRIBUTE = "ATTRIBUTE", "Attribute"
+    DOCUMENT = "DOCUMENT", "Document"
+    LINE_ITEM = "LINE_ITEM", "Line Item"
+    RULE = "RULE", "Rule"
+    AGENT = "AGENT", "Agent"
+
+
+class ValidationNextAction(models.TextChoices):
+    READY_FOR_RECOMMENDATION = "READY_FOR_RECOMMENDATION", "Ready for Recommendation"
+    READY_FOR_BENCHMARKING = "READY_FOR_BENCHMARKING", "Ready for Benchmarking"
+    REQUEST_REFINEMENT = "REQUEST_REFINEMENT", "Request Refinement"
+    NEEDS_TECHNICAL_REVIEW = "NEEDS_TECHNICAL_REVIEW", "Needs Technical Review"
+    NEEDS_COMMERCIAL_REVIEW = "NEEDS_COMMERCIAL_REVIEW", "Needs Commercial Review"
+
+
+class CreditTransactionType(models.TextChoices):
+    ALLOCATE = "ALLOCATE", "Allocate"
+    RESERVE = "RESERVE", "Reserve"
+    CONSUME = "CONSUME", "Consume"
+    REFUND = "REFUND", "Refund"
+    ADJUST = "ADJUST", "Adjust"
+    MONTHLY_RESET = "MONTHLY_RESET", "Monthly Reset"
+
+
+class AttributeDataType(models.TextChoices):
+    TEXT = "TEXT", "Text"
+    NUMBER = "NUMBER", "Number"
+    BOOLEAN = "BOOLEAN", "Boolean"
+    JSON = "JSON", "JSON"
+    DATE = "DATE", "Date"
+    SELECT = "SELECT", "Select"
+
+
+# ---------------------------------------------------------------------------
+# Prefill / PDF-led extraction enums
+# ---------------------------------------------------------------------------
+
+
+class PrefillStatus(models.TextChoices):
+    NOT_STARTED = "NOT_STARTED", "Not Started"
+    IN_PROGRESS = "IN_PROGRESS", "In Progress"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+    REVIEW_PENDING = "REVIEW_PENDING", "Review Pending"
+
+
+class SourceDocumentType(models.TextChoices):
+    RFQ = "RFQ", "RFQ"
+    REQUIREMENT_NOTE = "REQUIREMENT_NOTE", "Requirement Note"
+    SPECIFICATION = "SPECIFICATION", "Specification"
+    BOQ = "BOQ", "BOQ"
+    PROPOSAL = "PROPOSAL", "Proposal"
+    QUOTATION = "QUOTATION", "Quotation"
+    OTHER = "OTHER", "Other"
+
+
+class ExtractionSourceType(models.TextChoices):
+    MANUAL = "MANUAL", "Manual"
+    PREFILL = "PREFILL", "Prefill"
+    SYSTEM = "SYSTEM", "System"
+
+
+# ---------------------------------------------------------------------------
+# Multi-Country Extraction Platform enums
+# ---------------------------------------------------------------------------
+
+
+class TaxRegime(models.TextChoices):
+    GST = "GST", "Goods and Services Tax (India)"
+    VAT_UAE = "VAT_UAE", "Value Added Tax (UAE)"
+    VAT_SA = "VAT_SA", "Value Added Tax (Saudi Arabia)"
+    VAT_EU = "VAT_EU", "Value Added Tax (EU)"
+    NONE = "NONE", "No Tax Regime"
+
+
+class JurisdictionResolutionMethod(models.TextChoices):
+    TAX_ID_REGEX = "TAX_ID_REGEX", "Tax ID Regex Match"
+    CURRENCY_DETECTION = "CURRENCY_DETECTION", "Currency Detection"
+    ADDRESS_KEYWORDS = "ADDRESS_KEYWORDS", "Address Keywords"
+    EXPLICIT = "EXPLICIT", "Explicitly Provided"
+    LLM_FALLBACK = "LLM_FALLBACK", "LLM Fallback"
+    MANUAL = "MANUAL", "Manual Override"
+
+
+class ExtractionDocumentStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    CLASSIFYING = "CLASSIFYING", "Classifying"
+    EXTRACTING = "EXTRACTING", "Extracting"
+    NORMALIZING = "NORMALIZING", "Normalizing"
+    VALIDATING = "VALIDATING", "Validating"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+
+
+class FieldExtractionMethod(models.TextChoices):
+    DETERMINISTIC = "DETERMINISTIC", "Deterministic (regex/rule)"
+    LLM = "LLM", "LLM-based"
+    HYBRID = "HYBRID", "Hybrid (rule + LLM)"
+    MANUAL = "MANUAL", "Manual Override"
+
+
+class JurisdictionMode(models.TextChoices):
+    """How the system resolves jurisdiction for extraction."""
+    AUTO = "AUTO", "Auto-Detect"
+    FIXED = "FIXED", "Fixed (configured)"
+    HYBRID = "HYBRID", "Hybrid (configured + detection fallback)"
+
+
+class JurisdictionSource(models.TextChoices):
+    """Where the resolved jurisdiction came from."""
+    DOCUMENT_OVERRIDE = "DOCUMENT_OVERRIDE", "Document-Level Override"
+    ENTITY_PROFILE = "ENTITY_PROFILE", "Entity Extraction Profile"
+    SYSTEM_SETTINGS = "SYSTEM_SETTINGS", "System Runtime Settings"
+    AUTO_DETECTED = "AUTO_DETECTED", "Auto-Detected"
+    HYBRID_CONFIGURED = "HYBRID_CONFIGURED", "Hybrid — Configured Primary"
+    HYBRID_FALLBACK = "HYBRID_FALLBACK", "Hybrid — Detection Fallback"
+    FIXED = "FIXED", "Fixed (System Settings)"
+    ENTITY = "ENTITY", "Entity Profile"
+
+
+# ---------------------------------------------------------------------------
+# Extraction Platform Upgrade enums
+# ---------------------------------------------------------------------------
+
+
+class ExtractionRunStatus(models.TextChoices):
+    """Lifecycle status of an ExtractionRun."""
+    PENDING = "PENDING", "Pending"
+    JURISDICTION_RESOLVED = "JURISDICTION_RESOLVED", "Jurisdiction Resolved"
+    SCHEMA_SELECTED = "SCHEMA_SELECTED", "Schema Selected"
+    PROMPT_BUILT = "PROMPT_BUILT", "Prompt Built"
+    EXTRACTING = "EXTRACTING", "Extracting"
+    NORMALIZING = "NORMALIZING", "Normalizing"
+    VALIDATING = "VALIDATING", "Validating"
+    EVIDENCE_CAPTURING = "EVIDENCE_CAPTURING", "Evidence Capturing"
+    ROUTING = "ROUTING", "Routing"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+
+
+class ExtractionIssueSeverity(models.TextChoices):
+    """Severity of an extraction issue."""
+    INFO = "INFO", "Info"
+    WARNING = "WARNING", "Warning"
+    ERROR = "ERROR", "Error"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class ReviewQueue(models.TextChoices):
+    """Review queue classification for extraction review routing."""
+    AP_REVIEW = "AP_REVIEW", "AP Review"
+    TAX_REVIEW = "TAX_REVIEW", "Tax Review"
+    MASTER_DATA_REVIEW = "MASTER_DATA_REVIEW", "Master Data Review"
+    EXCEPTION_OPS = "EXCEPTION_OPS", "Exception Ops"
+    COMPLIANCE = "COMPLIANCE", "Compliance"
+
+
+class ExtractionApprovalAction(models.TextChoices):
+    """Approval actions for extractions."""
+    APPROVED = "APPROVED", "Approved"
+    REJECTED = "REJECTED", "Rejected"
+    ESCALATED = "ESCALATED", "Escalated"
+    REPROCESSED = "REPROCESSED", "Reprocessed"
+
+
+class CountryPackStatus(models.TextChoices):
+    """Activation status for country packs."""
+    DRAFT = "DRAFT", "Draft"
+    ACTIVE = "ACTIVE", "Active"
+    DEPRECATED = "DEPRECATED", "Deprecated"
+
+
+# ---------------------------------------------------------------------------
+# Bulk Extraction Intake enums
+# ---------------------------------------------------------------------------
+
+
+class BulkSourceType(models.TextChoices):
+    LOCAL_FOLDER = "LOCAL_FOLDER", "Local Folder"
+    GOOGLE_DRIVE = "GOOGLE_DRIVE", "Google Drive"
+    ONEDRIVE = "ONEDRIVE", "OneDrive"
+
+
+class BulkJobStatus(models.TextChoices):
+    QUEUED = "QUEUED", "Queued"
+    SCANNING = "SCANNING", "Scanning"
+    PROCESSING = "PROCESSING", "Processing"
+    COMPLETED = "COMPLETED", "Completed"
+    PARTIAL_FAILED = "PARTIAL_FAILED", "Partial Failed"
+    FAILED = "FAILED", "Failed"
+
+
+class BulkItemStatus(models.TextChoices):
+    DISCOVERED = "DISCOVERED", "Discovered"
+    SKIPPED = "SKIPPED", "Skipped"
+    CREDIT_BLOCKED = "CREDIT_BLOCKED", "Credit Blocked"
+    REGISTERED = "REGISTERED", "Registered"
+    PROCESSING = "PROCESSING", "Processing"
+    PROCESSED = "PROCESSED", "Processed"
+    FAILED = "FAILED", "Failed"
+    DUPLICATE = "DUPLICATE", "Duplicate"
+    UNSUPPORTED = "UNSUPPORTED", "Unsupported"
+
+
+# ---------------------------------------------------------------------------
+# Invoice Posting enums
+# ---------------------------------------------------------------------------
+
+
+class InvoicePostingStatus(models.TextChoices):
+    NOT_READY = "NOT_READY", "Not Ready"
+    READY_FOR_POSTING = "READY_FOR_POSTING", "Ready for Posting"
+    MAPPING_IN_PROGRESS = "MAPPING_IN_PROGRESS", "Mapping In Progress"
+    MAPPING_REVIEW_REQUIRED = "MAPPING_REVIEW_REQUIRED", "Mapping Review Required"
+    READY_TO_SUBMIT = "READY_TO_SUBMIT", "Ready to Submit"
+    SUBMISSION_IN_PROGRESS = "SUBMISSION_IN_PROGRESS", "Submission In Progress"
+    POSTED = "POSTED", "Posted"
+    POST_FAILED = "POST_FAILED", "Post Failed"
+    REJECTED = "REJECTED", "Rejected"
+    RETRY_PENDING = "RETRY_PENDING", "Retry Pending"
+    SKIPPED = "SKIPPED", "Skipped"
+
+
+class PostingRunStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    RUNNING = "RUNNING", "Running"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+    CANCELLED = "CANCELLED", "Cancelled"
+
+
+class PostingStage(models.TextChoices):
+    ELIGIBILITY_CHECK = "ELIGIBILITY_CHECK", "Eligibility Check"
+    SNAPSHOT_BUILD = "SNAPSHOT_BUILD", "Snapshot Build"
+    REFERENCE_RESOLUTION = "REFERENCE_RESOLUTION", "Reference Resolution"
+    MAPPING = "MAPPING", "Mapping"
+    VALIDATION = "VALIDATION", "Validation"
+    REVIEW_ROUTING = "REVIEW_ROUTING", "Review Routing"
+    PAYLOAD_BUILD = "PAYLOAD_BUILD", "Payload Build"
+    SUBMISSION = "SUBMISSION", "Submission"
+    FINALIZATION = "FINALIZATION", "Finalization"
+
+
+class PostingReviewQueue(models.TextChoices):
+    ITEM_MAPPING_REVIEW = "ITEM_MAPPING_REVIEW", "Item Mapping Review"
+    VENDOR_MAPPING_REVIEW = "VENDOR_MAPPING_REVIEW", "Vendor Mapping Review"
+    TAX_REVIEW = "TAX_REVIEW", "Tax Review"
+    COST_CENTER_REVIEW = "COST_CENTER_REVIEW", "Cost Center Review"
+    PO_REVIEW = "PO_REVIEW", "PO Review"
+    POSTING_OPS = "POSTING_OPS", "Posting Ops"
+
+
+class ERPReferenceBatchType(models.TextChoices):
+    VENDOR = "VENDOR", "Vendor"
+    ITEM = "ITEM", "Item"
+    TAX = "TAX", "Tax"
+    COST_CENTER = "COST_CENTER", "Cost Center"
+    OPEN_PO = "OPEN_PO", "Open PO"
+
+
+class ERPReferenceBatchStatus(models.TextChoices):
+    PENDING = "PENDING", "Pending"
+    COMPLETED = "COMPLETED", "Completed"
+    FAILED = "FAILED", "Failed"
+    PARTIAL = "PARTIAL", "Partial"
+
+
+class PostingFieldCategory(models.TextChoices):
+    HEADER = "HEADER", "Header"
+    LINE_ITEM = "LINE_ITEM", "Line Item"
+    TAX = "TAX", "Tax"
+    ACCOUNTING = "ACCOUNTING", "Accounting"
+    REFERENCE = "REFERENCE", "Reference"
+
+
+class PostingFieldSourceType(models.TextChoices):
+    INVOICE = "INVOICE", "Invoice"
+    INVOICE_LINE = "INVOICE_LINE", "Invoice Line"
+    VENDOR_REF = "VENDOR_REF", "Vendor Reference"
+    ITEM_REF = "ITEM_REF", "Item Reference"
+    TAX_REF = "TAX_REF", "Tax Reference"
+    COST_CENTER_REF = "COST_CENTER_REF", "Cost Center Reference"
+    PO_REF = "PO_REF", "PO Reference"
+    MANUAL_OVERRIDE = "MANUAL_OVERRIDE", "Manual Override"
+    RULE = "RULE", "Rule"
+
+
+class PostingIssueSeverity(models.TextChoices):
+    INFO = "INFO", "Info"
+    WARNING = "WARNING", "Warning"
+    ERROR = "ERROR", "Error"
+    CRITICAL = "CRITICAL", "Critical"
+
+
+class PostingRuleType(models.TextChoices):
+    CATEGORY_MAP = "CATEGORY_MAP", "Category Mapping"
+    TAX_MAP = "TAX_MAP", "Tax Code Mapping"
+    COST_CENTER_MAP = "COST_CENTER_MAP", "Cost Center Mapping"
+    LINE_TYPE_MAP = "LINE_TYPE_MAP", "Line Type Mapping"
+    BLOCK_RULE = "BLOCK_RULE", "Block Rule"
+
+
+class PostingApprovalAction(models.TextChoices):
+    APPROVED = "APPROVED", "Approved"
+    REJECTED = "REJECTED", "Rejected"

@@ -1,0 +1,625 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% block title %}Extraction Result #{{ ext.pk }} – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Invoice Extraction Agent</a></li>
+    <li class="breadcrumb-item active">Result #{{ ext.pk }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# ── Action bar ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-robot me-2"></i>Agent Result
+    </h5>
+    {% if ext.success %}
+    <span class="ap-badge ap-badge-success">Success</span>
+    {% else %}
+    <span class="ap-badge ap-badge-danger">Failed</span>
+    {% endif %}
+    {% if ext.confidence is not None %}
+    <div class="ap-confidence ms-1">
+      <div class="ap-confidence-bar">
+        <div class="ap-confidence-fill {% if ext.confidence >= 0.8 %}high{% elif ext.confidence >= 0.5 %}medium{% else %}low{% endif %}"
+             style="width:{% widthratio ext.confidence 1 100 %}%"></div>
+      </div>
+      <span>{% widthratio ext.confidence 1 100 %}%</span>
+    </div>
+    {% endif %}
+  </div>
+  <div class="d-flex gap-2">
+    {% if invoice %}
+    {% has_permission "extraction.correct" as can_edit %}
+    {% if can_edit %}
+    <button type="button" class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#editModal" title="Correct extracted values">
+      <i class="bi bi-pencil-square me-1"></i>Edit Values
+    </button>
+    {% endif %}
+    {% endif %}
+    {% if ext.raw_response %}
+    <a href="{% url 'extraction:result_json' ext.pk %}" class="btn btn-sm btn-outline-secondary" title="Download JSON">
+      <i class="bi bi-download me-1"></i>JSON
+    </a>
+    <a href="{% url 'extraction:console' ext.pk %}" class="btn btn-sm btn-outline-primary" title="Open Review Console">
+      <i class="bi bi-columns-gap me-1"></i>Review Console
+    </a>
+    {% endif %}
+    {% if ext.document_upload.blob_path %}
+    <form method="post" action="{% url 'extraction:rerun' ext.pk %}" class="d-inline">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-outline-primary" title="Re-run extraction">
+        <i class="bi bi-arrow-repeat me-1"></i>Re-extract
+      </button>
+    </form>
+    {% endif %}
+    {% if invoice %}
+    <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="btn btn-sm btn-outline-primary" title="Full invoice view">
+      <i class="bi bi-file-earmark-text me-1"></i>Invoice Detail
+    </a>
+    {% endif %}
+    {% if approval %}
+    <a href="{% url 'extraction:approval_detail' approval.pk %}" class="btn btn-sm {% if approval.status == 'PENDING' %}btn-success{% else %}btn-outline-info{% endif %}" title="Extraction approval">
+      <i class="bi bi-{% if approval.status == 'PENDING' %}check-circle{% elif approval.status == 'APPROVED' or approval.status == 'AUTO_APPROVED' %}check-circle-fill{% else %}x-circle{% endif %} me-1"></i>{% if approval.status == 'PENDING' %}Review & Approve{% else %}{{ approval.status }}{% endif %}
+    </a>
+    {% endif %}
+    <a href="{% url 'extraction:workbench' %}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back
+    </a>
+  </div>
+</div>
+
+{# ── Extraction Metadata ── #}
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body py-3 text-center">
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Engine</div>
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm)">{{ ext.engine_name }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">v{{ ext.engine_version }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body py-3 text-center">
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Duration</div>
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm)">{% if ext.duration_ms %}{{ ext.duration_ms|floatformat:0 }} ms{% else %}—{% endif %}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body py-3 text-center">
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">File</div>
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm)" title="{{ ext.document_upload.original_filename }}">{{ ext.document_upload.original_filename|truncatechars:25 }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ ext.document_upload.file_size|filesizeformat }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body py-3 text-center">
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Extracted At</div>
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm)">{{ ext.created_at|date:"d M Y" }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">{{ ext.created_at|date:"H:i:s" }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if not ext.success %}
+{# ── Error Message ── #}
+<div class="ap-card mb-4" style="border-left:3px solid var(--ap-danger)">
+  <div class="ap-card-body">
+    <div style="font-weight:600;color:var(--ap-danger);font-size:var(--ap-font-size-sm);margin-bottom:.25rem">
+      <i class="bi bi-exclamation-triangle me-1"></i>Extraction Error
+    </div>
+    <pre style="font-size:var(--ap-font-size-sm);margin:0;white-space:pre-wrap;color:var(--ap-text-secondary)">{{ ext.error_message|default:"Unknown error" }}</pre>
+  </div>
+</div>
+{% endif %}
+
+{% if invoice %}
+{# ══════════ EXTRACTED INVOICE DOCUMENT ══════════ #}
+<div class="row g-3">
+  {# ── Left Column: Invoice Data ── #}
+  <div class="col-lg-8">
+    <div class="ap-card" style="max-width:860px">
+      <div class="ap-card-body" style="padding:2rem 2.5rem">
+
+        {# ── Invoice Header ── #}
+        <div class="d-flex justify-content-between align-items-start mb-4">
+          <div>
+            <h4 class="mb-1 fw-bold" style="color:var(--ap-primary);letter-spacing:-0.5px">EXTRACTED INVOICE</h4>
+            <div style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+              {{ invoice.vendor.name|default:invoice.raw_vendor_name }}
+            </div>
+          </div>
+          <div class="text-end">
+            <div style="font-size:1.25rem;font-weight:700;color:var(--ap-text-primary)">{{ invoice.invoice_number }}</div>
+            <div style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+              {% if invoice.invoice_date %}{{ invoice.invoice_date|date:"d M Y" }}{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+
+        <hr style="border-color:var(--ap-border);margin:0 0 1.25rem">
+
+        {# ── Normalized Fields ── #}
+        <div class="row mb-4" style="font-size:var(--ap-font-size-sm)">
+          <div class="col-sm-4 mb-3">
+            <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Vendor</div>
+            <div style="font-weight:500">{{ invoice.vendor.name|default:invoice.raw_vendor_name|default:"—" }}</div>
+          </div>
+          <div class="col-sm-4 mb-3">
+            <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Invoice Number</div>
+            <div style="font-weight:500">{{ invoice.invoice_number|default:"—" }}</div>
+          </div>
+          <div class="col-sm-4 mb-3">
+            <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">PO Number</div>
+            <div style="font-weight:500">{{ invoice.po_number|default:"—" }}</div>
+          </div>
+          <div class="col-sm-4 mb-3">
+            <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Invoice Date</div>
+            <div style="font-weight:500">{% if invoice.invoice_date %}{{ invoice.invoice_date|date:"d M Y" }}{% else %}—{% endif %}</div>
+          </div>
+          <div class="col-sm-4 mb-3">
+            <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Currency</div>
+            <div style="font-weight:500">{{ invoice.currency }}</div>
+          </div>
+          <div class="col-sm-4 mb-3">
+            <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Status</div>
+            <div>
+              <span class="ap-badge {% if invoice.status == 'VALIDATED' %}ap-badge-success{% elif invoice.status == 'INVALID' %}ap-badge-danger{% elif invoice.status == 'EXTRACTED' %}ap-badge-primary{% else %}ap-badge-muted{% endif %}">
+                {{ invoice.get_status_display }}
+              </span>
+            </div>
+          </div>
+          {% if invoice.is_duplicate %}
+          <div class="col-sm-4 mb-3">
+            <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Duplicate</div>
+            <div><span class="ap-badge ap-badge-danger">Yes{% if invoice.duplicate_of %} — of #{{ invoice.duplicate_of.invoice_number }}{% endif %}</span></div>
+          </div>
+          {% endif %}
+        </div>
+
+        {# ── Raw vs Normalized side-by-side ── #}
+        {% if invoice.raw_vendor_name or invoice.raw_invoice_number %}
+        <div class="mb-4 p-3" style="background:var(--ap-bg-secondary);border-radius:var(--ap-radius);font-size:var(--ap-font-size-sm)">
+          <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.5rem">
+            <i class="bi bi-arrow-left-right me-1"></i>Raw ↔ Normalized Comparison
+          </div>
+          <table class="w-100" style="font-size:var(--ap-font-size-sm)">
+            <thead>
+              <tr style="border-bottom:1px solid var(--ap-border)">
+                <th style="padding:.4rem;width:120px;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase">Field</th>
+                <th style="padding:.4rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase">Raw (OCR)</th>
+                <th style="padding:.4rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase">Normalized</th>
+                <th style="padding:.4rem;width:40px;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;text-align:center">Match</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% with pairs="vendor_name,invoice_number,invoice_date,po_number,currency,subtotal,tax_amount,total_amount" %}
+              <tr style="border-bottom:1px solid var(--ap-border)">
+                <td style="padding:.4rem;font-weight:500">Vendor</td>
+                <td style="padding:.4rem;font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_vendor_name|default:"—" }}</td>
+                <td style="padding:.4rem">{{ invoice.vendor.name|default:invoice.raw_vendor_name|default:"—" }}</td>
+                <td style="padding:.4rem;text-align:center">{% if invoice.vendor %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-dash-circle text-warning"></i>{% endif %}</td>
+              </tr>
+              <tr style="border-bottom:1px solid var(--ap-border)">
+                <td style="padding:.4rem;font-weight:500">Invoice #</td>
+                <td style="padding:.4rem;font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_invoice_number|default:"—" }}</td>
+                <td style="padding:.4rem">{{ invoice.invoice_number|default:"—" }}</td>
+                <td style="padding:.4rem;text-align:center">{% if invoice.invoice_number %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-x-circle-fill text-danger"></i>{% endif %}</td>
+              </tr>
+              <tr style="border-bottom:1px solid var(--ap-border)">
+                <td style="padding:.4rem;font-weight:500">Invoice Date</td>
+                <td style="padding:.4rem;font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_invoice_date|default:"—" }}</td>
+                <td style="padding:.4rem">{% if invoice.invoice_date %}{{ invoice.invoice_date|date:"d M Y" }}{% else %}—{% endif %}</td>
+                <td style="padding:.4rem;text-align:center">{% if invoice.invoice_date %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-x-circle-fill text-danger"></i>{% endif %}</td>
+              </tr>
+              <tr style="border-bottom:1px solid var(--ap-border)">
+                <td style="padding:.4rem;font-weight:500">PO #</td>
+                <td style="padding:.4rem;font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_po_number|default:"—" }}</td>
+                <td style="padding:.4rem">{{ invoice.po_number|default:"—" }}</td>
+                <td style="padding:.4rem;text-align:center">{% if invoice.po_number %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-dash-circle text-warning"></i>{% endif %}</td>
+              </tr>
+              <tr style="border-bottom:1px solid var(--ap-border)">
+                <td style="padding:.4rem;font-weight:500">Currency</td>
+                <td style="padding:.4rem;font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_currency|default:"—" }}</td>
+                <td style="padding:.4rem">{{ invoice.currency }}</td>
+                <td style="padding:.4rem;text-align:center"><i class="bi bi-check-circle-fill text-success"></i></td>
+              </tr>
+              <tr style="border-bottom:1px solid var(--ap-border)">
+                <td style="padding:.4rem;font-weight:500">Subtotal</td>
+                <td style="padding:.4rem;font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_subtotal|default:"—" }}</td>
+                <td style="padding:.4rem">{% if invoice.subtotal %}{{ invoice.currency }} {{ invoice.subtotal|floatformat:2 }}{% else %}—{% endif %}</td>
+                <td style="padding:.4rem;text-align:center">{% if invoice.subtotal %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-dash-circle text-warning"></i>{% endif %}</td>
+              </tr>
+              <tr style="border-bottom:1px solid var(--ap-border)">
+                <td style="padding:.4rem;font-weight:500">Tax</td>
+                <td style="padding:.4rem;font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_tax_amount|default:"—" }}</td>
+                <td style="padding:.4rem">{% if invoice.tax_amount %}{{ invoice.currency }} {{ invoice.tax_amount|floatformat:2 }}{% else %}—{% endif %}</td>
+                <td style="padding:.4rem;text-align:center">{% if invoice.tax_amount %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-dash-circle text-warning"></i>{% endif %}</td>
+              </tr>
+              <tr>
+                <td style="padding:.4rem;font-weight:500">Total</td>
+                <td style="padding:.4rem;font-family:var(--ap-font-mono);font-size:.8rem">{{ invoice.raw_total_amount|default:"—" }}</td>
+                <td style="padding:.4rem;font-weight:600">{% if invoice.total_amount %}{{ invoice.currency }} {{ invoice.total_amount|floatformat:2 }}{% else %}—{% endif %}</td>
+                <td style="padding:.4rem;text-align:center">{% if invoice.total_amount %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-x-circle-fill text-danger"></i>{% endif %}</td>
+              </tr>
+              {% endwith %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+
+        {% if invoice.extraction_remarks %}
+        <div class="mb-4 p-3" style="background:#fff8e1;border-radius:var(--ap-radius);font-size:var(--ap-font-size-sm)">
+          <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">
+            <i class="bi bi-chat-left-text me-1"></i>Extraction Remarks
+          </div>
+          <pre style="margin:0;white-space:pre-wrap;font-size:var(--ap-font-size-sm)">{{ invoice.extraction_remarks }}</pre>
+        </div>
+        {% endif %}
+
+        <hr style="border-color:var(--ap-border);margin:0 0 1.25rem">
+
+        {# ── Line Items Table ── #}
+        <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.75rem">
+          Extracted Line Items ({{ line_items|length }})
+        </div>
+        <table class="w-100 mb-3" style="font-size:var(--ap-font-size-sm);border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:2px solid var(--ap-border)">
+              <th style="padding:.5rem .5rem .5rem 0;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;width:30px">#</th>
+              <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px">Description</th>
+              <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:70px">Qty</th>
+              <th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:110px">Unit Price</th>
+              {% if has_line_tax %}<th style="padding:.5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:90px">Tax</th>{% endif %}
+              <th style="padding:.5rem .0 .5rem .5rem;color:var(--ap-text-muted);font-weight:600;font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;text-align:right;width:110px">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line in line_items %}
+            <tr style="border-bottom:1px solid var(--ap-border)">
+              <td style="padding:.6rem .5rem .6rem 0;color:var(--ap-text-muted)">{{ line.line_number }}</td>
+              <td style="padding:.6rem .5rem">
+                {{ line.description|default:line.raw_description|truncatechars:80 }}
+                {% if line.is_service_item %}<span class="ap-badge ap-badge-info" style="font-size:.55rem;padding:.1rem .3rem;vertical-align:middle">SVC</span>{% endif %}
+                {% if line.is_stock_item %}<span class="ap-badge ap-badge-primary" style="font-size:.55rem;padding:.1rem .3rem;vertical-align:middle">STK</span>{% endif %}
+              </td>
+              <td style="padding:.6rem .5rem;text-align:right">{{ line.quantity|default:"—" }}</td>
+              <td style="padding:.6rem .5rem;text-align:right">{{ line.unit_price|default:"—" }}</td>
+              {% if has_line_tax %}<td style="padding:.6rem .5rem;text-align:right">{{ line.tax_amount|default:"—" }}</td>{% endif %}
+              <td style="padding:.6rem 0 .6rem .5rem;text-align:right;font-weight:500">{{ line.line_amount|default:"—" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="{% if has_line_tax %}6{% else %}5{% endif %}" style="padding:1.5rem;text-align:center;color:var(--ap-text-muted)">
+                <i class="bi bi-list-ul d-block mb-1" style="font-size:1.25rem"></i>No line items extracted
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        {# ── Totals ── #}
+        <div class="d-flex justify-content-end">
+          <div style="min-width:220px">
+            {% if invoice.subtotal %}
+            <div class="d-flex justify-content-between" style="padding:.35rem 0;font-size:var(--ap-font-size-sm)">
+              <span style="color:var(--ap-text-muted)">Subtotal</span>
+              <span>{{ invoice.currency }} {{ invoice.subtotal|floatformat:2 }}</span>
+            </div>
+            {% endif %}
+            {% if invoice.tax_amount %}
+            <div class="d-flex justify-content-between" style="padding:.35rem 0;font-size:var(--ap-font-size-sm)">
+              <span style="color:var(--ap-text-muted)">Tax</span>
+              <span>{{ invoice.currency }} {{ invoice.tax_amount|floatformat:2 }}</span>
+            </div>
+            {% endif %}
+            {% if invoice.total_amount %}
+            <div class="d-flex justify-content-between" style="padding:.35rem 0;font-size:var(--ap-font-size-sm);border-top:2px solid var(--ap-border)">
+              <span style="font-weight:600">Total</span>
+              <span style="font-weight:700;font-size:1.1rem">{{ invoice.currency }} {{ invoice.total_amount|floatformat:2 }}</span>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Right Column: Validation & Raw JSON ── #}
+  <div class="col-lg-4">
+    {# ── Validation Issues ── #}
+    <div class="ap-card mb-3">
+      <div class="ap-card-body">
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm);margin-bottom:.75rem">
+          <i class="bi bi-check2-square me-1"></i>Validation Results
+        </div>
+        {% if validation_issues %}
+        <div class="d-flex flex-column gap-2">
+          {% for issue in validation_issues %}
+          <div class="d-flex align-items-start gap-2 p-2" style="background:{% if issue.severity == 'error' %}#fef2f2{% else %}#fffbeb{% endif %};border-radius:var(--ap-radius);font-size:var(--ap-font-size-sm)">
+            {% if issue.severity == 'error' %}
+            <i class="bi bi-x-circle-fill text-danger" style="margin-top:2px"></i>
+            {% else %}
+            <i class="bi bi-exclamation-triangle-fill text-warning" style="margin-top:2px"></i>
+            {% endif %}
+            <div>
+              <div style="font-weight:500">{{ issue.field }}</div>
+              <div style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">{{ issue.message }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-3" style="color:var(--ap-text-muted);font-size:var(--ap-font-size-sm)">
+          <i class="bi bi-check-circle d-block mb-1" style="font-size:1.5rem;color:var(--ap-success)"></i>
+          All validations passed
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ── Upload Details ── #}
+    <div class="ap-card mb-3">
+      <div class="ap-card-body">
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm);margin-bottom:.75rem">
+          <i class="bi bi-file-earmark me-1"></i>Document Details
+        </div>
+        <div style="font-size:var(--ap-font-size-sm)">
+          <div class="d-flex justify-content-between mb-2">
+            <span style="color:var(--ap-text-muted)">Filename</span>
+            <span style="font-weight:500" title="{{ ext.document_upload.original_filename }}">{{ ext.document_upload.original_filename|truncatechars:22 }}</span>
+          </div>
+          <div class="d-flex justify-content-between mb-2">
+            <span style="color:var(--ap-text-muted)">File Size</span>
+            <span>{{ ext.document_upload.file_size|filesizeformat }}</span>
+          </div>
+          <div class="d-flex justify-content-between mb-2">
+            <span style="color:var(--ap-text-muted)">Content Type</span>
+            <span>{{ ext.document_upload.content_type|default:"—" }}</span>
+          </div>
+          <div class="d-flex justify-content-between mb-2">
+            <span style="color:var(--ap-text-muted)">Uploaded By</span>
+            <span>{{ ext.document_upload.uploaded_by.email|default:"—" }}</span>
+          </div>
+          <div class="d-flex justify-content-between mb-2">
+            <span style="color:var(--ap-text-muted)">Hash</span>
+            <span style="font-family:var(--ap-font-mono);font-size:.65rem" title="{{ ext.document_upload.file_hash }}">{{ ext.document_upload.file_hash|truncatechars:16 }}</span>
+          </div>
+          {% if ext.document_upload.blob_path %}
+          <div class="d-flex justify-content-between">
+            <span style="color:var(--ap-text-muted)">Source</span>
+            <a href="{% url 'documents:document_download' ext.document_upload.pk %}" target="_blank" class="text-decoration-none" style="font-size:var(--ap-font-size-xs)">
+              <i class="bi bi-file-earmark-pdf me-1"></i>View PDF
+            </a>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# ── Line-Item Raw Values ── #}
+    {% if line_items %}
+    <div class="ap-card mb-3">
+      <div class="ap-card-body">
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm);margin-bottom:.75rem">
+          <i class="bi bi-list-ul me-1"></i>Line Items — Raw OCR Values
+        </div>
+        <div style="max-height:300px;overflow-y:auto">
+          {% for line in line_items %}
+          <div class="mb-2 p-2" style="background:var(--ap-bg-secondary);border-radius:var(--ap-radius);font-size:var(--ap-font-size-xs)">
+            <div style="font-weight:600;color:var(--ap-text-muted);margin-bottom:.25rem">Line {{ line.line_number }}</div>
+            <div><span style="color:var(--ap-text-muted)">Desc:</span> <span style="font-family:var(--ap-font-mono)">{{ line.raw_description|truncatechars:50|default:"—" }}</span></div>
+            <div><span style="color:var(--ap-text-muted)">Qty:</span> <span style="font-family:var(--ap-font-mono)">{{ line.raw_quantity|default:"—" }}</span> | <span style="color:var(--ap-text-muted)">Price:</span> <span style="font-family:var(--ap-font-mono)">{{ line.raw_unit_price|default:"—" }}</span> | <span style="color:var(--ap-text-muted)">Amt:</span> <span style="font-family:var(--ap-font-mono)">{{ line.raw_line_amount|default:"—" }}</span></div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Raw JSON ── #}
+    {% if raw_json_pretty %}
+    <div class="ap-card">
+      <div class="ap-card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div style="font-weight:600;font-size:var(--ap-font-size-sm)">
+            <i class="bi bi-code-slash me-1"></i>Raw Extraction JSON
+          </div>
+          <a href="{% url 'extraction:result_json' ext.pk %}" class="btn btn-sm btn-outline-secondary py-0" style="font-size:.65rem">Download</a>
+        </div>
+        <pre style="max-height:400px;overflow:auto;font-size:.7rem;background:var(--ap-bg-secondary);padding:.75rem;border-radius:var(--ap-radius);margin:0"><code>{{ raw_json_pretty }}</code></pre>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% elif ext.success %}
+{# Edge case: success but no invoice linked #}
+<div class="ap-card">
+  <div class="ap-card-body text-center py-5" style="color:var(--ap-text-muted)">
+    <i class="bi bi-exclamation-circle d-block mb-2" style="font-size:2rem"></i>
+    Extraction completed but no invoice record was created.
+  </div>
+</div>
+{% endif %}
+
+{# ══════════ Edit Values Modal ══════════ #}
+{% if invoice %}
+<div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold" id="editModalLabel">
+          <i class="bi bi-pencil-square me-2 text-warning"></i>Correct Extracted Values
+          {% if ext.confidence is not None %}
+          <span class="ap-badge {% if ext.confidence >= 0.8 %}ap-badge-success{% elif ext.confidence >= 0.5 %}ap-badge-warning{% else %}ap-badge-danger{% endif %} ms-2" style="font-size:.65rem">Confidence: {% widthratio ext.confidence 1 100 %}%</span>
+          {% endif %}
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 px-3 mb-3" style="font-size:var(--ap-font-size-xs)">
+          <i class="bi bi-info-circle me-1"></i>
+          This extraction has low confidence. Review and correct the values below. Changes are audit-logged.
+        </div>
+
+        {# ── Header Fields ── #}
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm);margin-bottom:.75rem">
+          <i class="bi bi-file-text me-1"></i>Invoice Header
+        </div>
+        <div class="row g-2 mb-3" style="font-size:var(--ap-font-size-sm)">
+          <div class="col-sm-6">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--ap-text-muted)">Invoice Number</label>
+            <input type="text" class="form-control form-control-sm edit-header" data-field="invoice_number"
+                   value="{{ invoice.invoice_number|default:'' }}">
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--ap-text-muted)">PO Number</label>
+            <input type="text" class="form-control form-control-sm edit-header" data-field="po_number"
+                   value="{{ invoice.po_number|default:'' }}">
+          </div>
+          <div class="col-sm-4">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--ap-text-muted)">Invoice Date</label>
+            <input type="date" class="form-control form-control-sm edit-header" data-field="invoice_date"
+                   value="{% if invoice.invoice_date %}{{ invoice.invoice_date|date:'Y-m-d' }}{% endif %}">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--ap-text-muted)">Currency</label>
+            <input type="text" class="form-control form-control-sm edit-header" data-field="currency"
+                   value="{{ invoice.currency|default:'USD' }}" maxlength="10">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--ap-text-muted)">Subtotal</label>
+            <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="subtotal"
+                   value="{% if invoice.subtotal %}{{ invoice.subtotal }}{% endif %}">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--ap-text-muted)">Tax</label>
+            <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="tax_amount"
+                   value="{% if invoice.tax_amount %}{{ invoice.tax_amount }}{% endif %}">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--ap-text-muted)">Total</label>
+            <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="total_amount"
+                   value="{% if invoice.total_amount %}{{ invoice.total_amount }}{% endif %}">
+          </div>
+        </div>
+
+        {# ── Line Items ── #}
+        {% if line_items %}
+        <div style="font-weight:600;font-size:var(--ap-font-size-sm);margin-bottom:.5rem">
+          <i class="bi bi-list-ul me-1"></i>Line Items
+        </div>
+        <div style="overflow-x:auto">
+          <table class="w-100 mb-2" style="font-size:var(--ap-font-size-sm);border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:2px solid var(--ap-border)">
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--ap-text-muted);width:30px">#</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--ap-text-muted)">Description</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--ap-text-muted);width:75px">Qty</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--ap-text-muted);width:90px">Unit Price</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--ap-text-muted);width:80px">Tax</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--ap-text-muted);width:90px">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for line in line_items %}
+              <tr style="border-bottom:1px solid var(--ap-border)" data-line-pk="{{ line.pk }}">
+                <td style="padding:.3rem;color:var(--ap-text-muted)">{{ line.line_number }}</td>
+                <td style="padding:.3rem"><input type="text" class="form-control form-control-sm edit-line" data-field="description" value="{{ line.description|default:'' }}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="quantity" value="{% if line.quantity %}{{ line.quantity }}{% endif %}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="unit_price" value="{% if line.unit_price %}{{ line.unit_price }}{% endif %}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="tax_amount" value="{% if line.tax_amount %}{{ line.tax_amount }}{% endif %}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="line_amount" value="{% if line.line_amount %}{{ line.line_amount }}{% endif %}"></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="saveEditBtn">
+          <i class="bi bi-check-lg me-1"></i>Save Corrections
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if invoice %}
+<script>
+(function() {
+  var saveBtn = document.getElementById('saveEditBtn');
+  if (!saveBtn) return;
+
+  saveBtn.addEventListener('click', function() {
+    // Collect header fields
+    var header = {};
+    document.querySelectorAll('.edit-header').forEach(function(inp) {
+      header[inp.dataset.field] = inp.value;
+    });
+
+    // Collect line items
+    var lines = [];
+    document.querySelectorAll('#editModal tr[data-line-pk]').forEach(function(row) {
+      var lineData = { pk: parseInt(row.dataset.linePk, 10) };
+      row.querySelectorAll('.edit-line').forEach(function(inp) {
+        lineData[inp.dataset.field] = inp.value;
+      });
+      lines.push(lineData);
+    });
+
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+
+    fetch("{% url 'extraction:edit_values' ext.pk %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({ header: header, lines: lines })
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        // Close modal and reload page to show updated values
+        var modal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
+        if (modal) modal.hide();
+        window.location.reload();
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Corrections';
+      }
+    })
+    .catch(function(err) {
+      alert('Network error: ' + err);
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Corrections';
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

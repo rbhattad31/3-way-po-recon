@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% block title %}Credits – {{ target_user.email }} – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Extraction</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:credit_account_list' %}" class="text-decoration-none">Credits</a></li>
+    <li class="breadcrumb-item active">{{ target_user.get_full_name|default:target_user.email }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-coin me-2"></i>{{ target_user.get_full_name|default:target_user.email }}
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      {{ target_user.email }} · Credit account management
+    </p>
+  </div>
+  <a href="{% url 'extraction:credit_account_list' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to List
+  </a>
+</div>
+
+{# ── Summary Cards ── #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-primary)">{{ summary.balance_credits }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Balance</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-warning)">{{ summary.reserved_credits }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Reserved</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;{% if summary.available_credits <= 5 %}color:var(--ap-danger){% elif summary.available_credits <= 20 %}color:var(--ap-warning){% else %}color:var(--ap-success){% endif %}">{{ summary.available_credits }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Available</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-text-secondary)">
+          {% if summary.monthly_limit > 0 %}{{ summary.monthly_limit }}{% else %}∞{% endif %}
+        </div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Monthly Limit</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg col-xl">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-info)">{{ summary.monthly_used }}</div>
+        <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Monthly Used</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Status Badge ── #}
+{% if not summary.is_active %}
+<div class="alert alert-danger py-2 mb-4" style="font-size:var(--ap-font-size-sm)">
+  <i class="bi bi-exclamation-triangle me-1"></i>This credit account is <strong>inactive</strong>. The user cannot process invoices.
+</div>
+{% endif %}
+
+{# ── Adjustment Form ── #}
+<div class="ap-card mb-4">
+  <div class="ap-card-header">
+    <h6 class="mb-0"><i class="bi bi-sliders me-1"></i>Adjust Credits</h6>
+  </div>
+  <div class="ap-card-body">
+    <form method="post" action="{% url 'extraction:credit_adjust' user_id=target_user.pk %}">
+      {% csrf_token %}
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label" style="font-size:var(--ap-font-size-xs)">Action</label>
+          {{ form.action_type }}
+        </div>
+        <div class="col-md-2" id="creditsField">
+          <label class="form-label" style="font-size:var(--ap-font-size-xs)">Credits</label>
+          {{ form.credits }}
+        </div>
+        <div class="col-md-2" id="limitField" style="display:none">
+          <label class="form-label" style="font-size:var(--ap-font-size-xs)">Monthly Limit</label>
+          {{ form.monthly_limit }}
+        </div>
+        <div class="col-md-2" id="activeField" style="display:none">
+          <label class="form-label d-block" style="font-size:var(--ap-font-size-xs)">Active</label>
+          <div class="form-check form-switch mt-1">
+            {{ form.is_active }}
+            <label class="form-check-label" style="font-size:var(--ap-font-size-xs)">
+              {% if account.is_active %}Currently active{% else %}Currently inactive{% endif %}
+            </label>
+          </div>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label" style="font-size:var(--ap-font-size-xs)">Remarks <span class="text-danger">*</span></label>
+          {{ form.remarks }}
+        </div>
+      </div>
+      <div class="mt-3">
+        <button type="submit" class="btn btn-sm btn-primary">
+          <i class="bi bi-check-circle me-1"></i>Apply Change
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Transaction Ledger ── #}
+<div class="ap-card">
+  <div class="ap-card-header">
+    <h6 class="mb-0"><i class="bi bi-journal-text me-1"></i>Transaction Ledger</h6>
+  </div>
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table w-100" style="min-width:700px">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Type</th>
+          <th style="text-align:right">Credits</th>
+          <th style="text-align:right">Balance After</th>
+          <th style="text-align:right">Reserved After</th>
+          <th style="text-align:right">Monthly Used</th>
+          <th>Remarks</th>
+          <th>Actor</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for txn in transactions %}
+        <tr>
+          <td style="font-size:var(--ap-font-size-xs);white-space:nowrap">{{ txn.created_at|date:"d M Y H:i:s" }}</td>
+          <td>
+            {% if txn.transaction_type == "ALLOCATE" %}
+            <span class="ap-badge ap-badge-success">ALLOCATE</span>
+            {% elif txn.transaction_type == "RESERVE" %}
+            <span class="ap-badge ap-badge-warning">RESERVE</span>
+            {% elif txn.transaction_type == "CONSUME" %}
+            <span class="ap-badge ap-badge-info">CONSUME</span>
+            {% elif txn.transaction_type == "REFUND" %}
+            <span class="ap-badge ap-badge-muted">REFUND</span>
+            {% elif txn.transaction_type == "ADJUST" %}
+            <span class="ap-badge ap-badge-danger">ADJUST</span>
+            {% elif txn.transaction_type == "MONTHLY_RESET" %}
+            <span class="ap-badge ap-badge-muted">RESET</span>
+            {% else %}
+            <span class="ap-badge ap-badge-muted">{{ txn.transaction_type }}</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right;font-weight:600;{% if txn.credits > 0 %}color:var(--ap-success){% elif txn.credits < 0 %}color:var(--ap-danger){% endif %}">
+            {% if txn.credits > 0 %}+{% endif %}{{ txn.credits }}
+          </td>
+          <td style="text-align:right">{{ txn.balance_after }}</td>
+          <td style="text-align:right">{{ txn.reserved_after }}</td>
+          <td style="text-align:right">{{ txn.monthly_used_after }}</td>
+          <td style="font-size:var(--ap-font-size-xs);max-width:200px" class="text-truncate" title="{{ txn.remarks }}">{{ txn.remarks|truncatechars:60 }}</td>
+          <td style="font-size:var(--ap-font-size-xs)">{{ txn.created_by.get_short_name|default:"system" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="8" class="text-center py-4" style="color:var(--ap-text-muted)">No transactions yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  const actionSelect = document.getElementById('{{ form.action_type.id_for_label }}') || document.querySelector('[name="action_type"]');
+  const creditsField = document.getElementById('creditsField');
+  const limitField = document.getElementById('limitField');
+  const activeField = document.getElementById('activeField');
+
+  function toggleFields() {
+    const val = actionSelect.value;
+    creditsField.style.display = (val === 'add' || val === 'subtract') ? '' : 'none';
+    limitField.style.display = val === 'set_limit' ? '' : 'none';
+    activeField.style.display = val === 'toggle_active' ? '' : 'none';
+  }
+  actionSelect.addEventListener('change', toggleFields);
+  toggleFields();
+})();
+</script>
+{% endblock %}

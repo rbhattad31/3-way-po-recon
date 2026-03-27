@@ -1,0 +1,17 @@
+<div class="row g-3 mb-4">
+  {% for card in cards %}
+  <div class="col-sm-6 col-md-4 col-xl-3">
+    <div class="card cc-stat-card border-0 shadow-sm h-100">
+      <div class="card-body d-flex align-items-center gap-3">
+        <div class="cc-stat-icon bg-{{ card.color }}-subtle text-{{ card.color }}">
+          <i class="bi {{ card.icon }}"></i>
+        </div>
+        <div>
+          <div class="cc-stat-value">{{ card.value }}</div>
+          <div class="cc-stat-label">{{ card.label }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>

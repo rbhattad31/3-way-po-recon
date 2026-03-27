@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% load static %}
+{% load rbac_tags %}
+
+{% block extra_css %}
+<link href="{% static 'css/extraction_control_center.css' %}?v={{ static_version }}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="d-flex">
+  {# Control Center Sidebar #}
+  {% include "extraction_control_center/partials/_sidebar.html" %}
+
+  {# Main content area #}
+  <div class="cc-main flex-grow-1">
+    {% include "extraction_control_center/partials/_header.html" %}
+    <div class="cc-content">
+      {% block cc_content %}{% endblock %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/extraction_control_center.js' %}?v={{ static_version }}"></script>
+{% block cc_extra_js %}{% endblock %}
+{% endblock %}

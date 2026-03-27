@@ -20,9 +20,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from django.db import IntegrityError
 from django.utils import timezone
 
-from apps.agents.models import AgentEscalation, AgentRecommendation, AgentRun
+from apps.agents.models import AgentEscalation, AgentOrchestrationRun, AgentRecommendation, AgentRun
+from apps.agents.services.agent_memory import AgentMemory
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
 from apps.agents.services.base_agent import AgentContext, BaseAgent
 from apps.agents.services.decision_log_service import DecisionLogService
@@ -34,6 +36,7 @@ from apps.agents.services.guardrails_service import (
     AgentGuardrailsService,
 )
 from apps.agents.services.policy_engine import PolicyEngine
+from apps.agents.services.reasoning_planner import ReasoningPlanner
 from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
 from apps.core.decorators import observed_service
 from apps.core.metrics import MetricsService
@@ -62,13 +65,28 @@ class OrchestrationResult:
     skipped: bool = False
     skip_reason: str = ""
     error: str = ""
+    plan_source: str = ""
+    plan_confidence: float = 0.0
+
+
+class _AgentRunOutputProxy:
+    """Lightweight read-only adapter that presents an AgentRun DB record
+    with the same interface expected by AgentMemory.record_agent_output().
+    """
+
+    def __init__(self, agent_run: AgentRun) -> None:
+        self.reasoning: str = agent_run.summarized_reasoning or ""
+        payload = agent_run.output_payload or {}
+        self.recommendation_type: Optional[str] = payload.get("recommendation_type")
+        self.confidence: float = float(agent_run.confidence or 0.0)
+        self.evidence: dict = payload.get("evidence") or {}
 
 
 class AgentOrchestrator:
     """Orchestrates the agentic layer for a single ReconciliationResult."""
 
     def __init__(self):
-        self.policy = PolicyEngine()
+        self.policy = ReasoningPlanner()
         self.decision_service = DecisionLogService()
         self.resolver = DeterministicResolver()
 
@@ -108,6 +126,14 @@ class AgentOrchestrator:
             entity_id=result.pk,
         )
 
+        # --- RBAC: data-scope authorization (action + data boundary) ---
+        if not AgentGuardrailsService.authorize_data_scope(actor, result):
+            orch_result.error = (
+                "Data scope authorization denied: actor lacks access to this result's "
+                "business unit / vendor scope. See audit log for details."
+            )
+            return orch_result
+
         # Set trace context with RBAC metadata for downstream audit events
         trace_ctx = AgentGuardrailsService.build_trace_context_for_agent(
             actor, permission_checked=ORCHESTRATE_PERMISSION, access_granted=True,
@@ -117,10 +143,42 @@ class AgentOrchestrator:
 
         # 1. Build the plan
         plan = self.policy.plan(result)
+        orch_result.plan_source = plan.plan_source
+        orch_result.plan_confidence = plan.plan_confidence
+
+        # Duplicate-run protection: reject if a RUNNING orchestration exists.
+        live = AgentOrchestrationRun.objects.filter(
+            reconciliation_result=result,
+            status=AgentOrchestrationRun.Status.RUNNING,
+        ).first()
+        if live:
+            logger.warning(
+                "Orchestration skipped for result %s: orchestration run #%s is still RUNNING.",
+                result.pk, live.pk,
+            )
+            orch_result.skipped = True
+            orch_result.skip_reason = (
+                f"Duplicate orchestration prevented: run #{live.pk} is active."
+            )
+            return orch_result
 
         if plan.skip_agents:
             orch_result.skipped = True
             orch_result.skip_reason = plan.reason
+
+            AgentOrchestrationRun.objects.create(
+                reconciliation_result=result,
+                status=AgentOrchestrationRun.Status.COMPLETED,
+                plan_source=plan.plan_source if hasattr(plan, "plan_source") else "deterministic",
+                planned_agents=[],
+                executed_agents=[],
+                skip_reason=plan.reason,
+                actor_user_id=actor.pk,
+                trace_id=trace_ctx.trace_id,
+                started_at=timezone.now(),
+                completed_at=timezone.now(),
+                duration_ms=0,
+            )
 
             # Auto-close by tolerance band: upgrade PARTIAL_MATCH → MATCHED
             if plan.auto_close:
@@ -147,6 +205,20 @@ class AgentOrchestrator:
             orch_result.skip_reason = "No agents planned"
             return orch_result
 
+        import time as _time
+        _orch_start = _time.monotonic()
+        orch_db_run = AgentOrchestrationRun.objects.create(
+            reconciliation_result=result,
+            status=AgentOrchestrationRun.Status.RUNNING,
+            plan_source=plan.plan_source,
+            plan_confidence=plan.plan_confidence,
+            planned_agents=plan.agents,
+            executed_agents=[],
+            actor_user_id=actor.pk,
+            trace_id=trace_ctx.trace_id,
+            started_at=timezone.now(),
+        )
+
         # 2. Partition agents: LLM-required vs deterministic-replaceable
         llm_agents = [a for a in plan.agents if a not in self.resolver.REPLACED_AGENTS]
         deterministic_tail = [a for a in plan.agents if a in self.resolver.REPLACED_AGENTS]
@@ -158,6 +230,8 @@ class AgentOrchestrator:
                 "id", "exception_type", "severity", "message", "details", "resolved",
             )
         )
+        from apps.agents.services.base_agent import BaseAgent as _BA
+        exceptions = _BA._truncate_exceptions(exceptions)
 
         ctx = AgentContext(
             reconciliation_result=result,
@@ -190,6 +264,16 @@ class AgentOrchestrator:
         # Store actor on instance for use by helper methods
         self._actor = actor
 
+        # Attach structured memory to context for cross-agent data sharing.
+        memory = AgentMemory()
+        ctx.memory = memory
+        # Pre-seed facts so all agents start with consistent base context.
+        ctx.memory.facts["grn_available"] = bool(getattr(result, "grn_available", False))
+        ctx.memory.facts["grn_fully_received"] = bool(getattr(result, "grn_fully_received", False))
+        ctx.memory.facts["is_two_way"] = (ctx.reconciliation_mode == "TWO_WAY")
+        ctx.memory.facts["vendor_name"] = getattr(result, "vendor_name", "") or ""
+        ctx.memory.facts["match_status"] = str(getattr(result, "match_status", "") or "")
+
         # 4. Execute LLM agents in sequence
         last_output = None
         for agent_type in llm_agents:
@@ -197,13 +281,6 @@ class AgentOrchestrator:
             if not agent_cls:
                 logger.warning("No agent class for type %s", agent_type)
                 continue
-
-            # Pass forward context from previous agents
-            if last_output:
-                ctx.extra["prior_reasoning"] = last_output.summarized_reasoning or ""
-                ctx.extra["recommendation_type"] = (
-                    last_output.output_payload or {}
-                ).get("recommendation_type", "")
 
             agent: BaseAgent = agent_cls()
             try:
@@ -224,38 +301,70 @@ class AgentOrchestrator:
                     )
                     continue
 
-                agent_run = agent.run(ctx)
+                # Pass review_assignment to ExceptionAnalysisAgent
+                if agent_type == AgentType.EXCEPTION_ANALYSIS:
+                    from apps.reviews.models import ReviewAssignment
+                    _review_assignment = (
+                        ReviewAssignment.objects
+                        .filter(reconciliation_result=result)
+                        .order_by("-created_at")
+                        .first()
+                    )
+                    agent_run = agent.run(ctx, review_assignment=_review_assignment)
+                else:
+                    agent_run = agent.run(ctx)
                 orch_result.agents_executed.append(agent_type)
                 orch_result.agent_runs.append(agent_run)
+                orch_db_run.executed_agents = orch_result.agents_executed
+                orch_db_run.save(update_fields=["executed_agents"])
                 last_output = agent_run
+
+                # Stamp plan metadata onto the first agent run for dashboard tracking.
+                if len(orch_result.agent_runs) == 1:
+                    agent_run.input_payload = agent_run.input_payload or {}
+                    agent_run.input_payload["plan_source"] = plan.plan_source
+                    agent_run.input_payload["plan_confidence"] = plan.plan_confidence
+                    agent_run.input_payload["planned_agents"] = plan.agents
+                    agent_run.save(update_fields=["input_payload"])
+
+                # Update structured memory from this agent's output.
+                _output_proxy = _AgentRunOutputProxy(agent_run)
+                memory.record_agent_output(agent_type, _output_proxy)
 
                 # Record recommendation only for designated routing agents
                 output_payload = agent_run.output_payload or {}
                 rec_type = output_payload.get("recommendation_type")
                 if rec_type and agent_type in _RECOMMENDING_AGENTS:
-                    rec = self.decision_service.log_recommendation(
-                        agent_run=agent_run,
-                        reconciliation_result=result,
-                        recommendation_type=rec_type,
-                        confidence=agent_run.confidence or 0.0,
-                        reasoning=agent_run.summarized_reasoning or "",
-                        evidence=output_payload.get("evidence"),
-                    )
-                    # Backfill invoice FK on recommendation
-                    rec.invoice_id = result.invoice_id
-                    rec.save(update_fields=["invoice_id"])
+                    try:
+                        rec = self.decision_service.log_recommendation(
+                            agent_run=agent_run,
+                            reconciliation_result=result,
+                            recommendation_type=rec_type,
+                            confidence=agent_run.confidence or 0.0,
+                            reasoning=agent_run.summarized_reasoning or "",
+                            evidence=output_payload.get("evidence"),
+                        )
+                    except IntegrityError:
+                        logger.warning(
+                            "Duplicate recommendation skipped: result=%s type=%s agent_run=%s",
+                            result.pk, rec_type, agent_run.pk,
+                        )
+                    else:
+                        # Backfill invoice FK on recommendation
+                        rec.invoice_id = result.invoice_id
+                        rec.save(update_fields=["invoice_id"])
 
-                    # Audit: agent recommendation created
-                    from apps.auditlog.services import AuditService
-                    from apps.core.enums import AuditEventType
-                    AuditService.log_event(
-                        entity_type="Invoice",
-                        entity_id=result.invoice_id,
-                        event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
-                        description=f"Agent '{agent_type}' recommended {rec_type} (confidence: {agent_run.confidence or 0:.0%})",
-                        agent=agent_type,
-                        metadata={"recommendation_id": rec.pk, "recommendation_type": rec_type, "confidence": agent_run.confidence},
-                    )
+                        # Audit: agent recommendation created
+                        from apps.auditlog.services import AuditService
+                        from apps.core.enums import AuditEventType
+                        AuditService.log_event(
+                            entity_type="Invoice",
+                            entity_id=result.invoice_id,
+                            event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
+                            description=f"Agent '{agent_type}' recommended {rec_type} (confidence: {agent_run.confidence or 0:.0%})",
+                            agent=agent_type,
+                            metadata={"recommendation_id": rec.pk, "recommendation_type": rec_type, "confidence": agent_run.confidence},
+                        )
 
             except Exception as exc:
                 logger.exception("Agent %s failed for result %s", agent_type, result.pk)
@@ -263,7 +372,7 @@ class AgentOrchestrator:
                 # Continue with remaining agents
 
             # --- Agent feedback loop: apply findings back to reconciliation ---
-            if agent_type in _FEEDBACK_AGENTS and last_output:
+            if agent_type in _FEEDBACK_AGENTS and last_output and last_output.status == AgentRunStatus.COMPLETED:
                 new_status = self._apply_agent_findings(
                     agent_type, last_output, result, ctx,
                 )
@@ -279,8 +388,30 @@ class AgentOrchestrator:
                             "message", "details", "resolved",
                         )
                     )
-                    ctx.extra["grn_available"] = result.grn_available
-                    ctx.extra["grn_fully_received"] = result.grn_fully_received
+                    from apps.agents.services.base_agent import BaseAgent as _BA
+                    ctx.exceptions = _BA._truncate_exceptions(ctx.exceptions)
+                    ctx.memory.resolved_po_number = ctx.po_number
+                    ctx.memory.facts["grn_available"] = bool(result.grn_available)
+                    ctx.memory.facts["grn_fully_received"] = bool(result.grn_fully_received)
+
+            # --- Reflection: dynamically insert agents based on findings ---
+            if last_output and last_output.status == AgentRunStatus.COMPLETED:
+                extra_agents = self._reflect(
+                    agent_type,
+                    last_output,
+                    result,
+                    llm_agents[llm_agents.index(agent_type) + 1:],
+                    ctx,
+                    already_executed=list(orch_result.agents_executed),
+                )
+                if extra_agents:
+                    insert_pos = llm_agents.index(agent_type) + 1
+                    for i, new_agent in enumerate(extra_agents):
+                        llm_agents.insert(insert_pos + i, new_agent)
+                    logger.info(
+                        "Reflection inserted agents %s after %s for result %s",
+                        extra_agents, agent_type, result.pk,
+                    )
 
         # 5. Deterministic resolution for tail agents (replaces LLM for
         #    EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY)
@@ -288,12 +419,27 @@ class AgentOrchestrator:
             self._apply_deterministic_resolution(
                 result, orch_result, deterministic_tail, last_output,
             )
+            orch_db_run.executed_agents = orch_result.agents_executed
 
         # 6. Determine final recommendation (from last agent with a recommendation)
         self._resolve_final_recommendation(orch_result, result)
 
         # 7. Auto-close or escalate
         self._apply_post_policies(orch_result, result)
+
+        orch_db_run.status = (
+            AgentOrchestrationRun.Status.PARTIAL
+            if orch_result.error
+            else AgentOrchestrationRun.Status.COMPLETED
+        )
+        orch_db_run.final_recommendation = orch_result.final_recommendation or ""
+        orch_db_run.final_confidence = orch_result.final_confidence
+        orch_db_run.completed_at = timezone.now()
+        orch_db_run.duration_ms = int((_time.monotonic() - _orch_start) * 1000)
+        orch_db_run.save(update_fields=[
+            "status", "final_recommendation", "final_confidence",
+            "completed_at", "duration_ms", "executed_agents",
+        ])
 
         logger.info(
             "Orchestration complete for result %s: agents=%s recommendation=%s confidence=%.2f",
@@ -305,6 +451,56 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _reflect(
+        self,
+        completed_agent_type,
+        agent_run,
+        result,
+        remaining_agents,
+        ctx,
+        already_executed=None,
+    ):
+        """Inspect the just-completed agent run and return any agent types to
+        insert immediately after the current position in the pipeline.
+
+        Returns a list of agent_type strings (possibly empty). Never raises.
+        """
+        try:
+            if ctx.memory is None:
+                return []
+
+            already_executed = set(already_executed or [])
+
+            # Rule 1: PO was just found in a 3-way case -- check for GRN next.
+            if (
+                completed_agent_type == AgentType.PO_RETRIEVAL
+                and ctx.memory.resolved_po_number is not None
+                and getattr(result, "reconciliation_mode", "") != "TWO_WAY"
+                and AgentType.GRN_RETRIEVAL not in remaining_agents
+                and AgentType.GRN_RETRIEVAL not in already_executed
+            ):
+                return [AgentType.GRN_RETRIEVAL]
+
+            # Rule 2: Very low confidence extraction -- investigate discrepancies too.
+            if (
+                completed_agent_type == AgentType.INVOICE_UNDERSTANDING
+                and agent_run.confidence is not None
+                and agent_run.confidence < 0.5
+                and AgentType.RECONCILIATION_ASSIST not in remaining_agents
+                and AgentType.RECONCILIATION_ASSIST not in already_executed
+            ):
+                return [AgentType.RECONCILIATION_ASSIST]
+
+            return []
+        except Exception:
+            logger.exception(
+                "_reflect() raised unexpectedly for agent %s result %s",
+                completed_agent_type,
+                getattr(result, "pk", "?"),
+            )
+            return []
+
     def _resolve_final_recommendation(
         self, orch: OrchestrationResult, result: ReconciliationResult
     ) -> None:
@@ -396,6 +592,8 @@ class AgentOrchestrator:
                 "id", "exception_type", "severity", "message", "details", "resolved",
             )
         )
+        from apps.agents.services.base_agent import BaseAgent as _BA
+        fresh_exceptions = _BA._truncate_exceptions(fresh_exceptions)
 
         # Extract prior recommendation from last LLM agent (if any)
         prior_rec = None
@@ -456,35 +654,42 @@ class AgentOrchestrator:
 
             # Create recommendation for RECOMMENDING agents (same as LLM path)
             if det_agent_type in _RECOMMENDING_AGENTS:
-                rec = self.decision_service.log_recommendation(
-                    agent_run=det_run,
-                    reconciliation_result=result,
-                    recommendation_type=resolution.recommendation_type,
-                    confidence=resolution.confidence,
-                    reasoning=resolution.reasoning,
-                    evidence=resolution.evidence,
-                )
-                rec.invoice_id = result.invoice_id
-                rec.save(update_fields=["invoice_id"])
+                try:
+                    rec = self.decision_service.log_recommendation(
+                        agent_run=det_run,
+                        reconciliation_result=result,
+                        recommendation_type=resolution.recommendation_type,
+                        confidence=resolution.confidence,
+                        reasoning=resolution.reasoning,
+                        evidence=resolution.evidence,
+                    )
+                except IntegrityError:
+                    logger.warning(
+                        "Duplicate recommendation skipped: result=%s type=%s agent_run=%s",
+                        result.pk, resolution.recommendation_type, det_run.pk,
+                    )
+                else:
+                    rec.invoice_id = result.invoice_id
+                    rec.save(update_fields=["invoice_id"])
 
-                from apps.auditlog.services import AuditService
-                from apps.core.enums import AuditEventType
-                AuditService.log_event(
-                    entity_type="Invoice",
-                    entity_id=result.invoice_id,
-                    event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
-                    description=(
-                        f"Deterministic resolver ('{det_agent_type}') recommended "
-                        f"{resolution.recommendation_type} "
-                        f"(confidence: {resolution.confidence:.0%})"
-                    ),
-                    agent=det_agent_type,
-                    metadata={
-                        "recommendation_type": resolution.recommendation_type,
-                        "confidence": resolution.confidence,
-                        "resolver": "deterministic",
-                    },
-                )
+                    from apps.auditlog.services import AuditService
+                    from apps.core.enums import AuditEventType
+                    AuditService.log_event(
+                        entity_type="Invoice",
+                        entity_id=result.invoice_id,
+                        event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
+                        description=(
+                            f"Deterministic resolver ('{det_agent_type}') recommended "
+                            f"{resolution.recommendation_type} "
+                            f"(confidence: {resolution.confidence:.0%})"
+                        ),
+                        agent=det_agent_type,
+                        metadata={
+                            "recommendation_type": resolution.recommendation_type,
+                            "confidence": resolution.confidence,
+                            "resolver": "deterministic",
+                        },
+                    )
 
         # Persist the case summary on the result
         result.summary = resolution.case_summary

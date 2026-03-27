@@ -163,6 +163,17 @@ class CaseOrchestrator:
     def _execute_path_stages(self):
         """Execute the path-specific stages based on resolved processing path."""
         path = self.case.processing_path
+
+        # On reprocess: if a PO was linked after original classification
+        # (e.g. PO seeded/imported since last run), re-resolve the path
+        # so the case moves from NON_PO/UNRESOLVED to TWO_WAY/THREE_WAY.
+        if path in (ProcessingPath.NON_PO, ProcessingPath.UNRESOLVED) and self.case.purchase_order:
+            path = self._resolve_path_from_linked_po()
+            CaseRoutingService.reroute_path(
+                self.case, path,
+                f"PO {self.case.purchase_order.po_number} now linked; re-resolved as {path}",
+            )
+
         if path == ProcessingPath.UNRESOLVED:
             # Try PO Retrieval Agent, then re-resolve
             self._execute_stage(CaseStageType.PO_RETRIEVAL)
@@ -177,7 +188,7 @@ class CaseOrchestrator:
                 self.case.refresh_from_db()
                 path = self.case.processing_path
 
-            # Set the case status to match the newly resolved path
+            # Transition the case status to match the resolved path via state machine
             _PATH_IN_PROGRESS = {
                 ProcessingPath.TWO_WAY: CaseStatus.TWO_WAY_IN_PROGRESS,
                 ProcessingPath.THREE_WAY: CaseStatus.THREE_WAY_IN_PROGRESS,
@@ -185,8 +196,7 @@ class CaseOrchestrator:
             }
             target_status = _PATH_IN_PROGRESS.get(path)
             if target_status and self.case.status != target_status:
-                self.case.status = target_status
-                self.case.save(update_fields=["status", "updated_at"])
+                CaseStateMachine.transition(self.case, target_status, PerformedByType.DETERMINISTIC)
 
         if path == ProcessingPath.TWO_WAY:
             self._run_two_way_path()
@@ -195,12 +205,26 @@ class CaseOrchestrator:
         elif path == ProcessingPath.NON_PO:
             self._run_non_po_path()
         else:
-            # Still unresolved after PO retrieval — reroute to NON_PO
-            CaseRoutingService.reroute_path(
-                self.case, ProcessingPath.NON_PO,
-                "PO retrieval failed; treating as non-PO",
-            )
-            self._run_non_po_path()
+            # Still unresolved after PO retrieval — decide based on whether
+            # the invoice references a PO number.  An invoice that *has* a PO
+            # number is PO-backed (TWO_WAY at minimum) even if the PO record
+            # doesn't exist in the system yet.
+            po_number = (self.case.invoice.po_number or "").strip()
+            if po_number:
+                CaseRoutingService.reroute_path(
+                    self.case, ProcessingPath.TWO_WAY,
+                    f"PO '{po_number}' not found in system but invoice references it; "
+                    "treating as TWO_WAY (PO-backed)",
+                )
+                CaseStateMachine.transition(self.case, CaseStatus.TWO_WAY_IN_PROGRESS, PerformedByType.DETERMINISTIC)
+                self._run_two_way_path()
+            else:
+                CaseRoutingService.reroute_path(
+                    self.case, ProcessingPath.NON_PO,
+                    "No PO reference on invoice and PO retrieval failed",
+                )
+                CaseStateMachine.transition(self.case, CaseStatus.NON_PO_VALIDATION_IN_PROGRESS, PerformedByType.DETERMINISTIC)
+                self._run_non_po_path()
 
     def _run_two_way_path(self):
         """Execute 2-way matching stages."""
@@ -227,11 +251,11 @@ class CaseOrchestrator:
         self._run_common_tail()
 
     def _run_common_tail(self):
-        """Execute the common tail stages: exception analysis → routing → summary."""
+        """Execute the common tail stages: exception analysis -> routing -> summary."""
         self._execute_stage(CaseStageType.EXCEPTION_ANALYSIS)
-        if CaseStateMachine.is_terminal(self.case.status):
-            return
-        self._execute_stage(CaseStageType.REVIEW_ROUTING)
+        if not CaseStateMachine.is_terminal(self.case.status):
+            self._execute_stage(CaseStageType.REVIEW_ROUTING)
+        # Always run case summary so stale data is refreshed, even on auto-close
         self._execute_stage(CaseStageType.CASE_SUMMARY)
 
     def _execute_stage(self, stage_name: str):
@@ -297,9 +321,24 @@ class CaseOrchestrator:
         resolver = ReconciliationModeResolver()
         mode_result = resolver.resolve(invoice, po)
 
+        # If GRNs exist for this PO, force THREE_WAY regardless of mode resolver
+        from apps.documents.models import GoodsReceiptNote
+        has_grn = GoodsReceiptNote.objects.filter(purchase_order=po).exists()
+        if has_grn and mode_result.mode == "TWO_WAY":
+            mode_result.mode = "THREE_WAY"
+            mode_result.grn_required = True
+            logger.info(
+                "Case %s: GRN exists for PO %s — overriding mode to THREE_WAY",
+                self.case.case_number, po.po_number,
+            )
+
         self.case.reconciliation_mode = mode_result.mode
         self.case.invoice_type = InvoiceType.PO_BACKED
         self.case.save(update_fields=["reconciliation_mode", "invoice_type", "updated_at"])
+
+        # Enrich invoice line item flags from PO data
+        from apps.cases.orchestrators.stage_executor import StageExecutor
+        StageExecutor._enrich_invoice_lines_from_po(invoice, po)
 
         if mode_result.mode == "TWO_WAY":
             path = ProcessingPath.TWO_WAY

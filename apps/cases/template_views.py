@@ -406,9 +406,9 @@ def case_agent_view(request, pk):
 
     invoice = case.invoice
     po = case.purchase_order
-    stages = list(case.stages.order_by("created_at"))
-    decisions = list(case.decisions.order_by("created_at"))
-    comments = list(case.comments.select_related("author").order_by("created_at"))
+    stages = list(case.stages.order_by("-created_at"))
+    decisions = list(case.decisions.order_by("-created_at"))
+    comments = list(case.comments.select_related("author").order_by("-created_at"))
 
     # GRNs linked to PO
     grns = []
@@ -431,25 +431,50 @@ def case_agent_view(request, pk):
     validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version", "-created_at").first()
     if validation_artifact and isinstance(validation_artifact.payload, dict):
         checks = validation_artifact.payload.get("checks", {})
-        for check_name, check_data in checks.items():
-            status = check_data.get("status", "")
-            if status in ("FAIL", "WARNING"):
-                validation_issues.append({
-                    "check_name": check_name.replace("_", " ").title(),
-                    "status": status,
-                    "message": check_data.get("message", ""),
-                })
+        if isinstance(checks, dict):
+            for check_name, check_data in checks.items():
+                status = check_data.get("status", "")
+                if status in ("FAIL", "WARNING"):
+                    validation_issues.append({
+                        "check_name": check_name.replace("_", " ").title(),
+                        "status": status,
+                        "message": check_data.get("message", ""),
+                    })
+        elif isinstance(checks, list):
+            for check_data in checks:
+                if isinstance(check_data, dict):
+                    status = check_data.get("status", "")
+                    if status in ("FAIL", "WARNING"):
+                        validation_issues.append({
+                            "check_name": check_data.get("check_name", check_data.get("name", "Unknown")).replace("_", " ").title(),
+                            "status": status,
+                            "message": check_data.get("message", ""),
+                        })
 
     # Agent runs
-    agent_runs = []
+    from apps.agents.models import AgentRun
+    from django.db.models import Q
+
+    agent_run_q = Q()
     if recon_result:
-        from apps.agents.models import AgentRun
-        agent_runs = list(
-            AgentRun.objects.filter(reconciliation_result=recon_result)
-            .select_related("agent_definition")
-            .prefetch_related("steps", "tool_calls", "decisions", "recommendations")
-            .order_by("created_at")
-        )
+        agent_run_q |= Q(reconciliation_result=recon_result)
+    # Include orphaned runs (e.g. PO_RETRIEVAL before reconciliation)
+    agent_run_q |= Q(reconciliation_result__isnull=True, input_payload__invoice_id=invoice.pk)
+    # Include runs linked via case stages
+    stage_run_ids = list(
+        case.stages.filter(performed_by_agent__isnull=False)
+        .values_list("performed_by_agent_id", flat=True)
+    )
+    if stage_run_ids:
+        agent_run_q |= Q(pk__in=stage_run_ids)
+
+    agent_runs = list(
+        AgentRun.objects.filter(agent_run_q)
+        .select_related("agent_definition")
+        .prefetch_related("steps", "tool_calls", "decisions", "recommendations")
+        .distinct()
+        .order_by("created_at")
+    )
 
     # Summary
     summary = getattr(case, "summary", None)

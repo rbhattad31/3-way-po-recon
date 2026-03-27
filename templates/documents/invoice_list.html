@@ -111,18 +111,19 @@
 </div>
 {% endif %}
 
+<div id="pendingUploadsSection">
 {% if pending_uploads %}
 <div class="ap-card mb-3" style="border-left:3px solid var(--ap-warning)">
   <div class="ap-card-header" style="color:var(--ap-warning)">
     <i class="bi bi-hourglass-split"></i> Pending Uploads
-    <span class="ap-badge ap-badge-warning ms-2">{{ pending_uploads|length }}</span>
+    <span class="ap-badge ap-badge-warning ms-2" id="pendingCount">{{ pending_uploads|length }}</span>
   </div>
   <div class="ap-card-body p-0">
     <table class="ap-table">
       <thead>
         <tr><th>Filename</th><th>Type</th><th>Size</th><th>Status</th><th>Uploaded</th></tr>
       </thead>
-      <tbody>
+      <tbody id="pendingUploadsBody">
         {% for upload in pending_uploads %}
         <tr>
           <td><i class="bi bi-file-earmark-pdf me-1 text-danger"></i>{{ upload.original_filename }}</td>
@@ -143,6 +144,7 @@
   </div>
 </div>
 {% endif %}
+</div>
 
 <div class="ap-card">
   <div class="ap-card-body p-0">
@@ -247,6 +249,80 @@ function removeInvFilter(name) {
   url.searchParams.delete(name);
   window.location = url.toString();
 }
+
+/* ── Pending Uploads Auto-Refresh ── */
+(function() {
+  var hadPending = {{ pending_uploads|length|default:"0" }};
+  var pollInterval = 5000;
+  var pollTimer = null;
+
+  function renderPendingUploads(uploads) {
+    var section = document.getElementById('pendingUploadsSection');
+    if (!uploads.length) {
+      section.innerHTML = '';
+      return;
+    }
+    var rows = '';
+    uploads.forEach(function(u) {
+      var statusBadge = u.state === 'PROCESSING'
+        ? '<span class="ap-badge ap-badge-primary"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Processing</span>'
+        : '<span class="ap-badge ap-badge-muted">Queued</span>';
+      rows += '<tr>'
+        + '<td><i class="bi bi-file-earmark-pdf me-1 text-danger"></i>' + u.filename + '</td>'
+        + '<td><span class="ap-badge ap-badge-primary">' + u.document_type + '</span></td>'
+        + '<td style="color:var(--ap-text-muted);font-size:var(--ap-font-size-sm)">' + u.file_size + '</td>'
+        + '<td>' + statusBadge + '</td>'
+        + '<td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">' + u.uploaded_ago + '</td>'
+        + '</tr>';
+    });
+    section.innerHTML =
+      '<div class="ap-card mb-3" style="border-left:3px solid var(--ap-warning)">'
+      + '<div class="ap-card-header" style="color:var(--ap-warning)">'
+      + '<i class="bi bi-hourglass-split"></i> Pending Uploads '
+      + '<span class="ap-badge ap-badge-warning ms-2">' + uploads.length + '</span>'
+      + '</div>'
+      + '<div class="ap-card-body p-0"><table class="ap-table">'
+      + '<thead><tr><th>Filename</th><th>Type</th><th>Size</th><th>Status</th><th>Uploaded</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table></div></div>';
+  }
+
+  function pollPending() {
+    fetch('{% url "documents:pending_uploads_status" %}')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        renderPendingUploads(data.pending_uploads);
+        if (hadPending > 0 && data.count === 0) {
+          // All pending uploads finished — reload to show new invoices & updated KPIs
+          window.location.reload();
+          return;
+        }
+        hadPending = data.count;
+        if (data.count > 0) {
+          pollTimer = setTimeout(pollPending, pollInterval);
+        }
+      })
+      .catch(function() {
+        // On error, retry after a longer delay
+        pollTimer = setTimeout(pollPending, pollInterval * 2);
+      });
+  }
+
+  // Start polling if there are pending uploads on page load
+  if (hadPending > 0) {
+    pollTimer = setTimeout(pollPending, pollInterval);
+  }
+
+  // Also start polling after an upload form submission (modal POST)
+  var uploadForm = document.querySelector('#uploadInvoiceModal form');
+  if (uploadForm) {
+    uploadForm.addEventListener('submit', function() {
+      // After redirect back, polling will pick up. But in case the page doesn't reload quickly,
+      // start polling soon.
+      hadPending = 1;
+      setTimeout(pollPending, 2000);
+    });
+  }
+})();
 </script>
 {% endblock %}
 

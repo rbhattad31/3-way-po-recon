@@ -25,28 +25,69 @@ class POLookupTool(BaseTool):
     name = "po_lookup"
     required_permission = "purchase_orders.view"
     description = (
-        "Look up a Purchase Order by PO number. Returns PO header and line items. "
-        "Use when the agent needs PO details for reconciliation."
+        "Look up a Purchase Order by PO number, or list open POs for a vendor. "
+        "Supports exact, normalized, and partial/contains matching on PO numbers. "
+        "Pass vendor_id alone to list all open POs for that vendor."
     )
+    when_to_use = "When you need to verify a PO number exists, get PO header/line details, or find open POs for a vendor."
+    when_not_to_use = "Do not use as evidence that goods were received. PO existence does not confirm delivery."
+    no_result_meaning = "No matching PO found in the system. Does not prove the PO does not exist in ERP -- it may not be synced yet."
+    failure_handling_instruction = "On tool failure, do not infer PO existence from memory alone. Report uncertainty."
+    authoritative_fields = ["po_number", "vendor_id", "total_amount", "status", "line_items"]
+    evidence_keys_produced = ["found", "po_number", "vendor", "total_amount", "status", "line_items"]
     parameters_schema = {
         "type": "object",
         "properties": {
-            "po_number": {"type": "string", "description": "The PO number to look up"},
+            "po_number": {"type": "string", "description": "The PO number to look up (supports partial match)"},
+            "vendor_id": {"type": "integer", "description": "Vendor PK — list open POs for this vendor"},
         },
-        "required": ["po_number"],
+        "required": [],
     }
 
-    def run(self, *, po_number: str = "", **kwargs) -> ToolResult:
+    def run(self, *, po_number: str = "", vendor_id: int = 0, **kwargs) -> ToolResult:
         from apps.core.utils import normalize_po_number
         from apps.documents.models import PurchaseOrder
 
-        if not po_number:
-            return ToolResult(success=False, error="po_number is required")
+        # If vendor_id given without po_number, list POs for that vendor
+        if vendor_id and not po_number:
+            pos = PurchaseOrder.objects.filter(vendor_id=vendor_id, status="OPEN")[:10]
+            if not pos:
+                return ToolResult(success=True, data={
+                    "found": False, "vendor_id": vendor_id,
+                    "message": "No open POs found for this vendor",
+                })
+            po_list = []
+            for p in pos:
+                po_list.append({
+                    "po_number": p.po_number,
+                    "total_amount": str(p.total_amount),
+                    "po_date": str(p.po_date) if p.po_date else None,
+                })
+            return ToolResult(success=True, data={
+                "found": True, "vendor_id": vendor_id,
+                "po_count": len(po_list), "purchase_orders": po_list,
+            })
 
+        if not po_number:
+            return ToolResult(success=False, error="po_number or vendor_id is required")
+
+        # Resolve via ERP integration layer (API → DB fallback)
+        resolution_result = self._resolve_via_erp(po_number, vendor_id, **kwargs)
+        if resolution_result is not None:
+            return resolution_result
+
+        # Direct DB lookup (legacy path — only reached if resolver import fails)
         po = PurchaseOrder.objects.filter(po_number=po_number).first()
         if not po:
             norm = normalize_po_number(po_number)
             po = PurchaseOrder.objects.filter(normalized_po_number=norm).first()
+
+        # Fallback: contains match (e.g., "2601001" matches "PO-MCD-2601001")
+        if not po:
+            candidates = PurchaseOrder.objects.filter(po_number__icontains=po_number)
+            if vendor_id:
+                candidates = candidates.filter(vendor_id=vendor_id)
+            po = candidates.first()
 
         if not po:
             return ToolResult(success=True, data={"found": False, "po_number": po_number})
@@ -68,6 +109,42 @@ class POLookupTool(BaseTool):
             "line_items": json.loads(json.dumps(lines, default=_decimal_serialise)),
         })
 
+    def _resolve_via_erp(self, po_number: str, vendor_id: int = 0, **kwargs):
+        """Attempt resolution via the ERP integration layer.
+
+        Returns a ToolResult if resolved (found or not found), or None to
+        fall through to legacy direct DB lookup.
+        """
+        try:
+            from apps.erp_integration.services.connector_factory import ConnectorFactory
+            from apps.erp_integration.services.resolution.po_resolver import POResolver
+
+            connector = ConnectorFactory.get_default_connector()
+            resolver = POResolver()
+            result = resolver.resolve(
+                connector,
+                po_number=po_number,
+                reconciliation_result_id=kwargs.get("reconciliation_result_id"),
+            )
+
+            if not result.resolved:
+                return ToolResult(success=True, data={
+                    "found": False,
+                    "po_number": po_number,
+                    "_erp_source": result.source_type,
+                    "_erp_fallback_used": result.fallback_used,
+                })
+
+            data = result.value or {}
+            data["_erp_source"] = result.source_type
+            data["_erp_confidence"] = result.confidence
+            data["_erp_fallback_used"] = result.fallback_used
+            data["found"] = True
+            return ToolResult(success=True, data=data)
+        except Exception:
+            logger.debug("ERP resolver not available for PO lookup, using direct DB", exc_info=True)
+            return None
+
 
 # ---------------------------------------------------------------------------
 # GRN Lookup Tool
@@ -80,6 +157,12 @@ class GRNLookupTool(BaseTool):
         "Look up Goods Receipt Notes for a given PO number. "
         "Returns GRN headers and received quantities."
     )
+    when_to_use = "When you need to confirm whether goods were physically received for a given PO in 3-WAY mode."
+    when_not_to_use = "Do not use in TWO_WAY reconciliation mode. GRN is not applicable there."
+    no_result_meaning = "No GRN found for this PO. Goods may not have been received yet or GRN not yet recorded."
+    failure_handling_instruction = "On tool failure, do not assume goods were or were not received. Escalate if receipt status is critical."
+    authoritative_fields = ["grn_number", "receipt_date", "status", "line_items.quantity_received"]
+    evidence_keys_produced = ["found", "po_number", "grn_count", "grns"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -94,6 +177,12 @@ class GRNLookupTool(BaseTool):
         if not po_number:
             return ToolResult(success=False, error="po_number is required")
 
+        # Resolve via ERP integration layer (API → DB fallback)
+        resolution_result = self._resolve_via_erp(po_number, **kwargs)
+        if resolution_result is not None:
+            return resolution_result
+
+        # Direct DB lookup (legacy path — only reached if resolver import fails)
         po = PurchaseOrder.objects.filter(po_number=po_number).first()
         if not po:
             return ToolResult(success=True, data={"found": False, "po_number": po_number})
@@ -120,6 +209,43 @@ class GRNLookupTool(BaseTool):
             "grns": grn_data,
         })
 
+    def _resolve_via_erp(self, po_number: str, **kwargs):
+        """Attempt resolution via the ERP integration layer.
+
+        Returns a ToolResult if resolved (found or not found), or None to
+        fall through to legacy direct DB lookup.
+        """
+        try:
+            from apps.erp_integration.services.connector_factory import ConnectorFactory
+            from apps.erp_integration.services.resolution.grn_resolver import GRNResolver
+
+            connector = ConnectorFactory.get_default_connector()
+            resolver = GRNResolver()
+            result = resolver.resolve(
+                connector,
+                po_number=po_number,
+                reconciliation_result_id=kwargs.get("reconciliation_result_id"),
+            )
+
+            if not result.resolved:
+                return ToolResult(success=True, data={
+                    "found": False,
+                    "po_number": po_number,
+                    "_erp_source": result.source_type,
+                    "_erp_fallback_used": result.fallback_used,
+                })
+
+            data = result.value or {}
+            data["_erp_source"] = result.source_type
+            data["_erp_confidence"] = result.confidence
+            data["_erp_fallback_used"] = result.fallback_used
+            data["found"] = True
+            data["po_number"] = po_number
+            return ToolResult(success=True, data=data)
+        except Exception:
+            logger.debug("ERP resolver not available for GRN lookup, using direct DB", exc_info=True)
+            return None
+
 
 # ---------------------------------------------------------------------------
 # Vendor Search Tool
@@ -132,6 +258,12 @@ class VendorSearchTool(BaseTool):
         "Search for a vendor by name, code, or alias. "
         "Use when the invoice vendor doesn't match the PO vendor."
     )
+    when_to_use = "When the invoice vendor name does not match the PO vendor and you need to check for aliases or alternate names."
+    when_not_to_use = "Do not use to confirm payment terms or spending limits -- this tool only returns identity data."
+    no_result_meaning = "No vendor match found. The vendor may be unknown, inactive, or using a name not yet registered as an alias."
+    failure_handling_instruction = "On failure, do not assume vendor identity from invoice text alone. Flag for manual vendor verification."
+    authoritative_fields = ["vendor_id", "code", "name", "match_type"]
+    evidence_keys_produced = ["query", "count", "vendors"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -205,6 +337,12 @@ class InvoiceDetailsTool(BaseTool):
     description = (
         "Get full details of an invoice including header, line items, and extraction metadata."
     )
+    when_to_use = "When you need the full extracted invoice data including header fields, line items, and extraction confidence."
+    when_not_to_use = "Do not use to look up PO or GRN data -- this tool returns invoice data only."
+    no_result_meaning = "Invoice not found by ID. This is a system error -- the invoice should always exist if the context is valid."
+    failure_handling_instruction = "On failure, rely only on the context already provided. Do not fabricate invoice fields."
+    authoritative_fields = ["invoice_number", "vendor", "po_number", "total_amount", "extraction_confidence", "line_items"]
+    evidence_keys_produced = ["invoice_id", "invoice_number", "vendor_id", "total_amount", "extraction_confidence", "line_items"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -255,6 +393,12 @@ class ExceptionListTool(BaseTool):
         "Retrieve all reconciliation exceptions for a given ReconciliationResult. "
         "Use to understand what mismatches were found."
     )
+    when_to_use = "When you need the full list of reconciliation exceptions for root cause analysis."
+    when_not_to_use = "Do not use to retrieve invoice or PO data -- call invoice_details or po_lookup instead."
+    no_result_meaning = "No exceptions found. The reconciliation result may have no discrepancies at this point."
+    failure_handling_instruction = "On failure, use the exceptions already present in the agent context."
+    authoritative_fields = ["exception_type", "severity", "message", "resolved"]
+    evidence_keys_produced = ["reconciliation_result_id", "exceptions"]
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -291,6 +435,12 @@ class ReconciliationSummaryTool(BaseTool):
         "Get the reconciliation result summary for a given ReconciliationResult, "
         "including match status, confidence, and header-level evidence."
     )
+    when_to_use = "When you need the match status, confidence scores, and header-level comparison results for a reconciliation."
+    when_not_to_use = "Do not use to get line item detail -- use invoice_details or po_lookup for that."
+    no_result_meaning = "Reconciliation result not found. This is a system error if the context references a valid result ID."
+    failure_handling_instruction = "On failure, use match_status and confidence from the agent context. Do not fabricate match outcomes."
+    authoritative_fields = ["match_status", "deterministic_confidence", "vendor_match", "po_total_match", "total_amount_difference", "grn_available", "grn_fully_received"]
+    evidence_keys_produced = ["result_id", "match_status", "vendor_match", "po_total_match", "total_amount_difference", "grn_available"]
     parameters_schema = {
         "type": "object",
         "properties": {

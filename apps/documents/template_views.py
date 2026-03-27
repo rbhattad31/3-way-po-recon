@@ -4,8 +4,9 @@ import hashlib
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.http import Http404
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.defaultfilters import filesizeformat, timesince
 from django.views.decorators.http import require_POST
 
 from apps.core.enums import DocumentType, InvoiceStatus, UserRole
@@ -224,6 +225,7 @@ def invoice_list(request):
     from apps.core.enums import FileProcessingState
     pending_uploads = DocumentUpload.objects.filter(
         processing_state__in=[FileProcessingState.QUEUED, FileProcessingState.PROCESSING],
+        document_type=DocumentType.INVOICE,
     ).select_related("uploaded_by").order_by("-created_at")[:10]
 
     # KPI stats (scoped to same visibility as the listing)
@@ -255,6 +257,29 @@ def invoice_list(request):
         "pending_uploads": pending_uploads,
         "stats": invoice_stats,
     })
+
+
+@login_required
+def pending_uploads_status(request):
+    """Return pending uploads as JSON for AJAX polling."""
+    from apps.core.enums import FileProcessingState
+
+    pending = DocumentUpload.objects.filter(
+        processing_state__in=[FileProcessingState.QUEUED, FileProcessingState.PROCESSING],
+    ).select_related("uploaded_by").order_by("-created_at")[:10]
+
+    uploads = []
+    for u in pending:
+        uploads.append({
+            "id": u.pk,
+            "filename": u.original_filename,
+            "document_type": u.document_type,
+            "file_size": filesizeformat(u.file_size),
+            "state": u.processing_state,
+            "uploaded_ago": timesince(u.created_at) + " ago",
+        })
+
+    return JsonResponse({"pending_uploads": uploads, "count": len(uploads)})
 
 
 @login_required

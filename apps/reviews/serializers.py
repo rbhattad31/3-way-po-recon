@@ -77,12 +77,23 @@ class ReviewAssignmentDetailSerializer(serializers.ModelSerializer):
         source="reconciliation_result.invoice.invoice_number", read_only=True
     )
 
+    # Reviewer-facing exception summary (populated by ExceptionAnalysisAgent)
+    reviewer_summary = serializers.CharField(read_only=True)
+    reviewer_risk_level = serializers.CharField(read_only=True)
+    reviewer_confidence = serializers.FloatField(read_only=True)
+    reviewer_recommendation = serializers.CharField(read_only=True)
+    reviewer_suggested_actions = serializers.JSONField(read_only=True)
+    reviewer_summary_generated_at = serializers.DateTimeField(read_only=True)
+
     class Meta:
         model = ReviewAssignment
         fields = [
             "id", "reconciliation_result", "assigned_to", "assigned_to_name",
             "status", "priority", "due_date", "notes",
             "invoice_number", "comments", "actions", "decision",
+            "reviewer_summary", "reviewer_risk_level", "reviewer_confidence",
+            "reviewer_recommendation", "reviewer_suggested_actions",
+            "reviewer_summary_generated_at",
             "created_at", "updated_at",
         ]
         read_only_fields = [
