@@ -254,6 +254,10 @@ _AGENT_CONTRACTS = {
     },
 }
 
+# Increment this whenever the reference page template or view data changes.
+# Passed into the template so the browser sees a new ETag / detects staleness.
+_PAGE_VERSION = 3
+
 # PolicyEngine dispatch rules -- shown as a table in the reference page
 _POLICY_ENGINE_RULES = [
     {
@@ -1050,7 +1054,8 @@ def agent_reference(request):
         {"type": "DUPLICATE_INVOICE", "label": "Duplicate Invoice Check", "db_model": "Invoice (local)", "fallback": "DuplicateInvoiceDBFallbackAdapter"},
     ]
 
-    return render(request, "agents/reference.html", {
+    response = render(request, "agents/reference.html", {
+        "page_version": _PAGE_VERSION,
         "agents_info": agents_info,
         "react_agent_count": len(agents_info) - len(_PIPELINE_AGENT_TYPES),
         "policy_engine_rules": _POLICY_ENGINE_RULES,
@@ -1101,3 +1106,6 @@ def agent_reference(request):
         "erp_resolution_chain": erp_resolution_chain,
         "erp_resolution_types_info": erp_resolution_types_info,
     })
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    return response

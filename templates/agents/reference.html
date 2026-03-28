@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Platform Reference -- 3-Way PO Reconciliation{% endblock %}
+<meta name="page-version" content="{{ page_version }}">
 
 {% block extra_css %}
 <style>
@@ -155,43 +156,68 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
 
       <div class="card mb-3">
         <div class="card-header bg-white fw-semibold small">
-          <i class="bi bi-arrow-right-circle me-1 text-primary"></i> End-to-End Processing Flow
+          <i class="bi bi-diagram-3 me-1 text-primary"></i> End-to-End Platform Flow &mdash; Detailed
         </div>
-        <div class="card-body py-3">
-          <div class="d-flex flex-wrap align-items-center gap-1">
-            <div class="flow-step bg-light border">
-              <i class="bi bi-upload d-block fs-5 text-secondary mb-1"></i>Upload
-            </div>
-            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
-            <div class="flow-step border" style="background:#e8f0fe">
-              <i class="bi bi-robot d-block fs-5 text-primary mb-1"></i>OCR + Extraction
-            </div>
-            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
-            <div class="flow-step bg-light border">
-              <i class="bi bi-check2-square d-block fs-5 text-success mb-1"></i>Approval Gate
-            </div>
-            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
-            <div class="flow-step border" style="background:#fff3cd">
-              <i class="bi bi-arrow-left-right d-block fs-5 text-warning mb-1"></i>Reconciliation
-            </div>
-            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
-            <div class="flow-step border" style="background:#d1ecf1">
-              <i class="bi bi-cpu d-block fs-5 text-info mb-1"></i>Agents (ReAct)
-            </div>
-            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
-            <div class="flow-step bg-light border">
-              <i class="bi bi-people d-block fs-5 text-danger mb-1"></i>Review
-            </div>
-            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
-            <div class="flow-step border" style="background:#d1e7dd">
-              <i class="bi bi-send d-block fs-5 text-success mb-1"></i>Posting to ERP
-            </div>
+        <div class="card-body p-3" style="overflow-x:auto">
+          <div class="mermaid">
+flowchart TD
+    UP(["Invoice Upload\n(PDF / Image)"]) --> OCR["Azure Document\nIntelligence OCR"]
+    OCR --> IEA["InvoiceExtractionAgent\nGPT-4o  temp=0.0\nresponse_format=json_object\nNo tools -- single-shot"]
+
+    IEA --> PARSE["Parse + Normalize\nfields, line items, totals"]
+    PARSE --> VAL{"Validation\npassed?"}
+    VAL -->|No| INV(["INVALID\nstatus"])
+    VAL -->|Yes| CGATE{"Confidence\n>= 0.75?"}
+    CGATE -->|"< 0.75"| IUA["InvoiceUnderstandingAgent\nvalidates + cross-checks\ntools: invoice_details  vendor_search"]
+    CGATE -->|">= 0.75"| APPR
+
+    IUA --> APPR["Extraction Approval Gate\n(human or auto-approve)"]
+
+    APPR --> RECON["Reconciliation Engine\nTwoWayMatchService\nThreeWayMatchService  NonPO"]
+    RECON --> MODE["ReconciliationModeResolver\npolicy -> heuristic -> default"]
+    MODE --> PENG{"PolicyEngine\n/ ReasoningPlanner\nDispatch"}
+
+    PENG -->|"MATCHED + high conf"| TOUCHLESS(["Skip agents\nauto-close"])
+    PENG -->|PO_NOT_FOUND| POR["PORetrievalAgent\ntools: po_lookup  vendor_search"]
+    PENG -->|"GRN_NOT_FOUND (3-WAY)"| GRNR["GRNRetrievalAgent\ntool: grn_lookup"]
+    PENG -->|PARTIAL_MATCH| RA["ReconciliationAssistAgent\ntools: invoice_details  po_lookup"]
+    PENG -->|exceptions| EA["ExceptionAnalysisAgent\nall 5 tools"]
+
+    IUA -->|"conf < 0.5"| RA
+    POR -->|"PO found + 3-WAY"| GRNR
+
+    POR --> RR
+    GRNR --> RR
+    RA --> RR
+    EA --> RR
+
+    RR["ReviewRoutingAgent\nno tools"] --> CS["CaseSummaryAgent\nno tools"]
+    CS --> REVIEW(["AP Review Queue\n/ Auto-close"])
+
+    REVIEW --> POST["Invoice Posting Pipeline\n9 stages: eligibility -> snapshot\n-> mapping -> validation\n-> confidence -> routing\n-> payload -> finalize"]
+    POST --> ERP(["ERP Submission\nSAP / Dynamics / Zoho\n/ Salesforce / Custom"])
+
+    classDef pipeline fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef react fill:#d1fae5,stroke:#10b981,color:#064e3b
+    classDef engine fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef terminal fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef posting fill:#fdf4ff,stroke:#a855f7,color:#581c87
+    classDef danger fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+
+    class IEA pipeline
+    class IUA,POR,GRNR,RA,EA,RR,CS react
+    class RECON,MODE,PENG engine
+    class UP,APPR,TOUCHLESS,REVIEW,ERP terminal
+    class POST posting
+    class INV danger
           </div>
-          <p class="text-muted small mt-3 mb-0">
-            Agents use a <strong>ReAct loop</strong> (Reason &rarr; Act &rarr; Observe) with up to
-            <strong>{{ max_tool_rounds }}</strong> tool rounds per run. The posting pipeline runs
-            automatically after extraction approval and produces a ready-to-submit ERP payload.
-          </p>
+        </div>
+        <div class="px-3 pb-3 small text-muted border-top pt-2">
+          <i class="bi bi-info-circle me-1"></i>
+          Agents use a <strong>ReAct loop</strong> (Reason &rarr; Act &rarr; Observe) with up to
+          <strong>{{ max_tool_rounds }}</strong> tool rounds. <strong>ReasoningPlanner</strong> makes an LLM call to order agents;
+          <strong>PolicyEngine</strong> is the deterministic fallback. The posting pipeline runs automatically after approval.
+          <a href="#agent-diagrams" class="ms-2">More diagrams &darr;</a>
         </div>
       </div>
 
@@ -424,6 +450,262 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
     <!-- ── AGENT SYSTEM ── -->
     <div id="agents" class="docs-section">
       <h2 class="docs-section-title"><i class="bi bi-robot me-2 text-success"></i>Agent System</h2>
+
+      <!-- ═══ SYSTEM DIAGRAMS ═══ -->
+      <h3 class="docs-h3" id="agent-diagrams">System Diagrams</h3>
+      <p class="text-muted small mb-3">
+        Three complementary views of the agent system. The full end-to-end pipeline is shown in the
+        <a href="#overview">Overview</a> section above.
+      </p>
+
+      <ul class="nav nav-tabs mb-0" id="diagramTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="diag-policy-tab" data-bs-toggle="tab"
+                  data-bs-target="#diag-policy" type="button" role="tab">
+            <i class="bi bi-lightning me-1"></i>PolicyEngine Dispatch
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="diag-tools-tab" data-bs-toggle="tab"
+                  data-bs-target="#diag-tools" type="button" role="tab">
+            <i class="bi bi-wrench me-1"></i>Agent &rarr; Tool Map
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="diag-extraction-tab" data-bs-toggle="tab"
+                  data-bs-target="#diag-extraction" type="button" role="tab">
+            <i class="bi bi-file-earmark-code me-1"></i>InvoiceExtractionAgent
+          </button>
+        </li>
+      </ul>
+
+      <div class="tab-content border border-top-0 rounded-bottom bg-white mb-4" id="diagramTabContent">
+
+        <!-- Tab 1: PolicyEngine dispatch -->
+        <div class="tab-pane fade show active p-4" id="diag-policy" role="tabpanel">
+          <p class="small text-muted mb-3">How PolicyEngine / ReasoningPlanner evaluates a reconciliation result and selects agents. Conditions are checked in order; multiple branches can fire for the same result.</p>
+          <div class="mermaid">
+flowchart TD
+    RES([Reconciliation Result]) --> C1{MATCHED AND\nhigh confidence?}
+    C1 -->|Yes| DONE([Skip entire pipeline])
+    C1 -->|No| C2{extraction_conf\n< 0.70?}
+
+    C2 -->|Yes| IUA[Schedule\nINVOICE_UNDERSTANDING]
+    C2 -->|No| C3
+
+    IUA --> C3{PO_NOT_FOUND\nexception?}
+    C3 -->|Yes| POR[Schedule\nPO_RETRIEVAL]
+    C3 -->|No| C4
+
+    POR --> C4{GRN_NOT_FOUND or\nGRN_PARTIAL AND\nmode=THREE_WAY?}
+    C4 -->|Yes| GRNR[Schedule\nGRN_RETRIEVAL]
+    C4 -->|No| C5
+
+    GRNR --> C5{match_status =\nPARTIAL_MATCH AND\noutside auto-close band?}
+    C5 -->|Yes| RA[Schedule\nRECONCILIATION_ASSIST]
+    C5 -->|"No (within band)"| AUTOC[Add AUTO_CLOSE\nrecommendation]
+    C5 -->|No| C6
+
+    RA --> C6{Any exceptions\npresent?}
+    AUTOC --> C6
+    C6 -->|Yes| EA[Schedule\nEXCEPTION_ANALYSIS]
+    C6 -->|No| TAIL
+
+    EA --> TAIL{Any agents\nscheduled?}
+    C6 -->|No + no agents| NOTHING([Nothing more to do])
+
+    TAIL -->|Yes| RR[Always append\nREVIEW_ROUTING]
+    RR --> CS[Always append\nCASE_SUMMARY]
+    CS --> RUN([Execute plan in order])
+
+    subgraph reflect ["_reflect() -- dynamic plan extensions (post-agent)"]
+      direction LR
+      R1["After PO_RETRIEVAL: if PO found in THREE_WAY\n--> add GRN_RETRIEVAL"]
+      R2["After INVOICE_UNDERSTANDING: if own confidence < 0.5\n--> add RECONCILIATION_ASSIST"]
+    end
+
+    classDef schedule fill:#d1fae5,stroke:#10b981,color:#064e3b
+    classDef decision fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef terminal fill:#f3f4f6,stroke:#9ca3af,color:#374151
+
+    class IUA,POR,GRNR,RA,EA,RR,CS schedule
+    class C1,C2,C3,C4,C5,C6,TAIL decision
+    class RES,DONE,AUTOC,NOTHING,RUN terminal
+          </div>
+        </div>
+
+        <!-- Tab 3: Agent -> Tool ownership -->
+        <div class="tab-pane fade p-4" id="diag-tools" role="tabpanel">
+          <p class="small text-muted mb-3">Which tools each agent can invoke during its ReAct loop. Blue = agent, teal = tool. All tool calls are RBAC-guarded by <code>AgentGuardrailsService.authorize_tool()</code>.</p>
+          <div class="mermaid">
+graph LR
+    subgraph pipeline ["Pipeline Agents (no tools)"]
+      IEA["InvoiceExtractionAgent"]
+    end
+
+    subgraph react ["ReAct Agents"]
+      IUA["InvoiceUnderstandingAgent"]
+      POR["PORetrievalAgent"]
+      GRNR["GRNRetrievalAgent"]
+      RA["ReconciliationAssistAgent"]
+      EA["ExceptionAnalysisAgent"]
+      RR["ReviewRoutingAgent"]
+      CS["CaseSummaryAgent"]
+    end
+
+    subgraph tools ["Registered Tools (RBAC-guarded)"]
+      T1["po_lookup\npurchase_orders.view"]
+      T2["grn_lookup\ngrns.view"]
+      T3["vendor_search\nvendors.view"]
+      T4["invoice_details\ninvoices.view"]
+      T5["exception_list\nreconciliation.view"]
+      T6["reconciliation_summary\nreconciliation.view"]
+    end
+
+    IUA --> T4
+    IUA --> T1
+    IUA --> T3
+
+    POR --> T1
+    POR --> T3
+
+    GRNR --> T2
+
+    RA --> T4
+    RA --> T1
+
+    EA --> T1
+    EA --> T2
+    EA --> T4
+    EA --> T5
+    EA --> T6
+
+    classDef agentpipe fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef agentreact fill:#d1fae5,stroke:#10b981,color:#064e3b
+    classDef tool fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+
+    class IEA agentpipe
+    class IUA,POR,GRNR,RA,EA,RR,CS agentreact
+    class T1,T2,T3,T4,T5,T6 tool
+          </div>
+        </div>
+
+        <!-- Tab 4: InvoiceExtractionAgent deep-dive -->
+        <div class="tab-pane fade p-4" id="diag-extraction" role="tabpanel">
+          <p class="small text-muted mb-3">
+            Internal flow of <strong>InvoiceExtractionAgent</strong> — the pipeline-only, single-shot extraction agent.
+            Runs right after Azure Document Intelligence OCR. No ReAct loop, no tools.
+          </p>
+          <div class="mermaid">
+flowchart TD
+    subgraph input ["Input"]
+      OCR["Azure DI OCR text\n(up to 60K chars)"]
+      META["Invoice metadata\n(category, country, currency)"]
+    end
+
+    subgraph compose ["InvoicePromptComposer"]
+      direction TB
+      BASE["1. extraction.invoice_base\n(or monolithic fallback)"]
+      CAT{"invoice_category?"}
+      GOODS["+ extraction.invoice_category_goods\n(HSN, qty/unit/rate)"]
+      SVC["+ extraction.invoice_category_service\n(SAC, fee/charge lines)"]
+      TRAVEL["+ extraction.invoice_category_travel\n(booking ref, base fare)"]
+      COUNTRY{"country / tax\nregime?"}
+      GST["+ extraction.country_india_gst\n(GSTIN, IRN, CGST/SGST/IGST)"]
+      VAT["+ extraction.country_generic_vat\n(VAT reg, net vs gross)"]
+      PROMPT["Composed system prompt\n(base + category + country)"]
+
+      BASE --> CAT
+      CAT -->|goods| GOODS --> COUNTRY
+      CAT -->|service| SVC --> COUNTRY
+      CAT -->|travel| TRAVEL --> COUNTRY
+      CAT -->|unclassified| COUNTRY
+      COUNTRY -->|IN/GST| GST --> PROMPT
+      COUNTRY -->|AE,SA,GB,DE VAT| VAT --> PROMPT
+      COUNTRY -->|other| PROMPT
+    end
+
+    subgraph llm ["LLM Call  (GPT-4o)"]
+      direction TB
+      SYSM["system: composed prompt"]
+      USERM["user: Extract invoice data from the following OCR text..."]
+      API["Azure OpenAI Chat\ntemperature=0.0\nmax_tokens=4096\nresponse_format=json_object"]
+      RAW["Raw JSON string response"]
+      SYSM --> API
+      USERM --> API
+      API --> RAW
+    end
+
+    subgraph parse ["Response parsing"]
+      RAW2["_parse_agent_json(content)"]
+      CONF["confidence = data.confidence"]
+      EVID["evidence = full extraction dict\n(vendor_name, invoice_number, line_items,\ntotals, tax, currency, dates)"]
+      OUT["AgentOutput\n(reasoning, confidence, evidence)"]
+      RAW2 --> CONF
+      RAW2 --> EVID
+      CONF --> OUT
+      EVID --> OUT
+    end
+
+    subgraph audit ["Audit trail (DB)"]
+      AR["AgentRun\n(status, tokens, duration_ms,\nllm_model_used, actor RBAC)"]
+      AM1["AgentMessage: role=system"]
+      AM2["AgentMessage: role=user"]
+      AM3["AgentMessage: role=assistant"]
+      AR --> AM1
+      AR --> AM2
+      AR --> AM3
+    end
+
+    subgraph langfuse ["Langfuse observability"]
+      LFT["start_trace: invoice_extraction\n(trace_id, invoice_id, session_id)"]
+      LFS["start_span: INVOICE_EXTRACTION\n(ocr_char_count, agent_run_id)"]
+      LFG["log_generation (via LLMClient)\n(model, prompt msgs, tokens)"]
+      LFSC["score_trace: extraction_confidence\n(0.0-1.0)"]
+      LFT --> LFS --> LFG --> LFSC
+    end
+
+    OCR --> compose
+    META --> compose
+    compose --> llm
+    OCR --> llm
+    llm --> parse
+    compose --> audit
+    llm -.->|tokens| audit
+    parse --> audit
+    parse --> langfuse
+
+    parse --> DOWNSTREAM["ExtractionAdapter\n_extract_from_agent_run()\nInvoice + InvoiceLineItems saved to DB"]
+
+    subgraph confidence ["Confidence routing (post-save)"]
+      CHK{"extraction_conf\n>= threshold (0.75)?"}
+      AUTO["Auto-approve\n(if EXTRACTION_AUTO_APPROVE = True)"]
+      IUA_FIRE["Fire InvoiceUnderstandingAgent\n(low confidence path)"]
+      CHK -->|Yes| AUTO
+      CHK -->|No| IUA_FIRE
+    end
+
+    DOWNSTREAM --> confidence
+
+    classDef input fill:#f0f9ff,stroke:#0ea5e9,color:#075985
+    classDef compose fill:#fef9c3,stroke:#eab308,color:#713f12
+    classDef llm fill:#f0fdf4,stroke:#22c55e,color:#14532d
+    classDef parse fill:#fdf4ff,stroke:#a855f7,color:#581c87
+    classDef audit fill:#fff7ed,stroke:#f97316,color:#7c2d12
+    classDef lf fill:#f8fafc,stroke:#94a3b8,color:#334155
+    classDef out fill:#f3f4f6,stroke:#9ca3af,color:#1f2937
+
+    class OCR,META input
+    class BASE,CAT,GOODS,SVC,TRAVEL,COUNTRY,GST,VAT,PROMPT compose
+    class SYSM,USERM,API,RAW llm
+    class RAW2,CONF,EVID,OUT parse
+    class AR,AM1,AM2,AM3 audit
+    class LFT,LFS,LFG,LFSC lf
+    class DOWNSTREAM,CHK,AUTO,IUA_FIRE out
+          </div>
+        </div>
+
+      </div><!-- /tab-content -->
 
       <div class="alert alert-light border small mb-4">
         <i class="bi bi-info-circle me-1"></i>
@@ -1655,6 +1937,7 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
         <a class="nav-link toc-child" href="#state-machine">State Machine</a>
 
         <div class="toc-group-label">Agent System</div>
+        <a class="nav-link toc-child" href="#agent-diagrams">System Diagrams</a>
         <a class="nav-link toc-child" href="#policy-engine">Dispatch Rules</a>
         <a class="nav-link toc-child" href="#agent-types">Agent Catalog</a>
         <a class="nav-link toc-child" href="#tools">Registered Tools</a>
@@ -1713,6 +1996,42 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js?v={{ page_version }}"></script>
+<script>
+// Initialize Mermaid for all .mermaid blocks.
+// Re-run on Bootstrap tab shown so diagrams in hidden tabs render correctly.
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  themeVariables: {
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    fontSize: '16px',
+  },
+  flowchart: { curve: 'basis', useMaxWidth: true, nodeSpacing: 55, rankSpacing: 65 },
+  graph: { nodeSpacing: 55, rankSpacing: 65 },
+});
+
+function renderMermaid() {
+  document.querySelectorAll('.mermaid[data-processed]').forEach(function(el) {
+    el.removeAttribute('data-processed');
+    var src = el.getAttribute('data-mermaid-src');
+    if (src) { el.textContent = src; }
+  });
+  mermaid.run({ querySelector: '.mermaid' });
+}
+
+// Stash original source before first run so we can restore on repeated renders
+document.querySelectorAll('.mermaid').forEach(function(el) {
+  el.setAttribute('data-mermaid-src', el.textContent.trim());
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+  renderMermaid();
+  document.querySelectorAll('#diagramTabs button[data-bs-toggle="tab"]').forEach(function(btn) {
+    btn.addEventListener('shown.bs.tab', function() { renderMermaid(); });
+  });
+});
+</script>
 <script>
 (function () {
   // Bootstrap ScrollSpy on document.body targeting the docs TOC
