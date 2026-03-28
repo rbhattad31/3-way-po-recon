@@ -66,14 +66,23 @@ def resolve(result, exceptions, prior_recommendation=None, prior_confidence=0.0)
 
 class TestPriorAutoClose:
     def test_prior_auto_close_with_high_confidence(self):
-        """Prior AUTO_CLOSE recommendation with >= 0.80 + exceptions present -> AUTO_CLOSE.
+        """Prior AUTO_CLOSE recommendation with >= 0.80 -> AUTO_CLOSE.
 
-        NOTE: When exceptions list is EMPTY the resolver returns early with
-        SEND_TO_AP_REVIEW before checking prior recommendations. Prior AUTO_CLOSE
-        is only respected when there are active exceptions to route.
+        Fix applied: Rule 0 now runs BEFORE the empty-exceptions early return,
+        so AUTO_CLOSE is respected even when there are no exceptions.
         """
         result = make_result()
-        # Must have at least one exception to avoid the empty-exception early return
+        # Works with empty exceptions list now that the bug is fixed
+        resolution = resolve(
+            result, [],
+            prior_recommendation=RecommendationType.AUTO_CLOSE,
+            prior_confidence=0.85,
+        )
+        assert resolution.recommendation_type == RecommendationType.AUTO_CLOSE
+
+    def test_prior_auto_close_respected_with_exceptions_too(self):
+        """Prior AUTO_CLOSE also wins when exceptions are present."""
+        result = make_result()
         excs = [make_exc(ExceptionType.AMOUNT_MISMATCH)]
         resolution = resolve(
             result, excs,

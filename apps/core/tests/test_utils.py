@@ -123,17 +123,16 @@ class TestParseDate:
         assert parse_date(d) == d
 
     def test_datetime_returns_date(self):
-        # parse_date checks isinstance(value, datetime) AFTER isinstance(value, date)
-        # since datetime is a subclass of date. The source code checks date first,
-        # so a datetime object matches the `isinstance(value, date)` check and is
-        # returned as-is (not converted to .date()). Adjust expectation accordingly.
-        from datetime import datetime as dt_class
-        dt = dt_class(2025, 1, 15, 12, 0, 0)
+        """parse_date(datetime) returns a plain date object (not a datetime).
+
+        Bug fix applied: datetime check now runs before the date check so
+        datetime objects are correctly converted via .date() instead of being
+        returned as datetime instances.
+        """
+        dt = datetime(2025, 1, 15, 12, 0, 0)
         result = parse_date(dt)
-        # Either a date or datetime is acceptable — key is year/month/day correct
-        assert result.year == 2025
-        assert result.month == 1
-        assert result.day == 15
+        assert result == date(2025, 1, 15)
+        assert type(result) is date  # must be a plain date, not a datetime
 
     def test_iso_string(self):
         assert parse_date("2025-01-15") == date(2025, 1, 15)
