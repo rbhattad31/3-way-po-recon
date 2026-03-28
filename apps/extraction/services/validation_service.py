@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 from django.conf import settings
 
@@ -26,6 +26,10 @@ class ValidationIssue:
 class ValidationResult:
     is_valid: bool = True
     issues: List[ValidationIssue] = field(default_factory=list)
+    # Critical field validation — populated when field_confidence is available
+    critical_failures: List[str] = field(default_factory=list)       # field names below confidence threshold
+    field_review_flags: Dict[str, str] = field(default_factory=dict) # field -> reason string
+    requires_review_override: bool = False  # True forces human approval regardless of confidence score
 
     def add_error(self, fld: str, msg: str) -> None:
         self.issues.append(ValidationIssue(field=fld, severity="error", message=msg))
@@ -111,9 +115,36 @@ class ValidationService:
                 f"Low extraction confidence ({inv.confidence:.2f} < {threshold})",
             )
 
+        # ── Critical field confidence check ───────────────────────────────────
+        # When FieldConfidenceService has already populated inv.field_confidence,
+        # check each critical field.  Any critical field with confidence < 0.6
+        # forces human review regardless of the overall confidence score.
+        fc = getattr(inv, "field_confidence", {}) or {}
+        if fc:
+            from apps.extraction.services.field_confidence_service import CRITICAL_FIELDS
+            _CRIT_CONF_THRESHOLD = 0.60
+            for cf in CRITICAL_FIELDS:
+                score = fc.get("header", {}).get(cf)
+                if score is not None and score < _CRIT_CONF_THRESHOLD:
+                    result.critical_failures.append(cf)
+                    reason = f"field_confidence={score:.2f} < {_CRIT_CONF_THRESHOLD}"
+                    result.field_review_flags[cf] = reason
+                    result.add_warning(
+                        f"critical_field.{cf}",
+                        f"Critical field '{cf}' has low confidence ({score:.2f}); human review required",
+                    )
+            if result.critical_failures:
+                result.requires_review_override = True
+                logger.info(
+                    "Critical field confidence failures: %s — review override set",
+                    result.critical_failures,
+                )
+
         logger.info(
-            "Validation complete: valid=%s errors=%d warnings=%d confidence=%.2f (llm=%.2f)",
+            "Validation complete: valid=%s errors=%d warnings=%d confidence=%.2f (llm=%.2f) "
+            "critical_failures=%s review_override=%s",
             result.is_valid, len(result.errors), len(result.warnings),
             inv.confidence, llm_confidence,
+            result.critical_failures, result.requires_review_override,
         )
         return result

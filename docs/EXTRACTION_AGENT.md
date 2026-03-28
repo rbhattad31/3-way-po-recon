@@ -1,8 +1,8 @@
 # Invoice Extraction Agent — Feature Documentation
 
-> **Modules**: `apps/extraction/` (Application Layer — UI, Task, Core Models) + `apps/extraction_core/` (Platform Layer — Configuration, Execution, Governance)  
-> **Dependencies**: Azure Document Intelligence (OCR), Azure OpenAI GPT-4o (LLM), Agent Framework (`apps/agents/`)  
-> **Status**: Human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking. Tests not yet written (pytest + factory-boy configured). ERP connectors and Celery Beat schedules are pending.
+> **Modules**: `apps/extraction/` (Application Layer — UI, Task, Core Models) + `apps/extraction_core/` (Platform Layer — Configuration, Execution, Governance)
+> **Dependencies**: Azure Document Intelligence (OCR), Azure OpenAI GPT-4o (LLM), Agent Framework (`apps/agents/`)
+> **Status**: Human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking + Phase 2 modular prompt composition + deterministic response repair + field-level confidence scoring + critical field validation + hard reconciliation math checks. 75+ service-level tests — see `apps/extraction/tests/`. ERP connectors and Celery Beat schedules are pending.
 
 ---
 
@@ -249,16 +249,18 @@ ExtractionParserService → NormalizationService → ValidationService
 | Step | Service | Description |
 |------|---------|-------------|
 | 0 | `CreditService.reserve()` | Reserve 1 credit (`ref_type="document_upload"`, `ref_id=upload.pk`). Hard-stop if insufficient. |
-| 1 | `InvoiceExtractionAdapter` | OCR + LLM extraction → `ExtractionResponse` |
+| 1 | `InvoiceExtractionAdapter` | OCR + LLM extraction → `ExtractionResponse` (includes `_repair` metadata in `raw_json`) |
 | 1a | `DocumentTypeClassifier` | Classify OCR text → reject non-invoices (GRN, PO, DELIVERY_NOTE, STATEMENT) with credit refund. Rejection requires `confidence ≥ 0.60` **and** `not is_ambiguous`. |
 | 1b | `_run_governed_pipeline()` | Wire governed extraction pipeline (`ExtractionPipeline.run()`) as an enrichment step. Creates `ExtractionDocument` linked to the upload, passes OCR text + invoice reference. Wrapped in try/except for graceful degradation — if the governed pipeline fails, the legacy pipeline continues and the result shows "Legacy" source. |
 | 2 | `ExtractionParserService` | Parse raw JSON → `ParsedInvoice` dataclass |
-| 3 | `NormalizationService` | Normalize fields (dates, amounts, PO numbers) |
-| 4 | `ValidationService` + `ExtractionConfidenceScorer` | Check mandatory fields, compute deterministic confidence score |
+| 3 | `NormalizationService` | Normalize fields (dates, amounts, PO numbers) → `NormalizedInvoice` |
+| 3a | `FieldConfidenceService` | Deterministic per-field confidence scoring (0.0–1.0) based on presence, parse success, repair actions. Attaches `field_confidence` dict to `NormalizedInvoice`. Embeds `_field_confidence` in `raw_json` for persistence. |
+| 4 | `ValidationService` + `ExtractionConfidenceScorer` | Check mandatory fields, compute deterministic overall confidence. Reads `NormalizedInvoice.field_confidence` to detect low-confidence critical fields → sets `requires_review_override`. |
+| 4a | `ReconciliationValidatorService` | 6 deterministic math checks: total consistency, line sum, line math, tax breakdown, tax %, line tax sum. Issues serialised to `raw_json["_validation"]`. Math ERRORs surfaced as validation warnings. |
 | 5 | `DuplicateDetectionService` | Detect re-submitted invoices |
-| 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database (sets `extraction_run` FK) |
+| 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database (sets `extraction_run` FK). `ExtractionResult.raw_response` contains `_repair`, `_field_confidence`, and `_validation` metadata. |
 | 6a | `CreditService.consume()` / `.refund()` | On success → consume; on OCR failure → refund (see §17 decision table) |
-| 7 | Approval Gate | Auto-approve or queue for human review |
+| 7 | Approval Gate | Auto-approve or queue for human review. `requires_review_override=True` skips auto-approval entirely (critical field confidence failure). |
 
 ### Audit Events
 
@@ -584,9 +586,82 @@ If no consistency checks are possible (all values missing), returns 0.5 (neutral
 
 **Output**: `ConfidenceBreakdown` with `overall`, `field_coverage`, `line_item_quality`, `consistency`, `penalties` list, `llm_original` (preserved for audit comparison). The `overall` score is clamped to [0.0, 1.0] and written to `Invoice.extraction_confidence`.
 
+### 5.4b FieldConfidenceService
+
+**File**: `apps/extraction/services/field_confidence_service.py`
+**Called by**: Pipeline step 3a (after `NormalizationService`, before `ValidationService`)
+
+Produces a **per-field confidence map** (0.0–1.0) for every extracted header field and per-line sub-field. Unlike `ExtractionConfidenceScorer` (which produces a single scalar), this service identifies *which* fields are unreliable.
+
+**Scoring bands**:
+
+| Band | Score | Meaning |
+|------|-------|---------|
+| Explicit + clean | 0.95–1.00 | Field present in LLM output, parsed OK, no repair touching this field |
+| Minor repair elsewhere | 0.80–0.94 | Field parsed OK; a repair action ran but did not affect this field |
+| Direct repair | 0.60–0.79 | Repair action directly modified this field (e.g., `tax_percentage.recomputed`) |
+| Recovered | 0.65 | `invoice_number` recovered from OCR by repair (`invoice_number.recovered_from_ocr`) |
+| Suspicious | 0.30–0.59 | Value present but anomalous (zero total, non-3-char currency defaulted) |
+| Missing / failed | 0.00–0.29 | Field absent from LLM output or normalization returned None/empty |
+
+**Critical fields** (`CRITICAL_FIELDS`): `invoice_number`, `vendor_name`, `invoice_date`, `currency`, `total_amount`
+
+**Output**: `FieldConfidenceResult` with:
+- `header: Dict[str, float]` — per-field score for all header fields
+- `lines: List[Dict[str, float]]` — per-line scores (description, line_amount, quantity, unit_price, tax_percentage, tax_amount, line_math)
+- `weakest_critical_field: str` — name of the lowest-scoring critical field
+- `weakest_critical_score: float` — its score
+- `low_confidence_fields: List[str]` — all header fields with score < 0.6
+
+**Persistence**: `FieldConfidenceService.to_serializable(result)` is embedded into `raw_response["_field_confidence"]` by the pipeline task before `ExtractionResult` is saved.
+
+**Fail-silent**: Any exception returns an empty `FieldConfidenceResult` and logs a warning. The pipeline continues unchanged.
+
+**Integration with ValidationService**: The result dict is attached to `NormalizedInvoice.field_confidence`. `ValidationService` reads it to detect low-confidence critical fields (see §5.4c).
+
+### 5.4c Critical Field Validation
+
+**File**: `apps/extraction/services/validation_service.py` (extended `ValidationResult`)
+
+`ValidationResult` now carries three additional attributes:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `critical_failures` | `List[str]` | Names of critical fields with `field_confidence < 0.60` |
+| `field_review_flags` | `Dict[str, str]` | field → reason string for each failed field |
+| `requires_review_override` | `bool` | `True` if any critical field triggered a failure |
+
+When `requires_review_override=True`, the pipeline **skips auto-approval entirely** and routes directly to human review, regardless of the overall `ExtractionConfidenceScorer` score.
+
+**Critical confidence threshold**: 0.60 (hardcoded; critical fields must clear this to avoid forced review).
+
+### 5.4d ReconciliationValidatorService
+
+**File**: `apps/extraction/services/reconciliation_validator.py`
+**Called by**: Pipeline step 4a (after `ValidationService`)
+
+Runs 6 deterministic math checks on the normalized invoice. Produces **structured issues** (not just a penalty string) so the UI and audit log can display exactly which math check failed.
+
+| Check | Issue Code | Severity | Tolerance | Condition |
+|-------|-----------|---------|-----------|-----------|
+| `TOTAL_CHECK` | `TOTAL_MISMATCH` | **ERROR** | 2% | `subtotal + tax_amount ≠ total_amount` |
+| `LINE_SUM_CHECK` | `LINE_SUM_MISMATCH` | WARNING | 5% | `Σ line_amounts ≠ subtotal` |
+| `LINE_MATH_CHECK` | `LINE_MATH_MISMATCH` | WARNING | 2% per line | `qty × unit_price ≠ line_amount` |
+| `TAX_BREAKDOWN_CHECK` | `TAX_BREAKDOWN_MISMATCH` | WARNING | abs 0.50 | `sum(cgst+sgst+igst+vat) ≠ tax_amount` |
+| `TAX_PCT_CHECK` | `TAX_PCT_INCONSISTENT` | INFO | 1pp | `(tax_amount/subtotal×100) ≠ tax_percentage` |
+| `LINE_TAX_SUM_CHECK` | `LINE_TAX_SUM_MISMATCH` | INFO | 5% | `Σ line.tax_amounts ≠ tax_amount` |
+
+**`is_clean`**: `True` only when no ERROR-severity issues exist (warnings/info are non-blocking).
+
+**Relationship to `ExtractionConfidenceScorer`**: The scorer already performs binary pass/fail consistency checks that feed into the overall confidence score. `ReconciliationValidatorService` is **additive** — it produces granular structured issues without modifying the scorer.
+
+**Persistence**: Serialized via `ReconciliationValidatorService.to_serializable(result)` and embedded into `raw_response["_validation"]`.
+
+**Fail-silent**: Any exception returns an empty `ReconciliationValidationResult(is_clean=True)` and logs a warning.
+
 ### 5.5 DuplicateDetectionService
 
-**File**: `apps/extraction/services/duplicate_detection_service.py`  
+**File**: `apps/extraction/services/duplicate_detection_service.py`
 **Decorator**: `@observed_service("extraction.duplicate_check", entity_type="Invoice")`
 
 Returns `DuplicateCheckResult` with `is_duplicate`, `duplicate_invoice_id`, `reason`.
@@ -1243,52 +1318,80 @@ A deeper analysis agent that runs after extraction for low-confidence or ambiguo
 
 ## 10. LLM Prompt
 
-**Registry key**: `extraction.invoice_system`  
-**File**: `apps/core/prompt_registry.py` (hardcoded default) + DB-overridable via `PromptTemplate` model
+**Registry key**: `extraction.invoice_system` (monolithic fallback) + `extraction.invoice_base` (modular base — see §10b)
+**File**: `apps/core/prompt_registry.py` (hardcoded defaults) + Langfuse (production label, 60s cache TTL) + DB (`PromptTemplate` model)
 
-```
-You are an expert invoice data extraction system. You will receive OCR text
-from an invoice document. Extract ALL relevant fields and return a JSON object
-with EXACTLY this structure:
+### JSON Output Schema
 
+The extraction prompt instructs the LLM to return valid JSON with this exact structure:
+
+```json
 {
-  "confidence": <float 0.0-1.0>,
-  "vendor_name": "<vendor/supplier company name>",
-  "vendor_tax_id": "<vendor GSTIN, VAT number, or tax registration ID>",
-  "invoice_number": "<invoice number/ID>",
-  "invoice_date": "<invoice date in YYYY-MM-DD format>",
-  "due_date": "<payment due date in YYYY-MM-DD format, or empty string>",
+  "confidence": 0.0,
+  "vendor_name": "<supplier name>",
+  "vendor_tax_id": "<GSTIN/VAT number>",
+  "buyer_name": "<billed to company>",
+  "invoice_number": "<invoice number>",
+  "invoice_date": "<YYYY-MM-DD>",
+  "due_date": "<YYYY-MM-DD>",
   "po_number": "<purchase order number>",
-  "buyer_name": "<billed-to / buyer company name>",
-  "currency": "<3-letter ISO currency code, e.g. USD, EUR, INR>",
-  "subtotal": "<subtotal amount before tax>",
-  "tax_amount": "<total tax amount>",
-  "tax_percentage": "<overall tax rate as a percentage, e.g. 18 for 18%, or empty string>",
+  "currency": "<ISO code>",
+  "subtotal": 0,
+  "tax_percentage": 0,
+  "tax_amount": 0,
   "tax_breakdown": {
-    "cgst": "<CGST amount or 0>",
-    "sgst": "<SGST amount or 0>",
-    "igst": "<IGST amount or 0>",
-    "vat": "<VAT amount or 0>"
+    "cgst": 0,
+    "sgst": 0,
+    "igst": 0,
+    "vat": 0
   },
-  "total_amount": "<grand total amount>",
+  "total_amount": 0,
+  "document_type": "invoice",
   "line_items": [
     {
       "item_description": "<description>",
-      "quantity": "<quantity>",
-      "unit_price": "<unit price>",
-      "tax_amount": "<tax for this line or 0>",
-      "tax_percentage": "<tax rate % for this line or empty string>",
-      "line_amount": "<total for this line>"
+      "item_category": "<category>",
+      "quantity": 0,
+      "unit_price": 0,
+      "tax_percentage": 0,
+      "tax_amount": 0,
+      "line_amount": 0
     }
   ]
 }
 ```
 
-**Key rules**:
-- Extract EVERY line item visible in the invoice
-- Preserve values exactly as shown for display fields
-- Keep currency symbols with amounts (e.g., $, €, ₹)
-- Missing fields → empty string (text) or 0 (numeric)
+### Key Extraction Rules (in the prompt)
+
+| Rule | Description |
+|------|-------------|
+| **Pre-extraction analysis** | Mandatory step: identify document type, table vs pricing breakdown structure, tax regime, quantity logic |
+| **Label binding** | Values bound to nearest explicit label; no identifier guessing by format alone |
+| **Header block recovery** | When label and value are on separate OCR lines, search the nearby header section (not the whole doc) |
+| **invoice_number sources** | Only from: Invoice Number, Invoice No, Tax Invoice No, Bill No |
+| **Reference exclusions** | CART Ref. No., Client Code, IRN, Document No., Booking Confirmation No., Hotel Booking ID, Requisition Number, Passenger Name, Employee Code, Cost Center Code — **never** used as invoice_number |
+| **po_number** | Only when explicitly labeled (PO Number / P.O. No / Purchase Order), else `""` |
+| **vendor_name** | English characters only; transliterate/translate if OCR contains Arabic/Urdu/non-English |
+| **vendor_tax_id** | GSTIN or VAT registration number of the vendor |
+| **buyer_name** | Entity under "Bill To" |
+| **due_date** | Extract if present, else `""` |
+| **tax_breakdown** | Map CGST→cgst, SGST→sgst, IGST→igst, VAT→vat; default 0 if missing |
+| **document_type** | Always `"invoice"` |
+| **item_category** | One of: Food, Logistics, Packaging, Maintenance, Utilities, Equipment, Services, Materials, Other |
+| **subtotal** | Sum of ALL pre-tax components (base fare, service charges, fees); exclude GST/VAT, roundoff, total |
+| **tax_percentage** | Computed: `(tax_amount / subtotal) × 100`; NOT copied from component-level rate |
+| **Travel invoice** | Convert pricing breakdown (Base Fare, Service Charges) into line items; consolidate Basic Fare + Hotel Taxes → Total Fare |
+| **Consistency** | `subtotal + tax_amount ≈ total_amount` (±2%); `Σ line_amounts ≈ subtotal` (±5%); prefer computed if mismatch |
+| **Defaults** | Missing text → `""`; missing numbers → `0` |
+
+### Prompt Versioning
+
+The prompt is resolved in this priority order:
+1. **Langfuse** (`extraction-invoice_system`, label `production`) — 60s in-process TTL cache
+2. **Database** — `PromptTemplate` model (slug `extraction.invoice_system`)
+3. **Hardcoded default** — `_DEFAULTS["extraction.invoice_system"]` in `prompt_registry.py`
+
+The Langfuse version is the **source of truth in production**. Run `python manage.py push_prompts_to_langfuse` to sync codebase defaults to Langfuse (18 prompts total).
 - Parse dates to YYYY-MM-DD (applies to both `invoice_date` and `due_date`)
 - Extract PO number from anywhere (header, footer, references)
 - `tax_breakdown`: populate whichever components (CGST/SGST/IGST/VAT) appear on the invoice; use 0 for absent components
@@ -2181,7 +2284,9 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 | `apps/extraction/services/extraction_adapter.py` | Azure DI OCR + LLM extraction orchestration |
 | `apps/extraction/services/parser_service.py` | JSON → ParsedInvoice dataclass parsing |
 | `apps/extraction/services/normalization_service.py` | Field normalization (dates, amounts, strings) |
-| `apps/extraction/services/validation_service.py` | Mandatory field validation + deterministic confidence scoring via `ExtractionConfidenceScorer` |
+| `apps/extraction/services/field_confidence_service.py` | Per-field confidence scoring (0.0–1.0); populates `NormalizedInvoice.field_confidence`; serialized to `raw_response["_field_confidence"]` |
+| `apps/extraction/services/reconciliation_validator.py` | 6 deterministic math checks; structured issues with severity (ERROR/WARNING/INFO); serialized to `raw_response["_validation"]` |
+| `apps/extraction/services/validation_service.py` | Mandatory field validation + deterministic confidence scoring + critical field check (reads `field_confidence`, sets `requires_review_override`) |
 | `apps/extraction/services/duplicate_detection_service.py` | Duplicate invoice detection |
 | `apps/extraction/services/persistence_service.py` | Invoice + LineItem + ExtractionResult persistence |
 | `apps/extraction/services/approval_service.py` | Approval lifecycle (approve/reject/auto-approve + analytics) |

@@ -451,59 +451,193 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
         </div>
       </div>
 
-      <h3 class="docs-h3" id="agent-types">Agent Types ({{ agents_info|length }})</h3>
-      <div class="accordion" id="agentAccordion">
-        {% for agent in agents_info %}
-        <div class="accordion-item">
-          <h2 class="accordion-header">
-            <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
-                    type="button" data-bs-toggle="collapse" data-bs-target="#agent-{{ forloop.counter }}">
-              <span class="me-2">
-                {% if agent.type == "INVOICE_EXTRACTION" %}<i class="bi bi-file-earmark-code text-primary"></i>
-                {% elif agent.type == "INVOICE_UNDERSTANDING" %}<i class="bi bi-file-earmark-text text-info"></i>
-                {% elif agent.type == "PO_RETRIEVAL" %}<i class="bi bi-search text-info"></i>
-                {% elif agent.type == "GRN_RETRIEVAL" %}<i class="bi bi-box-seam text-success"></i>
-                {% elif agent.type == "EXCEPTION_ANALYSIS" %}<i class="bi bi-exclamation-triangle text-warning"></i>
-                {% elif agent.type == "RECONCILIATION_ASSIST" %}<i class="bi bi-arrow-left-right text-primary"></i>
-                {% elif agent.type == "REVIEW_ROUTING" %}<i class="bi bi-signpost-split text-danger"></i>
-                {% elif agent.type == "CASE_SUMMARY" %}<i class="bi bi-journal-text text-secondary"></i>
-                {% else %}<i class="bi bi-robot"></i>{% endif %}
-              </span>
-              <strong>{{ agent.label }}</strong>
-              <span class="text-muted ms-3 small">{{ agent.type }}</span>
-              {% if agent.required_permission %}
-              <span class="badge bg-warning text-dark ms-2"><i class="bi bi-shield-lock me-1"></i>{{ agent.required_permission }}</span>
+      <!-- PolicyEngine Dispatch Rules -->
+      <h3 class="docs-h3" id="policy-engine">PolicyEngine &mdash; Agent Dispatch Rules</h3>
+      <p class="text-muted small mb-3">
+        <code>ReasoningPlanner</code> makes an LLM call to order agents; <code>PolicyEngine</code> is the deterministic fallback.
+        Both evaluate these rules to decide which agents to schedule for a given result.
+      </p>
+      <div class="card mb-4">
+        <div class="card-body p-0">
+          <table class="table table-hover table-sm mb-0">
+            <thead class="table-light">
+              <tr>
+                <th style="width:34%">Trigger Condition</th>
+                <th style="width:12%">Mode</th>
+                <th style="width:28%">Agents Scheduled</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for rule in policy_engine_rules %}
+              <tr>
+                <td class="small fst-italic">{{ rule.condition }}</td>
+                <td class="small"><span class="badge bg-light border text-dark">{{ rule.mode }}</span></td>
+                <td>
+                  {% if rule.agents %}
+                    {% for agent_type in rule.agents %}<span class="badge bg-primary me-1">{{ agent_type }}</span>{% endfor %}
+                  {% else %}
+                    <span class="badge bg-secondary">None &mdash; skip</span>
+                  {% endif %}
+                </td>
+                <td class="small text-muted">{{ rule.notes }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Per-Agent Detail Cards -->
+      <h3 class="docs-h3" id="agent-types">Agent Catalog ({{ agents_info|length }})</h3>
+      <p class="text-muted small mb-4">
+        <span class="badge bg-success me-1">ReAct Loop</span> agents run inside the <code>AgentOrchestrator</code>.
+        <span class="badge bg-secondary me-1">Pipeline-only</span> agents are single-shot and run directly in the extraction pipeline, never scheduled by PolicyEngine.
+      </p>
+
+      {% for agent in agents_info %}
+      <div class="card mb-4 border" id="agent-{{ agent.type|lower }}">
+        <!-- Card header -->
+        <div class="card-header bg-white d-flex flex-wrap align-items-center gap-2 py-3">
+          <span class="fs-5">
+            {% if agent.type == "INVOICE_EXTRACTION" %}<i class="bi bi-file-earmark-code text-primary"></i>
+            {% elif agent.type == "INVOICE_UNDERSTANDING" %}<i class="bi bi-file-earmark-text text-info"></i>
+            {% elif agent.type == "PO_RETRIEVAL" %}<i class="bi bi-search text-info"></i>
+            {% elif agent.type == "GRN_RETRIEVAL" %}<i class="bi bi-box-seam text-success"></i>
+            {% elif agent.type == "EXCEPTION_ANALYSIS" %}<i class="bi bi-exclamation-triangle text-warning"></i>
+            {% elif agent.type == "RECONCILIATION_ASSIST" %}<i class="bi bi-arrow-left-right text-primary"></i>
+            {% elif agent.type == "REVIEW_ROUTING" %}<i class="bi bi-signpost-split text-danger"></i>
+            {% elif agent.type == "CASE_SUMMARY" %}<i class="bi bi-journal-text text-secondary"></i>
+            {% else %}<i class="bi bi-robot"></i>{% endif %}
+          </span>
+          <strong class="fs-6">{{ agent.label }}</strong>
+          <code class="text-muted small">{{ agent.type }}</code>
+          {% if agent.is_pipeline %}
+            <span class="badge bg-secondary">Pipeline-only</span>
+          {% else %}
+            <span class="badge bg-success">ReAct Loop</span>
+          {% endif %}
+          {% if agent.required_permission %}<span class="badge bg-warning text-dark ms-auto"><i class="bi bi-shield-lock me-1"></i>{{ agent.required_permission }}</span>{% endif %}
+        </div>
+
+        <!-- Purpose bar -->
+        <div class="border-bottom px-4 py-2 bg-light small text-muted">
+          <strong class="text-dark">Purpose:</strong> {{ agent.purpose }}
+        </div>
+
+        <!-- Main body -->
+        <div class="card-body">
+
+          <!-- 3-column grid: Trigger | Tools | Allowed Recommendations -->
+          <div class="row g-4 mb-3">
+
+            <!-- Col 1: Trigger -->
+            <div class="col-md-4">
+              <h6 class="text-uppercase small fw-bold text-secondary mb-2"><i class="bi bi-lightning me-1"></i>Trigger Condition</h6>
+              <p class="small mb-2">{{ agent.entry_conditions }}</p>
+              {% if agent.trigger %}
+              <div class="bg-light border rounded px-2 py-1 small text-muted mb-2">
+                <i class="bi bi-info-circle me-1"></i>{{ agent.trigger }}
+              </div>
               {% endif %}
-            </button>
-          </h2>
-          <div id="agent-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
-               data-bs-parent="#agentAccordion">
-            <div class="accordion-body">
-              <p class="mb-3"><em>{{ agent.description }}</em></p>
-              <h6>Tools</h6>
-              <div class="mb-3">
-                {% for tool_name in agent.allowed_tools %}
-                <span class="badge bg-info text-dark me-1 mb-1"><i class="bi bi-wrench me-1"></i>{{ tool_name }}</span>
-                {% empty %}
-                <span class="text-muted small">No tools -- prompt-only / single-shot agent</span>
+              {% if agent.dynamic_adds %}
+              <div class="small text-success mt-1"><i class="bi bi-plus-circle me-1"></i><strong>Dynamic:</strong> {{ agent.dynamic_adds }}</div>
+              {% endif %}
+              {% if agent.skip_conditions %}
+              <div class="small text-danger mt-1"><i class="bi bi-x-circle me-1"></i><strong>Skip when:</strong> {{ agent.skip_conditions }}</div>
+              {% endif %}
+            </div>
+
+            <!-- Col 2: Tools -->
+            <div class="col-md-4">
+              <h6 class="text-uppercase small fw-bold text-secondary mb-2"><i class="bi bi-wrench me-1"></i>Tools</h6>
+              {% for tool_name in agent.allowed_tools %}
+              <span class="badge bg-info text-dark me-1 mb-1"><i class="bi bi-wrench me-1"></i>{{ tool_name }}</span>
+              {% empty %}
+              <p class="small text-muted mb-1">No tools &mdash; single-shot LLM call</p>
+              {% endfor %}
+              {% if agent.min_tool_calls > 0 %}
+              <div class="mt-2"><span class="badge bg-light border text-dark small">Min tool calls: {{ agent.min_tool_calls }}</span></div>
+              {% endif %}
+              {% if agent.requires_tool_grounding %}
+              <div class="mt-1 small text-primary"><i class="bi bi-shield-check me-1"></i>Tool grounding required</div>
+              {% endif %}
+            </div>
+
+            <!-- Col 3: Allowed Recommendations -->
+            <div class="col-md-4">
+              <h6 class="text-uppercase small fw-bold text-secondary mb-2"><i class="bi bi-send me-1"></i>Allowed Recommendations</h6>
+              {% if agent.allowed_recs %}
+                {% for rec in agent.allowed_recs %}
+                <span class="badge bg-secondary me-1 mb-1" style="font-size:.72rem">{{ rec }}</span>
+                {% endfor %}
+                <div class="mt-2 small text-muted">Default fallback: <strong>{{ agent.default_fallback_rec }}</strong></div>
+              {% else %}
+                <p class="small text-muted">No recommendations &mdash; pipeline-only agent</p>
+              {% endif %}
+              {% if agent.prohibited_actions %}
+              <div class="mt-2">
+                <span class="small fw-semibold text-danger"><i class="bi bi-ban me-1"></i>Prohibited:</span>
+                {% for act in agent.prohibited_actions %}
+                <span class="badge bg-danger-subtle text-danger border border-danger-subtle me-1 mt-1" style="font-size:.72rem">{{ act }}</span>
                 {% endfor %}
               </div>
-              {% if agent.required_permission %}
-              <h6>Permission</h6>
-              <div class="mb-3">
-                <code>{{ agent.required_permission }}</code>
-                <span class="text-muted small ms-2">Orchestration also requires <code>agents.orchestrate</code>.</span>
-              </div>
               {% endif %}
-              <h6>System Prompt</h6>
-              <div class="bg-light border rounded p-3" style="max-height:220px;overflow-y:auto">
-                <pre class="mb-0" style="white-space:pre-wrap;font-size:.82rem">{{ agent.system_prompt }}</pre>
+            </div>
+          </div><!-- /row -->
+
+          <!-- Guardrails + success row -->
+          <div class="border-top pt-3">
+            <div class="row g-2 align-items-start">
+              <div class="col-md-8">
+                <div class="d-flex flex-wrap gap-3 small">
+                  <div>
+                    <span class="text-muted">Permission:</span>
+                    <code>{{ agent.required_permission|default:"--" }}</code>
+                  </div>
+                  <div>
+                    <span class="text-muted">Tool-grounded:</span>
+                    {% if agent.requires_tool_grounding %}
+                    <span class="badge bg-primary">Yes</span>
+                    {% else %}
+                    <span class="badge bg-light border text-dark">No</span>
+                    {% endif %}
+                  </div>
+                  {% if agent.tool_failure_confidence_cap %}
+                  <div>
+                    <span class="text-muted">Conf cap on tool failure:</span>
+                    <span class="badge bg-warning text-dark">{{ agent.tool_failure_confidence_cap }}</span>
+                  </div>
+                  {% endif %}
+                </div>
+                <div class="mt-2 small">
+                  <span class="text-muted">Success criteria:</span> {{ agent.success_criteria }}
+                </div>
               </div>
+              <div class="col-md-4">
+                {% if agent.human_review_required_conditions %}
+                <div class="small"><i class="bi bi-people text-primary me-1"></i><strong>Human review required:</strong> {{ agent.human_review_required_conditions }}</div>
+                {% endif %}
+              </div>
+            </div>
+          </div><!-- /guardrails -->
+
+        </div><!-- /card-body -->
+
+        <!-- Collapsible system prompt (not shown by default) -->
+        <div class="card-footer bg-white border-top-0 pt-0">
+          <button class="btn btn-link btn-sm ps-0 text-muted" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#prompt-{{ agent.type|lower }}">
+            <i class="bi bi-code-square me-1"></i>Show system prompt
+          </button>
+          <div id="prompt-{{ agent.type|lower }}" class="collapse">
+            <div class="bg-light border rounded p-3 mt-2" style="max-height:220px;overflow-y:auto">
+              <pre class="mb-0" style="white-space:pre-wrap;font-size:.82rem">{{ agent.system_prompt }}</pre>
             </div>
           </div>
         </div>
-        {% endfor %}
-      </div>
+      </div><!-- /agent card -->
+      {% endfor %}
 
       <h3 class="docs-h3" id="tools">Registered Tools ({{ tools_info|length }})</h3>
       <div class="row g-3 mb-4">
@@ -960,10 +1094,33 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
     <div id="prompts" class="docs-section">
       <h2 class="docs-section-title"><i class="bi bi-chat-left-text me-2 text-secondary"></i>LLM Prompts</h2>
 
-      <div class="alert alert-info border-0 py-2 mb-4 small">
-        <i class="bi bi-info-circle me-1"></i>
-        All prompts use Azure OpenAI GPT-4o and are version-controlled via <code>PromptRegistry</code>.
-        Prompts are stored in the DB and can be updated via the admin or <code>seed_prompts</code> management command.
+      <div class="alert alert-info border-0 mb-4 small">
+        <div class="fw-semibold mb-2"><i class="bi bi-info-circle me-1"></i>Three prompt categories &mdash; different roles:</div>
+        <div class="row g-2">
+          <div class="col-md-4">
+            <div class="bg-white border rounded p-2">
+              <span class="badge bg-primary mb-1">Extraction</span>
+              <div>Used by <code>InvoicePromptComposer</code> to build the OCR-to-JSON system prompt.
+              Modular: <strong>base</strong> + category overlay (goods/service/travel) + country overlay (GST/VAT).
+              Single-shot call at <code>temperature=0.0</code> &mdash; no tools, no ReAct loop.</div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="bg-white border rounded p-2">
+              <span class="badge bg-success mb-1">Agent</span>
+              <div>Used by <strong>ReAct reasoning agents</strong> in the case pipeline (exception analysis, PO/GRN retrieval, reconciliation assist, etc.).
+              Each agent has a dedicated <code>agent.*</code> slug. Runs tool-calling loops at <code>temperature=0.1</code>.</div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="bg-white border rounded p-2">
+              <span class="badge bg-info text-dark mb-1">Case</span>
+              <div>Standalone prompts for case-level LLM calls: case summary, exception analysis narrative, non-PO validation reasoning, and the reviewer copilot assistant.
+              Fetched via <code>PromptRegistry</code> by slug (e.g. <code>case.case_summary</code>).</div>
+            </div>
+          </div>
+        </div>
+        <div class="mt-2 text-muted">All prompts are stored in the DB (<code>PromptTemplate</code>) and can be overridden via the Langfuse prompt editor or <code>seed_prompts</code> management command.</div>
       </div>
 
       <div class="row g-2 mb-4">
@@ -975,14 +1132,14 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
         </div>
         <div class="col-md-3 col-6">
           <div class="card border-0 shadow-sm text-center py-3">
-            <div class="fs-2 fw-bold text-info">1</div>
+            <div class="fs-2 fw-bold text-info">7</div>
             <div class="small text-muted">Extraction</div>
           </div>
         </div>
         <div class="col-md-3 col-6">
           <div class="card border-0 shadow-sm text-center py-3">
-            <div class="fs-2 fw-bold text-success">{{ agents_info|length }}</div>
-            <div class="small text-muted">Agent</div>
+            <div class="fs-2 fw-bold text-success">{{ react_agent_count }}</div>
+            <div class="small text-muted">Agent (ReAct)</div>
           </div>
         </div>
         <div class="col-md-3 col-6">
@@ -1498,7 +1655,8 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
         <a class="nav-link toc-child" href="#state-machine">State Machine</a>
 
         <div class="toc-group-label">Agent System</div>
-        <a class="nav-link toc-child" href="#agent-types">Agent Types</a>
+        <a class="nav-link toc-child" href="#policy-engine">Dispatch Rules</a>
+        <a class="nav-link toc-child" href="#agent-types">Agent Catalog</a>
         <a class="nav-link toc-child" href="#tools">Registered Tools</a>
         <a class="nav-link toc-child" href="#recommendations">Recommendations</a>
         <a class="nav-link toc-child" href="#recommendation-idempotency">Idempotency</a>

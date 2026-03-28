@@ -8,7 +8,11 @@
       "Bash(xargs grep:*)",
       "Bash(python manage.py push_prompts_to_langfuse --dry-run)",
       "Bash(python manage.py push_prompts_to_langfuse)",
-      "Bash(wc -l /c/3-way-po-recon/docs/*.md /c/3-way-po-recon/deploy/*.md)"
+      "Bash(wc -l /c/3-way-po-recon/docs/*.md /c/3-way-po-recon/deploy/*.md)",
+      "Bash(python -m pytest apps/extraction/tests/test_field_confidence_service.py apps/extraction/tests/test_reconciliation_validator.py -v)",
+      "Bash(python -m pytest apps/extraction/tests/ -v --tb=short)",
+      "Bash(python -m pytest apps/extraction/tests/test_credit_service.py apps/extraction/tests/test_credit_views.py -v --tb=short)",
+      "Bash(python -m pytest apps/extraction/tests/ --tb=short -q)"
     ]
   }
 }

@@ -258,7 +258,7 @@ Legacy roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`, `AUDITOR` 
 | Model | Key Fields | Relationships |
 |---|---|---|
 | **DocumentUpload** | file, original_filename, file_size, file_hash (SHA-256), content_type, document_type, processing_state, blob_name/container/url | — |
-| **Invoice** | raw_* fields (vendor_name, invoice_number, po_number, currency, subtotal, tax, total), normalized fields, invoice_date, status, extraction_confidence, is_duplicate, duplicate_of | FK: document_upload, vendor, created_by |
+| **Invoice** | raw_* fields (vendor_name, vendor_tax_id, buyer_name, invoice_number, invoice_date, due_date, po_number, currency, subtotal, tax_amount, total_amount), normalized fields (invoice_number, invoice_date, due_date, po_number, currency, subtotal, tax_amount, tax_percentage, tax_breakdown `{cgst,sgst,igst,vat}`, total_amount, vendor_tax_id, buyer_name), status, extraction_confidence, is_duplicate, duplicate_of | FK: document_upload, vendor, created_by; migration 0009 added due_date, vendor_tax_id, buyer_name, tax_percentage, tax_breakdown |
 | **InvoiceLineItem** | raw & normalized qty/unit_price/tax/line_amount, description, item_code, extraction_confidence, item_category, is_service_item, is_stock_item | FK: invoice |
 | **PurchaseOrder** | po_number, po_date, currency, total_amount, tax_amount, status, buyer_name, department | FK: vendor |
 | **PurchaseOrderLineItem** | line_number, item_code, description, quantity, unit_price, tax_amount, line_amount, unit_of_measure, item_category, is_service_item, is_stock_item | FK: purchase_order |
@@ -439,7 +439,7 @@ All enums live in `apps/core/enums.py` (24 classes). Key enums:
 ### Agents
 | Enum | Values |
 |---|---|
-| `AgentType` | INVOICE_UNDERSTANDING, PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY |
+| `AgentType` | INVOICE_EXTRACTION, INVOICE_UNDERSTANDING, PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY |
 | `AgentRunStatus` | PENDING, RUNNING, COMPLETED, FAILED, SKIPPED |
 | `RecommendationType` | AUTO_CLOSE, SEND_TO_AP_REVIEW, SEND_TO_PROCUREMENT, SEND_TO_VENDOR_CLARIFICATION, REPROCESS_EXTRACTION, ESCALATE_TO_MANAGER |
 | `ToolCallStatus` | REQUESTED, SUCCESS, FAILED |
@@ -490,51 +490,68 @@ InvoiceUploadService
 process_invoice_upload_task (Celery)
 ```
 
-### 7.2 Extraction Pipeline (Two-Agent Architecture)
+### 7.2 Extraction Pipeline
 
-The extraction runs as a Celery task (`process_invoice_upload_task`) using a **two-agent architecture**:
+The extraction runs as a Celery task (`process_invoice_upload_task`). Orchestrated by `InvoiceExtractionAdapter` with the following stages:
 
-**Step 1 — OCR (`InvoiceExtractionAdapter`)**
-- Sends document to Azure Document Intelligence
-- Returns raw text content from PDF/image
+**Stage 1 — OCR (`InvoiceExtractionAdapter`)**
+- Azure Document Intelligence (primary) — PDF/image → raw text
+- PyPDF2 native fallback when `EXTRACTION_OCR_ENABLED=false` or `ExtractionRuntimeSettings.ocr_enabled=false`
+- Output: ocr_text, page count, duration_ms
 
-**Step 2 — Invoice Extraction Agent (`InvoiceExtractionAgent`)**
-- Replaces direct GPT-4o call with a traced AI agent
-- Uses `response_format=json_object` and `temperature=0` for deterministic JSON output
-- Single-shot extraction (no tool-calling / ReAct loop)
-- Full agent traceability: AgentRun + AgentStep records created
-- Returns JSON with invoice header fields + line items
-- Output: `ExtractionResponse` (raw_json, confidence, duration_ms)
+**Stage 2 — Invoice Category Classification (`InvoiceCategoryClassifier`)** *(Phase 2)*
+- Rule-based classifier: `goods` / `service` / `travel`
+- Title-zone scoring (first 3 000 chars, full weight) + body scoring (0.4× weight)
+- Defaults to `service` when confidence < 0.20 or ambiguous
+- Output: `InvoiceCategoryResult` (category, confidence, signals, is_ambiguous)
 
-**Step 3 — Parsing (`ExtractionParserService`)**
-- Parses raw JSON into `ParsedInvoice` dataclass
+**Stage 3 — Modular Prompt Composition (`InvoicePromptComposer`)** *(Phase 2)*
+- Fetches `extraction.invoice_base` + category overlay + country/tax overlay from `PromptRegistry`
+- `PromptRegistry` resolution: Langfuse (60s TTL) → DB (`PromptTemplate`) → hardcoded defaults
+- Computes prompt_hash (sha256 first 16 chars) for Langfuse traceability
+- 18 registered prompts (base + 3 category + 2 country + 12 agent/other)
+- Output: `PromptComposition` (final_prompt, components dict, prompt_hash)
+
+**Stage 4 — Invoice Extraction Agent (`InvoiceExtractionAgent`)**
+- Single-shot LLM agent (no ReAct loop), `temperature=0`, `response_format=json_object`
+- Receives composed prompt via `ctx.extra["composed_prompt"]`; falls back to `extraction.invoice_system` if absent
+- Extracts: vendor_name, vendor_tax_id, buyer_name, invoice_number, invoice_date, due_date, po_number, currency, subtotal, tax_percentage, tax_amount, tax_breakdown (cgst/sgst/igst/vat), total_amount, document_type, line_items
+- Full agent traceability: `AgentRun` + `AgentMessage` records
+
+**Stage 5 — Response Repair (`ResponseRepairService`)** *(Phase 2)*
+- Deterministic pre-parser correction layer; operates on a copy (never mutates input)
+- 5 rules: (a) invoice_number exclusion (IRN, CART Ref, Hotel Booking ID, etc.) with OCR recovery; (b) tax_percentage recomputation from tax_amount/subtotal; (c) subtotal alignment with pre-tax line sums; (d) line-level tax allocation for service/travel; (e) travel line consolidation (Basic Fare + Hotel Taxes → Total Fare)
+- Repair metadata embedded in `raw_json["_repair"]` for audit
+
+**Step 6 — Parsing (`ExtractionParserService`)**
+- Parses repaired JSON → `ParsedInvoice` dataclass
 - Preserves raw values for auditability
 
-**Step 4 — Normalization (`NormalizationService`)**
+**Step 7 — Normalization (`NormalizationService`)**
 - Vendor name: lowercase, strip, collapse whitespace
 - Invoice number: uppercase, strip spaces
 - PO number: uppercase, strip leading zeros/prefixes, remove non-alphanumeric
-- Dates: best-effort parse from multiple formats
-- Amounts: safe Decimal conversion
+- Dates: YYYY-MM-DD parse from multiple formats
+- Amounts: safe Decimal conversion; `tax_breakdown` dict normalized
 - Currency: normalize to 3-char ISO code
 
-**Step 5 — Validation (`ValidationService`)**
+**Step 8 — Validation (`ValidationService`)**
 - **Mandatory**: invoice_number, vendor_name, total_amount
 - **Recommended**: po_number, invoice_date, subtotal, confidence ≥ 0.75
 - Output: `ValidationResult` (is_valid, issues, errors/warnings)
 
-**Step 6 — Duplicate Detection (`DuplicateDetectionService`)**
+**Step 9 — Duplicate Detection (`DuplicateDetectionService`)**
 - Check 1: Same invoice_number + vendor → DUPLICATE
 - Check 2: Same invoice_number + amount within 90 days → DUPLICATE
 - Check 3: Same vendor + amount + date → WARNING
 
-**Step 7 — Persistence (`InvoicePersistenceService`)**
+**Step 10 — Persistence (`InvoicePersistenceService`)**
 - Resolve vendor FK (by normalized name or alias lookup)
 - Set invoice status: INVALID (if validation failed), EXTRACTED/VALIDATED (otherwise)
-- Save Invoice + InvoiceLineItem records
-- Save ExtractionResult metadata
+- Save Invoice + InvoiceLineItem records (including vendor_tax_id, buyer_name, due_date, tax_breakdown)
+- Save ExtractionResult metadata (including prompt_hash, invoice_category, repair actions)
 
-**Step 8 — Extraction Approval Gate (`ExtractionApprovalService`)**
+**Step 11 — Extraction Approval Gate (`ExtractionApprovalService`)**
 - For valid, non-duplicate invoices: check auto-approval eligibility
 - **Auto-approval**: When `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence ≥ `EXTRACTION_AUTO_APPROVE_THRESHOLD`, auto-approve → READY_FOR_RECON
 - **Human approval**: Otherwise set invoice to PENDING_APPROVAL, create ExtractionApproval record with original values snapshot
@@ -2031,7 +2048,9 @@ celery -A config worker -l info
 
 - All data models, migrations, enums (25 enum classes), permissions, middleware
 - Two-agent extraction architecture: InvoiceExtractionAgent (always, single-shot, json_object) + InvoiceUnderstandingAgent (conditional: confidence < 75%)
-- Extraction pipeline (Azure DI OCR + GPT-4o, 7 services) with human-in-the-loop approval gate
+- **Phase 2 extraction upgrade**: `InvoiceCategoryClassifier` (goods/service/travel), `InvoicePromptComposer` (base + category + country overlays, prompt_hash), `ResponseRepairService` (5 deterministic repair rules pre-parser); wired into InvoiceExtractionAdapter
+- **Invoice model extended**: vendor_tax_id, buyer_name, due_date, tax_percentage, tax_breakdown (cgst/sgst/igst/vat) — migration 0009
+- Extraction pipeline (Azure DI OCR + GPT-4o, 11 stages) with human-in-the-loop approval gate
 - **Extraction Approval**: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI with field correction tracking; configurable auto-approval threshold (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`)
 - Reconciliation engine (14 services; 2-way/3-way matching with mode resolver)
 - ReconciliationPolicy model with priority-ordered mode rules
@@ -2079,7 +2098,7 @@ celery -A config worker -l info
 - RBAC audit: 9 event types logged via RBACEventService to AuditEvent + 9 agent guardrail event types
 - RBAC API: full REST endpoints for users, roles, permissions, matrix
 - RBAC seed: 6 roles (incl. SYSTEM_AGENT), 40 permissions (incl. 16 agent/recommendation/cases/extraction), full role-permission matrix
-- Prompt registry with 13 defaults
+- Prompt registry with 18 defaults (extraction.invoice_system, extraction.invoice_base, 3 category overlays, 2 country overlays, 12 agent prompts); pushed to Langfuse via `push_prompts_to_langfuse`
 - Seed data commands (4 commands including Saudi McD scenarios)
 - Azure Blob Storage integration
 - Admin panel registration
@@ -2089,7 +2108,7 @@ celery -A config worker -l info
 
 | Area | Description |
 |---|---|
-| **Tests** | pytest + factory-boy configured; no tests written yet |
+| **Tests** | Reconciliation engine: 73 tests (`apps/reconciliation/tests/`). Extraction Phase 2: 51 tests — category classifier (13), prompt composer (13), response repair (25). Total: 124+ passing. |
 | **Extraction Refinement** | Multi-page invoice support, edge-case layout handling |
 | **ERP Integrations** | Actual PO/GRN API connectors (models exist, not wired) |
 | **Report Exports** | Full CSV/Excel export (CSV exists for case console only) |

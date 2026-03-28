@@ -57,10 +57,36 @@ tracing calls become no-ops.
 Local slug (in `PromptRegistry`) | Langfuse name
 ----|----
 `extraction.invoice_system` | `extraction-invoice_system`
+`extraction.invoice_base` | `extraction-invoice_base`
+`extraction.invoice_category_goods` | `extraction-invoice_category_goods`
+`extraction.invoice_category_service` | `extraction-invoice_category_service`
+`extraction.invoice_category_travel` | `extraction-invoice_category_travel`
+`extraction.country_india_gst` | `extraction-country_india_gst`
+`extraction.country_generic_vat` | `extraction-country_generic_vat`
 `agent.exception_analysis` | `agent-exception_analysis`
 `agent.invoice_understanding` | `agent-invoice_understanding`
+_(+ 9 more agent prompts)_ | —
 
-All dots are replaced with dashes. Use `slug_to_langfuse_name()` for the conversion.
+All dots are replaced with dashes (`slug.replace(".", "-")`). Use `slug_to_langfuse_name()` for the conversion. **18 prompts total** are registered in `_DEFAULTS` and pushed by `push_prompts_to_langfuse`.
+
+#### Prompt composition flow (Phase 2)
+
+`InvoicePromptComposer` assembles the final system prompt at extraction time:
+
+```
+extraction.invoice_base          (base extraction instructions)
+  + extraction.invoice_category_{category}   (goods / service / travel overlay)
+  + extraction.country_{country}_{regime}    (e.g. country_india_gst)
+  ─────────────────────────────────────────
+  = final_prompt  →  InvoiceExtractionAgent
+```
+
+The `PromptRegistry` resolution order for each component:
+1. Langfuse (production label, 60s TTL cache)
+2. DB (`PromptTemplate` model)
+3. Hardcoded `_DEFAULTS` in `prompt_registry.py`
+
+`InvoicePromptComposer.compose()` returns a `PromptComposition` with `final_prompt`, `components` (dict of key→content used), and `prompt_hash` (sha256 first 16 chars). The hash is logged to Langfuse as `prompt_hash` metadata on every `invoice_extraction` trace so prompt changes are traceable in the UI.
 
 ### Trace hierarchy
 

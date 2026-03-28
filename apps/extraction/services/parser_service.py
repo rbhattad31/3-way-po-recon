@@ -40,6 +40,8 @@ class ParsedInvoice:
     raw_total_amount: str = ""
     confidence: float = 0.0
     line_items: List[ParsedLineItem] = field(default_factory=list)
+    # Per-field confidence map — populated by FieldConfidenceService after parse
+    field_confidence: Dict[str, Any] = field(default_factory=dict)
 
 
 class ExtractionParserService:

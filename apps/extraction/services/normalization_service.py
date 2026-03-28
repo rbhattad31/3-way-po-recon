@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import date
 
 from apps.core.utils import (
@@ -78,6 +78,8 @@ class NormalizedInvoice:
     total_amount: Optional[Decimal] = None
 
     line_items: List[NormalizedLineItem] = field(default_factory=list)
+    # Per-field confidence map — populated by FieldConfidenceService after normalization
+    field_confidence: Dict[str, Any] = field(default_factory=dict)
 
 
 class NormalizationService:

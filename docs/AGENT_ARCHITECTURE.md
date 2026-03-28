@@ -899,12 +899,20 @@ and produce a structured summary for the reviewer.
 - `interpret_response()` replaces unknown `recommendation_type` values with
   `SEND_TO_AP_REVIEW` and clamps confidence to [0.0, 1.0].
 
-### 7.3 InvoiceExtractionAgent [IMPLEMENTED]
+### 7.3 InvoiceExtractionAgent [IMPLEMENTED — Phase 2]
 
 **Purpose:** Single-shot extraction of invoice header and line-item data from
 OCR text. Runs during upload, not during the reconciliation pipeline.
 
-**Tools used:** None.
+**Tools used:** None (no ReAct loop; single LLM call with `response_format=json_object`, `temperature=0`).
+
+**Phase 2 enhancements:**
+
+- **Composed prompt via `ctx.extra`**: `InvoiceExtractionAdapter` passes `composed_prompt` (base + category overlay + country overlay from `InvoicePromptComposer`) and `prompt_metadata` (invoice_category, category_confidence, prompt_hash, component versions) via `ctx.extra`. The `_init_messages()` override in `InvoiceExtractionAgent` uses `ctx.extra.get("composed_prompt")` as the system message if present; falls back to `PromptRegistry.get("extraction.invoice_system")` otherwise.
+
+- **Extended Langfuse metadata**: `self.llm._langfuse_metadata` extended with 10 fields from `ctx.extra.get("prompt_metadata", {})` — invoice_category, invoice_category_confidence, base_prompt_key, base_prompt_version, category_prompt_key, category_prompt_version, country_prompt_key, country_prompt_version, prompt_hash, schema_code.
+
+- **Extracted fields** (from the updated prompt): vendor_name, vendor_tax_id, buyer_name, invoice_number, invoice_date, due_date, po_number, currency, subtotal, tax_percentage, tax_amount, tax_breakdown (cgst/sgst/igst/vat), total_amount, document_type, line_items.
 
 **Remaining gap:** No lightweight schema check (required keys, numeric
 confidence, non-empty line_items) before calling `_finalise_run()`. If the

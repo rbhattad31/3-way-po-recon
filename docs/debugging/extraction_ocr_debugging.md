@@ -2,15 +2,16 @@
 
 ## Overview
 
-When an invoice is uploaded, the system:
-1. Runs OCR (Azure Document Intelligence or native PyPDF2) to get raw text from the PDF.
-2. Sends that raw text to GPT-4o (via `InvoiceExtractionAgent`) to extract structured fields.
-3. Saves the structured JSON in `ExtractionResult.raw_response`.
-4. Saves the raw OCR text in `ExtractionResult.ocr_text` (added 2026-03-27).
+When an invoice is uploaded, the system runs a multi-stage pipeline:
 
-If a field like `invoice_number` is blank after extraction, you need to check whether:
-- The OCR text contained the field but the LLM failed to extract it (prompt issue).
-- The OCR text itself was blank or garbled (OCR/PDF issue).
+1. **OCR** (Azure Document Intelligence or native PyPDF2) → raw text from the PDF.
+2. **Category classification** (`InvoiceCategoryClassifier`) → goods / service / travel.
+3. **Prompt composition** (`InvoicePromptComposer`) → base + category + country overlays.
+4. **LLM extraction** (`InvoiceExtractionAgent`) → structured JSON.
+5. **Response repair** (`ResponseRepairService`) → 5 deterministic rules fix common LLM errors before the parser.
+6. **Parse + normalize + validate** → `Invoice` record saved.
+
+`ExtractionResult.raw_response` contains the repaired LLM JSON (plus `_repair` metadata if any repairs were made). `ExtractionResult.ocr_text` contains the raw OCR text.
 
 ---
 
@@ -18,17 +19,18 @@ If a field like `invoice_number` is blank after extraction, you need to check wh
 
 | What | Model | Field | Notes |
 |---|---|---|---|
-| Structured extracted fields (JSON) | `ExtractionResult` | `raw_response` | What the LLM returned |
-| Raw OCR text sent to LLM | `ExtractionResult` | `ocr_text` | Added 2026-03-27; empty for extractions before this date |
-| Governed pipeline OCR text | `ExtractionDocument` | `ocr_text` | Only populated when governed pipeline succeeds |
-| Invoice normalized fields | `Invoice` | `invoice_number`, `raw_invoice_number`, etc. | Final persisted values |
-| Agent run details | `AgentRun` | `output_payload`, `prompt_tokens`, etc. | Linked via `ExtractionResult.agent_run_id` |
+| Repaired LLM JSON | `ExtractionResult` | `raw_response` | Includes `_repair` key if ResponseRepairService acted |
+| Repair actions taken | `ExtractionResult` | `raw_response["_repair"]` | `{was_repaired, repair_actions, warnings}` |
+| Raw OCR text | `ExtractionResult` | `ocr_text` | What was sent to LLM |
+| Governed pipeline OCR | `ExtractionDocument` | `ocr_text` | Only when governed pipeline succeeds |
+| Invoice normalized fields | `Invoice` | `invoice_number`, `vendor_tax_id`, `buyer_name`, `due_date`, `tax_breakdown`, etc. | Final persisted values |
+| Agent run details | `AgentRun` | `output_payload`, `prompt_tokens`, `input_payload` | Linked via `ExtractionResult.agent_run_id` |
 
 ---
 
-## How to Debug a Missed Field
+## How to Debug a Missed or Wrong Field
 
-### Step 1 -- Find the ExtractionResult
+### Step 1 — Find the ExtractionResult
 
 From the console URL `/extraction/console/<pk>/`, the `pk` is the `ExtractionResult` ID.
 
@@ -38,28 +40,47 @@ from apps.extraction.models import ExtractionResult
 ext = ExtractionResult.objects.get(pk=<pk>)
 ```
 
-### Step 2 -- Check what the LLM returned
+### Step 2 — Check what the LLM returned (after repair)
 
 ```python
 import json
 print(json.dumps(ext.raw_response, indent=2))
 ```
 
-Look for the field in question (e.g. `"invoice_number"`). If it is `""` or missing, the LLM did not extract it.
+Check whether `_repair` was applied:
 
-### Step 3 -- Check what the OCR produced
+```python
+repair = ext.raw_response.get("_repair", {})
+if repair.get("was_repaired"):
+    print("Repair actions:", repair["repair_actions"])
+    print("Repair warnings:", repair.get("warnings", []))
+```
+
+### Step 3 — Check the OCR text
 
 ```python
 print(ext.ocr_text)
 ```
 
-Search for the invoice number manually in the OCR text (Ctrl+F in a text editor).
+Search for the field manually in the OCR text:
 
-- **If the text IS there but extraction missed it** -- this is a prompt issue. The LLM did not recognize the label. Update the extraction prompt in `apps/core/prompt_registry.py` or via Django admin under Prompt Templates.
-- **If the text is NOT there** -- this is an OCR issue. The PDF may be image-only, scanned poorly, or text may be in a non-extractable layer.
-- **If `ocr_text` is empty** -- the extraction was run before 2026-03-27 (field did not exist yet). Reprocess the invoice to populate it.
+- **Field present in OCR but wrong in LLM output** → prompt issue or repair rule needed. Update the prompt in Langfuse (`extraction-invoice_system`) or add a repair rule to `ResponseRepairService`.
+- **Field absent from OCR** → OCR/PDF issue. Check scan quality and OCR mode.
+- **`ocr_text` empty** → Extraction pre-dates the `ocr_text` field, or governed pipeline failed. Reprocess.
 
-### Step 4 -- Check OCR mode
+### Step 4 — Check invoice category and prompt used
+
+```python
+# Check what category was detected and which prompt hash was used
+print("Category:", ext.raw_response.get("_category"))  # if stored
+# Or check the AgentRun
+from apps.agents.models import AgentRun, AgentMessage
+agent_run = AgentRun.objects.get(pk=ext.agent_run_id)
+sys_msg = AgentMessage.objects.filter(agent_run=agent_run, role="system").first()
+print("System prompt (first 500 chars):", sys_msg.content[:500] if sys_msg else "Not found")
+```
+
+### Step 5 — Check OCR mode
 
 ```python
 from apps.extraction_core.models import ExtractionRuntimeSettings
@@ -68,12 +89,12 @@ settings = ExtractionRuntimeSettings.get_active()
 print("OCR enabled:", settings.ocr_enabled if settings else "Using env var")
 ```
 
-- `ocr_enabled=True` -> Azure Document Intelligence (handles scanned/image PDFs).
-- `ocr_enabled=False` -> Native PDF text extraction via PyPDF2 (only works for PDFs with a text layer).
+- `ocr_enabled=True` → Azure Document Intelligence (handles scanned/image PDFs).
+- `ocr_enabled=False` → PyPDF2 native text extraction (text-layer PDFs only).
 
-If the invoice is a scanned image and OCR is disabled, switch it on at `/extraction/control-center/settings/`.
+Enable/disable at `/extraction/control-center/settings/`.
 
-### Step 5 -- Check the AgentRun
+### Step 6 — Check the AgentRun
 
 ```python
 from apps.agents.models import AgentRun
@@ -82,21 +103,24 @@ agent_run = AgentRun.objects.get(pk=ext.agent_run_id)
 print("Status:", agent_run.status)
 print("Error:", agent_run.error_message)
 print("Tokens:", agent_run.total_tokens)
-print("Output:", agent_run.output_payload)
 ```
 
-If `status=FAILED`, the LLM call failed entirely -- check `error_message` for API key or quota issues.
+If `status=FAILED`, the LLM call failed entirely — check `error_message` for API key or quota issues.
 
 ---
 
-## Common Causes of Missed invoice_number
+## Common Causes of Missed or Wrong Fields
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| OCR text has the number but extraction missed it | LLM did not recognize the label (e.g. "Tax Inv. No.", "Bill No.") | The prompt was updated 2026-03-27 with 15+ label variants. Reprocess. |
-| OCR text is garbled around the number | Low-quality scan or rotated page | Re-scan the document; ensure Azure DI is enabled. |
-| OCR text is empty | Scanned image PDF with OCR disabled | Enable OCR in Extraction Control Center. |
-| `raw_response` is null | `InvoiceExtractionAgent` failed | Check `AgentRun.error_message`; check LLM API keys. |
+| `invoice_number` is blank | LLM extracted CART Ref / IRN instead | ResponseRepairService should have cleared it. Check `raw_response["_repair"]`. If repair didn't fire, the OCR label pattern may not be in `_EXCLUDED_REFERENCE_LABELS`. |
+| `invoice_number` is label word like "No." | OCR recovery regex matched label suffix | Fixed in Phase 2 (digit requirement in `_recover_invoice_number_from_ocr`). Reprocess. |
+| `vendor_tax_id` or `buyer_name` is blank | Field missing from old prompt version | Prompt was updated. Run `push_prompts_to_langfuse`. Reprocess. |
+| `tax_breakdown` is all zeros | LLM returned tax_breakdown but parser didn't save it | Check `NormalizationService` tax_breakdown handling. |
+| `tax_percentage` is wrong | LLM copied line-level rate instead of computing header rate | ResponseRepairService rule b recomputes from `tax_amount/subtotal`. Check if repair fired. |
+| `subtotal` doesn't match line items | LLM summed incorrectly | ResponseRepairService rule c aligns subtotal. Check `_repair` metadata. |
+| OCR text is garbled | Low-quality scan or rotated page | Re-scan; ensure Azure DI is enabled. |
+| `raw_response` is null | `InvoiceExtractionAgent` failed | Check `AgentRun.error_message`; verify LLM API keys. |
 | `invoice_number` present in `raw_response` but blank in `Invoice` | Normalization stripped it | Check `normalize_invoice_number()` in `apps/core/utils.py`. |
 
 ---
@@ -105,9 +129,11 @@ If `status=FAILED`, the LLM call failed entirely -- check `error_message` for AP
 
 From the extraction console (`/extraction/console/<pk>/`), click **Reprocess**. This:
 1. Re-runs OCR on the original uploaded file.
-2. Re-sends OCR text to the LLM with the current prompt.
-3. Overwrites `ExtractionResult.raw_response` and `ExtractionResult.ocr_text`.
-4. Updates all `Invoice` fields with the new extraction output.
+2. Re-classifies invoice category.
+3. Composes a fresh prompt (picks up Langfuse prompt changes).
+4. Re-sends OCR text to LLM; applies response repair.
+5. Overwrites `ExtractionResult.raw_response` and `ExtractionResult.ocr_text`.
+6. Updates all `Invoice` fields with the new extraction output.
 
 Requires the `extraction.reprocess` permission.
 
@@ -116,25 +142,27 @@ Requires the `extraction.reprocess` permission.
 ## Checking via Django Shell (Quick Reference)
 
 ```python
-# Get extraction result for an invoice
 from apps.documents.models import Invoice
 from apps.extraction.models import ExtractionResult
+import json
 
 invoice = Invoice.objects.get(pk=<invoice_pk>)
 ext = ExtractionResult.objects.filter(invoice=invoice).order_by("-created_at").first()
 
-# Check what was extracted
-print("invoice_number in raw_response:", ext.raw_response.get("invoice_number"))
-print("invoice_number on invoice:", invoice.invoice_number)
-print("raw_invoice_number on invoice:", invoice.raw_invoice_number)
+# Check extracted fields
+for field in ["invoice_number", "vendor_tax_id", "buyer_name", "due_date", "tax_breakdown"]:
+    print(f"{field}: raw={ext.raw_response.get(field)!r}  normalized={getattr(invoice, field, 'N/A')!r}")
 
-# Check OCR text (search for number manually)
+# Check repair activity
+repair = ext.raw_response.get("_repair", {})
+print("Was repaired:", repair.get("was_repaired", False))
+print("Repair actions:", repair.get("repair_actions", []))
+
+# Scan OCR text for invoice number label patterns
 if ext.ocr_text:
     for i, line in enumerate(ext.ocr_text.splitlines(), 1):
-        if any(kw in line.lower() for kw in ["invoice", "bill", "ref", "no.", "#"]):
+        if any(kw in line.lower() for kw in ["invoice", "bill", "ref", "no.", "irn", "cart"]):
             print(f"Line {i}: {line}")
-else:
-    print("OCR text not saved -- extraction pre-dates 2026-03-27 or governed pipeline failed")
 ```
 
 ---
@@ -143,10 +171,12 @@ else:
 
 | File | Purpose |
 |---|---|
-| `apps/extraction/models.py` | `ExtractionResult.ocr_text` field definition |
-| `apps/extraction/migrations/0010_add_ocr_text_to_extraction_result.py` | Migration that added the field |
-| `apps/extraction/services/persistence_service.py` | Where `ocr_text` is written on every extraction save |
-| `apps/extraction/services/extraction_adapter.py` | OCR + LLM pipeline; `ExtractionResponse.ocr_text` carries the raw text |
-| `apps/core/prompt_registry.py` | `extraction.invoice_system` prompt -- the instruction set sent to GPT-4o |
-| `apps/core/management/commands/seed_prompts.py` | Push updated prompt to DB: `python manage.py seed_prompts --force` |
-| `apps/core/utils.py` | `normalize_invoice_number()` -- post-extraction normalization |
+| `apps/extraction/services/extraction_adapter.py` | Main pipeline — OCR, classify, compose, LLM, repair |
+| `apps/extraction_core/services/invoice_category_classifier.py` | Invoice type classifier (goods/service/travel) |
+| `apps/extraction/services/invoice_prompt_composer.py` | Modular prompt builder |
+| `apps/extraction/services/response_repair_service.py` | 5 deterministic repair rules |
+| `apps/extraction/services/parser_service.py` | JSON → ParsedInvoice dataclass |
+| `apps/extraction/services/persistence_service.py` | Saves Invoice + line items to DB |
+| `apps/core/prompt_registry.py` | 18 prompt defaults; Langfuse resolution chain |
+| `apps/core/management/commands/push_prompts_to_langfuse.py` | Sync prompts: `python manage.py push_prompts_to_langfuse` |
+| `apps/core/utils.py` | `normalize_invoice_number()` post-extraction normalization |
