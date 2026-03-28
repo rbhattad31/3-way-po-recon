@@ -328,11 +328,54 @@ class TestGetPrompt:
         assert result is None
 
     def test_prompt_text_returns_prompt_string(self):
-        """prompt_text() returns the .prompt attribute from the client object."""
+        """prompt_text() extracts content from the first system chat message.
+
+        prompt_text() was updated to treat client.prompt as a list of chat
+        message dicts/objects (role + content) rather than a plain string.
+        We mock accordingly.
+        """
         mock_client = MagicMock()
         mock_prompt_obj = MagicMock()
-        mock_prompt_obj.prompt = "You are an AP agent..."
+        # prompt is a list of chat message dicts
+        mock_prompt_obj.prompt = [
+            {"role": "system", "content": "You are an AP agent..."},
+        ]
         mock_client.get_prompt.return_value = mock_prompt_obj
         with patch("apps.core.langfuse_client.get_client", return_value=mock_client):
             result = lf_module.prompt_text("agent-exception_analysis")
         assert result == "You are an AP agent..."
+
+    def test_prompt_text_returns_first_system_message(self):
+        """prompt_text() returns first system message when multiple messages present."""
+        mock_client = MagicMock()
+        mock_prompt_obj = MagicMock()
+        mock_prompt_obj.prompt = [
+            {"role": "user", "content": "User turn"},
+            {"role": "system", "content": "System instruction"},
+        ]
+        mock_client.get_prompt.return_value = mock_prompt_obj
+        with patch("apps.core.langfuse_client.get_client", return_value=mock_client):
+            result = lf_module.prompt_text("agent-exception_analysis")
+        assert result == "System instruction"
+
+    def test_prompt_text_falls_back_to_first_message_when_no_system(self):
+        """prompt_text() falls back to first message content when no system role."""
+        mock_client = MagicMock()
+        mock_prompt_obj = MagicMock()
+        mock_prompt_obj.prompt = [
+            {"role": "user", "content": "Only user message"},
+        ]
+        mock_client.get_prompt.return_value = mock_prompt_obj
+        with patch("apps.core.langfuse_client.get_client", return_value=mock_client):
+            result = lf_module.prompt_text("agent-exception_analysis")
+        assert result == "Only user message"
+
+    def test_prompt_text_returns_none_on_empty_messages(self):
+        """prompt_text() returns None when prompt list is empty."""
+        mock_client = MagicMock()
+        mock_prompt_obj = MagicMock()
+        mock_prompt_obj.prompt = []
+        mock_client.get_prompt.return_value = mock_prompt_obj
+        with patch("apps.core.langfuse_client.get_client", return_value=mock_client):
+            result = lf_module.prompt_text("agent-exception_analysis")
+        assert result is None
