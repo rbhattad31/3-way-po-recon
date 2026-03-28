@@ -64,6 +64,22 @@ class ReviewWorkflowService:
         logger.info("Created review assignment %s for result %s", assignment.pk, result.pk)
 
         try:
+            from apps.core.langfuse_client import start_trace
+            _lf_trace_id = f"review-{assignment.pk}"
+            start_trace(
+                _lf_trace_id,
+                "review_assignment",
+                metadata={
+                    "assignment_pk": assignment.pk,
+                    "reconciliation_result_id": assignment.reconciliation_result_id,
+                    "assigned_to": getattr(assignment.assigned_to, "pk", None),
+                    "review_type": getattr(assignment, "review_type", None),
+                },
+            )
+        except Exception:
+            pass
+
+        try:
             from apps.core.langfuse_client import score_trace
             _trace_id = f"review-{assignment.pk}"
             score_trace(
@@ -86,45 +102,87 @@ class ReviewWorkflowService:
     # ------------------------------------------------------------------
     @staticmethod
     def assign_reviewer(assignment: ReviewAssignment, user) -> ReviewAssignment:
-        previous_assignee = assignment.assigned_to
-        assignment.assigned_to = user
-        assignment.status = ReviewStatus.ASSIGNED
-        assignment.save(update_fields=["assigned_to", "status", "updated_at"])
+        _lf_span = None
+        try:
+            from apps.core.langfuse_client import get_client
+            lf = get_client()
+            if lf:
+                _lf_span = lf.span(
+                    trace_id=f"review-{assignment.pk}",
+                    name="review_assign_reviewer",
+                    metadata={"reviewer_id": getattr(user, "pk", None)},
+                )
+        except Exception:
+            pass
 
-        from apps.auditlog.services import AuditService
-        from apps.core.enums import AuditEventType
-        AuditService.log_event(
-            entity_type="ReviewAssignment",
-            entity_id=assignment.pk,
-            event_type=AuditEventType.REVIEWER_ASSIGNED,
-            description=f"Reviewer {user} assigned to review #{assignment.pk}",
-            user=user,
-            metadata={
-                "assignment_id": assignment.pk,
-                "invoice_id": assignment.reconciliation_result.invoice_id,
-                "previous_assignee_id": previous_assignee.pk if previous_assignee else None,
-            },
-        )
+        try:
+            previous_assignee = assignment.assigned_to
+            assignment.assigned_to = user
+            assignment.status = ReviewStatus.ASSIGNED
+            assignment.save(update_fields=["assigned_to", "status", "updated_at"])
+
+            from apps.auditlog.services import AuditService
+            from apps.core.enums import AuditEventType
+            AuditService.log_event(
+                entity_type="ReviewAssignment",
+                entity_id=assignment.pk,
+                event_type=AuditEventType.REVIEWER_ASSIGNED,
+                description=f"Reviewer {user} assigned to review #{assignment.pk}",
+                user=user,
+                metadata={
+                    "assignment_id": assignment.pk,
+                    "invoice_id": assignment.reconciliation_result.invoice_id,
+                    "previous_assignee_id": previous_assignee.pk if previous_assignee else None,
+                },
+            )
+        finally:
+            try:
+                if _lf_span:
+                    _lf_span.end(output={"status": assignment.status})
+            except Exception:
+                pass
+
         return assignment
 
     @staticmethod
     def start_review(assignment: ReviewAssignment) -> ReviewAssignment:
-        assignment.status = ReviewStatus.IN_REVIEW
-        assignment.save(update_fields=["status", "updated_at"])
+        _lf_span = None
+        try:
+            from apps.core.langfuse_client import get_client
+            lf = get_client()
+            if lf:
+                _lf_span = lf.span(
+                    trace_id=f"review-{assignment.pk}",
+                    name="review_start",
+                    metadata={"assignment_id": assignment.pk},
+                )
+        except Exception:
+            pass
 
-        from apps.auditlog.services import AuditService
-        from apps.core.enums import AuditEventType
-        AuditService.log_event(
-            entity_type="ReviewAssignment",
-            entity_id=assignment.pk,
-            event_type=AuditEventType.REVIEW_STARTED,
-            description=f"Review #{assignment.pk} started by {assignment.assigned_to}",
-            user=assignment.assigned_to,
-            metadata={
-                "assignment_id": assignment.pk,
-                "invoice_id": assignment.reconciliation_result.invoice_id,
-            },
-        )
+        try:
+            assignment.status = ReviewStatus.IN_REVIEW
+            assignment.save(update_fields=["status", "updated_at"])
+
+            from apps.auditlog.services import AuditService
+            from apps.core.enums import AuditEventType
+            AuditService.log_event(
+                entity_type="ReviewAssignment",
+                entity_id=assignment.pk,
+                event_type=AuditEventType.REVIEW_STARTED,
+                description=f"Review #{assignment.pk} started by {assignment.assigned_to}",
+                user=assignment.assigned_to,
+                metadata={
+                    "assignment_id": assignment.pk,
+                    "invoice_id": assignment.reconciliation_result.invoice_id,
+                },
+            )
+        finally:
+            try:
+                if _lf_span:
+                    _lf_span.end(output={"status": assignment.status})
+            except Exception:
+                pass
+
         return assignment
 
     # ------------------------------------------------------------------
@@ -209,6 +267,22 @@ class ReviewWorkflowService:
         decision_status: str,
         reason: str,
     ) -> ReviewDecision:
+        _lf_span = None
+        try:
+            from apps.core.langfuse_client import get_client
+            lf = get_client()
+            if lf:
+                _lf_span = lf.span(
+                    trace_id=f"review-{assignment.pk}",
+                    name="review_finalise",
+                    metadata={
+                        "decision_status": decision_status,
+                        "user_id": getattr(user, "pk", None),
+                    },
+                )
+        except Exception:
+            pass
+
         assignment.status = decision_status
         assignment.save(update_fields=["status", "updated_at"])
 
@@ -274,6 +348,12 @@ class ReviewWorkflowService:
                     f"reviewer={getattr(user, 'pk', None)}"
                 ),
             )
+        except Exception:
+            pass
+
+        try:
+            if _lf_span:
+                _lf_span.end(output={"status": decision_status})
         except Exception:
             pass
 

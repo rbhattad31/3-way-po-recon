@@ -145,7 +145,32 @@ class AgentGuardrailsService:
         perm = AGENT_PERMISSIONS.get(agent_type)
         if not perm:
             return False
-        return user.has_permission(perm)
+        granted = user.has_permission(perm)
+        if granted:
+            try:
+                from apps.core.langfuse_client import score_trace
+                from apps.core.trace import TraceContext
+                _ctx = TraceContext.get_current()
+                _tid = getattr(_ctx, "trace_id", "") or ""
+                if _tid:
+                    _role = ""
+                    try:
+                        _pr = user.get_primary_role()
+                        _role = _pr.code if _pr else getattr(user, "role", "")
+                    except Exception:
+                        pass
+                    score_trace(
+                        _tid,
+                        "rbac_guardrail",
+                        1.0,
+                        comment=(
+                            f"rbac_guardrail GRANTED method=authorize_agent"
+                            f" agent_type={agent_type} user_role={_role}"
+                        ),
+                    )
+            except Exception:
+                pass
+        return granted
 
     @classmethod
     def authorize_tool(cls, user, tool_name: str) -> bool:
@@ -153,7 +178,32 @@ class AgentGuardrailsService:
         perm = TOOL_PERMISSIONS.get(tool_name)
         if not perm:
             return True  # Tools without mapped permissions are unrestricted
-        return user.has_permission(perm)
+        granted = user.has_permission(perm)
+        if granted:
+            try:
+                from apps.core.langfuse_client import score_trace
+                from apps.core.trace import TraceContext
+                _ctx = TraceContext.get_current()
+                _tid = getattr(_ctx, "trace_id", "") or ""
+                if _tid:
+                    _role = ""
+                    try:
+                        _pr = user.get_primary_role()
+                        _role = _pr.code if _pr else getattr(user, "role", "")
+                    except Exception:
+                        pass
+                    score_trace(
+                        _tid,
+                        "rbac_guardrail",
+                        1.0,
+                        comment=(
+                            f"rbac_guardrail GRANTED method=authorize_tool"
+                            f" tool={tool_name} user_role={_role}"
+                        ),
+                    )
+            except Exception:
+                pass
+        return granted
 
     @classmethod
     def authorize_recommendation(cls, user, recommendation_type: str) -> bool:
@@ -177,6 +227,17 @@ class AgentGuardrailsService:
         if not user.has_permission(permission_code):
             msg = error_message or f"Permission denied: {permission_code}"
             raise PermissionDenied(msg)
+
+    # ------------------------------------------------------------------
+    # Langfuse trace ID helper
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _lf_trace_id_for_run(agent_run) -> Optional[str]:
+        """Return the Langfuse trace ID for agent_run, or None if unavailable."""
+        try:
+            return getattr(agent_run, "trace_id", None) or str(agent_run.pk)
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # RBAC snapshot builders

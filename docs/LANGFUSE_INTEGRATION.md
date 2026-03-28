@@ -81,10 +81,20 @@ root trace  (start_trace)
      -- LLM_EXTRACT_FALLBACK
         -- llm_extract_fallback_chat  (log_generation)
 
-  -- erp_submission          (PostingSubmitResolver.submit_invoice())
-     (closed immediately with success/error output)
+  -- posting_pipeline        (PostingPipeline.run() -- one per PostingRun)
+     -- eligibility_check    (stage 1)
+     -- snapshot_build       (stage 2)
+     -- mapping              (stage 3)
+     -- validation           (stage 4)
+     -- duplicate_check      (stage 5)
+     -- confidence_scoring   (stage 6, emits posting_confidence score)
+     -- review_routing       (stage 7, emits posting_requires_review score)
+     -- payload_build        (stage 8)
+     -- finalization         (stage 9)
+     -- erp_submission       (child span when lf_trace_id forwarded from PostingActionService)
 
-  -- erp_status_check        (PostingSubmitResolver.get_posting_status())
+  -- erp_submission_standalone  (isolated fallback trace when no parent trace ID is available)
+  -- erp_status_check           (PostingSubmitResolver.get_posting_status() -- always isolated)
      (closed immediately with status/error output)
 
   -- reconciliation_task     (run_reconciliation_task Celery task wrapper)
@@ -281,9 +291,55 @@ Score mapping:
 `str(run.pk)`. The root trace is now always created before `_reconcile_single`
 runs, so the score is always attached to a linked trace.
 
-### 6. Posting confidence score (`apps/posting_core/services/posting_pipeline.py`)
+### 6. Posting pipeline (`apps/posting_core/services/posting_pipeline.py`)
 
-Stage 6 emits a confidence score immediately after calculation:
+The 9-stage posting pipeline is fully traced with a root trace, one child span per
+stage, and two quality scores emitted after stages 6 and 7.
+
+#### Root trace (`PostingPipeline.run()`)
+
+Opened at the start of `run()` before any stage executes and closed in the
+existing `finally` block with the final run status:
+
+```python
+_trace_id = getattr(posting_run, "trace_id", None) or str(posting_run.pk)
+_lf_trace = start_trace(
+    _trace_id,
+    "posting_pipeline",
+    metadata={
+        "posting_run_pk": posting_run.pk,
+        "invoice_id": posting_run.invoice_posting.invoice_id,
+        "connector_used": bool(self._connector),
+    },
+)
+# ... all stages run ...
+finally:
+    end_span(_lf_trace, output={"final_status": posting_run.status})
+```
+
+#### Per-stage child spans
+
+Each of the 9 stages is wrapped with a child span named after the stage. Failed
+stages are marked with `level="ERROR"`:
+
+| Stage | Span name |
+|---|---|
+| 1 | `eligibility_check` |
+| 2 | `snapshot_build` |
+| 3 | `mapping` |
+| 4 | `validation` |
+| 5 | `duplicate_check` |
+| 6 | `confidence_scoring` |
+| 7 | `review_routing` |
+| 8 | `payload_build` |
+| 9 | `finalization` |
+
+Each span is opened before the stage function executes and closed in a `finally`
+block with `output={"passed": stage_ok, "status": posting_run.status}`.
+
+#### Quality scores
+
+**After stage 6** (`confidence_scoring`) emits `posting_confidence`:
 
 ```python
 score_trace(
@@ -294,7 +350,7 @@ score_trace(
 )
 ```
 
-Stage 7 emits a binary review-routing score after `PostingReviewRoutingService.route()`:
+**After stage 7** (`review_routing`) emits `posting_requires_review`:
 
 ```python
 score_trace(
@@ -306,6 +362,16 @@ score_trace(
 ```
 
 Both calls use `posting_run.trace_id` or `str(posting_run.pk)` as the trace ID.
+Because the root trace is now always opened before stage 1, both scores are
+guaranteed to be linked to a trace in Langfuse.
+
+`PostingOrchestrator.prepare_posting()` extracts the same trace ID before calling
+`PostingPipeline.run()` so it can be forwarded to the ERP submission layer:
+
+```python
+_trace_id = getattr(posting_run, "trace_id", None) or str(posting_run.pk)
+PostingPipeline(connector=connector).run(posting_run)
+```
 
 ### 7. Direct LLM fallback (`InvoiceExtractionAdapter._llm_extract()`)
 
@@ -401,23 +467,23 @@ Score mapping:
 
 ### 11. ERP submission spans (`apps/erp_integration/services/submission/posting_submit_resolver.py`)
 
-Both `submit_invoice()` and `get_posting_status()` open a root trace immediately
-after measuring `duration_ms` and close it before calling `_log_submission()`.
-The trace ID is derived from the first available identifier:
+`submit_invoice()` now accepts an optional `lf_trace_id` kwarg. When provided,
+the submission span is attached as a child of the caller's trace (e.g. the
+posting pipeline trace). When omitted, a standalone fallback trace is created
+so the call is always visible in Langfuse regardless of context.
 
-```
-f"erp-{posting_run_id}"  ->  f"erp-inv-{invoice_id}"  ->  uuid4().hex
-```
+#### Linked path — child span under parent trace
 
-**`erp_submission`** (from `submit_invoice()`):
+When `lf_trace_id` is supplied (e.g. forwarded from `PostingActionService`):
 
 ```python
-_lf_trace = start_trace(
-    _trace_id, "erp_submission",
-    invoice_id=invoice_id,
+lf_client = get_client()
+_lf_span = lf_client.span(
+    trace_id=lf_trace_id,
+    name="erp_submission",
     metadata={"submission_type": submission_type, "connector_name": ..., "posting_run_id": ...},
 )
-end_span(_lf_trace, output={
+_lf_span.end(output={
     "success": result.success,
     "status": str(result.status),
     "erp_document_number": result.erp_document_number or "",
@@ -426,9 +492,49 @@ end_span(_lf_trace, output={
 }, level="ERROR" if not result.success else "DEFAULT")
 ```
 
-**`erp_status_check`** (from `get_posting_status()`) — identical pattern with
-`"erp_status_check"` as the name and `"document_number"` in metadata instead
-of `"submission_type"`.
+This makes the ERP submission appear as a child span inside the `posting_pipeline`
+trace rather than as a separate isolated trace.
+
+#### Standalone fallback — root trace when no parent is available
+
+When `lf_trace_id` is `None` (direct calls from tests, admin actions, or callers
+that have not yet been wired up):
+
+```python
+_fallback_id = (
+    f"erp-sub-{posting_run_id}" if posting_run_id
+    else f"erp-inv-{invoice_id}" if invoice_id
+    else uuid4().hex
+)
+_lf_trace = start_trace(_fallback_id, "erp_submission_standalone", ...)
+end_span(_lf_trace, output={...}, level=...)
+```
+
+The fallback ID chain is: `f"erp-sub-{posting_run_id}"` -> `f"erp-inv-{invoice_id}"` -> `uuid4().hex`.
+
+#### Trace ID forwarding from `PostingActionService.submit_posting()`
+
+Before the Phase 1 mock block, `submit_posting()` resolves the trace ID from the
+latest `PostingRun` so it is available to pass to the real ERP connector call in
+Phase 2:
+
+```python
+_lf_trace_id = None
+try:
+    _latest_run = PostingRun.objects.filter(
+        invoice_id=posting.invoice_id,
+    ).order_by("-created_at").first()
+    _lf_trace_id = getattr(_latest_run, "trace_id", None) or (
+        str(_latest_run.pk) if _latest_run else None
+    )
+except Exception:
+    pass
+# Phase 2: pass lf_trace_id=_lf_trace_id to the resolver
+```
+
+**`erp_status_check`** (from `get_posting_status()`) — unchanged; still creates
+an isolated root trace using the same fallback ID chain, as status checks are
+triggered independently of the pipeline.
 
 Failed ERP calls (`result.success == False`) are marked `level="ERROR"` so they
 appear highlighted in red in the Langfuse UI.
@@ -478,9 +584,32 @@ score_trace(
 
 ### 13. RBAC guardrail scores (`apps/agents/services/guardrails_service.py`)
 
-**`log_guardrail_decision()`** — called for every guardrail decision across the
-entire agent system. Emits a score only when `trace_ctx.trace_id` is non-empty
-(i.e. inside an active agent pipeline trace):
+Every guardrail grant or deny decision emits a Langfuse score so RBAC enforcement
+is auditable in the Langfuse dashboard alongside the `AuditEvent` log.
+
+#### Trace ID helper
+
+`AgentGuardrailsService._lf_trace_id_for_run(agent_run)` is a static helper that
+returns the best available trace ID for an agent run without raising:
+
+```python
+@staticmethod
+def _lf_trace_id_for_run(agent_run) -> Optional[str]:
+    try:
+        return getattr(agent_run, "trace_id", None) or str(agent_run.pk)
+    except Exception:
+        return None
+```
+
+Use this when a caller already holds an `AgentRun` instance (e.g. the deny path
+in `base_agent._execute_tool()` and `recommendation_service.mark_recommendation_accepted()`).
+
+#### `log_guardrail_decision()` — grant and deny (all methods)
+
+This is the single choke point that the orchestrator, recommendation service, and
+tool executor all call on deny. It builds `trace_ctx` internally and emits a score
+only when `trace_ctx.trace_id` is non-empty (i.e. inside an active agent pipeline
+trace):
 
 ```python
 score_trace(
@@ -494,10 +623,66 @@ score_trace(
 Scoring 0.0 for denied decisions makes it straightforward to filter
 `score:rbac_guardrail = 0` in Langfuse to find all authorization failures.
 
-**`authorize_data_scope()`** — emits `rbac_data_scope = 0.0` **only** on the
-deny path (successful scope checks are not scored to reduce noise).
-Uses `TraceContext.get_current()` since no `trace_ctx` object is threaded
-through `authorize_data_scope()`:
+Methods that route through `log_guardrail_decision()`:
+
+| Method | When called |
+|---|---|
+| `authorize_orchestration` | deny path (orchestrator) + both paths for recommendation / tool deny |
+| `authorize_agent` | deny path (orchestrator loop) |
+| `authorize_tool` | deny path (`_execute_tool` in `base_agent.py`) |
+| `authorize_recommendation` | deny path (`recommendation_service.py`) |
+| `authorize_data_scope` | both grant and deny (data scope always audited) |
+
+#### `authorize_agent()` — grant path (direct score)
+
+The deny path is already covered by the orchestrator calling `log_guardrail_decision`.
+The grant path emits a score directly using `TraceContext.get_current()` so every
+successful agent authorization is surfaced alongside deny events:
+
+```python
+granted = user.has_permission(perm)
+if granted:
+    try:
+        from apps.core.langfuse_client import score_trace
+        from apps.core.trace import TraceContext
+        _ctx = TraceContext.get_current()
+        _tid = getattr(_ctx, "trace_id", "") or ""
+        if _tid:
+            score_trace(
+                _tid,
+                "rbac_guardrail",
+                1.0,
+                comment=f"rbac_guardrail GRANTED method=authorize_agent agent_type={agent_type} user_role={_role}",
+            )
+    except Exception:
+        pass
+return granted
+```
+
+#### `authorize_tool()` — grant path (direct score)
+
+Same pattern as `authorize_agent`. The deny path is scored by `log_guardrail_decision`
+inside `base_agent._execute_tool()`; the grant path is scored here:
+
+```python
+if granted:
+    try:
+        score_trace(
+            _tid,
+            "rbac_guardrail",
+            1.0,
+            comment=f"rbac_guardrail GRANTED method=authorize_tool tool={tool_name} user_role={_role}",
+        )
+    except Exception:
+        pass
+return granted
+```
+
+#### `authorize_data_scope()` — deny-only score
+
+Emits `rbac_data_scope = 0.0` **only** on the deny path (successful scope checks
+are not scored to reduce noise). Uses `TraceContext.get_current()` since no
+`trace_ctx` object is threaded through `authorize_data_scope()`:
 
 ```python
 if not granted:
@@ -509,6 +694,16 @@ if not granted:
         comment=f"actor={actor.pk} result={result.pk}",
     )
 ```
+
+#### Score coverage summary
+
+| Method | Grant scored | Deny scored | Score name |
+|---|---|---|---|
+| `authorize_orchestration` | via `log_guardrail_decision` | via `log_guardrail_decision` | `rbac_guardrail` |
+| `authorize_agent` | direct (TraceContext) | via `log_guardrail_decision` | `rbac_guardrail` |
+| `authorize_tool` | direct (TraceContext) | via `log_guardrail_decision` | `rbac_guardrail` |
+| `authorize_recommendation` | via `log_guardrail_decision` | via `log_guardrail_decision` | `rbac_guardrail` |
+| `authorize_data_scope` | not scored (noise) | direct (TraceContext) | `rbac_data_scope` |
 
 ### 14. Bulk extraction job (`apps/extraction/bulk_tasks.py` + `apps/extraction/services/bulk_service.py` + `apps/extraction/services/bulk_source_adapters.py`)
 
@@ -591,8 +786,8 @@ and there are no auth failures to surface).
 | Score name | Value range | Source | Trace ID convention |
 |---|---|---|---|
 | `reconciliation_match` | 0.0 / 0.3 / 0.5 / 1.0 | `runner_service.py` | `run.trace_id` or `str(run.pk)` |
-| `posting_confidence` | 0.0 – 1.0 | `posting_pipeline.py` Stage 6 | `posting_run.trace_id` or `str(posting_run.pk)` |
-| `posting_requires_review` | 0.0 or 1.0 | `posting_pipeline.py` Stage 7 | same as above |
+| `posting_confidence` | 0.0 – 1.0 | `posting_pipeline.py` Stage 6 (`confidence_scoring` span) | `posting_run.trace_id` or `str(posting_run.pk)` — always linked to root `posting_pipeline` trace |
+| `posting_requires_review` | 0.0 or 1.0 | `posting_pipeline.py` Stage 7 (`review_routing` span) | same as above |
 | `extraction_confidence` | 0.0 – 1.0 | `extraction_pipeline.py` Step 9 | `str(run.pk)` |
 | `extraction_requires_review` | 0.0 or 1.0 | `extraction_pipeline.py` Step 9 | same as above |
 | `review_priority` | 0.0 – 1.0 (priority/10) | `reviews/services.py` `create_assignment()` | `f"review-{assignment.pk}"` |
@@ -601,7 +796,7 @@ and there are no auth failures to surface).
 | `extraction_approval_decision` | 0.0 or 1.0 | `approval_service.py` `approve()` / `reject()` | `f"approval-{approval.pk}"` |
 | `extraction_approval_confidence` | 0.0 – 1.0 | `approval_service.py` `approve()` | `f"approval-{approval.pk}"` |
 | `extraction_corrections_count` | 0.0+ (raw count) | `approval_service.py` `approve()` | `f"approval-{approval.pk}"` |
-| `rbac_guardrail` | 0.0 or 1.0 | `guardrails_service.py` `log_guardrail_decision()` | active agent pipeline `trace_id` |
+| `rbac_guardrail` | 0.0 or 1.0 | `guardrails_service.py` — `log_guardrail_decision()` (all methods) + direct grant path in `authorize_agent()` / `authorize_tool()` | active agent pipeline `trace_id` via `TraceContext.get_current()` |
 | `rbac_data_scope` | 0.0 (deny only) | `guardrails_service.py` `authorize_data_scope()` | `TraceContext.get_current().trace_id` |
 | `bulk_job_success_rate` | 0.0 – 1.0 | `bulk_tasks.py` `run_bulk_job_task` | `job.trace_id` or `str(job.pk)` |
 
@@ -725,4 +920,4 @@ existing prompts and reseed with the correct names.
 | Prompt 404 warning in logs | Run `push_prompts_to_langfuse`. If names are wrong, run with `--purge`. |
 | Old prompt content being served | Langfuse client caches prompts for 60 seconds. Wait or restart to force refresh. |
 | `start_trace` returns None | Set `LANGFUSE_LOG_LEVEL=debug` and check for exceptions in the client init. Ensure host URL has no trailing slash. |
-| Scores appear in Langfuse but not linked to a trace | The posting pipeline does not yet create a root Langfuse trace -- its scores are recorded as unlinked. This is expected until a root trace is added to `posting_pipeline.py`. Reconciliation and bulk extraction scores are now always linked. |
+| Scores appear in Langfuse but not linked to a trace | Confirm the pipeline that emits the score also calls `start_trace` before the score. The posting, reconciliation, and bulk extraction pipelines all create root traces — scores from these pipelines are always linked. |

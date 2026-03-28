@@ -202,9 +202,9 @@ def score_trace(
 
 
 def get_prompt(slug: str, label: str = "production") -> Optional[Any]:
-    """Fetch a text prompt from Langfuse by name (slug).
+    """Fetch a chat prompt from Langfuse by name (slug).
 
-    Returns the TextPromptClient if found, or None if not configured /
+    Returns the ChatPromptClient if found, or None if not configured /
     prompt does not exist in Langfuse.  Uses the SDK's built-in 60s cache
     so hot paths are not affected.
 
@@ -221,7 +221,7 @@ def get_prompt(slug: str, label: str = "production") -> Optional[Any]:
         client = lf.get_prompt(
             name=slug,
             label=label,
-            type="text",
+            type="chat",
             cache_ttl_seconds=60,
             max_retries=1,
             fetch_timeout_seconds=2,
@@ -233,24 +233,43 @@ def get_prompt(slug: str, label: str = "production") -> Optional[Any]:
 
 
 def prompt_text(slug: str, label: str = "production") -> Optional[str]:
-    """Return just the prompt text string from Langfuse, or None if not found."""
+    """Return just the prompt text string from Langfuse chat prompt, or None if not found.
+
+    For chat prompts stored as a single system message, returns the content of that
+    message.  For multi-message chat prompts, returns the content of the first system
+    message found, or all messages joined by newlines as a fallback.
+    """
     client = get_prompt(slug, label=label)
     if client is None:
         return None
     try:
-        return client.prompt
+        messages = client.prompt  # list of ChatMessage objects or dicts
+        if not messages:
+            return None
+        # Prefer the first system message
+        for msg in messages:
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
+            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
+            if role == "system" and content:
+                return content
+        # Fallback: return content of the first message regardless of role
+        first = messages[0]
+        return (
+            first.get("content") if isinstance(first, dict)
+            else getattr(first, "content", None)
+        )
     except Exception:
         return None
 
 
 def push_prompt(slug: str, content: str, *, labels: Optional[List[str]] = None) -> bool:
-    """Create or update a text prompt in Langfuse.
+    """Create or update a chat prompt in Langfuse.
 
     Returns True on success, False on failure.
 
     Args:
         slug:    Langfuse prompt name (use slug_to_langfuse_name() for conversion).
-        content: Full prompt text.
+        content: Full prompt text (stored as a single system message in chat format).
         labels:  List of labels to attach. Defaults to ["production"].
     """
     lf = get_client()
@@ -259,11 +278,11 @@ def push_prompt(slug: str, content: str, *, labels: Optional[List[str]] = None) 
     try:
         lf.create_prompt(
             name=slug,
-            prompt=content,
+            prompt=[{"role": "system", "content": content}],
             labels=labels if labels is not None else ["production"],
-            type="text",
+            type="chat",
         )
-        logger.info("Pushed prompt '%s' to Langfuse", slug)
+        logger.info("Pushed chat prompt '%s' to Langfuse", slug)
         return True
     except Exception as exc:
         logger.warning("Langfuse push_prompt failed for '%s': %s", slug, exc)

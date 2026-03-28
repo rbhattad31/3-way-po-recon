@@ -29,6 +29,7 @@ class NormalizedLineItem:
     raw_item_category: str = ""
     raw_quantity: str = ""
     raw_unit_price: str = ""
+    raw_tax_percentage: str = ""
     raw_tax_amount: str = ""
     raw_line_amount: str = ""
     description: str = ""
@@ -36,6 +37,7 @@ class NormalizedLineItem:
     normalized_description: str = ""
     quantity: Optional[Decimal] = None
     unit_price: Optional[Decimal] = None
+    tax_percentage: Optional[Decimal] = None
     tax_amount: Optional[Decimal] = None
     line_amount: Optional[Decimal] = None
 
@@ -44,25 +46,35 @@ class NormalizedLineItem:
 class NormalizedInvoice:
     # Raw values preserved
     raw_vendor_name: str = ""
+    raw_vendor_tax_id: str = ""
+    raw_buyer_name: str = ""
     raw_invoice_number: str = ""
     raw_invoice_date: str = ""
+    raw_due_date: str = ""
     raw_po_number: str = ""
     raw_currency: str = ""
     raw_subtotal: str = ""
+    raw_tax_percentage: str = ""
     raw_tax_amount: str = ""
+    raw_tax_breakdown: dict = field(default_factory=dict)
     raw_total_amount: str = ""
     confidence: float = 0.0
 
     # Normalized values
     vendor_name_normalized: str = ""
+    vendor_tax_id: str = ""
+    buyer_name: str = ""
     invoice_number: str = ""
     normalized_invoice_number: str = ""
     invoice_date: Optional[date] = None
+    due_date: Optional[date] = None
     po_number: str = ""
     normalized_po_number: str = ""
     currency: str = "USD"
     subtotal: Optional[Decimal] = None
+    tax_percentage: Optional[Decimal] = None
     tax_amount: Optional[Decimal] = None
+    tax_breakdown: dict = field(default_factory=dict)
     total_amount: Optional[Decimal] = None
 
     line_items: List[NormalizedLineItem] = field(default_factory=list)
@@ -81,24 +93,34 @@ class NormalizationService:
 
         result = NormalizedInvoice(
             raw_vendor_name=parsed.raw_vendor_name,
+            raw_vendor_tax_id=parsed.raw_vendor_tax_id,
+            raw_buyer_name=parsed.raw_buyer_name,
             raw_invoice_number=parsed.raw_invoice_number,
             raw_invoice_date=parsed.raw_invoice_date,
+            raw_due_date=parsed.raw_due_date,
             raw_po_number=parsed.raw_po_number,
             raw_currency=parsed.raw_currency,
             raw_subtotal=parsed.raw_subtotal,
+            raw_tax_percentage=parsed.raw_tax_percentage,
             raw_tax_amount=parsed.raw_tax_amount,
+            raw_tax_breakdown=parsed.raw_tax_breakdown,
             raw_total_amount=parsed.raw_total_amount,
             confidence=parsed.confidence,
             # Normalized
             vendor_name_normalized=normalize_string(parsed.raw_vendor_name),
+            vendor_tax_id=parsed.raw_vendor_tax_id.strip(),
+            buyer_name=parsed.raw_buyer_name.strip(),
             invoice_number=parsed.raw_invoice_number.strip(),
             normalized_invoice_number=normalize_invoice_number(parsed.raw_invoice_number),
             invoice_date=parse_date(parsed.raw_invoice_date),
+            due_date=parse_date(parsed.raw_due_date),
             po_number=parsed.raw_po_number.strip(),
             normalized_po_number=normalize_po_number(parsed.raw_po_number),
             currency=currency,
             subtotal=self._safe_decimal(parsed.raw_subtotal),
+            tax_percentage=self._safe_decimal(parsed.raw_tax_percentage),
             tax_amount=self._safe_decimal(parsed.raw_tax_amount),
+            tax_breakdown=self._normalize_tax_breakdown(parsed.raw_tax_breakdown),
             total_amount=self._safe_decimal(parsed.raw_total_amount),
             line_items=lines,
         )
@@ -118,6 +140,7 @@ class NormalizationService:
             raw_item_category=li.raw_item_category,
             raw_quantity=li.raw_quantity,
             raw_unit_price=li.raw_unit_price,
+            raw_tax_percentage=li.raw_tax_percentage,
             raw_tax_amount=li.raw_tax_amount,
             raw_line_amount=li.raw_line_amount,
             description=desc,
@@ -125,9 +148,21 @@ class NormalizationService:
             normalized_description=normalize_string(desc),
             quantity=self._safe_decimal(li.raw_quantity, four_places=True),
             unit_price=self._safe_decimal(li.raw_unit_price, four_places=True),
+            tax_percentage=self._safe_decimal(li.raw_tax_percentage),
             tax_amount=self._safe_decimal(li.raw_tax_amount),
             line_amount=self._safe_decimal(li.raw_line_amount),
         )
+
+    @staticmethod
+    def _normalize_tax_breakdown(raw: dict) -> dict:
+        """Coerce tax breakdown values to floats; default missing keys to 0."""
+        result = {}
+        for key in ("cgst", "sgst", "igst", "vat"):
+            try:
+                result[key] = float(raw.get(key) or 0)
+            except (TypeError, ValueError):
+                result[key] = 0.0
+        return result
 
     @staticmethod
     def _safe_decimal(value: str, four_places: bool = False) -> Optional[Decimal]:

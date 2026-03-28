@@ -1,4 +1,4 @@
-"""Agent template views — reference pages for end users."""
+"""Agent template views -- reference pages for end users."""
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
@@ -22,9 +22,18 @@ from apps.core.enums import (
     AuditEventType,
     CaseStageType,
     CaseStatus,
+    InvoicePostingStatus,
     PerformedByType,
+    PostingReviewQueue,
+    PostingRunStatus,
+    PostingStage,
     ProcessingPath,
     RecommendationType,
+)
+from apps.erp_integration.enums import (
+    ERPConnectorType,
+    ERPResolutionType,
+    ERPSubmissionType,
 )
 
 
@@ -568,6 +577,225 @@ def agent_reference(request):
         },
     ]
 
+    # ---- Posting Pipeline ----
+    posting_pipeline_stages = [
+        {
+            "number": 1,
+            "code": "ELIGIBILITY_CHECK",
+            "label": "Eligibility Check",
+            "icon": "bi-check2-circle",
+            "color": "secondary",
+            "description": (
+                "Verify the invoice is RECONCILED, not already posting, and not a duplicate "
+                "posting attempt. Raises ValueError if ineligible; logs POSTING_ELIGIBILITY_FAILED."
+            ),
+        },
+        {
+            "number": 2,
+            "code": "SNAPSHOT_BUILD",
+            "label": "Snapshot Build",
+            "icon": "bi-camera",
+            "color": "info",
+            "description": (
+                "Capture a point-in-time JSON snapshot of the invoice header and all line items "
+                "to ensure consistency throughout the pipeline run."
+            ),
+        },
+        {
+            "number": 3,
+            "code": "MAPPING",
+            "label": "Reference Resolution + Mapping",
+            "icon": "bi-search",
+            "color": "primary",
+            "description": (
+                "PostingMappingEngine resolves vendor, item, tax code, and cost-center codes. "
+                "Strategy per field: exact code -> alias -> name -> fuzzy. Live ERP connector "
+                "used when available (ConnectorFactory). ERP source metadata stored per field."
+            ),
+        },
+        {
+            "number": 4,
+            "code": "VALIDATION",
+            "label": "Validation",
+            "icon": "bi-shield-check",
+            "color": "warning",
+            "description": (
+                "Run 10+ rules: required field presence, amount consistency, tax reasonability, "
+                "PO cross-check, business rule compliance. Generates PostingIssue records per failure."
+            ),
+        },
+        {
+            "number": 5,
+            "code": "CONFIDENCE",
+            "label": "Confidence Scoring",
+            "icon": "bi-percent",
+            "color": "success",
+            "description": (
+                "5-dimensional weighted score: header completeness (15%), vendor mapping (25%), "
+                "line item mapping (30%), tax completeness (15%), reference freshness (15%). "
+                "is_touchless=True when no review needed."
+            ),
+        },
+        {
+            "number": 6,
+            "code": "REVIEW_ROUTING",
+            "label": "Review Routing",
+            "icon": "bi-signpost-split",
+            "color": "danger",
+            "description": (
+                "Assign to the appropriate review queue when confidence is low or issues exist. "
+                "Queues: VENDOR_MAPPING_REVIEW, ITEM_MAPPING_REVIEW, TAX_REVIEW, "
+                "COST_CENTER_REVIEW, PO_REVIEW, POSTING_OPS."
+            ),
+        },
+        {
+            "number": 7,
+            "code": "PAYLOAD_BUILD",
+            "label": "Payload Build",
+            "icon": "bi-file-earmark-code",
+            "color": "primary",
+            "description": (
+                "PostingPayloadBuilder assembles the canonical ERP posting payload "
+                "(header + line items + tax + accounting codes), stored as JSON in posting_payload_json."
+            ),
+        },
+        {
+            "number": 8,
+            "code": "FINALIZATION",
+            "label": "Finalization + Duplicate Check",
+            "icon": "bi-check-circle",
+            "color": "success",
+            "description": (
+                "Stage 9b: Duplicate invoice check via the ERP integration layer "
+                "(DuplicateInvoiceResolver). Persist all run artifacts: PostingFieldValue, "
+                "PostingLineItem, PostingIssue, PostingEvidence, PostingApprovalRecord."
+            ),
+        },
+        {
+            "number": 9,
+            "code": "STATUS",
+            "label": "Status Update",
+            "icon": "bi-flag",
+            "color": "dark",
+            "description": (
+                "Update InvoicePosting status: MAPPING_REVIEW_REQUIRED (issues found) or "
+                "READY_TO_SUBMIT (touchless). ERP resolution provenance stored in "
+                "erp_source_metadata_json."
+            ),
+        },
+    ]
+
+    posting_confidence_dimensions = [
+        {"name": "Header Completeness", "weight": 15, "icon": "bi-card-text",
+         "description": "Invoice number, date, currency, vendor all present and valid."},
+        {"name": "Vendor Mapping", "weight": 25, "icon": "bi-building",
+         "description": "Vendor resolved with high confidence; exact/alias match preferred over fuzzy."},
+        {"name": "Line Item Mapping", "weight": 30, "icon": "bi-list-ul",
+         "description": "All line items have resolved item codes; PO cross-reference confirmed."},
+        {"name": "Tax Completeness", "weight": 15, "icon": "bi-percent",
+         "description": "Tax codes resolved; rate and amount consistent with jurisdiction."},
+        {"name": "Reference Freshness", "weight": 15, "icon": "bi-clock",
+         "description": "ERP reference data imported within POSTING_REFERENCE_FRESHNESS_HOURS (default 168h / 7 days)."},
+    ]
+
+    posting_statuses = [{"value": v, "label": l} for v, l in InvoicePostingStatus.choices]
+    posting_review_queues = [{"value": v, "label": l} for v, l in PostingReviewQueue.choices]
+
+    # ---- ERP Integration ----
+    erp_connector_info = [
+        {
+            "type": "CUSTOM",
+            "label": "Custom ERP",
+            "icon": "bi-code-slash",
+            "description": "Flexible REST connector with custom endpoint configuration and any authentication scheme.",
+            "capabilities": ["vendor_lookup", "po_lookup", "invoice_create"],
+            "auth": "Bearer / API Key",
+        },
+        {
+            "type": "SQLSERVER",
+            "label": "SQL Server",
+            "icon": "bi-server",
+            "description": "Direct SQL Server or Azure SQL database access. Queries ERP data without REST overhead.",
+            "capabilities": ["vendor_lookup", "item_lookup", "po_lookup", "grn_lookup"],
+            "auth": "Connection String",
+        },
+        {
+            "type": "MYSQL",
+            "label": "MySQL / MariaDB",
+            "icon": "bi-database",
+            "description": "Direct MySQL or MariaDB database access for ERP data lookup.",
+            "capabilities": ["vendor_lookup", "item_lookup", "po_lookup"],
+            "auth": "Connection String",
+        },
+        {
+            "type": "DYNAMICS",
+            "label": "Microsoft Dynamics 365",
+            "icon": "bi-microsoft",
+            "description": "OAuth2-authenticated Dynamics 365 Business Central REST API with full invoice lifecycle support.",
+            "capabilities": ["vendor_lookup", "item_lookup", "po_lookup", "invoice_create", "invoice_park"],
+            "auth": "OAuth 2.0 (tenant_id + client_id + client_secret)",
+        },
+        {
+            "type": "ZOHO",
+            "label": "Zoho",
+            "icon": "bi-globe2",
+            "description": "Zoho Books / Zoho Inventory REST API connector for vendor and item data.",
+            "capabilities": ["vendor_lookup", "item_lookup", "po_lookup"],
+            "auth": "OAuth 2.0",
+        },
+        {
+            "type": "SALESFORCE",
+            "label": "Salesforce",
+            "icon": "bi-cloud",
+            "description": "Salesforce REST API connector for vendor account and PO data.",
+            "capabilities": ["vendor_lookup", "po_lookup"],
+            "auth": "OAuth 2.0",
+        },
+    ]
+
+    erp_resolution_chain = [
+        {
+            "step": 1,
+            "name": "Cache Check",
+            "icon": "bi-lightning-charge",
+            "color": "warning",
+            "description": (
+                "Check ERPReferenceCacheRecord for a fresh entry. TTL controlled by "
+                "ERP_CACHE_TTL_SECONDS env var (default 3600 s). Cache hit returns immediately."
+            ),
+        },
+        {
+            "step": 2,
+            "name": "ERP API Connector",
+            "icon": "bi-plug",
+            "color": "primary",
+            "description": (
+                "Call the live ERP API via ConnectorFactory.get_default_connector(). Only invoked "
+                "if the connector supports the resolution type (capability flag check)."
+            ),
+        },
+        {
+            "step": 3,
+            "name": "DB Fallback",
+            "icon": "bi-database-gear",
+            "color": "success",
+            "description": (
+                "Query local ERP reference tables (ERPVendorReference, ERPItemReference, etc.) "
+                "populated by ExcelImportOrchestrator. Always available as last resort."
+            ),
+        },
+    ]
+
+    erp_resolution_types_info = [
+        {"type": "VENDOR", "label": "Vendor Lookup", "db_model": "ERPVendorReference", "fallback": "VendorDBFallbackAdapter"},
+        {"type": "ITEM", "label": "Item Lookup", "db_model": "ERPItemReference", "fallback": "ItemDBFallbackAdapter"},
+        {"type": "TAX", "label": "Tax Code Lookup", "db_model": "ERPTaxCodeReference", "fallback": "TaxDBFallbackAdapter"},
+        {"type": "COST_CENTER", "label": "Cost Center Lookup", "db_model": "ERPCostCenterReference", "fallback": "CostCenterDBFallbackAdapter"},
+        {"type": "PO", "label": "PO Lookup", "db_model": "ERPPOReference", "fallback": "PODBFallbackAdapter"},
+        {"type": "GRN", "label": "GRN Lookup", "db_model": "GoodsReceiptNote (local)", "fallback": "GRNDBFallbackAdapter"},
+        {"type": "DUPLICATE_INVOICE", "label": "Duplicate Invoice Check", "db_model": "Invoice (local)", "fallback": "DuplicateInvoiceDBFallbackAdapter"},
+    ]
+
     return render(request, "agents/reference.html", {
         "agents_info": agents_info,
         "tools_info": tools_info,
@@ -607,4 +835,13 @@ def agent_reference(request):
         # Hardening
         "tool_grounded_agents": tool_grounded_agents,
         "data_scope_dimensions": data_scope_dimensions,
+        # Posting Pipeline
+        "posting_pipeline_stages": posting_pipeline_stages,
+        "posting_confidence_dimensions": posting_confidence_dimensions,
+        "posting_statuses": posting_statuses,
+        "posting_review_queues": posting_review_queues,
+        # ERP Integration
+        "erp_connector_info": erp_connector_info,
+        "erp_resolution_chain": erp_resolution_chain,
+        "erp_resolution_types_info": erp_resolution_types_info,
     })

@@ -198,60 +198,467 @@ def register_default(slug: str, content: str):
 register_default(
     "extraction.invoice_system",
     """You are an expert invoice data extraction system. You will receive OCR text from an invoice document.
-Extract ALL relevant fields and return a JSON object with EXACTLY this structure:
+
+Your task is to extract ALL relevant fields and return a JSON object with EXACTLY the structure defined below.
+
+---
+
+## PRE-EXTRACTION ANALYSIS (MANDATORY)
+
+Before extracting, perform the following:
+
+1. Identify document type (invoice, service invoice, travel invoice, etc.)
+2. Identify structure:
+
+   * Line item table OR
+   * Pricing breakdown (summary-style invoice)
+3. Identify tax structure:
+
+   * GST (CGST/SGST/IGST), VAT, or other
+4. Identify quantity logic:
+
+   * Explicit (Qty column)
+   * Derived (pcs, units, nights, etc.)
+   * Missing (default to 1)
+5. Identify fields that must be derived:
+
+   * tax_percentage
+   * subtotal
+   * unit_price
+
+Then perform extraction.
+
+---
+
+## OUTPUT FORMAT (STRICT)
+
+Return ONLY valid JSON:
 
 {{
-  "confidence": <float 0.0-1.0 representing your overall confidence>,
-  "vendor_name": "<vendor/supplier company name>",
-  "invoice_number": "<invoice number — the unique document identifier assigned by the supplier>",
-  "invoice_date": "<invoice date in YYYY-MM-DD format>",
-  "po_number": "<purchase order number referenced on the invoice>",
-  "currency": "<3-letter ISO currency code e.g. USD, EUR, INR>",
-  "subtotal": "<subtotal amount before tax as a number>",
-    "tax_percentage": "<overall tax percentage as a number such as 15 or 5; use 0 if not available>",
-  "tax_amount": "<total tax amount as a number>",
-  "total_amount": "<grand total amount as a number>",
-  "line_items": [
-    {{
-      "item_description": "<description of the line item>",
-            "item_category": "<concise business category for the line item, e.g. Food, Logistics, Packaging, Maintenance, Utilities, Equipment, Services, Materials, or Other>",
-      "quantity": "<quantity as a number>",
-      "unit_price": "<unit price as a number>",
-            "tax_percentage": "<tax percentage for this line as a number such as 15 or 5; use 0 if not available>",
-      "tax_amount": "<tax for this line as a number or 0 if not available>",
-      "line_amount": "<total amount for this line as a number>"
-    }}
-  ]
+"confidence": <float 0.0-1.0>,
+"vendor_name": "<supplier name>",
+"vendor_tax_id": "<GSTIN/VAT number>",
+"buyer_name": "<billed to company>",
+"invoice_number": "<invoice number>",
+"invoice_date": "<YYYY-MM-DD>",
+"due_date": "<YYYY-MM-DD>",
+"po_number": "<purchase order number>",
+"currency": "<ISO code>",
+"subtotal": <number>,
+"tax_percentage": <number>,
+"tax_amount": <number>,
+"tax_breakdown": {{
+"cgst": <number>,
+"sgst": <number>,
+"igst": <number>,
+"vat": <number>
+}},
+"total_amount": <number>,
+"document_type": "invoice",
+"line_items": [
+{{
+"item_description": "<description>",
+"item_category": "<category>",
+"quantity": <number>,
+"unit_price": <number>,
+"tax_percentage": <number>,
+"tax_amount": <number>,
+"line_amount": <number>
+}}
+]
 }}
 
-Rules:
-- Extract EVERY line item visible in the invoice.
-- Preserve values exactly as shown on the invoice for display fields.
-- If a currency symbol is present with an amount (e.g., $, €, ₹), keep that symbol in the returned amount string.
-- If a field is not found, return an empty string for text fields or 0 for numeric fields.
-- Return `tax_percentage` values as percentage numbers, not fractions (for example return `15`, not `0.15`).
-- For each `item_category`, infer a short business category from the description. Use labels like `Food`, `Logistics`, `Packaging`, `Maintenance`, `Utilities`, `Equipment`, `Services`, `Materials`, or `Other`.
-- Parse dates into YYYY-MM-DD format.
-- If the PO number is referenced anywhere (header, footer, reference fields), extract it.
-- Return ONLY valid JSON, no markdown or explanation.
-- ## Strictly For the invoice_number field ##:
-    - This is the UNIQUE DOCUMENT IDENTIFIER assigned by the supplier/vendor. It is NOT the PO number.
-    - Search the ENTIRE document — header, top-right box, reference section, footer, and stamp areas.
-    - Common labels (all equivalent): Invoice No., Invoice #, Inv No., Inv. No, Tax Invoice No.,
-      Tax Inv. No., Bill No., Bill Number, Document No., Doc No., Reference No., Ref No.,
-      Voucher No., Serial No., Sr. No., Invoice Number, Invoice ID, Receipt No., GST Invoice No.
-    - If you see a number immediately following any of these labels, that is the invoice_number.
-    - Do NOT leave invoice_number empty if ANY document identifier number is visible on the invoice.
-    - Do NOT confuse invoice_number with: quantity, line number, HSN/SAC code, bank account number,
-      GSTIN, phone number, or PO number.
-    - If multiple candidate numbers exist, prefer the one explicitly labeled with "Invoice" or "Bill".
-    - Return the value exactly as printed (e.g. "INV/2024/0042", "TI-10023", "2024-INV-007").
-- ## Strictly For the vendor_name field ##:
-    - The value in vendor_name MUST be in English characters only.
-    - If OCR contains Arabic/Urdu/other non-English script, convert vendor_name to the official English company name.
-    - If official English company name is not explicitly present, transliterate or translate to English.
-    - Never return vendor_name in Arabic, Urdu, or any non-English script.
-    - Keep the most likely legal/business name in English (avoid abbreviating unless OCR itself only has abbreviation).""",
+---
+
+## LABEL-BINDING RULES (CRITICAL)
+
+Always bind values to the nearest explicit field label.
+
+* "Invoice Number" → extract value closest to this label
+* "Invoice Date" → extract value closest to this label
+* "Due Date" → extract value closest to this label
+
+Do NOT select identifiers based only on format or appearance.
+
+---
+
+## HEADER BLOCK RECOVERY RULE (CRITICAL)
+
+OCR may separate labels and values across lines.
+
+If a label (e.g., "Invoice Number") does not have a value directly beside it:
+
+1. Search within the same nearby header section
+2. Match values based on label order and proximity
+3. Prefer structured identifiers near other header fields
+4. If exactly one valid candidate remains after exclusions, use it
+
+Do NOT search the entire document.
+
+---
+
+## IDENTIFIER DISAMBIGUATION RULES
+
+### invoice_number
+
+Extract ONLY from:
+
+* Invoice Number
+* Invoice No
+* Tax Invoice No
+* Bill No
+
+Primary method:
+
+* Direct label binding
+
+Fallback:
+
+* Header block recovery
+
+---
+
+## REFERENCE EXCLUSION RULES (VERY IMPORTANT)
+
+The following must NEVER be used as invoice_number:
+
+* CART Ref. No.
+* Client Code
+* IRN
+* Document No.
+* Booking Confirmation No.
+* Hotel Booking ID
+* Requisition Number
+* Passenger Name
+* Employee Code
+* Cost Center Code
+
+Reject these even if they look like valid identifiers.
+
+---
+
+### po_number
+
+Extract ONLY if explicitly labeled:
+
+* PO Number / P.O. No / Purchase Order
+
+Else return ""
+
+---
+
+## HEADER FIELD PRIORITY
+
+1. Explicit label match
+2. Header block recovery
+3. Empty string if unresolved
+
+Never substitute other identifiers.
+
+---
+
+## TRAVEL INVOICE HEADER PRIORITY
+
+Common fields:
+
+* Invoice Number
+* Client Code
+* CART Ref No
+* Document No
+
+Always prioritize Invoice Number.
+Never substitute CART or Document numbers.
+
+---
+
+## VENDOR & BUYER RULES
+
+### vendor_name
+
+* Extract supplier issuing invoice (NOT Bill To)
+* Must be English characters only
+
+### vendor_tax_id
+
+* Extract GSTIN / VAT number of vendor
+
+### buyer_name
+
+* Extract entity under "Bill To"
+
+---
+
+## DATE RULES
+
+* invoice_date → YYYY-MM-DD
+* due_date → extract if present else ""
+
+---
+
+## CURRENCY RULES
+
+* Detect symbol and map to ISO code (₹ → INR)
+* Do NOT include symbols in numeric values
+
+---
+
+## LINE ITEM EXTRACTION
+
+### General
+
+* Extract ALL line items
+* Each must include:
+
+  * description
+  * quantity
+  * unit_price
+  * line_amount
+
+---
+
+### Table Handling
+
+* Prefer tabular data
+* Map:
+  rate → unit_price
+  amount → line_amount
+
+---
+
+## SERVICE / TRAVEL INVOICE HANDLING
+
+If no table exists:
+
+Convert pricing breakdown into line items.
+
+Include:
+
+* Base Fare / Gross Fare
+* Service Charges
+* Fees
+
+Exclude:
+
+* Total
+* RoundOff
+
+---
+
+## SERVICE INVOICE LINE CONSOLIDATION RULE
+
+If invoice shows:
+
+* Basic Fare
+* Hotel Taxes
+* Total Fare
+
+Then:
+
+* combine into one line item using Total Fare
+* do not split unless clearly billed separately
+
+Keep service charges separate.
+
+---
+
+## SUBTOTAL CALCULATION (CRITICAL)
+
+Subtotal must include ALL pre-tax components.
+
+Include:
+
+* Base Fare / Gross Fare
+* Service Charges
+* Financial Charges
+* Fees
+
+Exclude:
+
+* GST / VAT / IGST / CGST / SGST
+* RoundOff
+* Total
+
+---
+
+## DERIVATION RULES
+
+* tax_percentage = (tax_amount / subtotal) × 100
+* subtotal = sum of pre-tax components
+* unit_price = line_amount / quantity
+* quantity default = 1
+
+---
+
+## LINE-LEVEL TAX ALLOCATION
+
+If tax applies to specific component:
+
+* assign tax only to that line
+
+Do NOT distribute across all lines.
+
+---
+
+## TAX RULES
+
+Extract:
+
+* tax_amount
+* tax_breakdown
+
+Map:
+
+* CGST → cgst
+* SGST → sgst
+* IGST → igst
+* VAT → vat
+
+Default = 0 if missing
+
+---
+
+## OVERALL TAX PERCENTAGE
+
+Compute:
+tax_percentage = (tax_amount / subtotal) × 100
+
+Do NOT copy component-level rate unless it applies to full subtotal.
+
+---
+
+## CONSISTENCY RULES
+
+Ensure:
+
+* subtotal + tax_amount ≈ total_amount (±2%)
+* sum(line_items.line_amount) ≈ subtotal (±5%)
+
+If mismatch:
+→ prefer computed values
+
+---
+
+## ITEM CATEGORY
+
+Use ONLY:
+Food, Logistics, Packaging, Maintenance, Utilities, Equipment, Services, Materials, Other
+
+---
+
+## DOCUMENT TYPE
+
+Always:
+"invoice"
+
+---
+
+## CONFIDENCE SCORING
+
+* High (0.9–1.0): clean + consistent
+* Medium (0.7–0.9): minor inference
+* Low (<0.7): missing/inconsistent
+
+---
+
+## DEFAULT VALUES
+
+* Missing text → ""
+* Missing numbers → 0
+
+---
+
+## FINAL INSTRUCTION
+
+* Return ONLY valid JSON
+* NO explanation
+* NO markdown
+* STRICT schema compliance""",
+)
+
+# ---------------------------------------------------------------------------
+# 1b. Modular extraction prompt components
+#     These are composed by InvoicePromptComposer into the final system prompt.
+#     Each key is fetched via PromptRegistry.get_or_default() so missing keys
+#     degrade gracefully to an empty string (no overlay applied).
+#
+#     Composition order:  base → category overlay → country/tax overlay
+#     If all modular parts are absent the composer falls back to
+#     extraction.invoice_system (the monolithic default above).
+# ---------------------------------------------------------------------------
+
+# Base prompt — shares content with invoice_system for phase 1.
+# Promoted to its own key so Langfuse can version it independently of
+# the monolithic fallback.  The InvoicePromptComposer reads this key
+# first and falls back to extraction.invoice_system if absent.
+register_default(
+    "extraction.invoice_base",
+    _DEFAULTS["extraction.invoice_system"],
+)
+
+# ── Category overlays — appended after the base prompt ──────────────────────
+
+register_default(
+    "extraction.invoice_category_goods",
+    "\n\n## GOODS INVOICE EXTRACTION RULES ##\n"
+    "- This invoice covers physical goods / materials / products.\n"
+    "- HSN code appears in line items — preserve it in item_description.\n"
+    "- qty, pcs, unit, rate columns map to quantity, unit_price, line_amount.\n"
+    "- subtotal = sum of all pre-tax line amounts.\n"
+    "- Do NOT include GST / VAT in subtotal.\n"
+    "- If batch_no or serial_no appears per line, include it in item_description.\n",
+)
+
+register_default(
+    "extraction.invoice_category_service",
+    "\n\n## SERVICE INVOICE EXTRACTION RULES ##\n"
+    "- This invoice covers professional services, fees, or subscriptions.\n"
+    "- SAC code may appear — preserve it in item_description.\n"
+    "- Treat each distinct fee / charge as a separate line item.\n"
+    "- subtotal = sum of all pre-tax service charges.\n"
+    "- Do NOT include GST / VAT in subtotal.\n"
+    "- If a single lump-sum is billed, create one line item.\n"
+    "- Finance charges and late-payment fees are separate line items.\n",
+)
+
+register_default(
+    "extraction.invoice_category_travel",
+    "\n\n## TRAVEL INVOICE EXTRACTION RULES ##\n"
+    "- This invoice covers travel (hotel stay, airfare, or booking).\n"
+    "- invoice_number is the BOOKING / TAX INVOICE number issued by the vendor.\n"
+    "  It is NOT the CART Ref, Client Code, Booking Confirmation No., Hotel Booking ID,\n"
+    "  IRN, or Document No. — those are reference numbers, not invoice numbers.\n"
+    "- subtotal = base fare / room rate BEFORE taxes; exclude hotel taxes from subtotal.\n"
+    "- Create separate line items for: Base Fare, Service Charge, Hotel Tax (if shown).\n"
+    "- tax_amount = GST / service tax applied to service charges (not to base fare).\n"
+    "- If the document shows Total Fare for a single stay, prefer one consolidated line.\n"
+    "- Passenger name / traveller name is NOT vendor_name.\n"
+    "- Do NOT use CART Ref. No. or Client Code as invoice_number.\n",
+)
+
+# ── Country / tax-regime overlays ────────────────────────────────────────────
+
+register_default(
+    "extraction.country_india_gst",
+    "\n\n## INDIA GST EXTRACTION RULES ##\n"
+    "- GSTIN format: 15 alphanumeric characters (e.g. 27AABCU9603R1ZX). "
+    "Extract vendor GSTIN as vendor_tax_id.\n"
+    "- IRN (Invoice Reference Number): 64-character hash generated by the GST portal. "
+    "Do NOT use IRN as invoice_number.\n"
+    "- GST components: CGST + SGST (intra-state) or IGST (inter-state). "
+    "Sum them for total tax_amount.\n"
+    "- HSN codes appear next to goods line items; SAC codes for services.\n"
+    "- E-way bill number is a reference field — not the invoice number.\n"
+    "- tax_percentage = total GST rate (CGST+SGST or IGST), typically 5/12/18/28.\n",
+)
+
+register_default(
+    "extraction.country_generic_vat",
+    "\n\n## VAT INVOICE EXTRACTION RULES ##\n"
+    "- Extract VAT registration number as vendor_tax_id.\n"
+    "- tax_percentage = VAT rate shown on the invoice (e.g. 5, 15, 20).\n"
+    "- tax_amount = total VAT charged.\n"
+    "- subtotal = net amount before VAT.\n"
+    "- total_amount = subtotal + tax_amount.\n",
 )
 
 # ---------------------------------------------------------------------------

@@ -132,7 +132,9 @@ Views resolve execution data via `ExecutionContext` (`apps/extraction/services/e
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow Diagram (Base Pipeline)
+### Data Flow Diagram (Base Pipeline — Updated)
+
+> **Current flow** includes category classification, modular prompt composition, and deterministic response repair (added in Phase 2 upgrade).
 
 ```
 User uploads PDF/Image
@@ -145,15 +147,42 @@ User uploads PDF/Image
          │
          ▼
   ┌──────────────────────────────────┐
-  │  Stage 1: Azure Document Int.    │
-  │  OCR → raw text (60K+ chars)     │
+  │  Stage 1: OCR                    │
+  │  Azure Document Intelligence     │
+  │  (or native PDF text layer)      │
+  │  → raw OCR text                  │
   └──────────────┬───────────────────┘
                  │
                  ▼
   ┌──────────────────────────────────┐
-  │  Stage 2: InvoiceExtractionAgent │
-  │  GPT-4o → structured JSON       │
+  │  Stage 2: Category Classification│   ← NEW
+  │  InvoiceCategoryClassifier       │
+  │  goods | service | travel        │
+  └──────────────┬───────────────────┘
+                 │
+                 ▼
+  ┌──────────────────────────────────┐
+  │  Stage 3: Prompt Composition     │   ← NEW
+  │  InvoicePromptComposer           │
+  │  base + category + country/tax   │
+  │  overlays → final system prompt  │
+  └──────────────┬───────────────────┘
+                 │
+                 ▼
+  ┌──────────────────────────────────┐
+  │  Stage 4: InvoiceExtractionAgent │
+  │  GPT-4o → structured JSON        │
   │  (temp=0, json_object mode)      │
+  │  Uses composed prompt if provided│
+  └──────────────┬───────────────────┘
+                 │
+                 ▼
+  ┌──────────────────────────────────┐
+  │  Stage 5: Response Repair        │   ← NEW
+  │  ResponseRepairService           │
+  │  invoice# exclusion, tax recomp, │
+  │  subtotal align, line tax alloc, │
+  │  travel consolidation            │
   └──────────────┬───────────────────┘
                  │
                  ▼
@@ -171,6 +200,7 @@ User uploads PDF/Image
          ▼
   InvoicePersistenceService  (save Invoice + LineItems)
   ExtractionResultPersistenceService  (save engine metadata)
+  → ExtractionResult.raw_response includes _repair metadata
          │
          ▼
   ┌─────────────────────────────────────────┐
@@ -309,15 +339,17 @@ Records individual field corrections for granular analytics.
 
 **Invoice** (`documents_invoice`) — stores raw + normalized invoice header fields:
 
-- **Raw fields**: `raw_vendor_name`, `raw_invoice_number`, `raw_invoice_date`, `raw_po_number`, `raw_currency`, `raw_subtotal`, `raw_tax_amount`, `raw_total_amount`
-- **Normalized fields**: `invoice_number`, `normalized_invoice_number`, `invoice_date`, `po_number`, `normalized_po_number`, `currency`, `subtotal`, `tax_amount`, `total_amount`
+- **Raw fields**: `raw_vendor_name`, `raw_invoice_number`, `raw_invoice_date`, `raw_po_number`, `raw_currency`, `raw_subtotal`, `raw_tax_amount`, `raw_total_amount`, `raw_vendor_tax_id`, `raw_buyer_name`, `raw_due_date`
+- **Normalized fields**: `invoice_number`, `normalized_invoice_number`, `invoice_date`, `po_number`, `normalized_po_number`, `currency`, `subtotal`, `tax_amount`, `total_amount`, `due_date` (DateField), `vendor_tax_id` (CharField 100), `buyer_name` (CharField 255), `tax_percentage` (Decimal 7,4), `tax_breakdown` (JSONField `{cgst, sgst, igst, vat}`)
 - **Extraction metadata**: `extraction_confidence` (float 0.0–1.0), `extraction_remarks`, `extraction_raw_json`
 - **Status**: `status` (InvoiceStatus enum)
+
+> Migration `0009_add_tax_breakdown_vendor_tax_id_buyer_due_date` added the `due_date`, `vendor_tax_id`, `buyer_name`, `tax_percentage`, `tax_breakdown`, `raw_vendor_tax_id`, `raw_buyer_name`, and `raw_due_date` fields.
 
 **InvoiceLineItem** (`documents_invoice_line`) — line items:
 
 - **Raw fields**: `raw_description`, `raw_quantity`, `raw_unit_price`, `raw_tax_amount`, `raw_line_amount`
-- **Normalized fields**: `description`, `normalized_description`, `quantity`, `unit_price`, `tax_amount`, `line_amount`
+- **Normalized fields**: `description`, `normalized_description`, `quantity`, `unit_price`, `tax_amount`, `line_amount`, `tax_percentage` (Decimal 7,4, nullable)
 - **Classification**: `item_category`, `is_service_item`, `is_stock_item`
 
 **DocumentUpload** (`documents_upload`) — file metadata:
@@ -440,10 +472,10 @@ raw_json, agent_run_id = _agent_extract(ocr_text)
 
 Parses raw JSON → structured dataclasses:
 
-- **ParsedInvoice**: `raw_vendor_name`, `raw_invoice_number`, `raw_invoice_date`, `raw_po_number`, `raw_currency`, `raw_subtotal`, `raw_tax_amount`, `raw_total_amount`, `confidence`, `line_items`
-- **ParsedLineItem**: `line_number`, `raw_description`, `raw_quantity`, `raw_unit_price`, `raw_tax_amount`, `raw_line_amount`
+- **ParsedInvoice**: `raw_vendor_name`, `raw_invoice_number`, `raw_invoice_date`, `raw_po_number`, `raw_currency`, `raw_subtotal`, `raw_tax_amount`, `raw_total_amount`, `raw_vendor_tax_id`, `raw_buyer_name`, `raw_due_date`, `raw_tax_percentage`, `raw_tax_breakdown` (dict), `confidence`, `line_items`
+- **ParsedLineItem**: `line_number`, `raw_description`, `raw_quantity`, `raw_unit_price`, `raw_tax_amount`, `raw_line_amount`, `raw_tax_percentage`
 
-Flexible field mapping (e.g., accepts both `item_description` and `description`).
+Flexible field mapping (e.g., accepts both `item_description` and `description`). Validates that `tax_breakdown` is a dict (defaults to `{}` if the LLM returns a non-dict value).
 
 ### 5.3 NormalizationService
 
@@ -457,10 +489,24 @@ Normalizes parsed values to proper types:
 | Vendor name | `normalize_string()` — lowercase, strip, remove diacritics |
 | Invoice number | `normalize_invoice_number()` — strip spaces/dashes/special chars |
 | PO number | `normalize_po_number()` — same normalization |
-| Date | `parse_date()` — flexible parsing (DD/MM/YYYY, YYYY-MM-DD, etc.) |
+| Date | `parse_date()` — flexible parsing (DD/MM/YYYY, YYYY-MM-DD, etc.) — used for both `invoice_date` and `due_date` |
 | Currency | `parse_currency()` — fallback to `"USD"` |
-| Amounts | `to_decimal()` — parse currency strings to `Decimal` |
-| Line items | Same normalization per line |
+| Amounts | `to_decimal()` — parse currency strings to `Decimal` — used for `subtotal`, `tax_amount`, `total_amount`, `tax_percentage`, and line amounts |
+| Line items | Same normalization per line (includes `tax_percentage`) |
+| Tax breakdown | `_normalize_tax_breakdown(raw)` — coerces `cgst`, `sgst`, `igst`, `vat` keys to `float`; defaults missing keys to `0.0` |
+
+**New fields added to `NormalizedInvoice`**:
+- `raw_vendor_tax_id`, `raw_buyer_name`, `raw_due_date`, `raw_tax_percentage` — raw string carry-throughs
+- `raw_tax_breakdown` — raw dict carry-through
+- `vendor_tax_id` (str) — passthrough of the GSTIN/VAT identifier
+- `buyer_name` (str) — billed-to entity name
+- `due_date` (Optional[date]) — parsed payment due date
+- `tax_percentage` (Optional[Decimal]) — headline tax rate percentage
+- `tax_breakdown` (dict) — cleaned `{cgst, sgst, igst, vat}` dict (all floats, defaults 0.0)
+
+**New fields added to `NormalizedLineItem`**:
+- `raw_tax_percentage` (str) — raw string from LLM
+- `tax_percentage` (Optional[Decimal]) — parsed line-level tax rate
 
 Utility functions live in `apps/core/utils.py`.
 
@@ -567,6 +613,19 @@ Saves normalized invoice + line items to the database.
 - **Total reconciliation** (`_reconcile_totals`): Compares line-item sum against extracted header subtotal. Only overrides when line items sum to **more** than the header (indicating the header was misread/truncated). When line items sum to **less**, keeps the original header total (the LLM likely missed some line items). Recomputes `total_amount = new_subtotal + tax_amount`.
 - Resolves vendor via `Vendor.normalized_name` or `VendorAlias.normalized_alias`
 
+**New fields persisted** (added in migration `0009_add_tax_breakdown_vendor_tax_id_buyer_due_date`):
+
+*Invoice header fields*:
+- `raw_vendor_tax_id`, `raw_buyer_name`, `raw_due_date` — raw string values from LLM
+- `vendor_tax_id` (CharField 100) — GSTIN/VAT/tax registration number
+- `buyer_name` (CharField 255) — billed-to entity name
+- `due_date` (DateField, nullable) — payment due date parsed from the invoice
+- `tax_percentage` (DecimalField 7,4, nullable) — headline tax rate (e.g. 18.0 for 18%)
+- `tax_breakdown` (JSONField, default `{}`) — component tax amounts `{cgst, sgst, igst, vat}` as floats
+
+*Line item fields*:
+- `tax_percentage` (DecimalField 7,4, nullable) — per-line tax rate percentage
+
 ### 5.7 ExtractionResultPersistenceService
 
 **Decorator**: `@observed_service("extraction.persist_result", entity_type="ExtractionResult", audit_event="EXTRACTION_RESULT_PERSISTED")`
@@ -587,6 +646,8 @@ Persists `ExtractionResult` record with engine metadata (separate from Invoice d
 - `try_auto_approve()`: `@observed_service("extraction.try_auto_approve", entity_type="ExtractionApproval")`
 - `approve()`: `@observed_service("extraction.approve", entity_type="ExtractionApproval", audit_event="EXTRACTION_APPROVED")`
 - `reject()`: `@observed_service("extraction.reject", entity_type="ExtractionApproval", audit_event="EXTRACTION_REJECTED")`
+
+> **Rerun idempotency**: `create_pending_approval()` and `try_auto_approve()` both use `update_or_create(invoice=invoice, defaults={...})` instead of `objects.create()`. This prevents `IntegrityError` on the `OneToOneField` when an invoice is re-extracted — the existing `ExtractionApproval` record is reset to `PENDING` (or `AUTO_APPROVED`) with a fresh data snapshot rather than creating a duplicate row.
 
 See [Section 8: Approval Gate](#8-approval-gate).
 
@@ -1082,14 +1143,16 @@ AUTO_APPROVED → ×    (terminal state, no further transitions)
 ### Service Methods
 
 **`create_pending_approval(invoice, extraction_result)`**
-- Creates `ExtractionApproval` with `status=PENDING`
+- Uses `update_or_create(invoice=invoice, defaults={...})` to create or reset the `ExtractionApproval` record
+- On first run: creates with `status=PENDING`; on rerun: resets `status=PENDING`, clears `reviewed_by`, `reviewed_at`, `is_touchless=False`
 - Snapshots current header + line values as `original_values_snapshot`
+- Logs "Created" vs "Reset existing" for observability
 - Called when auto-approval is not triggered
 
 **`try_auto_approve(invoice, extraction_result)`**
 - Checks `EXTRACTION_AUTO_APPROVE_ENABLED` setting (default: `false`)
-- If enabled and confidence ≥ `EXTRACTION_AUTO_APPROVE_THRESHOLD` (default: `1.1` — effectively disabled):
-  - Creates `ExtractionApproval(status=AUTO_APPROVED, is_touchless=True)`
+- If enabled and confidence >= `EXTRACTION_AUTO_APPROVE_THRESHOLD` (default: `1.1` — effectively disabled):
+  - Uses `update_or_create(invoice=invoice, defaults={...})` to create or reset the `ExtractionApproval` record with `status=AUTO_APPROVED, is_touchless=True, reviewed_at=timezone.now()`
   - Sets `invoice.status = READY_FOR_RECON`
   - Returns the approval object
 - Otherwise returns `None`
@@ -1117,8 +1180,8 @@ AUTO_APPROVED → ×    (terminal state, no further transitions)
 
 | Type | Fields |
 |------|--------|
-| Header | `invoice_number`, `po_number`, `invoice_date`, `currency`, `subtotal`, `tax_amount`, `total_amount`, `raw_vendor_name` |
-| Line Item | `description`, `quantity`, `unit_price`, `tax_amount`, `line_amount` |
+| Header | `invoice_number`, `po_number`, `invoice_date`, `due_date`, `currency`, `subtotal`, `tax_amount`, `total_amount`, `raw_vendor_name`, `vendor_tax_id`, `buyer_name`, `tax_percentage` |
+| Line Item | `description`, `quantity`, `unit_price`, `tax_amount`, `line_amount`, `tax_percentage` |
 
 ### Auto-Approval Configuration
 
@@ -1191,12 +1254,22 @@ with EXACTLY this structure:
 {
   "confidence": <float 0.0-1.0>,
   "vendor_name": "<vendor/supplier company name>",
+  "vendor_tax_id": "<vendor GSTIN, VAT number, or tax registration ID>",
   "invoice_number": "<invoice number/ID>",
   "invoice_date": "<invoice date in YYYY-MM-DD format>",
+  "due_date": "<payment due date in YYYY-MM-DD format, or empty string>",
   "po_number": "<purchase order number>",
+  "buyer_name": "<billed-to / buyer company name>",
   "currency": "<3-letter ISO currency code, e.g. USD, EUR, INR>",
   "subtotal": "<subtotal amount before tax>",
   "tax_amount": "<total tax amount>",
+  "tax_percentage": "<overall tax rate as a percentage, e.g. 18 for 18%, or empty string>",
+  "tax_breakdown": {
+    "cgst": "<CGST amount or 0>",
+    "sgst": "<SGST amount or 0>",
+    "igst": "<IGST amount or 0>",
+    "vat": "<VAT amount or 0>"
+  },
   "total_amount": "<grand total amount>",
   "line_items": [
     {
@@ -1204,6 +1277,7 @@ with EXACTLY this structure:
       "quantity": "<quantity>",
       "unit_price": "<unit price>",
       "tax_amount": "<tax for this line or 0>",
+      "tax_percentage": "<tax rate % for this line or empty string>",
       "line_amount": "<total for this line>"
     }
   ]
@@ -1215,10 +1289,140 @@ with EXACTLY this structure:
 - Preserve values exactly as shown for display fields
 - Keep currency symbols with amounts (e.g., $, €, ₹)
 - Missing fields → empty string (text) or 0 (numeric)
-- Parse dates to YYYY-MM-DD
+- Parse dates to YYYY-MM-DD (applies to both `invoice_date` and `due_date`)
 - Extract PO number from anywhere (header, footer, references)
+- `tax_breakdown`: populate whichever components (CGST/SGST/IGST/VAT) appear on the invoice; use 0 for absent components
+- `tax_percentage`: headline tax rate as a plain number (e.g. `"18"` for 18% GST); leave empty string when not stated
 - Return ONLY valid JSON — no markdown or explanation
 - **vendor_name MUST be English-only** — if Arabic/Urdu/non-English script detected, translate/transliterate to official English company name
+
+---
+
+## 10a. Invoice Category Classifier
+
+**File**: `apps/extraction_core/services/invoice_category_classifier.py`
+
+Classifies invoice OCR text into one of three categories **before** LLM extraction so the prompt can be tailored:
+
+| Category | Key signals |
+|---|---|
+| `travel` | hotel, itinerary, passenger name, CART Ref, PNR, booking ID, room rate, fare |
+| `goods`  | HSN code, qty/pcs/unit, rate per unit, SKU, batch no, e-way bill |
+| `service` | professional fees, SAC, consulting, subscription, maintenance contract, management fee |
+
+**Result dataclass**: `InvoiceCategoryResult`
+
+| Field | Type | Description |
+|---|---|---|
+| `category` | `str` | `goods` / `service` / `travel` |
+| `confidence` | `float` | 0.0–1.0 |
+| `signals` | `list[str]` | Matched keyword evidence (max 10) |
+| `is_ambiguous` | `bool` | True when top-2 score gap < 0.20 |
+
+**Fallback**: Defaults to `service` when input is empty or confidence < 0.20.
+
+---
+
+## 10b. Modular Prompt Composition
+
+**File**: `apps/extraction/services/invoice_prompt_composer.py`
+**Registry**: `apps/core/prompt_registry.py`
+
+### Why prompt overlays instead of multiple agents
+
+A single `InvoiceExtractionAgent` is retained because:
+- The extraction schema (JSON output shape) is identical for all invoice types
+- Category-specific guidance is additive — overlays append targeted rules to the base
+- Fewer agents = simpler failure modes, unified tracing, one Langfuse config
+
+### Registry keys
+
+| Key | Purpose |
+|---|---|
+| `extraction.invoice_base` | Base extraction prompt (versioned independently of monolithic fallback) |
+| `extraction.invoice_system` | Monolithic fallback (unchanged — backward compatible) |
+| `extraction.invoice_category_goods` | Goods-specific extraction rules overlay |
+| `extraction.invoice_category_service` | Service-specific extraction rules overlay |
+| `extraction.invoice_category_travel` | Travel-specific rules (invoice# exclusions, subtotal, line structure) |
+| `extraction.country_india_gst` | India GST rules (GSTIN, IRN, CGST/SGST/IGST) |
+| `extraction.country_generic_vat` | Generic VAT rules |
+
+All keys are Langfuse-overridable via the normal PromptRegistry resolution chain (Langfuse → DB → hardcoded default).
+
+### Composition result: `PromptComposition`
+
+| Field | Type | Description |
+|---|---|---|
+| `final_prompt` | `str` | Assembled system prompt sent to the LLM |
+| `components` | `dict[str, str]` | `{slug: version}` for each part used |
+| `prompt_hash` | `str` | sha256 hex (16 chars) of `final_prompt` — deterministic across runs |
+
+### Backward compatibility / fallback
+
+1. If `extraction.invoice_base` is absent → uses `extraction.invoice_system`
+2. If category overlay is absent or empty → skipped (base prompt only)
+3. If country overlay is absent → skipped
+4. If `InvoicePromptComposer` raises → `InvoiceExtractionAgent` uses its own `system_prompt` property (existing behaviour)
+
+### Langfuse metadata logged per extraction
+
+```
+invoice_category, invoice_category_confidence,
+base_prompt_key, base_prompt_version,
+category_prompt_key, category_prompt_version,
+country_prompt_key, country_prompt_version,
+prompt_hash, schema_code
+```
+
+---
+
+## 10c. Response Repair / Validator
+
+**File**: `apps/extraction/services/response_repair_service.py`
+
+### Why deterministic repair before parsing
+
+The parser (`ExtractionParserService`) is a pure JSON→dataclass mapper. Placing repair upstream means:
+- The parser, normalizer, validator, and confidence scorer all receive cleaner data
+- Every repair is explicitly recorded in `repair_actions` — auditable
+- No silent value invention — repairs only fire when OCR evidence exists
+
+### Phase 1 rules
+
+| Rule | Trigger | Action |
+|---|---|---|
+| **a. Invoice number exclusion** | `invoice_number` matches CART Ref, Client Code, IRN, Booking ID, Document No., etc. | Attempt OCR recovery for a real invoice-labelled number; clear to `""` if not found |
+| **b. Tax % recomputation** | LLM tax_percentage differs >0.5pp from `tax_amount/subtotal×100` | Recompute from amounts |
+| **c. Subtotal alignment** | `subtotal` differs >1 unit from sum of pre-tax line amounts (GST/VAT lines excluded) | Align subtotal to line sum |
+| **d. Line tax allocation** | Travel/service invoice; single service-charge line; all tax on base/hotel line | Move tax to service-charge line, zero base line tax |
+| **e. Travel consolidation** | Basic Fare + Hotel Taxes + Total Fare lines exist; Total Fare ≈ Basic + Taxes | Remove sub-lines, keep Total Fare line |
+
+### Result dataclass: `RepairResult`
+
+| Field | Description |
+|---|---|
+| `repaired_json` | Modified (or original) JSON dict |
+| `repair_actions` | List of human-readable action strings |
+| `warnings` | Non-fatal issues (e.g., could not recover invoice number) |
+| `was_repaired` | `True` if any action was applied |
+
+### Persistence
+
+Repair metadata is embedded in `ExtractionResult.raw_response` under the `_repair` key (no migration needed):
+
+```json
+{
+  "vendor_name": "...",
+  "invoice_number": "...",
+  "_repair": {
+    "was_repaired": true,
+    "repair_actions": ["invoice_number: replaced CART-9876 with INV-001"],
+    "warnings": []
+  }
+}
+```
+
+The parser ignores `_repair` naturally (it only reads known field names).
 
 ---
 
@@ -1295,6 +1499,8 @@ All cross-module lookups are wrapped in `try/except` for graceful degradation if
 
 **`extraction_edit_values`** — Inline value editing:
 - Accepts JSON payload with `header` and `lines` corrections
+- Header fields: `invoice_number`, `po_number`, `invoice_date`, `due_date`, `currency`, `subtotal`, `tax_amount`, `total_amount`, `raw_vendor_name`, `vendor_tax_id`, `buyer_name`, `tax_percentage`
+- Line fields: `description`, `quantity`, `unit_price`, `tax_amount`, `line_amount`, `tax_percentage`
 - Returns changed fields list and count
 - Audits changes as `EXTRACTION_COMPLETED` event
 
@@ -1395,11 +1601,17 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 │  INTELLIGENCE PANEL (6 tabs, full-width col-12)              │
 │                                                              │
 │  Tab 1: Extracted Data                                       │
-│    - Header Fields table                                     │
+│    - Header Fields table (vendor_name, invoice_number,       │
+│      invoice_date, due_date, po_number, vendor_tax_id,       │
+│      buyer_name, currency, subtotal, tax_amount,             │
+│      tax_percentage, total_amount)                           │
 │    - Parties card (exc-supplementary-card)                   │
 │    - Tax & Jurisdiction card                                 │
+│    - Tax Breakdown card (CGST/SGST/IGST/VAT components;      │
+│      only rendered when invoice_tax_breakdown is non-empty)  │
 │    - Master Data Matches card (exc-supplementary-card)       │
-│    - Line Items table (expandable)                           │
+│    - Line Items table (expandable; Tax % column shown when   │
+│      has_line_tax_pct is True)                               │
 │                                                              │
 │  Tab 2: Validation                                           │
 │    - Errors / Warnings / Passed                              │
@@ -1439,7 +1651,7 @@ The Extraction Review Console is an enterprise-grade, agentic deep-dive UI for r
 | `console.html` | Main layout — extends `base.html`, includes all partials/modals, loads CSS/JS. 6 tab pills. |
 | `_header_bar.html` | Command bar — extraction ID, status/confidence badges (uses `{% widthratio %}` for 0–1 → percentage conversion), jurisdiction badges, review queue badge (bg-info-subtle), schema badge (bg-dark-subtle), extraction method badge (conditional: HYBRID=purple, LLM=primary, else=secondary), action buttons |
 | `_document_viewer.html` | **Deprecated** — no longer included in layout. File exists but is unused. |
-| `_extracted_data.html` | Tab 1 — Header Fields, Parties, Tax/Jurisdiction, Master Data Matches, Line Items with **summary footer** (summed Qty, Tax Amount, Total across all line items) |
+| `_extracted_data.html` | Tab 1 — Header Fields, Parties, Tax/Jurisdiction, Tax Breakdown (CGST/SGST/IGST/VAT; shown only when non-zero), Master Data Matches, Line Items with **summary footer** (summed Qty, Tax Amount, Total across all line items) and optional Tax % column |
 | `_confidence_badge.html` | Reusable confidence % indicator (green ≥85%, amber ≥50%, red <50%). Uses `{% widthratio confidence 1 100 %}` to convert 0–1 float to percentage. |
 | `_validation_panel.html` | Tab 2 — Errors/Warnings/Passed grouped by severity, "Go to field" navigation |
 | `_evidence_panel.html` | Tab 3 — Evidence cards with source snippets and page references |
@@ -1503,11 +1715,13 @@ The `extraction_console` view builds the following context for the template:
 |-----------------|--------|-------------|
 | `extraction` | Computed dict | ID, file_name, status, confidence, created_at, resolved_jurisdiction, jurisdiction_source, jurisdiction_confidence, jurisdiction_warning, review_queue, schema_code, schema_version, extraction_method, requires_review |
 | `ext` | `ExtractionResult` | Original extraction result record |
-| `header_fields` | Invoice model | Dict of field dicts (display_name, value, raw_value, confidence, method, is_mandatory, evidence) |
-| `tax_fields` | Invoice model | Tax-specific field dicts |
-| `parties` | `raw_response.document_intelligence.parties` | Supplier/buyer/ship-to/bill-to from document intelligence |
+| `header_fields` | Invoice model | Dict of field dicts (display_name, value, raw_value, confidence, method, is_mandatory, evidence). Includes: `vendor_name`, `invoice_number`, `invoice_date`, `due_date`, `po_number`, `vendor_tax_id`, `buyer_name`, `currency`, `subtotal`, `tax_amount`, `tax_percentage`, `total_amount` |
+| `tax_fields` | Invoice model | Tax-specific field dicts: `tax_amount`, `tax_percentage`, and individual tax breakdown rows (`cgst`, `sgst`, `igst`, `vat` — only non-zero components added) |
+| `invoice_tax_breakdown` | `invoice.tax_breakdown` | Raw breakdown dict `{cgst, sgst, igst, vat}` used by the Tax Breakdown card |
+| `has_line_tax_pct` | Computed bool | `True` when at least one line item has a non-null `tax_percentage` — controls Tax % column visibility in line items table |
+| `parties` | `raw_response.document_intelligence.parties` | Supplier/buyer/ship-to/bill-to from document intelligence; falls back to `invoice.vendor_name` + `invoice.vendor_tax_id` for supplier, and `invoice.buyer_name` for buyer |
 | `enrichment` | `raw_response.enrichment` | Vendor/customer/PO matches from master data enrichment |
-| `line_items` | `InvoiceLineItem` queryset | List of dicts with description, qty, price, tax, total, confidence, fields |
+| `line_items` | `InvoiceLineItem` queryset | List of dicts with description, qty, price, `tax_percentage`, tax, total, confidence, fields |
 | `line_items_totals` | Computed | Dict with summed `quantity`, `tax_amount`, `total` across all line items — displayed in table footer |
 | `errors` / `warnings` | Re-run `ValidationService` | Grouped validation issues |
 | `validation_field_issues` | Computed | Map of field names with validation issues |

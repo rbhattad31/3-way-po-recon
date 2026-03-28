@@ -871,11 +871,12 @@ def extraction_export_csv(request):
 # Inline edit extracted invoice fields
 # ────────────────────────────────────────────────────────────────
 EDITABLE_HEADER_FIELDS = {
-    "invoice_number", "po_number", "invoice_date", "currency",
-    "subtotal", "tax_amount", "total_amount",
+    "invoice_number", "po_number", "invoice_date", "due_date", "currency",
+    "vendor_tax_id", "buyer_name",
+    "subtotal", "tax_percentage", "tax_amount", "total_amount",
 }
 EDITABLE_LINE_FIELDS = {
-    "description", "quantity", "unit_price", "tax_amount", "line_amount",
+    "description", "quantity", "unit_price", "tax_percentage", "tax_amount", "line_amount",
 }
 
 
@@ -930,7 +931,13 @@ def extraction_edit_values(request, pk):
                 setattr(invoice, field_name, parsed_date)
             except ValueError:
                 continue
-        elif field_name in ("subtotal", "tax_amount", "total_amount"):
+        elif field_name == "due_date":
+            try:
+                parsed_date = datetime.strptime(value, "%Y-%m-%d").date() if value else None
+                setattr(invoice, field_name, parsed_date)
+            except ValueError:
+                continue
+        elif field_name in ("subtotal", "tax_percentage", "tax_amount", "total_amount"):
             try:
                 setattr(invoice, field_name, Decimal(value) if value else None)
             except InvalidOperation:
@@ -979,7 +986,7 @@ def extraction_edit_values(request, pk):
             if old_value == value:
                 continue
 
-            if field_name in ("quantity", "unit_price", "tax_amount", "line_amount"):
+            if field_name in ("quantity", "unit_price", "tax_percentage", "tax_amount", "line_amount"):
                 try:
                     setattr(line_item, field_name, Decimal(value) if value else None)
                 except InvalidOperation:
@@ -1294,8 +1301,12 @@ def extraction_console(request, pk):
             ("invoice_number", "Invoice Number", True),
             ("po_number", "PO Number", False),
             ("invoice_date", "Invoice Date", True),
+            ("due_date", "Due Date", False),
+            ("vendor_tax_id", "Vendor Tax ID (GSTIN/VAT)", False),
+            ("buyer_name", "Buyer / Bill To", False),
             ("currency", "Currency", True),
             ("subtotal", "Subtotal", False),
+            ("tax_percentage", "Tax Rate %", False),
             ("tax_amount", "Tax Amount", False),
             ("total_amount", "Total Amount", True),
         ]
@@ -1314,7 +1325,9 @@ def extraction_console(request, pk):
             }
 
         # Tax fields
+        _tax_breakdown = getattr(invoice, "tax_breakdown", None) or {}
         _tax_map = [
+            ("tax_percentage", "Tax Rate %"),
             ("tax_amount", "Tax Amount"),
             ("currency", "Currency"),
         ]
@@ -1328,6 +1341,24 @@ def extraction_console(request, pk):
                 "is_mandatory": False,
                 "evidence": True,
             }
+        # Add individual breakdown components
+        _breakdown_labels = {
+            "cgst": "CGST",
+            "sgst": "SGST",
+            "igst": "IGST",
+            "vat": "VAT",
+        }
+        for key, label in _breakdown_labels.items():
+            bval = _tax_breakdown.get(key, 0)
+            if bval:
+                tax_fields[f"breakdown_{key}"] = {
+                    "display_name": f"  {label}",
+                    "value": str(bval),
+                    "confidence": ext.confidence,
+                    "method": "LLM",
+                    "is_mandatory": False,
+                    "evidence": False,
+                }
 
         # Build line items list for template
         line_items = []
@@ -1336,7 +1367,7 @@ def extraction_console(request, pk):
                 "description": li.description,
                 "quantity": li.quantity,
                 "unit_price": li.unit_price,
-                "tax_rate": getattr(li, "tax_rate", None),
+                "tax_percentage": li.tax_percentage,
                 "tax_amount": li.tax_amount,
                 "total": li.line_amount,
                 "confidence": ext.confidence,
@@ -1413,10 +1444,25 @@ def extraction_console(request, pk):
         vendor_name = extracted_data.get("vendor_name") or (
             invoice.raw_vendor_name if invoice else None
         )
+        buyer = extracted_data.get("buyer_name") or (
+            invoice.buyer_name if invoice else None
+        )
+        vendor_tax = extracted_data.get("vendor_tax_id") or (
+            invoice.vendor_tax_id if invoice else None
+        )
         if vendor_name:
             parties = {
-                "supplier": [{"name": vendor_name, "confidence": ext.confidence}],
+                "supplier": [{
+                    "name": vendor_name,
+                    "tax_id": vendor_tax or "",
+                    "confidence": ext.confidence,
+                }],
             }
+        if buyer:
+            parties.setdefault("buyer", []).append({
+                "name": buyer,
+                "confidence": ext.confidence,
+            })
 
     # ── Validation re-run ──
     validated_fields = set()
@@ -1480,13 +1526,16 @@ def extraction_console(request, pk):
         _field_display = {
             "invoice_number": "Invoice Number",
             "invoice_date": "Invoice Date",
+            "due_date": "Due Date",
             "vendor_name": "Vendor Name",
+            "vendor_tax_id": "Vendor Tax ID",
+            "buyer_name": "Buyer / Bill To",
             "po_number": "PO Number",
             "currency": "Currency",
             "subtotal": "Subtotal",
+            "tax_percentage": "Tax Rate %",
             "tax_amount": "Tax Amount",
             "total_amount": "Total Amount",
-            "tax_percentage": "Tax Percentage",
             "confidence": "Confidence Score",
         }
         for field_key, display_name in _field_display.items():
@@ -1759,12 +1808,21 @@ def extraction_console(request, pk):
         raw_json_pretty = json.dumps(ext.raw_response, indent=2, default=str)
 
     has_line_tax = False
+    has_line_tax_pct = False
     line_items_raw = []
     if invoice:
         line_items_raw = list(invoice.line_items.order_by("line_number"))
         has_line_tax = any(
             li.tax_amount and li.tax_amount != 0 for li in line_items_raw
         )
+        has_line_tax_pct = any(
+            li.tax_percentage and li.tax_percentage != 0 for li in line_items_raw
+        )
+
+    # Build tax_breakdown context from invoice
+    invoice_tax_breakdown = {}
+    if invoice and invoice.tax_breakdown and isinstance(invoice.tax_breakdown, dict):
+        invoice_tax_breakdown = invoice.tax_breakdown
 
     # Build evidence map keyed by field_key for inline display
     evidence_map = {e["field_key"]: e for e in evidence_entries}
@@ -1837,6 +1895,8 @@ def extraction_console(request, pk):
         "line_items_raw": line_items_raw,
         "line_items_totals": line_items_totals,
         "has_line_tax": has_line_tax,
+        "has_line_tax_pct": has_line_tax_pct,
+        "invoice_tax_breakdown": invoice_tax_breakdown,
         "evidence_entries": evidence_entries,
         "evidence_map": evidence_map,
         "reasoning_blocks": reasoning_blocks,

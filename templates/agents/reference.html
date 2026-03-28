@@ -1,19 +1,137 @@
 {% extends "base.html" %}
-{% block title %}Platform Reference – PO Reconciliation{% endblock %}
+{% block title %}Platform Reference -- 3-Way PO Reconciliation{% endblock %}
 
 {% block extra_css %}
 <style>
-  .ref-step-card { transition: transform .15s; }
-  .ref-step-card:hover { transform: translateY(-2px); box-shadow: 0 .25rem .75rem rgba(0,0,0,.08); }
-  .pipeline-connector { width: 2px; height: 24px; background: #dee2e6; margin: 0 auto; }
-  .tab-count { font-size: .7rem; vertical-align: super; }
-  .governance-method { font-family: 'Courier New', monospace; font-weight: 600; font-size: .8rem; }
+/* ── Documentation chrome ── */
+.docs-toc {
+  position: sticky;
+  top: 70px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+  font-size: .8rem;
+  padding-bottom: 2rem;
+}
+.docs-toc .toc-group-label {
+  font-size: .65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: #adb5bd;
+  padding: .6rem .75rem .15rem;
+  margin-top: .25rem;
+}
+.docs-toc .nav-link {
+  padding: .2rem .75rem;
+  color: #6c757d;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  line-height: 1.4;
+}
+.docs-toc .nav-link:hover  { color: #0d6efd; border-left-color: #cfe2ff; background: none; }
+.docs-toc .nav-link.active { color: #0d6efd; font-weight: 600; border-left-color: #0d6efd; background: none; }
+.docs-toc .toc-child { padding-left: 1.5rem; font-size: .76rem; }
+
+/* ── Section spacing ── */
+.docs-section { scroll-margin-top: 70px; padding-top: 2.5rem; }
+.docs-section + .docs-section { border-top: 1px solid #e9ecef; margin-top: 1rem; }
+.docs-section-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 1rem;
+}
+.docs-section-title .badge-new {
+  font-size: .6rem;
+  font-weight: 700;
+  background: #d1e7dd;
+  color: #0a3622;
+  padding: .2rem .5rem;
+  border-radius: 4px;
+  vertical-align: middle;
+  margin-left: .5rem;
+}
+.docs-h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 1.75rem;
+  margin-bottom: .75rem;
+  padding-bottom: .35rem;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+/* ── Pipeline steps ── */
+.stage-row {
+  display: flex;
+  gap: .85rem;
+  align-items: flex-start;
+  padding: .75rem 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+.stage-row:last-child { border-bottom: none; }
+.stage-num {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: .82rem;
+  flex-shrink: 0;
+  color: #fff;
+}
+.stage-num-secondary { background: #6c757d; }
+.stage-num-info      { background: #0dcaf0; color: #000; }
+.stage-num-primary   { background: #0d6efd; }
+.stage-num-warning   { background: #ffc107; color: #000; }
+.stage-num-success   { background: #198754; }
+.stage-num-danger    { background: #dc3545; }
+.stage-num-dark      { background: #212529; }
+
+/* ── ERP connector / resolution ── */
+.resolution-step {
+  display: flex;
+  gap: .85rem;
+  align-items: flex-start;
+  padding: .6rem 0;
+}
+.res-step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: .8rem;
+  flex-shrink: 0;
+}
+
+/* ── Confidence bars ── */
+.conf-bar-wrap { height: 8px; border-radius: 4px; background: #e9ecef; margin: .3rem 0 .15rem; }
+.conf-bar      { height: 8px; border-radius: 4px; background: #0d6efd; }
+
+/* ── Inline code badges ── */
+code { background: #f3f4f6; border-radius: 4px; padding: .05rem .35rem; font-size: .83em; color: #dc3545; }
+pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+/* ── Overview flow arrow ── */
+.flow-step {
+  border-radius: .4rem;
+  padding: .5rem .8rem;
+  text-align: center;
+  font-size: .78rem;
+  font-weight: 500;
+}
+.flow-arrow { font-size: 1.1rem; color: #adb5bd; align-self: center; }
 </style>
 {% endblock %}
 
 {% block breadcrumb %}
 <nav aria-label="breadcrumb">
-  <ol class="breadcrumb">
+  <ol class="breadcrumb mb-0">
     <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
     <li class="breadcrumb-item active">Platform Reference</li>
   </ol>
@@ -21,1134 +139,1135 @@
 {% endblock %}
 
 {% block content %}
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- INTRO — End-to-End Flow Overview                              -->
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<div class="card mb-4">
-  <div class="card-body">
-    <h4 class="card-title mb-2"><i class="bi bi-diagram-3"></i> End-to-End Processing Flow</h4>
-    <p class="text-muted mb-3">
-      Every invoice creates an <strong>AP Case</strong> driven through a sequence of
-      <strong>stages</strong> by the <strong>Case Orchestrator</strong>. The extraction pipeline
-      uses a <strong>two-agent architecture</strong> (Extraction Agent + Understanding Agent for
-      low confidence). The processing path (2-Way, 3-Way, or Non-PO) is resolved automatically
-      and determines which stages run. LLM-powered agents use a
-      <strong>ReAct loop</strong> (Reason &rarr; Act &rarr; Observe) with up to
-      <strong>{{ max_tool_rounds }} tool-calling rounds</strong>.
-    </p>
+<div class="row gx-4 mt-2">
 
-    <!-- Flow visual -->
-    <div class="row text-center g-2 mb-3">
-      <div class="col-md-2">
-        <div class="border rounded p-2 bg-light">
-          <i class="bi bi-upload fs-3 text-secondary"></i>
-          <div class="small mt-1 fw-semibold">Upload</div>
+  <!-- ════════════════════════════════ MAIN CONTENT ════════════════════════════════ -->
+  <div class="col-xl-9 col-lg-8" id="docs-content">
+
+    <!-- ── OVERVIEW ── -->
+    <div id="overview" class="docs-section" style="padding-top:.25rem;border-top:none">
+      <h1 class="docs-section-title"><i class="bi bi-diagram-3 me-2 text-primary"></i>Platform Reference</h1>
+      <p class="text-muted mb-4" style="max-width:700px">
+        Complete technical reference for the 3-Way PO Reconciliation platform --
+        extraction pipeline, reconciliation engine, AI agent system, invoice posting pipeline,
+        ERP integration layer, and full governance stack.
+      </p>
+
+      <div class="card mb-3">
+        <div class="card-header bg-white fw-semibold small">
+          <i class="bi bi-arrow-right-circle me-1 text-primary"></i> End-to-End Processing Flow
         </div>
-      </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center">
-        <i class="bi bi-arrow-right fs-4 text-muted"></i>
-      </div>
-      <div class="col-md-2">
-        <div class="border rounded p-2" style="background:#e8f0fe">
-          <i class="bi bi-robot fs-3 text-primary"></i>
-          <div class="small mt-1 fw-semibold">Extraction<br><span class="text-muted" style="font-size:.7rem">OCR &rarr; Agent</span></div>
-        </div>
-      </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center">
-        <i class="bi bi-arrow-right fs-4 text-muted"></i>
-      </div>
-      <div class="col-md-2">
-        <div class="border rounded p-2 bg-light">
-          <i class="bi bi-signpost-split fs-3 text-info"></i>
-          <div class="small mt-1 fw-semibold">Path<br>Resolution</div>
-        </div>
-      </div>
-      <div class="col-md-1 d-flex align-items-center justify-content-center">
-        <i class="bi bi-arrow-right fs-4 text-muted"></i>
-      </div>
-      <div class="col-md-3">
-        <div class="border rounded p-2" style="background:#f0f7ff">
-          <div class="d-flex justify-content-around">
-            <div><span class="badge bg-primary">2-Way</span></div>
-            <div><span class="badge bg-warning text-dark">3-Way</span></div>
-            <div><span class="badge bg-info text-dark">Non-PO</span></div>
-          </div>
-          <div class="small mt-1 fw-semibold">Matching &rarr; Agents &rarr; Review</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- NAVIGATION TABS                                                -->
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<ul class="nav nav-tabs mb-4" role="tablist">
-  <li class="nav-item">
-    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-pipeline" type="button">
-      <i class="bi bi-file-earmark-text me-1"></i> Invoice Pipeline
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-lifecycle" type="button">
-      <i class="bi bi-diagram-3 me-1"></i> Case Lifecycle
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-agents" type="button">
-      <i class="bi bi-robot me-1"></i> Agents <span class="tab-count">{{ agents_info|length }}</span>
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tools" type="button">
-      <i class="bi bi-tools me-1"></i> Tools &amp; Recommendations
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-prompts" type="button">
-      <i class="bi bi-chat-left-text me-1"></i> Prompts <span class="tab-count">{{ prompts|length }}</span>
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">
-      <i class="bi bi-journal-check me-1"></i> Audit &amp; Governance
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-observability" type="button">
-      <i class="bi bi-activity me-1"></i> Observability
-    </button>
-  </li>
-  <li class="nav-item">
-    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-rbac" type="button">
-      <i class="bi bi-shield-lock me-1"></i> RBAC
-    </button>
-  </li>
-</ul>
-
-<div class="tab-content">
-
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- INVOICE PIPELINE TAB (NEW)                                     -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade show active" id="tab-pipeline" role="tabpanel">
-
-    <div class="alert alert-primary border-0 mb-4">
-      <i class="bi bi-info-circle me-1"></i>
-      The extraction pipeline uses a <strong>two-agent architecture</strong>:
-      the <strong>Invoice Extraction Agent</strong> always runs after OCR to extract structured data,
-      and the <strong>Invoice Understanding Agent</strong> conditionally validates
-      when extraction confidence falls below <strong>{{ confidence_threshold }}%</strong>.
-    </div>
-
-    <!-- Step-by-step pipeline -->
-    <h5 class="mb-3"><i class="bi bi-arrow-down-circle me-1"></i> Extraction Pipeline Steps</h5>
-    {% for step in extraction_pipeline %}
-    <div class="card ref-step-card mb-2 {% if step.step == 3 or step.step == 7 %}border-start border-4 border-primary{% endif %}">
-      <div class="card-body py-3">
-        <div class="row align-items-center">
-          <div class="col-auto">
-            <div class="rounded-circle d-flex align-items-center justify-content-center {% if step.step == 3 or step.step == 7 %}bg-primary text-white{% else %}bg-light{% endif %}" style="width:40px;height:40px">
-              <i class="bi {{ step.icon }}"></i>
+        <div class="card-body py-3">
+          <div class="d-flex flex-wrap align-items-center gap-1">
+            <div class="flow-step bg-light border">
+              <i class="bi bi-upload d-block fs-5 text-secondary mb-1"></i>Upload
+            </div>
+            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
+            <div class="flow-step border" style="background:#e8f0fe">
+              <i class="bi bi-robot d-block fs-5 text-primary mb-1"></i>OCR + Extraction
+            </div>
+            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
+            <div class="flow-step bg-light border">
+              <i class="bi bi-check2-square d-block fs-5 text-success mb-1"></i>Approval Gate
+            </div>
+            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
+            <div class="flow-step border" style="background:#fff3cd">
+              <i class="bi bi-arrow-left-right d-block fs-5 text-warning mb-1"></i>Reconciliation
+            </div>
+            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
+            <div class="flow-step border" style="background:#d1ecf1">
+              <i class="bi bi-cpu d-block fs-5 text-info mb-1"></i>Agents (ReAct)
+            </div>
+            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
+            <div class="flow-step bg-light border">
+              <i class="bi bi-people d-block fs-5 text-danger mb-1"></i>Review
+            </div>
+            <div class="flow-arrow"><i class="bi bi-arrow-right"></i></div>
+            <div class="flow-step border" style="background:#d1e7dd">
+              <i class="bi bi-send d-block fs-5 text-success mb-1"></i>Posting to ERP
             </div>
           </div>
-          <div class="col">
-            <div class="d-flex align-items-center mb-1">
-              <strong>{{ step.step }}. {{ step.name }}</strong>
-              {% if step.step == 3 %}<span class="badge bg-primary ms-2">AI Agent</span>{% endif %}
-              {% if step.step == 7 %}<span class="badge bg-warning text-dark ms-2">Conditional</span>{% endif %}
+          <p class="text-muted small mt-3 mb-0">
+            Agents use a <strong>ReAct loop</strong> (Reason &rarr; Act &rarr; Observe) with up to
+            <strong>{{ max_tool_rounds }}</strong> tool rounds per run. The posting pipeline runs
+            automatically after extraction approval and produces a ready-to-submit ERP payload.
+          </p>
+        </div>
+      </div>
+
+      <!-- Key stats row -->
+      <div class="row g-2 mb-2">
+        <div class="col-md-2 col-4">
+          <div class="card border-0 shadow-sm text-center py-2">
+            <div class="fs-3 fw-bold text-primary">{{ agents_info|length }}</div>
+            <div class="small text-muted">AI Agents</div>
+          </div>
+        </div>
+        <div class="col-md-2 col-4">
+          <div class="card border-0 shadow-sm text-center py-2">
+            <div class="fs-3 fw-bold text-info">{{ tools_info|length }}</div>
+            <div class="small text-muted">Tools</div>
+          </div>
+        </div>
+        <div class="col-md-2 col-4">
+          <div class="card border-0 shadow-sm text-center py-2">
+            <div class="fs-3 fw-bold text-warning">9</div>
+            <div class="small text-muted">Post Stages</div>
+          </div>
+        </div>
+        <div class="col-md-2 col-4">
+          <div class="card border-0 shadow-sm text-center py-2">
+            <div class="fs-3 fw-bold text-success">6</div>
+            <div class="small text-muted">ERP Connectors</div>
+          </div>
+        </div>
+        <div class="col-md-2 col-4">
+          <div class="card border-0 shadow-sm text-center py-2">
+            <div class="fs-3 fw-bold text-danger">7</div>
+            <div class="small text-muted">ERP Resolvers</div>
+          </div>
+        </div>
+        <div class="col-md-2 col-4">
+          <div class="card border-0 shadow-sm text-center py-2">
+            <div class="fs-3 fw-bold text-secondary">{{ prompts|length }}</div>
+            <div class="small text-muted">LLM Prompts</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── INVOICE PIPELINE ── -->
+    <div id="invoice-pipeline" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-file-earmark-text me-2 text-primary"></i>Invoice Pipeline</h2>
+
+      <div class="alert alert-primary border-0 py-2 mb-4 small">
+        <i class="bi bi-info-circle me-1"></i>
+        Two-agent architecture: <strong>Invoice Extraction Agent</strong> always runs after OCR.
+        <strong>Invoice Understanding Agent</strong> validates conditionally when confidence &lt; <strong>{{ confidence_threshold }}%</strong>.
+      </div>
+
+      <h3 class="docs-h3" id="extraction-steps">Extraction Pipeline Steps</h3>
+      <div class="card mb-4">
+        <div class="card-body py-2 px-3">
+          {% for step in extraction_pipeline %}
+          <div class="stage-row">
+            <div class="stage-num {% if step.step == 3 or step.step == 7 %}stage-num-primary{% else %}stage-num-secondary{% endif %}">{{ step.step }}</div>
+            <div class="flex-grow-1">
+              <div class="fw-semibold">
+                {{ step.name }}
+                {% if step.step == 3 %}<span class="badge bg-primary ms-1">AI Agent</span>{% endif %}
+                {% if step.step == 7 %}<span class="badge bg-warning text-dark ms-1">Conditional</span>{% endif %}
+              </div>
+              <div class="text-muted small mb-1">{{ step.description }}</div>
+              <div class="text-secondary" style="font-size:.75rem"><i class="bi bi-person-gear me-1"></i>{{ step.performer }}</div>
             </div>
-            <div class="text-muted small mb-1">{{ step.description }}</div>
-            <div class="small"><span class="text-secondary"><i class="bi bi-person-gear me-1"></i>{{ step.performer }}</span></div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="two-agent-arch">Two-Agent Architecture</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-md-6">
+          <div class="card h-100 border-primary">
+            <div class="card-header bg-primary text-white fw-semibold"><i class="bi bi-robot me-1"></i> Invoice Extraction Agent</div>
+            <div class="card-body p-0">
+              <table class="table table-sm table-borderless mb-0 px-2">
+                <tr><td class="fw-semibold ps-3" style="width:38%">When</td><td>Always -- every invoice after OCR</td></tr>
+                <tr><td class="fw-semibold ps-3">Purpose</td><td>Extract structured fields from OCR text</td></tr>
+                <tr><td class="fw-semibold ps-3">Model</td><td>GPT-4o (temp: 0.0)</td></tr>
+                <tr><td class="fw-semibold ps-3">Mode</td><td><code>response_format=json_object</code></td></tr>
+                <tr><td class="fw-semibold ps-3">Tools</td><td><em class="text-muted">None -- single-shot</em></td></tr>
+                <tr><td class="fw-semibold ps-3">Tracing</td><td>Full AgentRun / AgentStep</td></tr>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card h-100 border-warning">
+            <div class="card-header bg-warning text-dark fw-semibold"><i class="bi bi-lightbulb me-1"></i> Invoice Understanding Agent</div>
+            <div class="card-body p-0">
+              <table class="table table-sm table-borderless mb-0 px-2">
+                <tr><td class="fw-semibold ps-3" style="width:38%">When</td><td>Confidence &lt; {{ confidence_threshold }}%</td></tr>
+                <tr><td class="fw-semibold ps-3">Purpose</td><td>Validate + cross-check extracted data</td></tr>
+                <tr><td class="fw-semibold ps-3">Model</td><td>GPT-4o (temp: 0.1)</td></tr>
+                <tr><td class="fw-semibold ps-3">Mode</td><td>Free-form reasoning with tool calls</td></tr>
+                <tr><td class="fw-semibold ps-3">Tools</td><td><code>invoice_details</code>, <code>vendor_search</code></td></tr>
+                <tr><td class="fw-semibold ps-3">Tracing</td><td>AgentRun / AgentStep / ToolCall</td></tr>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="invoice-status-flow">Invoice Status Flow</h3>
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+            <span class="badge bg-secondary py-2 px-3">UPLOADED</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-info text-dark py-2 px-3">EXTRACTION_IN_PROGRESS</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-primary py-2 px-3">EXTRACTED</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-warning text-dark py-2 px-3">VALIDATED</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-dark py-2 px-3">PENDING_APPROVAL</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-dark py-2 px-3">READY_FOR_RECON</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-success py-2 px-3">RECONCILED</span>
+          </div>
+          <div class="small text-muted">
+            Failure paths:
+            EXTRACTION_IN_PROGRESS &rarr; <span class="badge bg-danger">INVALID</span>
+            &nbsp;|&nbsp; READY_FOR_RECON &rarr; <span class="badge bg-danger">FAILED</span>
           </div>
         </div>
       </div>
     </div>
-    {% if not forloop.last %}
-    <div class="pipeline-connector"></div>
-    {% endif %}
-    {% endfor %}
 
-    <!-- Two-agent comparison -->
-    <h5 class="mt-4 mb-3"><i class="bi bi-robot me-1"></i> Two-Agent Architecture Comparison</h5>
-    <div class="row g-3 mb-4">
-      <div class="col-md-6">
-        <div class="card h-100 border-primary">
-          <div class="card-header bg-primary text-white">
-            <i class="bi bi-robot me-1"></i> Invoice Extraction Agent
-          </div>
-          <div class="card-body">
-            <table class="table table-sm table-borderless mb-0">
-              <tbody>
-                <tr><td class="fw-semibold" style="width:35%">When</td><td>Always — runs for every invoice after OCR</td></tr>
-                <tr><td class="fw-semibold">Purpose</td><td>Extract structured fields from raw OCR text</td></tr>
-                <tr><td class="fw-semibold">Model</td><td>GPT-4o (temperature: 0.0)</td></tr>
-                <tr><td class="fw-semibold">Response</td><td><code>response_format=json_object</code> — deterministic JSON output</td></tr>
-                <tr><td class="fw-semibold">Tools</td><td>None — single-shot extraction, no tool-calling</td></tr>
-                <tr><td class="fw-semibold">Runs in</td><td>Extraction task (Celery) — before case creation</td></tr>
-                <tr><td class="fw-semibold">Tracing</td><td>Full AgentRun / AgentStep — auditable</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-6">
-        <div class="card h-100 border-warning">
-          <div class="card-header bg-warning text-dark">
-            <i class="bi bi-lightbulb me-1"></i> Invoice Understanding Agent
-          </div>
-          <div class="card-body">
-            <table class="table table-sm table-borderless mb-0">
-              <tbody>
-                <tr><td class="fw-semibold" style="width:35%">When</td><td>Conditional — only when confidence &lt; {{ confidence_threshold }}%</td></tr>
-                <tr><td class="fw-semibold">Purpose</td><td>Validate and cross-check extracted data</td></tr>
-                <tr><td class="fw-semibold">Model</td><td>GPT-4o (temperature: 0.1)</td></tr>
-                <tr><td class="fw-semibold">Response</td><td>Free-form reasoning with tool calls</td></tr>
-                <tr><td class="fw-semibold">Tools</td><td><code>invoice_details</code>, <code>vendor_search</code></td></tr>
-                <tr><td class="fw-semibold">Runs in</td><td>Case Orchestrator (EXTRACTION stage) — after case creation</td></tr>
-                <tr><td class="fw-semibold">Tracing</td><td>Full AgentRun / AgentStep / ToolCall — auditable</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- ── CASE LIFECYCLE ── -->
+    <div id="case-lifecycle" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-diagram-3 me-2 text-info"></i>Case Lifecycle</h2>
 
-    <!-- Invoice status flow -->
-    <h5 class="mb-3"><i class="bi bi-arrow-right-circle me-1"></i> Invoice Status Flow</h5>
-    <div class="card mb-3">
-      <div class="card-body">
-        <div class="d-flex flex-wrap align-items-center gap-2">
-          <span class="badge bg-secondary py-2 px-3">UPLOADED</span>
-          <i class="bi bi-arrow-right text-muted"></i>
-          <span class="badge bg-info text-dark py-2 px-3">EXTRACTION_IN_PROGRESS</span>
-          <i class="bi bi-arrow-right text-muted"></i>
-          <span class="badge bg-primary py-2 px-3">EXTRACTED</span>
-          <i class="bi bi-arrow-right text-muted"></i>
-          <span class="badge bg-warning text-dark py-2 px-3">VALIDATED</span>
-          <i class="bi bi-arrow-right text-muted"></i>
-          <span class="badge bg-dark py-2 px-3">READY_FOR_RECON</span>
-          <i class="bi bi-arrow-right text-muted"></i>
-          <span class="badge bg-success py-2 px-3">RECONCILED</span>
-        </div>
-        <div class="mt-2 small text-muted">
-          <i class="bi bi-exclamation-triangle me-1"></i>
-          Failure paths: EXTRACTION_IN_PROGRESS &rarr; <span class="badge bg-danger">INVALID</span> |
-          READY_FOR_RECON &rarr; <span class="badge bg-danger">FAILED</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- CASE LIFECYCLE TAB                                             -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-lifecycle" role="tabpanel">
-
-    <!-- Processing paths -->
-    <h5 class="mb-3"><i class="bi bi-signpost-split me-1"></i> Processing Paths</h5>
-    <div class="row g-3 mb-4">
-      {% for path in processing_paths %}
-      <div class="col-lg-4">
-        <div class="card h-100">
-          <div class="card-header bg-white">
-            <strong>
+      <h3 class="docs-h3" id="processing-paths">Processing Paths</h3>
+      <div class="row g-3 mb-4">
+        {% for path in processing_paths %}
+        <div class="col-lg-4">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold">
               {% if path.value == "TWO_WAY" %}<i class="bi bi-arrow-left-right text-primary me-1"></i>
               {% elif path.value == "THREE_WAY" %}<i class="bi bi-diagram-3 text-warning me-1"></i>
               {% elif path.value == "NON_PO" %}<i class="bi bi-shield-check text-info me-1"></i>
               {% endif %}
               {{ path.label }}
-            </strong>
-            <span class="badge bg-secondary ms-2">{{ path.stages|length }} stages</span>
-          </div>
-          <div class="card-body p-0">
-            <ol class="list-group list-group-flush list-group-numbered">
-              {% for stage in path.stages %}
-              <li class="list-group-item d-flex align-items-start py-2">
-                <div class="ms-2">
-                  <div>
+              <span class="badge bg-secondary ms-1">{{ path.stages|length }} stages</span>
+            </div>
+            <div class="card-body p-0">
+              <ol class="list-group list-group-flush list-group-numbered">
+                {% for stage in path.stages %}
+                <li class="list-group-item py-2">
+                  <div class="ms-1">
                     <i class="bi {{ stage.icon }} text-{{ stage.color }} me-1"></i>
                     <strong class="small">{{ stage.label }}</strong>
+                    <div class="text-muted" style="font-size:.73rem">{{ stage.performer }}</div>
                   </div>
-                  <div class="text-muted" style="font-size:.78rem">{{ stage.performer }}</div>
-                </div>
-              </li>
-              {% endfor %}
-            </ol>
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-
-    <!-- Stage details -->
-    <h5 class="mb-3"><i class="bi bi-list-check me-1"></i> Stage Details</h5>
-    <div class="table-responsive mb-4">
-      <table class="table table-bordered table-hover align-middle mb-0">
-        <thead class="table-light">
-          <tr>
-            <th style="width:22%">Stage</th>
-            <th style="width:20%">Performer</th>
-            <th>Description</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for path in processing_paths %}
-            {% for stage in path.stages %}
-              {% if forloop.parentloop.first %}
-              <tr>
-                <td>
-                  <i class="bi {{ stage.icon }} text-{{ stage.color }} me-1"></i>
-                  <strong>{{ stage.label }}</strong>
-                  <br><code class="small text-muted">{{ stage.value }}</code>
-                </td>
-                <td class="small">{{ stage.performer }}</td>
-                <td class="small">{{ stage.description }}</td>
-              </tr>
-              {% endif %}
-            {% endfor %}
-          {% endfor %}
-          {# Stages only in non-first paths #}
-          {% for path in processing_paths %}
-            {% if not forloop.first %}
-              {% for stage in path.stages %}
-                {% if stage.value == "NON_PO_VALIDATION" or stage.value == "THREE_WAY_MATCHING" or stage.value == "GRN_ANALYSIS" %}
-                <tr>
-                  <td>
-                    <i class="bi {{ stage.icon }} text-{{ stage.color }} me-1"></i>
-                    <strong>{{ stage.label }}</strong>
-                    <br><code class="small text-muted">{{ stage.value }}</code>
-                  </td>
-                  <td class="small">{{ stage.performer }}</td>
-                  <td class="small">{{ stage.description }}</td>
-                </tr>
-                {% endif %}
-              {% endfor %}
-            {% endif %}
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Non-PO Validation Checks -->
-    <h5 class="mb-3"><i class="bi bi-shield-check me-1"></i> Non-PO Validation — 9 Deterministic Checks</h5>
-    <div class="row g-2 mb-4">
-      {% for check in non_po_checks %}
-      <div class="col-md-4">
-        <div class="card h-100 border-0 shadow-sm">
-          <div class="card-body py-2 px-3">
-            <div class="fw-semibold small">
-              <i class="bi {{ check.icon }} text-info me-1"></i>
-              {{ forloop.counter }}. {{ check.name }}
+                </li>
+                {% endfor %}
+              </ol>
             </div>
-            <div class="text-muted" style="font-size:.78rem">{{ check.description }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="non-po-checks">Non-PO Validation -- 9 Deterministic Checks</h3>
+      <div class="row g-2 mb-4">
+        {% for check in non_po_checks %}
+        <div class="col-md-4">
+          <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body py-2 px-3">
+              <div class="fw-semibold small"><i class="bi {{ check.icon }} text-info me-1"></i>{{ forloop.counter }}. {{ check.name }}</div>
+              <div class="text-muted" style="font-size:.76rem">{{ check.description }}</div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="state-machine">State Machine Transitions</h3>
+      <p class="text-muted small mb-2">
+        {{ transitions|length }} valid transitions. Terminal states:
+        {% for ts in terminal_states %}<span class="badge bg-dark ms-1">{{ ts }}</span>{% endfor %}.
+        Terminal transitions fire AuditEvents: CASE_CLOSED, CASE_REJECTED, CASE_ESCALATED, CASE_FAILED.
+      </p>
+      <div class="table-responsive mb-3" style="max-height:360px;overflow-y:auto">
+        <table class="table table-sm table-bordered table-hover mb-0">
+          <thead class="table-light position-sticky top-0">
+            <tr><th>From</th><th></th><th>To</th><th>Triggered By</th></tr>
+          </thead>
+          <tbody>
+            {% for t in transitions %}
+            <tr>
+              <td class="small"><code>{{ t.from_value }}</code></td>
+              <td class="text-center px-1"><i class="bi bi-arrow-right text-muted"></i></td>
+              <td class="small">
+                {% if t.to_value == "CLOSED" or t.to_value == "REJECTED" %}<span class="badge bg-dark">{{ t.to_value }}</span>
+                {% elif t.to_value == "FAILED" %}<span class="badge bg-danger">{{ t.to_value }}</span>
+                {% elif t.to_value == "ESCALATED" %}<span class="badge bg-warning text-dark">{{ t.to_value }}</span>
+                {% else %}<code>{{ t.to_value }}</code>{% endif %}
+              </td>
+              <td class="small text-muted">{{ t.triggers }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-header bg-white fw-semibold small">Case Status Flow</div>
+        <div class="card-body py-2">
+          <pre class="mb-0 small" style="line-height:1.9"><strong>NEW</strong> -&gt; INTAKE -&gt; EXTRACTING -&gt; EXTRACTED -&gt; PATH_RESOLVED
+  |
+  +--- <span class="text-primary">TWO_WAY:</span>   PO_LOOKUP -&gt; MATCHING -&gt; MATCHED / EXCEPTIONS
+  +--- <span class="text-warning">THREE_WAY:</span> PO_LOOKUP -&gt; MATCHING -&gt; GRN_ANALYSIS -&gt; MATCHED / EXCEPTIONS
+  +--- <span class="text-info">NON_PO:</span>    VALIDATING -&gt; VALIDATED / EXCEPTIONS
+  |
+  +--- EXCEPTIONS -&gt; AGENT_ANALYSIS -&gt; REVIEW_PENDING -&gt; IN_REVIEW
+  |
+  Terminal: <strong>CLOSED</strong>  <strong>REJECTED</strong>  <strong>ESCALATED</strong>  <strong>FAILED</strong></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── AGENT SYSTEM ── -->
+    <div id="agents" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-robot me-2 text-success"></i>Agent System</h2>
+
+      <div class="alert alert-light border small mb-4">
+        <i class="bi bi-info-circle me-1"></i>
+        Agents use the <strong>ReAct loop</strong> (Reason &rarr; Act &rarr; Observe) with up to <strong>{{ max_tool_rounds }}</strong> iterations.
+        The <strong>ReasoningPlanner</strong> always makes an LLM call to determine agent ordering.
+        <strong>PolicyEngine</strong> is the deterministic fallback on LLM error and handles
+        auto-close logic (qty: 5%, price: 3%, amount: 3% bands).
+        <strong>AgentOrchestrationRun</strong> acts as a duplicate-run guard: a RUNNING record blocks re-entry for the same result.
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-header bg-white fw-semibold small"><i class="bi bi-arrow-right-circle me-1"></i> Agent Run Status Flow</div>
+        <div class="card-body py-2">
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="badge bg-secondary py-2 px-3">PENDING</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-primary py-2 px-3">RUNNING</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-success py-2 px-3">COMPLETED</span>
+            <span class="text-muted mx-1">|</span>
+            <span class="badge bg-danger py-2 px-3">FAILED</span>
+            <span class="text-muted mx-1">|</span>
+            <span class="badge bg-warning text-dark py-2 px-3">SKIPPED</span>
           </div>
         </div>
       </div>
-      {% endfor %}
-    </div>
 
-    <!-- State Machine -->
-    <h5 class="mb-3"><i class="bi bi-arrows-move me-1"></i> State Machine Transitions</h5>
-    <div class="card mb-3">
-      <div class="card-body">
-        <p class="text-muted mb-2">
-          The case state machine enforces <strong>{{ transitions|length }} transitions</strong>
-          between statuses. Terminal states:
-          {% for ts in terminal_states %}<span class="badge bg-dark ms-1">{{ ts }}</span>{% endfor %}.
-          Each transition is <strong>audited</strong> — terminal state transitions automatically
-          create AuditEvents (CASE_CLOSED, CASE_REJECTED, CASE_ESCALATED, CASE_FAILED).
-        </p>
-        <div class="table-responsive" style="max-height:420px;overflow-y:auto">
-          <table class="table table-sm table-bordered table-hover mb-0">
-            <thead class="table-light position-sticky top-0">
-              <tr><th>From</th><th></th><th>To</th><th>Triggered By</th></tr>
-            </thead>
+      <h3 class="docs-h3" id="agent-types">Agent Types ({{ agents_info|length }})</h3>
+      <div class="accordion" id="agentAccordion">
+        {% for agent in agents_info %}
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
+                    type="button" data-bs-toggle="collapse" data-bs-target="#agent-{{ forloop.counter }}">
+              <span class="me-2">
+                {% if agent.type == "INVOICE_EXTRACTION" %}<i class="bi bi-file-earmark-code text-primary"></i>
+                {% elif agent.type == "INVOICE_UNDERSTANDING" %}<i class="bi bi-file-earmark-text text-info"></i>
+                {% elif agent.type == "PO_RETRIEVAL" %}<i class="bi bi-search text-info"></i>
+                {% elif agent.type == "GRN_RETRIEVAL" %}<i class="bi bi-box-seam text-success"></i>
+                {% elif agent.type == "EXCEPTION_ANALYSIS" %}<i class="bi bi-exclamation-triangle text-warning"></i>
+                {% elif agent.type == "RECONCILIATION_ASSIST" %}<i class="bi bi-arrow-left-right text-primary"></i>
+                {% elif agent.type == "REVIEW_ROUTING" %}<i class="bi bi-signpost-split text-danger"></i>
+                {% elif agent.type == "CASE_SUMMARY" %}<i class="bi bi-journal-text text-secondary"></i>
+                {% else %}<i class="bi bi-robot"></i>{% endif %}
+              </span>
+              <strong>{{ agent.label }}</strong>
+              <span class="text-muted ms-3 small">{{ agent.type }}</span>
+              {% if agent.required_permission %}
+              <span class="badge bg-warning text-dark ms-2"><i class="bi bi-shield-lock me-1"></i>{{ agent.required_permission }}</span>
+              {% endif %}
+            </button>
+          </h2>
+          <div id="agent-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
+               data-bs-parent="#agentAccordion">
+            <div class="accordion-body">
+              <p class="mb-3"><em>{{ agent.description }}</em></p>
+              <h6>Tools</h6>
+              <div class="mb-3">
+                {% for tool_name in agent.allowed_tools %}
+                <span class="badge bg-info text-dark me-1 mb-1"><i class="bi bi-wrench me-1"></i>{{ tool_name }}</span>
+                {% empty %}
+                <span class="text-muted small">No tools -- prompt-only / single-shot agent</span>
+                {% endfor %}
+              </div>
+              {% if agent.required_permission %}
+              <h6>Permission</h6>
+              <div class="mb-3">
+                <code>{{ agent.required_permission }}</code>
+                <span class="text-muted small ms-2">Orchestration also requires <code>agents.orchestrate</code>.</span>
+              </div>
+              {% endif %}
+              <h6>System Prompt</h6>
+              <div class="bg-light border rounded p-3" style="max-height:220px;overflow-y:auto">
+                <pre class="mb-0" style="white-space:pre-wrap;font-size:.82rem">{{ agent.system_prompt }}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="tools">Registered Tools ({{ tools_info|length }})</h3>
+      <div class="row g-3 mb-4">
+        {% for tool in tools_info %}
+        <div class="col-lg-6">
+          <div class="card h-100">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+              <strong><i class="bi bi-wrench me-1 text-info"></i>{{ tool.name }}</strong>
+              {% if tool.required_permission %}<span class="badge bg-warning text-dark"><i class="bi bi-shield-lock me-1"></i>{{ tool.required_permission }}</span>{% endif %}
+            </div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">{{ tool.description }}</p>
+              <table class="table table-sm table-bordered mb-0">
+                <thead class="table-light"><tr><th>Param</th><th>Type</th><th>Req</th><th>Description</th></tr></thead>
+                <tbody>
+                  {% for param_name, param_info in tool.parameters.items %}
+                  <tr>
+                    <td><code>{{ param_name }}</code></td>
+                    <td><span class="badge bg-secondary">{{ param_info.type }}</span></td>
+                    <td>{% if param_name in tool.required %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-dash text-muted"></i>{% endif %}</td>
+                    <td class="small">{{ param_info.description|default:"--" }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="recommendations">Recommendation Types</h3>
+      <div class="card mb-4">
+        <div class="card-body p-0">
+          <table class="table table-hover mb-0">
+            <thead class="table-light"><tr><th>Code</th><th>Label</th><th>Description</th></tr></thead>
             <tbody>
-              {% for t in transitions %}
+              {% for rec in recommendation_types %}
               <tr>
-                <td class="small"><code>{{ t.from_value }}</code></td>
-                <td class="text-center"><i class="bi bi-arrow-right text-muted"></i></td>
-                <td class="small">
-                  {% if t.to_value == "CLOSED" or t.to_value == "REJECTED" %}
-                    <span class="badge bg-dark">{{ t.to_value }}</span>
-                  {% elif t.to_value == "FAILED" %}
-                    <span class="badge bg-danger">{{ t.to_value }}</span>
-                  {% elif t.to_value == "ESCALATED" %}
-                    <span class="badge bg-warning text-dark">{{ t.to_value }}</span>
-                  {% else %}
-                    <code>{{ t.to_value }}</code>
-                  {% endif %}
+                <td><code>{{ rec.value }}</code></td>
+                <td><strong>{{ rec.label }}</strong></td>
+                <td class="small text-muted">
+                  {% if rec.value == "AUTO_CLOSE" %}Differences within tolerance -- no human action needed.
+                  {% elif rec.value == "SEND_TO_AP_REVIEW" %}Standard discrepancy for AP processor review.
+                  {% elif rec.value == "SEND_TO_PROCUREMENT" %}Price / quantity issue for procurement team.
+                  {% elif rec.value == "SEND_TO_VENDOR_CLARIFICATION" %}Vendor mismatch -- contact vendor for clarification.
+                  {% elif rec.value == "REPROCESS_EXTRACTION" %}Low extraction quality -- re-extract the invoice.
+                  {% elif rec.value == "ESCALATE_TO_MANAGER" %}Complex / high-value case for management review.
+                  {% else %}--{% endif %}
                 </td>
-                <td class="small text-muted">{{ t.triggers }}</td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
       </div>
-    </div>
 
-    <!-- Case status flow -->
-    <h5 class="mb-3"><i class="bi bi-arrow-right-circle me-1"></i> Case Status Flow</h5>
-    <div class="card mb-3">
-      <div class="card-body">
-        <pre class="mb-0 small" style="line-height:1.8">
-<strong>NEW</strong> → INTAKE → EXTRACTING → EXTRACTED → PATH_RESOLVED
-  │
-  ├─ <span class="text-primary">TWO_WAY path:</span>  PO_LOOKUP → MATCHING → MATCHED / EXCEPTIONS
-  ├─ <span class="text-warning">THREE_WAY path:</span> PO_LOOKUP → MATCHING → GRN_ANALYSIS → MATCHED / EXCEPTIONS
-  └─ <span class="text-info">NON_PO path:</span>   VALIDATING → VALIDATED / EXCEPTIONS
-  │
-  ├─ EXCEPTIONS → AGENT_ANALYSIS → REVIEW_PENDING → IN_REVIEW
-  └─ Terminal: <span class="badge bg-dark">CLOSED</span> <span class="badge bg-dark">REJECTED</span> <span class="badge bg-warning text-dark">ESCALATED</span> <span class="badge bg-danger">FAILED</span></pre>
+      <h3 class="docs-h3" id="recommendation-idempotency">Recommendation Idempotency</h3>
+      <div class="card mb-4">
+        <div class="card-body small">
+          <p class="text-muted mb-2">Two layers prevent duplicates on retries or cross-run re-executions:</p>
+          <ol class="mb-0">
+            <li class="mb-2">
+              <strong>Service-layer check</strong> (<code>DecisionLogService.log_recommendation()</code>) --
+              queries for an existing PENDING record with the same
+              <code>(reconciliation_result, recommendation_type)</code> before inserting.
+            </li>
+            <li>
+              <strong>DB unique constraint</strong> (<code>uq_rec_result_type_run</code>) --
+              enforces uniqueness on <code>(reconciliation_result, recommendation_type, agent_run)</code>
+              as a last-resort safeguard against race conditions.
+            </li>
+          </ol>
+        </div>
       </div>
-    </div>
-  </div>
 
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- AGENTS TAB                                                     -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-agents" role="tabpanel">
-
-    <!-- Stage-to-agent mapping overview -->
-    <div class="alert alert-light border mb-4">
-      <strong><i class="bi bi-info-circle me-1"></i> When do agents run?</strong>
-      <ul class="mb-0 mt-1 small">
-        <li><strong>Extraction (always)</strong> — <em>Invoice Extraction</em> agent extracts structured data from OCR output using GPT-4o with JSON mode.</li>
-        <li><strong>Extraction (low confidence)</strong> — <em>Invoice Understanding</em> agent validates and cross-checks when confidence &lt; {{ confidence_threshold }}%.</li>
-        <li><strong>PO Retrieval</strong> — <em>PO Retrieval</em> agent is the fallback when deterministic lookup fails.</li>
-        <li><strong>GRN Analysis</strong> — <em>GRN Retrieval</em> agent investigates receipt discrepancies (3-Way only, conditional).</li>
-        <li><strong>Exception Analysis</strong> — <em>Exception Analysis</em> + <em>Reconciliation Assist</em> agents reason over exceptions.</li>
-        <li><strong>Review Routing</strong> — <em>Review Routing</em> agent assigns the case to the right reviewer queue.</li>
-        <li><strong>Case Summary</strong> — <em>Case Summary</em> agent produces the final narrative for reviewers.</li>
-      </ul>
-    </div>
-
-    <!-- Agent run status flow -->
-    <div class="card mb-4">
-      <div class="card-header bg-white"><strong><i class="bi bi-arrow-right-circle me-1"></i> Agent Run Status Flow</strong></div>
-      <div class="card-body py-2">
-        <div class="d-flex flex-wrap align-items-center gap-2">
-          <span class="badge bg-secondary py-2 px-3">PENDING</span>
-          <i class="bi bi-arrow-right text-muted"></i>
-          <span class="badge bg-primary py-2 px-3">RUNNING</span>
-          <i class="bi bi-arrow-right text-muted"></i>
-          <span class="badge bg-success py-2 px-3">COMPLETED</span>
-          <span class="text-muted mx-1">|</span>
-          <span class="badge bg-danger py-2 px-3">FAILED</span>
-          <span class="text-muted mx-1">|</span>
-          <span class="badge bg-warning text-dark py-2 px-3">SKIPPED</span>
+      <h3 class="docs-h3" id="tool-grounding">Tool-Grounded Agents &amp; Confidence Guards</h3>
+      <div class="card mb-4">
+        <div class="card-body">
+          <p class="small text-muted mb-3">
+            Agents with <code>requires_tool_grounding=True</code> must call at least one tool.
+            The ReAct loop automatically applies confidence caps when tools fail or are never called.
+          </p>
+          <div class="mb-3">
+            <strong class="small">Tool-grounded types:</strong>
+            {% for a in tool_grounded_agents %}<span class="badge bg-primary me-1">{{ a }}</span>{% endfor %}
+          </div>
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light"><tr><th>Condition</th><th>Confidence Cap</th><th>Extra Effect</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="small">Any tool call returns error (all agent types)</td>
+                <td><span class="badge bg-warning text-dark">0.50</span></td>
+                <td class="small"><code>AUTO_CLOSE</code> downgraded to <code>SEND_TO_AP_REVIEW</code></td>
+              </tr>
+              <tr>
+                <td class="small">Tool-grounded agent, 0 tool calls made</td>
+                <td><span class="badge bg-secondary">0.60</span></td>
+                <td class="small">Confidence cap only; no recommendation downgrade</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
 
-    <div class="accordion" id="agentAccordion">
-      {% for agent in agents_info %}
-      <div class="accordion-item">
-        <h2 class="accordion-header">
-          <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
-                  type="button" data-bs-toggle="collapse"
-                  data-bs-target="#agent-{{ forloop.counter }}">
-            <span class="me-2">
-              {% if agent.type == "INVOICE_EXTRACTION" %}<i class="bi bi-file-earmark-code text-primary"></i>
-              {% elif agent.type == "INVOICE_UNDERSTANDING" %}<i class="bi bi-file-earmark-text text-info"></i>
-              {% elif agent.type == "PO_RETRIEVAL" %}<i class="bi bi-search text-info"></i>
-              {% elif agent.type == "GRN_RETRIEVAL" %}<i class="bi bi-box-seam text-success"></i>
-              {% elif agent.type == "EXCEPTION_ANALYSIS" %}<i class="bi bi-exclamation-triangle text-warning"></i>
-              {% elif agent.type == "RECONCILIATION_ASSIST" %}<i class="bi bi-arrow-left-right text-primary"></i>
-              {% elif agent.type == "REVIEW_ROUTING" %}<i class="bi bi-signpost-split text-danger"></i>
-              {% elif agent.type == "CASE_SUMMARY" %}<i class="bi bi-journal-text text-secondary"></i>
-              {% else %}<i class="bi bi-robot"></i>
-              {% endif %}
-            </span>
-            <strong>{{ agent.label }}</strong>
-            <span class="text-muted ms-3 small">{{ agent.type }}</span>
-            {% if agent.required_permission %}
-            <span class="badge bg-warning text-dark ms-2" title="Required RBAC permission"><i class="bi bi-shield-lock me-1"></i>{{ agent.required_permission }}</span>
-            {% endif %}
-            {% if agent.type == "INVOICE_EXTRACTION" %}<span class="badge bg-primary ms-2">New</span>{% endif %}
-          </button>
-        </h2>
-        <div id="agent-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
-             data-bs-parent="#agentAccordion">
-          <div class="accordion-body">
-            <p class="mb-3"><em>{{ agent.description }}</em></p>
+    <!-- ═══ POSTING PIPELINE (NEW) ═══ -->
+    <div id="posting-pipeline" class="docs-section">
+      <h2 class="docs-section-title">
+        <i class="bi bi-send me-2 text-warning"></i>Invoice Posting Pipeline
+        <span class="docs-section-title badge-new">New</span>
+      </h2>
 
-            <h6><i class="bi bi-tools me-1"></i> Tools Used</h6>
-            <div class="mb-3">
-              {% for tool_name in agent.allowed_tools %}
-              <span class="badge bg-info text-dark me-1 mb-1">
-                <i class="bi bi-wrench me-1"></i>{{ tool_name }}
-              </span>
-              {% empty %}
-              <span class="text-muted small">No tools — prompt-only / single-shot agent</span>
-              {% endfor %}
-            </div>
+      <p class="text-muted mb-4" style="max-width:700px">
+        Two-layer architecture: <code>apps/posting/</code> (business/UI layer orchestrates lifecycle and actions)
+        and <code>apps/posting_core/</code> (platform/core layer runs the 9-stage pipeline).
+        Triggered automatically after extraction approval; produces a ready-to-submit ERP payload.
+      </p>
 
-            {% if agent.required_permission %}
-            <h6><i class="bi bi-shield-lock me-1"></i> RBAC Requirement</h6>
-            <div class="mb-3">
-              <span class="text-muted small">Permission required to run this agent:</span>
-              <code class="ms-1">{{ agent.required_permission }}</code>
-              <div class="text-muted small mt-1">
-                Orchestration also requires <code>{{ orchestrate_permission }}</code>.
-                Checked by <code>AgentGuardrailsService.authorize_agent()</code>.
-              </div>
-            </div>
-            {% endif %}
+      <div class="row g-2 mb-4">
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-primary">9</div>
+            <div class="small text-muted">Pipeline Stages</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-success">11</div>
+            <div class="small text-muted">Posting Statuses</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-warning">6</div>
+            <div class="small text-muted">Review Queues</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-info">17</div>
+            <div class="small text-muted">Audit Event Types</div>
+          </div>
+        </div>
+      </div>
 
-            <h6><i class="bi bi-chat-left-text me-1"></i> System Prompt</h6>
-            <div class="bg-light border rounded p-3 mb-2" style="max-height:300px;overflow-y:auto">
-              <pre class="mb-0" style="white-space:pre-wrap;font-size:.85rem">{{ agent.system_prompt }}</pre>
+      <h3 class="docs-h3" id="posting-stages">Pipeline Stages</h3>
+      <div class="card mb-4">
+        <div class="card-body py-2 px-3">
+          {% for stage in posting_pipeline_stages %}
+          <div class="stage-row">
+            <div class="stage-num stage-num-{{ stage.color }}">{{ stage.number }}</div>
+            <div class="flex-grow-1">
+              <div class="fw-semibold">Stage {{ stage.number }}: {{ stage.label }}</div>
+              <div class="text-muted small mb-1">{{ stage.description }}</div>
+              <code class="small">PostingStage.{{ stage.code }}</code>
             </div>
           </div>
+          {% endfor %}
         </div>
       </div>
-      {% endfor %}
-    </div>
 
-    <!-- Tool-Grounded Agents & Runtime Confidence Guards -->
-    <hr class="my-4">
-    <h5 class="mb-3"><i class="bi bi-shield-exclamation me-1"></i> Tool-Grounded Agents &amp; Confidence Guards</h5>
-    <div class="alert alert-warning border-0 mb-3">
-      <i class="bi bi-exclamation-triangle me-1"></i>
-      <strong>Runtime enforcement:</strong> For tool-grounded agents, the ReAct loop applies
-      automatic confidence caps when tools fail or are never called. This prevents over-confident
-      <code>AUTO_CLOSE</code> decisions when evidence is unavailable.
-    </div>
-    <div class="row g-3 mb-4">
-      <div class="col-md-5">
-        <div class="card h-100">
-          <div class="card-header bg-white">
-            <strong>Tool-Grounded Agent Types</strong>
-            <span class="badge bg-primary ms-2">{{ tool_grounded_agents|length }}</span>
+      <h3 class="docs-h3" id="posting-confidence">Confidence Scoring (5 Dimensions)</h3>
+      <div class="card mb-4">
+        <div class="card-body">
+          {% for dim in posting_confidence_dimensions %}
+          <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="fw-semibold small"><i class="bi {{ dim.icon }} me-1 text-primary"></i>{{ dim.name }}</span>
+              <span class="badge bg-primary">{{ dim.weight }}%</span>
+            </div>
+            <div class="conf-bar-wrap"><div class="conf-bar" style="width:{{ dim.weight }}%"></div></div>
+            <div class="text-muted" style="font-size:.78rem">{{ dim.description }}</div>
           </div>
-          <div class="card-body">
-            <p class="text-muted small mb-2">
-              These agents must call at least one tool to be considered fully grounded.
-              With zero tool calls the ReAct loop applies a confidence cap automatically.
-            </p>
-            {% for agent_type in tool_grounded_agents %}
-            <span class="badge bg-primary me-1 mb-1">{{ agent_type }}</span>
-            {% endfor %}
+          {% endfor %}
+          <div class="alert alert-info border-0 mt-2 mb-0 py-2 small">
+            <i class="bi bi-info-circle me-1"></i>
+            <code>is_touchless=True</code> when no review needed and confidence meets threshold.
+            Auto-submit is triggered for touchless runs.
           </div>
         </div>
       </div>
-      <div class="col-md-7">
-        <div class="card h-100">
-          <div class="card-header bg-white"><strong>Confidence Cap Rules</strong></div>
-          <div class="card-body p-0">
-            <table class="table table-sm table-bordered mb-0">
-              <thead class="table-light">
-                <tr><th>Condition</th><th>Cap</th><th>Extra Effect</th></tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td class="small">Any tool call returns an error (applies to all agent types)</td>
-                  <td><span class="badge bg-warning text-dark">0.50</span></td>
-                  <td class="small"><code>AUTO_CLOSE</code> recommendation downgraded to <code>SEND_TO_AP_REVIEW</code></td>
-                </tr>
-                <tr>
-                  <td class="small">Tool-grounded agent completes with 0 tool calls</td>
-                  <td><span class="badge bg-secondary">0.60</span></td>
-                  <td class="small">No recommendation downgrade; confidence cap only</td>
-                </tr>
-              </tbody>
-            </table>
+
+      <h3 class="docs-h3" id="posting-status-flow">Invoice Posting Status Flow</h3>
+      <div class="card mb-4">
+        <div class="card-body">
+          <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+            <span class="badge bg-secondary py-2 px-3">NOT_READY</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-info text-dark py-2 px-3">READY_FOR_POSTING</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-primary py-2 px-3">MAPPING_IN_PROGRESS</span>
+          </div>
+          <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-warning text-dark py-2 px-3">MAPPING_REVIEW_REQUIRED</span>
+            <span class="text-muted small">or</span>
+            <span class="badge bg-success py-2 px-3">READY_TO_SUBMIT</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-info text-dark py-2 px-3">SUBMISSION_IN_PROGRESS</span>
+          </div>
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-success py-2 px-3">POSTED</span>
+            <span class="text-muted">|</span>
+            <span class="badge bg-danger py-2 px-3">POST_FAILED</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="badge bg-warning text-dark py-2 px-3">RETRY_PENDING</span>
+            <span class="text-muted">|</span>
+            <span class="badge bg-dark py-2 px-3">REJECTED</span>
+            <span class="text-muted">|</span>
+            <span class="badge bg-secondary py-2 px-3">SKIPPED</span>
           </div>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- TOOLS & RECOMMENDATIONS TAB                                    -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-tools" role="tabpanel">
-
-    <h5 class="mb-3"><i class="bi bi-tools me-1"></i> Registered Tools ({{ tools_info|length }})</h5>
-    <div class="row g-3 mb-4">
-      {% for tool in tools_info %}
-      <div class="col-lg-6">
-        <div class="card h-100">
-          <div class="card-header bg-white d-flex justify-content-between align-items-center">
-            <strong><i class="bi bi-wrench me-1"></i> {{ tool.name }}</strong>
-            {% if tool.required_permission %}
-            <span class="badge bg-warning text-dark" title="Required RBAC permission"><i class="bi bi-shield-lock me-1"></i>{{ tool.required_permission }}</span>
-            {% endif %}
+      <h3 class="docs-h3" id="posting-review-queues">Review Queues</h3>
+      <div class="row g-2 mb-4">
+        {% for q in posting_review_queues %}
+        <div class="col-md-4">
+          <div class="card border-0 shadow-sm">
+            <div class="card-body py-2 px-3">
+              <div class="fw-semibold small"><i class="bi bi-inbox me-1 text-warning"></i>{{ q.label }}</div>
+              <code class="small text-muted">{{ q.value }}</code>
+            </div>
           </div>
-          <div class="card-body">
-            <p class="text-muted mb-3">{{ tool.description }}</p>
-            <h6 class="mb-2">Parameters</h6>
-            <table class="table table-sm table-bordered mb-0">
-              <thead class="table-light">
-                <tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr>
-              </thead>
-              <tbody>
-                {% for param_name, param_info in tool.parameters.items %}
-                <tr>
-                  <td><code>{{ param_name }}</code></td>
-                  <td><span class="badge bg-secondary">{{ param_info.type }}</span></td>
-                  <td>
-                    {% if param_name in tool.required %}
-                      <i class="bi bi-check-circle-fill text-success"></i>
-                    {% else %}
-                      <i class="bi bi-dash text-muted"></i>
-                    {% endif %}
-                  </td>
-                  <td class="small">{{ param_info.description|default:"—" }}</td>
-                </tr>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="posting-mapping-engine">PostingMappingEngine</h3>
+      <div class="card mb-4">
+        <div class="card-header bg-white fw-semibold small">Resolution Strategy per Field</div>
+        <div class="card-body small">
+          <p class="text-muted mb-3">
+            For each field (vendor, item, tax code, cost center, PO reference) the engine attempts
+            resolution in this order. ERP connector is used when available (via <code>ConnectorFactory</code>).
+          </p>
+          <ol class="mb-3">
+            <li class="mb-1">Exact code match against ERP reference table</li>
+            <li class="mb-1">Alias lookup (<code>VendorAliasMapping</code>, <code>ItemAliasMapping</code>)</li>
+            <li class="mb-1">Name / description fuzzy match</li>
+            <li class="mb-1">Live ERP API connector (when <code>connector=</code> kwarg is provided)</li>
+          </ol>
+          <div class="alert alert-light border-0 py-2 mb-0">
+            Per-field resolution source (connector, fallback, confidence) is stored in
+            <code>PostingRun.erp_source_metadata_json</code> for full provenance.
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="posting-reference-import">ERP Reference Import (ExcelImportOrchestrator)</h3>
+      <div class="card mb-4">
+        <div class="card-body small">
+          <p class="text-muted mb-3">
+            Imports vendor, item, tax code, cost center, and open PO master data from Excel / CSV files
+            into local reference tables. Each import creates an <code>ERPReferenceImportBatch</code>
+            record (checksum, row counts, status).
+          </p>
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light"><tr><th>Reference Type</th><th>Target Model</th><th>Batch Type</th></tr></thead>
+            <tbody>
+              <tr><td>Vendor Master</td><td><code>ERPVendorReference</code></td><td><code>VENDOR</code></td></tr>
+              <tr><td>Item / Material Master</td><td><code>ERPItemReference</code></td><td><code>ITEM</code></td></tr>
+              <tr><td>Tax Codes</td><td><code>ERPTaxCodeReference</code></td><td><code>TAX</code></td></tr>
+              <tr><td>Cost Centers / GL Accounts</td><td><code>ERPCostCenterReference</code></td><td><code>COST_CENTER</code></td></tr>
+              <tr><td>Open Purchase Orders</td><td><code>ERPPOReference</code></td><td><code>OPEN_PO</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="posting-governance">Governance</h3>
+      <div class="card">
+        <div class="card-body small">
+          <ul class="mb-0">
+            <li class="mb-2"><strong>17 posting-specific AuditEventType values</strong> -- e.g. POSTING_STARTED, POSTING_ELIGIBILITY_PASSED, POSTING_ELIGIBILITY_FAILED, POSTING_MAPPING_COMPLETE, POSTING_SUBMITTED.</li>
+            <li class="mb-2"><strong>PostingGovernanceTrailService</strong> is the sole writer of <code>PostingApprovalRecord</code>.</li>
+            <li class="mb-2"><code>PostingRun.erp_source_metadata_json</code> -- per-field ERP resolution provenance (connector used, fallback, confidence).</li>
+            <li><strong>Phase 1 mock submit:</strong> <code>PostingActionService.submit_posting()</code> is a stub -- replace with live ERP connector call for Phase 2 (SAP BAPI, Oracle REST, etc.).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ ERP INTEGRATION (NEW) ═══ -->
+    <div id="erp-integration" class="docs-section">
+      <h2 class="docs-section-title">
+        <i class="bi bi-plug me-2 text-danger"></i>ERP Integration Layer
+        <span class="docs-section-title badge-new">New</span>
+      </h2>
+
+      <p class="text-muted mb-4" style="max-width:700px">
+        <code>apps/erp_integration/</code> is the shared ERP connectivity layer used by both the posting
+        pipeline and agent tools. All lookups follow a three-step resolution chain:
+        <strong>cache &rarr; ERP API connector &rarr; DB fallback</strong>.
+      </p>
+
+      <h3 class="docs-h3" id="erp-connectors">ERP Connectors ({{ erp_connector_info|length }})</h3>
+      <div class="row g-3 mb-4">
+        {% for conn in erp_connector_info %}
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-header bg-white d-flex align-items-center gap-2">
+              <i class="bi {{ conn.icon }} text-primary fs-5"></i>
+              <strong>{{ conn.label }}</strong>
+              <span class="badge bg-secondary ms-auto">{{ conn.type }}</span>
+            </div>
+            <div class="card-body small">
+              <p class="text-muted mb-2">{{ conn.description }}</p>
+              <div class="mb-2"><span class="fw-semibold">Auth:</span> <span class="text-muted">{{ conn.auth }}</span></div>
+              <div>
+                {% for cap in conn.capabilities %}
+                <span class="badge bg-light text-dark border me-1 mb-1" style="font-size:.72rem">{{ cap }}</span>
                 {% endfor %}
-              </tbody>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="erp-resolution-chain">Resolution Chain</h3>
+      <div class="card mb-4">
+        <div class="card-body">
+          <p class="small text-muted mb-4">
+            Every ERP lookup (vendor, item, tax, cost center, PO, GRN, duplicate invoice) flows through
+            <code>BaseResolver</code> subclasses in <code>apps/erp_integration/services/resolution/</code>.
+          </p>
+          {% for step in erp_resolution_chain %}
+          <div class="resolution-step {% if not forloop.last %}mb-3{% endif %}">
+            <div>
+              <div class="res-step-num bg-{{ step.color }} {% if step.color == 'warning' %}text-dark{% else %}text-white{% endif %}">{{ step.step }}</div>
+              {% if not forloop.last %}<div class="text-center text-muted mt-1" style="line-height:1">|</div>{% endif %}
+            </div>
+            <div>
+              <div class="fw-semibold"><i class="bi {{ step.icon }} me-1"></i>{{ step.name }}</div>
+              <div class="text-muted small">{{ step.description }}</div>
+            </div>
+          </div>
+          {% endfor %}
+          <div class="alert alert-info border-0 mt-3 mb-0 py-2 small">
+            <i class="bi bi-info-circle me-1"></i>
+            <code>ERP_CACHE_TTL_SECONDS</code> (default 3600 s) controls cache lifetime.
+            <code>ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD</code> (default 0.8) controls minimum
+            confidence for duplicate-invoice fallback acceptance.
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="erp-resolver-types">Resolver Types (7)</h3>
+      <div class="card mb-4">
+        <div class="card-body p-0">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light">
+              <tr><th>Resolution Type</th><th>Label</th><th>DB Reference Model</th><th>DB Fallback Adapter</th></tr>
+            </thead>
+            <tbody>
+              {% for rt in erp_resolution_types_info %}
+              <tr>
+                <td><code>{{ rt.type }}</code></td>
+                <td class="small">{{ rt.label }}</td>
+                <td class="small"><code>{{ rt.db_model }}</code></td>
+                <td class="small"><code>{{ rt.fallback }}</code></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="erp-connector-factory">ConnectorFactory</h3>
+      <div class="card mb-4">
+        <div class="card-body small">
+          <table class="table table-sm table-borderless mb-3">
+            <tr>
+              <td class="fw-semibold" style="width:44%"><code>get_default_connector()</code></td>
+              <td class="text-muted">Returns the active default <code>ERPConnection</code> as a connector instance. Returns <code>None</code> if no active default.</td>
+            </tr>
+            <tr>
+              <td class="fw-semibold"><code>get_connector_by_name(name)</code></td>
+              <td class="text-muted">Retrieves connector by connection name.</td>
+            </tr>
+            <tr>
+              <td class="fw-semibold"><code>create_from_connection(conn)</code></td>
+              <td class="text-muted">Instantiates the connector class matching the <code>ERPConnection.connector_type</code>.</td>
+            </tr>
+          </table>
+          <div class="alert alert-warning border-0 py-2 mb-0">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            If no <code>ERPConnection</code> with <code>is_default=True</code>, <code>status=ACTIVE</code>,
+            <code>is_active=True</code> exists, the posting pipeline falls back to direct DB lookups.
+            <code>POLookupTool</code> / <code>GRNLookupTool</code> attempt ERP resolution first, then
+            fall through to local DB.
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="erp-audit-models">Audit &amp; Cache Models</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold small"><i class="bi bi-lightning-charge text-warning me-1"></i> ERPReferenceCacheRecord</div>
+            <div class="card-body small text-muted">
+              TTL-based DB cache. Fields: <code>cache_key</code>, <code>resolution_type</code>,
+              <code>cached_data_json</code>, <code>expires_at</code>. Expired entries replaced on next lookup.
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold small"><i class="bi bi-list-ul text-primary me-1"></i> ERPResolutionLog</div>
+            <div class="card-body small text-muted">
+              Per-attempt audit: <code>resolution_type</code>, <code>source</code> (API / CACHE / DB_FALLBACK),
+              <code>success</code>, <code>confidence</code>, <code>duration_ms</code>, <code>error_message</code>.
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold small"><i class="bi bi-send text-success me-1"></i> ERPSubmissionLog</div>
+            <div class="card-body small text-muted">
+              Per-submission audit: <code>submission_type</code> (CREATE_INVOICE / PARK_INVOICE),
+              <code>status</code> (SUCCESS / FAILED / TIMEOUT / UNSUPPORTED),
+              <code>erp_document_number</code>, <code>duration_ms</code>.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="erp-api">ERP Resolve API</h3>
+      <div class="card">
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light"><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="badge bg-primary">GET</span></td>
+                <td><code>/api/v1/erp/resolve/&lt;resolution_type&gt;/</code></td>
+                <td class="small text-muted">On-demand ERP resolution. Types: vendor, item, tax, cost_center, po, grn, duplicate_invoice.</td>
+              </tr>
+              <tr>
+                <td><span class="badge bg-success">POST</span></td>
+                <td><code>/api/v1/erp/resolve/&lt;resolution_type&gt;/</code></td>
+                <td class="small text-muted">Force a fresh resolution bypassing cache.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── LLM PROMPTS ── -->
+    <div id="prompts" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-chat-left-text me-2 text-secondary"></i>LLM Prompts</h2>
+
+      <div class="alert alert-info border-0 py-2 mb-4 small">
+        <i class="bi bi-info-circle me-1"></i>
+        All prompts use Azure OpenAI GPT-4o and are version-controlled via <code>PromptRegistry</code>.
+        Prompts are stored in the DB and can be updated via the admin or <code>seed_prompts</code> management command.
+      </div>
+
+      <div class="row g-2 mb-4">
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-primary">{{ prompts|length }}</div>
+            <div class="small text-muted">Total Prompts</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-info">1</div>
+            <div class="small text-muted">Extraction</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-success">{{ agents_info|length }}</div>
+            <div class="small text-muted">Agent</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-warning">4</div>
+            <div class="small text-muted">Case</div>
+          </div>
+        </div>
+      </div>
+
+      {% regroup prompts by category as prompt_groups %}
+      {% for group in prompt_groups %}
+      <h3 class="docs-h3" id="prompt-{{ group.grouper|lower }}">
+        <span class="badge bg-{{ group.list.0.color }} me-2"><i class="bi {{ group.list.0.icon }}"></i></span>
+        {{ group.grouper }} Prompts
+        <span class="badge bg-light text-secondary border fw-normal ms-1" style="font-size:.72rem">{{ group.list|length }}</span>
+      </h3>
+      <div class="accordion mb-4" id="promptAccordion{{ group.grouper }}">
+        {% for prompt in group.list %}
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
+                    type="button" data-bs-toggle="collapse"
+                    data-bs-target="#prompt-{{ group.grouper|lower }}-{{ forloop.counter }}">
+              <strong>{{ prompt.name }}</strong>
+            </button>
+          </h2>
+          <div id="prompt-{{ group.grouper|lower }}-{{ forloop.counter }}"
+               class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
+               data-bs-parent="#promptAccordion{{ group.grouper }}">
+            <div class="accordion-body">
+              <div class="row mb-3">
+                <div class="col-md-6">
+                  <small class="text-muted d-block fw-semibold">Description</small>
+                  <p class="mb-0 small">{{ prompt.description }}</p>
+                </div>
+                <div class="col-md-3">
+                  <small class="text-muted d-block fw-semibold">Model</small>
+                  <span class="badge bg-dark">{{ prompt.model }}</span>
+                </div>
+                <div class="col-md-3">
+                  <small class="text-muted d-block fw-semibold">Source</small>
+                  <code class="small">{{ prompt.used_in }}</code>
+                </div>
+              </div>
+              <div class="bg-light border rounded p-3" style="max-height:360px;overflow-y:auto">
+                <pre class="mb-0" style="white-space:pre-wrap;font-size:.82rem">{{ prompt.prompt_text }}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- ── AUDIT & GOVERNANCE ── -->
+    <div id="governance" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-journal-check me-2 text-danger"></i>Audit &amp; Governance</h2>
+
+      <div class="alert alert-light border py-2 mb-4 small">
+        <i class="bi bi-info-circle me-1"></i>
+        Every action -- upload to closure -- is recorded. The governance layer provides
+        <strong>full traceability</strong> across HTTP requests, service calls, agent runs, and human decisions.
+      </div>
+
+      <h3 class="docs-h3" id="audit-events">Audit Event Types</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-lg-5">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold small">Business Events <span class="badge bg-primary">{{ business_events|length }}</span></div>
+            <div class="card-body"><div class="d-flex flex-wrap gap-1">{% for e in business_events %}<span class="badge bg-light text-dark border" style="font-size:.72rem">{{ e.label }}</span>{% endfor %}</div></div>
+          </div>
+        </div>
+        <div class="col-lg-4">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold small">Case &amp; Review Events <span class="badge bg-info text-dark">{{ case_events|length }}</span></div>
+            <div class="card-body"><div class="d-flex flex-wrap gap-1">{% for e in case_events %}<span class="badge bg-light text-dark border" style="font-size:.72rem">{{ e.label }}</span>{% endfor %}</div></div>
+          </div>
+        </div>
+        <div class="col-lg-3">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold small">RBAC Events <span class="badge bg-warning text-dark">{{ rbac_events|length }}</span></div>
+            <div class="card-body"><div class="d-flex flex-wrap gap-1">{% for e in rbac_events %}<span class="badge bg-light text-dark border" style="font-size:.72rem">{{ e.label }}</span>{% endfor %}</div></div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="audit-event-structure">AuditEvent Record Structure</h3>
+      <div class="card mb-4">
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-4">
+              <h6 class="text-muted mb-2 small">Identification</h6>
+              <ul class="list-unstyled small text-muted"><li><code>trace_id</code>, <code>span_id</code>, <code>request_id</code></li><li><code>event_type</code>, <code>event_name</code></li><li><code>source_service</code>, <code>source_layer</code></li></ul>
+            </div>
+            <div class="col-md-4">
+              <h6 class="text-muted mb-2 small">RBAC Snapshot</h6>
+              <ul class="list-unstyled small text-muted"><li><code>actor_email</code>, <code>actor_primary_role</code></li><li><code>actor_roles_snapshot</code></li><li><code>permission_checked</code>, <code>access_granted</code></li><li><code>permission_source</code></li></ul>
+            </div>
+            <div class="col-md-4">
+              <h6 class="text-muted mb-2 small">Cross-References</h6>
+              <ul class="list-unstyled small text-muted"><li><code>invoice_id</code>, <code>case_id</code></li><li><code>reconciliation_result_id</code></li><li><code>status_before</code>, <code>status_after</code></li><li><code>duration_ms</code>, <code>error_code</code></li></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="governance-api">Governance API ({{ governance_endpoints|length }} Endpoints)</h3>
+      <div class="card mb-4">
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light"><tr><th style="width:8%">Method</th><th style="width:42%">Endpoint</th><th>Description</th><th style="width:20%">Access</th></tr></thead>
+            <tbody>
+              {% for ep in governance_endpoints %}
+              <tr>
+                <td><span style="font-family:monospace;font-weight:700;font-size:.8rem;color:#198754">{{ ep.method }}</span></td>
+                <td><code class="small">{{ ep.path }}</code></td>
+                <td class="small text-muted">{{ ep.description }}</td>
+                <td class="small">{{ ep.access }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="traceability">Distributed Traceability</h3>
+      <div class="card mb-4">
+        <div class="card-body">
+          <p class="small text-muted mb-3">
+            Every HTTP request, Celery task, service call, and agent step is wrapped in a
+            <strong>TraceContext</strong> -- a structured envelope carrying correlation IDs,
+            business entity references, and an RBAC snapshot.
+          </p>
+          <h6 class="small fw-semibold mb-2">Propagation Methods</h6>
+          <div class="row g-2 mb-4">
+            {% for prop in trace_propagation %}
+            <div class="col-md-6">
+              <div class="border rounded p-2">
+                <div class="fw-semibold small"><i class="bi {{ prop.icon }} text-primary me-1"></i>{{ prop.method }}</div>
+                <div class="text-muted" style="font-size:.75rem">{{ prop.how }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <h6 class="small fw-semibold mb-3">TraceContext Fields</h6>
+          {% for group in trace_field_groups %}
+          <div class="mb-3">
+            <div class="fw-semibold small mb-1"><i class="bi {{ group.icon }} me-1 text-primary"></i>{{ group.group }}</div>
+            <table class="table table-sm table-bordered mb-0">
+              <thead class="table-light"><tr><th style="width:28%">Field</th><th>Description</th></tr></thead>
+              <tbody>{% for name, desc in group.fields %}<tr><td><code>{{ name }}</code></td><td class="small text-muted">{{ desc }}</td></tr>{% endfor %}</tbody>
             </table>
           </div>
+          {% endfor %}
         </div>
       </div>
-      {% endfor %}
+
+      <h3 class="docs-h3" id="agent-tracing">Agent-Level Tracing (AgentTraceService)</h3>
+      <div class="card mb-4">
+        <div class="card-body">
+          <p class="small text-muted mb-3">Single entry point for all agent activity. Produces: <strong>AgentRun &rarr; AgentStep &rarr; ToolCall / DecisionLog</strong>.</p>
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light"><tr><th>Method</th><th>Record(s)</th><th>What It Captures</th></tr></thead>
+            <tbody>
+              <tr><td><code>start_agent_run()</code></td><td><span class="badge bg-primary">AgentRun</span></td><td class="small">ReconciliationResult link, agent type, input payload, status=RUNNING</td></tr>
+              <tr><td><code>log_agent_step()</code></td><td><span class="badge bg-info text-dark">AgentStep</span></td><td class="small">Step name, output, success flag, duration_ms</td></tr>
+              <tr><td><code>log_tool_call()</code></td><td><span class="badge bg-success">ToolCall</span></td><td class="small">Tool name, input/output JSON, success, duration_ms</td></tr>
+              <tr><td><code>log_agent_decision()</code></td><td><span class="badge bg-warning text-dark">DecisionLog</span></td><td class="small">Decision type, confidence score, evidence JSON</td></tr>
+              <tr><td><code>finish_agent_run()</code></td><td><span class="badge bg-primary">AgentRun</span></td><td class="small">status=COMPLETED/FAILED, confidence_score, summarized_reasoning</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="span-hierarchy">Span Hierarchy Example</h3>
+      <div class="card">
+        <div class="card-body">
+          <pre class="mb-0 small bg-light border rounded p-3" style="line-height:1.9"><strong>HTTP POST /reconciliation/start/</strong>              &lt;-- Root span (RequestTraceMiddleware)
+  +-- @observed_action start_reconciliation         &lt;-- Child (source_layer=UI)
+       +-- @observed_service runner.run             &lt;-- Child (source_layer=SERVICE)
+            +-- AuditEvent: RECONCILIATION_STARTED  &lt;-- Compliance audit record
+       +-- @observed_task process_invoice_upload    &lt;-- Celery header propagation
+            +-- @observed_service orchestrator.run  &lt;-- Child (source_layer=SERVICE)
+                 +-- AgentTraceService.start_run()  &lt;-- Agent-level tracing</pre>
+        </div>
+      </div>
     </div>
 
-    <hr class="my-4">
+    <!-- ── OBSERVABILITY ── -->
+    <div id="observability" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-activity me-2 text-info"></i>Observability</h2>
 
-    <!-- Recommendations section -->
-    <h5 class="mb-3"><i class="bi bi-lightbulb me-1"></i> Recommendation Types</h5>
-    <div class="card mb-4">
-      <div class="card-body p-0">
-        <table class="table table-hover mb-0">
-          <thead class="table-light">
-            <tr><th>Code</th><th>Label</th><th>Description</th></tr>
-          </thead>
+      <h3 class="docs-h3" id="decorators">Observability Decorators</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-md-4">
+          <div class="card h-100 border-start border-4 border-success">
+            <div class="card-body small">
+              <h6><code>@observed_service</code></h6>
+              <div class="text-muted">
+                <strong>Target:</strong> Service class methods<br>
+                <strong>Span layer:</strong> SERVICE<br>
+                <strong>Writes:</strong> ProcessingLog; AuditEvent if configured<br>
+                <strong>Measures:</strong> Duration
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100 border-start border-4 border-primary">
+            <div class="card-body small">
+              <h6><code>@observed_action</code></h6>
+              <div class="text-muted">
+                <strong>Target:</strong> FBV view functions<br>
+                <strong>Span layer:</strong> UI<br>
+                <strong>Writes:</strong> AuditEvent + ProcessingLog<br>
+                <strong>Extra:</strong> RBAC check result recorded
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100 border-start border-4 border-warning">
+            <div class="card-body small">
+              <h6><code>@observed_task</code></h6>
+              <div class="text-muted">
+                <strong>Target:</strong> Celery task functions<br>
+                <strong>Span layer:</strong> TASK<br>
+                <strong>Writes:</strong> ProcessingLog<br>
+                <strong>Extra:</strong> Reconstructs TraceContext from Celery headers
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="instrumented-points">Instrumented Entry Points ({{ observed_entries|length }})</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered table-hover mb-0">
+          <thead class="table-light"><tr><th>Decorator</th><th>Location</th><th>Name</th><th>Event / Permission</th></tr></thead>
           <tbody>
-            {% for rec in recommendation_types %}
+            {% for entry in observed_entries %}
             <tr>
-              <td><code>{{ rec.value }}</code></td>
-              <td><strong>{{ rec.label }}</strong></td>
-              <td class="text-muted small">
-                {% if rec.value == "AUTO_CLOSE" %}
-                  Differences are within tolerance or clearly explainable — no human action needed.
-                {% elif rec.value == "SEND_TO_AP_REVIEW" %}
-                  Standard discrepancy that an Accounts Payable processor should review.
-                {% elif rec.value == "SEND_TO_PROCUREMENT" %}
-                  Price or quantity issue that requires procurement team attention.
-                {% elif rec.value == "SEND_TO_VENDOR_CLARIFICATION" %}
-                  Vendor mismatch or data issue — contact the vendor for clarification.
-                {% elif rec.value == "REPROCESS_EXTRACTION" %}
-                  Extraction quality is low — re-extract the invoice with improved processing.
-                {% elif rec.value == "ESCALATE_TO_MANAGER" %}
-                  Complex or high-value case that needs management review and decision.
-                {% else %}
-                  —
-                {% endif %}
+              <td>
+                {% if "service" in entry.decorator %}<span class="badge bg-success">{{ entry.decorator }}</span>
+                {% elif "action" in entry.decorator %}<span class="badge bg-primary">{{ entry.decorator }}</span>
+                {% else %}<span class="badge bg-warning text-dark">{{ entry.decorator }}</span>{% endif %}
               </td>
+              <td class="small"><code>{{ entry.location }}</code></td>
+              <td class="small"><code>{{ entry.name }}</code></td>
+              <td class="small">{{ entry.event }}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-    </div>
 
-    <h5 class="mb-3"><i class="bi bi-gear me-1"></i> How Agents Choose a Recommendation</h5>
-    <div class="card mb-3">
-      <div class="card-body">
-        <ul class="mb-0">
-          <li>Each agent receives the reconciliation exceptions and uses tools to gather context.</li>
-          <li>The agent reasons through the exceptions and picks the most appropriate recommendation type.</li>
-          <li>A <strong>confidence score (0–100%)</strong> indicates how certain the agent is about its recommendation.</li>
-          <li>If confidence is below the threshold, the case is <strong>escalated</strong> for human review.</li>
-          <li>Multiple agents may run in sequence (e.g., Exception Analysis &rarr; Review Routing &rarr; Case Summary).</li>
-          <li>The <strong>Policy Engine</strong> may <strong>auto-close</strong> cases that fall within auto-close tolerance bands (qty: 5%, price: 3%, amount: 3%).</li>
-        </ul>
-      </div>
-    </div>
-
-    <h5 class="mb-3"><i class="bi bi-arrow-repeat me-1"></i> Recommendation Idempotency</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <p class="text-muted mb-2">
-          Two layers prevent duplicate recommendations from being created on retries or cross-run agent re-executions:
-        </p>
-        <ol class="mb-0 small">
-          <li class="mb-2">
-            <strong>Service-layer check</strong> (<code>DecisionLogService.log_recommendation()</code>) —
-            Before inserting a new <code>AgentRecommendation</code>, the service queries for an existing
-            <em>pending</em> record with the same
-            <code>(reconciliation_result, recommendation_type, accepted=None)</code>.
-            If found, the existing record is returned without creating a duplicate — even across different agent runs.
-          </li>
-          <li>
-            <strong>DB unique constraint</strong> (<code>uq_rec_result_type_run</code>) —
-            Enforces uniqueness at <code>(reconciliation_result, recommendation_type, agent_run)</code>
-            as a last-resort safeguard against race conditions within the same run.
-          </li>
-        </ol>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- PROMPTS TAB                                                    -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-prompts" role="tabpanel">
-    <div class="alert alert-info mb-4">
-      <i class="bi bi-info-circle me-1"></i>
-      These are the LLM prompts (system messages) used across the application.
-      Each prompt instructs Azure OpenAI on how to process data and produce structured output.
-    </div>
-
-    <!-- Category summary cards -->
-    <div class="row g-3 mb-4">
-      <div class="col-md-3">
-        <div class="card border-0 shadow-sm">
-          <div class="card-body text-center py-3">
-            <div class="fs-3 fw-bold text-primary">{{ prompts|length }}</div>
-            <small class="text-muted">Total Prompts</small>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card border-0 shadow-sm">
-          <div class="card-body text-center py-3">
-            <div class="fs-3 fw-bold" style="color:#0d6efd">1</div>
-            <small class="text-muted">Extraction</small>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card border-0 shadow-sm">
-          <div class="card-body text-center py-3">
-            <div class="fs-3 fw-bold text-success">{{ agents_info|length }}</div>
-            <small class="text-muted">Agent</small>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card border-0 shadow-sm">
-          <div class="card-body text-center py-3">
-            <div class="fs-3 fw-bold text-info">4</div>
-            <small class="text-muted">Case</small>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Prompt cards -->
-    <div class="accordion" id="promptAccordion">
-      {% for prompt in prompts %}
-      <div class="accordion-item">
-        <h2 class="accordion-header">
-          <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
-                  type="button" data-bs-toggle="collapse"
-                  data-bs-target="#prompt-{{ forloop.counter }}">
-            <span class="badge bg-{{ prompt.color }} me-2"><i class="bi {{ prompt.icon }}"></i></span>
-            <strong>{{ prompt.name }}</strong>
-            <span class="badge bg-light text-dark ms-2">{{ prompt.category }}</span>
-          </button>
-        </h2>
-        <div id="prompt-{{ forloop.counter }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
-             data-bs-parent="#promptAccordion">
-          <div class="accordion-body">
-            <div class="row mb-3">
-              <div class="col-md-6">
-                <small class="text-muted d-block"><strong>Description:</strong></small>
-                <p class="mb-0">{{ prompt.description }}</p>
-              </div>
-              <div class="col-md-3">
-                <small class="text-muted d-block"><strong>Model:</strong></small>
-                <span class="badge bg-dark">{{ prompt.model }}</span>
-              </div>
-              <div class="col-md-3">
-                <small class="text-muted d-block"><strong>Source File:</strong></small>
-                <code class="small">{{ prompt.used_in }}</code>
-              </div>
+      <h3 class="docs-h3" id="logging">Structured Logging</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold small">JSONLogFormatter <span class="badge bg-dark">Production</span></div>
+            <div class="card-body small text-muted">
+              Outputs JSON with <code>timestamp</code>, <code>level</code>, 20+ TraceContext fields
+              (<code>trace_id</code>, <code>actor_email</code>, <code>invoice_id</code>, ...) +
+              exception info + record extras.
             </div>
-
-            <h6><i class="bi bi-chat-left-text me-1"></i> Prompt Text</h6>
-            <div class="bg-light border rounded p-3" style="max-height:400px;overflow-y:auto">
-              <pre class="mb-0" style="white-space:pre-wrap;font-size:.85rem">{{ prompt.prompt_text }}</pre>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold small">DevLogFormatter <span class="badge bg-secondary">Development</span></div>
+            <div class="card-body small text-muted">
+              Human-readable with appended <code>[trace=...]</code>, <code>[inv=...]</code>,
+              <code>[Nms]</code>. PII fields redacted via <code>redact_dict()</code>.
             </div>
           </div>
         </div>
       </div>
-      {% endfor %}
-    </div>
-  </div>
 
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- AUDIT & GOVERNANCE TAB (NEW)                                   -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-audit" role="tabpanel">
-
-    <div class="alert alert-light border mb-4">
-      <i class="bi bi-info-circle me-1"></i>
-      Every action — from invoice upload to case closure — is recorded in the audit trail.
-      The governance layer provides <strong>full traceability</strong> across HTTP requests,
-      service calls, agent runs, and human decisions.
-    </div>
-
-    <!-- Audit event types -->
-    <h5 class="mb-3"><i class="bi bi-journal-check me-1"></i> Audit Event Types ({{ business_events|length|add:rbac_events|length|add:case_events|length }})</h5>
-    <div class="row g-3 mb-4">
-      <div class="col-lg-5">
-        <div class="card h-100">
-          <div class="card-header bg-white"><strong>Business Events</strong> <span class="badge bg-primary">{{ business_events|length }}</span></div>
-          <div class="card-body p-0">
-            <div class="d-flex flex-wrap p-3 gap-1">
-              {% for evt in business_events %}
-              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="col-lg-4">
-        <div class="card h-100">
-          <div class="card-header bg-white"><strong>Case & Review Events</strong> <span class="badge bg-info">{{ case_events|length }}</span></div>
-          <div class="card-body p-0">
-            <div class="d-flex flex-wrap p-3 gap-1">
-              {% for evt in case_events %}
-              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="col-lg-3">
-        <div class="card h-100">
-          <div class="card-header bg-white"><strong>RBAC Events</strong> <span class="badge bg-warning text-dark">{{ rbac_events|length }}</span></div>
-          <div class="card-body p-0">
-            <div class="d-flex flex-wrap p-3 gap-1">
-              {% for evt in rbac_events %}
-              <span class="badge bg-light text-dark border">{{ evt.label }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- AuditEvent record structure -->
-    <h5 class="mb-3"><i class="bi bi-card-list me-1"></i> AuditEvent Record Structure</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <div class="row">
-          <div class="col-md-4">
-            <h6 class="text-muted mb-2">Identification</h6>
-            <ul class="list-unstyled small">
-              <li><code>trace_id</code>, <code>span_id</code>, <code>request_id</code></li>
-              <li><code>event_type</code>, <code>event_name</code></li>
-              <li><code>source_service</code>, <code>source_layer</code></li>
-            </ul>
-          </div>
-          <div class="col-md-4">
-            <h6 class="text-muted mb-2">RBAC Snapshot</h6>
-            <ul class="list-unstyled small">
-              <li><code>actor_email</code>, <code>actor_primary_role</code></li>
-              <li><code>actor_roles_snapshot</code></li>
-              <li><code>permission_checked</code>, <code>access_granted</code></li>
-              <li><code>permission_source</code></li>
-            </ul>
-          </div>
-          <div class="col-md-4">
-            <h6 class="text-muted mb-2">Cross-References</h6>
-            <ul class="list-unstyled small">
-              <li><code>invoice_id</code>, <code>case_id</code></li>
-              <li><code>reconciliation_result_id</code></li>
-              <li><code>status_before</code>, <code>status_after</code></li>
-              <li><code>duration_ms</code>, <code>error_code</code></li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Governance API endpoints -->
-    <h5 class="mb-3"><i class="bi bi-hdd-network me-1"></i> Governance API Endpoints ({{ governance_endpoints|length }})</h5>
-    <div class="card mb-4">
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-light">
-            <tr><th style="width:8%">Method</th><th style="width:40%">Endpoint</th><th>Description</th><th style="width:20%">Access</th></tr>
-          </thead>
-          <tbody>
-            {% for ep in governance_endpoints %}
-            <tr>
-              <td><span class="governance-method text-success">{{ ep.method }}</span></td>
-              <td><code class="small">{{ ep.path }}</code></td>
-              <td class="small text-muted">{{ ep.description }}</td>
-              <td class="small">{{ ep.access }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Traceability section -->
-    <h5 class="mb-3"><i class="bi bi-bezier2 me-1"></i> Distributed Traceability</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <p class="text-muted mb-3">
-          Every HTTP request, Celery task, service call, and agent step is wrapped in a
-          <strong>TraceContext</strong> — a structured envelope carrying correlation IDs,
-          business entity references, and an RBAC snapshot.
-        </p>
-
-        <!-- Trace propagation -->
-        <h6 class="mb-2">How Traces Propagate</h6>
-        <div class="row g-2 mb-3">
-          {% for prop in trace_propagation %}
-          <div class="col-md-6 col-lg-3">
-            <div class="border rounded p-2">
-              <div class="fw-semibold small">
-                <i class="bi {{ prop.icon }} text-primary me-1"></i> {{ prop.method }}
-              </div>
-              <div class="text-muted" style="font-size:.78rem">{{ prop.how }}</div>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-
-        <!-- Span hierarchy -->
-        <h6 class="mb-2">Span Hierarchy Example</h6>
-        <pre class="mb-0 small bg-light border rounded p-3" style="line-height:1.8">
-<strong>HTTP POST /reconciliation/start/</strong>                      ← Root span (RequestTraceMiddleware)
-  └─ <span class="text-primary">@observed_action</span> start_reconciliation             ← Child span (source_layer=UI)
-       └─ <span class="text-success">@observed_service</span> reconciliation.runner.run      ← Child span (source_layer=SERVICE)
-            └─ AuditEvent  RECONCILIATION_STARTED             ← Compliance audit record
-       └─ <span class="text-warning">@observed_task</span> extraction.process_invoice_upload ← Celery headers propagation
-            └─ <span class="text-success">@observed_service</span> agents.orchestrator.execute  ← Child span (source_layer=SERVICE)
-                 └─ AgentTraceService.start_agent_run()       ← Agent-level tracing</pre>
-      </div>
-    </div>
-
-    <!-- TraceContext fields -->
-    <h5 class="mb-3"><i class="bi bi-card-list me-1"></i> TraceContext Fields</h5>
-    {% for group in trace_field_groups %}
-    <div class="card mb-3">
-      <div class="card-header bg-white">
-        <i class="bi {{ group.icon }} me-1"></i> <strong>{{ group.group }}</strong>
-      </div>
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-light">
-            <tr><th style="width:25%">Field</th><th>Description</th></tr>
-          </thead>
-          <tbody>
-            {% for field_name, field_desc in group.fields %}
-            <tr>
-              <td><code>{{ field_name }}</code></td>
-              <td class="small text-muted">{{ field_desc }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    {% endfor %}
-
-    <!-- Agent tracing -->
-    <h5 class="mb-3"><i class="bi bi-robot me-1"></i> Agent-Level Tracing</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <p class="text-muted mb-3">
-          <strong>AgentTraceService</strong> records every AI-agent activity for full auditability.
-          Each agent run produces: <strong>AgentRun &rarr; AgentStep &rarr; ToolCall / DecisionLog</strong>.
-        </p>
-        <table class="table table-sm table-bordered mb-0">
-          <thead class="table-light">
-            <tr><th>Method</th><th>Records</th><th>What It Captures</th></tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>start_agent_run()</code></td>
-              <td><span class="badge bg-primary">AgentRun</span></td>
-              <td class="small">Links to ReconciliationResult, agent type, input payload, status=RUNNING</td>
-            </tr>
-            <tr>
-              <td><code>log_agent_step()</code></td>
-              <td><span class="badge bg-info text-dark">AgentStep</span></td>
-              <td class="small">Step name, description, output, success flag, duration_ms</td>
-            </tr>
-            <tr>
-              <td><code>log_tool_call()</code></td>
-              <td><span class="badge bg-success">ToolCall</span></td>
-              <td class="small">Tool name, input/output JSON, success flag, duration_ms</td>
-            </tr>
-            <tr>
-              <td><code>log_agent_decision()</code></td>
-              <td><span class="badge bg-warning text-dark">DecisionLog</span></td>
-              <td class="small">Decision type, summary, confidence score, evidence JSON</td>
-            </tr>
-            <tr>
-              <td><code>finish_agent_run()</code></td>
-              <td><span class="badge bg-primary">AgentRun</span></td>
-              <td class="small">Sets status=COMPLETED/FAILED, confidence_score, summarized_reasoning</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Where to see traces -->
-    <h5 class="mb-3"><i class="bi bi-eye me-1"></i> Where Governance Data Is Visible</h5>
-    <div class="row g-3 mb-3">
-      <div class="col-md-3">
-        <div class="card h-100 border-0 shadow-sm">
-          <div class="card-body text-center py-3">
-            <i class="bi bi-journal-text fs-3 text-secondary"></i>
-            <div class="fw-semibold mt-1">Case Agent View</div>
-            <div class="text-muted small">Agent steps, tool calls, decisions with timestamps</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card h-100 border-0 shadow-sm">
-          <div class="card-body text-center py-3">
-            <i class="bi bi-clock-history fs-3 text-info"></i>
-            <div class="fw-semibold mt-1">Governance Timeline</div>
-            <div class="text-muted small">8 event categories with RBAC badges</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card h-100 border-0 shadow-sm">
-          <div class="card-body text-center py-3">
-            <i class="bi bi-list-ul fs-3 text-warning"></i>
-            <div class="fw-semibold mt-1">Audit Event Log</div>
-            <div class="text-muted small">Filterable by role, trace_id, denied-only</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card h-100 border-0 shadow-sm">
-          <div class="card-body text-center py-3">
-            <i class="bi bi-code-slash fs-3 text-success"></i>
-            <div class="fw-semibold mt-1">Governance API</div>
-            <div class="text-muted small">9 REST endpoints for programmatic access</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- OBSERVABILITY TAB                                               -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-observability" role="tabpanel">
-
-    <div class="alert alert-light border mb-4">
-      <i class="bi bi-info-circle me-1"></i>
-      The platform instruments key entry points with <strong>decorators</strong> that
-      automatically create child spans, measure duration, write audit events, and record
-      processing logs. Combined with structured JSON logging and in-process metrics,
-      this provides full visibility into every operation.
-    </div>
-
-    <!-- Decorators -->
-    <h5 class="mb-3"><i class="bi bi-braces me-1"></i> Observability Decorators</h5>
-    <div class="row g-3 mb-4">
-      <div class="col-md-4">
-        <div class="card h-100 border-start border-4 border-success">
-          <div class="card-body">
-            <h6 class="card-title"><code>@observed_service</code></h6>
-            <div class="small text-muted">
-              <strong>Target:</strong> Service class methods<br>
-              <strong>Creates:</strong> Child span (source_layer=SERVICE)<br>
-              <strong>Writes:</strong> ProcessingLog always; AuditEvent if audit_event is set<br>
-              <strong>Measures:</strong> Duration via DurationTimer
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-4">
-        <div class="card h-100 border-start border-4 border-primary">
-          <div class="card-body">
-            <h6 class="card-title"><code>@observed_action</code></h6>
-            <div class="small text-muted">
-              <strong>Target:</strong> FBV view functions<br>
-              <strong>Creates:</strong> Child span (source_layer=UI)<br>
-              <strong>Writes:</strong> Both AuditEvent and ProcessingLog<br>
-              <strong>Extra:</strong> Resolves permission source, records RBAC check result
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-4">
-        <div class="card h-100 border-start border-4 border-warning">
-          <div class="card-body">
-            <h6 class="card-title"><code>@observed_task</code></h6>
-            <div class="small text-muted">
-              <strong>Target:</strong> Celery task functions<br>
-              <strong>Creates:</strong> Child span (source_layer=TASK)<br>
-              <strong>Writes:</strong> ProcessingLog<br>
-              <strong>Extra:</strong> Reconstructs TraceContext from Celery headers
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Instrumented entry points -->
-    <h5 class="mb-3"><i class="bi bi-pin-map me-1"></i> Instrumented Entry Points ({{ observed_entries|length }})</h5>
-    <div class="table-responsive mb-4">
-      <table class="table table-sm table-bordered table-hover mb-0">
-        <thead class="table-light">
-          <tr><th>Decorator</th><th>Location</th><th>Name</th><th>Event / Permission</th></tr>
-        </thead>
-        <tbody>
-          {% for entry in observed_entries %}
-          <tr>
-            <td>
-              {% if "service" in entry.decorator %}<span class="badge bg-success">{{ entry.decorator }}</span>
-              {% elif "action" in entry.decorator %}<span class="badge bg-primary">{{ entry.decorator }}</span>
-              {% else %}<span class="badge bg-warning text-dark">{{ entry.decorator }}</span>{% endif %}
-            </td>
-            <td class="small"><code>{{ entry.location }}</code></td>
-            <td class="small"><code>{{ entry.name }}</code></td>
-            <td class="small">{{ entry.event }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Structured logging -->
-    <h5 class="mb-3"><i class="bi bi-file-text me-1"></i> Structured Logging</h5>
-    <div class="row g-3 mb-4">
-      <div class="col-md-6">
-        <div class="card h-100">
-          <div class="card-header bg-white"><strong>JSONLogFormatter</strong> <span class="badge bg-dark">Production</span></div>
-          <div class="card-body small text-muted">
-            Outputs JSON with: <code>timestamp</code>, <code>level</code>, <code>logger</code>,
-            <code>message</code> + 20+ structured fields from TraceContext
-            (<code>trace_id</code>, <code>span_id</code>, <code>invoice_id</code>, <code>actor_email</code>, …)
-            + record extras (<code>event_name</code>, <code>duration_ms</code>, <code>success</code>) + exception info.
-          </div>
-        </div>
-      </div>
-      <div class="col-md-6">
-        <div class="card h-100">
-          <div class="card-header bg-white"><strong>DevLogFormatter</strong> <span class="badge bg-secondary">Development</span></div>
-          <div class="card-body small text-muted">
-            Human-readable base message with appended suffixes:
-            <code>[trace=…]</code>, <code>[inv=…]</code>, <code>[Nms]</code>.
-            Uses TraceLogger that auto-merges TraceContext into every record's <code>extra</code> dict.
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PII Redaction -->
-    <div class="card mb-4">
-      <div class="card-header bg-white">
-        <i class="bi bi-shield-exclamation me-1"></i> <strong>PII Redaction</strong>
-      </div>
-      <div class="card-body">
-        <p class="small text-muted mb-2">
-          <code>redact_dict()</code> is applied automatically to audit payloads — scrubs sensitive fields
-          before they're persisted. Redacted fields:
-        </p>
-        <div>
+      <h3 class="docs-h3" id="pii-redaction">PII Redaction</h3>
+      <div class="card mb-4">
+        <div class="card-body small">
+          <p class="text-muted mb-2"><code>redact_dict()</code> is applied to audit payloads before persistence. Redacted fields:</p>
           <span class="badge bg-danger me-1 mb-1">bank_account</span>
           <span class="badge bg-danger me-1 mb-1">account_number</span>
           <span class="badge bg-danger me-1 mb-1">iban</span>
@@ -1163,485 +1282,299 @@
           <span class="badge bg-danger me-1 mb-1">bank_name</span>
         </div>
       </div>
-    </div>
 
-    <!-- What gets written when -->
-    <h5 class="mb-3"><i class="bi bi-database me-1"></i> What Gets Written &amp; When</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <table class="table table-sm table-bordered mb-0">
-          <thead class="table-light">
-            <tr><th>Record Type</th><th>Written By</th><th>Purpose</th></tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><span class="badge bg-secondary">ProcessingLog</span></td>
-              <td class="small">All @observed_* decorators</td>
-              <td class="small">Operational log — traces request/service/task execution with duration, success/failure, exception class</td>
-            </tr>
-            <tr>
-              <td><span class="badge bg-primary">AuditEvent</span></td>
-              <td class="small">@observed_service (if audit_event set), @observed_action, service methods</td>
-              <td class="small">Compliance audit — captures old/new values, RBAC snapshot, entity cross-references, input/output (redacted)</td>
-            </tr>
-            <tr>
-              <td><span class="badge bg-info text-dark">AgentRun / AgentStep</span></td>
-              <td class="small">AgentTraceService</td>
-              <td class="small">Agent-specific audit — records each LLM reasoning iteration, tool invocation, and final decision</td>
-            </tr>
-            <tr>
-              <td><span class="badge bg-success">ToolCall</span></td>
-              <td class="small">AgentTraceService + ToolCallLogger</td>
-              <td class="small">Tool invocation log — input/output JSON, success, duration, linked ToolDefinition</td>
-            </tr>
-            <tr>
-              <td><span class="badge bg-warning text-dark">DecisionLog</span></td>
-              <td class="small">AgentTraceService</td>
-              <td class="small">Agent decisions — confidence score, evidence, recommendation type</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Metrics categories -->
-    <h5 class="mb-3"><i class="bi bi-speedometer2 me-1"></i> In-Process Metrics</h5>
-    <div class="row g-3 mb-3">
-      {% for cat in metrics_categories %}
-      <div class="col-md-6 col-lg-4">
-        <div class="card h-100 border-0 shadow-sm">
-          <div class="card-body">
-            <div class="fw-semibold mb-2">
-              <i class="bi {{ cat.icon }} me-1"></i> {{ cat.category }}
+      <h3 class="docs-h3" id="metrics">In-Process Metrics (MetricsService)</h3>
+      <div class="row g-3">
+        {% for cat in metrics_categories %}
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body small">
+              <div class="fw-semibold mb-2"><i class="bi {{ cat.icon }} me-1 text-primary"></i>{{ cat.category }}</div>
+              <div class="text-muted">{{ cat.counters }}</div>
             </div>
-            <div class="text-muted small" style="word-break:break-word">{{ cat.counters }}</div>
           </div>
         </div>
+        {% endfor %}
       </div>
-      {% endfor %}
-    </div>
-  </div>
-
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!-- RBAC TAB                                                        -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="tab-pane fade" id="tab-rbac" role="tabpanel">
-
-    <div class="alert alert-light border mb-4">
-      <i class="bi bi-info-circle me-1"></i>
-      The platform uses an <strong>enterprise RBAC system</strong> with roles, permissions,
-      per-user overrides, and expiry support. Every permission check is evaluated at runtime
-      and recorded in the audit trail.
     </div>
 
-    <!-- Permission precedence -->
-    <h5 class="mb-3"><i class="bi bi-funnel me-1"></i> Permission Evaluation Order</h5>
-    <div class="row g-2 mb-4">
-      {% for step in rbac_precedence %}
-      <div class="col-12">
-        <div class="card border-start border-4 border-{{ step.color }}">
+    <!-- ── RBAC ── -->
+    <div id="rbac" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-shield-lock me-2 text-warning"></i>RBAC</h2>
+
+      <div class="alert alert-light border py-2 mb-4 small">
+        <i class="bi bi-info-circle me-1"></i>
+        Enterprise RBAC with roles, permissions, per-user overrides, expiry support, and data-scope restrictions.
+        Every permission check is evaluated at runtime and recorded in the audit trail.
+      </div>
+
+      <h3 class="docs-h3" id="permission-evaluation">Permission Evaluation Order</h3>
+      <div class="mb-4">
+        {% for step in rbac_precedence %}
+        <div class="card border-start border-4 border-{{ step.color }} mb-2">
           <div class="card-body py-2 d-flex align-items-center">
-            <div class="me-3">
-              <span class="badge bg-{{ step.color }} rounded-pill fs-6">{{ step.step }}</span>
-            </div>
-            <div class="me-3">
-              <i class="bi {{ step.icon }} text-{{ step.color }} fs-5"></i>
-            </div>
+            <span class="badge bg-{{ step.color }} rounded-pill me-3 fs-6">{{ step.step }}</span>
+            <i class="bi {{ step.icon }} text-{{ step.color }} fs-5 me-3"></i>
             <div>
               <strong>{{ step.rule }}</strong>
               <div class="small text-muted">{{ step.description }}</div>
             </div>
           </div>
         </div>
+        {% endfor %}
       </div>
-      {% endfor %}
-    </div>
 
-    <!-- RBAC model overview -->
-    <h5 class="mb-3"><i class="bi bi-diagram-2 me-1"></i> RBAC Data Model</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <pre class="mb-0 small" style="line-height:1.7">
-<strong>Role</strong> (code, name, rank, is_system_role)
-  │
-  ├──< <strong>RolePermission</strong> ──> <strong>Permission</strong> (code: "module.action", e.g. invoices.view)
-  │
-  └──< <strong>UserRole</strong> (is_primary, assigned_by, expires_at, is_active, scope_json)
-        │   scope_json: {allowed_business_units?: str[], allowed_vendor_ids?: int[]}
-        │
-        └──> <strong>User</strong>
-               │
-               └──< <strong>UserPermissionOverride</strong> (ALLOW/DENY, reason, expires_at)
-                      │
-                      └──> <strong>Permission</strong></pre>
-      </div>
-    </div>
-
-    <!-- DRF Permission classes -->
-    <h5 class="mb-3"><i class="bi bi-code-slash me-1"></i> API Permission Classes (DRF)</h5>
-    <div class="table-responsive mb-4">
-      <table class="table table-sm table-bordered table-hover mb-0">
-        <thead class="table-light">
-          <tr><th>Class</th><th>View Attribute</th><th>Description</th></tr>
-        </thead>
-        <tbody>
-          {% for cls in rbac_permission_classes %}
-          <tr>
-            <td><code>{{ cls.name }}</code></td>
-            <td class="small"><code>{{ cls.usage }}</code></td>
-            <td class="small text-muted">{{ cls.description }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- CBV Mixins -->
-    <h5 class="mb-3"><i class="bi bi-layers me-1"></i> Class-Based View Mixins</h5>
-    <div class="table-responsive mb-4">
-      <table class="table table-sm table-bordered mb-0">
-        <thead class="table-light">
-          <tr><th>Mixin</th><th>Attribute</th></tr>
-        </thead>
-        <tbody>
-          {% for mixin in rbac_cbv_mixins %}
-          <tr>
-            <td><code>{{ mixin.name }}</code></td>
-            <td class="small"><code>{{ mixin.attribute }}</code></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- FBV Decorators -->
-    <h5 class="mb-3"><i class="bi bi-at me-1"></i> Function-Based View Decorators</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <div class="mb-2">
-          <code>@permission_required_code("invoices.view")</code>
-          <span class="text-muted small ms-2">— Raises PermissionDenied if the check fails</span>
-        </div>
-        <div>
-          <code>@role_required("ADMIN", "FINANCE_MANAGER")</code>
-          <span class="text-muted small ms-2">— Raises PermissionDenied if user lacks all listed roles</span>
+      <h3 class="docs-h3" id="rbac-model">RBAC Data Model</h3>
+      <div class="card mb-4">
+        <div class="card-body">
+          <pre class="mb-0 small" style="line-height:1.8"><strong>Role</strong> (code, name, rank, is_system_role)
+  |
+  +--&lt; <strong>RolePermission</strong> --&gt; <strong>Permission</strong> (code: "module.action", e.g. invoices.view)
+  |
+  +--&lt; <strong>UserRole</strong> (is_primary, expires_at, scope_json)
+        |   scope_json: {allowed_business_units?: str[], allowed_vendor_ids?: int[]}
+        |
+        +-&gt; <strong>User</strong>
+               |
+               +--&lt; <strong>UserPermissionOverride</strong> (ALLOW/DENY, reason, expires_at) --&gt; <strong>Permission</strong></pre>
         </div>
       </div>
-    </div>
 
-    <!-- Template tags -->
-    <h5 class="mb-3"><i class="bi bi-braces me-1"></i> Template Tags</h5>
-    <div class="card mb-4">
-      <div class="card-header bg-white">
-        <code>{% templatetag openblock %} load rbac_tags {% templatetag closeblock %}</code>
-      </div>
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover mb-0">
-          <thead class="table-light">
-            <tr><th>Tag</th><th>Description</th></tr>
-          </thead>
+      <h3 class="docs-h3" id="rbac-classes">Permission Classes &amp; Mixins</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered table-hover mb-0">
+          <thead class="table-light"><tr><th>Class / Mixin</th><th>Usage</th><th>Description</th></tr></thead>
           <tbody>
-            {% for tag in rbac_template_tags %}
-            <tr>
-              <td><code>{{ tag.tag }}</code></td>
-              <td class="small text-muted">{{ tag.description }}</td>
-            </tr>
+            {% for cls in rbac_permission_classes %}
+            <tr><td><code>{{ cls.name }}</code></td><td class="small"><code>{{ cls.usage }}</code></td><td class="small text-muted">{{ cls.description }}</td></tr>
+            {% endfor %}
+            {% for mixin in rbac_cbv_mixins %}
+            <tr><td><code>{{ mixin.name }}</code></td><td class="small"><code>{{ mixin.attribute }}</code></td><td class="small text-muted">Class-based view mixin</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-    </div>
 
-    <!-- Middleware -->
-    <h5 class="mb-3"><i class="bi bi-layers me-1"></i> RBAC Middleware Chain</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <ol class="mb-0">
-          <li class="mb-2">
-            <strong>RequestTraceMiddleware</strong> — Creates root TraceContext, enriches with RBAC
-            snapshot (actor_user_id, actor_email, actor_primary_role, actor_roles_snapshot). Sets
-            <code>X-Trace-ID</code> / <code>X-Request-ID</code> response headers.
-          </li>
-          <li class="mb-2">
-            <strong>RBACMiddleware</strong> — Pre-loads <code>user.get_role_codes()</code> and
-            <code>user.get_effective_permissions()</code> on every authenticated request. Cached on
-            the user instance for the request lifecycle.
-          </li>
-          <li class="mb-2">
-            <strong>LoginRequiredMiddleware</strong> — Redirects all anonymous requests to login
-            (except /admin/, /accounts/, /api/).
-          </li>
-          <li class="mb-0">
-            <strong>rbac_context</strong> (context processor) — Injects <code>user_permissions</code>,
-            <code>user_role_codes</code>, and <code>is_admin</code> into every template context.
-          </li>
-        </ol>
-      </div>
-    </div>
-
-    <!-- RBAC audit events -->
-    <h5 class="mb-3"><i class="bi bi-journal-check me-1"></i> RBAC Audit Events</h5>
-    <div class="card mb-3">
-      <div class="card-body">
-        <p class="small text-muted mb-3">
-          <strong>RBACEventService</strong> records every role and permission change as an AuditEvent.
-          These events are queryable via the Governance API
-          (<code>/api/v1/governance/rbac-activity/</code>) and visible in the Audit Event Log.
-        </p>
-        <div class="row g-2">
-          {% for evt in rbac_events %}
-          <div class="col-md-4">
-            <div class="d-flex align-items-center p-2 border rounded">
-              <i class="bi bi-shield-lock text-warning me-2"></i>
-              <div>
-                <div class="small fw-semibold">{{ evt.label }}</div>
-                <code class="small text-muted">{{ evt.value }}</code>
-              </div>
-            </div>
-          </div>
-          {% endfor %}
+      <h3 class="docs-h3" id="template-tags">Template Tags</h3>
+      <div class="card mb-4">
+        <div class="card-header bg-white small"><code>{% templatetag openblock %} load rbac_tags {% templatetag closeblock %}</code></div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light"><tr><th>Tag</th><th>Description</th></tr></thead>
+            <tbody>{% for tag in rbac_template_tags %}<tr><td><code>{{ tag.tag }}</code></td><td class="small text-muted">{{ tag.description }}</td></tr>{% endfor %}</tbody>
+          </table>
         </div>
       </div>
-    </div>
 
-    <!-- ── Agent RBAC Guardrails ── -->
-    <hr class="my-4">
-    <h4 class="mb-3"><i class="bi bi-shield-exclamation me-1"></i> Agent RBAC Guardrails</h4>
-    <div class="alert alert-warning border-0 mb-4">
-      <i class="bi bi-info-circle me-1"></i>
-      <strong>AgentGuardrailsService</strong> is the central RBAC enforcement layer for the entire AI agent subsystem.
-      Every agent run, tool call, recommendation, and post-policy action is authorized before execution.
-      Denied attempts are logged as <code>AuditEvent</code> records for governance visibility.
-    </div>
+      <h3 class="docs-h3" id="agent-guardrails">Agent RBAC Guardrails</h3>
+      <div class="alert alert-warning border-0 py-2 mb-4 small">
+        <i class="bi bi-info-circle me-1"></i>
+        <strong>AgentGuardrailsService</strong> is the central RBAC enforcement layer for the entire AI agent subsystem.
+        Every agent run, tool call, recommendation, and post-policy action is authorized before execution.
+        All decisions (grant or deny) are logged as <code>AuditEvent</code> records.
+      </div>
 
-    <!-- System Agent Identity -->
-    <h5 class="mb-3"><i class="bi bi-person-gear me-1"></i> System Agent Identity</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <p class="mb-3">{{ system_agent_info.description }}</p>
-        <table class="table table-sm table-bordered mb-0">
-          <tbody>
+      <h6 class="mb-3 small fw-semibold">Guardrail Enforcement Flow (7 Gates)</h6>
+      {% for step in guardrail_flow %}
+      <div class="card border-start border-4 border-{{ step.color }} mb-2">
+        <div class="card-body py-2 d-flex align-items-center">
+          <span class="badge bg-{{ step.color }} rounded-pill me-3 fs-6">{{ step.step }}</span>
+          <i class="bi {{ step.icon }} text-{{ step.color }} fs-5 me-3"></i>
+          <div class="small">
+            <strong>{{ step.name }}</strong>
+            <div class="text-muted">{{ step.description }}</div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+
+      <h6 class="mt-4 mb-3 small fw-semibold">System Agent Identity</h6>
+      <div class="card mb-4">
+        <div class="card-body small">
+          <p class="text-muted mb-3">{{ system_agent_info.description }}</p>
+          <table class="table table-sm table-bordered mb-0">
             <tr><td class="fw-semibold" style="width:180px">Service Account</td><td><code>{{ system_agent_info.email }}</code></td></tr>
             <tr><td class="fw-semibold">Role Code</td><td><code>{{ system_agent_info.role_code }}</code></td></tr>
-            <tr><td class="fw-semibold">Role Rank</td><td>{{ system_agent_info.rank }} <span class="text-muted small">(highest — system-level)</span></td></tr>
-            <tr><td class="fw-semibold">Resolved By</td><td><code>AgentGuardrailsService.resolve_actor()</code></td></tr>
-            <tr><td class="fw-semibold">Audit Event</td><td><code>SYSTEM_AGENT_USED</code> — logged whenever this identity is resolved</td></tr>
-          </tbody>
-        </table>
+            <tr><td class="fw-semibold">Role Rank</td><td>{{ system_agent_info.rank }} <span class="text-muted">(highest -- system-level)</span></td></tr>
+            <tr><td class="fw-semibold">Audit Event</td><td><code>SYSTEM_AGENT_USED</code> -- logged whenever resolved</td></tr>
+          </table>
+        </div>
       </div>
-    </div>
 
-    <!-- Guardrail Enforcement Flow -->
-    <h5 class="mb-3"><i class="bi bi-arrow-right-circle me-1"></i> Guardrail Enforcement Flow</h5>
-    <div class="row g-2 mb-4">
-      {% for step in guardrail_flow %}
-      <div class="col-12">
-        <div class="card border-start border-4 border-{{ step.color }}">
-          <div class="card-body py-2 d-flex align-items-center">
-            <div class="me-3">
-              <span class="badge bg-{{ step.color }} rounded-pill fs-6">{{ step.step }}</span>
+      <h6 class="mb-3 small fw-semibold">Data-Scope Authorization</h6>
+      <div class="card mb-4">
+        <div class="card-body p-0">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light"><tr><th>Dimension</th><th>Scope Key</th><th>Actor Source</th><th>Result Source</th><th>Status</th></tr></thead>
+            <tbody>
+              {% for dim in data_scope_dimensions %}
+              <tr>
+                <td><strong class="small">{{ dim.dimension }}</strong></td>
+                <td><code class="small">{{ dim.scope_key }}</code></td>
+                <td class="small text-muted">{{ dim.source_actor }}</td>
+                <td class="small text-muted">{{ dim.source_result }}</td>
+                <td>{% if dim.status == "enforced" %}<span class="badge bg-success">Enforced</span>{% else %}<span class="badge bg-secondary">Pending</span>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h6 class="mb-3 small fw-semibold">Permission Maps</h6>
+      <div class="row g-3 mb-4">
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header bg-white small fw-semibold">Agent Permissions</div>
+            <div class="card-body p-0">
+              <table class="table table-sm table-borderless mb-0">
+                {% for agent in agents_info %}
+                <tr><td class="small ps-3"><code>{{ agent.type }}</code></td><td class="small pe-3"><code>{{ agent.required_permission }}</code></td></tr>
+                {% endfor %}
+              </table>
             </div>
-            <div class="me-3">
-              <i class="bi {{ step.icon }} text-{{ step.color }} fs-5"></i>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header bg-white small fw-semibold">Tool Permissions</div>
+            <div class="card-body p-0">
+              <table class="table table-sm table-borderless mb-0">
+                {% for tool in tools_info %}
+                <tr><td class="small ps-3"><strong>{{ tool.name }}</strong></td><td class="small pe-3"><code>{{ tool.required_permission|default:"--" }}</code></td></tr>
+                {% endfor %}
+              </table>
             </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header bg-white small fw-semibold">Recommendation Permissions</div>
+            <div class="card-body p-0">
+              <table class="table table-sm table-borderless mb-0">
+                {% for rp in recommendation_perms %}
+                <tr><td class="small ps-3"><strong>{{ rp.type }}</strong></td><td class="small pe-3"><code>{{ rp.permission }}</code></td></tr>
+                {% endfor %}
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h6 class="mb-3 small fw-semibold">Guardrail Audit Events (9 Types)</h6>
+      <div class="row g-2">
+        {% for evt in guardrail_events %}
+        <div class="col-md-4">
+          <div class="d-flex align-items-start p-2 border rounded">
+            <i class="bi bi-shield-{% if 'DENIED' in evt.value %}x text-danger{% elif 'SYSTEM' in evt.value %}gear text-info{% else %}check text-success{% endif %} me-2 mt-1"></i>
             <div>
-              <strong>{{ step.name }}</strong>
-              <div class="small text-muted">{{ step.description }}</div>
+              <div class="small fw-semibold">{{ evt.label }}</div>
+              <code class="small text-muted">{{ evt.value }}</code>
+              <div class="text-muted" style="font-size:.75rem">{{ evt.description }}</div>
             </div>
           </div>
         </div>
-      </div>
-      {% endfor %}
-    </div>
-
-    <!-- Data-Scope Authorization detail -->
-    <h5 class="mb-3"><i class="bi bi-funnel me-1"></i> Data-Scope Authorization</h5>
-    <div class="alert alert-info border-0 mb-3">
-      <i class="bi bi-info-circle me-1"></i>
-      Beyond role/permission checks, the orchestrator enforces <strong>data-scope boundaries</strong>.
-      Even if an actor has the correct permissions, they can only trigger agents for reconciliation
-      results that fall within their assigned business-unit and vendor scope.
-      Denial is recorded as a <code>GUARDRAIL_DENIED</code> AuditEvent. Admins and
-      <code>SYSTEM_AGENT</code> are always unrestricted.
-    </div>
-    <div class="card mb-3">
-      <div class="card-body p-0">
-        <table class="table table-sm table-bordered mb-0">
-          <thead class="table-light">
-            <tr>
-              <th style="width:18%">Dimension</th>
-              <th style="width:22%">Scope Key (UserRole.scope_json)</th>
-              <th>Actor Source</th>
-              <th>Result Source</th>
-              <th style="width:10%">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for dim in data_scope_dimensions %}
-            <tr>
-              <td><strong>{{ dim.dimension }}</strong></td>
-              <td><code>{{ dim.scope_key }}</code></td>
-              <td class="small text-muted">{{ dim.source_actor }}</td>
-              <td class="small text-muted">{{ dim.source_result }}</td>
-              <td>
-                {% if dim.status == "enforced" %}
-                  <span class="badge bg-success">Enforced</span>
-                {% else %}
-                  <span class="badge bg-secondary">Pending</span>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="card mb-4">
-      <div class="card-header bg-white"><strong>Assigning scope to a UserRole</strong></div>
-      <div class="card-body small text-muted">
-        <p class="mb-2">
-          Each <code>UserRole</code> record may carry an optional <code>scope_json</code>
-          (JSONField, nullable). Supported keys:
-        </p>
-        <pre class="bg-light border rounded p-2 mb-2" style="font-size:.8rem">{
-  "allowed_business_units": ["EU-RETAIL", "APAC-DISTRIB"],
-  "allowed_vendor_ids": [42, 107, 250]
-}</pre>
-        <p class="mb-0">
-          The effective scope is the <strong>union</strong> of <code>scope_json</code> entries across
-          all of the user's active roles. A user with no scope entries on any role (or with
-          <code>scope_json=null</code>) is considered <strong>unrestricted</strong>.
-          Admins and <code>SYSTEM_AGENT</code> bypass scope checks entirely.
-        </p>
+        {% endfor %}
       </div>
     </div>
 
-    <!-- Agent Permission Map -->
-    <h5 class="mb-3"><i class="bi bi-robot me-1"></i> Agent Permission Map</h5>
-    <div class="card mb-4">
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover table-bordered mb-0">
-          <thead class="table-light">
-            <tr><th>Agent Type</th><th>Required Permission</th></tr>
-          </thead>
-          <tbody>
-            {% for agent in agents_info %}
-            <tr>
-              <td><strong>{{ agent.label }}</strong> <span class="text-muted small">({{ agent.type }})</span></td>
-              <td><code>{{ agent.required_permission }}</code></td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+  </div><!-- /col-xl-9 -->
 
-    <!-- Tool Permission Map -->
-    <h5 class="mb-3"><i class="bi bi-wrench me-1"></i> Tool Permission Map</h5>
-    <div class="card mb-4">
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover table-bordered mb-0">
-          <thead class="table-light">
-            <tr><th>Tool</th><th>Required Permission</th></tr>
-          </thead>
-          <tbody>
-            {% for tool in tools_info %}
-            <tr>
-              <td><strong>{{ tool.name }}</strong></td>
-              <td><code>{{ tool.required_permission|default:"—" }}</code></td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+  <!-- ════════════════════════════════ TABLE OF CONTENTS ════════════════════════════════ -->
+  <div class="col-xl-3 col-lg-4 d-none d-lg-block">
+    <nav id="docs-toc" class="docs-toc ps-2 border-start">
+      <div class="toc-group-label">On this page</div>
+      <nav class="nav flex-column">
+        <a class="nav-link" href="#overview">Overview</a>
 
-    <!-- Recommendation Permission Map -->
-    <h5 class="mb-3"><i class="bi bi-lightbulb me-1"></i> Recommendation Permission Map</h5>
-    <div class="card mb-4">
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover table-bordered mb-0">
-          <thead class="table-light">
-            <tr><th>Recommendation Type</th><th>Required Permission</th></tr>
-          </thead>
-          <tbody>
-            {% for rp in recommendation_perms %}
-            <tr>
-              <td><strong>{{ rp.type }}</strong></td>
-              <td><code>{{ rp.permission }}</code></td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+        <div class="toc-group-label">Invoice Pipeline</div>
+        <a class="nav-link toc-child" href="#extraction-steps">Extraction Steps</a>
+        <a class="nav-link toc-child" href="#two-agent-arch">Two-Agent Architecture</a>
+        <a class="nav-link toc-child" href="#invoice-status-flow">Invoice Status Flow</a>
 
-    <!-- Post-Policy Action Permissions -->
-    <h5 class="mb-3"><i class="bi bi-gear me-1"></i> Post-Policy Action Permissions</h5>
-    <div class="card mb-4">
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover table-bordered mb-0">
-          <thead class="table-light">
-            <tr><th>Action</th><th>Required Permission</th></tr>
-          </thead>
-          <tbody>
-            {% for ap in action_perms %}
-            <tr>
-              <td><strong>{{ ap.action }}</strong></td>
-              <td><code>{{ ap.permission }}</code></td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+        <div class="toc-group-label">Case Lifecycle</div>
+        <a class="nav-link toc-child" href="#processing-paths">Processing Paths</a>
+        <a class="nav-link toc-child" href="#non-po-checks">Non-PO Validation</a>
+        <a class="nav-link toc-child" href="#state-machine">State Machine</a>
 
-    <!-- AgentRun RBAC Snapshot -->
-    <h5 class="mb-3"><i class="bi bi-database me-1"></i> AgentRun RBAC Snapshot Fields</h5>
-    <div class="card mb-4">
-      <div class="card-body">
-        <p class="small text-muted mb-3">
-          Every <code>AgentRun</code> record captures the RBAC context at execution time for full auditability.
-        </p>
-        <table class="table table-sm table-bordered mb-0">
-          <thead class="table-light">
-            <tr><th>Field</th><th>Description</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>actor_primary_role</code></td><td>The user's primary RBAC role at the time of the agent run</td></tr>
-            <tr><td><code>actor_roles_snapshot_json</code></td><td>JSON snapshot of all active roles the actor held</td></tr>
-            <tr><td><code>permission_source</code></td><td>How permission was resolved: ROLE, ADMIN_BYPASS, USER_OVERRIDE, SYSTEM_AGENT</td></tr>
-            <tr><td><code>access_granted</code></td><td>Boolean — whether the guardrail check granted access</td></tr>
-            <tr><td><code>prompt_version</code></td><td>Prompt template version used for this run — always written (empty string if version unavailable); a warning is logged when the version is missing</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+        <div class="toc-group-label">Agent System</div>
+        <a class="nav-link toc-child" href="#agent-types">Agent Types</a>
+        <a class="nav-link toc-child" href="#tools">Registered Tools</a>
+        <a class="nav-link toc-child" href="#recommendations">Recommendations</a>
+        <a class="nav-link toc-child" href="#recommendation-idempotency">Idempotency</a>
+        <a class="nav-link toc-child" href="#tool-grounding">Confidence Guards</a>
 
-    <!-- Guardrail Audit Events -->
-    <h5 class="mb-3"><i class="bi bi-journal-check me-1"></i> Guardrail Audit Events</h5>
-    <div class="card mb-3">
-      <div class="card-body">
-        <p class="small text-muted mb-3">
-          Every guardrail decision (grant or deny) is recorded as an <code>AuditEvent</code>.
-          These are queryable via the Governance API and visible in the Audit Event Log.
-        </p>
-        <div class="row g-2">
-          {% for evt in guardrail_events %}
-          <div class="col-md-4">
-            <div class="d-flex align-items-center p-2 border rounded">
-              <i class="bi bi-shield-{% if 'DENIED' in evt.value %}x text-danger{% elif 'SYSTEM' in evt.value %}gear text-info{% else %}check text-success{% endif %} me-2"></i>
-              <div>
-                <div class="small fw-semibold">{{ evt.label }}</div>
-                <code class="small text-muted">{{ evt.value }}</code>
-                <div class="small text-muted">{{ evt.description }}</div>
-              </div>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+        <div class="toc-group-label">Posting Pipeline</div>
+        <a class="nav-link toc-child" href="#posting-stages">Pipeline Stages</a>
+        <a class="nav-link toc-child" href="#posting-confidence">Confidence Scoring</a>
+        <a class="nav-link toc-child" href="#posting-status-flow">Status Flow</a>
+        <a class="nav-link toc-child" href="#posting-review-queues">Review Queues</a>
+        <a class="nav-link toc-child" href="#posting-mapping-engine">Mapping Engine</a>
+        <a class="nav-link toc-child" href="#posting-reference-import">Reference Import</a>
+        <a class="nav-link toc-child" href="#posting-governance">Governance</a>
+
+        <div class="toc-group-label">ERP Integration</div>
+        <a class="nav-link toc-child" href="#erp-connectors">Connectors</a>
+        <a class="nav-link toc-child" href="#erp-resolution-chain">Resolution Chain</a>
+        <a class="nav-link toc-child" href="#erp-resolver-types">Resolver Types</a>
+        <a class="nav-link toc-child" href="#erp-connector-factory">ConnectorFactory</a>
+        <a class="nav-link toc-child" href="#erp-audit-models">Audit Models</a>
+        <a class="nav-link toc-child" href="#erp-api">Resolve API</a>
+
+        <div class="toc-group-label">LLM Prompts</div>
+        <a class="nav-link toc-child" href="#prompt-extraction">Extraction</a>
+        <a class="nav-link toc-child" href="#prompt-agent">Agent</a>
+        <a class="nav-link toc-child" href="#prompt-case">Case</a>
+
+        <div class="toc-group-label">Audit &amp; Governance</div>
+        <a class="nav-link toc-child" href="#audit-events">Event Types</a>
+        <a class="nav-link toc-child" href="#audit-event-structure">Record Structure</a>
+        <a class="nav-link toc-child" href="#governance-api">Governance API</a>
+        <a class="nav-link toc-child" href="#traceability">Traceability</a>
+        <a class="nav-link toc-child" href="#agent-tracing">Agent Tracing</a>
+        <a class="nav-link toc-child" href="#span-hierarchy">Span Hierarchy</a>
+
+        <div class="toc-group-label">Observability</div>
+        <a class="nav-link toc-child" href="#decorators">Decorators</a>
+        <a class="nav-link toc-child" href="#instrumented-points">Entry Points</a>
+        <a class="nav-link toc-child" href="#logging">Logging</a>
+        <a class="nav-link toc-child" href="#pii-redaction">PII Redaction</a>
+        <a class="nav-link toc-child" href="#metrics">Metrics</a>
+
+        <div class="toc-group-label">RBAC</div>
+        <a class="nav-link toc-child" href="#permission-evaluation">Evaluation Order</a>
+        <a class="nav-link toc-child" href="#rbac-model">Data Model</a>
+        <a class="nav-link toc-child" href="#rbac-classes">Permission Classes</a>
+        <a class="nav-link toc-child" href="#template-tags">Template Tags</a>
+        <a class="nav-link toc-child" href="#agent-guardrails">Agent Guardrails</a>
+      </nav>
+    </nav>
+  </div><!-- /col-xl-3 -->
+
+</div><!-- /row -->
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  // Bootstrap ScrollSpy on document.body targeting the docs TOC
+  var bodySpy = new bootstrap.ScrollSpy(document.body, {
+    target: '#docs-toc',
+    offset: 80,
+    method: 'offset',
+  })
+
+  // Smooth scroll when a TOC link is clicked
+  document.querySelectorAll('#docs-toc a[href^="#"]').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault()
+      var target = document.querySelector(this.getAttribute('href'))
+      if (target) {
+        var y = target.getBoundingClientRect().top + window.scrollY - 75
+        window.scrollTo({ top: y, behavior: 'smooth' })
+      }
+    })
+  })
+}())
+</script>
 {% endblock %}

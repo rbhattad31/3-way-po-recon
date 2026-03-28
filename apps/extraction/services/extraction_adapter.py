@@ -42,6 +42,17 @@ class ExtractionResponse:
     ocr_page_count: int = 0
     ocr_duration_ms: int = 0
     ocr_char_count: int = 0
+    # Invoice category classification (new)
+    invoice_category: str = ""
+    category_confidence: float = 0.0
+    category_signals: Any = field(default_factory=list)
+    # Prompt composition metadata (new)
+    prompt_components: Any = field(default_factory=dict)
+    prompt_hash: str = ""
+    # Response repair metadata (new)
+    was_repaired: bool = False
+    repair_actions: Any = field(default_factory=list)
+    repair_warnings: Any = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -82,9 +93,39 @@ class InvoiceExtractionAdapter:
             logger.info("OCR completed: %d characters, %d pages from %s", ocr_char_count, ocr_page_count, file_path)
             print("Document extraction results:", ocr_text)
 
-            # Step 2: LLM structured extraction via Invoice Extraction Agent
-            raw_json, agent_run_id = self._agent_extract(ocr_text, actor_user_id=actor_user_id)
+            # Step 2a: Invoice category classification (new)
+            category_result = self._classify_category(ocr_text)
+
+            # Step 2b: Compose extraction prompt from modular parts (new)
+            composition = self._compose_prompt(category_result)
+
+            # Step 2c: LLM structured extraction via Invoice Extraction Agent
+            raw_json, agent_run_id = self._agent_extract(
+                ocr_text,
+                actor_user_id=actor_user_id,
+                composed_prompt=composition.final_prompt,
+                prompt_metadata=self._build_prompt_metadata(category_result, composition),
+            )
             logger.info("Agent extraction completed (agent_run_id=%s)", agent_run_id)
+
+            # Step 2d: Deterministic response repair (new)
+            repair_result = self._repair_response(raw_json, ocr_text, category_result)
+            raw_json = repair_result.repaired_json
+            if repair_result.was_repaired:
+                logger.info(
+                    "Response repair applied (%d actions): %s",
+                    len(repair_result.repair_actions),
+                    "; ".join(repair_result.repair_actions[:3]),
+                )
+
+            # Embed repair metadata inside raw_json for persistence (stored in ExtractionResult.raw_response)
+            if repair_result.repair_actions or repair_result.warnings:
+                raw_json["_repair"] = {
+                    "was_repaired": repair_result.was_repaired,
+                    "repair_actions": repair_result.repair_actions,
+                    "warnings": repair_result.warnings,
+                }
+
             elapsed = int((time.time() - start) * 1000)
 
             return ExtractionResponse(
@@ -99,6 +140,17 @@ class InvoiceExtractionAdapter:
                 ocr_page_count=ocr_page_count,
                 ocr_duration_ms=ocr_duration_ms,
                 ocr_char_count=ocr_char_count,
+                # Category metadata
+                invoice_category=category_result.category if category_result else "",
+                category_confidence=category_result.confidence if category_result else 0.0,
+                category_signals=list(category_result.signals) if category_result else [],
+                # Prompt composition metadata
+                prompt_components=dict(composition.components),
+                prompt_hash=composition.prompt_hash,
+                # Repair metadata
+                was_repaired=repair_result.was_repaired,
+                repair_actions=list(repair_result.repair_actions),
+                repair_warnings=list(repair_result.warnings),
             )
         except Exception as exc:
             elapsed = int((time.time() - start) * 1000)
@@ -197,7 +249,73 @@ class InvoiceExtractionAdapter:
     # Step 2: Azure OpenAI LLM structured extraction
     # ------------------------------------------------------------------
     @staticmethod
-    def _agent_extract(ocr_text: str, *, actor_user_id: Optional[int] = None) -> tuple:
+    def _classify_category(ocr_text: str):
+        """Classify OCR text into goods/service/travel. Fail-silent — returns None on error."""
+        try:
+            from apps.extraction_core.services.invoice_category_classifier import InvoiceCategoryClassifier
+            return InvoiceCategoryClassifier.classify(ocr_text)
+        except Exception as exc:
+            logger.warning("InvoiceCategoryClassifier failed (using no category): %s", exc)
+            return None
+
+    @staticmethod
+    def _compose_prompt(category_result):
+        """Compose modular extraction prompt. Fail-silent — falls back to base prompt."""
+        try:
+            from apps.extraction.services.invoice_prompt_composer import InvoicePromptComposer
+            category = category_result.category if category_result else None
+            return InvoicePromptComposer.compose(invoice_category=category)
+        except Exception as exc:
+            logger.warning("InvoicePromptComposer failed (using fallback prompt): %s", exc)
+            # Return an empty composition — agent will use its own system_prompt property
+            from apps.extraction.services.invoice_prompt_composer import PromptComposition
+            return PromptComposition()
+
+    @staticmethod
+    def _repair_response(raw_json, ocr_text: str, category_result):
+        """Apply deterministic repair to LLM output. Fail-silent — returns original on error."""
+        try:
+            from apps.extraction.services.response_repair_service import ResponseRepairService
+            category = category_result.category if category_result else None
+            return ResponseRepairService.repair(
+                raw_json,
+                ocr_text=ocr_text,
+                invoice_category=category,
+            )
+        except Exception as exc:
+            logger.warning("ResponseRepairService failed (pass-through): %s", exc)
+            from apps.extraction.services.response_repair_service import RepairResult
+            return RepairResult(repaired_json=raw_json or {})
+
+    @staticmethod
+    def _build_prompt_metadata(category_result, composition) -> dict:
+        """Build the prompt_metadata dict passed to the agent via ctx.extra."""
+        components = composition.components if composition else {}
+        # Extract individual component keys for Langfuse
+        base_key = next((k for k in components if "base" in k or "system" in k), "")
+        cat_key = next((k for k in components if "category" in k), "")
+        country_key = next((k for k in components if "country" in k), "")
+        return {
+            "invoice_category": category_result.category if category_result else "",
+            "invoice_category_confidence": category_result.confidence if category_result else 0.0,
+            "base_prompt_key": base_key,
+            "base_prompt_version": components.get(base_key, "") if base_key else "",
+            "category_prompt_key": cat_key,
+            "category_prompt_version": components.get(cat_key, "") if cat_key else "",
+            "country_prompt_key": country_key,
+            "country_prompt_version": components.get(country_key, "") if country_key else "",
+            "prompt_hash": composition.prompt_hash if composition else "",
+            "components": dict(components),
+        }
+
+    @staticmethod
+    def _agent_extract(
+        ocr_text: str,
+        *,
+        actor_user_id: Optional[int] = None,
+        composed_prompt: str = "",
+        prompt_metadata: Optional[Dict[str, Any]] = None,
+    ) -> tuple:
         """Run the Invoice Extraction Agent on OCR text.
 
         Returns:
@@ -212,11 +330,17 @@ class InvoiceExtractionAdapter:
         if not agent_cls:
             raise RuntimeError("Invoice Extraction Agent not found in registry")
 
+        extra: Dict[str, Any] = {"ocr_text": ocr_text}
+        if composed_prompt:
+            extra["composed_prompt"] = composed_prompt
+        if prompt_metadata:
+            extra["prompt_metadata"] = prompt_metadata
+
         ctx = AgentContext(
             reconciliation_result=None,
             invoice_id=0,  # Invoice not yet created
             actor_user_id=actor_user_id,
-            extra={"ocr_text": ocr_text},
+            extra=extra,
         )
 
         agent = agent_cls()

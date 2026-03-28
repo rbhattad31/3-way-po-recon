@@ -40,22 +40,42 @@
             <input type="date" class="form-control form-control-sm edit-header" data-field="invoice_date"
                    value="{% if invoice.invoice_date %}{{ invoice.invoice_date|date:'Y-m-d' }}{% endif %}">
           </div>
-          <div class="col-sm-2">
+          <div class="col-sm-4">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Due Date</label>
+            <input type="date" class="form-control form-control-sm edit-header" data-field="due_date"
+                   value="{% if invoice.due_date %}{{ invoice.due_date|date:'Y-m-d' }}{% endif %}">
+          </div>
+          <div class="col-sm-4">
             <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Currency</label>
             <input type="text" class="form-control form-control-sm edit-header" data-field="currency"
                    value="{{ invoice.currency|default:'USD' }}" maxlength="10">
           </div>
-          <div class="col-sm-2">
+          <div class="col-sm-6">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Vendor Tax ID (GSTIN/VAT)</label>
+            <input type="text" class="form-control form-control-sm edit-header" data-field="vendor_tax_id"
+                   value="{{ invoice.vendor_tax_id|default:'' }}">
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Buyer / Bill To</label>
+            <input type="text" class="form-control form-control-sm edit-header" data-field="buyer_name"
+                   value="{{ invoice.buyer_name|default:'' }}">
+          </div>
+          <div class="col-sm-3">
             <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Subtotal</label>
             <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="subtotal"
                    value="{% if invoice.subtotal %}{{ invoice.subtotal }}{% endif %}">
           </div>
-          <div class="col-sm-2">
-            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Tax</label>
+          <div class="col-sm-3">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Tax Rate %</label>
+            <input type="number" step="0.0001" class="form-control form-control-sm edit-header" data-field="tax_percentage"
+                   value="{% if invoice.tax_percentage %}{{ invoice.tax_percentage }}{% endif %}">
+          </div>
+          <div class="col-sm-3">
+            <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Tax Amount</label>
             <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="tax_amount"
                    value="{% if invoice.tax_amount %}{{ invoice.tax_amount }}{% endif %}">
           </div>
-          <div class="col-sm-2">
+          <div class="col-sm-3">
             <label class="form-label mb-1" style="font-size:.7rem;font-weight:600;text-transform:uppercase;color:var(--bs-secondary-color)">Total</label>
             <input type="number" step="0.01" class="form-control form-control-sm edit-header" data-field="total_amount"
                    value="{% if invoice.total_amount %}{{ invoice.total_amount }}{% endif %}">
@@ -75,7 +95,8 @@
                 <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color)">Description</th>
                 <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:75px">Qty</th>
                 <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:90px">Unit Price</th>
-                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:80px">Tax</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:70px">Tax %</th>
+                <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:80px">Tax Amt</th>
                 <th style="padding:.3rem;font-size:.65rem;text-transform:uppercase;color:var(--bs-secondary-color);width:90px">Amount</th>
               </tr>
             </thead>
@@ -86,6 +107,7 @@
                 <td style="padding:.3rem"><input type="text" class="form-control form-control-sm edit-line" data-field="description" value="{{ line.description|default:'' }}"></td>
                 <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="quantity" value="{% if line.quantity %}{{ line.quantity }}{% endif %}"></td>
                 <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="unit_price" value="{% if line.unit_price %}{{ line.unit_price }}{% endif %}"></td>
+                <td style="padding:.3rem"><input type="number" step="0.0001" class="form-control form-control-sm edit-line" data-field="tax_percentage" value="{% if line.tax_percentage %}{{ line.tax_percentage }}{% endif %}"></td>
                 <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="tax_amount" value="{% if line.tax_amount %}{{ line.tax_amount }}{% endif %}"></td>
                 <td style="padding:.3rem"><input type="number" step="0.01" class="form-control form-control-sm edit-line" data-field="line_amount" value="{% if line.line_amount %}{{ line.line_amount }}{% endif %}"></td>
               </tr>

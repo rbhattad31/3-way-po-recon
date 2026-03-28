@@ -268,6 +268,19 @@ class InvoiceExtractionAgent(BaseAgent):
     def allowed_tools(self) -> List[str]:
         return []  # Single-shot extraction — no tools needed
 
+    def _init_messages(self, ctx: AgentContext, agent_run) -> List[Dict[str, str]]:
+        """Use composed_prompt from ctx.extra if provided, otherwise fall back to system_prompt."""
+        from apps.agents.services.llm_client import LLMMessage  # local to avoid circular import
+        composed = ctx.extra.get("composed_prompt")
+        sys_msg = composed if composed else self.system_prompt
+        user_msg = self.build_user_message(ctx)
+        self._save_message(agent_run, "system", sys_msg, 0)
+        self._save_message(agent_run, "user", user_msg, 1)
+        return [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg},
+        ]
+
     def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
         data = _parse_agent_json(content)
         # Store the raw extracted JSON in evidence for downstream consumption
@@ -338,12 +351,25 @@ class InvoiceExtractionAgent(BaseAgent):
         except Exception:
             _lf_span = None
         self.llm._langfuse_span = _lf_span
+        # Build base metadata then merge prompt-composition metadata from ctx.extra
+        _prompt_meta = ctx.extra.get("prompt_metadata", {})
         self.llm._langfuse_metadata = {
             "agent_type": str(self.agent_type),
             "invoice_id": ctx.invoice_id,
             "trace_id": ctx.trace_id or "",
             "agent_run_id": agent_run.pk,
             "ocr_char_count": len(ocr_text),
+            # Prompt composition fields (populated by InvoiceExtractionAdapter)
+            "invoice_category": _prompt_meta.get("invoice_category", ""),
+            "invoice_category_confidence": _prompt_meta.get("invoice_category_confidence", 0.0),
+            "base_prompt_key": _prompt_meta.get("base_prompt_key", ""),
+            "base_prompt_version": _prompt_meta.get("base_prompt_version", ""),
+            "category_prompt_key": _prompt_meta.get("category_prompt_key", ""),
+            "category_prompt_version": _prompt_meta.get("category_prompt_version", ""),
+            "country_prompt_key": _prompt_meta.get("country_prompt_key", ""),
+            "country_prompt_version": _prompt_meta.get("country_prompt_version", ""),
+            "prompt_hash": _prompt_meta.get("prompt_hash", ""),
+            "schema_code": _prompt_meta.get("schema_code", ""),
         }
 
         try:
@@ -366,15 +392,20 @@ class InvoiceExtractionAgent(BaseAgent):
             output = self.interpret_response(llm_resp.content or "", ctx)
             self._finalise_run(agent_run, output, start, agent_def=agent_def)
 
-            # Close Langfuse span with extraction output.
+            # Close Langfuse span with extraction output + prompt metadata.
             if _lf_span is not None:
                 try:
+                    _prompt_meta = ctx.extra.get("prompt_metadata", {})
                     end_span(_lf_span, output={
                         "confidence": output.confidence,
                         "vendor_name": output.evidence.get("vendor_name", ""),
                         "invoice_number": output.evidence.get("invoice_number", ""),
                         "total_amount": output.evidence.get("total_amount", ""),
                         "line_items_count": len(output.evidence.get("line_items", [])),
+                        # Prompt composition summary
+                        "invoice_category": _prompt_meta.get("invoice_category", ""),
+                        "prompt_hash": _prompt_meta.get("prompt_hash", ""),
+                        "prompt_components_count": len(_prompt_meta.get("components", {})),
                     })
                     if _own_trace and _lf_trace:
                         score_trace(
