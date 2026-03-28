@@ -47,6 +47,31 @@ class ValidationResult:
         return [i for i in self.issues if i.severity == "warning"]
 
 
+import re as _re
+
+# Keywords indicating precious/semi-precious stones (GST 0.25% slab, Chapter 71).
+# HSN headings 7102 (diamond), 7103 (precious/semi-precious stones), 7104 (synthetic).
+_PRECIOUS_STONE_PATTERN = _re.compile(
+    r"\b(diamond|diamonds|gemstone|gem\s*stone|gems|precious\s+stone|semi.?precious"
+    r"|ruby|rubies|emerald|sapphire|pearl|pearls|topaz|opal|amethyst"
+    r"|tanzanite|alexandrite|spinel|tourmaline|rough\s+stone|rough\s+gem"
+    r"|71\s*0[234])\b",
+    _re.IGNORECASE,
+)
+
+
+def _is_precious_stone_invoice(inv: NormalizedInvoice) -> bool:
+    """Return True if any line item description or vendor name contains
+    precious/semi-precious stone keywords that qualify for the 0.25% GST slab."""
+    texts = [inv.vendor_name_normalized]
+    for li in inv.line_items:
+        texts.append(getattr(li, "description", "") or "")
+        texts.append(getattr(li, "normalized_description", "") or "")
+        texts.append(getattr(li, "raw_description", "") or "")
+    combined = " ".join(t for t in texts if t)
+    return bool(_PRECIOUS_STONE_PATTERN.search(combined))
+
+
 class ValidationService:
     """Run validation rules on a NormalizedInvoice."""
 
@@ -88,16 +113,22 @@ class ValidationService:
         # breakdown keys present), tax_percentage must be one of the defined
         # Indian GST slabs.  Any other value means the LLM hallucinated or
         # mis-computed the rate and the user must correct it manually.
+        #
+        # Special case: 0.25% is valid for precious/semi-precious stones and
+        # diamonds (GST Schedule I, Chapter 71 HSN headings 7102-7104).
         _GST_VALID_RATES = {0, 3, 5, 12, 18, 28}
         tax_breakdown = inv.tax_breakdown or {}
         _is_gst_invoice = any(k in tax_breakdown for k in ("cgst", "sgst", "igst"))
         if _is_gst_invoice and inv.tax_percentage is not None:
             _rate = float(inv.tax_percentage)
-            if _rate not in _GST_VALID_RATES:
+            _effective_valid = set(_GST_VALID_RATES)
+            if _rate == 0.25 and _is_precious_stone_invoice(inv):
+                _effective_valid.add(0.25)
+            if _rate not in _effective_valid:
                 result.add_error(
                     "tax_percentage",
                     f"Tax rate {_rate}% is not a valid Indian GST slab "
-                    f"(must be one of {sorted(_GST_VALID_RATES)}). "
+                    f"(must be one of {sorted(_effective_valid)}). "
                     f"Please correct this field manually.",
                 )
 

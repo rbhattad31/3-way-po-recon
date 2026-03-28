@@ -65,7 +65,7 @@ class InvoiceExtractionAdapter:
     """Two-step extraction: Azure Document Intelligence OCR -> Azure OpenAI LLM."""
 
     @observed_service("extraction.extract", entity_type="DocumentUpload", audit_event="EXTRACTION_STARTED")
-    def extract(self, file_path: str, *, actor_user_id: Optional[int] = None) -> ExtractionResponse:
+    def extract(self, file_path: str, *, actor_user_id: Optional[int] = None, document_upload_id: Optional[int] = None) -> ExtractionResponse:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
         try:
@@ -105,6 +105,7 @@ class InvoiceExtractionAdapter:
                 actor_user_id=actor_user_id,
                 composed_prompt=composition.final_prompt,
                 prompt_metadata=self._build_prompt_metadata(category_result, composition),
+                document_upload_id=document_upload_id,
             )
             logger.info("Agent extraction completed (agent_run_id=%s)", agent_run_id)
 
@@ -315,6 +316,7 @@ class InvoiceExtractionAdapter:
         actor_user_id: Optional[int] = None,
         composed_prompt: str = "",
         prompt_metadata: Optional[Dict[str, Any]] = None,
+        document_upload_id: Optional[int] = None,
     ) -> tuple:
         """Run the Invoice Extraction Agent on OCR text.
 
@@ -357,6 +359,14 @@ class InvoiceExtractionAdapter:
 
         if not raw_json:
             raise RuntimeError("Invoice Extraction Agent returned empty extraction data")
+
+        # Stamp the upload FK so we can aggregate tokens across all reprocess runs
+        if document_upload_id and agent_run.pk:
+            try:
+                from apps.agents.models import AgentRun as _AgentRun
+                _AgentRun.objects.filter(pk=agent_run.pk).update(document_upload_id=document_upload_id)
+            except Exception:
+                pass
 
         return raw_json, agent_run.pk
 

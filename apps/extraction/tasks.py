@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("extraction.process_invoice_upload", audit_event="EXTRACTION_STARTED", entity_type="DocumentUpload")
-def process_invoice_upload_task(self, upload_id: int) -> dict:
+def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "document_upload", credit_ref_id: str = "") -> dict:
     """End-to-end extraction pipeline for a single DocumentUpload.
 
     Steps executed sequentially:
@@ -72,6 +72,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             extraction_resp: ExtractionResponse = adapter.extract(
                 file_path,
                 actor_user_id=upload.uploaded_by_id,
+                document_upload_id=upload.pk,
             )
         finally:
             import os
@@ -83,7 +84,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         if not extraction_resp.success:
             _fail_upload(upload, extraction_resp.error_message)
             ExtractionResultPersistenceService.save(upload, None, extraction_resp)
-            _refund_credit_for_upload(upload)
+            _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
             return {"status": "error", "message": extraction_resp.error_message}
 
         # 1a. Document type classification — reject non-invoices early
@@ -96,7 +97,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
                 f"Please upload this document through the appropriate channel."
             )
             _fail_upload(upload, reject_msg)
-            _refund_credit_for_upload(upload)
+            _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
             logger.info(
                 "Upload %s rejected: classified as %s (confidence=%.2f, keywords=%s)",
                 upload_id, doc_type_result.document_type,
@@ -328,7 +329,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         )
 
         # ── Credit: consume reserved credit on successful extraction ──
-        _consume_credit_for_upload(upload)
+        _consume_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
 
         return {
             "status": "ok",
@@ -344,7 +345,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         logger.exception("Extraction pipeline failed for upload %s", upload_id)
         _fail_upload(upload, str(exc))
         # ── Credit: refund reserved credit — extraction failed (OCR/pipeline error) ──
-        _refund_credit_for_upload(upload)
+        _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
         # Audit: extraction failed
         try:
             from apps.auditlog.services import AuditService
@@ -443,15 +444,16 @@ def _fail_upload(upload: DocumentUpload, message: str) -> None:
             logger.warning("Blob move to exception/ failed: %s", mv_err)
 
 
-def _consume_credit_for_upload(upload: DocumentUpload) -> None:
+def _consume_credit_for_upload(upload: DocumentUpload, credit_ref_type: str = "document_upload", credit_ref_id: str = "") -> None:
     """Consume reserved credit after successful extraction.
 
-    Policy: ChargePolicy.for_extraction_success() → CONSUME.
-    reference_type='document_upload', reference_id=upload.pk.
-    Idempotent — CreditService.consume() skips if already consumed.
+    Policy: ChargePolicy.for_extraction_success() -> CONSUME.
+    Uses credit_ref_type/credit_ref_id to match the reservation made by the view.
+    Idempotent -- CreditService.consume() skips if already consumed for that reference.
     """
     if not upload.uploaded_by_id:
         return
+    ref_id = credit_ref_id or str(upload.pk)
     try:
         from apps.extraction.services.credit_service import CreditService
         from apps.extraction.credit_models import UserCreditAccount
@@ -459,22 +461,24 @@ def _consume_credit_for_upload(upload: DocumentUpload) -> None:
             return
         CreditService.consume(
             upload.uploaded_by, credits=1,
-            reference_type="document_upload",
-            reference_id=str(upload.pk),
+            reference_type=credit_ref_type,
+            reference_id=ref_id,
             remarks=f"Consumed for extraction task upload_id={upload.pk}",
         )
     except Exception as credit_exc:
         logger.warning("Credit consume failed for upload %s: %s", upload.pk, credit_exc)
 
 
-def _refund_credit_for_upload(upload: DocumentUpload) -> None:
+def _refund_credit_for_upload(upload: DocumentUpload, credit_ref_type: str = "document_upload", credit_ref_id: str = "") -> None:
     """Refund reserved credit when extraction fails (OCR/pipeline error).
 
-    Policy: ChargePolicy.for_ocr_failure() / for_pipeline_failure() / for_non_invoice_document() → REFUND.
-    Idempotent — CreditService.refund() skips if already refunded.
+    Policy: ChargePolicy.for_ocr_failure() / for_pipeline_failure() / for_non_invoice_document() -> REFUND.
+    Uses credit_ref_type/credit_ref_id to match the reservation made by the view.
+    Idempotent -- CreditService.refund() skips if already refunded for that reference.
     """
     if not upload.uploaded_by_id:
         return
+    ref_id = credit_ref_id or str(upload.pk)
     try:
         from apps.extraction.services.credit_service import CreditService
         from apps.extraction.credit_models import UserCreditAccount
@@ -482,8 +486,8 @@ def _refund_credit_for_upload(upload: DocumentUpload) -> None:
             return
         CreditService.refund(
             upload.uploaded_by, credits=1,
-            reference_type="document_upload",
-            reference_id=str(upload.pk),
+            reference_type=credit_ref_type,
+            reference_id=ref_id,
             remarks=f"Refund for failed extraction task upload_id={upload.pk}",
         )
     except Exception as credit_exc:

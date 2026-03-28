@@ -463,10 +463,17 @@ else:
 
 **Stage 2 — LLM Extraction**:
 ```python
-raw_json, agent_run_id = _agent_extract(ocr_text)
+raw_json, agent_run_id = _agent_extract(ocr_text, document_upload_id=document_upload_id)
 ```
 - Instantiates `InvoiceExtractionAgent()`
 - Returns JSON + `AgentRun.pk` for traceability
+- After the `AgentRun` record is created, the method immediately stamps `AgentRun.document_upload_id` via a targeted `UPDATE` (`AgentRun.objects.filter(pk=...).update(document_upload_id=...)`) so that all runs for a given upload are queryable via `AgentRun.objects.filter(document_upload_id=...)`
+
+**`extract()` signature** (`InvoiceExtractionAdapter.extract`):
+```python
+def extract(self, file_path: str, document_upload_id: Optional[int] = None) -> ExtractionResponse:
+```
+The `document_upload_id` parameter is supplied by the Celery task (`process_invoice_upload_task`) and passed through to `_agent_extract()`. It is optional — if `None`, the AgentRun FK is simply not set (backward-compatible).
 
 **Engine name tracking**: `engine_name` is set to `"azure_di_gpt4o_agent"` when OCR is used, or `"native_pdf_gpt4o_agent"` when native extraction is used. This allows filtering and comparing accuracy by extraction method.
 
@@ -544,6 +551,7 @@ Returns `ValidationResult` with `is_valid`, `errors`, and `warnings`.
 - `normalized_invoice_number` missing
 - `vendor_name_normalized` missing
 - `total_amount` missing or non-numeric
+- `tax_percentage` is not a valid Indian GST slab when `tax_breakdown` contains `cgst`/`sgst`/`igst` keys (see GST rate validation below)
 
 **Warnings** (non-blocking):
 - `normalized_po_number` missing (will require agent lookup)
@@ -552,6 +560,25 @@ Returns `ValidationResult` with `is_valid`, `errors`, and `warnings`.
 - No line items extracted
 - Low extraction confidence (< `EXTRACTION_CONFIDENCE_THRESHOLD` = 0.75)
 - Line item missing quantity / unit_price / description
+
+#### GST Rate Validation
+
+When a GST invoice is detected (any of `cgst`, `sgst`, `igst` keys present in `tax_breakdown`), `tax_percentage` must be one of the recognised Indian GST slabs. Any value outside the valid set causes a blocking **error** (invoice status → INVALID); the user must correct the field manually.
+
+**Standard slabs**: `{0, 3, 5, 12, 18, 28}` percent.
+
+**Special case — 0.25% for precious/semi-precious stones**: The 0.25% slab (GST Schedule I, Chapter 71, HSN headings 7102–7104) is permitted **only** when `_is_precious_stone_invoice()` returns `True`. This helper scans all line item description fields (`description`, `normalized_description`, `raw_description`) and the vendor name for keywords:
+
+> `diamond`, `diamonds`, `gemstone`, `gem stone`, `gems`, `precious stone`, `semi-precious`, `ruby`, `rubies`, `emerald`, `sapphire`, `pearl`, `pearls`, `topaz`, `opal`, `amethyst`, `tanzanite`, `alexandrite`, `spinel`, `tourmaline`, `rough stone`, `rough gem`, and Chapter 71 HSN code substrings `7102`–`7104`.
+
+If 0.25% is present for an invoice that does not match any precious stone keyword, it is still rejected as invalid.
+
+| Invoice type | Valid `tax_percentage` values |
+|---|---|
+| Standard GST invoice | `{0, 3, 5, 12, 18, 28}` |
+| GST invoice with precious stone line items | `{0, 0.25, 3, 5, 12, 18, 28}` |
+
+**Repair service alignment**: `ResponseRepairService._GST_STANDARD_RATES` is `(0, 0.25, 3, 5, 12, 18, 28)` so that `_extract_gst_rate_from_ocr()` and `_repair_tax_percentage()` accept 0.25% as a valid OCR-scanned rate without triggering an additional repair action.
 
 ### 5.4a ExtractionConfidenceScorer
 
@@ -2265,7 +2292,9 @@ User clicks Upload → check_can_reserve() → reserve(1, ref_type="document_upl
   → OCR Failure: refund(1) — no charge for failed extraction
 ```
 
-**Reprocess flow**: `extraction_rerun` also reserves 1 credit before re-extraction (`ref_type="reprocess"`, `ref_id=upload.pk`). Blocked if the current approval is already finalized (`APPROVED`/`AUTO_APPROVED`).
+**Reprocess flow**: `extraction_rerun` also reserves 1 credit before re-extraction (`ref_type="reprocess"`, `ref_id=f"reprocess-{upload.pk}-{timestamp}"`). A unique timestamp-based `reference_id` is generated on every reprocess attempt so that the idempotency guard does not block subsequent reprocesses of the same upload. Blocked if the current approval is already finalized (`APPROVED`/`AUTO_APPROVED`).
+
+The task receives `credit_ref_type` and `credit_ref_id` as explicit kwargs and threads them through all four consume/refund call sites (OCR failure refund, pipeline failure consume, success consume, persist failure consume). This ensures the correct unique reference is used regardless of which pipeline branch completes.
 
 ### Credit Decision Table — ChargePolicy
 
@@ -2279,7 +2308,7 @@ All charge/refund decisions are centralized in `ChargePolicy` (`apps/extraction/
 | Parse / normalize / validate failure | `for_pipeline_failure()` | REFUND | `document_upload` | `upload.pk` |
 | Duplicate invoice detected | `for_duplicate_invoice()` | CONSUME | `document_upload` | `upload.pk` |
 | Unsupported jurisdiction / schema | `for_unsupported_jurisdiction()` | REFUND | `document_upload` | `upload.pk` |
-| Manual reprocess (re-extraction) | `for_reprocess()` | CONSUME | `reprocess` | `upload.pk` |
+| Manual reprocess (re-extraction) | `for_reprocess()` | CONSUME | `reprocess` | `f"reprocess-{upload.pk}-{timestamp}"` (unique per attempt) |
 | Rejection after human review | `for_rejection_after_review()` | NOOP | — | — |
 
 ### Credit Pipeline Integration
@@ -2299,7 +2328,7 @@ The Celery task (`process_invoice_upload_task`) determines credit outcome by pip
 
 > **Sync fallback path** (no blob storage): OCR success → consume, extraction failure → refund.
 
-**Idempotency**: `reserve()`, `consume()`, and `refund()` check for existing transactions with the same `reference_type + reference_id` before creating duplicates. This ensures safe retries and Celery retry safety.
+**Idempotency**: `reserve()`, `consume()`, and `refund()` check for existing transactions with the same `reference_type + reference_id` before creating duplicates. This ensures safe retries and Celery retry safety. For initial uploads the `reference_id` is `str(upload.pk)`; for reprocesses it is `f"reprocess-{upload.pk}-{timestamp}"` (unique per attempt) so each reprocess attempt is independently idempotent without blocking subsequent ones.
 
 **Invariant enforcement**: All credit mutations validate `balance_credits >= 0`, `reserved_credits >= 0`, `monthly_used >= 0`, and `balance_credits >= reserved_credits`. Violations raise `CreditAccountingError`.
 
@@ -2357,23 +2386,33 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 1. `_ocr_document()` returns `(text, page_count, duration_ms)` — page count and duration captured at OCR time
 2. `ExtractionResponse` carries `ocr_page_count`, `ocr_duration_ms`, `ocr_char_count`
 3. `ExtractionResultPersistenceService` saves OCR fields to `ExtractionResult` model
-4. Console view calculates: `ocr_cost = ocr_pages × $1.50 / 1,000` and `llm_cost` from token usage
-5. Template displays 5 KPI cards (Total Cost, LLM Cost, OCR Cost, Total Tokens, OCR Pages) + cost breakdown
+4. Console view queries **all** `AgentRun` rows linked to the upload via `AgentRun.objects.filter(document_upload_id=..., agent_type=INVOICE_EXTRACTION)` and aggregates token fields using `SUM()` across every run (initial upload + all reprocesses)
+5. Console calculates: `ocr_cost = ocr_pages x $1.50 / 1,000 x run_count` (OCR is re-run on every reprocess) and `llm_cost` from the aggregated token totals
+
+### Multi-Run Aggregation
+
+Each reprocess re-runs the full pipeline (OCR + LLM). `AgentRun.document_upload` (FK, indexed) links every run back to the originating `DocumentUpload`. The console therefore shows **cumulative** token usage and cost across all runs, not just the most recent.
+
+| Data | Source | Behavior |
+|------|--------|----------|
+| `prompt_tokens`, `completion_tokens`, `total_tokens` | `SUM()` across all `AgentRun` rows for the upload | Cumulative across all runs |
+| OCR cost | `ocr_page_count x $1.50/1000 x run_count` | Multiplied by number of extraction runs |
+| `run_count` | `AgentRun.objects.filter(document_upload_id=...).count()` | Shown in "Extraction Runs" KPI card |
 
 ### Console Cost Panel
 
 **Template**: `templates/extraction/console/_cost_tokens_panel.html`
 
 **KPI Cards** (5):
-- Total Cost (LLM + OCR) — warning color
+- Total Cost (LLM + OCR, all runs) — warning color
 - LLM Cost — primary color
 - OCR Cost — info color
-- Total Tokens — success color
-- OCR Pages — secondary color
+- Total Tokens (all runs) — success color
+- Extraction Runs (`run_count`) — secondary color
 
 **Cost Breakdown**: Side-by-side LLM vs OCR bars with dollar amounts and detail (token counts / page+char counts)
 
-**Token Breakdown**: Stacked progress bar (prompt vs completion tokens)
+**Token Breakdown**: Stacked progress bar (prompt vs completion tokens, summed across all runs)
 
 **Execution Details**: LLM Model, OCR Engine, Agent Type, Status, OCR Duration, LLM Duration, Timestamps, Pricing rates, Agent Run ID
 
@@ -2599,6 +2638,9 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 - **Auto-approve not working?** Check both `EXTRACTION_AUTO_APPROVE_ENABLED=true` AND `EXTRACTION_AUTO_APPROVE_THRESHOLD` < 1.0 (e.g., 0.95).
 - **Agent 400 errors from OpenAI?** Ensure tool-calling messages follow OpenAI format: assistant messages include `tool_calls` array, tool responses include `tool_call_id`.
 - **Approval queue empty?** Invoices only appear when `status=PENDING_APPROVAL` — check that the extraction pipeline completed successfully and auto-approve didn't trigger.
+- **Recovery lane not triggering?** Check `raw_response["_decision_codes"]` — recovery only fires for named codes (`INV_NUM_UNRECOVERABLE`, `TOTAL_MISMATCH_HARD`, etc.), not for generic low confidence.
+- **prompt_source shows None in console?** The extraction may predate Phase 2 hardening — `_prompt_meta` is absent from older `raw_response` records. `_enrich_hardening_fields()` handles this gracefully (returns `None`).
+- **derive_codes returns empty?** Check that `FieldConfidenceService` and `ReconciliationValidatorService` ran successfully (steps 3a and 4a). If they failed silently, their results are `None` and `derive_codes()` receives no inputs.
 
 ---
 
@@ -2793,3 +2835,142 @@ Both are set post-creation as OTel span attributes. Do **not** pass them
 directly to `start_observation()` -- this causes a silent `TypeError`
 that returns `None` and breaks all traces. See `docs/LANGFUSE_INTEGRATION.md`
 Issue 1 for the fix pattern.
+
+---
+
+## 22. Phase 2 Hardening
+
+This section documents the five hardening changes added after Phase 2 (modular prompt composition + response repair + field confidence). All changes are additive and fail-silent — no breaking changes to existing approval, governance, or Langfuse flows.
+
+### 22.1 Decision Codes
+
+**File**: `apps/extraction/decision_codes.py`
+
+Machine-readable string constants for every named failure mode in the pipeline. Replaces ad-hoc string matching in routing and recovery logic.
+
+**`derive_codes(validation_result, recon_val_result, field_conf_result, prompt_source_type)`**:
+- Called at pipeline step 4b (after all validation and math checks)
+- Returns a deduplicated, stable-order list of applicable codes
+- Embedded into `raw_response["_decision_codes"]` and audit metadata
+- Fail-silent: returns `[]` on any exception
+
+**Usage in downstream components**:
+
+| Consumer | How it uses codes |
+|----------|------------------|
+| `RecoveryLaneService.evaluate()` | Checks membership in `RECOVERY_TRIGGER_CODES` |
+| `ReviewRoutingEngine.evaluate()` | Maps codes via `ROUTING_MAP` for queue assignment (Rule 0, highest precedence) |
+| `ExecutionContext` | Populated from `raw_response["_decision_codes"]` for UI display |
+| Audit log | Included in `AuditService` metadata for every `EXTRACTION_COMPLETED` event |
+
+### 22.2 Recovery Lane
+
+**File**: `apps/extraction/services/recovery_lane_service.py`
+
+Post-extraction bounded correction. Triggered **only** by named failure modes — **not** by generic low-confidence scores.
+
+**Design rules**:
+- `evaluate()` is a pure deterministic function (no I/O, no DB calls)
+- `invoke()` is the only function that touches the database (creates `AgentRun`)
+- Output is strictly additive — original extraction is never modified
+- Always fail-silent — pipeline never raises due to recovery lane failure
+- Agent is `InvoiceUnderstandingAgent` with `reconciliation_result=None` and bounded `ctx.extra`
+
+**Recovery trigger flow**:
+```
+derive_codes()
+    └─ any code in RECOVERY_TRIGGER_CODES?
+           │ YES
+           ▼
+    RecoveryLaneService.evaluate(codes)  →  RecoveryDecision
+           │ should_invoke=True
+           ▼
+    RecoveryLaneService.invoke(decision, invoice_id, ...)
+           │
+           ▼
+    InvoiceUnderstandingAgent.run(ctx)
+           │
+           ▼
+    RecoveryResult  →  raw_response["_recovery"]
+                   →  AgentRun.input_payload["_recovery_meta"]
+```
+
+**Not triggered by**:
+- `LOW_CONFIDENCE_CRITICAL_FIELD` alone
+- `LINE_SUM_MISMATCH` alone
+- Any confidence score below threshold (only named codes trigger)
+
+### 22.3 Evidence-Aware Field Confidence
+
+**File**: `apps/extraction/services/field_confidence_service.py` (extended)
+
+`FieldConfidenceService.score()` accepts two new optional parameters:
+
+- **`ocr_text: str`** — Raw OCR text. When a critical field's extracted value appears verbatim in the OCR text (≥ 3 chars), its score is boosted by +0.10 (capped at 0.95). Confirmed in `evidence_flags[field] = "... ocr_confirmed"`.
+
+- **`evidence_context: dict`** — Extraction evidence hints:
+  - `"extraction_method"`: `"explicit"` | `"repaired"` | `"recovered"` | `"derived"` — caps critical field scores when the overall extraction was not explicit.
+  - `"snippets"`: dict mapping field name → raw text snippet from the document. Each present snippet boosts the field score by +0.05 (capped at 0.90).
+
+**`evidence_flags`** (new field on `FieldConfidenceResult`): records why each adjusted field was modified. Included in `raw_response["_field_confidence"]["evidence_flags"]`.
+
+**Backward compatible**: Both params are optional; existing call sites without them produce identical results (no `evidence_flags` populated).
+
+### 22.4 Prompt Source Audit Trail
+
+**File**: `apps/agents/services/agent_classes.py` — `InvoiceExtractionAgent`
+
+Previously, the agent silently fell back from composed prompt to monolithic fallback without recording which path was used. Now:
+
+- `_init_messages()` explicitly records `self._prompt_source_type = "composed"` or `"monolithic_fallback"`
+- After `_finalise_run()`, the agent persists full prompt metadata to `AgentRun.input_payload["_prompt_meta"]`
+- `AgentRun.prompt_version` = `prompt_hash[:50]` (or fallback source string)
+- `AgentRun.invocation_reason` = `"extraction:<source_type>"`
+
+**Prompt source precedence** (in order):
+1. `ctx.extra["composed_prompt"]` — modular composed prompt from `InvoicePromptComposer` → `"composed"`
+2. `PromptRegistry.get("extraction.invoice_system")` — monolithic fallback → `"monolithic_fallback"`
+
+If path 2 is taken, `PROMPT_COMPOSITION_FALLBACK_USED` is emitted in step 4b decision codes.
+
+### 22.5 ExecutionContext Extensions
+
+**File**: `apps/extraction/services/execution_context.py`
+
+Five new fields on `ExecutionContext` (Phase 2 hardening), populated on all resolution paths (governed, legacy lookup, and pure legacy) via `_enrich_hardening_fields()`:
+
+```python
+decision_codes: list           # from raw_response["_decision_codes"]
+prompt_source: str | None      # from raw_response["_prompt_meta"]["prompt_source_type"]
+prompt_hash: str | None        # from raw_response["_prompt_meta"]["prompt_hash"]
+recovery_lane_invoked: bool    # from raw_response["_recovery"]["invoked"]
+recovery_lane_succeeded: bool | None  # set only when recovery_lane_invoked=True
+```
+
+### 22.6 ReviewRoutingEngine — Decision Code Routing (Rule 0)
+
+**File**: `apps/extraction_core/services/review_routing_engine.py`
+
+`ReviewRoutingEngine.evaluate()` extended with optional `decision_codes: List[str]` parameter.
+
+When provided, **Rule 0** runs first via `_apply_decision_codes()`:
+- Maps each code to a queue via `ROUTING_MAP`
+- Uses a priority ladder: `EXCEPTION_OPS > TAX_REVIEW > MASTER_DATA_REVIEW > AP_REVIEW`
+- Sets priority `"CRITICAL"` if any `HARD_REVIEW_CODES` member is present, else `"HIGH"`
+- If `EXCEPTION_OPS` with `CRITICAL` priority is set, returns immediately (skips all other rules)
+- Falls through to confidence-based rules 1–6 for any remaining routing logic
+
+Fully backward-compatible: `decision_codes=None` (default) skips Rule 0 entirely.
+
+### 22.7 raw_response Key Summary
+
+All Phase 2 hardening outputs are embedded as private keys in `ExtractionResult.raw_response`:
+
+| Key | Set by | Content |
+|-----|--------|---------|
+| `_repair` | `ResponseRepairService` | Repair actions applied, fields modified |
+| `_field_confidence` | `FieldConfidenceService` | Per-field scores + `evidence_flags` |
+| `_validation` | `ReconciliationValidatorService` | 6 math check results + severity |
+| `_prompt_meta` | `InvoiceExtractionAgent.run()` | Prompt source type, hash, component versions |
+| `_decision_codes` | `derive_codes()` | List of machine-readable code strings |
+| `_recovery` | `RecoveryLaneService.invoke()` | Agent output, trigger codes, succeeded flag |

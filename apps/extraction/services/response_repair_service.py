@@ -279,10 +279,9 @@ class ResponseRepairService:
     # Rule b — tax percentage recomputation
     # ------------------------------------------------------------------
 
-    # Standard Indian GST slab rates (percent). Used only by ValidationService
-    # to detect an invalid extracted rate. The repair service no longer auto-snaps
-    # to a slab -- invalid rates are flagged as errors for manual correction.
-    _GST_STANDARD_RATES: tuple = (0, 3, 5, 12, 18, 28)
+    # Standard Indian GST slab rates (percent).
+    # 0.25 is included for precious/semi-precious stones (Chapter 71 HSN 7102-7104).
+    _GST_STANDARD_RATES: tuple = (0, 0.25, 3, 5, 12, 18, 28)
 
     @classmethod
     def _snap_to_gst_rate(cls, computed: float) -> float:

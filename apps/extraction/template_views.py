@@ -642,7 +642,10 @@ def extraction_rerun(request, pk):
     reason = request.POST.get("reason", "")
     details = request.POST.get("details", "")
 
-    # ── Credit: reserve 1 credit for reprocess (ChargePolicy.for_reprocess → CONSUME) ──
+    # ── Credit: reserve 1 credit for reprocess (ChargePolicy.for_reprocess -> CONSUME) ──
+    # Use a unique reference_id per attempt so each reprocess is a distinct charge
+    import time as _time
+    _credit_ref_id = f"reprocess-{upload.pk}-{int(_time.time())}"
     from apps.extraction.services.credit_service import CreditService
     credit_check = CreditService.check_can_reserve(request.user, credits=1)
     if not credit_check.allowed:
@@ -652,7 +655,7 @@ def extraction_rerun(request, pk):
     reserve_result = CreditService.reserve(
         request.user, credits=1,
         reference_type="reprocess",
-        reference_id=str(upload.pk),
+        reference_id=_credit_ref_id,
         remarks=f"Reserved for reprocess: upload_id={upload.pk}",
     )
     if not reserve_result.allowed:
@@ -682,7 +685,12 @@ def extraction_rerun(request, pk):
 
     from apps.extraction.tasks import process_invoice_upload_task
     from apps.core.utils import dispatch_task
-    dispatch_task(process_invoice_upload_task, upload_id=upload.pk)
+    dispatch_task(
+        process_invoice_upload_task,
+        upload_id=upload.pk,
+        credit_ref_type="reprocess",
+        credit_ref_id=_credit_ref_id,
+    )
     _invalidate_extraction_caches(request.user)
 
     messages.success(
@@ -1835,59 +1843,67 @@ def extraction_console(request, pk):
     # Build evidence map keyed by field_key for inline display
     evidence_map = {e["field_key"]: e for e in evidence_entries}
 
-    # ── Cost & Token Usage from AgentRun ──
+    # ── Cost & Token Usage from AgentRun (totalled across all runs for this upload) ──
     cost_token_data = None
     try:
         from apps.agents.models import AgentRun
         from apps.core.enums import AgentType as _AT
+        from django.db.models import Sum
 
-        agent_run = None
-        # Primary: use stored agent_run_id on ExtractionResult
-        if ext.agent_run_id:
-            agent_run = AgentRun.objects.filter(pk=ext.agent_run_id).first()
-        # Fallback: find INVOICE_EXTRACTION run by time proximity
-        if not agent_run:
-            from datetime import timedelta
-            window_start = ext.created_at - timedelta(minutes=5)
-            window_end = ext.created_at + timedelta(minutes=5)
-            agent_run = (
-                AgentRun.objects.filter(
-                    agent_type=_AT.INVOICE_EXTRACTION,
-                    created_at__gte=window_start,
-                    created_at__lte=window_end,
-                )
-                .order_by("-created_at")
-                .first()
+        # Collect ALL extraction runs for this upload via the new document_upload FK
+        all_runs_qs = AgentRun.objects.none()
+        if ext.document_upload_id:
+            all_runs_qs = AgentRun.objects.filter(
+                document_upload_id=ext.document_upload_id,
+                agent_type=_AT.INVOICE_EXTRACTION,
+            ).order_by("-created_at")
+
+        # Fallback: if FK not yet populated (old runs before migration), use stored agent_run_id only
+        if not all_runs_qs.exists() and ext.agent_run_id:
+            all_runs_qs = AgentRun.objects.filter(pk=ext.agent_run_id)
+
+        if all_runs_qs.exists():
+            totals = all_runs_qs.aggregate(
+                prompt_tk=Sum("prompt_tokens"),
+                completion_tk=Sum("completion_tokens"),
+                total_tk=Sum("total_tokens"),
             )
+            prompt_tk = totals["prompt_tk"] or 0
+            completion_tk = totals["completion_tk"] or 0
+            total_tk = totals["total_tk"] or 0
 
-        if agent_run and agent_run.total_tokens:
-            prompt_tk = agent_run.prompt_tokens or 0
-            completion_tk = agent_run.completion_tokens or 0
-            total_tk = agent_run.total_tokens or 0
-            # GPT-4o pricing: $5/1M input, $15/1M output
-            llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
-            # Azure Document Intelligence (Read model): $1.50 per 1,000 pages
-            ocr_pages = ext.ocr_page_count or 0
-            ocr_cost = Decimal(str(ocr_pages * 1.5 / 1_000)) if ocr_pages else Decimal("0")
-            total_cost = (llm_cost + ocr_cost).quantize(Decimal("0.000001"))
-            cost_token_data = {
-                "prompt_tokens": prompt_tk,
-                "completion_tokens": completion_tk,
-                "total_tokens": total_tk,
-                "llm_cost": llm_cost.quantize(Decimal("0.000001")),
-                "ocr_cost": ocr_cost.quantize(Decimal("0.000001")),
-                "cost_estimate": total_cost,
-                "ocr_page_count": ocr_pages,
-                "ocr_duration_ms": ext.ocr_duration_ms or 0,
-                "ocr_char_count": ext.ocr_char_count or 0,
-                "llm_model": agent_run.llm_model_used or "gpt-4o",
-                "duration_ms": agent_run.duration_ms,
-                "agent_run_id": agent_run.pk,
-                "agent_type": agent_run.get_agent_type_display(),
-                "status": agent_run.status,
-                "started_at": agent_run.started_at,
-                "completed_at": agent_run.completed_at,
-            }
+            if total_tk:
+                # Latest run for metadata (model name, duration, run id, status)
+                latest_run = all_runs_qs.first()
+                run_count = all_runs_qs.count()
+
+                # GPT-4o pricing: $5/1M input, $15/1M output
+                llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
+                # Azure Document Intelligence (Read model): $1.50 per 1,000 pages
+                # OCR is per-run; use ExtractionResult page count (latest / best available)
+                ocr_pages = ext.ocr_page_count or 0
+                # For total OCR cost, multiply by number of runs (each reprocess re-runs OCR)
+                ocr_cost = Decimal(str(ocr_pages * run_count * 1.5 / 1_000)) if ocr_pages else Decimal("0")
+                total_cost = (llm_cost + ocr_cost).quantize(Decimal("0.000001"))
+                cost_token_data = {
+                    "prompt_tokens": prompt_tk,
+                    "completion_tokens": completion_tk,
+                    "total_tokens": total_tk,
+                    "llm_cost": llm_cost.quantize(Decimal("0.000001")),
+                    "ocr_cost": ocr_cost.quantize(Decimal("0.000001")),
+                    "cost_estimate": total_cost,
+                    "ocr_page_count": ocr_pages,
+                    "ocr_duration_ms": ext.ocr_duration_ms or 0,
+                    "ocr_char_count": ext.ocr_char_count or 0,
+                    "llm_model": latest_run.llm_model_used or "gpt-4o",
+                    "duration_ms": latest_run.duration_ms,
+                    "agent_run_id": latest_run.pk,
+                    "agent_type": latest_run.get_agent_type_display(),
+                    "status": latest_run.status,
+                    "started_at": latest_run.started_at,
+                    "completed_at": latest_run.completed_at,
+                    "run_count": run_count,
+                }
     except Exception:
         logger.debug("Could not load cost/token data for extraction %s", ext.pk)
 

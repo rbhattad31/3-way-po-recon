@@ -102,6 +102,11 @@ class AgentRun(BaseModel):
 
     agent_definition = models.ForeignKey(AgentDefinition, on_delete=models.SET_NULL, null=True, related_name="runs")
     agent_type = models.CharField(max_length=40, choices=AgentType.choices, db_index=True)
+    document_upload = models.ForeignKey(
+        "documents.DocumentUpload", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="agent_runs",
+        help_text="Upload that triggered this run (populated for INVOICE_EXTRACTION runs).",
+    )
     reconciliation_result = models.ForeignKey(
         "reconciliation.ReconciliationResult", on_delete=models.CASCADE,
         related_name="agent_runs", null=True, blank=True,
@@ -153,6 +158,7 @@ class AgentRun(BaseModel):
             models.Index(fields=["agent_type"], name="idx_agentrun_type"),
             models.Index(fields=["status"], name="idx_agentrun_status"),
             models.Index(fields=["reconciliation_result"], name="idx_agentrun_result"),
+            models.Index(fields=["document_upload"], name="idx_agentrun_upload"),
         ]
 
     def __str__(self) -> str:
