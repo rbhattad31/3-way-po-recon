@@ -2,7 +2,7 @@
 
 > **Modules**: `apps/extraction/` (Application Layer — UI, Task, Core Models) + `apps/extraction_core/` (Platform Layer — Configuration, Execution, Governance)
 > **Dependencies**: Azure Document Intelligence (OCR), Azure OpenAI GPT-4o (LLM), Agent Framework (`apps/agents/`)
-> **Status**: Human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking + Phase 2 modular prompt composition + deterministic response repair + field-level confidence scoring + critical field validation + hard reconciliation math checks. 75+ service-level tests — see `apps/extraction/tests/`. ERP connectors and Celery Beat schedules are pending.
+> **Status**: Human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking + Phase 2 modular prompt composition + deterministic response repair + field-level confidence scoring + critical field validation + hard reconciliation math checks + **Phase 2 hardening: decision codes, recovery lane, evidence-aware field confidence, prompt-source audit trail**. 766 service-level tests — see `apps/extraction/tests/`. ERP connectors and Celery Beat schedules are pending.
 
 ---
 
@@ -29,6 +29,7 @@
 19. [Django Admin](#19-django-admin)
 20. [File Reference](#20-file-reference)
 21. [Bulk Extraction Intake (Phase 1)](#21-bulk-extraction-intake-phase-1)
+22. [Phase 2 Hardening](#22-phase-2-hardening)
 
 ---
 
@@ -80,6 +81,16 @@ Views resolve execution data via `ExecutionContext` (`apps/extraction/services/e
 1. Check `extraction_result.extraction_run` FK (direct link)
 2. Fall back to `ExtractionRun.objects.filter(document__document_upload_id=...)` (lookup by upload)
 3. Return legacy context (all None) if no governed run exists
+
+**Phase 2 hardening fields** (populated on all paths via `_enrich_hardening_fields()` from `raw_response` keys):
+
+| Field | Type | Source |
+|-------|------|--------|
+| `decision_codes` | `List[str]` | `raw_response["_decision_codes"]` |
+| `prompt_source` | `str \| None` | `raw_response["_prompt_meta"]["prompt_source_type"]` |
+| `prompt_hash` | `str \| None` | `raw_response["_prompt_meta"]["prompt_hash"]` |
+| `recovery_lane_invoked` | `bool` | `raw_response["_recovery"]["invoked"]` |
+| `recovery_lane_succeeded` | `bool \| None` | `raw_response["_recovery"]["succeeded"]` (only set when invoked) |
 
 ### GovernanceTrailService
 
@@ -191,16 +202,24 @@ User uploads PDF/Image
          ▼
   NormalizationService  (clean, type-cast, standardize)
          │
+         ├──► FieldConfidenceService  (per-field scores + evidence_flags)
          ▼
   ValidationService  (mandatory fields, confidence check)
          │
+         ├──► ReconciliationValidatorService  (6 math checks)
+         ├──► derive_codes()  (machine-readable decision codes)
+         ├──► RecoveryLaneService.evaluate()  (policy: named failure modes only)
+         │         │ if triggered
+         │         └──► InvoiceUnderstandingAgent  (bounded recovery)
          ▼
   DuplicateDetectionService  (vendor + invoice# match)
          │
          ▼
   InvoicePersistenceService  (save Invoice + LineItems)
   ExtractionResultPersistenceService  (save engine metadata)
-  → ExtractionResult.raw_response includes _repair metadata
+  → ExtractionResult.raw_response includes:
+      _repair, _field_confidence, _validation,
+      _prompt_meta, _decision_codes, _recovery
          │
          ▼
   ┌─────────────────────────────────────────┐
@@ -257,8 +276,10 @@ ExtractionParserService → NormalizationService → ValidationService
 | 3a | `FieldConfidenceService` | Deterministic per-field confidence scoring (0.0–1.0) based on presence, parse success, repair actions. Attaches `field_confidence` dict to `NormalizedInvoice`. Embeds `_field_confidence` in `raw_json` for persistence. |
 | 4 | `ValidationService` + `ExtractionConfidenceScorer` | Check mandatory fields, compute deterministic overall confidence. Reads `NormalizedInvoice.field_confidence` to detect low-confidence critical fields → sets `requires_review_override`. |
 | 4a | `ReconciliationValidatorService` | 6 deterministic math checks: total consistency, line sum, line math, tax breakdown, tax %, line tax sum. Issues serialised to `raw_json["_validation"]`. Math ERRORs surfaced as validation warnings. |
+| 4b | `derive_codes()` | Maps ValidationResult + ReconciliationValidationResult + FieldConfidenceResult + prompt_source_type → list of machine-readable decision codes. Embedded into `raw_json["_decision_codes"]`. |
+| 4c | `RecoveryLaneService` | Deterministic policy evaluation against named failure modes. When triggered, invokes `InvoiceUnderstandingAgent` with bounded recovery context. Output embedded into `raw_json["_recovery"]`. Fail-silent. |
 | 5 | `DuplicateDetectionService` | Detect re-submitted invoices |
-| 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database (sets `extraction_run` FK). `ExtractionResult.raw_response` contains `_repair`, `_field_confidence`, and `_validation` metadata. |
+| 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database (sets `extraction_run` FK). `ExtractionResult.raw_response` contains `_repair`, `_field_confidence`, `_validation`, `_prompt_meta`, `_decision_codes`, and `_recovery` metadata. |
 | 6a | `CreditService.consume()` / `.refund()` | On success → consume; on OCR failure → refund (see §17 decision table) |
 | 7 | Approval Gate | Auto-approve or queue for human review. `requires_review_override=True` skips auto-approval entirely (critical field confidence failure). |
 
@@ -612,6 +633,29 @@ Produces a **per-field confidence map** (0.0–1.0) for every extracted header f
 - `weakest_critical_field: str` — name of the lowest-scoring critical field
 - `weakest_critical_score: float` — its score
 - `low_confidence_fields: List[str]` — all header fields with score < 0.6
+- `evidence_flags: Dict[str, str]` — per-field notes when score was adjusted by evidence (see §5.4e)
+
+**Evidence-aware scoring** (optional params added in Phase 2 hardening):
+
+```python
+FieldConfidenceService.score(
+    normalized, raw_json, repair_actions,
+    ocr_text="...",           # raw OCR text for substring confirmation
+    evidence_context={        # extraction evidence hints
+        "extraction_method": "repaired",   # explicit|repaired|recovered|derived
+        "snippets": {"invoice_number": "INV-001 ..."},
+    }
+)
+```
+
+| Signal | Effect |
+|--------|--------|
+| `extraction_method=repaired` | Caps critical field scores at 0.78 |
+| `extraction_method=recovered` | Caps critical field scores at 0.65 |
+| `extraction_method=derived` | Caps critical field scores at 0.55 |
+| `extraction_method=explicit` | No cap — baseline scoring applies |
+| OCR substring match (≥ 3 chars) | Boosts score by +0.10, capped at 0.95 |
+| Evidence snippet present (≥ 2 chars) | Boosts score by +0.05, capped at 0.90 |
 
 **Persistence**: `FieldConfidenceService.to_serializable(result)` is embedded into `raw_response["_field_confidence"]` by the pipeline task before `ExtractionResult` is saved.
 
@@ -658,6 +702,106 @@ Runs 6 deterministic math checks on the normalized invoice. Produces **structure
 **Persistence**: Serialized via `ReconciliationValidatorService.to_serializable(result)` and embedded into `raw_response["_validation"]`.
 
 **Fail-silent**: Any exception returns an empty `ReconciliationValidationResult(is_clean=True)` and logs a warning.
+
+### 5.4e Decision Codes (`decision_codes.py`)
+
+**File**: `apps/extraction/decision_codes.py`
+**Called by**: Pipeline step 4b (after step 4a)
+
+Centralised machine-readable constants + `derive_codes()` helper. Maps pipeline outputs → a list of string codes the routing engine, recovery lane, and audit log can consume without parsing human-readable messages.
+
+**Constants**:
+
+| Code | Trigger |
+|------|---------|
+| `INV_NUM_UNRECOVERABLE` | `invoice_number` in `critical_failures` |
+| `TOTAL_MISMATCH_HARD` | `TOTAL_MISMATCH` in reconciliation issues |
+| `LINE_SUM_MISMATCH` | `LINE_SUM_MISMATCH` in reconciliation issues |
+| `LINE_TABLE_INCOMPLETE` | > 50% of lines have `line_amount` score < 0.5 |
+| `TAX_ALLOC_AMBIGUOUS` | `TAX_BREAKDOWN_MISMATCH` in reconciliation issues |
+| `TAX_BREAKDOWN_MISMATCH` | `TAX_BREAKDOWN_MISMATCH` in reconciliation issues |
+| `VENDOR_MATCH_LOW` | `vendor_name` in `critical_failures` OR `vendor_name` score < 0.40 |
+| `LOW_CONFIDENCE_CRITICAL_FIELD` | Any field in `critical_failures` |
+| `PROMPT_COMPOSITION_FALLBACK_USED` | `prompt_source_type` = `"monolithic_fallback"` or `"agent_default"` |
+| `RECOVERY_LANE_INVOKED` | Added by task when recovery lane runs |
+| `RECOVERY_LANE_SUCCEEDED` | Added by task when recovery lane produces output |
+| `RECOVERY_LANE_FAILED` | Added by task when recovery lane errors |
+
+**`derive_codes(validation_result, recon_val_result, field_conf_result, prompt_source_type)`**:
+- Accepts all four pipeline outputs (all optional)
+- Returns a deduplicated list of applicable codes in a stable order
+- Fail-silent: returns `[]` on any exception
+
+**`ROUTING_MAP`**: Maps each code → canonical review queue string (`EXCEPTION_OPS`, `TAX_REVIEW`, `MASTER_DATA_REVIEW`, `AP_REVIEW`).
+
+**`HARD_REVIEW_CODES`**: Frozenset of codes that always require human review regardless of confidence score.
+
+**Persistence**: Embedded into `raw_response["_decision_codes"]` and included in `AuditService` metadata.
+
+### 5.4f RecoveryLaneService
+
+**File**: `apps/extraction/services/recovery_lane_service.py`
+**Called by**: Pipeline step 4c (after `derive_codes()`)
+
+Bounded post-extraction anomaly correction via `InvoiceUnderstandingAgent`. Never replaces the original extraction — output is **additive only**.
+
+**Trigger codes** (named failure modes only — generic low confidence does NOT trigger):
+
+```
+INV_NUM_UNRECOVERABLE    TOTAL_MISMATCH_HARD    TAX_ALLOC_AMBIGUOUS
+VENDOR_MATCH_LOW         LINE_TABLE_INCOMPLETE  PROMPT_COMPOSITION_FALLBACK_USED
+```
+
+**API**:
+
+```python
+# Step 1 — deterministic policy (no I/O)
+decision: RecoveryDecision = RecoveryLaneService.evaluate(decision_codes)
+# decision.should_invoke, decision.trigger_codes, decision.recovery_actions
+
+# Step 2 — agent invocation (fail-silent)
+result: RecoveryResult = RecoveryLaneService.invoke(
+    decision, invoice_id,
+    validation_result=..., field_conf_result=..., actor_user_id=...
+)
+```
+
+**`RecoveryDecision`** (policy output):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `should_invoke` | bool | `True` only when a named trigger code is present |
+| `trigger_codes` | List[str] | Which codes triggered recovery |
+| `recovery_actions` | List[str] | Bounded actions for the agent (e.g., `verify_invoice_number`) |
+| `reason` | str | Human-readable explanation |
+
+**`RecoveryResult`** (agent output):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `invoked` | bool | Whether the agent was called |
+| `succeeded` | bool | Whether agent produced reasoning or evidence |
+| `agent_reasoning` | str | Agent's analysis text (truncated to 500 chars in serialization) |
+| `agent_confidence` | float | Agent-reported confidence |
+| `agent_recommendation` | str | Agent recommendation type |
+| `agent_evidence` | dict | Key evidence dict from agent |
+| `agent_run_id` | int | FK to `AgentRun` record |
+| `error` | str | Empty string if no error; exception message otherwise |
+
+**Recovery action mapping** (per trigger code):
+
+| Code | Actions |
+|------|---------|
+| `INV_NUM_UNRECOVERABLE` | `verify_invoice_number`, `cross_check_ocr` |
+| `TOTAL_MISMATCH_HARD` | `verify_totals`, `recheck_line_sums`, `check_tax` |
+| `TAX_ALLOC_AMBIGUOUS` | `verify_tax_breakdown`, `check_tax_type` |
+| `VENDOR_MATCH_LOW` | `verify_vendor_name`, `vendor_lookup` |
+| `LINE_TABLE_INCOMPLETE` | `verify_line_items`, `recount_lines` |
+| `PROMPT_COMPOSITION_FALLBACK_USED` | `full_invoice_review` |
+
+**Persistence**: `RecoveryResult.to_serializable()` embedded into `raw_response["_recovery"]`. `AgentRun.input_payload["_recovery_meta"]` stamped with trigger codes and actions.
+
+**Fail-silent**: Any exception in `invoke()` returns `RecoveryResult(invoked=True, succeeded=False, error=...)` — the pipeline never raises.
 
 ### 5.5 DuplicateDetectionService
 
@@ -969,7 +1113,7 @@ The original pipeline orchestrator. Coordinates jurisdiction → schema → dete
 |---------|------|---------|
 | `ConfidenceScorer` | `confidence_scorer.py` | Multi-dimensional scoring for governed pipeline (header=0.3, tax=0.3, line_item=0.2, jurisdiction=0.2) |
 | `ReviewRoutingService` | `review_routing.py` | Confidence-driven review routing with priority tiers |
-| `ReviewRoutingEngine` | `review_routing_engine.py` | Queue-based routing (EXCEPTION_OPS, TAX_REVIEW, VENDOR_OPS); thresholds: CRITICAL=0.4, LOW=0.65, TAX=0.6 |
+| `ReviewRoutingEngine` | `review_routing_engine.py` | Queue-based routing (EXCEPTION_OPS, TAX_REVIEW, VENDOR_OPS); thresholds: CRITICAL=0.4, LOW=0.65, TAX=0.6. Extended with optional `decision_codes` param — code-based routing runs first (Rule 0) and can short-circuit confidence rules for `HARD_REVIEW_CODES`. |
 
 #### LLM & Prompts
 
@@ -1288,14 +1432,43 @@ A single-shot LLM agent (no tool calls, no ReAct loop) optimized for determinist
 
 **Execution flow**:
 1. Creates `AgentRun` record
-2. Builds system prompt + user message (containing OCR text)
+2. `_init_messages()` — selects system prompt and **records prompt source**:
+   - `ctx.extra["composed_prompt"]` present → uses it, sets `self._prompt_source_type = "composed"`
+   - Absent → falls back to `self.system_prompt` (PromptRegistry), sets `self._prompt_source_type = "monolithic_fallback"`
 3. Calls LLM with `response_format=json_object`
 4. Saves assistant message to `AgentMessage`
 5. Parses JSON → `AgentOutput` (with confidence, evidence, reasoning)
 6. Finalizes `AgentRun` with output payload + token usage
+7. **Persists prompt metadata** to `AgentRun.input_payload["_prompt_meta"]` (fail-silent):
+
+```python
+{
+    "prompt_source_type": "composed" | "monolithic_fallback",
+    "prompt_hash": "abc123...",        # 16-char sha256 from PromptComposition
+    "base_prompt_key": "extraction.invoice_base",
+    "base_prompt_version": "v3",
+    "category_prompt_key": "extraction.goods_overlay",
+    "category_prompt_version": "v1",
+    "country_prompt_key": "",
+    "country_prompt_version": "",
+    "invoice_category": "goods",
+    "components": {"base": "v3", "goods": "v1"},
+}
+```
+
+`AgentRun.prompt_version` is set to `prompt_hash[:50]` (or `source_type[:50]` if no hash).
+`AgentRun.invocation_reason` is set to `"extraction:<source_type>"`.
+
+**Prompt source precedence**:
+1. `ctx.extra["composed_prompt"]` — modular composed prompt from `InvoicePromptComposer`
+2. `self.system_prompt` → `PromptRegistry.get("extraction.invoice_system")` — monolithic fallback
+3. If PromptRegistry also fails, the agent errors (not a silent fallback)
+
+When path 2 is taken, `PROMPT_COMPOSITION_FALLBACK_USED` decision code is emitted in step 4b.
 
 **Traceability**:
-- `AgentRun` — execution metadata, LLM model, token usage, duration
+- `AgentRun` — execution metadata, LLM model, token usage, duration, `prompt_version`, `invocation_reason`
+- `AgentRun.input_payload["_prompt_meta"]` — full prompt source audit trail
 - `AgentMessage` — system, user, and assistant messages
 - No `AgentStep` or `ToolCall` records (single-shot, no tool loop)
 
@@ -1312,7 +1485,10 @@ A deeper analysis agent that runs after extraction for low-confidence or ambiguo
 | Tools | `invoice_details`, `po_lookup`, `vendor_search` |
 | Max iterations | 6 (inherited from `BaseAgent`) |
 
-**When invoked**: Part of the two-agent architecture — `InvoiceExtractionAgent` always runs; `InvoiceUnderstandingAgent` runs additionally for low-confidence extractions or when validation warnings are present.
+**When invoked**: Two invocation paths:
+
+1. **Case orchestrator path** (original) — runs for low-confidence extractions or when validation warnings are present during case processing.
+2. **Recovery lane path** (Phase 2 hardening) — invoked by `RecoveryLaneService` during the extraction pipeline (step 4c) when named failure modes are detected. In this path, `ctx.reconciliation_result=None` and `ctx.extra` carries `recovery_trigger_codes`, `recovery_actions`, `validation_warnings`, and `low_confidence_fields`. The agent's `AgentRun.input_payload["_recovery_meta"]` is stamped with the trigger context, and `invocation_reason` is set to `"RECOVERY_LANE"`.
 
 ---
 
@@ -2284,9 +2460,11 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 | `apps/extraction/services/extraction_adapter.py` | Azure DI OCR + LLM extraction orchestration |
 | `apps/extraction/services/parser_service.py` | JSON → ParsedInvoice dataclass parsing |
 | `apps/extraction/services/normalization_service.py` | Field normalization (dates, amounts, strings) |
-| `apps/extraction/services/field_confidence_service.py` | Per-field confidence scoring (0.0–1.0); populates `NormalizedInvoice.field_confidence`; serialized to `raw_response["_field_confidence"]` |
+| `apps/extraction/services/field_confidence_service.py` | Per-field confidence scoring (0.0–1.0) + evidence-aware adjustments (`ocr_text`, `evidence_context`); serialized to `raw_response["_field_confidence"]` |
 | `apps/extraction/services/reconciliation_validator.py` | 6 deterministic math checks; structured issues with severity (ERROR/WARNING/INFO); serialized to `raw_response["_validation"]` |
 | `apps/extraction/services/validation_service.py` | Mandatory field validation + deterministic confidence scoring + critical field check (reads `field_confidence`, sets `requires_review_override`) |
+| `apps/extraction/decision_codes.py` | Centralized machine-readable decision code constants + `derive_codes()` + `ROUTING_MAP` + `HARD_REVIEW_CODES`; serialized to `raw_response["_decision_codes"]` |
+| `apps/extraction/services/recovery_lane_service.py` | `RecoveryLaneService` — deterministic policy evaluation + fail-silent `InvoiceUnderstandingAgent` invocation; serialized to `raw_response["_recovery"]` |
 | `apps/extraction/services/duplicate_detection_service.py` | Duplicate invoice detection |
 | `apps/extraction/services/persistence_service.py` | Invoice + LineItem + ExtractionResult persistence |
 | `apps/extraction/services/approval_service.py` | Approval lifecycle (approve/reject/auto-approve + analytics) |
@@ -2341,7 +2519,7 @@ The extraction console's Cost & Tokens panel tracks both LLM and OCR costs per e
 | **Confidence & Review Routing** | |
 | `apps/extraction_core/services/confidence_scorer.py` | Multi-dimensional confidence scoring |
 | `apps/extraction_core/services/review_routing.py` | Confidence-driven review routing |
-| `apps/extraction_core/services/review_routing_engine.py` | Queue-based routing (EXCEPTION_OPS, TAX_REVIEW, VENDOR_OPS) |
+| `apps/extraction_core/services/review_routing_engine.py` | Queue-based routing; extended with `decision_codes` param for code-first routing (Rule 0 — highest precedence) |
 | **LLM & Prompts** | |
 | `apps/extraction_core/services/prompt_builder.py` | Dynamic LLM prompt construction |
 | `apps/extraction_core/services/prompt_builder_service.py` | Enhanced data-driven prompt builder |

@@ -449,8 +449,16 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
         # 4. Validate
         validation_result = ValidationService().validate(normalized)
 
-        # 5. Duplicate check
-        dup_result = DuplicateDetectionService().check(normalized)
+        # 5. Duplicate check — exclude the existing invoice for this upload so a
+        # reprocess does not flag the invoice as a duplicate of itself.
+        _existing_inv_id = (
+            Invoice.objects
+            .filter(document_upload=upload)
+            .order_by("-created_at")
+            .values_list("pk", flat=True)
+            .first()
+        )
+        dup_result = DuplicateDetectionService().check(normalized, exclude_invoice_id=_existing_inv_id)
 
         # 6. Persist (Invoice + LineItems + ExtractionResult)
         invoice = InvoicePersistenceService().save(

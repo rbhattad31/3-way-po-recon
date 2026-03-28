@@ -125,6 +125,20 @@
 
       {# RIGHT: Actions #}
       <div class="d-flex align-items-center gap-2 flex-wrap">
+        {# Validation errors — shown inline in header so user can't miss them #}
+        {% if errors %}
+        <div class="d-flex align-items-center gap-1 flex-wrap">
+          {% for err in errors %}
+          <span class="badge bg-danger d-flex align-items-center gap-1"
+                title="{{ err.message }}"
+                style="font-size:.72rem;max-width:320px;white-space:normal;text-align:left;cursor:default;">
+            <i class="bi bi-x-circle-fill flex-shrink-0"></i>
+            <span class="text-truncate" style="max-width:260px;">{{ err.title }}: {{ err.message }}</span>
+          </span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
         {# Back to workbench #}
         <a href="{% url 'extraction:workbench' %}" class="btn btn-outline-secondary btn-sm">
           <i class="bi bi-arrow-left me-1"></i>Back

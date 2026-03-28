@@ -83,6 +83,24 @@ class ValidationService:
             if li.unit_price is None:
                 result.add_warning(f"{prefix}.unit_price", f"Line {li.line_number}: unit price missing")
 
+        # ── GST rate validation ───────────────────────────────────────────────
+        # When the invoice is identified as a GST invoice (CGST/SGST/IGST
+        # breakdown keys present), tax_percentage must be one of the defined
+        # Indian GST slabs.  Any other value means the LLM hallucinated or
+        # mis-computed the rate and the user must correct it manually.
+        _GST_VALID_RATES = {0, 3, 5, 12, 18, 28}
+        tax_breakdown = inv.tax_breakdown or {}
+        _is_gst_invoice = any(k in tax_breakdown for k in ("cgst", "sgst", "igst"))
+        if _is_gst_invoice and inv.tax_percentage is not None:
+            _rate = float(inv.tax_percentage)
+            if _rate not in _GST_VALID_RATES:
+                result.add_error(
+                    "tax_percentage",
+                    f"Tax rate {_rate}% is not a valid Indian GST slab "
+                    f"(must be one of {sorted(_GST_VALID_RATES)}). "
+                    f"Please correct this field manually.",
+                )
+
         # ── Deterministic confidence scoring ──────────────────────────
         # Replace LLM self-reported confidence with a score computed from
         # what was actually extracted: field coverage (50%), line-item

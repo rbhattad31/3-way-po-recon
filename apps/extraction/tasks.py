@@ -166,9 +166,56 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             except Exception:
                 pass
 
-        # 5. Duplicate check
+        # 4b. Derive machine-readable decision codes from all pipeline outputs
+        decision_codes: list = []
+        try:
+            from apps.extraction.decision_codes import derive_codes
+            _prompt_source_type = (
+                (extraction_resp.raw_json.get("_prompt_meta") or {}).get("prompt_source_type", "")
+            )
+            decision_codes = derive_codes(
+                validation_result=validation_result,
+                recon_val_result=recon_val_result,
+                field_conf_result=field_conf_result,
+                prompt_source_type=_prompt_source_type,
+            )
+            extraction_resp.raw_json["_decision_codes"] = decision_codes
+        except Exception as dc_exc:
+            logger.warning("derive_codes failed (non-fatal): %s", dc_exc)
+
+        # 4c. Recovery lane — invoke only for named failure modes
+        recovery_result = None
+        try:
+            from apps.extraction.services.recovery_lane_service import RecoveryLaneService
+            recovery_decision = RecoveryLaneService.evaluate(decision_codes)
+            if recovery_decision.should_invoke:
+                logger.info(
+                    "Recovery lane triggered for upload %s — codes: %s",
+                    upload_id, recovery_decision.trigger_codes,
+                )
+                recovery_result = RecoveryLaneService.invoke(
+                    recovery_decision,
+                    invoice_id=0,  # invoice not persisted yet; agent uses invoice_details tool
+                    validation_result=validation_result,
+                    field_conf_result=field_conf_result,
+                    actor_user_id=upload.uploaded_by_id,
+                )
+                extraction_resp.raw_json["_recovery"] = recovery_result.to_serializable()
+        except Exception as rl_exc:
+            logger.warning("RecoveryLaneService failed (non-fatal): %s", rl_exc)
+
+        # 5. Duplicate check — exclude the existing invoice for this upload so a
+        # reprocess does not flag the invoice as a duplicate of itself.
+        from apps.documents.models import Invoice as _InvoiceModel
+        _existing_inv = (
+            _InvoiceModel.objects
+            .filter(document_upload=upload)
+            .order_by("-created_at")
+            .values_list("pk", flat=True)
+            .first()
+        )
         dup_service = DuplicateDetectionService()
-        dup_result = dup_service.check(normalized)
+        dup_result = dup_service.check(normalized, exclude_invoice_id=_existing_inv)
 
         # 6. Persist
         persistence = InvoicePersistenceService()
@@ -240,6 +287,11 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
             _audit_meta["recon_checks_passed"] = recon_val_result.checks_passed
         if getattr(validation_result, "requires_review_override", False):
             _audit_meta["review_forced_by"] = validation_result.critical_failures
+        if decision_codes:
+            _audit_meta["decision_codes"] = decision_codes
+        if recovery_result is not None:
+            _audit_meta["recovery_lane_invoked"] = recovery_result.invoked
+            _audit_meta["recovery_lane_succeeded"] = recovery_result.succeeded
         AuditService.log_event(
             entity_type="Invoice",
             entity_id=invoice.pk,

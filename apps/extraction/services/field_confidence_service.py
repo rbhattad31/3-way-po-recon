@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class FieldConfidenceResult:
     weakest_critical_field: str = ""
     weakest_critical_score: float = 1.0
     low_confidence_fields: List[str] = field(default_factory=list)  # score < 0.6
+    evidence_flags: Dict[str, str] = field(default_factory=dict)  # field → evidence note
 
 
 class FieldConfidenceService:
@@ -53,6 +54,8 @@ class FieldConfidenceService:
         normalized,
         raw_json: dict,
         repair_actions: Optional[List[str]] = None,
+        ocr_text: Optional[str] = None,
+        evidence_context: Optional[Dict[str, Any]] = None,
     ) -> FieldConfidenceResult:
         """Score each field.
 
@@ -60,16 +63,39 @@ class FieldConfidenceService:
             normalized: NormalizedInvoice instance (post-normalization)
             raw_json: The repaired JSON dict (ExtractionResponse.raw_json)
             repair_actions: List of repair action strings from _repair metadata
+            ocr_text: Optional raw OCR text — used for substring confirmation of
+                      extracted values (boosts confidence when value found in OCR).
+            evidence_context: Optional dict with extraction evidence snippets.
+                Keys of interest:
+                  - "extraction_method": str ("explicit", "repaired", "recovered", "derived")
+                  - "snippets": dict[field_name, str] — raw text snippet near the field
         """
         try:
-            return FieldConfidenceService._score(normalized, raw_json, repair_actions or [])
+            return FieldConfidenceService._score(
+                normalized,
+                raw_json,
+                repair_actions or [],
+                ocr_text=ocr_text or "",
+                evidence_context=evidence_context or {},
+            )
         except Exception:
             logger.exception("FieldConfidenceService.score failed — returning neutral scores")
             return FieldConfidenceResult()
 
     @staticmethod
-    def _score(normalized, raw_json: dict, repair_actions: List[str]) -> FieldConfidenceResult:
+    def _score(
+        normalized,
+        raw_json: dict,
+        repair_actions: List[str],
+        ocr_text: str = "",
+        evidence_context: Dict[str, Any] = None,
+    ) -> FieldConfidenceResult:
         repaired_fields = FieldConfidenceService._repaired_field_set(repair_actions)
+        evidence_context = evidence_context or {}
+        extraction_method = evidence_context.get("extraction_method", "")
+        evidence_snippets = evidence_context.get("snippets", {}) or {}
+        ocr_lower = ocr_text.lower() if ocr_text else ""
+        evidence_flags: Dict[str, str] = {}
 
         header = {}
 
@@ -194,6 +220,48 @@ class FieldConfidenceService:
             lc = FieldConfidenceService._score_line(li, raw_li, repair_actions, idx + 1)
             line_confidences.append(lc)
 
+        # ── Evidence-aware adjustments ────────────────────────────────────────
+        # 1. extraction_method signal: lower bands for repaired/recovered/derived
+        if extraction_method in ("repaired", "recovered", "derived"):
+            _method_cap = {"repaired": 0.78, "recovered": 0.65, "derived": 0.55}.get(
+                extraction_method, 1.0
+            )
+            for cf in CRITICAL_FIELDS:
+                if cf in header and header[cf] > _method_cap:
+                    header[cf] = _method_cap
+                    evidence_flags[cf] = f"capped_by_extraction_method:{extraction_method}"
+
+        # 2. OCR substring confirmation: boost fields that appear verbatim in OCR
+        if ocr_lower:
+            _ocr_boost_fields = {
+                "invoice_number": normalized.normalized_invoice_number or "",
+                "vendor_name": normalized.vendor_name_normalized or "",
+                "currency": normalized.currency or "",
+            }
+            for fname, fval in _ocr_boost_fields.items():
+                if not fval:
+                    continue
+                fval_lower = str(fval).lower().strip()
+                if len(fval_lower) >= 3 and fval_lower in ocr_lower:
+                    old_score = header.get(fname, 0.0)
+                    if old_score < 0.95:
+                        # Confirmed in OCR — nudge up within the current scoring band
+                        boosted = min(old_score + 0.10, 0.95)
+                        header[fname] = boosted
+                        evidence_flags[fname] = (
+                            evidence_flags.get(fname, "") + f" ocr_confirmed"
+                        ).strip()
+
+        # 3. Evidence snippets: field-level snippet present → add small confidence credit
+        for fname, snippet in evidence_snippets.items():
+            if fname in header and snippet and len(str(snippet).strip()) >= 2:
+                old_score = header[fname]
+                if old_score < 0.90:
+                    header[fname] = min(old_score + 0.05, 0.90)
+                    evidence_flags[fname] = (
+                        evidence_flags.get(fname, "") + " snippet_present"
+                    ).strip()
+
         # Summarize weakest critical field and low-confidence list
         low_conf = [f for f, s in header.items() if s < 0.6]
         worst_crit_name = ""
@@ -210,6 +278,7 @@ class FieldConfidenceService:
             weakest_critical_field=worst_crit_name,
             weakest_critical_score=worst_crit_score,
             low_confidence_fields=low_conf,
+            evidence_flags=evidence_flags,
         )
 
     @staticmethod
@@ -271,4 +340,5 @@ class FieldConfidenceService:
             "weakest_critical_field": result.weakest_critical_field,
             "weakest_critical_score": result.weakest_critical_score,
             "low_confidence_fields": result.low_confidence_fields,
+            "evidence_flags": result.evidence_flags,
         }

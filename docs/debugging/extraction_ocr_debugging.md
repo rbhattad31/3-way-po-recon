@@ -117,7 +117,8 @@ If `status=FAILED`, the LLM call failed entirely — check `error_message` for A
 | `invoice_number` is label word like "No." | OCR recovery regex matched label suffix | Fixed in Phase 2 (digit requirement in `_recover_invoice_number_from_ocr`). Reprocess. |
 | `vendor_tax_id` or `buyer_name` is blank | Field missing from old prompt version | Prompt was updated. Run `push_prompts_to_langfuse`. Reprocess. |
 | `tax_breakdown` is all zeros | LLM returned tax_breakdown but parser didn't save it | Check `NormalizationService` tax_breakdown handling. |
-| `tax_percentage` is wrong | LLM copied line-level rate instead of computing header rate | ResponseRepairService rule b recomputes from `tax_amount/subtotal`. Check if repair fired. |
+| `tax_percentage` is wrong | LLM copied line-level rate instead of computing header rate | ResponseRepairService rule b recomputes from `tax_amount/subtotal` and snaps to nearest valid GST slab (0/3/5/12/18/28%) when CGST/SGST/IGST breakdown keys are present. Check `raw_response["_repair"]` — repair action will say "snapped from computed X% to GST slab" if snapping occurred. |
+| `tax_percentage` shows fractional rate like 8.33% or 16.67% on Indian invoice | Computed rate did not snap to GST slab | Ensure `tax_breakdown` contains at least one of `cgst`, `sgst`, `igst` keys so GST context is detected. If breakdown is missing, the LLM prompt may not have extracted it — reprocess after updating the India GST overlay prompt. |
 | `subtotal` doesn't match line items | LLM summed incorrectly | ResponseRepairService rule c aligns subtotal. Check `_repair` metadata. |
 | OCR text is garbled | Low-quality scan or rotated page | Re-scan; ensure Azure DI is enabled. |
 | `raw_response` is null | `InvoiceExtractionAgent` failed | Check `AgentRun.error_message`; verify LLM API keys. |
@@ -136,6 +137,18 @@ From the extraction console (`/extraction/console/<pk>/`), click **Reprocess**. 
 6. Updates all `Invoice` fields with the new extraction output.
 
 Requires the `extraction.reprocess` permission.
+
+> **Note:** Reprocessing will NOT mark the invoice as a duplicate of itself. The duplicate check
+> correctly excludes the existing invoice on the same upload when reprocessing.
+
+---
+
+## Known Issues & Fixes (changelog)
+
+| Date | Issue | Fix |
+|---|---|---|
+| 2026-03-28 | Invoice incorrectly marked as duplicate on reprocess | `DuplicateDetectionService.check()` now receives `exclude_invoice_id` set to the existing invoice on the same upload in both `tasks.py` and `template_views.py`. |
+| 2026-03-28 | Indian GST tax rate shows fractional values (e.g. 8.33%, 16.67%) | `ResponseRepairService._repair_tax_percentage()` now snaps the computed rate to the nearest standard GST slab (0/3/5/12/18/28%) within ±2 pp when CGST/SGST/IGST breakdown keys are detected. |
 
 ---
 

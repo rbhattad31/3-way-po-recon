@@ -47,7 +47,6 @@ class RepairResult:
 # These label patterns appear in OCR just before a reference number that the
 # LLM may incorrectly copy into invoice_number.
 _EXCLUDED_REFERENCE_LABELS: list[str] = [
-    r"cart\s+ref(?:erence)?\.?\s*no\.?",
     r"client\s+code",
     r"\birn\b",                       # Invoice Reference Number (GST e-invoice hash)
     r"document\s+no\.?",
@@ -57,6 +56,9 @@ _EXCLUDED_REFERENCE_LABELS: list[str] = [
     r"e[-\s]?way\s+bill\s+no\.?",
     r"acknowledgement\s+no\.?",
     r"pnr",
+    # Travel agency internal IDs that appear after print-copy labels
+    r"original\s*/\s*duplicate\s+for\s+recipient",
+    r"iata\s+approved\s+agency",
 ]
 
 # Regex that matches IRN (64-char hex-like string) directly
@@ -110,7 +112,7 @@ class ResponseRepairService:
             cls._repair_invoice_number(data, ocr_text, actions, warnings)
 
             # Rule b — tax percentage recomputation
-            cls._repair_tax_percentage(data, actions, warnings)
+            cls._repair_tax_percentage(data, ocr_text, actions, warnings)
 
             # Rule c — subtotal / line reconciliation
             cls._repair_subtotal(data, invoice_category, actions, warnings)
@@ -212,28 +214,64 @@ class ResponseRepairService:
         if not ocr_text:
             return ""
 
-        # Pattern: invoice|inv|bill|receipt|voucher + optional No./Number/#/ID suffix
-        # + separators + the actual value (must contain a digit).
-        pattern = re.compile(
+        def _extract_from_pattern(src: str, pat: re.Pattern) -> str:
+            for match in pat.finditer(src):
+                candidate = match.group(1).strip().rstrip(".")
+                if not candidate:
+                    continue
+                # Must contain at least one digit -- real IDs always do
+                if not re.search(r"\d", candidate):
+                    continue
+                if len(candidate) < 3:
+                    continue
+                if exclude_value and candidate == exclude_value:
+                    continue
+                return candidate
+            return ""
+
+        def _find_near_label(label_pat: str, text: str, window: int = 10) -> str:
+            """Scan line-by-line: find label, then look in next `window` lines
+            for a standalone alphanumeric ID (handles multi-column OCR layouts
+            where the label and value are separated by other labels)."""
+            lines = text.splitlines()
+            for i, line in enumerate(lines):
+                if re.search(label_pat, line, re.IGNORECASE):
+                    for j in range(i + 1, min(i + window + 1, len(lines))):
+                        candidate = lines[j].strip().rstrip(".")
+                        # Must be a standalone token (no spaces), contain a digit,
+                        # and be between 3-40 chars.
+                        if (
+                            candidate
+                            and " " not in candidate
+                            and re.search(r"\d", candidate)
+                            and 3 <= len(candidate) <= 40
+                            and (not exclude_value or candidate != exclude_value)
+                        ):
+                            return candidate
+            return ""
+
+        # Pass 1: standard invoice/bill/receipt labels.
+        primary_pattern = re.compile(
             r"(?:tax\s+invoice|invoice|inv\.?|bill|receipt|voucher|serial\s*no\.?|sr\.?\s*no\.?)"
             r"\s*(?:no\.?|number|#|id)?"
             r"[\s:.\-#]+"
             r"([A-Za-z0-9][A-Za-z0-9/\-_.]{1,49})",
             re.IGNORECASE,
         )
+        found = _extract_from_pattern(ocr_text, primary_pattern)
+        if found:
+            return found
 
-        for match in pattern.finditer(ocr_text):
-            candidate = match.group(1).strip().rstrip(".")
-            if not candidate:
-                continue
-            # Must contain at least one digit — real IDs always do
-            if not re.search(r"\d", candidate):
-                continue
-            if len(candidate) < 3:
-                continue
-            if exclude_value and candidate == exclude_value:
-                continue
-            return candidate
+        # Pass 2: travel agency fallback -- 'CART Ref. No.' is the booking
+        # reference used as the invoice number in FCM-style travel invoices.
+        # OCR layouts are often multi-column so the value may be several lines
+        # below the label; use a line-window scan instead of inline regex.
+        found = _find_near_label(
+            r"cart\s+ref(?:erence)?\.?\s*no\.?",
+            ocr_text,
+        )
+        if found:
+            return found
 
         return ""
 
@@ -241,9 +279,60 @@ class ResponseRepairService:
     # Rule b — tax percentage recomputation
     # ------------------------------------------------------------------
 
-    @staticmethod
+    # Standard Indian GST slab rates (percent). Used only by ValidationService
+    # to detect an invalid extracted rate. The repair service no longer auto-snaps
+    # to a slab -- invalid rates are flagged as errors for manual correction.
+    _GST_STANDARD_RATES: tuple = (0, 3, 5, 12, 18, 28)
+
+    @classmethod
+    def _snap_to_gst_rate(cls, computed: float) -> float:
+        """Return the nearest standard GST slab rate (always -- no tolerance)."""
+        return float(min(cls._GST_STANDARD_RATES, key=lambda r: abs(r - computed)))
+
+    @classmethod
+    def _extract_gst_rate_from_ocr(cls, ocr_text: str) -> Optional[float]:
+        """Scan OCR text for an explicitly stated GST rate.
+
+        Handles two forms:
+          - IGST <rate>%  (inter-state)  -> rate
+          - CGST <rate>% + SGST <rate>% (intra-state) -> sum
+        Returns the rate as a float if it is a valid GST slab, else None.
+        """
+        if not ocr_text:
+            return None
+        valid = set(cls._GST_STANDARD_RATES)
+
+        # IGST rate: "IGST 18.00%" or "IGST: 18%"
+        igst_match = re.search(
+            r"igst[\s:]+([0-9]+(?:\.[0-9]+)?)\s*%",
+            ocr_text, re.IGNORECASE,
+        )
+        if igst_match:
+            rate = float(igst_match.group(1))
+            if rate in valid:
+                return rate
+
+        # CGST + SGST rates — pick the first clearly labelled pair
+        cgst_match = re.search(
+            r"cgst[\s:]+([0-9]+(?:\.[0-9]+)?)\s*%",
+            ocr_text, re.IGNORECASE,
+        )
+        sgst_match = re.search(
+            r"sgst[\s:]+([0-9]+(?:\.[0-9]+)?)\s*%",
+            ocr_text, re.IGNORECASE,
+        )
+        if cgst_match and sgst_match:
+            combined = float(cgst_match.group(1)) + float(sgst_match.group(1))
+            if combined in valid:
+                return combined
+
+        return None
+
+    @classmethod
     def _repair_tax_percentage(
+        cls,
         data: dict,
+        ocr_text: str,
         actions: list[str],
         warnings: list[str],
     ) -> None:
@@ -258,15 +347,39 @@ class ResponseRepairService:
 
         recomputed = round(float(tax_amount / subtotal * 100), 4)
 
-        # Only repair if the LLM value differs by more than 0.5 percentage points
-        if current_pct is not None and abs(float(current_pct) - recomputed) < 0.5:
+        # For GST invoices (cgst/sgst/igst keys present in breakdown), if the
+        # current extracted rate is not a valid slab, try to read the explicit
+        # rate from the OCR text before falling back to the recomputed value.
+        tax_breakdown = data.get("tax_breakdown") or {}
+        is_gst = any(k in tax_breakdown for k in ("cgst", "sgst", "igst"))
+        final_rate = recomputed
+        ocr_rate_used = False
+        if is_gst:
+            valid_gst_rates = set(cls._GST_STANDARD_RATES)
+            current_val = float(current_pct) if current_pct is not None else None
+            if current_val is None or current_val not in valid_gst_rates:
+                ocr_rate = cls._extract_gst_rate_from_ocr(ocr_text)
+                if ocr_rate is not None:
+                    final_rate = ocr_rate
+                    ocr_rate_used = True
+
+        # Only repair if the LLM value differs by more than 0.5 percentage points.
+        # GST slab validation downstream in ValidationService handles the error
+        # case when we still cannot determine a valid rate.
+        if current_pct is not None and abs(float(current_pct) - final_rate) < 0.5:
             return
 
-        data["tax_percentage"] = recomputed
-        actions.append(
-            f"tax_percentage: recomputed to {recomputed}% "
-            f"(tax_amount={tax_amount}, subtotal={subtotal})"
-        )
+        data["tax_percentage"] = final_rate
+        if ocr_rate_used:
+            actions.append(
+                f"tax_percentage: set to {final_rate}% from explicit OCR rate "
+                f"(computed rate {recomputed}% from subtotal was not a valid GST slab)"
+            )
+        else:
+            actions.append(
+                f"tax_percentage: recomputed to {final_rate}% "
+                f"(tax_amount={tax_amount}, subtotal={subtotal})"
+            )
 
     # ------------------------------------------------------------------
     # Rule c — subtotal / line reconciliation

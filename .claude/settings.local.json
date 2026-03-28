@@ -12,7 +12,11 @@
       "Bash(python -m pytest apps/extraction/tests/test_field_confidence_service.py apps/extraction/tests/test_reconciliation_validator.py -v)",
       "Bash(python -m pytest apps/extraction/tests/ -v --tb=short)",
       "Bash(python -m pytest apps/extraction/tests/test_credit_service.py apps/extraction/tests/test_credit_views.py -v --tb=short)",
-      "Bash(python -m pytest apps/extraction/tests/ --tb=short -q)"
+      "Bash(python -m pytest apps/extraction/tests/ --tb=short -q)",
+      "Bash(python -m pytest apps/extraction/tests/test_decision_codes.py apps/extraction/tests/test_recovery_lane.py apps/extraction/tests/test_evidence_confidence.py apps/extraction/tests/test_prompt_source.py -x -q)",
+      "Bash(python -m pytest apps/extraction/tests/test_recovery_lane.py -x -q)",
+      "Bash(python -m pytest apps/extraction/tests/test_recovery_lane.py apps/extraction/tests/test_decision_codes.py apps/extraction/tests/test_evidence_confidence.py apps/extraction/tests/test_prompt_source.py -q)",
+      "Bash(python -m pytest --tb=short -q)"
     ]
   }
 }

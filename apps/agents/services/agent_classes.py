@@ -269,10 +269,25 @@ class InvoiceExtractionAgent(BaseAgent):
         return []  # Single-shot extraction — no tools needed
 
     def _init_messages(self, ctx: AgentContext, agent_run) -> List[Dict[str, str]]:
-        """Use composed_prompt from ctx.extra if provided, otherwise fall back to system_prompt."""
+        """Resolve the system prompt and record which source path was used.
+
+        Precedence:
+          1. composed_prompt  — from InvoicePromptComposer via ctx.extra (normal operation)
+          2. system_prompt    — monolithic PromptRegistry.get("extraction.invoice_system") fallback
+          3. (agent_default)  — only if system_prompt itself raises (recorded but never suppressed)
+
+        The resolved source type is stored on self._prompt_source_type so that
+        run() can persist it to AgentRun.input_payload for governance audit.
+        """
         from apps.agents.services.llm_client import LLMMessage  # local to avoid circular import
         composed = ctx.extra.get("composed_prompt")
-        sys_msg = composed if composed else self.system_prompt
+        if composed:
+            sys_msg = composed
+            self._prompt_source_type = "composed"
+        else:
+            sys_msg = self.system_prompt
+            self._prompt_source_type = "monolithic_fallback"
+
         user_msg = self.build_user_message(ctx)
         self._save_message(agent_run, "system", sys_msg, 0)
         self._save_message(agent_run, "user", user_msg, 1)
@@ -391,6 +406,35 @@ class InvoiceExtractionAgent(BaseAgent):
 
             output = self.interpret_response(llm_resp.content or "", ctx)
             self._finalise_run(agent_run, output, start, agent_def=agent_def)
+
+            # Persist prompt composition metadata on AgentRun.input_payload so it
+            # is queryable without Langfuse.  Uses the same post-creation update
+            # pattern as the orchestrator (safe on existing input_payload dict).
+            try:
+                _pm = ctx.extra.get("prompt_metadata", {})
+                _ph = _pm.get("prompt_hash", "")
+                _src = getattr(self, "_prompt_source_type", "unknown")
+                _prompt_persistence = {
+                    "prompt_source_type": _src,
+                    "prompt_hash": _ph,
+                    "base_prompt_key": _pm.get("base_prompt_key", ""),
+                    "base_prompt_version": _pm.get("base_prompt_version", ""),
+                    "category_prompt_key": _pm.get("category_prompt_key", ""),
+                    "category_prompt_version": _pm.get("category_prompt_version", ""),
+                    "country_prompt_key": _pm.get("country_prompt_key", ""),
+                    "country_prompt_version": _pm.get("country_prompt_version", ""),
+                    "invoice_category": _pm.get("invoice_category", ""),
+                    "components": _pm.get("components", {}),
+                }
+                agent_run.input_payload = agent_run.input_payload or {}
+                agent_run.input_payload["_prompt_meta"] = _prompt_persistence
+                # Also stamp on the dedicated prompt_version field (prompt hash, max 50 chars)
+                agent_run.prompt_version = _ph[:50] if _ph else _src[:50]
+                # invocation_reason records the source path for quick filtering
+                agent_run.invocation_reason = f"extraction:{_src}"
+                agent_run.save(update_fields=["input_payload", "prompt_version", "invocation_reason"])
+            except Exception as _pe:
+                logger.warning("InvoiceExtractionAgent: failed to persist prompt metadata: %s", _pe)
 
             # Close Langfuse span with extraction output + prompt metadata.
             if _lf_span is not None:
