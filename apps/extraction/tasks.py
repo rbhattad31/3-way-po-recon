@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("extraction.process_invoice_upload", audit_event="EXTRACTION_STARTED", entity_type="DocumentUpload")
-def process_invoice_upload_task(self, upload_id: int) -> dict:
+def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "document_upload", credit_ref_id: str = "") -> dict:
     """End-to-end extraction pipeline for a single DocumentUpload.
 
     Steps executed sequentially:
@@ -69,7 +69,11 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         file_path = download_blob_to_tempfile(upload.blob_path)
 
         try:
-            extraction_resp: ExtractionResponse = adapter.extract(file_path)
+            extraction_resp: ExtractionResponse = adapter.extract(
+                file_path,
+                actor_user_id=upload.uploaded_by_id,
+                document_upload_id=upload.pk,
+            )
         finally:
             import os
             try:
@@ -80,7 +84,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         if not extraction_resp.success:
             _fail_upload(upload, extraction_resp.error_message)
             ExtractionResultPersistenceService.save(upload, None, extraction_resp)
-            _refund_credit_for_upload(upload)
+            _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
             return {"status": "error", "message": extraction_resp.error_message}
 
         # 1a. Document type classification — reject non-invoices early
@@ -93,7 +97,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
                 f"Please upload this document through the appropriate channel."
             )
             _fail_upload(upload, reject_msg)
-            _refund_credit_for_upload(upload)
+            _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
             logger.info(
                 "Upload %s rejected: classified as %s (confidence=%.2f, keywords=%s)",
                 upload_id, doc_type_result.document_type,
@@ -112,13 +116,107 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         normalizer = NormalizationService()
         normalized = normalizer.normalize(parsed)
 
+        # 3a. Field-level confidence scoring
+        field_conf_result = None
+        try:
+            from apps.extraction.services.field_confidence_service import FieldConfidenceService
+            repair_actions = (extraction_resp.raw_json.get("_repair") or {}).get("repair_actions", [])
+            field_conf_result = FieldConfidenceService.score(
+                normalized,
+                extraction_resp.raw_json,
+                repair_actions,
+            )
+            # Attach to normalized so ValidationService can read it
+            normalized.field_confidence = {
+                "header": field_conf_result.header,
+                "lines": field_conf_result.lines,
+            }
+        except Exception as fc_exc:
+            logger.warning("FieldConfidenceService failed (non-fatal): %s", fc_exc)
+
         # 4. Validate
         validator = ValidationService()
         validation_result = validator.validate(normalized)
 
-        # 5. Duplicate check
+        # 4a. Hard reconciliation validation (math checks)
+        recon_val_result = None
+        try:
+            from apps.extraction.services.reconciliation_validator import ReconciliationValidatorService
+            recon_val_result = ReconciliationValidatorService.validate(normalized)
+            if recon_val_result.errors:
+                # Surface reconciliation ERRORs as validation warnings (non-blocking)
+                for ri in recon_val_result.errors:
+                    validation_result.add_warning(
+                        f"recon.{ri.check_name}",
+                        f"[{ri.issue_code}] {ri.message}",
+                    )
+        except Exception as rv_exc:
+            logger.warning("ReconciliationValidatorService failed (non-fatal): %s", rv_exc)
+
+        # Embed field confidence and reconciliation metadata into raw_json for persistence
+        if field_conf_result is not None:
+            try:
+                from apps.extraction.services.field_confidence_service import FieldConfidenceService as _FCS
+                extraction_resp.raw_json["_field_confidence"] = _FCS.to_serializable(field_conf_result)
+            except Exception:
+                pass
+        if recon_val_result is not None:
+            try:
+                from apps.extraction.services.reconciliation_validator import ReconciliationValidatorService as _RVS
+                extraction_resp.raw_json["_validation"] = _RVS.to_serializable(recon_val_result)
+            except Exception:
+                pass
+
+        # 4b. Derive machine-readable decision codes from all pipeline outputs
+        decision_codes: list = []
+        try:
+            from apps.extraction.decision_codes import derive_codes
+            _prompt_source_type = (
+                (extraction_resp.raw_json.get("_prompt_meta") or {}).get("prompt_source_type", "")
+            )
+            decision_codes = derive_codes(
+                validation_result=validation_result,
+                recon_val_result=recon_val_result,
+                field_conf_result=field_conf_result,
+                prompt_source_type=_prompt_source_type,
+            )
+            extraction_resp.raw_json["_decision_codes"] = decision_codes
+        except Exception as dc_exc:
+            logger.warning("derive_codes failed (non-fatal): %s", dc_exc)
+
+        # 4c. Recovery lane — invoke only for named failure modes
+        recovery_result = None
+        try:
+            from apps.extraction.services.recovery_lane_service import RecoveryLaneService
+            recovery_decision = RecoveryLaneService.evaluate(decision_codes)
+            if recovery_decision.should_invoke:
+                logger.info(
+                    "Recovery lane triggered for upload %s — codes: %s",
+                    upload_id, recovery_decision.trigger_codes,
+                )
+                recovery_result = RecoveryLaneService.invoke(
+                    recovery_decision,
+                    invoice_id=0,  # invoice not persisted yet; agent uses invoice_details tool
+                    validation_result=validation_result,
+                    field_conf_result=field_conf_result,
+                    actor_user_id=upload.uploaded_by_id,
+                )
+                extraction_resp.raw_json["_recovery"] = recovery_result.to_serializable()
+        except Exception as rl_exc:
+            logger.warning("RecoveryLaneService failed (non-fatal): %s", rl_exc)
+
+        # 5. Duplicate check — exclude the existing invoice for this upload so a
+        # reprocess does not flag the invoice as a duplicate of itself.
+        from apps.documents.models import Invoice as _InvoiceModel
+        _existing_inv = (
+            _InvoiceModel.objects
+            .filter(document_upload=upload)
+            .order_by("-created_at")
+            .values_list("pk", flat=True)
+            .first()
+        )
         dup_service = DuplicateDetectionService()
-        dup_result = dup_service.check(normalized)
+        dup_result = dup_service.check(normalized, exclude_invoice_id=_existing_inv)
 
         # 6. Persist
         persistence = InvoicePersistenceService()
@@ -150,8 +248,12 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         if validation_result.is_valid and not dup_result.is_duplicate:
             from apps.extraction.services.approval_service import ExtractionApprovalService
 
+            # Critical field failures force human review even if confidence passes threshold
+            review_forced = getattr(validation_result, "requires_review_override", False)
+
             # Try auto-approve first (disabled by default — threshold = 1.1)
-            auto_approval = ExtractionApprovalService.try_auto_approve(invoice, ext_result)
+            # Skip auto-approval entirely when critical field review is forced
+            auto_approval = None if review_forced else ExtractionApprovalService.try_auto_approve(invoice, ext_result)
             if not auto_approval:
                 # Human approval required — set PENDING_APPROVAL
                 invoice.status = InvoiceStatus.PENDING_APPROVAL
@@ -171,12 +273,32 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         # Audit: extraction completed
         from apps.auditlog.services import AuditService
         from apps.core.enums import AuditEventType
+        _audit_meta = {
+            "upload_id": upload_id,
+            "is_duplicate": dup_result.is_duplicate,
+            "is_valid": validation_result.is_valid,
+        }
+        if field_conf_result is not None:
+            _audit_meta["weakest_critical_field"] = field_conf_result.weakest_critical_field
+            _audit_meta["weakest_critical_score"] = field_conf_result.weakest_critical_score
+            _audit_meta["low_confidence_fields_count"] = len(field_conf_result.low_confidence_fields)
+        if recon_val_result is not None:
+            _audit_meta["recon_errors"] = len(recon_val_result.errors)
+            _audit_meta["recon_warnings"] = len(recon_val_result.warnings)
+            _audit_meta["recon_checks_passed"] = recon_val_result.checks_passed
+        if getattr(validation_result, "requires_review_override", False):
+            _audit_meta["review_forced_by"] = validation_result.critical_failures
+        if decision_codes:
+            _audit_meta["decision_codes"] = decision_codes
+        if recovery_result is not None:
+            _audit_meta["recovery_lane_invoked"] = recovery_result.invoked
+            _audit_meta["recovery_lane_succeeded"] = recovery_result.succeeded
         AuditService.log_event(
             entity_type="Invoice",
             entity_id=invoice.pk,
             event_type=AuditEventType.EXTRACTION_COMPLETED,
             description=f"Extraction completed for invoice {invoice.invoice_number} (confidence: {invoice.extraction_confidence})",
-            metadata={"upload_id": upload_id, "is_duplicate": dup_result.is_duplicate, "is_valid": validation_result.is_valid},
+            metadata=_audit_meta,
         )
 
         # --- Auto-create AP Case only if invoice is READY_FOR_RECON (auto-approved) ---
@@ -207,7 +329,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         )
 
         # ── Credit: consume reserved credit on successful extraction ──
-        _consume_credit_for_upload(upload)
+        _consume_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
 
         return {
             "status": "ok",
@@ -223,7 +345,7 @@ def process_invoice_upload_task(self, upload_id: int) -> dict:
         logger.exception("Extraction pipeline failed for upload %s", upload_id)
         _fail_upload(upload, str(exc))
         # ── Credit: refund reserved credit — extraction failed (OCR/pipeline error) ──
-        _refund_credit_for_upload(upload)
+        _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
         # Audit: extraction failed
         try:
             from apps.auditlog.services import AuditService
@@ -322,15 +444,16 @@ def _fail_upload(upload: DocumentUpload, message: str) -> None:
             logger.warning("Blob move to exception/ failed: %s", mv_err)
 
 
-def _consume_credit_for_upload(upload: DocumentUpload) -> None:
+def _consume_credit_for_upload(upload: DocumentUpload, credit_ref_type: str = "document_upload", credit_ref_id: str = "") -> None:
     """Consume reserved credit after successful extraction.
 
-    Policy: ChargePolicy.for_extraction_success() → CONSUME.
-    reference_type='document_upload', reference_id=upload.pk.
-    Idempotent — CreditService.consume() skips if already consumed.
+    Policy: ChargePolicy.for_extraction_success() -> CONSUME.
+    Uses credit_ref_type/credit_ref_id to match the reservation made by the view.
+    Idempotent -- CreditService.consume() skips if already consumed for that reference.
     """
     if not upload.uploaded_by_id:
         return
+    ref_id = credit_ref_id or str(upload.pk)
     try:
         from apps.extraction.services.credit_service import CreditService
         from apps.extraction.credit_models import UserCreditAccount
@@ -338,22 +461,24 @@ def _consume_credit_for_upload(upload: DocumentUpload) -> None:
             return
         CreditService.consume(
             upload.uploaded_by, credits=1,
-            reference_type="document_upload",
-            reference_id=str(upload.pk),
+            reference_type=credit_ref_type,
+            reference_id=ref_id,
             remarks=f"Consumed for extraction task upload_id={upload.pk}",
         )
     except Exception as credit_exc:
         logger.warning("Credit consume failed for upload %s: %s", upload.pk, credit_exc)
 
 
-def _refund_credit_for_upload(upload: DocumentUpload) -> None:
+def _refund_credit_for_upload(upload: DocumentUpload, credit_ref_type: str = "document_upload", credit_ref_id: str = "") -> None:
     """Refund reserved credit when extraction fails (OCR/pipeline error).
 
-    Policy: ChargePolicy.for_ocr_failure() / for_pipeline_failure() / for_non_invoice_document() → REFUND.
-    Idempotent — CreditService.refund() skips if already refunded.
+    Policy: ChargePolicy.for_ocr_failure() / for_pipeline_failure() / for_non_invoice_document() -> REFUND.
+    Uses credit_ref_type/credit_ref_id to match the reservation made by the view.
+    Idempotent -- CreditService.refund() skips if already refunded for that reference.
     """
     if not upload.uploaded_by_id:
         return
+    ref_id = credit_ref_id or str(upload.pk)
     try:
         from apps.extraction.services.credit_service import CreditService
         from apps.extraction.credit_models import UserCreditAccount
@@ -361,8 +486,8 @@ def _refund_credit_for_upload(upload: DocumentUpload) -> None:
             return
         CreditService.refund(
             upload.uploaded_by, credits=1,
-            reference_type="document_upload",
-            reference_id=str(upload.pk),
+            reference_type=credit_ref_type,
+            reference_id=ref_id,
             remarks=f"Refund for failed extraction task upload_id={upload.pk}",
         )
     except Exception as credit_exc:

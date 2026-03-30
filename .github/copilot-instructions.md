@@ -473,3 +473,164 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/posting_core/services/posting_pipeline.py` | 9-stage posting pipeline orchestration (incl. duplicate check) |
 | `apps/posting/services/posting_orchestrator.py` | Orchestrates `prepare_posting` lifecycle |
 | `apps/posting/services/posting_action_service.py` | Approve / reject / submit / retry actions |
+
+---
+
+## Langfuse Observability Patterns
+
+**Reference**: `apps/core/langfuse_client.py` + `docs/LANGFUSE_INTEGRATION.md`
+
+All Langfuse calls are fail-silent -- if `LANGFUSE_PUBLIC_KEY` is not set, every function returns `None` and callers must guard accordingly.
+
+### Available helpers (import from `apps.core.langfuse_client`)
+
+```python
+from apps.core.langfuse_client import (
+    start_trace,   # open a root trace span
+    start_span,    # open a child span under a trace or span
+    end_span,      # close any span, optionally set output + level
+    log_generation,# record one LLM call (model, messages, tokens, completion)
+    score_trace,   # attach a numeric score to a trace by trace_id
+)
+```
+
+### Trace ID conventions
+
+| Context | Trace ID pattern |
+|---|---|
+| Agent pipeline / extraction | `trace_ctx.trace_id` (from `TraceContext`) |
+| Reconciliation run | `run.trace_id` if set, else `str(run.pk)` |
+| Posting run | `posting_run.trace_id` if set, else `str(posting_run.pk)` |
+| ERP submission | `f"erp-{posting_run_id}"` -> `f"erp-inv-{invoice_id}"` -> `uuid4().hex` |
+| Extraction approval | `f"approval-{approval.pk}"` |
+| Review assignment | `f"review-{assignment.pk}"` |
+| Bulk job | `f"bulk-{job.pk}"` |
+| Copilot session | `f"copilot-{session.pk}"` |
+
+### Score value conventions
+
+| Score name | Values | When to emit |
+|---|---|---|
+| `reconciliation_match` | MATCHED=1.0, PARTIAL=0.5, REQUIRES_REVIEW=0.3, UNMATCHED=0.0 | After match classification |
+| `posting_confidence` | 0.0-1.0 composite | After stage 6 of posting pipeline |
+| `posting_requires_review` | 1.0 or 0.0 | After review routing (stage 7) |
+| `extraction_confidence` | 0.0-1.0 | After extraction pipeline step 9 |
+| `extraction_requires_review` | 1.0 or 0.0 | After routing in extraction pipeline |
+| `review_priority` | priority / 10.0 (normalised to 0.0-1.0) | On `create_assignment()` |
+| `review_decision` | APPROVED=1.0, REPROCESSED=0.5, REJECTED=0.0 | On `_finalise()` |
+| `rbac_guardrail` | 1.0=GRANTED, 0.0=DENIED | Every guardrail decision |
+| `rbac_data_scope` | 0.0 only (deny path) | `authorize_data_scope()` deny |
+| `bulk_job_success_rate` | 0.0-1.0 (processed / total) | After bulk job completes |
+| `copilot_session_length` | message count (raw int as float) | On session archive |
+
+### When adding a new Celery task that triggers a pipeline
+
+1. Resolve a `trace_id` at the top of the task:
+   ```python
+   import uuid
+   _trace_id = getattr(obj, "trace_id", None) or str(obj.pk)
+   ```
+2. Call `start_trace()` before the service call, `end_span()` after:
+   ```python
+   from apps.core.langfuse_client import start_trace, end_span
+   _lf_trace = start_trace(
+       _trace_id,
+       "task_name",          # snake_case name shown in Langfuse UI
+       metadata={"task_id": self.request.id, "obj_pk": obj.pk},
+   )
+   try:
+       result = SomeService.run(obj)
+   finally:
+       end_span(_lf_trace, output={"status": result.status if result else "error"})
+   ```
+3. Wrap the whole block in `try/except Exception` -- never let Langfuse errors propagate.
+4. Pass `_trace_id` into the service so child spans can be attached to it.
+
+### When adding a new pipeline stage (span)
+
+```python
+_lf_span = start_span(
+    _lf_trace,                # parent trace or span
+    name="stage_name",        # e.g. "eligibility_check"
+    metadata={"stage": 1, "invoice_id": invoice.pk},
+)
+# ... do work ...
+end_span(
+    _lf_span,
+    output={"passed": True, "issues": []},
+    level="ERROR" if failed else "DEFAULT",
+)
+```
+
+Always call `end_span()` in a `finally` block so spans are never left open.
+
+### When adding an LLM call
+
+```python
+log_generation(
+    span=_lf_span,
+    name="descriptive_call_name",       # e.g. "invoice_extraction_chat"
+    model=deployment_name,              # e.g. "gpt-4o"
+    prompt_messages=[                   # list of {"role": ..., "content": ...}
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ],
+    completion=response_text,
+    prompt_tokens=usage.prompt_tokens,
+    completion_tokens=usage.completion_tokens,
+    total_tokens=usage.total_tokens,
+)
+```
+
+### When emitting a quality score
+
+```python
+from apps.core.langfuse_client import score_trace
+score_trace(
+    _trace_id,
+    "score_name",    # from the conventions table above
+    float_value,     # always a float in range 0.0-1.0 (or raw count)
+    comment=f"context={...}",    # human-readable, optional but encouraged
+)
+```
+
+### Guard pattern (all Langfuse calls must be guarded)
+
+```python
+try:
+    from apps.core.langfuse_client import start_span, end_span
+    _lf_span = start_span(_lf_trace, name="my_span") if _lf_trace else None
+except Exception:
+    _lf_span = None
+
+# ... do work ...
+
+try:
+    if _lf_span:
+        end_span(_lf_span, output={...})
+except Exception:
+    pass
+```
+
+### Known missing integrations (implement these next)
+
+| File | What to add |
+|---|---|
+| `apps/extraction/bulk_tasks.py` — `run_bulk_job_task` | Root trace `"bulk_job"` wrapping the entire job; score `bulk_job_success_rate` at the end |
+| `apps/extraction/services/bulk_service.py` — `_process_item()` | Child span per item; mark `level="ERROR"` on failure |
+| `apps/extraction/services/bulk_source_adapters.py` — `GoogleDriveBulkSourceAdapter`, `OneDriveBulkSourceAdapter` | Span per `test_connection()`, `list_files()`, `download_file()` to surface latency and auth failures |
+| ~~`apps/reconciliation/tasks.py` — `run_reconciliation_task`~~ | ~~Root trace `"reconciliation_task"` forwarded into `ReconciliationRunnerService`~~ **Done** |
+| `apps/posting_core/services/posting_pipeline.py` | Root trace `"posting_pipeline"` opened at stage 1 so `posting_confidence` and `posting_requires_review` scores are linked |
+| ~~`apps/reconciliation/services/runner_service.py`~~ | ~~Root trace `"reconciliation_run"` so `reconciliation_match` scores are linked~~ **Done** |
+| `apps/erp_integration/services/submission/posting_submit_resolver.py` | Inherit parent trace ID from posting pipeline instead of creating isolated traces |
+| `apps/copilot/services/copilot_service.py` — `answer_question()` | Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive |
+| `apps/agents/tasks.py` — `run_agent_pipeline_task` | Root trace at task level (the orchestrator already creates one but the Celery wrapper does not) |
+| `apps/cases/tasks.py` — `process_case_task`, `reprocess_case_from_stage_task` | Root trace `"case_task"` per task invocation |
+
+### Debugging Langfuse
+
+- **No traces appearing**: Verify `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set. Check logs for `Langfuse disabled` or `start_trace failed`.
+- **Scores unlinked**: The pipeline is not creating a root trace -- `score_trace` scores are recorded but float free. Add a `start_trace` at pipeline entry and pass the same `trace_id` to `score_trace`.
+- **Users/Sessions tab empty**: Confirm SDK is v4.x. User/session attribution uses `_otel_span.set_attribute()` -- not constructor kwargs.
+- **Prompt 404 in logs**: Run `python manage.py push_prompts_to_langfuse`. If names are wrong, run with `--purge`.
+- **`start_trace` returns None**: Set `LANGFUSE_LOG_LEVEL=debug`; look for `TypeError` from unknown kwargs or bad host URL (must not have trailing slash).

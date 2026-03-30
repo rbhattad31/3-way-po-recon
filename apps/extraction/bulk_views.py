@@ -4,6 +4,9 @@ Provides:
 - bulk_job_list: list of bulk extraction jobs with start-new form
 - bulk_job_start: create and dispatch a new bulk job
 - bulk_job_detail: job summary + item-level detail table
+- bulk_source_list: list + manage all source connections
+- bulk_source_edit: edit an existing source connection
+- bulk_source_delete: deactivate (soft-delete) a source connection
 """
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ import logging
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_POST
 
@@ -156,6 +160,29 @@ def bulk_source_create(request):
 
 
 @login_required
+@require_POST
+@permission_required_code("extraction.bulk_create")
+def bulk_source_test(request):
+    """AJAX endpoint: test a source connection config without saving it."""
+    source_type = request.POST.get("source_type", "")
+    if source_type not in dict(BulkSourceType.choices):
+        return JsonResponse({"ok": False, "message": "Please select a valid source type."})
+
+    config = {}
+    for key in _SOURCE_CONFIG_KEYS.get(source_type, []):
+        config[key] = (request.POST.get(f"config_{key}") or "").strip()
+
+    try:
+        from apps.extraction.services.bulk_source_adapters import get_adapter
+        adapter = get_adapter(source_type, config)
+        result = adapter.test_connection()
+        return JsonResponse({"ok": result.valid, "message": result.message})
+    except Exception as exc:
+        logger.exception("Connection test error for source_type=%s", source_type)
+        return JsonResponse({"ok": False, "message": f"Test failed: {exc}"})
+
+
+@login_required
 @permission_required_code("extraction.bulk_view")
 @observed_action(
     "extraction.bulk_job_detail",
@@ -207,3 +234,135 @@ def bulk_job_detail(request, job_id: int):
         "item_status_choices": BulkItemStatus.choices,
         "item_status_filter": item_status_filter or "",
     })
+
+
+# ---------------------------------------------------------------------------
+# Source connection management
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("extraction.bulk_view")
+@observed_action(
+    "extraction.bulk_source_list",
+    permission="extraction.bulk_view",
+    entity_type="BulkSourceConnection",
+)
+def bulk_source_list(request):
+    """List all source connections with job counts."""
+    sources = (
+        BulkSourceConnection.objects
+        .prefetch_related("jobs")
+        .order_by("-created_at")
+    )
+    return render(request, "extraction/bulk_source_list.html", {
+        "sources": sources,
+        "source_types": BulkSourceType.choices,
+        "source_config_keys": _SOURCE_CONFIG_KEYS,
+    })
+
+
+@login_required
+@permission_required_code("extraction.bulk_create")
+@observed_action(
+    "extraction.bulk_source_edit",
+    permission="extraction.bulk_create",
+    entity_type="BulkSourceConnection",
+)
+def bulk_source_edit(request, pk: int):
+    """Edit an existing BulkSourceConnection."""
+    source = get_object_or_404(BulkSourceConnection, pk=pk)
+
+    if request.method == "POST":
+        name = (request.POST.get("name") or "").strip()
+        source_type = request.POST.get("source_type", "")
+
+        if not name:
+            messages.error(request, "Source name is required.")
+            return redirect("extraction:bulk_source_list")
+
+        if source_type not in dict(BulkSourceType.choices):
+            messages.error(request, "Invalid source type.")
+            return redirect("extraction:bulk_source_list")
+
+        config = {}
+        for key in _SOURCE_CONFIG_KEYS.get(source_type, []):
+            val = (request.POST.get(f"config_{key}") or "").strip()
+            # For password fields, keep the old value if nothing new was entered
+            if not val and key in source.config_json:
+                config[key] = source.config_json[key]
+            elif not val:
+                messages.error(request, f"Missing required config field: {key}")
+                return redirect("extraction:bulk_source_list")
+            else:
+                config[key] = val
+
+        source.name = name
+        source.source_type = source_type
+        source.config_json = config
+        source.save(update_fields=["name", "source_type", "config_json", "updated_at"])
+        messages.success(request, f"Source connection '{escape(name)}' updated.")
+        return redirect("extraction:bulk_source_list")
+
+    # GET — render the edit page
+    return render(request, "extraction/bulk_source_edit.html", {
+        "source": source,
+        "source_types": BulkSourceType.choices,
+        "source_config_keys": _SOURCE_CONFIG_KEYS,
+    })
+
+
+@login_required
+@require_POST
+@permission_required_code("extraction.bulk_create")
+def bulk_source_delete(request, pk: int):
+    """Deactivate (soft-delete) a source connection."""
+    source = get_object_or_404(BulkSourceConnection, pk=pk)
+    source.is_active = False
+    source.save(update_fields=["is_active", "updated_at"])
+    messages.success(request, f"Source connection '{escape(source.name)}' deactivated.")
+    return redirect("extraction:bulk_source_list")
+
+
+@login_required
+@require_POST
+@permission_required_code("extraction.bulk_create")
+def bulk_job_retry(request, job_id: int):
+    """Reset a stuck/failed bulk job and re-queue it."""
+    from apps.core.utils import dispatch_task
+    from apps.extraction.bulk_tasks import run_bulk_job_task
+    from django.utils import timezone
+
+    job = get_object_or_404(BulkExtractionJob, pk=job_id)
+
+    # Only allow retry for non-running states
+    if job.status in (BulkJobStatus.SCANNING, BulkJobStatus.PROCESSING):
+        # Treat as stuck — reset it
+        pass
+    elif job.status == BulkJobStatus.COMPLETED:
+        messages.warning(request, "Job already completed successfully.")
+        return redirect("extraction:bulk_job_detail", job_id=job.pk)
+
+    # Reset job counters and status
+    job.status = BulkJobStatus.QUEUED
+    job.started_at = None
+    job.completed_at = None
+    job.error_message = ""
+    job.total_found = 0
+    job.total_registered = 0
+    job.total_success = 0
+    job.total_failed = 0
+    job.total_skipped = 0
+    job.total_credit_blocked = 0
+    job.save(update_fields=[
+        "status", "started_at", "completed_at", "error_message",
+        "total_found", "total_registered", "total_success", "total_failed",
+        "total_skipped", "total_credit_blocked", "updated_at",
+    ])
+
+    # Remove existing items so the scan is clean
+    job.items.all().delete()
+
+    dispatch_task(run_bulk_job_task, job_id=job.pk)
+
+    messages.success(request, f"Job re-queued. Scanning source '{job.source_connection.name}'...")
+    return redirect("extraction:bulk_job_detail", job_id=job.pk)

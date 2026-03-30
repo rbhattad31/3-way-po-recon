@@ -54,24 +54,32 @@ class ExtractionApprovalService:
         invoice: Invoice,
         extraction_result: Optional[ExtractionResult] = None,
     ) -> ExtractionApproval:
-        """Create a PENDING approval for a successfully extracted invoice.
+        """Create (or reset) a PENDING approval for a successfully extracted invoice.
 
-        Takes a snapshot of the current extracted values so that later
-        corrections can be diffed for analytics.
+        On reprocessing the invoice already has an ExtractionApproval.  Rather
+        than raising an IntegrityError, we update the existing record back to
+        PENDING so the reviewer sees fresh data.
         """
         snapshot = cls._build_values_snapshot(invoice)
 
-        approval = ExtractionApproval.objects.create(
+        approval, created = ExtractionApproval.objects.update_or_create(
             invoice=invoice,
-            extraction_result=extraction_result,
-            status=ExtractionApprovalStatus.PENDING,
-            confidence_at_review=invoice.extraction_confidence,
-            original_values_snapshot=snapshot,
+            defaults={
+                "extraction_result": extraction_result,
+                "status": ExtractionApprovalStatus.PENDING,
+                "confidence_at_review": invoice.extraction_confidence,
+                "original_values_snapshot": snapshot,
+                # Reset review metadata so it looks fresh
+                "reviewed_by": None,
+                "reviewed_at": None,
+                "is_touchless": False,
+            },
         )
 
+        action = "Created" if created else "Reset"
         logger.info(
-            "Created pending extraction approval %s for invoice %s",
-            approval.pk, invoice.pk,
+            "%s pending extraction approval %s for invoice %s",
+            action, approval.pk, invoice.pk,
         )
         return approval
 
@@ -101,14 +109,17 @@ class ExtractionApprovalService:
 
         snapshot = cls._build_values_snapshot(invoice)
 
-        approval = ExtractionApproval.objects.create(
+        approval, created = ExtractionApproval.objects.update_or_create(
             invoice=invoice,
-            extraction_result=extraction_result,
-            status=ExtractionApprovalStatus.AUTO_APPROVED,
-            reviewed_at=timezone.now(),
-            confidence_at_review=confidence,
-            original_values_snapshot=snapshot,
-            is_touchless=True,
+            defaults={
+                "extraction_result": extraction_result,
+                "status": ExtractionApprovalStatus.AUTO_APPROVED,
+                "reviewed_at": timezone.now(),
+                "confidence_at_review": confidence,
+                "original_values_snapshot": snapshot,
+                "is_touchless": True,
+                "reviewed_by": None,
+            },
         )
 
         # Transition invoice to READY_FOR_RECON
@@ -130,6 +141,21 @@ class ExtractionApprovalService:
         )
         # ── Trigger posting pipeline ──
         cls._enqueue_posting(invoice, user=None)
+
+        try:
+            from apps.core.langfuse_client import score_trace
+            score_trace(
+                f"approval-{approval.pk}",
+                "extraction_auto_approve_confidence",
+                float(confidence),
+                comment=(
+                    f"invoice={invoice.pk} "
+                    f"threshold={threshold:.2f} "
+                    f"touchless=True"
+                ),
+            )
+        except Exception:
+            pass
 
         return approval
 
@@ -280,6 +306,36 @@ class ExtractionApprovalService:
         # ── Trigger posting pipeline ──
         cls._enqueue_posting(invoice, user)
 
+        try:
+            from apps.core.langfuse_client import score_trace
+            _trace_id = f"approval-{approval.pk}"
+            score_trace(
+                _trace_id,
+                "extraction_approval_decision",
+                1.0,
+                comment=(
+                    f"invoice={invoice.pk} "
+                    f"reviewer={getattr(user, 'pk', None)} "
+                    f"corrections={len(correction_records)} "
+                    f"touchless={approval.is_touchless}"
+                ),
+            )
+            score_trace(
+                _trace_id,
+                "extraction_approval_confidence",
+                float(approval.confidence_at_review or 0.0),
+                comment=f"invoice={invoice.pk}",
+            )
+            if correction_records:
+                score_trace(
+                    _trace_id,
+                    "extraction_corrections_count",
+                    float(len(correction_records)),
+                    comment=f"invoice={invoice.pk}",
+                )
+        except Exception:
+            pass
+
         return approval
 
     # ------------------------------------------------------------------
@@ -334,6 +390,21 @@ class ExtractionApprovalService:
 
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
         cls._record_governance_trail(approval, "REJECT", user, reason)
+
+        try:
+            from apps.core.langfuse_client import score_trace
+            score_trace(
+                f"approval-{approval.pk}",
+                "extraction_approval_decision",
+                0.0,
+                comment=(
+                    f"invoice={approval.invoice.pk} "
+                    f"reviewer={getattr(user, 'pk', None)} "
+                    f"reason={reason[:100]}"
+                ),
+            )
+        except Exception:
+            pass
 
         return approval
 

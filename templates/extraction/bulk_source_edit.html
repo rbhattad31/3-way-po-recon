@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% block title %}Edit Source – {{ source.name }}{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Extraction</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:bulk_job_list' %}" class="text-decoration-none">Bulk Extraction</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:bulk_source_list' %}" class="text-decoration-none">Sources</a></li>
+    <li class="breadcrumb-item active">Edit</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-pencil-square me-2"></i>Edit Source Connection
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      {{ source.get_source_type_display }} &mdash; {{ source.name }}
+    </p>
+  </div>
+  <a href="{% url 'extraction:bulk_source_list' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to Sources
+  </a>
+</div>
+
+<div class="row">
+  <div class="col-lg-7">
+    <div class="ap-card">
+      <div class="ap-card-body">
+        <form method="post" id="editSourceForm">
+          {% csrf_token %}
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Name</label>
+            <input type="text" name="name" class="form-control" required value="{{ source.name }}">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Source Type</label>
+            <select name="source_type" id="sourceTypeSelect" class="form-select" required>
+              <option value="">Select type...</option>
+              {% for val, label in source_types %}
+              <option value="{{ val }}" {% if source.source_type == val %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          {# LOCAL_FOLDER #}
+          <div class="source-config-fields {% if source.source_type != 'LOCAL_FOLDER' %}d-none{% endif %}" data-source-type="LOCAL_FOLDER">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Folder Path</label>
+              <input type="text" name="config_folder_path" class="form-control"
+                {% if source.source_type == 'LOCAL_FOLDER' %}required{% else %}disabled{% endif %}
+                value="{{ source.config_json.folder_path|default:'' }}"
+                placeholder="/path/to/invoices">
+              <div class="form-text">Absolute path to the folder on the server.</div>
+            </div>
+          </div>
+
+          {# GOOGLE_DRIVE #}
+          <div class="source-config-fields {% if source.source_type != 'GOOGLE_DRIVE' %}d-none{% endif %}" data-source-type="GOOGLE_DRIVE">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Drive Folder ID</label>
+              <input type="text" name="config_folder_id" class="form-control"
+                {% if source.source_type == 'GOOGLE_DRIVE' %}required{% else %}disabled{% endif %}
+                value="{{ source.config_json.folder_id|default:'' }}"
+                placeholder="1ABC...xyz">
+              <div class="form-text">The Google Drive folder ID from the folder URL.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Service Account JSON</label>
+              <textarea name="config_service_account_json" class="form-control"
+                {% if source.source_type == 'GOOGLE_DRIVE' %}required{% else %}disabled{% endif %}
+                rows="4" placeholder='{"type":"service_account",...}'>{{ source.config_json.service_account_json|default:'' }}</textarea>
+              <div class="form-text">Paste the full service-account credentials JSON. Leave blank to keep existing.</div>
+            </div>
+          </div>
+
+          {# ONEDRIVE #}
+          <div class="source-config-fields {% if source.source_type != 'ONEDRIVE' %}d-none{% endif %}" data-source-type="ONEDRIVE">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Tenant ID</label>
+              <input type="text" name="config_tenant_id" class="form-control"
+                {% if source.source_type == 'ONEDRIVE' %}required{% else %}disabled{% endif %}
+                value="{{ source.config_json.tenant_id|default:'' }}"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Client ID</label>
+              <input type="text" name="config_client_id" class="form-control"
+                {% if source.source_type == 'ONEDRIVE' %}required{% else %}disabled{% endif %}
+                value="{{ source.config_json.client_id|default:'' }}"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Client Secret</label>
+              <input type="password" name="config_client_secret" class="form-control"
+                {% if source.source_type == 'ONEDRIVE' %}required{% else %}disabled{% endif %}
+                placeholder="Leave blank to keep existing secret">
+              <div class="form-text">Leave blank to keep the existing secret unchanged.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Drive ID</label>
+              <input type="text" name="config_drive_id" class="form-control"
+                {% if source.source_type == 'ONEDRIVE' %}required{% else %}disabled{% endif %}
+                value="{{ source.config_json.drive_id|default:'' }}"
+                placeholder="b!...">
+              <div class="form-text">From Graph Explorer: GET /me/drives or /drives.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Folder Path</label>
+              <input type="text" name="config_folder_path" class="form-control"
+                {% if source.source_type == 'ONEDRIVE' %}required{% else %}disabled{% endif %}
+                value="{{ source.config_json.folder_path|default:'' }}"
+                placeholder="Finance-Agents/Agents1">
+              <div class="form-text">Path from drive root. Supports nested folders, e.g. <code>Finance-Agents/Agents1</code>.</div>
+            </div>
+          </div>
+
+          {# Test connection result #}
+          <div id="testConnectionResult" class="d-none mb-3"></div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check-circle me-1"></i>Save Changes</button>
+            <button type="button" class="btn btn-sm btn-outline-info" onclick="testSourceConnection()">
+              <i class="bi bi-wifi me-1"></i><span id="testBtnLabel">Test Connection</span>
+            </button>
+            <a href="{% url 'extraction:bulk_source_list' %}" class="btn btn-sm btn-outline-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# Sidebar: recent jobs #}
+  <div class="col-lg-5">
+    <div class="ap-card">
+      <div class="ap-card-body">
+        <h6 class="fw-bold mb-3" style="font-size:var(--ap-font-size-sm)"><i class="bi bi-clock-history me-2"></i>Recent Jobs</h6>
+        {% with source.jobs.all|slice:":8" as recent_jobs %}
+        {% if recent_jobs %}
+        <table class="table table-sm table-borderless mb-0" style="font-size:var(--ap-font-size-xs)">
+          <thead><tr><th>Job</th><th>Status</th><th>Found</th><th>Date</th></tr></thead>
+          <tbody>
+            {% for job in recent_jobs %}
+            <tr>
+              <td>
+                <a href="{% url 'extraction:bulk_job_detail' job_id=job.pk %}" class="text-decoration-none">
+                  {{ job.job_id|truncatechars:10 }}
+                </a>
+              </td>
+              <td>
+                {% if job.status == "COMPLETED" %}
+                  <span class="badge bg-success-subtle text-success" style="font-size:.65rem">Done</span>
+                {% elif job.status == "FAILED" %}
+                  <span class="badge bg-danger-subtle text-danger" style="font-size:.65rem">Failed</span>
+                {% elif job.status == "PARTIAL_FAILED" %}
+                  <span class="badge bg-warning-subtle text-warning" style="font-size:.65rem">Partial</span>
+                {% else %}
+                  <span class="badge bg-secondary-subtle text-secondary" style="font-size:.65rem">{{ job.get_status_display }}</span>
+                {% endif %}
+              </td>
+              <td>{{ job.total_found }}</td>
+              <td>{{ job.created_at|date:"M d, H:i" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted mb-0" style="font-size:var(--ap-font-size-sm)">No jobs run yet for this source.</p>
+        {% endif %}
+        {% endwith %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+</style>
+
+<script>
+  document.getElementById('sourceTypeSelect').addEventListener('change', function() {
+    document.querySelectorAll('.source-config-fields').forEach(function(el) {
+      el.classList.add('d-none');
+      el.querySelectorAll('input, textarea').forEach(function(inp) { inp.removeAttribute('required'); inp.disabled = true; });
+    });
+    var selected = this.value;
+    if (selected) {
+      var panel = document.querySelector('.source-config-fields[data-source-type="' + selected + '"]');
+      if (panel) {
+        panel.classList.remove('d-none');
+        panel.querySelectorAll('input, textarea').forEach(function(inp) { inp.setAttribute('required', ''); inp.disabled = false; });
+      }
+    }
+    var r = document.getElementById('testConnectionResult');
+    r.className = 'd-none mb-3'; r.innerHTML = '';
+  });
+
+  function testSourceConnection() {
+    var form = document.getElementById('editSourceForm');
+    var resultEl = document.getElementById('testConnectionResult');
+    var label = document.getElementById('testBtnLabel');
+    var sourceType = document.getElementById('sourceTypeSelect').value;
+
+    if (!sourceType) {
+      resultEl.className = 'alert alert-warning py-2 px-3 mb-3';
+      resultEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Please select a source type first.';
+      return;
+    }
+
+    label.textContent = 'Testing...';
+    resultEl.className = 'alert alert-secondary py-2 px-3 mb-3';
+    resultEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Testing connection...';
+
+    var formData = new FormData(form);
+    formData.set('source_type', sourceType);
+
+    fetch('{% url "extraction:bulk_source_test" %}', {
+      method: 'POST',
+      headers: {'X-CSRFToken': formData.get('csrfmiddlewaretoken')},
+      body: formData,
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      resultEl.className = data.ok ? 'alert alert-success py-2 px-3 mb-3' : 'alert alert-danger py-2 px-3 mb-3';
+      resultEl.innerHTML = (data.ok ? '<i class="bi bi-check-circle-fill me-1"></i>' : '<i class="bi bi-x-circle-fill me-1"></i>') + data.message;
+    })
+    .catch(function() {
+      resultEl.className = 'alert alert-danger py-2 px-3 mb-3';
+      resultEl.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>Request failed.';
+    })
+    .finally(function() { label.textContent = 'Test Connection'; });
+  }
+</script>
+{% endblock %}

@@ -1,4 +1,4 @@
-"""Agent template views — reference pages for end users."""
+"""Agent template views -- reference pages for end users."""
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
@@ -22,9 +22,18 @@ from apps.core.enums import (
     AuditEventType,
     CaseStageType,
     CaseStatus,
+    InvoicePostingStatus,
     PerformedByType,
+    PostingReviewQueue,
+    PostingRunStatus,
+    PostingStage,
     ProcessingPath,
     RecommendationType,
+)
+from apps.erp_integration.enums import (
+    ERPConnectorType,
+    ERPResolutionType,
+    ERPSubmissionType,
 )
 
 
@@ -111,6 +120,190 @@ _NON_PO_CHECKS = [
     {"name": "Budget Availability", "icon": "bi-wallet2", "description": "Sufficient budget remaining in the relevant cost center / GL account."},
 ]
 
+# ---------------------------------------------------------------------------
+# Agent contract metadata (mirrors seed_agent_contracts.py -- kept in sync)
+# ---------------------------------------------------------------------------
+_AGENT_CONTRACTS = {
+    "INVOICE_EXTRACTION": {
+        "purpose": "Extract structured invoice data from OCR text using LLM",
+        "entry_conditions": "Called immediately after OCR completes on a new invoice document",
+        "success_criteria": "Returns full JSON with vendor, PO number, line items, and confidence >= 0.7",
+        "prohibited_actions": ["AUTO_CLOSE", "ESCALATE_TO_MANAGER"],
+        "requires_tool_grounding": False,
+        "min_tool_calls": 0,
+        "tool_failure_confidence_cap": None,
+        "allowed_recs": None,
+        "default_fallback_rec": "REPROCESS_EXTRACTION",
+        "is_pipeline": True,
+        "trigger": "Pipeline-only -- runs in ExtractionAdapter directly after Azure DI OCR. Never added to AgentOrchestrator plan.",
+        "dynamic_adds": "",
+        "skip_conditions": "Never scheduled by PolicyEngine -- pipeline-only.",
+        "human_review_required_conditions": "confidence < 0.6 or key fields missing",
+    },
+    "INVOICE_UNDERSTANDING": {
+        "purpose": "Validate and clarify invoice extraction quality when confidence is low",
+        "entry_conditions": "extraction_confidence < 0.75 (post-OCR) OR < 0.70 (post-reconciliation)",
+        "success_criteria": "Determines whether extraction is reliable; may trigger RECONCILIATION_ASSIST via _reflect()",
+        "prohibited_actions": ["AUTO_CLOSE"],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 1,
+        "tool_failure_confidence_cap": 0.5,
+        "allowed_recs": ["REPROCESS_EXTRACTION", "SEND_TO_AP_REVIEW"],
+        "default_fallback_rec": "REPROCESS_EXTRACTION",
+        "is_pipeline": False,
+        "trigger": "PolicyEngine: extraction_conf < 0.70. Also fired by stage_executor when post-OCR confidence < 0.75.",
+        "dynamic_adds": "If own output confidence < 0.5 after tools, _reflect() adds RECONCILIATION_ASSIST to the plan.",
+        "skip_conditions": "Skipped when extraction_conf >= 0.70.",
+        "human_review_required_conditions": "confidence < 0.5 after tool grounding",
+    },
+    "PO_RETRIEVAL": {
+        "purpose": "Find the correct Purchase Order when deterministic lookup failed",
+        "entry_conditions": "match_status = PO_NOT_FOUND or po_number missing on invoice",
+        "success_criteria": "PO number confirmed via tool call and present in evidence",
+        "prohibited_actions": ["AUTO_CLOSE"],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 1,
+        "tool_failure_confidence_cap": 0.4,
+        "allowed_recs": ["SEND_TO_AP_REVIEW", "SEND_TO_PROCUREMENT"],
+        "default_fallback_rec": "SEND_TO_AP_REVIEW",
+        "is_pipeline": False,
+        "trigger": "PolicyEngine: PO_NOT_FOUND exception raised after deterministic PO lookup fails.",
+        "dynamic_adds": "If PO found in a THREE_WAY case, _reflect() adds GRN_RETRIEVAL to the plan.",
+        "skip_conditions": "Skipped when PO is found via deterministic lookup.",
+        "human_review_required_conditions": "no PO found after all search strategies exhausted",
+    },
+    "GRN_RETRIEVAL": {
+        "purpose": "Investigate goods receipt status when GRN is missing or partial",
+        "entry_conditions": "reconciliation_mode = THREE_WAY AND exception_type = GRN_NOT_FOUND or GRN_PARTIAL",
+        "success_criteria": "GRN status confirmed via tool call with quantity comparison",
+        "prohibited_actions": ["AUTO_CLOSE"],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 1,
+        "tool_failure_confidence_cap": 0.4,
+        "allowed_recs": ["SEND_TO_PROCUREMENT", "SEND_TO_AP_REVIEW"],
+        "default_fallback_rec": "SEND_TO_PROCUREMENT",
+        "is_pipeline": False,
+        "trigger": "PolicyEngine: GRN_NOT_FOUND/GRN_PARTIAL in THREE_WAY mode. Also added dynamically by _reflect() after PO_RETRIEVAL succeeds.",
+        "dynamic_adds": "",
+        "skip_conditions": "Never runs in TWO_WAY or NON_PO mode -- suppressed by PolicyEngine.",
+        "human_review_required_conditions": "goods not yet received or quantity rejected",
+    },
+    "RECONCILIATION_ASSIST": {
+        "purpose": "Investigate partial match discrepancies at line level",
+        "entry_conditions": "match_status = PARTIAL_MATCH with qty/price/amount discrepancies",
+        "success_criteria": "Explains root cause of discrepancies and recommends resolution",
+        "prohibited_actions": [],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 1,
+        "tool_failure_confidence_cap": 0.5,
+        "allowed_recs": ["AUTO_CLOSE", "SEND_TO_AP_REVIEW", "SEND_TO_PROCUREMENT", "SEND_TO_VENDOR_CLARIFICATION"],
+        "default_fallback_rec": "SEND_TO_AP_REVIEW",
+        "is_pipeline": False,
+        "trigger": "PolicyEngine: PARTIAL_MATCH outside auto-close tolerance band. Also added by _reflect() after INVOICE_UNDERSTANDING confidence < 0.5.",
+        "dynamic_adds": "",
+        "skip_conditions": "If PARTIAL_MATCH falls within auto-close band (qty: 5%, price: 3%, amount: 3%), PolicyEngine adds AUTO_CLOSE recommendation and skips this agent.",
+        "human_review_required_conditions": "discrepancy > tolerance AND confidence < 0.7",
+    },
+    "EXCEPTION_ANALYSIS": {
+        "purpose": "Analyse reconciliation exceptions, determine root causes, recommend resolution",
+        "entry_conditions": "exceptions present on result after matching",
+        "success_criteria": "All exceptions categorised with root cause and recommendation",
+        "prohibited_actions": [],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 1,
+        "tool_failure_confidence_cap": 0.5,
+        "allowed_recs": ["AUTO_CLOSE", "SEND_TO_AP_REVIEW", "SEND_TO_PROCUREMENT", "SEND_TO_VENDOR_CLARIFICATION", "REPROCESS_EXTRACTION", "ESCALATE_TO_MANAGER"],
+        "default_fallback_rec": "SEND_TO_AP_REVIEW",
+        "is_pipeline": False,
+        "trigger": "PolicyEngine: any exceptions present after reconciliation. Additive -- runs alongside retrieval/assist agents.",
+        "dynamic_adds": "",
+        "skip_conditions": "Skipped only if there are no reconciliation exceptions at all.",
+        "human_review_required_conditions": "HIGH severity exceptions or ESCALATE_TO_MANAGER recommendation",
+    },
+    "REVIEW_ROUTING": {
+        "purpose": "Determine correct review queue, team, and priority for the case",
+        "entry_conditions": "exception analysis complete, routing decision needed",
+        "success_criteria": "Routing decision made with high confidence based on prior analysis",
+        "prohibited_actions": ["AUTO_CLOSE", "REPROCESS_EXTRACTION"],
+        "requires_tool_grounding": False,
+        "min_tool_calls": 0,
+        "tool_failure_confidence_cap": None,
+        "allowed_recs": ["SEND_TO_AP_REVIEW", "SEND_TO_PROCUREMENT", "SEND_TO_VENDOR_CLARIFICATION", "ESCALATE_TO_MANAGER"],
+        "default_fallback_rec": "SEND_TO_AP_REVIEW",
+        "is_pipeline": False,
+        "trigger": "Always appended by PolicyEngine (alongside CASE_SUMMARY) if any other agents ran. Final synthesis step.",
+        "dynamic_adds": "",
+        "skip_conditions": "Skipped only if the entire agent pipeline is skipped (e.g., MATCHED + high confidence).",
+        "human_review_required_conditions": "always -- this agent assigns human review",
+    },
+    "CASE_SUMMARY": {
+        "purpose": "Produce human-readable case summary for AP reviewers",
+        "entry_conditions": "all preceding agents have completed for this pipeline run",
+        "success_criteria": "Clear summary produced covering invoice, PO, GRN, exceptions, recommendation",
+        "prohibited_actions": ["AUTO_CLOSE", "REPROCESS_EXTRACTION"],
+        "requires_tool_grounding": False,
+        "min_tool_calls": 0,
+        "tool_failure_confidence_cap": None,
+        "allowed_recs": ["SEND_TO_AP_REVIEW", "SEND_TO_PROCUREMENT", "SEND_TO_VENDOR_CLARIFICATION", "ESCALATE_TO_MANAGER"],
+        "default_fallback_rec": "SEND_TO_AP_REVIEW",
+        "is_pipeline": False,
+        "trigger": "Always appended by PolicyEngine (alongside REVIEW_ROUTING) if any other agents ran.",
+        "dynamic_adds": "",
+        "skip_conditions": "Skipped only if the entire agent pipeline is skipped (e.g., MATCHED + high confidence).",
+        "human_review_required_conditions": "always -- summary is produced for human reviewer",
+    },
+}
+
+# Increment this whenever the reference page template or view data changes.
+# Passed into the template so the browser sees a new ETag / detects staleness.
+_PAGE_VERSION = 3
+
+# PolicyEngine dispatch rules -- shown as a table in the reference page
+_POLICY_ENGINE_RULES = [
+    {
+        "condition": "match_status = MATCHED AND confidence >= threshold",
+        "mode": "Any",
+        "agents": [],
+        "notes": "Pipeline skipped entirely -- no agents run",
+    },
+    {
+        "condition": "extraction_conf < 0.70",
+        "mode": "Any",
+        "agents": ["INVOICE_UNDERSTANDING"],
+        "notes": "May extend plan with RECONCILIATION_ASSIST via _reflect() if own confidence < 0.5",
+    },
+    {
+        "condition": "PO_NOT_FOUND exception",
+        "mode": "Any",
+        "agents": ["PO_RETRIEVAL"],
+        "notes": "May extend plan with GRN_RETRIEVAL via _reflect() if PO found in THREE_WAY case",
+    },
+    {
+        "condition": "GRN_NOT_FOUND or GRN_PARTIAL exception",
+        "mode": "THREE_WAY only",
+        "agents": ["GRN_RETRIEVAL"],
+        "notes": "Suppressed in TWO_WAY and NON_PO modes",
+    },
+    {
+        "condition": "match_status = PARTIAL_MATCH (outside auto-close band)",
+        "mode": "Any",
+        "agents": ["RECONCILIATION_ASSIST"],
+        "notes": "Auto-close band: qty 5%, price 3%, amount 3% -- within band = AUTO_CLOSE rec, no agent",
+    },
+    {
+        "condition": "Any exceptions present after matching",
+        "mode": "Any",
+        "agents": ["EXCEPTION_ANALYSIS"],
+        "notes": "Additive -- runs alongside retrieval/assist agents, not instead of them",
+    },
+    {
+        "condition": "Any agents above were scheduled",
+        "mode": "Any",
+        "agents": ["REVIEW_ROUTING", "CASE_SUMMARY"],
+        "notes": "Always appended as final synthesis steps",
+    },
+]
+
 
 @login_required
 def agent_reference(request):
@@ -119,6 +312,7 @@ def agent_reference(request):
     for agent_type_val, agent_cls in AGENT_CLASS_REGISTRY.items():
         instance = agent_cls()
         label = AgentType(agent_type_val).label
+        contract = _AGENT_CONTRACTS.get(agent_type_val, {})
         agents_info.append({
             "type": agent_type_val,
             "label": label,
@@ -126,6 +320,21 @@ def agent_reference(request):
             "system_prompt": instance.system_prompt,
             "allowed_tools": instance.allowed_tools,
             "required_permission": AGENT_PERMISSIONS.get(agent_type_val, ""),
+            # Contract / guardrail fields
+            "purpose": contract.get("purpose", ""),
+            "entry_conditions": contract.get("entry_conditions", ""),
+            "success_criteria": contract.get("success_criteria", ""),
+            "prohibited_actions": contract.get("prohibited_actions", []),
+            "requires_tool_grounding": contract.get("requires_tool_grounding", False),
+            "min_tool_calls": contract.get("min_tool_calls", 0),
+            "tool_failure_confidence_cap": contract.get("tool_failure_confidence_cap"),
+            "allowed_recs": contract.get("allowed_recs"),
+            "default_fallback_rec": contract.get("default_fallback_rec", "SEND_TO_AP_REVIEW"),
+            "is_pipeline": contract.get("is_pipeline", False),
+            "trigger": contract.get("trigger", ""),
+            "dynamic_adds": contract.get("dynamic_adds", ""),
+            "skip_conditions": contract.get("skip_conditions", ""),
+            "human_review_required_conditions": contract.get("human_review_required_conditions", ""),
         })
 
     # Build tool info from the live registry
@@ -181,23 +390,81 @@ def agent_reference(request):
     terminal_states = [CaseStatus(s).label for s in TERMINAL_STATES]
 
     # ---- Prompts (extraction + agent + case) ----
-    prompts = [
-        {
-            "name": "Invoice Extraction",
-            "category": "Extraction",
-            "icon": "bi-file-earmark-text",
-            "color": "primary",
-            "description": (
-                "Used by the extraction pipeline when processing uploaded invoice PDFs. "
-                "After Azure Document Intelligence performs OCR, this prompt instructs "
-                "Azure OpenAI GPT-4o to extract structured invoice data from the raw text."
-            ),
-            "used_in": "apps/extraction/services/extraction_adapter.py",
-            "model": "Azure OpenAI GPT-4o (temperature: 0.0)",
-            "prompt_text": PromptRegistry.get("extraction.invoice_system"),
-        },
+    # Extraction: monolithic fallback + modular composition parts (InvoicePromptComposer)
+    _extraction_prompts = [
+        (
+            "Invoice Extraction (Monolithic Fallback)",
+            "extraction.invoice_system",
+            "Monolithic fallback used by ExtractionAdapter directly. "
+            "InvoicePromptComposer reads extraction.invoice_base first and falls back here if absent. "
+            "After Azure Document Intelligence OCR, instructs GPT-4o to extract structured invoice data.",
+            "apps/extraction/services/extraction_adapter.py + invoice_prompt_composer.py",
+        ),
+        (
+            "Invoice Base (Modular)",
+            "extraction.invoice_base",
+            "Base extraction prompt versioned independently of the monolithic fallback. "
+            "InvoicePromptComposer reads this first. Category and country overlays are appended after it.",
+            "apps/extraction/services/invoice_prompt_composer.py (step 1 of 3)",
+        ),
+        (
+            "Category Overlay -- Goods",
+            "extraction.invoice_category_goods",
+            "Appended by InvoicePromptComposer when invoice_category='goods'. "
+            "Rules for HSN codes, qty/unit/rate columns, and subtotal for physical goods invoices.",
+            "apps/extraction/services/invoice_prompt_composer.py (step 2 -- goods)",
+        ),
+        (
+            "Category Overlay -- Service",
+            "extraction.invoice_category_service",
+            "Appended by InvoicePromptComposer when invoice_category='service'. "
+            "Rules for SAC codes, fee/charge line items, and lump-sum service invoices.",
+            "apps/extraction/services/invoice_prompt_composer.py (step 2 -- service)",
+        ),
+        (
+            "Category Overlay -- Travel",
+            "extraction.invoice_category_travel",
+            "Appended by InvoicePromptComposer when invoice_category='travel'. "
+            "Rules for booking invoice numbers vs cart refs, base fare vs taxes, and traveller name.",
+            "apps/extraction/services/invoice_prompt_composer.py (step 2 -- travel)",
+        ),
+        (
+            "Country Overlay -- India GST",
+            "extraction.country_india_gst",
+            "Appended for IN/GST invoices. Rules for GSTIN format, IRN (not the invoice number), "
+            "CGST+SGST vs IGST breakdown, HSN/SAC codes, and standard GST rate tiers.",
+            "apps/extraction/services/invoice_prompt_composer.py (step 3 -- IN/GST)",
+        ),
+        (
+            "Country Overlay -- Generic VAT",
+            "extraction.country_generic_vat",
+            "Appended for AE/VAT, SA/ZATCA, GB/VAT, DE/VAT invoices. "
+            "Rules for VAT registration number, VAT rate, and net vs gross amount extraction.",
+            "apps/extraction/services/invoice_prompt_composer.py (step 3 -- VAT regimes)",
+        ),
     ]
+    prompts = []
+    for name, slug, description, used_in in _extraction_prompts:
+        text = PromptRegistry.get_or_default(slug)
+        if text:
+            prompts.append({
+                "name": name,
+                "category": "Extraction",
+                "icon": "bi-file-earmark-text",
+                "color": "primary",
+                "description": description,
+                "used_in": used_in,
+                "model": "Azure OpenAI GPT-4o (temperature: 0.0)",
+                "prompt_text": text,
+            })
+
+    # ReAct reasoning agents only -- exclude INVOICE_EXTRACTION because it is a
+    # single-shot pipeline agent (no tools, no ReAct loop) whose prompt content is
+    # already shown in the Extraction group above.
+    _PIPELINE_AGENT_TYPES = {AgentType.INVOICE_EXTRACTION.value}
     for agent in agents_info:
+        if agent["type"] in _PIPELINE_AGENT_TYPES:
+            continue
         prompts.append({
             "name": agent["label"],
             "category": "Agent",
@@ -214,14 +481,14 @@ def agent_reference(request):
         ("Case Summary", "case.case_summary",
          "Produces a reviewer-facing narrative with SUMMARY, REVIEWER NOTES, and RECOMMENDATION sections."),
         ("Exception Analysis", "case.exception_analysis",
-         "Analyses exceptions/validation issues — determines root cause, severity, and remediation path."),
+         "Analyses exceptions/validation issues -- determines root cause, severity, and remediation path."),
         ("Non-PO Validation", "case.non_po_validation",
          "Reasons over 9 deterministic check results for invoices without a Purchase Order."),
         ("Reviewer Copilot", "case.reviewer_copilot",
-         "Advisory assistant for human reviewers — answers case questions using tools but never commits actions."),
+         "Advisory assistant for human reviewers -- answers case questions using tools but never commits actions."),
     ]
     for name, slug, description in case_prompts:
-        text = PromptRegistry.get(slug, "")
+        text = PromptRegistry.get_or_default(slug)
         if text:
             prompts.append({
                 "name": name,
@@ -568,8 +835,230 @@ def agent_reference(request):
         },
     ]
 
-    return render(request, "agents/reference.html", {
+    # ---- Posting Pipeline ----
+    posting_pipeline_stages = [
+        {
+            "number": 1,
+            "code": "ELIGIBILITY_CHECK",
+            "label": "Eligibility Check",
+            "icon": "bi-check2-circle",
+            "color": "secondary",
+            "description": (
+                "Verify the invoice is RECONCILED, not already posting, and not a duplicate "
+                "posting attempt. Raises ValueError if ineligible; logs POSTING_ELIGIBILITY_FAILED."
+            ),
+        },
+        {
+            "number": 2,
+            "code": "SNAPSHOT_BUILD",
+            "label": "Snapshot Build",
+            "icon": "bi-camera",
+            "color": "info",
+            "description": (
+                "Capture a point-in-time JSON snapshot of the invoice header and all line items "
+                "to ensure consistency throughout the pipeline run."
+            ),
+        },
+        {
+            "number": 3,
+            "code": "MAPPING",
+            "label": "Reference Resolution + Mapping",
+            "icon": "bi-search",
+            "color": "primary",
+            "description": (
+                "PostingMappingEngine resolves vendor, item, tax code, and cost-center codes. "
+                "Strategy per field: exact code -> alias -> name -> fuzzy. Live ERP connector "
+                "used when available (ConnectorFactory). ERP source metadata stored per field."
+            ),
+        },
+        {
+            "number": 4,
+            "code": "VALIDATION",
+            "label": "Validation",
+            "icon": "bi-shield-check",
+            "color": "warning",
+            "description": (
+                "Run 10+ rules: required field presence, amount consistency, tax reasonability, "
+                "PO cross-check, business rule compliance. Generates PostingIssue records per failure."
+            ),
+        },
+        {
+            "number": 5,
+            "code": "CONFIDENCE",
+            "label": "Confidence Scoring",
+            "icon": "bi-percent",
+            "color": "success",
+            "description": (
+                "5-dimensional weighted score: header completeness (15%), vendor mapping (25%), "
+                "line item mapping (30%), tax completeness (15%), reference freshness (15%). "
+                "is_touchless=True when no review needed."
+            ),
+        },
+        {
+            "number": 6,
+            "code": "REVIEW_ROUTING",
+            "label": "Review Routing",
+            "icon": "bi-signpost-split",
+            "color": "danger",
+            "description": (
+                "Assign to the appropriate review queue when confidence is low or issues exist. "
+                "Queues: VENDOR_MAPPING_REVIEW, ITEM_MAPPING_REVIEW, TAX_REVIEW, "
+                "COST_CENTER_REVIEW, PO_REVIEW, POSTING_OPS."
+            ),
+        },
+        {
+            "number": 7,
+            "code": "PAYLOAD_BUILD",
+            "label": "Payload Build",
+            "icon": "bi-file-earmark-code",
+            "color": "primary",
+            "description": (
+                "PostingPayloadBuilder assembles the canonical ERP posting payload "
+                "(header + line items + tax + accounting codes), stored as JSON in posting_payload_json."
+            ),
+        },
+        {
+            "number": 8,
+            "code": "FINALIZATION",
+            "label": "Finalization + Duplicate Check",
+            "icon": "bi-check-circle",
+            "color": "success",
+            "description": (
+                "Stage 9b: Duplicate invoice check via the ERP integration layer "
+                "(DuplicateInvoiceResolver). Persist all run artifacts: PostingFieldValue, "
+                "PostingLineItem, PostingIssue, PostingEvidence, PostingApprovalRecord."
+            ),
+        },
+        {
+            "number": 9,
+            "code": "STATUS",
+            "label": "Status Update",
+            "icon": "bi-flag",
+            "color": "dark",
+            "description": (
+                "Update InvoicePosting status: MAPPING_REVIEW_REQUIRED (issues found) or "
+                "READY_TO_SUBMIT (touchless). ERP resolution provenance stored in "
+                "erp_source_metadata_json."
+            ),
+        },
+    ]
+
+    posting_confidence_dimensions = [
+        {"name": "Header Completeness", "weight": 15, "icon": "bi-card-text",
+         "description": "Invoice number, date, currency, vendor all present and valid."},
+        {"name": "Vendor Mapping", "weight": 25, "icon": "bi-building",
+         "description": "Vendor resolved with high confidence; exact/alias match preferred over fuzzy."},
+        {"name": "Line Item Mapping", "weight": 30, "icon": "bi-list-ul",
+         "description": "All line items have resolved item codes; PO cross-reference confirmed."},
+        {"name": "Tax Completeness", "weight": 15, "icon": "bi-percent",
+         "description": "Tax codes resolved; rate and amount consistent with jurisdiction."},
+        {"name": "Reference Freshness", "weight": 15, "icon": "bi-clock",
+         "description": "ERP reference data imported within POSTING_REFERENCE_FRESHNESS_HOURS (default 168h / 7 days)."},
+    ]
+
+    posting_statuses = [{"value": v, "label": l} for v, l in InvoicePostingStatus.choices]
+    posting_review_queues = [{"value": v, "label": l} for v, l in PostingReviewQueue.choices]
+
+    # ---- ERP Integration ----
+    erp_connector_info = [
+        {
+            "type": "CUSTOM",
+            "label": "Custom ERP",
+            "icon": "bi-code-slash",
+            "description": "Flexible REST connector with custom endpoint configuration and any authentication scheme.",
+            "capabilities": ["vendor_lookup", "po_lookup", "invoice_create"],
+            "auth": "Bearer / API Key",
+        },
+        {
+            "type": "SQLSERVER",
+            "label": "SQL Server",
+            "icon": "bi-server",
+            "description": "Direct SQL Server or Azure SQL database access. Queries ERP data without REST overhead.",
+            "capabilities": ["vendor_lookup", "item_lookup", "po_lookup", "grn_lookup"],
+            "auth": "Connection String",
+        },
+        {
+            "type": "MYSQL",
+            "label": "MySQL / MariaDB",
+            "icon": "bi-database",
+            "description": "Direct MySQL or MariaDB database access for ERP data lookup.",
+            "capabilities": ["vendor_lookup", "item_lookup", "po_lookup"],
+            "auth": "Connection String",
+        },
+        {
+            "type": "DYNAMICS",
+            "label": "Microsoft Dynamics 365",
+            "icon": "bi-microsoft",
+            "description": "OAuth2-authenticated Dynamics 365 Business Central REST API with full invoice lifecycle support.",
+            "capabilities": ["vendor_lookup", "item_lookup", "po_lookup", "invoice_create", "invoice_park"],
+            "auth": "OAuth 2.0 (tenant_id + client_id + client_secret)",
+        },
+        {
+            "type": "ZOHO",
+            "label": "Zoho",
+            "icon": "bi-globe2",
+            "description": "Zoho Books / Zoho Inventory REST API connector for vendor and item data.",
+            "capabilities": ["vendor_lookup", "item_lookup", "po_lookup"],
+            "auth": "OAuth 2.0",
+        },
+        {
+            "type": "SALESFORCE",
+            "label": "Salesforce",
+            "icon": "bi-cloud",
+            "description": "Salesforce REST API connector for vendor account and PO data.",
+            "capabilities": ["vendor_lookup", "po_lookup"],
+            "auth": "OAuth 2.0",
+        },
+    ]
+
+    erp_resolution_chain = [
+        {
+            "step": 1,
+            "name": "Cache Check",
+            "icon": "bi-lightning-charge",
+            "color": "warning",
+            "description": (
+                "Check ERPReferenceCacheRecord for a fresh entry. TTL controlled by "
+                "ERP_CACHE_TTL_SECONDS env var (default 3600 s). Cache hit returns immediately."
+            ),
+        },
+        {
+            "step": 2,
+            "name": "ERP API Connector",
+            "icon": "bi-plug",
+            "color": "primary",
+            "description": (
+                "Call the live ERP API via ConnectorFactory.get_default_connector(). Only invoked "
+                "if the connector supports the resolution type (capability flag check)."
+            ),
+        },
+        {
+            "step": 3,
+            "name": "DB Fallback",
+            "icon": "bi-database-gear",
+            "color": "success",
+            "description": (
+                "Query local ERP reference tables (ERPVendorReference, ERPItemReference, etc.) "
+                "populated by ExcelImportOrchestrator. Always available as last resort."
+            ),
+        },
+    ]
+
+    erp_resolution_types_info = [
+        {"type": "VENDOR", "label": "Vendor Lookup", "db_model": "ERPVendorReference", "fallback": "VendorDBFallbackAdapter"},
+        {"type": "ITEM", "label": "Item Lookup", "db_model": "ERPItemReference", "fallback": "ItemDBFallbackAdapter"},
+        {"type": "TAX", "label": "Tax Code Lookup", "db_model": "ERPTaxCodeReference", "fallback": "TaxDBFallbackAdapter"},
+        {"type": "COST_CENTER", "label": "Cost Center Lookup", "db_model": "ERPCostCenterReference", "fallback": "CostCenterDBFallbackAdapter"},
+        {"type": "PO", "label": "PO Lookup", "db_model": "ERPPOReference", "fallback": "PODBFallbackAdapter"},
+        {"type": "GRN", "label": "GRN Lookup", "db_model": "GoodsReceiptNote (local)", "fallback": "GRNDBFallbackAdapter"},
+        {"type": "DUPLICATE_INVOICE", "label": "Duplicate Invoice Check", "db_model": "Invoice (local)", "fallback": "DuplicateInvoiceDBFallbackAdapter"},
+    ]
+
+    response = render(request, "agents/reference.html", {
+        "page_version": _PAGE_VERSION,
         "agents_info": agents_info,
+        "react_agent_count": len(agents_info) - len(_PIPELINE_AGENT_TYPES),
+        "policy_engine_rules": _POLICY_ENGINE_RULES,
         "tools_info": tools_info,
         "recommendation_types": recommendation_types,
         "prompts": prompts,
@@ -607,4 +1096,16 @@ def agent_reference(request):
         # Hardening
         "tool_grounded_agents": tool_grounded_agents,
         "data_scope_dimensions": data_scope_dimensions,
+        # Posting Pipeline
+        "posting_pipeline_stages": posting_pipeline_stages,
+        "posting_confidence_dimensions": posting_confidence_dimensions,
+        "posting_statuses": posting_statuses,
+        "posting_review_queues": posting_review_queues,
+        # ERP Integration
+        "erp_connector_info": erp_connector_info,
+        "erp_resolution_chain": erp_resolution_chain,
+        "erp_resolution_types_info": erp_resolution_types_info,
     })
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    return response

@@ -37,11 +37,16 @@ def normalize_invoice_number(invoice_number: Optional[str]) -> str:
 
 
 def parse_date(value) -> Optional[date]:
-    """Best-effort date parse from various formats."""
-    if isinstance(value, date):
-        return value
+    """Best-effort date parse from various formats.
+
+    Fix: datetime must be checked BEFORE date because datetime is a subclass
+    of date — isinstance(datetime_obj, date) returns True, making the
+    datetime branch previously unreachable dead code.
+    """
     if isinstance(value, datetime):
         return value.date()
+    if isinstance(value, date):
+        return value
     if not value:
         return None
     parsed = dateparser.parse(str(value))

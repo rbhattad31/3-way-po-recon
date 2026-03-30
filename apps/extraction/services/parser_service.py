@@ -18,6 +18,7 @@ class ParsedLineItem:
     raw_item_category: str = ""
     raw_quantity: str = ""
     raw_unit_price: str = ""
+    raw_tax_percentage: str = ""
     raw_tax_amount: str = ""
     raw_line_amount: str = ""
 
@@ -25,15 +26,22 @@ class ParsedLineItem:
 @dataclass
 class ParsedInvoice:
     raw_vendor_name: str = ""
+    raw_vendor_tax_id: str = ""
+    raw_buyer_name: str = ""
     raw_invoice_number: str = ""
     raw_invoice_date: str = ""
+    raw_due_date: str = ""
     raw_po_number: str = ""
     raw_currency: str = ""
     raw_subtotal: str = ""
+    raw_tax_percentage: str = ""
     raw_tax_amount: str = ""
+    raw_tax_breakdown: Dict[str, Any] = field(default_factory=dict)
     raw_total_amount: str = ""
     confidence: float = 0.0
     line_items: List[ParsedLineItem] = field(default_factory=list)
+    # Per-field confidence map — populated by FieldConfidenceService after parse
+    field_confidence: Dict[str, Any] = field(default_factory=dict)
 
 
 class ExtractionParserService:
@@ -52,18 +60,28 @@ class ExtractionParserService:
                 raw_item_category=self._safe_str(item.get("item_category") or item.get("category")),
                 raw_quantity=self._safe_str(item.get("quantity")),
                 raw_unit_price=self._safe_str(item.get("unit_price")),
+                raw_tax_percentage=self._safe_str(item.get("tax_percentage")),
                 raw_tax_amount=self._safe_str(item.get("tax_amount")),
                 raw_line_amount=self._safe_str(item.get("line_amount") or item.get("amount")),
             ))
 
+        tax_breakdown_raw = raw_json.get("tax_breakdown") or {}
+        if not isinstance(tax_breakdown_raw, dict):
+            tax_breakdown_raw = {}
+
         parsed = ParsedInvoice(
             raw_vendor_name=self._safe_str(raw_json.get("vendor_name")),
+            raw_vendor_tax_id=self._safe_str(raw_json.get("vendor_tax_id")),
+            raw_buyer_name=self._safe_str(raw_json.get("buyer_name")),
             raw_invoice_number=self._safe_str(raw_json.get("invoice_number")),
             raw_invoice_date=self._safe_str(raw_json.get("invoice_date")),
+            raw_due_date=self._safe_str(raw_json.get("due_date")),
             raw_po_number=self._safe_str(raw_json.get("po_number")),
             raw_currency=self._safe_str(raw_json.get("currency")),
             raw_subtotal=self._safe_str(raw_json.get("subtotal")),
+            raw_tax_percentage=self._safe_str(raw_json.get("tax_percentage")),
             raw_tax_amount=self._safe_str(raw_json.get("tax_amount")),
+            raw_tax_breakdown=tax_breakdown_raw,
             raw_total_amount=self._safe_str(raw_json.get("total_amount")),
             confidence=float(raw_json.get("confidence", 0) or 0),
             line_items=lines,

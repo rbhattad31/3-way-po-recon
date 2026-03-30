@@ -33,19 +33,19 @@ def user_client(user):
 @pytest.mark.django_db
 class TestCreditAccountListView:
     def test_anonymous_redirect(self, client):
-        url = reverse("extraction:credit_list")
+        url = reverse("extraction:credit_account_list")
         resp = client.get(url)
         assert resp.status_code == 302
         assert "/accounts/login/" in resp.url
 
     def test_admin_can_access(self, admin_client, credit_account):
-        url = reverse("extraction:credit_list")
+        url = reverse("extraction:credit_account_list")
         resp = admin_client.get(url)
         assert resp.status_code == 200
         assert b"Credit" in resp.content
 
     def test_search_filters(self, admin_client, credit_account):
-        url = reverse("extraction:credit_list")
+        url = reverse("extraction:credit_account_list")
         resp = admin_client.get(url, {"q": "testuser"})
         assert resp.status_code == 200
 

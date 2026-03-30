@@ -41,6 +41,12 @@ class ExecutionContext:
     approval_action: str | None = None  # ExtractionApprovalRecord.action, if any
     approval_decided_at: object = None  # datetime or None
     duration_ms: int | None = None
+    # Phase 2 hardening fields (populated from raw_response when available)
+    decision_codes: list = field(default_factory=list)
+    prompt_source: str | None = None       # "composed" | "monolithic_fallback" | "agent_default"
+    prompt_hash: str | None = None         # 16-char sha256 from PromptComposition
+    recovery_lane_invoked: bool = False
+    recovery_lane_succeeded: bool | None = None
 
 
 def get_execution_context(extraction_result) -> ExecutionContext:
@@ -53,7 +59,9 @@ def get_execution_context(extraction_result) -> ExecutionContext:
     # Primary path: FK to ExtractionRun exists
     run = getattr(extraction_result, "extraction_run", None)
     if run is not None:
-        return _build_from_run(run)
+        ctx = _build_from_run(run)
+        _enrich_hardening_fields(ctx, extraction_result)
+        return ctx
 
     # Legacy fallback: attempt lookup via document_upload_id
     try:
@@ -69,15 +77,17 @@ def get_execution_context(extraction_result) -> ExecutionContext:
                 .first()
             )
             if run:
-                return _build_from_run(run)
+                ctx = _build_from_run(run)
+                _enrich_hardening_fields(ctx, extraction_result)
+                return ctx
     except Exception:
         logger.debug(
             "ExtractionRun lookup failed for result %s — returning legacy context",
             getattr(extraction_result, "pk", "?"),
         )
 
-    # No governed data available
-    return ExecutionContext(
+    # No governed data available — still populate hardening fields from raw_response
+    ctx = ExecutionContext(
         review_queue=None,
         schema_code=None,
         schema_version=None,
@@ -86,6 +96,30 @@ def get_execution_context(extraction_result) -> ExecutionContext:
         governed_status=None,
         source="legacy",
     )
+    _enrich_hardening_fields(ctx, extraction_result)
+    return ctx
+
+
+def _enrich_hardening_fields(ctx: ExecutionContext, extraction_result) -> None:
+    """Populate Phase 2 hardening fields from raw_response embedded keys.
+
+    Reads _decision_codes, _prompt_meta, and _recovery from the
+    ExtractionResult.raw_response JSON field.  Fail-silent.
+    """
+    try:
+        raw = getattr(extraction_result, "raw_response", None) or {}
+        if not isinstance(raw, dict):
+            return
+        ctx.decision_codes = raw.get("_decision_codes") or []
+        pm = raw.get("_prompt_meta") or {}
+        ctx.prompt_source = pm.get("prompt_source_type") or None
+        ctx.prompt_hash = pm.get("prompt_hash") or None
+        recovery = raw.get("_recovery") or {}
+        ctx.recovery_lane_invoked = bool(recovery.get("invoked", False))
+        if recovery.get("invoked"):
+            ctx.recovery_lane_succeeded = bool(recovery.get("succeeded", False))
+    except Exception:
+        logger.debug("_enrich_hardening_fields failed for result %s", getattr(extraction_result, "pk", "?"))
 
 
 def _build_from_run(run) -> ExecutionContext:

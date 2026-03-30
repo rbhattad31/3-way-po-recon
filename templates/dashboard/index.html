@@ -156,4 +156,81 @@
 </div>
 
 {% include "partials/upload_modal.html" %}
+
+{# PLATFORM PIPELINE DIAGRAM #}
+<div class="ap-card mb-3" id="platform-flow-diagram">
+  <div class="ap-card-header d-flex align-items-center justify-content-between">
+    <span><i class="bi bi-diagram-3 me-1"></i> End-to-End Platform Flow</span>
+    <a href="{% url 'agents:agent_reference' %}" class="btn btn-sm btn-outline-secondary"
+       style="font-size:var(--ap-font-size-xs)">Full Reference <i class="bi bi-arrow-right ms-1"></i></a>
+  </div>
+  <div class="ap-card-body" style="overflow-x:auto">
+    <div class="mermaid" id="dash-pipeline-diagram">
+flowchart LR
+    UP(["Invoice\nUpload"]) --> OCR["Azure DI\nOCR"]
+    OCR --> IEA["InvoiceExtractionAgent\nGPT-4o  temp=0.0\nno tools"]
+    IEA --> GATE{"Confidence\nGate"}
+    GATE -->|"< 0.75"| IUA["InvoiceUnderstanding\nAgent"]
+    GATE -->|">= 0.75"| APPR["Approval\nGate"]
+    IUA --> APPR
+    APPR --> RECON["Reconciliation Engine\n2-Way / 3-Way / Non-PO"]
+    RECON --> PENG{"PolicyEngine\nDispatch"}
+    PENG -->|"MATCHED\nhigh conf"| POSTING
+    PENG -->|PO_NOT_FOUND| POR["PORetrievalAgent"]
+    PENG -->|GRN_NOT_FOUND| GRNR["GRNRetrievalAgent"]
+    PENG -->|PARTIAL_MATCH| RA["ReconciliationAssist\nAgent"]
+    PENG -->|exceptions| EA["ExceptionAnalysis\nAgent"]
+    POR --> RR["ReviewRouting\nAgent"]
+    GRNR --> RR
+    RA --> RR
+    EA --> RR
+    RR --> CS["CaseSummary\nAgent"]
+    CS --> REVIEW(["AP Review\nQueue"])
+    REVIEW --> POSTING["Posting Pipeline\n9 stages  ERP mapping\nconfidence scoring"]
+    POSTING --> ERP(["ERP\nSubmission"])
+
+    classDef pipeline fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a,font-size:13px
+    classDef react fill:#d1fae5,stroke:#10b981,color:#064e3b,font-size:13px
+    classDef engine fill:#fef3c7,stroke:#f59e0b,color:#78350f,font-size:13px
+    classDef terminal fill:#f3f4f6,stroke:#9ca3af,color:#374151,font-size:13px
+    classDef posting fill:#fdf4ff,stroke:#a855f7,color:#581c87,font-size:13px
+
+    class IEA pipeline
+    class IUA,POR,GRNR,RA,EA,RR,CS react
+    class RECON,PENG engine
+    class UP,REVIEW,ERP terminal
+    class POSTING posting
+    </div>
+  </div>
+  <div class="px-3 pb-3" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+    <i class="bi bi-info-circle me-1"></i>
+    Agents run a <strong>ReAct loop</strong> (Reason &rarr; Act &rarr; Observe). PolicyEngine dispatches agents based on reconciliation result.
+    Touchless invoices (high confidence, no exceptions) skip directly to the Posting Pipeline.
+    <a href="{% url 'agents:agent_reference' %}#agent-diagrams" class="ms-1">View detailed diagrams</a>
+  </div>
+</div>
 {% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  try {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'base',
+      themeVariables: {
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        fontSize: '15px',
+      },
+      flowchart: { curve: 'basis', useMaxWidth: true, nodeSpacing: 50, rankSpacing: 60 },
+    });
+    document.addEventListener('DOMContentLoaded', function () {
+      mermaid.run({ querySelector: '#dash-pipeline-diagram' });
+    });
+  } catch (e) {
+    // fail silently -- Mermaid is non-critical
+  }
+}());
+</script>

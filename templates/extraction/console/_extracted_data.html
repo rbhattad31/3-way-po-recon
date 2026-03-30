@@ -131,7 +131,7 @@
               </td>
               <td class="text-end">{{ item.quantity|default:"—" }}</td>
               <td class="text-end">{{ item.unit_price|default:"—" }}</td>
-              <td class="text-end">{{ item.tax_rate|default:"—" }}</td>
+              <td class="text-end">{{ item.tax_percentage|default:"—" }}</td>
               <td class="text-end">{{ item.tax_amount|default:"—" }}</td>
               <td class="text-end fw-semibold">{{ item.total|default:"—" }}</td>
               <td class="text-center">
@@ -286,6 +286,62 @@
       </div>
     </div>
   </div>
+
+  {# ── Tax Breakdown Card (CGST/SGST/IGST/VAT) ── #}
+  {% if invoice_tax_breakdown %}
+  <div class="card exc-field-card mb-3">
+    <div class="card-header py-2 px-3 d-flex align-items-center">
+      <i class="bi bi-receipt-cutoff me-2 text-success"></i>
+      <span class="fw-semibold small">Tax Breakdown</span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm exc-field-table mb-0">
+        <thead>
+          <tr>
+            <th style="width:35%">Component</th>
+            <th class="text-end" style="width:35%">Amount</th>
+            <th style="width:15%">Confidence</th>
+            <th style="width:15%">Method</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if invoice_tax_breakdown.cgst %}
+          <tr class="exc-field-row" data-field-key="cgst" data-category="tax">
+            <td><span class="exc-field-label">CGST</span></td>
+            <td class="text-end fw-semibold">{{ invoice_tax_breakdown.cgst|floatformat:2 }}</td>
+            <td>{% include "extraction/console/_confidence_badge.html" with confidence=ext.confidence %}</td>
+            <td><span class="badge bg-light text-dark border small">LLM</span></td>
+          </tr>
+          {% endif %}
+          {% if invoice_tax_breakdown.sgst %}
+          <tr class="exc-field-row" data-field-key="sgst" data-category="tax">
+            <td><span class="exc-field-label">SGST</span></td>
+            <td class="text-end fw-semibold">{{ invoice_tax_breakdown.sgst|floatformat:2 }}</td>
+            <td>{% include "extraction/console/_confidence_badge.html" with confidence=ext.confidence %}</td>
+            <td><span class="badge bg-light text-dark border small">LLM</span></td>
+          </tr>
+          {% endif %}
+          {% if invoice_tax_breakdown.igst %}
+          <tr class="exc-field-row" data-field-key="igst" data-category="tax">
+            <td><span class="exc-field-label">IGST</span></td>
+            <td class="text-end fw-semibold">{{ invoice_tax_breakdown.igst|floatformat:2 }}</td>
+            <td>{% include "extraction/console/_confidence_badge.html" with confidence=ext.confidence %}</td>
+            <td><span class="badge bg-light text-dark border small">LLM</span></td>
+          </tr>
+          {% endif %}
+          {% if invoice_tax_breakdown.vat %}
+          <tr class="exc-field-row" data-field-key="vat" data-category="tax">
+            <td><span class="exc-field-label">VAT</span></td>
+            <td class="text-end fw-semibold">{{ invoice_tax_breakdown.vat|floatformat:2 }}</td>
+            <td>{% include "extraction/console/_confidence_badge.html" with confidence=ext.confidence %}</td>
+            <td><span class="badge bg-light text-dark border small">LLM</span></td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 
   {# ── Enrichment Card (Master Data Matches) ── #}
   {% if enrichment %}

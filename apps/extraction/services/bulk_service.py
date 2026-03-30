@@ -60,7 +60,7 @@ class BulkExtractionService:
         return job
 
     @classmethod
-    def run_job(cls, job: BulkExtractionJob) -> BulkExtractionJob:
+    def run_job(cls, job: BulkExtractionJob, lf_trace=None) -> BulkExtractionJob:
         """Execute the full bulk extraction job synchronously.
 
         1. Scan source
@@ -79,6 +79,7 @@ class BulkExtractionService:
                 job.source_connection.source_type,
                 job.source_connection.config_json,
             )
+            adapter.lf_trace = lf_trace
             validation = adapter.validate_config()
             if not validation.valid:
                 return cls._fail_job(job, f"Source validation failed: {validation.message}")
@@ -98,7 +99,7 @@ class BulkExtractionService:
                 if item.status != BulkItemStatus.DISCOVERED:
                     continue  # Already marked UNSUPPORTED
                 try:
-                    cls._process_item(job, item, adapter)
+                    cls._process_item(job, item, adapter, lf_parent=lf_trace)
                 except Exception as e:
                     logger.exception(
                         "Bulk item %s failed: %s", item.pk, e
@@ -152,8 +153,21 @@ class BulkExtractionService:
         job: BulkExtractionJob,
         item: BulkExtractionItem,
         adapter,
+        lf_parent=None,
     ) -> None:
-        """Process a single bulk item: duplicate check → credit → upload → extract."""
+        """Process a single bulk item: duplicate check -> credit -> upload -> extract."""
+        _lf_item_span = None
+        try:
+            from apps.core.langfuse_client import start_span
+            if lf_parent:
+                _lf_item_span = start_span(
+                    lf_parent,
+                    name="bulk_item_extraction",
+                    metadata={"file_name": item.source_name, "item_pk": item.pk},
+                )
+        except Exception:
+            pass
+
         user = job.started_by
 
         # 1. Duplicate check (same source_file_id in prior items)
@@ -162,6 +176,12 @@ class BulkExtractionService:
             item.skip_reason = "File already processed in a prior bulk job"
             item.save(update_fields=["status", "skip_reason", "updated_at"])
             cls._audit_item(job, item, AuditEventType.BULK_ITEM_SKIPPED)
+            try:
+                from apps.core.langfuse_client import end_span
+                if _lf_item_span:
+                    end_span(_lf_item_span, output={"item_status": item.status}, level="DEFAULT")
+            except Exception:
+                pass
             return
 
         # 2. Credit check
@@ -173,6 +193,12 @@ class BulkExtractionService:
             item.skip_reason = credit_check.message
             item.save(update_fields=["status", "skip_reason", "updated_at"])
             cls._audit_item(job, item, AuditEventType.BULK_ITEM_CREDIT_BLOCKED)
+            try:
+                from apps.core.langfuse_client import end_span
+                if _lf_item_span:
+                    end_span(_lf_item_span, output={"item_status": item.status}, level="DEFAULT")
+            except Exception:
+                pass
             return
 
         # 3. Download to temp file
@@ -191,6 +217,12 @@ class BulkExtractionService:
             item.status = BulkItemStatus.FAILED
             item.error_message = f"Download failed: {e}"
             item.save(update_fields=["status", "error_message", "updated_at"])
+            try:
+                from apps.core.langfuse_client import end_span
+                if _lf_item_span:
+                    end_span(_lf_item_span, output={"item_status": item.status}, level="ERROR")
+            except Exception:
+                pass
             return
 
         try:
@@ -268,6 +300,19 @@ class BulkExtractionService:
                     os.unlink(downloaded.local_path)
                 except OSError:
                     pass
+            try:
+                from apps.core.langfuse_client import end_span
+                if _lf_item_span:
+                    end_span(
+                        _lf_item_span,
+                        output={
+                            "success": item.status == BulkItemStatus.PROCESSED,
+                            "item_status": item.status,
+                        },
+                        level="DEFAULT" if item.status != BulkItemStatus.FAILED else "ERROR",
+                    )
+            except Exception:
+                pass
 
     # ── Helpers ─────────────────────────────────────────────
 

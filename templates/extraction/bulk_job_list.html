@@ -25,6 +25,9 @@
   {% has_permission "extraction.bulk_create" as can_create %}
   {% if can_create %}
   <div class="d-flex gap-2">
+    <a href="{% url 'extraction:bulk_source_list' %}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-plug me-1"></i>Manage Sources
+    </a>
     <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addSourceModal">
       <i class="bi bi-plus-circle me-1"></i>Add Source
     </button>
@@ -275,13 +278,19 @@
             </div>
             <div class="mb-3">
               <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Folder Path</label>
-              <input type="text" name="config_folder_path" class="form-control" disabled placeholder="/Invoices/2026">
-              <div class="form-text">Path within the drive to the folder.</div>
+              <input type="text" name="config_folder_path" class="form-control" disabled placeholder="Finance-Agents/Agents1">
+              <div class="form-text">Path from drive root. Supports nested folders, e.g. <code>Finance-Agents/Agents1</code>.</div>
             </div>
           </div>
+
+          {# Test connection result area #}
+          <div id="testConnectionResult" class="d-none mt-2"></div>
         </div>
         <div class="modal-footer py-2">
           <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" id="testConnectionBtn" class="btn btn-sm btn-outline-info ms-auto" onclick="testSourceConnection()">
+            <i class="bi bi-wifi me-1"></i>Test Connection
+          </button>
           <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check-circle me-1"></i>Create Source</button>
         </div>
       </form>
@@ -302,6 +311,62 @@
         panel.querySelectorAll('input, textarea').forEach(function(inp) { inp.setAttribute('required', ''); inp.disabled = false; });
       }
     }
+    // Clear any previous test result when source type changes
+    var resultEl = document.getElementById('testConnectionResult');
+    resultEl.className = 'd-none mt-2';
+    resultEl.innerHTML = '';
+  });
+
+  function testSourceConnection() {
+    var form = document.querySelector('#addSourceModal form');
+    var resultEl = document.getElementById('testConnectionResult');
+    var btn = document.getElementById('testConnectionBtn');
+
+    var sourceType = document.getElementById('sourceTypeSelect').value;
+    if (!sourceType) {
+      resultEl.className = 'alert alert-warning py-2 px-3 mt-2';
+      resultEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Please select a source type first.';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Testing...';
+    resultEl.className = 'alert alert-secondary py-2 px-3 mt-2';
+    resultEl.innerHTML = 'Testing connection...';
+
+    var formData = new FormData(form);
+    formData.set('source_type', sourceType);
+
+    fetch('{% url "extraction:bulk_source_test" %}', {
+      method: 'POST',
+      headers: {'X-CSRFToken': formData.get('csrfmiddlewaretoken')},
+      body: formData,
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        resultEl.className = 'alert alert-success py-2 px-3 mt-2';
+        resultEl.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>' + data.message;
+      } else {
+        resultEl.className = 'alert alert-danger py-2 px-3 mt-2';
+        resultEl.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>' + data.message;
+      }
+    })
+    .catch(function() {
+      resultEl.className = 'alert alert-danger py-2 px-3 mt-2';
+      resultEl.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>Request failed. Check console for details.';
+    })
+    .finally(function() {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-wifi me-1"></i>Test Connection';
+    });
+  }
+
+  // Clear test result when modal is closed
+  document.getElementById('addSourceModal').addEventListener('hidden.bs.modal', function() {
+    var resultEl = document.getElementById('testConnectionResult');
+    resultEl.className = 'd-none mt-2';
+    resultEl.innerHTML = '';
   });
 </script>
 {% endif %}

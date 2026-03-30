@@ -65,8 +65,11 @@ class Invoice(BaseModel, NotesMixin):
 
     # Raw extracted values
     raw_vendor_name = models.CharField(max_length=500, blank=True, default="")
+    raw_vendor_tax_id = models.CharField(max_length=200, blank=True, default="")
+    raw_buyer_name = models.CharField(max_length=500, blank=True, default="")
     raw_invoice_number = models.CharField(max_length=100, blank=True, default="")
     raw_invoice_date = models.CharField(max_length=50, blank=True, default="")
+    raw_due_date = models.CharField(max_length=50, blank=True, default="")
     raw_po_number = models.CharField(max_length=100, blank=True, default="")
     raw_currency = models.CharField(max_length=20, blank=True, default="")
     raw_subtotal = models.CharField(max_length=50, blank=True, default="")
@@ -77,12 +80,29 @@ class Invoice(BaseModel, NotesMixin):
     invoice_number = models.CharField(max_length=100, blank=True, db_index=True)
     normalized_invoice_number = models.CharField(max_length=100, blank=True, db_index=True)
     invoice_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
     po_number = models.CharField(max_length=100, blank=True, db_index=True)
     normalized_po_number = models.CharField(max_length=100, blank=True, db_index=True)
     currency = models.CharField(max_length=10, blank=True, default="USD")
     subtotal = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    tax_percentage = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True,
+        help_text="Effective tax rate as percentage (e.g. 18.0 for 18%%)",
+    )
     tax_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    tax_breakdown = models.JSONField(
+        default=dict, blank=True,
+        help_text="Detailed tax split: {cgst, sgst, igst, vat}",
+    )
     total_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    vendor_tax_id = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Vendor GSTIN / VAT registration number",
+    )
+    buyer_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Billed-to entity as extracted from the invoice",
+    )
 
     # Status & flags
     status = models.CharField(max_length=30, choices=InvoiceStatus.choices, default=InvoiceStatus.UPLOADED, db_index=True)
@@ -138,6 +158,10 @@ class InvoiceLineItem(TimestampMixin):
     normalized_description = models.TextField(blank=True, default="")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    tax_percentage = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True,
+        help_text="Line-level tax rate as percentage (e.g. 18.0 for 18%%)",
+    )
     tax_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
     line_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
 

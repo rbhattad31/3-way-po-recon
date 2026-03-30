@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from apps.core.enums import CreditTransactionType
 from apps.extraction.credit_models import CreditTransaction, UserCreditAccount
-from apps.extraction.services.credit_service import CreditService
+from apps.extraction.services.credit_service import CreditAccountingError, CreditService
 
 
 # ────────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ class TestCheckCanReserve:
         credit_account.save()
         result = CreditService.check_can_reserve(user, credits=1)
         assert result.allowed is False
-        assert result.reason_code == "INACTIVE"
+        assert result.reason_code == "INACTIVE_ACCOUNT"
 
     def test_blocked_monthly_limit(self, user, limited_account):
         limited_account.monthly_used = 5  # at the limit
@@ -157,12 +157,12 @@ class TestConsume:
         assert txn.balance_after == 9
 
     def test_consume_fails_without_reservation(self, user, credit_account):
-        with pytest.raises(ValueError, match="only 0 reserved"):
+        with pytest.raises(CreditAccountingError, match="only 0 reserved"):
             CreditService.consume(user, credits=1)
 
     def test_consume_fails_over_reserved(self, user, credit_account):
         CreditService.reserve(user, credits=1)
-        with pytest.raises(ValueError, match="only 1 reserved"):
+        with pytest.raises(CreditAccountingError, match="only 1 reserved"):
             CreditService.consume(user, credits=2)
 
     def test_consume_accepts_account_instance(self, user, credit_account):
@@ -197,7 +197,7 @@ class TestRefund:
         assert txn.credits == 1  # positive (credits returned)
 
     def test_refund_fails_without_reservation(self, user, credit_account):
-        with pytest.raises(ValueError, match="only 0 reserved"):
+        with pytest.raises(CreditAccountingError, match="only 0 reserved"):
             CreditService.refund(user, credits=1)
 
 

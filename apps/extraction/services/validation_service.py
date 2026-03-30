@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 from django.conf import settings
 
@@ -26,6 +26,10 @@ class ValidationIssue:
 class ValidationResult:
     is_valid: bool = True
     issues: List[ValidationIssue] = field(default_factory=list)
+    # Critical field validation — populated when field_confidence is available
+    critical_failures: List[str] = field(default_factory=list)       # field names below confidence threshold
+    field_review_flags: Dict[str, str] = field(default_factory=dict) # field -> reason string
+    requires_review_override: bool = False  # True forces human approval regardless of confidence score
 
     def add_error(self, fld: str, msg: str) -> None:
         self.issues.append(ValidationIssue(field=fld, severity="error", message=msg))
@@ -41,6 +45,31 @@ class ValidationResult:
     @property
     def warnings(self) -> List[ValidationIssue]:
         return [i for i in self.issues if i.severity == "warning"]
+
+
+import re as _re
+
+# Keywords indicating precious/semi-precious stones (GST 0.25% slab, Chapter 71).
+# HSN headings 7102 (diamond), 7103 (precious/semi-precious stones), 7104 (synthetic).
+_PRECIOUS_STONE_PATTERN = _re.compile(
+    r"\b(diamond|diamonds|gemstone|gem\s*stone|gems|precious\s+stone|semi.?precious"
+    r"|ruby|rubies|emerald|sapphire|pearl|pearls|topaz|opal|amethyst"
+    r"|tanzanite|alexandrite|spinel|tourmaline|rough\s+stone|rough\s+gem"
+    r"|71\s*0[234])\b",
+    _re.IGNORECASE,
+)
+
+
+def _is_precious_stone_invoice(inv: NormalizedInvoice) -> bool:
+    """Return True if any line item description or vendor name contains
+    precious/semi-precious stone keywords that qualify for the 0.25% GST slab."""
+    texts = [inv.vendor_name_normalized]
+    for li in inv.line_items:
+        texts.append(getattr(li, "description", "") or "")
+        texts.append(getattr(li, "normalized_description", "") or "")
+        texts.append(getattr(li, "raw_description", "") or "")
+    combined = " ".join(t for t in texts if t)
+    return bool(_PRECIOUS_STONE_PATTERN.search(combined))
 
 
 class ValidationService:
@@ -79,6 +108,30 @@ class ValidationService:
             if li.unit_price is None:
                 result.add_warning(f"{prefix}.unit_price", f"Line {li.line_number}: unit price missing")
 
+        # ── GST rate validation ───────────────────────────────────────────────
+        # When the invoice is identified as a GST invoice (CGST/SGST/IGST
+        # breakdown keys present), tax_percentage must be one of the defined
+        # Indian GST slabs.  Any other value means the LLM hallucinated or
+        # mis-computed the rate and the user must correct it manually.
+        #
+        # Special case: 0.25% is valid for precious/semi-precious stones and
+        # diamonds (GST Schedule I, Chapter 71 HSN headings 7102-7104).
+        _GST_VALID_RATES = {0, 3, 5, 12, 18, 28}
+        tax_breakdown = inv.tax_breakdown or {}
+        _is_gst_invoice = any(k in tax_breakdown for k in ("cgst", "sgst", "igst"))
+        if _is_gst_invoice and inv.tax_percentage is not None:
+            _rate = float(inv.tax_percentage)
+            _effective_valid = set(_GST_VALID_RATES)
+            if _rate == 0.25 and _is_precious_stone_invoice(inv):
+                _effective_valid.add(0.25)
+            if _rate not in _effective_valid:
+                result.add_error(
+                    "tax_percentage",
+                    f"Tax rate {_rate}% is not a valid Indian GST slab "
+                    f"(must be one of {sorted(_effective_valid)}). "
+                    f"Please correct this field manually.",
+                )
+
         # ── Deterministic confidence scoring ──────────────────────────
         # Replace LLM self-reported confidence with a score computed from
         # what was actually extracted: field coverage (50%), line-item
@@ -111,9 +164,36 @@ class ValidationService:
                 f"Low extraction confidence ({inv.confidence:.2f} < {threshold})",
             )
 
+        # ── Critical field confidence check ───────────────────────────────────
+        # When FieldConfidenceService has already populated inv.field_confidence,
+        # check each critical field.  Any critical field with confidence < 0.6
+        # forces human review regardless of the overall confidence score.
+        fc = getattr(inv, "field_confidence", {}) or {}
+        if fc:
+            from apps.extraction.services.field_confidence_service import CRITICAL_FIELDS
+            _CRIT_CONF_THRESHOLD = 0.60
+            for cf in CRITICAL_FIELDS:
+                score = fc.get("header", {}).get(cf)
+                if score is not None and score < _CRIT_CONF_THRESHOLD:
+                    result.critical_failures.append(cf)
+                    reason = f"field_confidence={score:.2f} < {_CRIT_CONF_THRESHOLD}"
+                    result.field_review_flags[cf] = reason
+                    result.add_warning(
+                        f"critical_field.{cf}",
+                        f"Critical field '{cf}' has low confidence ({score:.2f}); human review required",
+                    )
+            if result.critical_failures:
+                result.requires_review_override = True
+                logger.info(
+                    "Critical field confidence failures: %s — review override set",
+                    result.critical_failures,
+                )
+
         logger.info(
-            "Validation complete: valid=%s errors=%d warnings=%d confidence=%.2f (llm=%.2f)",
+            "Validation complete: valid=%s errors=%d warnings=%d confidence=%.2f (llm=%.2f) "
+            "critical_failures=%s review_override=%s",
             result.is_valid, len(result.errors), len(result.warnings),
             inv.confidence, llm_confidence,
+            result.critical_failures, result.requires_review_override,
         )
         return result

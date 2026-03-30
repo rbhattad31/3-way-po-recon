@@ -15,6 +15,7 @@
 
 {% block content %}
 {# ── Header ── #}
+{% has_permission "extraction.bulk_create" as can_create %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
@@ -24,10 +25,34 @@
       Job <code>{{ job.job_id }}</code>
     </p>
   </div>
-  <a href="{% url 'extraction:bulk_job_list' %}" class="btn btn-sm btn-outline-secondary">
-    <i class="bi bi-arrow-left me-1"></i>Back to List
-  </a>
+  <div class="d-flex gap-2 align-items-center">
+    {% if can_create and job.status in "SCANNING,PROCESSING,FAILED,PARTIAL_FAILED" %}
+    <form method="post" action="{% url 'extraction:bulk_job_retry' job_id=job.pk %}"
+          onsubmit="return confirm('This will delete all current items and re-scan the source. Continue?')">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-warning">
+        <i class="bi bi-arrow-repeat me-1"></i>
+        {% if job.status == "SCANNING" or job.status == "PROCESSING" %}Reset & Retry{% else %}Retry Job{% endif %}
+      </button>
+    </form>
+    {% endif %}
+    <a href="{% url 'extraction:bulk_job_list' %}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back to List
+    </a>
+  </div>
 </div>
+
+{# ── Stuck job warning ── #}
+{% if job.status == "SCANNING" or job.status == "PROCESSING" %}
+<div class="alert alert-warning py-2 px-3 mb-3 d-flex align-items-center gap-2" style="font-size:var(--ap-font-size-sm)">
+  <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+  <div>
+    This job appears to be stuck in <strong>{{ job.get_status_display }}</strong>.
+    This usually happens when the server was restarted mid-run.
+    {% if can_create %}Use <strong>Reset &amp; Retry</strong> to re-scan the source and restart processing.{% endif %}
+  </div>
+</div>
+{% endif %}
 
 {# ── Job Info Card ── #}
 <div class="row g-3 mb-3">

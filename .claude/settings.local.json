@@ -1,7 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(.venv/Scripts/python.exe -c \"import langfuse; print\\(''langfuse version:'', langfuse.__version__\\)\")"
+      "Bash(.venv/Scripts/python.exe -c \"import langfuse; print\\(''langfuse version:'', langfuse.__version__\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(python -m pytest apps/extraction/tests/test_invoice_category_classifier.py apps/extraction/tests/test_response_repair_service.py apps/extraction/tests/test_invoice_prompt_composer.py -v --no-header)",
+      "Bash(python -m pytest apps/extraction/tests/test_response_repair_service.py apps/extraction/tests/test_invoice_category_classifier.py apps/extraction/tests/test_invoice_prompt_composer.py -v --no-header)",
+      "Bash(xargs grep:*)",
+      "Bash(python manage.py push_prompts_to_langfuse --dry-run)",
+      "Bash(python manage.py push_prompts_to_langfuse)",
+      "Bash(wc -l /c/3-way-po-recon/docs/*.md /c/3-way-po-recon/deploy/*.md)",
+      "Bash(python -m pytest apps/extraction/tests/test_field_confidence_service.py apps/extraction/tests/test_reconciliation_validator.py -v)",
+      "Bash(python -m pytest apps/extraction/tests/ -v --tb=short)",
+      "Bash(python -m pytest apps/extraction/tests/test_credit_service.py apps/extraction/tests/test_credit_views.py -v --tb=short)",
+      "Bash(python -m pytest apps/extraction/tests/ --tb=short -q)",
+      "Bash(python -m pytest apps/extraction/tests/test_decision_codes.py apps/extraction/tests/test_recovery_lane.py apps/extraction/tests/test_evidence_confidence.py apps/extraction/tests/test_prompt_source.py -x -q)",
+      "Bash(python -m pytest apps/extraction/tests/test_recovery_lane.py -x -q)",
+      "Bash(python -m pytest apps/extraction/tests/test_recovery_lane.py apps/extraction/tests/test_decision_codes.py apps/extraction/tests/test_evidence_confidence.py apps/extraction/tests/test_prompt_source.py -q)",
+      "Bash(python -m pytest --tb=short -q)"
     ]
   }
 }

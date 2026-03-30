@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
 
 from apps.core.enums import ReviewQueue
 from apps.extraction_core.services.output_contract import ExtractionOutputContract
@@ -60,14 +60,28 @@ class ReviewRoutingEngine:
         has_tax_issues: bool = False,
         has_vendor_mismatch: bool = False,
         schema_missing: bool = False,
+        decision_codes: Optional[List[str]] = None,
     ) -> RoutingDecision:
         """
         Evaluate routing for an extraction result.
 
         Returns a RoutingDecision with queue assignment and reasons.
+
+        Args:
+            decision_codes: Optional list of machine-readable decision codes
+                (from apps.extraction.decision_codes).  When provided, code-based
+                routing rules run first and take precedence over confidence rules.
         """
         decision = RoutingDecision()
         reasons: list[str] = []
+
+        # Rule 0: Decision-code-based routing (highest precedence)
+        if decision_codes:
+            cls._apply_decision_codes(decision, reasons, decision_codes)
+            # If decision codes already set a CRITICAL queue, return immediately
+            if decision.queue == ReviewQueue.EXCEPTION_OPS and decision.priority == "CRITICAL":
+                decision.reasons = reasons
+                return decision
 
         # Rule 1: Critical confidence → EXCEPTION_OPS
         if overall_confidence < CRITICAL_CONFIDENCE:
@@ -129,6 +143,64 @@ class ReviewRoutingEngine:
 
         decision.reasons = reasons
         return decision
+
+    @classmethod
+    def _apply_decision_codes(
+        cls,
+        decision: RoutingDecision,
+        reasons: list,
+        decision_codes: List[str],
+    ) -> None:
+        """Apply routing rules derived from machine-readable decision codes.
+
+        Consults ROUTING_MAP from apps.extraction.decision_codes.
+        Queue assignment follows a priority ladder:
+          EXCEPTION_OPS > TAX_REVIEW > MASTER_DATA_REVIEW > AP_REVIEW
+        The highest-priority queue wins; lower-priority queues are noted in
+        reasons but do not override a higher-priority assignment.
+        """
+        try:
+            from apps.extraction.decision_codes import ROUTING_MAP, HARD_REVIEW_CODES
+        except ImportError:
+            logger.warning("decision_codes module unavailable — skipping code-based routing")
+            return
+
+        # Queue priority order (higher index = higher priority)
+        _QUEUE_PRIORITY = {
+            ReviewQueue.AP_REVIEW: 1,
+            ReviewQueue.MASTER_DATA_REVIEW: 2,
+            ReviewQueue.TAX_REVIEW: 3,
+            ReviewQueue.EXCEPTION_OPS: 4,
+        }
+
+        has_hard_code = any(c in HARD_REVIEW_CODES for c in decision_codes)
+        best_queue = ""
+        best_priority = 0
+
+        for code in decision_codes:
+            queue_str = ROUTING_MAP.get(code)
+            if not queue_str:
+                continue
+            # Map string → ReviewQueue value
+            queue_val = getattr(ReviewQueue, queue_str, queue_str)
+            q_prio = _QUEUE_PRIORITY.get(queue_val, 0)
+            if q_prio > best_priority:
+                best_priority = q_prio
+                best_queue = queue_val
+            reasons.append(f"[{code}] → {queue_str}")
+            decision.needs_review = True
+
+        if best_queue:
+            decision.queue = best_queue
+            decision.priority = "CRITICAL" if has_hard_code else "HIGH"
+            if not decision.suggested_reviewer_role:
+                _ROLE_MAP = {
+                    ReviewQueue.EXCEPTION_OPS: "ADMIN",
+                    ReviewQueue.TAX_REVIEW: "FINANCE_MANAGER",
+                    ReviewQueue.MASTER_DATA_REVIEW: "AP_PROCESSOR",
+                    ReviewQueue.AP_REVIEW: "REVIEWER",
+                }
+                decision.suggested_reviewer_role = _ROLE_MAP.get(best_queue, "REVIEWER")
 
     @classmethod
     def _has_tax_warnings(cls, output: ExtractionOutputContract) -> bool:

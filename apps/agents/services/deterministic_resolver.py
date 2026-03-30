@@ -159,6 +159,28 @@ class DeterministicResolver:
                 (e.g. RECONCILIATION_ASSIST), if any.
             prior_confidence: The confidence of the prior recommendation.
         """
+        # Rule 0 (priority): Respect a prior agent's AUTO_CLOSE even when there
+        # are no exceptions. This must run BEFORE the empty-exceptions early return
+        # so that a high-confidence AUTO_CLOSE recommendation is never silently
+        # discarded just because the exception list happens to be empty.
+        if (
+            prior_recommendation == RecommendationType.AUTO_CLOSE
+            and prior_confidence >= _PRIOR_AUTO_CLOSE_CONFIDENCE
+        ):
+            reasoning = (
+                f"Prior agent recommended AUTO_CLOSE with confidence {prior_confidence:.2f} "
+                f">= {_PRIOR_AUTO_CLOSE_CONFIDENCE} threshold. Respecting prior recommendation."
+            )
+            return DeterministicResolution(
+                recommendation_type=RecommendationType.AUTO_CLOSE,
+                confidence=prior_confidence,
+                reasoning=reasoning,
+                evidence=_build_evidence(exceptions),
+                case_summary=_build_case_summary(
+                    result, exceptions, RecommendationType.AUTO_CLOSE, reasoning,
+                ),
+            )
+
         if not exceptions:
             return DeterministicResolution(
                 recommendation_type=RecommendationType.SEND_TO_AP_REVIEW,

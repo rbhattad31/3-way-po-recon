@@ -173,6 +173,19 @@ class PostingActionService:
         posting.status = InvoicePostingStatus.SUBMISSION_IN_PROGRESS
         posting.save(update_fields=["status", "updated_at"])
 
+        # Resolve the posting pipeline trace ID so it can be forwarded to the
+        # ERP submission resolver in Phase 2 (lf_trace_id= kwarg).
+        _lf_trace_id = None
+        try:
+            _latest_run = PostingRun.objects.filter(
+                invoice_id=posting.invoice_id,
+            ).order_by("-created_at").first()
+            _lf_trace_id = getattr(_latest_run, "trace_id", None) or (
+                str(_latest_run.pk) if _latest_run else None
+            )
+        except Exception:
+            pass
+
         # ── Phase 1 Mock Submission ──
         # In production Phase 2+, this would:
         # 1. Call ERP connector with posting.payload_snapshot_json

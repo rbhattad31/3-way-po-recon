@@ -6,7 +6,7 @@ Deletes: invoices, POs, GRNs, documents, cases, reconciliation, agents,
 
 Preserves: users, roles, permissions, RBAC, agent definitions, tool definitions,
            reconciliation config/policies, prompt templates, extraction configs,
-           control center settings, credit accounts.
+           control center settings, credit accounts, credit transaction ledger.
 
 Usage:
     python manage.py flush_test_data
@@ -130,13 +130,7 @@ class Command(BaseCommand):
         except ImportError:
             pass
 
-        # Credit transactions (keep accounts, flush transactions)
-        try:
-            from apps.extraction.credit_models import CreditTransaction
-            count = CreditTransaction.objects.all().delete()[0]
-            self.stdout.write(f"  CreditTransaction: {count}")
-        except ImportError:
-            pass
+        # Credit transactions: ledger is preserved (intentionally skipped)
 
         # Bulk extraction
         try:

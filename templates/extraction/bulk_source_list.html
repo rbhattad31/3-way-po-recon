@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% load rbac_tags %}
+{% block title %}Source Connections – Bulk Extraction{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:workbench' %}" class="text-decoration-none">Extraction</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'extraction:bulk_job_list' %}" class="text-decoration-none">Bulk Extraction</a></li>
+    <li class="breadcrumb-item active">Source Connections</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{% has_permission "extraction.bulk_create" as can_manage %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-plug me-2"></i>Source Connections
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      Manage the folder and cloud drive sources used for bulk invoice extraction.
+    </p>
+  </div>
+  {% if can_manage %}
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addSourceModal">
+      <i class="bi bi-plus-circle me-1"></i>Add Source
+    </button>
+    <a href="{% url 'extraction:bulk_job_list' %}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-collection me-1"></i>Bulk Jobs
+    </a>
+  </div>
+  {% endif %}
+</div>
+
+<div class="ap-card">
+  <div class="ap-card-body p-0" style="overflow-x:auto">
+    <table class="ap-table w-100">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th style="text-align:right">Total Jobs</th>
+          <th>Last Job</th>
+          <th>Created</th>
+          {% if can_manage %}<th style="width:120px"></th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for src in sources %}
+        <tr>
+          <td class="fw-semibold">{{ src.name }}</td>
+          <td>
+            <span class="badge bg-light text-dark border" style="font-size:.7rem">
+              {{ src.get_source_type_display }}
+            </span>
+          </td>
+          <td>
+            {% if src.is_active %}
+              <span class="badge bg-success-subtle text-success">Active</span>
+            {% else %}
+              <span class="badge bg-secondary-subtle text-secondary">Inactive</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right">{{ src.jobs.count }}</td>
+          <td style="font-size:var(--ap-font-size-xs)">
+            {% with src.jobs.first as last_job %}
+              {% if last_job %}
+                <a href="{% url 'extraction:bulk_job_detail' job_id=last_job.pk %}" class="text-decoration-none">
+                  {{ last_job.created_at|date:"M d, Y H:i" }}
+                </a>
+              {% else %}—{% endif %}
+            {% endwith %}
+          </td>
+          <td style="font-size:var(--ap-font-size-xs)">{{ src.created_at|date:"M d, Y" }}</td>
+          {% if can_manage %}
+          <td>
+            <div class="d-flex gap-1">
+              <a href="{% url 'extraction:bulk_source_edit' pk=src.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:.75rem" title="Edit">
+                <i class="bi bi-pencil"></i>
+              </a>
+              {% if src.is_active %}
+              <form method="post" action="{% url 'extraction:bulk_source_delete' pk=src.pk %}" onsubmit="return confirm('Deactivate source \'{{ src.name }}\'? Existing jobs will not be affected.')">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:.75rem" title="Deactivate">
+                  <i class="bi bi-slash-circle"></i>
+                </button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="text-center py-4 text-muted">
+            <i class="bi bi-plug" style="font-size:1.5rem"></i>
+            <p class="mb-1 fw-semibold mt-2">No source connections yet</p>
+            {% if can_manage %}
+            <button class="btn btn-sm btn-primary mt-1" data-bs-toggle="modal" data-bs-target="#addSourceModal">
+              <i class="bi bi-plus-circle me-1"></i>Add Source Connection
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Add Source Modal (same as bulk_job_list) ── #}
+{% if can_manage %}
+<div class="modal fade" id="addSourceModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{% url 'extraction:bulk_source_create' %}">
+        {% csrf_token %}
+        <div class="modal-header py-2">
+          <h6 class="modal-title fw-bold"><i class="bi bi-plus-circle me-2"></i>Add Source Connection</h6>
+          <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Name</label>
+            <input type="text" name="name" class="form-control" required placeholder="e.g. Invoice Scans Folder">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Source Type</label>
+            <select name="source_type" id="sourceTypeSelectAdd" class="form-select" required>
+              <option value="">Select type...</option>
+              {% for val, label in source_types %}
+              <option value="{{ val }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="source-config-fields d-none" data-source-type="LOCAL_FOLDER">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Folder Path</label>
+              <input type="text" name="config_folder_path" class="form-control" disabled placeholder="/path/to/invoices">
+              <div class="form-text">Absolute path to the folder on the server.</div>
+            </div>
+          </div>
+
+          <div class="source-config-fields d-none" data-source-type="GOOGLE_DRIVE">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Drive Folder ID</label>
+              <input type="text" name="config_folder_id" class="form-control" disabled placeholder="1ABC...xyz">
+              <div class="form-text">The Google Drive folder ID from the folder URL.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Service Account JSON</label>
+              <textarea name="config_service_account_json" class="form-control" disabled rows="4" placeholder='{"type":"service_account",...}'></textarea>
+              <div class="form-text">Paste the full service-account credentials JSON.</div>
+            </div>
+          </div>
+
+          <div class="source-config-fields d-none" data-source-type="ONEDRIVE">
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Tenant ID</label>
+              <input type="text" name="config_tenant_id" class="form-control" disabled placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Client ID</label>
+              <input type="text" name="config_client_id" class="form-control" disabled placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Client Secret</label>
+              <input type="password" name="config_client_secret" class="form-control" disabled>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Drive ID</label>
+              <input type="text" name="config_drive_id" class="form-control" disabled placeholder="b!...">
+              <div class="form-text">From Graph Explorer: GET /me/drives or /drives. Required for app-only auth.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" style="font-size:var(--ap-font-size-sm)">Folder Path</label>
+              <input type="text" name="config_folder_path" class="form-control" disabled placeholder="Finance-Agents/Agents1">
+              <div class="form-text">Path from drive root. Supports nested folders, e.g. <code>Finance-Agents/Agents1</code>.</div>
+            </div>
+          </div>
+
+          <div id="testConnectionResultAdd" class="d-none mt-2"></div>
+        </div>
+        <div class="modal-footer py-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" id="testConnectionBtnAdd" class="btn btn-sm btn-outline-info ms-auto" onclick="testSourceConnectionAdd()">
+            <i class="bi bi-wifi me-1"></i>Test Connection
+          </button>
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check-circle me-1"></i>Create Source</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+</style>
+
+<script>
+  document.getElementById('sourceTypeSelectAdd').addEventListener('change', function() {
+    document.querySelectorAll('#addSourceModal .source-config-fields').forEach(function(el) {
+      el.classList.add('d-none');
+      el.querySelectorAll('input, textarea').forEach(function(inp) { inp.removeAttribute('required'); inp.disabled = true; });
+    });
+    var selected = this.value;
+    if (selected) {
+      var panel = document.querySelector('#addSourceModal .source-config-fields[data-source-type="' + selected + '"]');
+      if (panel) {
+        panel.classList.remove('d-none');
+        panel.querySelectorAll('input, textarea').forEach(function(inp) { inp.setAttribute('required', ''); inp.disabled = false; });
+      }
+    }
+    var r = document.getElementById('testConnectionResultAdd');
+    r.className = 'd-none mt-2'; r.innerHTML = '';
+  });
+
+  function testSourceConnectionAdd() {
+    var form = document.querySelector('#addSourceModal form');
+    var resultEl = document.getElementById('testConnectionResultAdd');
+    var btn = document.getElementById('testConnectionBtnAdd');
+    var sourceType = document.getElementById('sourceTypeSelectAdd').value;
+    if (!sourceType) {
+      resultEl.className = 'alert alert-warning py-2 px-3 mt-2';
+      resultEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Please select a source type first.';
+      return;
+    }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Testing...';
+    resultEl.className = 'alert alert-secondary py-2 px-3 mt-2';
+    resultEl.innerHTML = 'Testing connection...';
+    var formData = new FormData(form);
+    formData.set('source_type', sourceType);
+    fetch('{% url "extraction:bulk_source_test" %}', {
+      method: 'POST',
+      headers: {'X-CSRFToken': formData.get('csrfmiddlewaretoken')},
+      body: formData,
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      resultEl.className = data.ok ? 'alert alert-success py-2 px-3 mt-2' : 'alert alert-danger py-2 px-3 mt-2';
+      resultEl.innerHTML = (data.ok ? '<i class="bi bi-check-circle-fill me-1"></i>' : '<i class="bi bi-x-circle-fill me-1"></i>') + data.message;
+    })
+    .catch(function() {
+      resultEl.className = 'alert alert-danger py-2 px-3 mt-2';
+      resultEl.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i>Request failed.';
+    })
+    .finally(function() { btn.disabled = false; btn.innerHTML = '<i class="bi bi-wifi me-1"></i>Test Connection'; });
+  }
+
+  document.getElementById('addSourceModal').addEventListener('hidden.bs.modal', function() {
+    var r = document.getElementById('testConnectionResultAdd');
+    r.className = 'd-none mt-2'; r.innerHTML = '';
+  });
+</script>
+{% endif %}
+{% endblock %}

@@ -143,12 +143,41 @@ class PostingPipeline:
             confidence = PostingConfidenceService.calculate(proposal, all_issues)
             posting_run.overall_confidence = confidence
 
+            try:
+                from apps.core.langfuse_client import score_trace
+                _trace_id = getattr(posting_run, "trace_id", "") or str(posting_run.pk)
+                score_trace(
+                    _trace_id,
+                    "posting_confidence",
+                    float(confidence),
+                    comment=(
+                        f"invoice={invoice.pk} "
+                        f"requires_review={'pending'} "
+                        f"issues={len(all_issues)}"
+                    ),
+                )
+            except Exception:
+                pass
+
             # Stage 7: Review routing
             posting_run.stage_code = PostingStage.REVIEW_ROUTING
             posting_run.save(update_fields=["stage_code", "updated_at"])
             requires_review, primary_queue, review_reasons = (
                 PostingReviewRoutingService.route(proposal, all_issues, confidence)
             )
+
+            try:
+                from apps.core.langfuse_client import score_trace
+                _trace_id = getattr(posting_run, "trace_id", "") or str(posting_run.pk)
+                score_trace(
+                    _trace_id,
+                    "posting_requires_review",
+                    1.0 if requires_review else 0.0,
+                    comment=f"queue={primary_queue} reasons={len(review_reasons)}",
+                )
+            except Exception:
+                pass
+
             posting_run.requires_review = requires_review
             posting_run.review_queue = primary_queue
             posting_run.review_reasons_json = review_reasons

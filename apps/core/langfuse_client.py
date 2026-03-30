@@ -57,6 +57,7 @@ def start_trace(
     invoice_id: Optional[int] = None,
     result_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Open a root Langfuse trace span. Returns the span object or None.
@@ -70,7 +71,7 @@ def start_trace(
     try:
         from langfuse.types import TraceContext
         tc: TraceContext = {"trace_id": trace_id}
-        return lf.start_observation(
+        span = lf.start_observation(
             trace_context=tc,
             name=name,
             as_type="span",
@@ -86,6 +87,20 @@ def start_trace(
                 "django_trace_id": trace_id,
             },
         )
+        # Set user_id and session_id as OTel span attributes (Langfuse v4 API).
+        # These populate the Users and Sessions tabs in the Langfuse UI.
+        if span is not None:
+            try:
+                from langfuse._client.attributes import TRACE_USER_ID, TRACE_SESSION_ID
+                otel_span = getattr(span, "_otel_span", None)
+                if otel_span is not None:
+                    if user_id:
+                        otel_span.set_attribute(TRACE_USER_ID, str(user_id))
+                    if session_id:
+                        otel_span.set_attribute(TRACE_SESSION_ID, session_id)
+            except Exception:
+                pass  # Non-fatal — traces still work, just without user/session
+        return span
     except Exception as exc:
         logger.debug("Langfuse start_trace failed: %s", exc)
         return None
@@ -187,9 +202,9 @@ def score_trace(
 
 
 def get_prompt(slug: str, label: str = "production") -> Optional[Any]:
-    """Fetch a text prompt from Langfuse by name (slug).
+    """Fetch a chat prompt from Langfuse by name (slug).
 
-    Returns the TextPromptClient if found, or None if not configured /
+    Returns the ChatPromptClient if found, or None if not configured /
     prompt does not exist in Langfuse.  Uses the SDK's built-in 60s cache
     so hot paths are not affected.
 
@@ -206,7 +221,7 @@ def get_prompt(slug: str, label: str = "production") -> Optional[Any]:
         client = lf.get_prompt(
             name=slug,
             label=label,
-            type="text",
+            type="chat",
             cache_ttl_seconds=60,
             max_retries=1,
             fetch_timeout_seconds=2,
@@ -218,24 +233,43 @@ def get_prompt(slug: str, label: str = "production") -> Optional[Any]:
 
 
 def prompt_text(slug: str, label: str = "production") -> Optional[str]:
-    """Return just the prompt text string from Langfuse, or None if not found."""
+    """Return just the prompt text string from Langfuse chat prompt, or None if not found.
+
+    For chat prompts stored as a single system message, returns the content of that
+    message.  For multi-message chat prompts, returns the content of the first system
+    message found, or all messages joined by newlines as a fallback.
+    """
     client = get_prompt(slug, label=label)
     if client is None:
         return None
     try:
-        return client.prompt
+        messages = client.prompt  # list of ChatMessage objects or dicts
+        if not messages:
+            return None
+        # Prefer the first system message
+        for msg in messages:
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
+            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
+            if role == "system" and content:
+                return content
+        # Fallback: return content of the first message regardless of role
+        first = messages[0]
+        return (
+            first.get("content") if isinstance(first, dict)
+            else getattr(first, "content", None)
+        )
     except Exception:
         return None
 
 
 def push_prompt(slug: str, content: str, *, labels: Optional[List[str]] = None) -> bool:
-    """Create or update a text prompt in Langfuse.
+    """Create or update a chat prompt in Langfuse.
 
     Returns True on success, False on failure.
 
     Args:
         slug:    Langfuse prompt name (use slug_to_langfuse_name() for conversion).
-        content: Full prompt text.
+        content: Full prompt text (stored as a single system message in chat format).
         labels:  List of labels to attach. Defaults to ["production"].
     """
     lf = get_client()
@@ -244,11 +278,11 @@ def push_prompt(slug: str, content: str, *, labels: Optional[List[str]] = None) 
     try:
         lf.create_prompt(
             name=slug,
-            prompt=content,
+            prompt=[{"role": "system", "content": content}],
             labels=labels if labels is not None else ["production"],
-            type="text",
+            type="chat",
         )
-        logger.info("Pushed prompt '%s' to Langfuse", slug)
+        logger.info("Pushed chat prompt '%s' to Langfuse", slug)
         return True
     except Exception as exc:
         logger.warning("Langfuse push_prompt failed for '%s': %s", slug, exc)
