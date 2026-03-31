@@ -1,13 +1,23 @@
-"""PO lookup service — resolves an invoice's PO reference to a PurchaseOrder."""
+"""PO lookup service — resolves an invoice's PO reference to a PurchaseOrder.
+
+Thin wrapper over ERPResolutionService.resolve_po().
+
+The reconciliation engine should call this service; it should NOT query
+documents.PurchaseOrder or posting_core.ERPPOReference directly. All ERP
+source selection (MIRROR_DB vs DB_FALLBACK vs API) is handled by the
+shared resolution layer.
+"""
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from apps.core.utils import normalize_po_number, normalize_string, within_tolerance
 from apps.documents.models import Invoice, PurchaseOrder
+from apps.erp_integration.enums import ERPSourceType
+from apps.erp_integration.services.resolution_service import ERPResolutionService
 
 logger = logging.getLogger(__name__)
 
@@ -18,74 +28,143 @@ _DISCOVERY_AMOUNT_TOLERANCE_PCT = 1.0
 
 @dataclass
 class POLookupResult:
+    """Result of a PO resolution attempt.
+
+    Carries the hydrated PurchaseOrder ORM object alongside ERP provenance
+    metadata so that downstream services (result_service, runner_service)
+    can store the resolution source in ReconciliationResult.
+    """
+
     found: bool = False
     purchase_order: Optional[PurchaseOrder] = None
-    lookup_method: str = ""  # "exact" | "normalized" | "vendor_amount" | "not_found"
+    # lookup_method is now aligned with ERPSourceType values for consistency.
+    # Legacy values: "exact" | "normalized" | "vendor_amount" | "not_found"
+    lookup_method: str = ""
+    erp_source_type: str = ERPSourceType.NONE
+    erp_confidence: float = 0.0
+    is_stale: bool = False
+    warnings: List[str] = field(default_factory=list)
+    erp_provenance: Dict[str, Any] = field(default_factory=dict)
 
 
 class POLookupService:
     """Resolve the PO number on an invoice to a PurchaseOrder record.
 
+    Delegates to ERPResolutionService for all ERP data access. Does NOT
+    query documents.PurchaseOrder directly (except to hydrate an ORM object
+    from a resolved PO ID, which requires a single PK lookup).
+
     Lookup strategy (in order):
-      1. Exact match on ``po_number``
-      2. Normalized match on ``normalized_po_number``
-      3. Vendor + amount discovery (resolves vendor from raw name/alias
-         if FK is missing, then matches open POs by amount)
+      1. ERPResolutionService.resolve_po() — shared chain:
+            cache -> MIRROR_DB (documents.PurchaseOrder)
+                  -> live API
+                  -> DB_FALLBACK (ERPPOReference snapshot)
+      2. Vendor + amount discovery when the invoice carries no PO number
+         (deterministic; only attempted for unambiguous single matches).
     """
 
-    def lookup(self, invoice: Invoice, skip_vendor_amount: bool = False) -> POLookupResult:
-        # Try raw PO number (exact)
-        if invoice.po_number:
-            po = PurchaseOrder.objects.filter(po_number=invoice.po_number).first()
-            if po:
-                logger.info("PO found (exact) for invoice %s: PO %s", invoice.pk, po.po_number)
-                return POLookupResult(found=True, purchase_order=po, lookup_method="exact")
+    def __init__(self, erp_service: Optional[ERPResolutionService] = None):
+        self._erp = erp_service or ERPResolutionService.with_default_connector()
 
-        # Try normalized
-        norm = invoice.normalized_po_number or normalize_po_number(invoice.po_number)
-        if norm:
-            po = PurchaseOrder.objects.filter(normalized_po_number=norm).first()
-            if po:
-                logger.info("PO found (normalized) for invoice %s: PO %s", invoice.pk, po.po_number)
-                return POLookupResult(found=True, purchase_order=po, lookup_method="normalized")
+    def lookup(self, invoice: Invoice) -> POLookupResult:
+        """Resolve PO for a single invoice.
+
+        Args:
+            invoice: The invoice whose ``po_number`` (or vendor+amount) is
+                     used to find the matching PurchaseOrder.
+
+        Returns:
+            POLookupResult with the hydrated PurchaseOrder and provenance info.
+        """
+        po_number = invoice.po_number or invoice.normalized_po_number or ""
+
+        if po_number:
+            vendor_code = ""
+            if invoice.vendor and hasattr(invoice.vendor, "vendor_code"):
+                vendor_code = invoice.vendor.vendor_code or ""
+
+            result = self._erp.resolve_po(
+                po_number=po_number,
+                vendor_code=vendor_code,
+                invoice_id=invoice.pk,
+            )
+
+            if result.resolved:
+                po = self._hydrate_po(result)
+                if po:
+                    logger.info(
+                        "PO resolved for invoice %s: PO %s via %s (stale=%s)",
+                        invoice.pk, po.po_number, result.source_type, result.is_stale,
+                    )
+                    return POLookupResult(
+                        found=True,
+                        purchase_order=po,
+                        lookup_method=result.source_type,
+                        erp_source_type=result.source_type,
+                        erp_confidence=result.confidence,
+                        is_stale=result.is_stale,
+                        warnings=result.warnings,
+                        erp_provenance=result.to_provenance_dict(),
+                    )
 
         # Fallback: deterministic vendor + amount discovery.
-        # Only attempt this when the invoice has NO extracted PO number at all.
-        # If the invoice *has* a PO number but it didn't match (OCR noise,
-        # transposed digits, etc.), we deliberately return not_found so the
-        # PO_RETRIEVAL agent can handle the fuzzy matching.
+        # Only when the invoice has NO PO number reference at all (not just a failed lookup).
         has_po_reference = bool(invoice.po_number or invoice.raw_po_number)
-        if not skip_vendor_amount and not has_po_reference:
-            result = self._discover_by_vendor_amount(invoice)
-            if result.found:
-                return result
+        if not has_po_reference:
+            discovery = self._discover_by_vendor_amount(invoice)
+            if discovery.found:
+                return discovery
 
-        logger.warning("PO not found for invoice %s (po_number=%s)", invoice.pk, invoice.po_number)
+        logger.warning(
+            "PO not found for invoice %s (po_number=%s)", invoice.pk, invoice.po_number
+        )
         return POLookupResult(found=False, lookup_method="not_found")
 
     # ------------------------------------------------------------------
-    # Deterministic PO discovery
+    # PO hydration
     # ------------------------------------------------------------------
-    def _discover_by_vendor_amount(self, invoice: Invoice) -> POLookupResult:
-        """Find a PO by matching vendor + total amount when PO number lookup failed.
 
-        If ``invoice.vendor`` FK is missing but ``raw_vendor_name`` is
-        populated, the method first attempts to resolve the vendor
-        deterministically via normalised name and alias lookup.  When the
-        vendor is resolved the FK is back-filled on the invoice.
+    @staticmethod
+    def _hydrate_po(result) -> Optional[PurchaseOrder]:
+        """Hydrate a PurchaseOrder ORM object from an ERPResolutionResult.
+
+        When the result comes from MIRROR_DB, po_id is available directly.
+        When from DB_FALLBACK (ERPPOReference snapshot), we normalise and
+        search by po_number — the PO may not exist as a full document.
+        """
+        value = result.value or {}
+        po_id = value.get("po_id")
+        if po_id:
+            return PurchaseOrder.objects.filter(pk=po_id).first()
+
+        # DB_FALLBACK path: try to find the PO by number
+        po_number = value.get("po_number", "")
+        if po_number:
+            return (
+                PurchaseOrder.objects.filter(po_number=po_number).first()
+                or PurchaseOrder.objects.filter(
+                    normalized_po_number=normalize_po_number(po_number)
+                ).first()
+            )
+        return None
+
+    # ------------------------------------------------------------------
+    # Deterministic vendor + amount discovery
+    # ------------------------------------------------------------------
+
+    def _discover_by_vendor_amount(self, invoice: Invoice) -> POLookupResult:
+        """Find a PO by matching vendor + total amount when PO number is absent.
 
         Only returns a match when exactly one open PO for the vendor has a
-        total_amount within tolerance of the invoice total.  If zero or
-        multiple candidates match the result is ``not_found`` — the ambiguous
-        case is left for the AI agent.
+        total_amount within tolerance of the invoice total. Zero or multiple
+        candidates return not_found (ambiguous, left for the AI agent).
         """
         if not invoice.total_amount:
             return POLookupResult(found=False, lookup_method="not_found")
 
-        # Resolve vendor FK if missing
         vendor_id = invoice.vendor_id
         if not vendor_id:
-            vendor = self._resolve_vendor(invoice.raw_vendor_name)
+            vendor = self._resolve_vendor_from_name(invoice.raw_vendor_name)
             if vendor:
                 invoice.vendor = vendor
                 invoice.save(update_fields=["vendor", "updated_at"])
@@ -97,64 +176,62 @@ class POLookupService:
             else:
                 return POLookupResult(found=False, lookup_method="not_found")
 
-        candidates: List[PurchaseOrder] = list(
-            PurchaseOrder.objects.filter(
-                vendor_id=vendor_id,
-                status="OPEN",
-            ).exclude(total_amount__isnull=True)
+        candidates = list(
+            PurchaseOrder.objects.filter(vendor_id=vendor_id, status="OPEN")
+            .exclude(total_amount__isnull=True)
         )
-
         if not candidates:
             return POLookupResult(found=False, lookup_method="not_found")
 
-        inv_total = invoice.total_amount
         matches = [
             po for po in candidates
-            if within_tolerance(inv_total, po.total_amount, _DISCOVERY_AMOUNT_TOLERANCE_PCT)
+            if within_tolerance(invoice.total_amount, po.total_amount, _DISCOVERY_AMOUNT_TOLERANCE_PCT)
         ]
 
         if len(matches) == 1:
             po = matches[0]
             logger.info(
                 "PO discovered (vendor+amount) for invoice %s: PO %s "
-                "(vendor=%s, inv_total=%s, po_total=%s)",
+                "(vendor=%s, inv=%s, po=%s)",
                 invoice.pk, po.po_number, vendor_id,
-                inv_total, po.total_amount,
+                invoice.total_amount, po.total_amount,
             )
-            return POLookupResult(found=True, purchase_order=po, lookup_method="vendor_amount")
-
-        if len(matches) > 1:
-            logger.info(
-                "PO discovery ambiguous for invoice %s: %d candidates for vendor %s amount %s — "
-                "deferring to agent",
-                invoice.pk, len(matches), vendor_id, inv_total,
+            return POLookupResult(
+                found=True,
+                purchase_order=po,
+                lookup_method="vendor_amount",
+                erp_source_type=ERPSourceType.MIRROR_DB,
+                erp_confidence=0.85,
+                erp_provenance={
+                    "source_type": ERPSourceType.MIRROR_DB,
+                    "lookup_method": "vendor_amount_discovery",
+                    "vendor_id": vendor_id,
+                    "invoice_total": str(invoice.total_amount),
+                    "po_total": str(po.total_amount),
+                },
             )
 
+        logger.info(
+            "Vendor+amount discovery ambiguous for invoice %s: %d candidates",
+            invoice.pk, len(matches),
+        )
         return POLookupResult(found=False, lookup_method="not_found")
 
-    # ------------------------------------------------------------------
-    # Vendor resolution (deterministic alias lookup)
-    # ------------------------------------------------------------------
     @staticmethod
-    def _resolve_vendor(raw_vendor_name: str):
-        """Resolve a raw vendor name to a Vendor via normalised name or alias."""
-        from apps.vendors.models import Vendor, VendorAlias
-
-        if not raw_vendor_name:
+    def _resolve_vendor_from_name(raw_name: str) -> Optional[Any]:
+        """Attempt to resolve a vendor from a raw name string via aliases."""
+        if not raw_name:
             return None
-
-        norm = normalize_string(raw_vendor_name)
-        if not norm:
+        try:
+            from apps.vendors.models import Vendor, VendorAlias
+            norm = normalize_string(raw_name)
+            vendor = (
+                Vendor.objects.filter(normalized_name=norm, is_active=True).first()
+                or Vendor.objects.filter(name__iexact=raw_name, is_active=True).first()
+            )
+            if vendor:
+                return vendor
+            alias = VendorAlias.objects.filter(normalized_alias=norm).select_related("vendor").first()
+            return alias.vendor if alias else None
+        except Exception:
             return None
-
-        vendor = Vendor.objects.filter(normalized_name=norm, is_active=True).first()
-        if vendor:
-            return vendor
-
-        alias = VendorAlias.objects.filter(
-            normalized_alias=norm,
-        ).select_related("vendor").first()
-        if alias:
-            return alias.vendor
-
-        return None

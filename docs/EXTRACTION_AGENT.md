@@ -1571,88 +1571,282 @@ A deeper analysis agent that runs after extraction for low-confidence or ambiguo
 
 ---
 
-## 10. LLM Prompt
+## 10. LLM Prompts
 
-**Registry key**: `extraction.invoice_system` (monolithic fallback) + `extraction.invoice_base` (modular base — see §10b)
-**File**: `apps/core/prompt_registry.py` (hardcoded defaults) + Langfuse (production label, 60s cache TTL) + DB (`PromptTemplate` model)
+The prompt layer has three builder strategies. The **modular composition** path is the outer primary pipeline; the **schema-driven v2.0** path runs *inside* it at step 1b as a governed enrichment layer (fail-silent, wrapped in `try/except`). Agent and case prompts are resolved via the monolithic `PromptRegistry` path.
 
-### JSON Output Schema
+> **Key relationship**: Callers always invoke `InvoiceExtractionAgent` (modular composition). `InvoiceExtractionAgent` internally calls `ExtractionPipeline.run()` at step 1b via `_run_governed_pipeline()`. The schema-driven path is *not* a parallel entry point that callers choose -- it runs automatically inside Path A and produces governance records only. If it fails, Path A continues and labels the result "Legacy source".
 
-The extraction prompt instructs the LLM to return valid JSON with this exact structure:
+| Path | Role | Primary class | File | Used by |
+|---|---|---|---|---|
+| **Modular composition** | Primary outer pipeline | `InvoicePromptComposer` | `apps/extraction/services/invoice_prompt_composer.py` | `InvoiceExtractionAgent` -- all Celery tasks and direct callers |
+| **Schema-driven v2.0** | Step 1b enrichment (fail-silent, inside Path A) | `PromptBuilderService` | `apps/extraction_core/services/prompt_builder_service.py` | `ExtractionPipeline`, `LLMExtractionAdapter` -- called from inside `InvoiceExtractionAgent` |
+| **Monolithic** | Agent + case resolution | `PromptRegistry` | `apps/core/prompt_registry.py` | All 8 ReAct agents, case-level calls, `InvoiceUnderstandingAgent` |
+
+---
+
+### 10.1 Monolithic path -- `PromptRegistry`
+
+**File**: `apps/core/prompt_registry.py`
+
+Used by the agent-based extraction path and all 8 ReAct agents. Resolution order (highest to lowest priority):
+
+1. **Langfuse** (name: `extraction-invoice_system`, label `production`, 60s in-process TTL cache)
+2. **Database** -- `PromptTemplate` model (slug `extraction.invoice_system`, `is_active=True`)
+3. **Hardcoded default** -- `_DEFAULTS["extraction.invoice_system"]` in `prompt_registry.py`
+
+```python
+from apps.core.prompt_registry import PromptRegistry
+
+prompt = PromptRegistry.get("extraction.invoice_system")
+prompt = PromptRegistry.get("agent.exception_analysis", mode_context="3-WAY ...")
+```
+
+**18 managed prompts** total -- 2 extraction + 8 agent + 8 overlay/country prompts. Sync to Langfuse:
+
+```bash
+python manage.py push_prompts_to_langfuse            # push all to Langfuse (production label)
+python manage.py push_prompts_to_langfuse --slug extraction.invoice_system
+python manage.py push_prompts_to_langfuse --label staging   # staging label for testing
+python manage.py push_prompts_to_langfuse --purge    # delete all then re-seed (fixes misnamed prompts)
+
+python manage.py seed_prompts          # create DB PromptTemplate records for missing slugs
+python manage.py seed_prompts --force  # overwrite existing with hardcoded defaults
+```
+
+The Langfuse version is **source of truth in production**. If no Langfuse key is set, falls through to DB then hardcoded default automatically.
+
+---
+
+### 10.2 Schema-driven path -- `PromptBuilderService` v2.0
+
+**File**: `apps/extraction_core/services/prompt_builder_service.py`
+**Used by**: `ExtractionPipeline._build_prompt()` (step 3), `LLMExtractionAdapter`
+
+Generates fully dynamic prompts from `ExtractionSchemaDefinition` + `TaxJurisdictionProfile`. Zero hardcoded country-specific text -- everything is derived from schema field definitions and jurisdiction config.
+
+**Version constants**: `PROMPT_VERSION = "2.0"`, `PROMPT_CODE = "extraction_core_v2"`
+
+#### Public API
+
+```python
+from apps.extraction_core.services.prompt_builder_service import PromptBuilderService
+
+payload = PromptBuilderService.build(
+    country_code="IN",
+    regime_code="GST",
+    document_type="invoice",
+    schema=schema_definition,              # ExtractionSchemaDefinition instance
+    jurisdiction_profile=jurisdiction,     # TaxJurisdictionProfile -- optional
+    field_definitions=field_defs,          # list[ExtractionFieldDefinition] -- optional
+    unresolved_field_keys={"invoice_number", "vendor_name"},  # hybrid mode -- optional
+)
+# Returns dict:
+# {
+#     "prompt_code": "extraction_core_v2",
+#     "prompt_version": "2.0",
+#     "system_message": "<7-section assembled prompt>",
+#     "user_message_template": "<template with OCR placeholder>",
+#     "expected_schema": {...},   # dynamic JSON schema from schema definition
+#     "field_count": 14,          # number of fields requested (reduced in hybrid mode)
+# }
+
+user_message = PromptBuilderService.build_user_message(ocr_text)
+# Wraps ocr_text[:60000] in a standard extraction request envelope
+```
+
+#### 7-section prompt assembly
+
+The system message is assembled from these sections in order; empty sections are silently dropped:
+
+| # | Section method | What it contains |
+|---|---|---|
+| 1 | `_global_instructions()` | Extraction rules: JSON-only output, null policy, value vs confidence vs evidence envelope, monetary/date formatting, no markdown |
+| 2 | `_country_regime_instructions()` | Country code, tax regime label, tax ID label, expected currency, date formats, `extraction_notes` from `jurisdiction_profile.config_json` |
+| 3 | `_document_type_instructions()` | Document type label and per-document guidance |
+| 4 | `_schema_fields_section()` | Header fields, tax fields, line-item fields from `ExtractionSchemaDefinition`; each annotated with display name, data type, and `[REQUIRED]` flag |
+| 5 | `_tax_instructions()` | Regime-specific notes, `tax_id_regex` from jurisdiction profile, list of tax-flagged field keys with display names |
+| 6 | `_evidence_confidence_rules()` | Confidence band definitions: 1.0 (unambiguous) / 0.7-0.9 (inference) / 0.3-0.6 (ambiguous) / 0.0 + null (not found); verbatim snippet requirement |
+| 7 | `_output_format_section()` | Expected JSON schema rendered inline so the LLM knows the exact output shape |
+
+#### Hybrid mode (`unresolved_field_keys`)
+
+When `unresolved_field_keys` is provided, sections 4 and 7 include only those fields. Used when deterministic extraction already resolved some fields -- the LLM call is scoped to the remainder, reducing token usage and improving focus:
+
+```python
+payload = PromptBuilderService.build(
+    ...,
+    unresolved_field_keys={"invoice_number", "po_number"},
+)
+# payload["field_count"] == 2
+# payload["expected_schema"] contains only those 2 fields
+```
+
+#### Schema-driven expected output
+
+`build_expected_schema()` reads `ExtractionSchemaDefinition.header_fields_json`, `tax_fields_json`, and `line_item_fields_json` to produce a dynamic JSON schema. This schema is:
+- Embedded in section 7 of the system prompt so the LLM sees the exact required shape
+- Used downstream by `LLMExtractionAdapter` to validate and parse the LLM response
+- Stored on `ExtractionRun` via `prompt_code` / `prompt_version` for audit traceability
+
+Each extracted field uses this per-field envelope (schema-driven path):
 
 ```json
 {
-  "confidence": 0.0,
-  "vendor_name": "<supplier name>",
-  "vendor_tax_id": "<GSTIN/VAT number>",
-  "buyer_name": "<billed to company>",
-  "invoice_number": "<invoice number>",
-  "invoice_date": "<YYYY-MM-DD>",
-  "due_date": "<YYYY-MM-DD>",
-  "po_number": "<purchase order number>",
-  "currency": "<ISO code>",
-  "subtotal": 0,
-  "tax_percentage": 0,
-  "tax_amount": 0,
-  "tax_breakdown": {
-    "cgst": 0,
-    "sgst": 0,
-    "igst": 0,
-    "vat": 0
+  "header_fields": {
+    "invoice_number": { "value": "INV-2024-001", "confidence": 0.97, "evidence": "Invoice No. INV-2024-001" },
+    "vendor_name":    { "value": "Acme Pvt Ltd",  "confidence": 1.0,  "evidence": "ACME PRIVATE LIMITED" }
   },
-  "total_amount": 0,
-  "document_type": "invoice",
+  "tax_fields": {
+    "tax_amount": { "value": "1800.00", "confidence": 0.95, "evidence": "GST 18% = 1800.00" },
+    "cgst":       { "value": "900.00",  "confidence": 0.95, "evidence": "CGST @ 9% = 900.00" }
+  },
   "line_items": [
     {
-      "item_description": "<description>",
-      "item_category": "<category>",
-      "quantity": 0,
-      "unit_price": 0,
-      "tax_percentage": 0,
-      "tax_amount": 0,
-      "line_amount": 0
+      "item_description": { "value": "Cloud Hosting", "confidence": 1.0,  "evidence": "Cloud Hosting Services" },
+      "quantity":         { "value": "1",             "confidence": 0.90, "evidence": "Qty: 1" },
+      "unit_price":       { "value": "10000.00",      "confidence": 0.90, "evidence": "Rate: 10000" }
     }
   ]
 }
 ```
 
-### Key Extraction Rules (in the prompt)
+Compare with the **monolithic path** flat output (used by `InvoiceExtractionAgent`):
+
+```json
+{
+  "confidence": 0.94,
+  "vendor_name": "Acme Pvt Ltd",
+  "invoice_number": "INV-2024-001",
+  "total_amount": 11800,
+  "line_items": [{ "item_description": "Cloud Hosting", "quantity": 1 }]
+}
+```
+
+---
+
+### 10.3 `LLMExtractionAdapter`
+
+**File**: `apps/extraction_core/services/llm_extraction_adapter.py`
+
+Wraps `LLMClient` to drive a schema-driven extraction call. Uses `prompt_builder.py` (the earlier `PromptBuilderService` variant that works with `ExtractionTemplate` / `FieldSpec` objects) to build messages, then invokes the LLM with retry on JSON parse failures.
+
+```python
+adapter = LLMExtractionAdapter()
+results, audit = adapter.extract_fields(
+    template=template,           # ExtractionTemplate (header/tax/line-item FieldSpec lists)
+    ocr_text=ocr_text,
+    jurisdiction_profile=jurisdiction,
+    unresolved_field_keys=None,  # None = extract all; set[str] = hybrid mode
+)
+# results : list[FieldResult]       (value, confidence, evidence, method per field)
+# audit   : LLMExtractionAudit      (see fields below)
+```
+
+**`LLMExtractionAudit` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `model` | `str` | Deployment name used for the call |
+| `prompt_tokens` | `int` | Tokens in the request |
+| `completion_tokens` | `int` | Tokens in the response |
+| `total_tokens` | `int` | Combined token count |
+| `duration_ms` | `int` | Wall-clock latency |
+| `attempts` | `int` | LLM calls made (1 + retries on parse failure) |
+| `success` | `bool` | True if at least one attempt returned parseable JSON |
+| `error_message` | `str` | Last error string if all attempts failed |
+| `fields_extracted` | `int` | Number of non-null field results returned |
+
+---
+
+### 10.4 `PromptRegistryService` -- `ExtractionPromptTemplate` lifecycle
+
+**File**: `apps/extraction_core/services/prompt_registry_service.py`
+**Model**: `ExtractionPromptTemplate` (in `extraction_core` app, separate from `core.PromptTemplate`)
+
+Manages versioned prompt templates scoped to the extraction schema system.
+
+```python
+from apps.extraction_core.services.prompt_registry_service import PromptRegistryService
+
+# List with filters
+qs = PromptRegistryService.list_prompts({
+    "prompt_code": "extraction_core_v2",
+    "country_code": "IN",
+    "regime_code": "GST",
+    "status": "ACTIVE",
+})
+
+# Create
+prompt = PromptRegistryService.create_prompt({
+    "prompt_code": "extraction_core_v2",
+    "prompt_category": "extraction",
+    "country_code": "IN",
+    "regime_code": "GST",
+    "document_type": "invoice",
+    "schema_code": "invoice_v1",
+    "prompt_text": "...",
+    "variables_json": [],
+    "effective_from": date.today(),
+}, user=request.user)
+
+# Update (diff stored for audit)
+PromptRegistryService.update_prompt(prompt.pk, {"prompt_text": "..."}, user=request.user)
+```
+
+Filterable fields: `prompt_code`, `prompt_category`, `country_code`, `regime_code`, `document_type`, `schema_code`, `status`, `search`. `update_prompt()` computes and stores a diff of `prompt_text` changes for auditability.
+
+---
+
+### 10.5 How `ExtractionPipeline` wires the prompt layer
+
+`ExtractionPipeline` is the new primary entry point for governed extraction. Step 3 of 12 calls `PromptBuilderService.build()` and persists the prompt identity back to `ExtractionRun`:
+
+```python
+# ExtractionPipeline._build_prompt()  (step 3)
+prompt_payload = PromptBuilderService.build(
+    country_code=resolution.country_code,
+    regime_code=resolution.regime_code or "",
+    document_type=document_type,
+    schema=schema,                           # selected by SchemaRegistryService (step 2)
+    jurisdiction_profile=resolution.jurisdiction,
+)
+run.prompt_code = prompt_payload["prompt_code"]       # "extraction_core_v2"
+run.prompt_version = prompt_payload["prompt_version"] # "2.0"
+run.save(update_fields=["prompt_code", "prompt_version", "updated_at"])
+ExtractionAuditService.log_prompt_selected(...)       # audit event emitted
+```
+
+The assembled `system_message` is passed to `LLMClient.chat()` as the system turn. `build_user_message(ocr_text)` provides the user turn (OCR text wrapped in a standard envelope, truncated at 60 000 characters).
+
+`InvoiceExtractionAgent` is the outer orchestrator used by all Celery tasks. It uses `InvoicePromptComposer` overlays for its own primary LLM call, then invokes `ExtractionPipeline.run()` at step 1b as a fail-silent enrichment step that produces the governance records described above. The agent is the outer pipeline; `ExtractionPipeline` is called from inside it, not the other way around.
+
+---
+
+### 10.6 Key extraction rules (monolithic path)
+
+Embedded in `extraction.invoice_system` and applied by `InvoiceExtractionAgent`:
 
 | Rule | Description |
 |------|-------------|
 | **Pre-extraction analysis** | Mandatory step: identify document type, table vs pricing breakdown structure, tax regime, quantity logic |
 | **Label binding** | Values bound to nearest explicit label; no identifier guessing by format alone |
-| **Header block recovery** | When label and value are on separate OCR lines, search the nearby header section (not the whole doc) |
+| **Header block recovery** | When label and value are on separate OCR lines, search the nearby header section only |
 | **invoice_number sources** | Only from: Invoice Number, Invoice No, Tax Invoice No, Bill No |
-| **Reference exclusions** | CART Ref. No., Client Code, IRN, Document No., Booking Confirmation No., Hotel Booking ID, Requisition Number, Passenger Name, Employee Code, Cost Center Code — **never** used as invoice_number |
+| **Reference exclusions** | CART Ref. No., Client Code, IRN, Document No., Booking Confirmation No., Hotel Booking ID, Requisition Number, Passenger Name, Employee Code, Cost Center Code -- **never** used as invoice_number |
 | **po_number** | Only when explicitly labeled (PO Number / P.O. No / Purchase Order), else `""` |
 | **vendor_name** | English characters only; transliterate/translate if OCR contains Arabic/Urdu/non-English |
-| **vendor_tax_id** | GSTIN or VAT registration number of the vendor |
+| **vendor_tax_id** | GSTIN or VAT registration number of the vendor (not buyer) |
 | **buyer_name** | Entity under "Bill To" |
 | **due_date** | Extract if present, else `""` |
-| **tax_breakdown** | Map CGST→cgst, SGST→sgst, IGST→igst, VAT→vat; default 0 if missing |
+| **tax_breakdown** | Map CGST->cgst, SGST->sgst, IGST->igst, VAT->vat; default 0 if missing |
 | **document_type** | Always `"invoice"` |
 | **item_category** | One of: Food, Logistics, Packaging, Maintenance, Utilities, Equipment, Services, Materials, Other |
 | **subtotal** | Sum of ALL pre-tax components (base fare, service charges, fees); exclude GST/VAT, roundoff, total |
-| **tax_percentage** | Computed: `(tax_amount / subtotal) × 100`; NOT copied from component-level rate |
-| **Travel invoice** | Convert pricing breakdown (Base Fare, Service Charges) into line items; consolidate Basic Fare + Hotel Taxes → Total Fare |
-| **Consistency** | `subtotal + tax_amount ≈ total_amount` (±2%); `Σ line_amounts ≈ subtotal` (±5%); prefer computed if mismatch |
-| **Defaults** | Missing text → `""`; missing numbers → `0` |
-
-### Prompt Versioning
-
-The prompt is resolved in this priority order:
-1. **Langfuse** (`extraction-invoice_system`, label `production`) — 60s in-process TTL cache
-2. **Database** — `PromptTemplate` model (slug `extraction.invoice_system`)
-3. **Hardcoded default** — `_DEFAULTS["extraction.invoice_system"]` in `prompt_registry.py`
-
-The Langfuse version is the **source of truth in production**. Run `python manage.py push_prompts_to_langfuse` to sync codebase defaults to Langfuse (18 prompts total).
-- Parse dates to YYYY-MM-DD (applies to both `invoice_date` and `due_date`)
-- Extract PO number from anywhere (header, footer, references)
-- `tax_breakdown`: populate whichever components (CGST/SGST/IGST/VAT) appear on the invoice; use 0 for absent components
-- `tax_percentage`: headline tax rate as a plain number (e.g. `"18"` for 18% GST); leave empty string when not stated
-- Return ONLY valid JSON — no markdown or explanation
-- **vendor_name MUST be English-only** — if Arabic/Urdu/non-English script detected, translate/transliterate to official English company name
+| **tax_percentage** | Computed: `(tax_amount / subtotal) x 100`; NOT copied from component-level rate |
+| **Travel invoice** | Convert pricing breakdown (Base Fare, Service Charges) into line items; consolidate Basic Fare + Hotel Taxes -> Total Fare |
+| **Consistency** | `subtotal + tax_amount ~= total_amount` (+-2%); `sum(line_amounts) ~= subtotal` (+-5%); prefer computed if mismatch |
+| **Defaults** | Missing text -> `""`; missing numbers -> `0` |
 
 ---
 

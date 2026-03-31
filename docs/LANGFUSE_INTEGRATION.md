@@ -3,21 +3,23 @@
 ## Overview
 
 Langfuse is used for LLM observability: tracing every agent run, extraction call,
-and LLM generation. The integration is fail-silent — if Langfuse is unreachable
-or misconfigured, the application continues to work without any impact.
+posting pipeline run, and LLM generation. The integration is fail-silent -- if
+Langfuse is unreachable or misconfigured, the application continues to work
+without any impact.
 
 - **SDK version**: `langfuse==4.0.1`
 - **Prompt management**: prompts are stored in Langfuse and fetched at runtime
   (60-second cache TTL). The `PromptRegistry` falls back to hardcoded defaults
   if Langfuse is unavailable.
-- **Tracing**: every agent pipeline, extraction run, bulk extraction job, and
-  reviewer summary call is recorded as a Langfuse trace with child spans and
-  LLM generation logs.
+- **Tracing**: every agent pipeline, extraction run, reconciliation run, posting
+  pipeline run, bulk extraction job, case processing task, and copilot answer
+  call is recorded as a Langfuse trace with child spans and LLM generation logs.
 - **Scores**: numeric quality scores are attached to traces after reconciliation
   match classification, posting confidence calculation, extraction pipeline
-  routing, and review assignment / decision events.
-- **ERP spans**: synchronous ERP submission and status-check calls are wrapped
-  in single-operation traces so latency and failure rate are visible in Langfuse.
+  routing, review assignment / decision events, and copilot session archive.
+- **ERP spans**: ERP submission and status-check calls are wrapped in traces;
+  ERP resolution calls can be wrapped as child spans when a parent span is
+  provided by the caller (posting pipeline, reconciliation).
 
 ---
 
@@ -110,27 +112,41 @@ root trace  (start_trace)
   -- posting_pipeline        (PostingPipeline.run() -- one per PostingRun)
      -- eligibility_check    (stage 1)
      -- snapshot_build       (stage 2)
-     -- mapping              (stage 3)
-     -- validation           (stage 4)
-     -- duplicate_check      (stage 5)
-     -- confidence_scoring   (stage 6, emits posting_confidence score)
-     -- review_routing       (stage 7, emits posting_requires_review score)
-     -- payload_build        (stage 8)
-     -- finalization         (stage 9)
+     -- mapping              (stage 3, emits vendor_resolved / mapping_issues)
+        -- erp_resolve_vendor   (ERPResolutionService child span, when connector present)
+        -- erp_resolve_item     (one per line item, when connector present)
+     -- validation           (stage 4, emits total_issues)
+     -- confidence_scoring   (stage 5, emits posting_confidence score)
+     -- review_routing       (stage 6, emits posting_requires_review score)
+     -- payload_build        (stage 7)
+     -- finalization         (stage 8, persist artifacts)
+     -- duplicate_check      (stage 9b, emits is_duplicate / source_type)
      -- erp_submission       (child span when lf_trace_id forwarded from PostingActionService)
 
   -- erp_submission_standalone  (isolated fallback trace when no parent trace ID is available)
   -- erp_status_check           (PostingSubmitResolver.get_posting_status() -- always isolated)
      (closed immediately with status/error output)
 
-  -- reconciliation_task     (run_reconciliation_task Celery task wrapper)
-     -- reconciliation_run   (ReconciliationRunnerService.run() -- one per batch)
+  -- reconciliation_task     (run_reconciliation_task Celery task wrapper -- root trace)
+     -- reconciliation_run   (ReconciliationRunnerService.run() -- child span)
         -- recon_mode_resolution  (per invoice)
         -- recon_matching         (per invoice -- router + classifier)
         -- recon_result_persist   (per invoice -- result_service.save)
         -- recon_exception_build  (per invoice -- exception_builder.build)
         -- recon_mode_resolution  (next invoice...)
         -- ...
+
+  -- agent_pipeline_task     (run_agent_pipeline_task Celery task wrapper)
+     (standalone root trace carrying Celery task_id; the orchestrator's
+      agent_pipeline trace runs concurrently under its own trace_id)
+
+  -- case_task               (process_case_task / reprocess_case_from_stage_task)
+     (root trace per Celery task invocation, trace_id=case-{case_id},
+      metadata includes task_id, case_id, and stage)
+
+  -- copilot_answer          (APCopilotService.answer_question())
+     (root trace per answer call; trace_id from session.trace_id or copilot-{session.pk};
+      session_id=copilot-{session.pk}; closed before each return path with topic output)
 
   -- bulk_extraction_job     (run_bulk_job_task -- one per BulkExtractionJob)
      -- bulk_item_extraction (one per eligible item in BulkExtractionJob)
@@ -258,24 +274,36 @@ extraction_resp = adapter.extract(file_path, actor_user_id=upload.uploaded_by_id
 
 ### 5. Reconciliation pipeline (`apps/reconciliation/tasks.py` + `apps/reconciliation/services/runner_service.py`)
 
-The reconciliation pipeline is fully instrumented with a root trace and four
-child spans per invoice, plus a `reconciliation_match` quality score.
+The reconciliation pipeline is fully instrumented with a root task trace, a
+service-level child span, four child spans per invoice, and a `reconciliation_match`
+quality score.
 
-#### Root traces
+#### Root traces and hierarchy
 
-**Task-level span** (`run_reconciliation_task`): after the runner returns,
-a `"reconciliation_task"` span is opened and immediately closed with the final
-`run.status`. Trace ID: `run.trace_id or str(run.pk)`.
+**Task-level root trace** (`run_reconciliation_task`): opened at the **start** of
+the task, before the runner executes. Name: `"reconciliation_task"`.
+Trace ID: `f"recon-task-{celery_task_id}"`. The task span is closed in a
+`finally`-style block after the runner returns.
 
-**Service-level trace** (`ReconciliationRunnerService.run()`): opened after
-`ReconciliationRun.objects.create()` using the same trace ID convention.
+**Service-level child span** (`ReconciliationRunnerService.run()`): opened as a
+child of the task-level trace using `start_span(lf_task_trace, "reconciliation_run")`.
 Name: `"reconciliation_run"`. Closed after `recon_run.save()` with match-count
-summary `{matched, partial, unmatched, errors, review}`. If an external caller
-already passes `lf_trace`, that handle is used and the service does **not**
-open its own trace (`_lf_run_trace_is_mine = False`).
+summary `{matched, partial, unmatched, errors, review}`.
 
-`run()` accepts `lf_trace=None` as an optional kwarg — existing callers
-(template view, management commands, tests) are unaffected.
+This gives a clean two-tier hierarchy in Langfuse:
+
+```
+reconciliation_task  (task root, trace_id=recon-task-<celery_id>)
+  -- reconciliation_run  (service child span)
+       -- recon_mode_resolution   (per invoice)
+       -- recon_matching          (per invoice)
+       -- recon_result_persist    (per invoice)
+       -- recon_exception_build   (per invoice)
+```
+
+When `run_reconciliation_task` runs without a Celery task ID (e.g. called from
+a management command or directly), the task trace is skipped and the runner
+falls back to creating its own standalone `"reconciliation_run"` root trace.
 
 #### Per-invoice child spans (`_reconcile_single`)
 
@@ -313,90 +341,113 @@ Score mapping:
 | `REQUIRES_REVIEW` | `0.3` |
 | `UNMATCHED` | `0.0` |
 
-`trace_id` is taken from `run.trace_id` if present, otherwise falls back to
-`str(run.pk)`. The root trace is now always created before `_reconcile_single`
-runs, so the score is always attached to a linked trace.
-
 ### 6. Posting pipeline (`apps/posting_core/services/posting_pipeline.py`)
 
 The 9-stage posting pipeline is fully traced with a root trace, one child span per
-stage, and two quality scores emitted after stages 6 and 7.
+stage, and two quality scores emitted after stages 5 and 6.
 
 #### Root trace (`PostingPipeline.run()`)
 
-Opened at the start of `run()` before any stage executes and closed in the
-existing `finally` block with the final run status:
+Opened after `PostingRun.objects.create()` using `str(posting_run.pk)` as the
+trace ID. Name: `"posting_pipeline"`. Session ID: `"invoice-{invoice.pk}"`.
+Closed in both the success path and exception handler, with appropriate output
+and `level="ERROR"` on failure:
 
 ```python
-_trace_id = getattr(posting_run, "trace_id", None) or str(posting_run.pk)
+_trace_id = str(posting_run.pk)
 _lf_trace = start_trace(
     _trace_id,
     "posting_pipeline",
+    invoice_id=invoice.pk,
+    user_id=user.pk if user else None,
+    session_id=f"invoice-{invoice.pk}",
     metadata={
         "posting_run_pk": posting_run.pk,
-        "invoice_id": posting_run.invoice_posting.invoice_id,
-        "connector_used": bool(self._connector),
+        "invoice_id": invoice.pk,
+        "invoice_number": invoice.invoice_number or "",
     },
 )
-# ... all stages run ...
-finally:
-    end_span(_lf_trace, output={"final_status": posting_run.status})
 ```
 
-#### Per-stage child spans
+#### Per-stage child spans (actual code order)
 
-Each of the 9 stages is wrapped with a child span named after the stage. Failed
-stages are marked with `level="ERROR"`:
+Spans are created by the `_open_stage_span` / `_close_stage_span` local helpers
+inside `run()`. Each helper is fail-silent.
 
-| Stage | Span name |
-|---|---|
-| 1 | `eligibility_check` |
-| 2 | `snapshot_build` |
-| 3 | `mapping` |
-| 4 | `validation` |
-| 5 | `duplicate_check` |
-| 6 | `confidence_scoring` |
-| 7 | `review_routing` |
-| 8 | `payload_build` |
-| 9 | `finalization` |
-
-Each span is opened before the stage function executes and closed in a `finally`
-block with `output={"passed": stage_ok, "status": posting_run.status}`.
+| Stage | Span name | Key output fields |
+|---|---|---|
+| 1 | `eligibility_check` | `passed: True` |
+| 2 | `snapshot_build` | `built: True` |
+| 3 | `mapping` | `vendor_resolved`, `lines_count`, `mapping_issues`, `connector_used` |
+| 4 | `validation` | `total_issues` |
+| 5 | `confidence_scoring` | `confidence`, `issue_count` -- also emits `posting_confidence` score |
+| 6 | `review_routing` | `requires_review`, `queue`, `reason_count` -- also emits `posting_requires_review` score |
+| 7 | `payload_build` | `lines_in_payload` |
+| 8 | `finalization` | `artifacts_persisted: True` |
+| 9 | `duplicate_check` | `is_duplicate`, `source_type` |
 
 #### Quality scores
 
-**After stage 6** (`confidence_scoring`) emits `posting_confidence`:
+**After stage 5** (`confidence_scoring`) emits `posting_confidence`:
 
 ```python
 score_trace(
-    _trace_id,
+    str(posting_run.pk),     # trace_id
     "posting_confidence",
     float(confidence),       # 0.0 -- 1.0 composite score
-    comment=f"invoice={invoice.pk} requires_review=pending issues={len(all_issues)}",
+    comment=f"invoice={invoice.pk} requires_review='pending' issues={len(all_issues)}",
 )
 ```
 
-**After stage 7** (`review_routing`) emits `posting_requires_review`:
+**After stage 6** (`review_routing`) emits `posting_requires_review`:
 
 ```python
 score_trace(
-    _trace_id,
+    str(posting_run.pk),
     "posting_requires_review",
     1.0 if requires_review else 0.0,
     comment=f"queue={primary_queue} reasons={len(review_reasons)}",
 )
 ```
 
-Both calls use `posting_run.trace_id` or `str(posting_run.pk)` as the trace ID.
-Because the root trace is now always opened before stage 1, both scores are
-guaranteed to be linked to a trace in Langfuse.
+Both calls use `str(posting_run.pk)` as the trace ID, which matches the root
+trace opened at the start of `run()`. Scores are therefore always linked to
+a real trace in Langfuse.
 
-`PostingOrchestrator.prepare_posting()` extracts the same trace ID before calling
-`PostingPipeline.run()` so it can be forwarded to the ERP submission layer:
+#### ERP resolution child spans (when connector is present)
+
+`ERPResolutionService` methods (`resolve_vendor`, `resolve_item`, etc.) accept
+an optional `lf_parent_span` kwarg. When a non-None parent span is provided,
+the service wraps the entire resolution (cache + API + DB fallback) as a child
+span with the following output fields:
+
+| Field | Type | Notes |
+|---|---|---|
+| `resolved` | bool | Whether the lookup succeeded |
+| `source_type` | str | CACHE / API / MIRROR_DB / DB_FALLBACK / NONE |
+| `cache_hit` | bool | True when source_type is CACHE |
+| `fallback_used` | bool | True when DB fallback path was taken |
+| `confidence` | float | 0.0 -- 1.0 |
+| `is_stale` | bool | True when data exceeds freshness threshold |
+
+Span names follow the pattern `erp_{resolution_name}` (e.g. `erp_resolve_vendor`,
+`erp_resolve_po`). Full ERP payloads are **never** logged."
+
+To see these spans, callers must pass the current Langfuse span as `lf_parent_span`:
 
 ```python
-_trace_id = getattr(posting_run, "trace_id", None) or str(posting_run.pk)
-PostingPipeline(connector=connector).run(posting_run)
+result = erp_service.resolve_vendor(
+    vendor_code=vendor_code,
+    lf_parent_span=_lf_mapping_span,   # the "mapping" stage span
+)
+```
+
+`PostingOrchestrator.prepare_posting()` extracts the same trace ID before calling
+`PostingPipeline.run()` so it can be forwarded to the ERP submission layer in Phase 2:
+
+```python
+# PostingActionService.submit_posting() already resolves _lf_trace_id from
+# the latest PostingRun for forwarding to PostingSubmitResolver.submit_invoice()
 ```
 
 ### 7. Direct LLM fallback (`InvoiceExtractionAdapter._llm_extract()`)
@@ -731,6 +782,80 @@ if not granted:
 | `authorize_recommendation` | via `log_guardrail_decision` | via `log_guardrail_decision` | `rbac_guardrail` |
 | `authorize_data_scope` | not scored (noise) | direct (TraceContext) | `rbac_data_scope` |
 
+### 15. Case processing tasks (`apps/cases/tasks.py`)
+
+Both `process_case_task` and `reprocess_case_from_stage_task` now open a
+`"case_task"` root trace at entry, before the orchestrator runs.
+
+**Trace ID**: `f"case-{case_id}"`. This is stable across retries so all
+attempts for the same case are grouped in Langfuse.
+
+**For `process_case_task`**:
+
+```python
+_lf_trace = start_trace(
+    f"case-{case_id}",
+    "case_task",
+    metadata={"task_id": self.request.id, "case_id": case_id, "stage": "full"},
+)
+```
+
+The trace is closed after the orchestrator returns with `{"status": case.status,
+"case_number": case.case_number}`. On `APCase.DoesNotExist`, the trace closes
+with `level="ERROR"` and `{"error": "not_found"}`. On any other exception, the
+trace closes with `level="ERROR"` before `safe_retry()` is called.
+
+**For `reprocess_case_from_stage_task`**, the same pattern applies with
+`{"stage": stage}` in the metadata and `{"status": case.status, "stage": stage}`
+in the success output.
+
+### 16. Copilot service (`apps/copilot/services/copilot_service.py`)
+
+#### `answer_question()` span
+
+Every call to `answer_question()` opens a `"copilot_answer"` trace at entry:
+
+```python
+_lf_span = start_trace(
+    _session_trace_id,         # session.trace_id or f"copilot-{session.pk}"
+    "copilot_answer",
+    session_id=f"copilot-{session.pk}",
+    metadata={"session_id": str(session.pk), "case_id": session.linked_case_id},
+)
+```
+
+The trace is closed before each of the two return paths with `topic` and
+`case_id` in the output:
+
+```python
+end_span(_lf_span, output={"topic": _topic, "case_id": session.linked_case_id})
+```
+
+The `_topic` variable is set to `"small_talk"` on the short-circuit path and to
+the classified topic string (`"overview"`, `"invoice"`, `"reconciliation"`, etc.)
+on the main path.
+
+#### `archive_session()` score
+
+After a successful archive, `archive_session()` counts the session's messages
+and emits `copilot_session_length` as a raw message-count float:
+
+```python
+msg_count = CopilotMessage.objects.filter(
+    session__pk=session_id, session__user=user,
+).count()
+score_trace(
+    f"copilot-{session_id}",
+    "copilot_session_length",
+    float(msg_count),
+    comment=f"session={session_id} messages={msg_count}",
+)
+```
+
+Trace ID `f"copilot-{session_id}"` matches the `session_id` attribute set on
+`answer_question()` traces, so the score is grouped with all answer spans in the
+Langfuse Sessions tab.
+
 ### 14. Bulk extraction job (`apps/extraction/bulk_tasks.py` + `apps/extraction/services/bulk_service.py` + `apps/extraction/services/bulk_source_adapters.py`)
 
 The bulk extraction pipeline is fully traced with a root trace, per-item child
@@ -824,7 +949,8 @@ and there are no auth failures to surface).
 | `extraction_corrections_count` | 0.0+ (raw count) | `approval_service.py` `approve()` | `f"approval-{approval.pk}"` |
 | `rbac_guardrail` | 0.0 or 1.0 | `guardrails_service.py` — `log_guardrail_decision()` (all methods) + direct grant path in `authorize_agent()` / `authorize_tool()` | active agent pipeline `trace_id` via `TraceContext.get_current()` |
 | `rbac_data_scope` | 0.0 (deny only) | `guardrails_service.py` `authorize_data_scope()` | `TraceContext.get_current().trace_id` |
-| `bulk_job_success_rate` | 0.0 – 1.0 | `bulk_tasks.py` `run_bulk_job_task` | `job.trace_id` or `str(job.pk)` |
+| `bulk_job_success_rate` | 0.0 -- 1.0 | `bulk_tasks.py` `run_bulk_job_task` | `job.trace_id` or `str(job.pk)` |
+| `copilot_session_length` | 0.0+ (raw message count) | `copilot_service.py` `archive_session()` | `f"copilot-{session_id}"` |
 
 ---
 

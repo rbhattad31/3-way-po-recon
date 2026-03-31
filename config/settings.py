@@ -201,6 +201,37 @@ ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD = float(
 ERP_CACHE_TTL_SECONDS = int(os.getenv("ERP_CACHE_TTL_SECONDS", "3600"))
 
 # ---------------------------------------------------------------------------
+# ERP Shared Resolution Policy
+# How stale can data be before we flag it or attempt a live refresh?
+# TRANSACTIONAL = PO headers, GRN records  (short-lived, changes frequently)
+# MASTER        = vendor/item/tax/cost-center reference data (more stable)
+# ---------------------------------------------------------------------------
+ERP_TRANSACTIONAL_FRESHNESS_HOURS = int(
+    os.getenv("ERP_TRANSACTIONAL_FRESHNESS_HOURS", "24")
+)
+ERP_MASTER_FRESHNESS_HOURS = int(
+    os.getenv("ERP_MASTER_FRESHNESS_HOURS", "168")  # 7 days
+)
+# When True, a live ERP API call is attempted if the mirror lookup misses.
+ERP_ENABLE_LIVE_REFRESH_ON_MISS = (
+    os.getenv("ERP_ENABLE_LIVE_REFRESH_ON_MISS", "false").lower() == "true"
+)
+# When True, a live ERP API call is attempted if the resolved data is stale.
+ERP_ENABLE_LIVE_REFRESH_ON_STALE = (
+    os.getenv("ERP_ENABLE_LIVE_REFRESH_ON_STALE", "false").lower() == "true"
+)
+# Use internal mirror tables (documents.PurchaseOrder / GoodsReceiptNote) as
+# the primary source for reconciliation PO/GRN lookups.
+ERP_RECON_USE_MIRROR_AS_PRIMARY = (
+    os.getenv("ERP_RECON_USE_MIRROR_AS_PRIMARY", "true").lower() == "true"
+)
+# Use internal reference import tables as the primary source for posting
+# vendor/item/tax/cost-center resolution.
+ERP_POSTING_USE_MIRROR_AS_PRIMARY = (
+    os.getenv("ERP_POSTING_USE_MIRROR_AS_PRIMARY", "true").lower() == "true"
+)
+
+# ---------------------------------------------------------------------------
 # LLM / AI service configuration
 # ---------------------------------------------------------------------------
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "azure_openai")

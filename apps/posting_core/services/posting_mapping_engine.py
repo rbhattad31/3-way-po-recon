@@ -94,6 +94,24 @@ class PostingProposal:
     batch_refs: Dict[str, int] = field(default_factory=dict)
 
 
+@dataclass
+class _POLineData:
+    """Lightweight PO line data used for item resolution.
+
+    Built from ERPResolutionResult line items (MIRROR_DB / API) or from
+    ERPPOReference records (reference import snapshot fallback).
+    All paths go through _load_po_refs(), which tries ERPResolutionService
+    first and falls back to the direct ERPPOReference query.
+    """
+    po_number: str = ""
+    po_line_number: Optional[int] = None
+    item_code: str = ""
+    description: str = ""
+    normalized_description: str = ""
+    quantity: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
+
+
 class PostingMappingEngine:
     """Resolves ERP values from imported reference tables.
 
@@ -102,10 +120,11 @@ class PostingMappingEngine:
     engine falls back to direct DB queries (legacy behaviour).
     """
 
-    def __init__(self, *, connector=None):
+    def __init__(self, *, connector=None, lf_parent_span=None):
         self._latest_batches: Dict[str, ERPReferenceImportBatch] = {}
         self._connector = connector
         self._erp_source_metadata: Dict[str, Any] = {}
+        self._lf_mapping_span = lf_parent_span
 
     @property
     def erp_source_metadata(self) -> Dict[str, Any]:
@@ -249,7 +268,7 @@ class PostingMappingEngine:
     # ------------------------------------------------------------------
 
     def _resolve_item(self, line, line_proposal: PostingLineProposal,
-                      po_refs: List[ERPPOReference], proposal: PostingProposal) -> None:
+                      po_refs: List[_POLineData], proposal: PostingProposal) -> None:
         """Resolve item code for a line item."""
         description = line.description or ""
         normalized_desc = _normalize(description)
@@ -510,14 +529,15 @@ class PostingMappingEngine:
 
     def _try_vendor_via_resolver(self, vendor_code: str, vendor_name: str,
                                  proposal: PostingProposal, invoice) -> bool:
-        """Try resolving vendor via the ERP integration layer. Returns True if resolved."""
+        """Try resolving vendor via ERPResolutionService. Returns True if resolved."""
         try:
-            from apps.erp_integration.services.resolution.vendor_resolver import VendorResolver
-            resolver = VendorResolver()
-            result = resolver.resolve(
-                self._connector,
-                vendor_code=vendor_code, vendor_name=vendor_name,
+            from apps.erp_integration.services.resolution_service import ERPResolutionService
+            svc = ERPResolutionService(self._connector)
+            result = svc.resolve_vendor(
+                vendor_code=vendor_code,
+                vendor_name=vendor_name,
                 invoice_id=getattr(invoice, "pk", None),
+                lf_parent_span=self._lf_mapping_span,
             )
             if result.resolved and result.value:
                 proposal.header.vendor_code = result.value.get("vendor_code", "")
@@ -528,12 +548,7 @@ class PostingMappingEngine:
                     proposal, "vendor_code", PostingFieldSourceType.VENDOR_REF,
                     f"ERP resolver ({result.source_type}): {result.reason}",
                 )
-                self._erp_source_metadata["vendor"] = {
-                    "source_type": result.source_type,
-                    "fallback_used": result.fallback_used,
-                    "confidence": result.confidence,
-                    "connector_name": result.connector_name,
-                }
+                self._erp_source_metadata["vendor"] = result.to_provenance_dict()
                 return True
         except ImportError:
             pass
@@ -544,14 +559,15 @@ class PostingMappingEngine:
     def _try_item_via_resolver(self, item_code: str, description: str,
                                proposal: PostingProposal, line_proposal: PostingLineProposal,
                                invoice) -> bool:
-        """Try resolving item via the ERP integration layer."""
+        """Try resolving item via ERPResolutionService."""
         try:
-            from apps.erp_integration.services.resolution.item_resolver import ItemResolver
-            resolver = ItemResolver()
-            result = resolver.resolve(
-                self._connector,
-                item_code=item_code, description=description,
+            from apps.erp_integration.services.resolution_service import ERPResolutionService
+            svc = ERPResolutionService(self._connector)
+            result = svc.resolve_item(
+                item_code=item_code,
+                description=description,
                 invoice_id=getattr(invoice, "pk", None),
+                lf_parent_span=self._lf_mapping_span,
             )
             if result.resolved and result.value:
                 line_proposal.erp_item_code = result.value.get("item_code", "")
@@ -574,11 +590,11 @@ class PostingMappingEngine:
 
     def _try_tax_via_resolver(self, tax_code: str, rate: float,
                               line_proposal: PostingLineProposal) -> bool:
-        """Try resolving tax via the ERP integration layer."""
+        """Try resolving tax via ERPResolutionService."""
         try:
-            from apps.erp_integration.services.resolution.tax_resolver import TaxResolver
-            resolver = TaxResolver()
-            result = resolver.resolve(self._connector, tax_code=tax_code, rate=rate)
+            from apps.erp_integration.services.resolution_service import ERPResolutionService
+            svc = ERPResolutionService(self._connector)
+            result = svc.resolve_tax_code(tax_code=tax_code, rate=rate)
             if result.resolved and result.value:
                 line_proposal.tax_code = result.value.get("tax_code", "")
                 line_proposal.tax_source = PostingFieldSourceType.TAX_REF
@@ -591,11 +607,11 @@ class PostingMappingEngine:
 
     def _try_cost_center_via_resolver(self, cost_center_code: str,
                                       line_proposal: PostingLineProposal) -> bool:
-        """Try resolving cost center via the ERP integration layer."""
+        """Try resolving cost center via ERPResolutionService."""
         try:
-            from apps.erp_integration.services.resolution.cost_center_resolver import CostCenterResolver
-            resolver = CostCenterResolver()
-            result = resolver.resolve(self._connector, cost_center_code=cost_center_code)
+            from apps.erp_integration.services.resolution_service import ERPResolutionService
+            svc = ERPResolutionService(self._connector)
+            result = svc.resolve_cost_center(cost_center_code=cost_center_code)
             if result.resolved and result.value:
                 line_proposal.cost_center = result.value.get("cost_center_code", "")
                 line_proposal.cost_center_source = PostingFieldSourceType.COST_CENTER_REF
@@ -691,8 +707,8 @@ class PostingMappingEngine:
             .first()
         )
 
-    def _match_po_line(self, line, po_refs: List[ERPPOReference]) -> Optional[ERPPOReference]:
-        """Match invoice line to PO reference by line number or description."""
+    def _match_po_line(self, line, po_refs: List[_POLineData]) -> Optional[_POLineData]:
+        """Match invoice line to PO line data by line number or description."""
         line_num = getattr(line, "line_number", None)
         if line_num:
             for pr in po_refs:
@@ -706,15 +722,58 @@ class PostingMappingEngine:
                     return pr
         return None
 
-    def _load_po_refs(self, po_number: str) -> List[ERPPOReference]:
+    def _load_po_refs(self, po_number: str) -> List[_POLineData]:
+        """Load PO line references via ERPResolutionService (MIRROR_DB first, then DB_FALLBACK)."""
+        # 1. Shared resolution layer: MIRROR_DB -> API -> DB_FALLBACK
+        try:
+            from apps.erp_integration.services.resolution_service import ERPResolutionService
+            svc = ERPResolutionService(self._connector)
+            result = svc.resolve_po(po_number=po_number)
+            if result.resolved and result.value:
+                lines = result.value.get("lines", [])
+                refs = []
+                for ln in lines:
+                    refs.append(_POLineData(
+                        po_number=po_number,
+                        po_line_number=ln.get("line_number"),
+                        item_code=ln.get("item_code", "") or "",
+                        description=ln.get("description", "") or "",
+                        normalized_description=_normalize(ln.get("description", "") or ""),
+                        quantity=(
+                            Decimal(str(ln["quantity"])) if ln.get("quantity") else None
+                        ),
+                        unit_price=(
+                            Decimal(str(ln["unit_price"])) if ln.get("unit_price") else None
+                        ),
+                    ))
+                if refs:
+                    return refs
+        except Exception:
+            logger.debug(
+                "ERPResolutionService.resolve_po failed for '%s', falling to ERPPOReference",
+                po_number,
+                exc_info=True,
+            )
+
+        # 2. Fallback: direct ERPPOReference query (reference import snapshot)
         batch = self._latest_batches.get(ERPReferenceBatchType.OPEN_PO)
         if not batch:
             return []
-        return list(
+        erp_refs = list(
             ERPPOReference.objects
             .filter(batch=batch, po_number=po_number, is_open=True)
             .order_by("po_line_number")
         )
+        return [
+            _POLineData(
+                po_number=r.po_number,
+                po_line_number=r.po_line_number,
+                item_code=r.item_code or "",
+                description=r.description or "",
+                normalized_description=r.normalized_description or "",
+            )
+            for r in erp_refs
+        ]
 
     def _find_tax_by_code(self, code: str) -> Optional[ERPTaxCodeReference]:
         batch = self._latest_batches.get(ERPReferenceBatchType.TAX)

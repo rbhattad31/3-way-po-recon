@@ -98,7 +98,7 @@ Invoice Upload → OCR Extraction → Validation → Mode Resolution (2-Way/3-Wa
 
 ```
 ReconciliationRunnerService
-├── POLookupService
+├── POLookupService (via ERPResolutionService)
 ├── ReconciliationModeResolver
 │   └── ReconciliationPolicy (DB)
 ├── ReconciliationExecutionRouter
@@ -108,13 +108,23 @@ ReconciliationRunnerService
 │   └── ThreeWayMatchService
 │       ├── HeaderMatchService → ToleranceEngine
 │       ├── LineMatchService → ToleranceEngine
-│       ├── GRNLookupService
+│       ├── GRNLookupService (via ERPResolutionService)
 │       └── GRNMatchService
 ├── ClassificationService
 ├── ExceptionBuilderService
 ├── ReconciliationResultService
 ├── ReviewWorkflowService
 └── AuditService
+
+ERPResolutionService (shared gateway — used by reconciliation + posting + tools)
+├── POResolver  → PODBFallback (MIRROR_DB: documents.PurchaseOrder)
+│                             (DB_FALLBACK: posting_core.ERPPOReference)
+├── GRNResolver → GRNDBFallback (MIRROR_DB: documents.GoodsReceiptNote)
+├── VendorResolver  → VendorDBFallback (DB_FALLBACK: posting_core.ERPVendorReference)
+├── ItemResolver    → ItemDBFallback
+├── TaxResolver     → TaxDBFallback
+├── CostCenterResolver → CostCenterDBFallback
+└── DuplicateInvoiceResolver
 
 AgentOrchestrator
 ├── PolicyEngine (deterministic agent plan)
@@ -688,8 +698,10 @@ The reconciliation engine performs deterministic matching of invoices against PO
 ReconciliationRunnerService.run(invoice_ids)
     │
     ├─ For each invoice:
-    │   ├─ 1. PO Lookup (POLookupService)
-    │   │      Strategy: exact → normalized → vendor+amount discovery
+    ├─ 1. PO Lookup (`POLookupService` via `ERPResolutionService`)
+    │   │      Chain: cache -> MIRROR_DB (documents.PurchaseOrder)
+    │   │               -> live API -> DB_FALLBACK (ERPPOReference)
+    │   │      Result carries: erp_source_type, erp_provenance, is_stale
     │   │
     │   ├─ 2. Mode Resolution (ReconciliationModeResolver)
     │   │      Cascade: policy → heuristic → config default
@@ -705,7 +717,9 @@ ReconciliationRunnerService.run(invoice_ids)
     │   │      → Create structured exception records
     │   │
     │   ├─ 6. Result Persistence (ReconciliationResultService)
-    │   │      → Save result + line results + exceptions
+    │   │      -> Save result + line results + exceptions
+    │   │      -> Persist ERP provenance: po_erp_source_type, grn_erp_source_type,
+    │   │         data_is_stale, erp_source_metadata_json
     │   │
     │   ├─ 7. Auto-Create ReviewAssignment (if REQUIRES_REVIEW)
     │   │
@@ -756,7 +770,10 @@ Extends 2-way with GRN verification:
 
 1. Header match (same as 2-way)
 2. Line match (same as 2-way)
-3. **GRN Lookup** (`GRNLookupService`) — Aggregate all GRNs for the PO
+3. **GRN Lookup** (`GRNLookupService` via `ERPResolutionService`) -- Resolves via
+   shared ERP layer (MIRROR_DB: documents.GoodsReceiptNote), hydrates ORM objects
+   from `grn_ids` in the resolution result for line-level matching.
+   Result carries: erp_source_type, erp_provenance, is_stale
 4. **GRN Match** (`GRNMatchService`) — Compare Invoice/PO quantities against received quantities:
    - Over-receipt: received > ordered
    - Under-receipt: received < ordered
@@ -2415,9 +2432,23 @@ NOT_READY -> READY_FOR_POSTING -> MAPPING_IN_PROGRESS
 ```
 Request -> ERPCacheService (TTL lookup)
         -> BaseERPConnector.lookup() (live API)
-        -> DB Fallback Adapter (posting_core reference tables)
+        -> DB Fallback Adapter (see tiers below)
         -> ERPAuditService (log resolution + submission)
 ```
+
+**DB Fallback tiers by resolution type:**
+
+| Resolution Type | Tier 1 (confidence 1.0) | Tier 2 (confidence 0.75) |
+|---|---|---|
+| PURCHASE_ORDER | `documents.PurchaseOrder` (full transactional record) | `posting_core.ERPPOReference` (ERP snapshot; adds `_source_tier` + `_warning`) |
+| GRN | `documents.GoodsReceiptNote` | -- (single tier) |
+| VENDOR | `posting_core.ERPVendorReference` | -- (single tier) |
+| ITEM | `posting_core.ERPItemReference` | -- (single tier) |
+| TAX_CODE | `posting_core.ERPTaxCodeReference` | -- (single tier) |
+| COST_CENTER | `posting_core.ERPCostCenterReference` | -- (single tier) |
+| DUPLICATE_INVOICE | `posting_core` duplicate check | -- (single tier) |
+
+The two-tier PO chain means the reconciliation agent and posting agent see the same PO universe: transactional POs created in the recon system (Tier 1) AND POs imported from ERP master data exports (Tier 2).
 
 ### 24.2 Connectors
 
@@ -2444,6 +2475,17 @@ Add new connectors by extending `BaseERPConnector`, implementing capability flag
 ### 24.5 API Endpoint
 
 `POST /api/v1/erp/resolve/<resolution_type>/` -- on-demand ERP reference resolution
+
+### 24.6 Reference Data UI
+
+`/erp-connections/reference-data/` (`erp_integration:erp_reference_data`) -- browse all 5 imported reference tables (Vendors, Items, Tax Codes, Cost Centers, Open POs) in a tabbed interface with:
+- KPI cards showing record counts per table
+- Per-tab search and pagination
+- Import batch provenance column (batch ID, imported date)
+- Empty-state prompt linking to Import Reference Data
+- Help callout explaining the two-tier PO resolution chain
+
+Accessed from the **ERP Integration** sidebar section (separate from Posting Agent).
 
 ---
 

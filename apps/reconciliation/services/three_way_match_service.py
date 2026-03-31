@@ -114,6 +114,13 @@ class ThreeWayMatchService:
             grn_result.has_receipt_issues if grn_result else None,
         )
 
+        # Propagate GRN source provenance from the lookup summary into the match result
+        # so result_service can persist it in ReconciliationResult.
+        if grn_result is not None and grn_summary.grn_available:
+            grn_result.erp_source_type = grn_summary.erp_source_type
+            grn_result.erp_provenance = grn_summary.erp_provenance
+            grn_result.is_stale = grn_summary.is_stale
+
         return ThreeWayMatchOutput(
             po_result=po_result,
             header_result=header_result,

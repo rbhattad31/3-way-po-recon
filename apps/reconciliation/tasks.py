@@ -55,28 +55,59 @@ def run_reconciliation_task(
 
     runner = ReconciliationRunnerService(config=config)
 
+    # Open a task-level Langfuse root trace BEFORE the runner executes so that
+    # the runner can create its "reconciliation_run" span as a child of this
+    # trace, giving the correct hierarchy in Langfuse:
+    #   reconciliation_task (task root)
+    #     -- reconciliation_run (service span)
+    #          -- recon_mode_resolution (per invoice)
+    #          -- recon_matching        (per invoice)
+    #          -- recon_result_persist  (per invoice)
+    #          -- recon_exception_build (per invoice)
+    _lf_task_trace = None
+    _lf_task_trace_id = f"recon-task-{self.request.id}" if self.request.id else None
+    try:
+        from apps.core.langfuse_client import start_trace
+        if _lf_task_trace_id:
+            _lf_task_trace = start_trace(
+                _lf_task_trace_id,
+                "reconciliation_task",
+                user_id=triggered_by.pk if triggered_by else None,
+                metadata={
+                    "task_id": self.request.id,
+                    "invoice_count": len(invoices) if invoices else "all",
+                    "config_id": config_id,
+                    "triggered_by_id": triggered_by_id,
+                },
+            )
+    except Exception:
+        pass
+
     run = None
     try:
-        run = runner.run(invoices=invoices, triggered_by=triggered_by, lf_trace=None)
+        run = runner.run(invoices=invoices, triggered_by=triggered_by, lf_trace=_lf_task_trace)
     except Exception as exc:
         logger.exception("Reconciliation task failed")
+        try:
+            from apps.core.langfuse_client import end_span
+            end_span(_lf_task_trace, output={"error": str(exc)[:200]}, level="ERROR")
+            _lf_task_trace = None
+        except Exception:
+            pass
         from apps.core.utils import safe_retry
         safe_retry(self, exc)
     finally:
         try:
-            if run is not None:
-                from apps.core.langfuse_client import start_trace, end_span
-                _trace_id = getattr(run, "trace_id", None) or str(run.pk)
-                _lf_trace = start_trace(
-                    _trace_id,
-                    "reconciliation_task",
-                    metadata={
-                        "task_id": self.request.id,
-                        "run_pk": run.pk,
-                        "total_invoices": run.total_invoices,
+            if _lf_task_trace is not None:
+                from apps.core.langfuse_client import end_span
+                end_span(
+                    _lf_task_trace,
+                    output={
+                        "run_pk": run.pk if run else None,
+                        "run_status": run.status if run else "error",
+                        "total_invoices": run.total_invoices if run else 0,
                     },
                 )
-                end_span(_lf_trace, output={"run_status": run.status})
         except Exception:
             pass
 

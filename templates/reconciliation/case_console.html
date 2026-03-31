@@ -102,6 +102,20 @@
   </div>
 </div>
 
+{% if result.data_is_stale %}
+<div class="alert alert-warning d-flex align-items-center gap-2 mb-3" role="alert">
+  <i class="bi bi-exclamation-triangle-fill flex-shrink-0 fs-5"></i>
+  <div>
+    <strong>Stale ERP Data --</strong> one or more document snapshots used in this reconciliation may be outdated.
+    {% if result.erp_source_metadata_json %}
+      {% with po_meta=result.erp_source_metadata_json.po %}{% if po_meta.stale_reason %} PO: {{ po_meta.stale_reason }}.{% endif %}{% endwith %}
+      {% with grn_meta=result.erp_source_metadata_json.grn %}{% if grn_meta.stale_reason %} GRN: {{ grn_meta.stale_reason }}.{% endif %}{% endwith %}
+    {% endif %}
+    Consider re-running reconciliation with fresh data.
+  </div>
+</div>
+{% endif %}
+
 {# ================================================================== #}
 {#  SECTION 2 — AI CASE SUMMARY BANNER                               #}
 {# ================================================================== #}
@@ -313,6 +327,16 @@
               {{ result.total_amount_difference|default:"0.00" }} ({{ result.total_amount_difference_pct|default:"0" }}%)
             </strong>
           </span>
+          {% if result.po_erp_source_type %}
+          <span><small class="text-muted d-block">PO Source</small>
+            <span class="badge {% if result.po_erp_source_type == 'API' %}bg-success{% elif result.po_erp_source_type == 'CACHE' %}bg-info{% elif result.po_erp_source_type == 'MIRROR_DB' %}bg-primary{% elif result.po_erp_source_type == 'DB_FALLBACK' %}bg-secondary{% elif result.po_erp_source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %}">{{ result.po_erp_source_type }}</span>
+          </span>
+          {% endif %}
+          {% if result.grn_erp_source_type %}
+          <span><small class="text-muted d-block">GRN Source</small>
+            <span class="badge {% if result.grn_erp_source_type == 'API' %}bg-success{% elif result.grn_erp_source_type == 'CACHE' %}bg-info{% elif result.grn_erp_source_type == 'MIRROR_DB' %}bg-primary{% elif result.grn_erp_source_type == 'DB_FALLBACK' %}bg-secondary{% elif result.grn_erp_source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %}">{{ result.grn_erp_source_type }}</span>
+          </span>
+          {% endif %}
         </div>
       </div>
       {# Line-level DataTable #}

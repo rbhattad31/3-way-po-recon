@@ -43,6 +43,17 @@
           <tr><th>GRN Available</th><td>{% if result.grn_available %}<i class="bi bi-check-circle text-success"></i>{% else %}<i class="bi bi-x-circle text-secondary"></i>{% endif %}</td></tr>
           <tr><th>GRN Fully Received</th><td>{% if result.grn_fully_received %}<i class="bi bi-check-circle text-success"></i>{% elif result.grn_fully_received == False %}<i class="bi bi-x-circle text-danger"></i>{% else %}—{% endif %}</td></tr>
           {% endif %}
+          {% if result.po_erp_source_type %}
+          <tr><th>PO Data Source</th><td>
+            <span class="badge {% if result.po_erp_source_type == 'API' %}bg-success{% elif result.po_erp_source_type == 'CACHE' %}bg-info{% elif result.po_erp_source_type == 'MIRROR_DB' %}bg-primary{% elif result.po_erp_source_type == 'DB_FALLBACK' %}bg-secondary{% elif result.po_erp_source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %}">{{ result.po_erp_source_type }}</span>
+            {% if result.data_is_stale %}<span class="badge bg-danger ms-1"><i class="bi bi-exclamation-triangle-fill me-1"></i>Stale</span>{% endif %}
+          </td></tr>
+          {% endif %}
+          {% if result.grn_erp_source_type %}
+          <tr><th>GRN Data Source</th><td>
+            <span class="badge {% if result.grn_erp_source_type == 'API' %}bg-success{% elif result.grn_erp_source_type == 'CACHE' %}bg-info{% elif result.grn_erp_source_type == 'MIRROR_DB' %}bg-primary{% elif result.grn_erp_source_type == 'DB_FALLBACK' %}bg-secondary{% elif result.grn_erp_source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %}">{{ result.grn_erp_source_type }}</span>
+          </td></tr>
+          {% endif %}
         </table>
       </div>
     </div>
@@ -78,7 +89,50 @@
   </div>
 </div>
 
-{# ── Line Results ── #}
+{% if result.erp_source_metadata_json %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-diagram-3 me-2"></i>ERP Data Provenance</span>
+    <button class="btn btn-sm btn-link p-0 text-decoration-none" data-bs-toggle="collapse" data-bs-target="#erpProvenanceDetail">
+      <i class="bi bi-chevron-down"></i> Detail
+    </button>
+  </div>
+  <div class="collapse" id="erpProvenanceDetail">
+    <div class="ap-card-body p-0">
+      <table class="ap-table mb-0">
+        {% with po_meta=result.erp_source_metadata_json.po %}
+        {% if po_meta %}
+        <tr><th colspan="2" class="bg-light text-muted small">PO Provenance</th></tr>
+        <tr><th>Source</th><td>
+          <span class="badge {% if po_meta.source_type == 'API' %}bg-success{% elif po_meta.source_type == 'CACHE' %}bg-info{% elif po_meta.source_type == 'MIRROR_DB' %}bg-primary{% elif po_meta.source_type == 'DB_FALLBACK' %}bg-secondary{% elif po_meta.source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %}">{{ po_meta.source_type }}</span>
+        </td></tr>
+        <tr><th>Connector</th><td>{{ po_meta.connector_name|default:"--" }}</td></tr>
+        <tr><th>Confidence</th><td>{% if po_meta.confidence %}{{ po_meta.confidence }}{% else %}--{% endif %}</td></tr>
+        <tr><th>Synced At</th><td>{{ po_meta.synced_at|default:"--" }}</td></tr>
+        {% if po_meta.is_stale %}<tr><th>Stale</th><td><span class="badge bg-danger">Yes</span>{% if po_meta.stale_reason %} {{ po_meta.stale_reason }}{% endif %}</td></tr>{% endif %}
+        {% if po_meta.warnings %}<tr><th>Warnings</th><td class="text-warning-emphasis">{{ po_meta.warnings|join:", " }}</td></tr>{% endif %}
+        {% endif %}
+        {% endwith %}
+        {% with grn_meta=result.erp_source_metadata_json.grn %}
+        {% if grn_meta %}
+        <tr><th colspan="2" class="bg-light text-muted small">GRN Provenance</th></tr>
+        <tr><th>Source</th><td>
+          <span class="badge {% if grn_meta.source_type == 'API' %}bg-success{% elif grn_meta.source_type == 'CACHE' %}bg-info{% elif grn_meta.source_type == 'MIRROR_DB' %}bg-primary{% elif grn_meta.source_type == 'DB_FALLBACK' %}bg-secondary{% elif grn_meta.source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %}">{{ grn_meta.source_type }}</span>
+        </td></tr>
+        <tr><th>Connector</th><td>{{ grn_meta.connector_name|default:"--" }}</td></tr>
+        <tr><th>Confidence</th><td>{% if grn_meta.confidence %}{{ grn_meta.confidence }}{% else %}--{% endif %}</td></tr>
+        <tr><th>Synced At</th><td>{{ grn_meta.synced_at|default:"--" }}</td></tr>
+        {% if grn_meta.is_stale %}<tr><th>Stale</th><td><span class="badge bg-danger">Yes</span>{% if grn_meta.stale_reason %} {{ grn_meta.stale_reason }}{% endif %}</td></tr>{% endif %}
+        {% if grn_meta.warnings %}<tr><th>Warnings</th><td class="text-warning-emphasis">{{ grn_meta.warnings|join:", " }}</td></tr>{% endif %}
+        {% endif %}
+        {% endwith %}
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# -- Line Results -- #}
 <div class="ap-card mb-3">
   <div class="ap-card-header"><i class="bi bi-table me-2"></i>Line-Level Comparison</div>
   <div class="ap-card-body p-0" style="overflow-x:auto">

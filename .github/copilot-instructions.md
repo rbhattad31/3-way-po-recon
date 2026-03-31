@@ -48,7 +48,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Resolution chain**: cache → ERP API connector → DB fallback. All lookups go through `BaseResolver` subclasses in `apps/erp_integration/services/resolution/`.
 - **Connectors** (`apps/erp_integration/services/connectors/`): `BaseERPConnector` → `CustomERPConnector`, `DynamicsConnector`, `ZohoConnector`, `SalesforceConnector`. New connectors must implement capability flags (`supports_vendor_lookup()` etc.) and the relevant lookup/submission methods.
 - **`ConnectorFactory`**: `get_default_connector()` returns the active default `ERPConnection` record as a connector instance; `get_connector_by_name(name)` retrieves by name.
-- **DB fallback adapters** (`apps/erp_integration/services/db_fallback/`): one per resolution type — vendor, item, tax, cost center, PO, GRN, duplicate invoice. Falls back to local `posting_core` reference tables.
+- **DB fallback adapters** (`apps/erp_integration/services/db_fallback/`): one per resolution type — vendor, item, tax, cost center, PO, GRN, duplicate invoice. Vendor/item/tax/cost-center adapters fall back to local `posting_core` reference tables. **PO fallback is two-tier**: Tier 1 queries `documents.PurchaseOrder` (confidence 1.0, full transactional record); Tier 2 queries `posting_core.ERPPOReference` (confidence 0.75, adds `_source_tier: "erp_reference_snapshot"` and `_warning` to the result). GRN fallback uses `documents.GoodsReceiptNote` directly.
 - **Submission** (`apps/erp_integration/services/submission/posting_submit_resolver.py`): wraps ERP create/park invoice calls.
 - **Cache** (`ERPCacheService`): TTL-based DB cache (`ERPReferenceCacheRecord`), controlled by `ERP_CACHE_TTL_SECONDS` env var (default 3600s).
 - **Audit** (`ERPAuditService`): logs every resolution + submission to `ERPResolutionLog` / `ERPSubmissionLog` and `AuditEvent`.
@@ -56,6 +56,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **`POLookupTool` / `GRNLookupTool`** now attempt ERP resolution first (`_resolve_via_erp()`); fall through to direct DB only if the resolver import fails.
 - **Settings**: `ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD` (default 0.8), `ERP_CACHE_TTL_SECONDS` (default 3600).
 - **API**: `GET/POST /api/v1/erp/resolve/<resolution_type>/` — on-demand ERP reference resolution.
+- **Reference Data UI**: `/erp-connections/reference-data/` (`erp_integration:erp_reference_data`) — browse all 5 imported reference tables (Vendors, Items, Tax Codes, Cost Centers, Open POs) with search, pagination, KPI cards, and import-batch provenance. Sidebar: ERP Integration section (Reference Data, Import Reference Data, ERP Connections).
 - **ERP connector enums** live in `apps/erp_integration/enums.py` (not `apps/core/enums.py`): `ERPConnectorType`, `ERPConnectionStatus`, `ERPSourceType`, `ERPResolutionType`, `ERPSubmissionType`, `ERPSubmissionStatus`.
 
 ### Invoice Posting Agent (`apps/posting/` + `apps/posting_core/`)
@@ -389,7 +390,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
 - **Invoice Posting Agent** (`apps/posting/` + `apps/posting_core/`): 9-stage pipeline (eligibility, snapshot, mapping, validation, confidence, review routing, payload build, finalization, status); 11 posting statuses; 6 review queues; Excel/CSV ERP reference import; governance trail; 17 audit event types; posting workbench + detail templates; full DRF API (`/api/v1/posting/` + `/api/v1/posting-core/`).
-- **ERP Integration Layer** (`apps/erp_integration/`): `ERPConnection` model + `ConnectorFactory`; 4 connector implementations (Custom, Dynamics, Zoho, Salesforce); 7 resolver types with DB fallback; TTL cache; resolution + submission audit logs; `POST /api/v1/erp/resolve/<type>/`; wired into `PostingMappingEngine` (connector kwarg) and `POLookupTool`/`GRNLookupTool` (ERP-first with legacy DB fallback).
+- **ERP Integration Layer** (`apps/erp_integration/`): `ERPConnection` model + `ConnectorFactory`; 4 connector implementations (Custom, Dynamics, Zoho, Salesforce); 7 resolver types with DB fallback (PO fallback is two-tier: `documents.PurchaseOrder` -> `posting_core.ERPPOReference`); TTL cache; resolution + submission audit logs; `POST /api/v1/erp/resolve/<type>/`; reference data browse UI at `/erp-connections/reference-data/`; wired into `PostingMappingEngine` (connector kwarg) and `POLookupTool`/`GRNLookupTool` (ERP-first with legacy DB fallback).
 - `PostingRun.erp_source_metadata_json` field — captures ERP resolution provenance per pipeline run.
 
 ### ⬜ Not yet implemented (next steps)
@@ -616,16 +617,18 @@ except Exception:
 
 | File | What to add |
 |---|---|
-| `apps/extraction/bulk_tasks.py` — `run_bulk_job_task` | Root trace `"bulk_job"` wrapping the entire job; score `bulk_job_success_rate` at the end |
-| `apps/extraction/services/bulk_service.py` — `_process_item()` | Child span per item; mark `level="ERROR"` on failure |
-| `apps/extraction/services/bulk_source_adapters.py` — `GoogleDriveBulkSourceAdapter`, `OneDriveBulkSourceAdapter` | Span per `test_connection()`, `list_files()`, `download_file()` to surface latency and auth failures |
-| ~~`apps/reconciliation/tasks.py` — `run_reconciliation_task`~~ | ~~Root trace `"reconciliation_task"` forwarded into `ReconciliationRunnerService`~~ **Done** |
-| `apps/posting_core/services/posting_pipeline.py` | Root trace `"posting_pipeline"` opened at stage 1 so `posting_confidence` and `posting_requires_review` scores are linked |
-| ~~`apps/reconciliation/services/runner_service.py`~~ | ~~Root trace `"reconciliation_run"` so `reconciliation_match` scores are linked~~ **Done** |
-| `apps/erp_integration/services/submission/posting_submit_resolver.py` | Inherit parent trace ID from posting pipeline instead of creating isolated traces |
-| `apps/copilot/services/copilot_service.py` — `answer_question()` | Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive |
-| `apps/agents/tasks.py` — `run_agent_pipeline_task` | Root trace at task level (the orchestrator already creates one but the Celery wrapper does not) |
-| `apps/cases/tasks.py` — `process_case_task`, `reprocess_case_from_stage_task` | Root trace `"case_task"` per task invocation |
+| ~~`apps/extraction/bulk_tasks.py` — `run_bulk_job_task`~~ | ~~Root trace `"bulk_job"` wrapping the entire job; score `bulk_job_success_rate` at the end~~ **Done (already implemented)** |
+| ~~`apps/extraction/services/bulk_service.py` — `_process_item()`~~ | ~~Child span per item; mark `level="ERROR"` on failure~~ **Done (already implemented)** |
+| ~~`apps/extraction/services/bulk_source_adapters.py` — `GoogleDriveBulkSourceAdapter`, `OneDriveBulkSourceAdapter`~~ | ~~Span per `test_connection()`, `list_files()`, `download_file()` to surface latency and auth failures~~ **Done (already implemented)** |
+| ~~`apps/reconciliation/tasks.py` — `run_reconciliation_task`~~ | ~~Root trace `"reconciliation_task"` forwarded into `ReconciliationRunnerService`~~ **Done (2026-03-31)** |
+| ~~`apps/posting_core/services/posting_pipeline.py`~~ | ~~Root trace `"posting_pipeline"` opened at stage 1 so `posting_confidence` and `posting_requires_review` scores are linked~~ **Done (2026-03-31): 9 per-stage spans + root trace added** |
+| ~~`apps/reconciliation/services/runner_service.py`~~ | ~~Root trace `"reconciliation_run"` so `reconciliation_match` scores are linked~~ **Done: now a child span under `reconciliation_task`** |
+| ~~`apps/erp_integration/services/resolution_service.py`~~ | ~~ERP resolution Langfuse spans~~ **Done (2026-03-31): `_trace_resolve` helper + `lf_parent_span` kwarg on all resolve_* methods** |
+| ~~`apps/agents/tasks.py` — `run_agent_pipeline_task`~~ | ~~Root trace at task level (the orchestrator already creates one but the Celery wrapper does not)~~ **Done (2026-03-31): `agent_pipeline_task` wrapper trace with Celery task_id** |
+| `apps/erp_integration/services/submission/posting_submit_resolver.py` | Inherit parent trace ID from posting pipeline instead of creating isolated traces (Phase 2 -- ERP submission is mock in Phase 1) |
+| ~~`apps/copilot/services/copilot_service.py` — `answer_question()`~~ | ~~Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive~~ **Done (2026-03-31)** |
+| ~~`apps/cases/tasks.py` — `process_case_task`, `reprocess_case_from_stage_task`~~ | ~~Root trace `"case_task"` per task invocation~~ **Done (2026-03-31)** |
+| ~~`apps/posting_core/services/posting_mapping_engine.py`~~ | ~~Pass the `mapping` stage span via `lf_parent_span` to `ERPResolutionService.resolve_vendor/resolve_item` calls so ERP spans appear nested under the `mapping` span in Langfuse~~ **Done (2026-03-31)** |
 
 ### Debugging Langfuse
 

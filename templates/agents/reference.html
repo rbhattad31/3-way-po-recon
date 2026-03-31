@@ -4,6 +4,68 @@
 
 {% block extra_css %}
 <style>
+/* -- Diagram zoom -- */
+.diagram-zoom-wrap {
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  background: #fafafa;
+  border-radius: .375rem;
+  min-height: 220px;
+  height: 480px;
+}
+.diagram-zoom-wrap.is-grabbing { cursor: grabbing; }
+.diagram-zoom-wrap .mermaid {
+  display: inline-block;
+  transform-origin: top left;
+  transition: none;
+  user-select: none;
+}
+.diagram-zoom-wrap svg {
+  display: block;
+  max-width: none !important;
+  height: auto;
+}
+.diagram-zoom-toolbar {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .35rem .5rem;
+  border-bottom: 1px solid #dee2e6;
+  background: #fff;
+  border-radius: .375rem .375rem 0 0;
+}
+.diagram-zoom-toolbar .zoom-level {
+  font-size: .7rem;
+  color: #6c757d;
+  min-width: 3rem;
+  text-align: center;
+}
+/* Fullscreen overlay (position:fixed -- avoids browser fullscreen black backdrop) */
+.diagram-fs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1055;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+.diagram-fs-overlay .diagram-zoom-toolbar {
+  flex: 0 0 auto;
+  border-radius: 0;
+  border-bottom: 1px solid #dee2e6;
+  padding: .5rem .75rem;
+}
+.diagram-fs-overlay .diagram-zoom-wrap {
+  flex: 1 1 0%;
+  min-height: 0;
+  height: auto !important;
+  max-height: none !important;
+  overflow: auto;
+  border-radius: 0;
+  background: #fff;
+  cursor: default;
+}
 /* ── Documentation chrome ── */
 .docs-toc {
   position: sticky;
@@ -154,112 +216,585 @@ pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
         ERP integration layer, and full governance stack.
       </p>
 
+      {# Four focused, tabbed flow diagrams -- click any stage in the Overview tab to jump to that section #}
       <div class="card mb-3">
-        <div class="card-header bg-white fw-semibold small">
-          <i class="bi bi-diagram-3 me-1 text-primary"></i> End-to-End Platform Flow &mdash; Detailed
+        <div class="card-header bg-white pb-0">
+          <ul class="nav nav-tabs card-header-tabs" id="diagramTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">
+                <i class="bi bi-diagram-3 me-1"></i>Platform Overview
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-extraction" type="button" role="tab">
+                <i class="bi bi-file-earmark-text me-1"></i>Extraction
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-path-resolution" type="button" role="tab">
+                <i class="bi bi-signpost-split me-1"></i>Path Resolution
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-reconciliation" type="button" role="tab">
+                <i class="bi bi-check2-all me-1"></i>Reconciliation
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-agents" type="button" role="tab">
+                <i class="bi bi-robot me-1"></i>Agent Pipeline
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-erp" type="button" role="tab">
+                <i class="bi bi-cloud-arrow-up me-1"></i>ERP &amp; Posting
+              </button>
+            </li>
+          </ul>
         </div>
-        <div class="card-body p-3" style="overflow-x:auto">
-          <div class="mermaid">
+
+        <div class="tab-content">
+
+          {# ── Tab 1: Platform Overview ── #}
+          <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart LR
+    A["Document Intake\nOCR reads the uploaded file\nAI structures every invoice field\nApproval gate before processing continues"]
+    B["Path Resolution\nDetermines 2-way, 3-way, or Non-PO path\nPO Retrieval Agent runs if strict lookup fails"]
+    C["3-Way Reconciliation\nPurely deterministic engine\nInvoice matched against PO and Goods Receipt\nTolerance bands applied to every line"]
+    D["Exception Analysis\nAI agents investigate every flag or gap\nPO and GRN recovery attempted again\nFinal recommendation produced"]
+    E["Review and Routing\nAI writes plain-English case summary\nCase assigned to the correct AP queue"]
+    F["ERP Posting\nDeterministic field mapping to ERP codes\nSubmitted directly to the finance system"]
+
+    A --> B
+    B -->|"PO-backed invoice"| C
+    B -->|"Non-PO invoice\nskips reconciliation"| D
+    C -->|"Matched or auto-closed\nno human review needed"| F
+    C -->|"Partial match, unmatched\nor requires review"| D
+    D --> E --> F
+
+    IEA(["Extraction Agent\nAlways: structures all invoice fields"])
+    IUA(["Verification Agent\nConditional: low-confidence results"])
+    A --- IEA
+    A --- IUA
+
+    POR(["PO Retrieval Agent\nConditional: strict PO lookup failed\nAlso re-runs in Exception Analysis\nif PO_NOT_FOUND exception remains"])
+    B -.-> POR
+
+    GRNR(["GRN Retrieval Agent\n3-way only: GRN missing or short\nCan re-run in Exception Analysis\nif GRN_NOT_FOUND exception remains"])
+    C -.-> GRNR
+
+    RA(["Reconciliation Assist\nPartial match: price and qty gaps"])
+    EA(["Exception Analysis Agent\nAny exceptions: explains each flag"])
+    D --- RA
+    D --- EA
+
+    RR(["Review Routing Agent\nAssigns case to the right team"])
+    CS(["Case Summary Agent\nWrites the AP reviewer summary"])
+    E --- RR
+    E --- CS
+
+    click A call switchTab("tab-extraction")
+    click B call switchTab("tab-path-resolution")
+    click C call switchTab("tab-reconciliation")
+    click D call switchTab("tab-agents")
+    click E call switchTab("tab-agents")
+    click F call switchTab("tab-erp")
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        L1["Amber -- Deterministic\nPure rule engine, no LLM"]
+        L2["Blue -- Deterministic + AI\nDeterministic first; AI agent\ncalled only when needed"]
+        L3["Green -- AI Agent Pipeline\nLLM agents run for every\nnon-matched outcome"]
+        L4(["Rounded -- Conditional Agent\nOnly triggered when a specific\ncondition is met"])
+    end
+
+    classDef det fill:#fef3c7,stroke:#d97706,color:#78350f,font-weight:bold
+    classDef mix fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a,font-weight:bold
+    classDef ai  fill:#d1fae5,stroke:#059669,color:#065f46,font-weight:bold
+    classDef agent fill:#f0fdf4,stroke:#10b981,color:#064e3b,font-size:12px
+    class A,B mix
+    class C,F det
+    class D,E ai
+    class IEA,IUA,POR,GRNR,RA,EA,RR,CS agent
+    class L1 det
+    class L2 mix
+    class L3 ai
+    class L4 agent
+            </div>{# /mermaid #}
+            </div>{# /diagram-zoom-wrap #}
+            <p class="small text-muted border-top pt-2 px-3 pb-2 mb-0">
+              <i class="bi bi-hand-index me-1"></i>Click any stage box to jump to its detail tab. Dashed arrows show conditional agent calls.
+            </p>
+          </div>
+
+          {# ── Tab 2: Extraction Pipeline ── #}
+          <div class="tab-pane fade" id="tab-extraction" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
 flowchart TD
-    UP(["Invoice Upload\n(PDF / Image)"]) --> OCR["Azure Document\nIntelligence OCR"]
-    OCR --> IEA["InvoiceExtractionAgent\nGPT-4o  temp=0.0\nresponse_format=json_object\nNo tools -- single-shot"]
+    UP(["Invoice Uploaded\nPDF or image file"]) --> OCR["Document OCR\nText and layout extracted from the invoice\nUp to 60,000 characters processed"]
+    OCR --> IEA["Primary Extraction Agent\nAI reads all invoice fields and line items\nOutputs structured data in one pass"]
+    IEA --> PARSE["Parse and Normalise\nFields cleaned and standardised\nLine items and totals reconciled"]
+    PARSE --> VAL{"All required\nfields valid?"}
+    VAL -->|No| INV(["Invoice Rejected\nReturned with validation errors"])
+    VAL -->|Yes| CGATE{"Confidence\nscore high enough?"}
+    CGATE -->|"Low confidence"| IUA["Secondary Verification Agent\nAI cross-checks the extracted data\nQueries vendor records and invoice details"]
+    CGATE -->|"High confidence"| APPR
+    IUA --> APPR["Approval Gate\nHuman reviews extraction results\nor system auto-approves if confidence meets threshold"]
+    APPR -->|Approved| READY(["Ready for Reconciliation\nInvoice queued for matching"])
+    APPR -->|Rejected| REJ(["Returned to Submitter"])
 
-    IEA --> PARSE["Parse + Normalize\nfields, line items, totals"]
-    PARSE --> VAL{"Validation\npassed?"}
-    VAL -->|No| INV(["INVALID\nstatus"])
-    VAL -->|Yes| CGATE{"Confidence\n>= 0.75?"}
-    CGATE -->|"< 0.75"| IUA["InvoiceUnderstandingAgent\nvalidates + cross-checks\ntools: invoice_details  vendor_search"]
-    CGATE -->|">= 0.75"| APPR
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LE1["Pipeline step"]
+        LE2["Conditional AI agent"]
+        LE3["Decision or gate"]
+        LE4["Rejection outcome"]
+        LE5["Start or end"]
+    end
+    classDef agent fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef react fill:#d1fae5,stroke:#10b981,color:#064e3b
+    classDef gate fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef bad fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    class OCR,IEA,PARSE agent
+    class IUA react
+    class VAL,CGATE,APPR gate
+    class UP,READY neutral
+    class INV,REJ bad
+    class LE1 agent
+    class LE2 react
+    class LE3 gate
+    class LE4 bad
+    class LE5 neutral
+            </div>{# /mermaid #}
+            </div>{# /diagram-zoom-wrap #}
+            <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-2">
+              <i class="bi bi-info-circle me-1"></i>
+              <strong>IEA</strong> always runs after OCR. <strong>IUA</strong> runs only when confidence &lt; {{ confidence_threshold }}%.
+              Both agents produce full <code>AgentRun</code> records with RBAC audit trail and Langfuse traces.
+              Field corrections are tracked per-field via <code>ExtractionFieldCorrection</code>.
+            </p>
+          </div>
 
-    IUA --> APPR["Extraction Approval Gate\n(human or auto-approve)"]
+          {# ── Tab 3: Path Resolution ── #}
+          <div class="tab-pane fade" id="tab-path-resolution" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart TD
+    INV(["Approved Invoice
+    Extraction complete and approved"]) --> PNUM
 
-    APPR --> RECON["Reconciliation Engine\nTwoWayMatchService\nThreeWayMatchService  NonPO"]
-    RECON --> MODE["ReconciliationModeResolver\npolicy -> heuristic -> default"]
-    MODE --> PENG{"PolicyEngine\n/ ReasoningPlanner\nDispatch"}
+    PNUM{"Does the invoice
+    have a PO number?"}
 
-    PENG -->|"MATCHED + high conf"| TOUCHLESS(["Skip agents\nauto-close"])
-    PENG -->|PO_NOT_FOUND| POR["PORetrievalAgent\ntools: po_lookup  vendor_search"]
-    PENG -->|"GRN_NOT_FOUND (3-WAY)"| GRNR["GRNRetrievalAgent\ntool: grn_lookup"]
-    PENG -->|PARTIAL_MATCH| RA["ReconciliationAssistAgent\ntools: invoice_details  po_lookup"]
-    PENG -->|exceptions| EA["ExceptionAnalysisAgent\nall 5 tools"]
+    PNUM -->|"No PO number"| NOPO(["NON-PO path
+    Routed to Non-PO Validation
+    No reconciliation against a PO"])
 
-    IUA -->|"conf < 0.5"| RA
-    POR -->|"PO found + 3-WAY"| GRNR
+    PNUM -->|"PO number present"| STRICT
 
+    STRICT["Strict PO Lookup
+    Search by exact PO number
+    then normalised PO number
+    via ERP Resolution chain"]
+
+    STRICT -->|"PO found"| CONF
+    STRICT -->|"PO not found
+    and extraction confidence below 50%"| LOWCONF(["NON-PO path
+    Low confidence in PO number
+    Treated as Non-PO"])
+    STRICT -->|"PO not found
+    confidence acceptable"| POR
+
+    POR(["PO Retrieval Agent
+    LLM fuzzy match against ERP data
+    Vendor and amount cross-check
+    Searches ERP Resolution chain"])
+    POR -->|"PO recovered"| CONF
+    POR -->|"PO still not found"| UNRES
+
+    UNRES{"Invoice has PO number
+    but PO not in system"}
+    UNRES -->|"PO number present
+    treat as PO-backed"| TWOWAY(["TWO-WAY path
+    Invoice references a PO
+    Matched against PO only
+    GRN not required"])
+    UNRES -->|"No PO number at all"| NOPO
+
+    CONF["Mode Resolution
+    Determine 2-way or 3-way matching"]
+
+    subgraph MODERES ["Mode Resolution -- 3-tier cascade"]
+        direction TB
+        MR1["1. Policy Rules
+        Vendor, item category, business unit,
+        location, or invoice type rules
+        First matching policy wins"]
+        MR2["2. Heuristics
+        Service keywords in line descriptions
+        is_service_item or is_stock_item flags
+        on PO lines"]
+        MR3["3. Platform Default
+        Configured default mode
+        applies when no policy or heuristic matches"]
+        MR1 -->|"No policy match"| MR2
+        MR2 -->|"No heuristic match"| MR3
+    end
+
+    CONF --> MODERES
+
+    MODERES -->|"Mode = TWO_WAY"| GRNS
+    MODERES -->|"Mode = THREE_WAY"| THREE
+
+    GRNS{"Do GRNs exist
+    for this PO?"}
+    GRNS -->|"GRNs found
+    override to 3-way"| THREE
+    GRNS -->|"No GRNs"| TWOWAY
+
+    THREE(["THREE-WAY path
+    Invoice vs PO vs Goods Receipt
+    All three documents must align"])
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LPR1["Deterministic step"]
+        LPR2["Decision gate"]
+        LPR3["Conditional AI agent"]
+        LPR4["Resolved path outcome"]
+        LPR5["Start or pass-through"]
+    end
+    classDef det fill:#fef3c7,stroke:#d97706,color:#78350f,font-weight:bold
+    classDef gate fill:#ede9fe,stroke:#8b5cf6,color:#4c1d95
+    classDef agent fill:#f0fdf4,stroke:#10b981,color:#064e3b
+    classDef ok fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a,font-weight:bold
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    class STRICT,CONF det
+    class PNUM,UNRES,GRNS gate
+    class POR agent
+    class TWOWAY,THREE ok
+    class INV,NOPO,LOWCONF neutral
+    class LPR1 det
+    class LPR2 gate
+    class LPR3 agent
+    class LPR4 ok
+    class LPR5 neutral
+            </div>{# /mermaid #}
+            </div>{# /diagram-zoom-wrap #}
+            <p class="small text-muted border-top pt-2 px-3 pb-2 mb-0">
+              <i class="bi bi-info-circle me-1"></i>
+              Path Resolution runs after extraction approval. It determines whether the case follows the
+              <strong>2-way</strong>, <strong>3-way</strong>, or <strong>Non-PO</strong> processing path.
+              The PO Retrieval Agent (green) is the only AI component here — all other logic is deterministic.
+            </p>
+          </div>
+
+          {# ── Tab 4: Reconciliation Engine ── #}
+          <div class="tab-pane fade" id="tab-reconciliation" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart TD
+    INV(["Approved Invoice\nReady for matching"]) --> PATHRES
+
+    subgraph ERP ["ERP Resolution Chain -- shared infrastructure used by all lookups, both deterministic and agents"]
+        direction LR
+        E1["1. Cache\nRecent lookups reused\nExpires after 1 hour"] -->|"Miss"| E2["2. Live ERP API\nDynamics, Zoho, Salesforce\nor Custom connector"]
+        E2 -->|"Not found"| E3["3. Local DB\nTransactional PO and GRN records\nHighest local confidence"]
+        E3 -->|"Still not found"| E4["4. ERP Snapshot\nImported master data\nLower confidence, warning attached"]
+    end
+
+    PATHRES["Path Resolution\nStrict PO lookup by exact and normalised PO number\nClassifies as 2-way, 3-way, Non-PO, or Unresolved"]
+    PATHRES -.->|"Strict PO lookup\n(exact match only)"| ERP
+    ERP -.-> PATHRES
+
+    POR(["PO Retrieval Agent\nRuns when strict lookup fails\nUses LLM fuzzy matching\nAlso re-runs in Exception Analysis\nif PO_NOT_FOUND exception remains"])
+    PATHRES -->|"PO found"| PO
+    PATHRES -->|"PO not found -- Unresolved"| POR
+    POR -.->|"Fuzzy search via ERP chain"| ERP
+    ERP -.-> POR
+    POR -->|"PO recovered or still not found"| PO
+
+    PATHRES -->|"No PO number on invoice"| NOPO(["Non-PO Validation\nDeterministic spend checks\nThen passed to Exception Analysis"])
+
+    PO["Step 1 -- Confirm the Purchase Order\nVerify the PO found by Path Resolution\nor the PO recovered by the PO Retrieval Agent"]
+
+    PO --> MODE
+    MODE["Step 2 -- Choose Matching Mode\nPolicy rule for this vendor or category wins\nFalls back to document type flags, then platform default"]
+
+    MODE -->|"2-Way"| TWO
+    MODE -->|"3-Way"| GRN
+
+    GRN["Step 3a -- Find the Goods Receipt\nLocate all GRNs linked to the Purchase Order\nSummarise quantities received per line"]
+    GRN -.->|"GRN lookup via ERP chain"| ERP
+    ERP -.-> GRN
+
+    GRNR(["GRN Retrieval Agent\n3-way only: runs when GRN is\nmissing or has receipt shortages\nAlso re-runs in Exception Analysis\nif GRN_NOT_FOUND exception remains"])
+    GRN -.->|"GRN not found or receipt exception"| GRNR
+    GRNR -.->|"Searches ERP chain"| ERP
+    ERP -.-> GRNR
+    GRNR -.->|"Returns resolved GRN or failure"| GRN
+    GRN --> THREE
+
+    TWO["Step 3b -- 2-Way Match\nInvoice vs Purchase Order\nHeader totals and each line item"]
+    THREE["Step 3c -- 3-Way Match\nInvoice vs Purchase Order vs Goods Receipt\nQuantities must align across all three"]
+
+    TWO --> TOL
+    THREE --> TOL
+
+    TOL["Step 4 -- Tolerance Checks\nStrict band for normal matching\nWider auto-close band for near-matches"]
+
+    TOL --> CLASS
+    CLASS{"Step 5 -- Classify Result"}
+
+    CLASS -->|"All lines within tolerance"| MATCHED(["Matched\nAuto-closed, no agents needed"])
+    CLASS -->|"Within auto-close band"| AUTOCLOSE(["Auto-Closed\nMinor variance accepted, no agents"])
+    CLASS -->|"Some lines differ"| PARTIAL(["Partial Match\nRA agent investigates"])
+    CLASS -->|"No PO found"| UNMATCHED(["Unmatched\nPOR + EA agents investigate"])
+    CLASS -->|"Significant issues"| REVIEW(["Requires Review\nEA + RR agents investigate"])
+
+    MATCHED --> SAVE
+    AUTOCLOSE --> SAVE
+    PARTIAL --> SAVE
+    UNMATCHED --> SAVE
+    REVIEW --> SAVE
+
+    SAVE["Step 6 -- Save and Hand Off\nRecord match status, line comparison, exceptions\nERP source and freshness stored per lookup"]
+
+    SAVE -->|"Matched or Auto-Closed"| DONE(["Done -- no further action"])
+    SAVE -->|"Partial, Unmatched or Requires Review"| AGENTS(["Exception Analysis Pipeline\nRA, IUA, POR, GRNR, EA agents\nRR and CS always run at end"])
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LREC1["ERP Resolution chain"]
+        LREC2["Deterministic engine step"]
+        LREC3["Matching operation"]
+        LREC4["Classification gate"]
+        LREC5["Matched or auto-closed"]
+        LREC6["Partial or review"]
+        LREC7["Unmatched outcome"]
+        LREC8["Neutral or pass-through"]
+        LREC9["Conditional AI agent"]
+    end
+    classDef erp fill:#ecfdf5,stroke:#059669,color:#064e3b
+    classDef engine fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef match fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef gate fill:#ede9fe,stroke:#8b5cf6,color:#4c1d95
+    classDef ok fill:#f0fdf4,stroke:#16a34a,color:#14532d
+    classDef warn fill:#fff7ed,stroke:#f97316,color:#7c2d12
+    classDef bad fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef agent fill:#d1fae5,stroke:#10b981,color:#064e3b
+    class E1,E2,E3,E4 erp
+    class PO,MODE,TOL,PATHRES engine
+    class GRN,TWO,THREE match
+    class CLASS gate
+    class MATCHED,AUTOCLOSE,DONE ok
+    class PARTIAL,REVIEW warn
+    class UNMATCHED bad
+    class INV,SAVE,NOPO neutral
+    class POR,GRNR,AGENTS agent
+    class LREC1 erp
+    class LREC2 engine
+    class LREC3 match
+    class LREC4 gate
+    class LREC5 ok
+    class LREC6 warn
+    class LREC7 bad
+    class LREC8 neutral
+    class LREC9 agent
+            </div>{# /mermaid #}
+            </div>{# /diagram-zoom-wrap #}
+            <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-2">
+              <i class="bi bi-info-circle me-1"></i>
+              <strong>ERP Resolution (green subgraph) is shared infrastructure</strong> — the same cache to live ERP to local DB to snapshot chain is called by both deterministic steps and AI agents.
+              It is not agent-exclusive. The matching engine (yellow/blue nodes) is fully deterministic; agents (light green nodes) run conditionally around it.
+            </p>
+          </div>
+
+          {# ── Tab 5: Agent Pipeline ── #}
+          <div class="tab-pane fade" id="tab-agents" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart TD
+    RECON["Reconciliation Completed\nInvoice compared against Purchase Order and Goods Receipt\nExceptions and discrepancies identified"]
+    RECON --> MODE["Matching Mode Selected\nPolicy rules checked first\nFalls back to document type if no policy applies"]
+    MODE --> PLAN{"AI Planning\nDecides which agents to run\nand in what order"}
+    PLAN -->|"Perfect match"| TOUCH(["Auto-Closed\nNo further review needed"])
+    PLAN -->|"Purchase Order not found"| POR["PO Retrieval Agent\nSearches for the missing purchase order\nQueries ERP and vendor records"]
+    PLAN -->|"Goods Receipt not found"| GRNR["GRN Retrieval Agent\nLocates the goods receipt note\nOnly runs for 3-way matching"]
+    PLAN -->|"Quantities or prices differ"| RA["Reconciliation Assistant\nAnalyses each discrepancy in detail\nSuggests the most likely resolution"]
+    PLAN -->|"Other exceptions flagged"| EA["Exception Analysis Agent\nInvestigates all flagged issues\nDraws on ERP, PO and invoice data"]
+    POR -->|"PO found, GRN still needed"| GRNR
     POR --> RR
     GRNR --> RR
     RA --> RR
     EA --> RR
+    RR["Review Routing Agent\nDecides who should review this case\nSets the priority and work queue"]
+    RR --> CS["Case Summary Agent\nWrites a plain-English summary\nfor the AP reviewer to act on"]
+    CS --> REVIEW(["Sent to AP Review Queue\nor automatically closed"])
 
-    RR["ReviewRoutingAgent\nno tools"] --> CS["CaseSummaryAgent\nno tools"]
-    CS --> REVIEW(["AP Review Queue\n/ Auto-close"])
-
-    REVIEW --> POST["Invoice Posting Pipeline\n9 stages: eligibility -> snapshot\n-> mapping -> validation\n-> confidence -> routing\n-> payload -> finalize"]
-    POST --> ERP(["ERP Submission\nSAP / Dynamics / Zoho\n/ Salesforce / Custom"])
-
-    classDef pipeline fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
-    classDef react fill:#d1fae5,stroke:#10b981,color:#064e3b
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LAD1["Deterministic routing"]
+        LAD2["AI planner"]
+        LAD3["AI agent step"]
+        LAD4["Start or end"]
+    end
     classDef engine fill:#fef3c7,stroke:#f59e0b,color:#78350f
-    classDef terminal fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef react fill:#d1fae5,stroke:#10b981,color:#064e3b
+    classDef planner fill:#ede9fe,stroke:#8b5cf6,color:#4c1d95
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    class RECON,MODE engine
+    class POR,GRNR,RA,EA,RR,CS react
+    class PLAN planner
+    class TOUCH,REVIEW neutral
+    class LAD1 engine
+    class LAD2 planner
+    class LAD3 react
+    class LAD4 neutral
+            </div>{# /mermaid #}
+            </div>{# /diagram-zoom-wrap #}
+            <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-2">
+              <i class="bi bi-info-circle me-1"></i>
+              <strong>ReasoningPlanner</strong> is always active (no feature flag). On LLM error it falls through to <strong>PolicyEngine</strong>.
+              Max <strong>{{ max_tool_rounds }}</strong> ReAct rounds per agent. <code>AgentOrchestrationRun</code> blocks duplicate concurrent runs.
+              RBAC guardrails are evaluated before every agent and every tool call.
+            </p>
+          </div>
+
+          {# ── Tab 5: ERP Resolution + Posting ── #}
+          <div class="tab-pane fade" id="tab-erp" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart TD
+    subgraph CALLERS ["All consumers share one resolution facade"]
+        direction LR
+        RECON["Reconciliation Engine\nPOLookupService\nGRNLookupService"]
+        POST["Posting Pipeline\nPostingMappingEngine"]
+        TOOLS["Agent Tools\nPOLookupTool\nGRNLookupTool"]
+    end
+
+    RECON --> SVC
+    POST --> SVC
+    TOOLS --> SVC
+
+    SVC["ERPResolutionService\nSingle entry point for all ERP lookups\nWraps 7 resolvers: PO, GRN, Vendor, Item, Tax, Cost Centre, Duplicate"]
+
+    subgraph CHAIN ["Resolution chain -- highest freshness first"]
+        direction TB
+        C1["1. Cache\nTTL-keyed by SHA-256 of params\nDefault TTL 1 hour"] -->|"Miss"| C2["2. Mirror DB -- transactional data\ndocuments.PurchaseOrder\ndocuments.GoodsReceiptNote\nconfidence = 1.0"]
+        C2 -->|"Miss or master data lookup"| C3["3. Live ERP API\nDynamics, Zoho, Salesforce, Custom REST, SQL Server\nOnly when connector active and capable\nconfidence = 1.0"]
+        C3 -->|"Miss or no active connector"| C4["4. Reference Snapshots (DB_FALLBACK)\nVendor, Item, Tax, Cost Centre: imported master tables\nPO snapshot: ERPPOReference conf=0.75 with warning"]
+    end
+
+    SVC --> CHAIN
+
+    CHAIN --> FRESH["Freshness Check\nTransactional data (PO, GRN): stale after 24 hours\nMaster data (Vendor, Item, Tax, Cost Centre): stale after 7 days\nStale data is still returned -- is_stale=True is a warning only"]
+
+    FRESH --> OUT["ERPResolutionResult\nsource_type, confidence, is_stale, synced_at\nfallback_used, warnings, source_keys\nto_provenance_dict() for JSON storage"]
+
+    OUT --> RLOG["ERPResolutionLog\nEvery lookup persisted\nLinked to Invoice, ReconciliationResult, or PostingRun"]
+    OUT --> PROV["Provenance Stored on Match Record\nReconciliationResult.erp_source_metadata_json\nReconciliationResult.po_erp_source_type\nReconciliationResult.data_is_stale\nPostingRun.erp_source_metadata_json per field"]
+
+    APPIN(["Invoice Approved\nReady to post"]) --> P1
+
+    subgraph POSTING ["9-Stage Posting Pipeline"]
+        direction LR
+        P1["1. Eligibility Check\n2. Data Snapshot"] --> P2["3. Field Mapping\nVendor, items, tax, cost centre\nresolved via ERPResolutionService"] --> P3["4. Validation\n5. Confidence Scoring\n6. Review Routing\n7. Payload Assembly"] --> P4["8. Finalisation\n9. Status Update\nDuplicate invoice check included"]
+    end
+
+    P2 -.->|"Vendor and item\nlookups"| SVC
+
+    P4 --> SUB["PostingSubmitResolver\nAPI-only -- no DB fallback for submission\nFails gracefully if connector not configured"]
+    SUB --> SLOG["ERPSubmissionLog\nEvery submission persisted\nLinked to InvoicePosting"]
+    SUB --> ERPS(["Posted to ERP\nDynamics, Zoho, Salesforce or Custom connector"])
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LEP1["ERP resolution step"]
+        LEP2["Posting pipeline stage"]
+        LEP3["Audit or provenance storage"]
+        LEP4["Invoice, result, or ERP system"]
+        LEP5["Freshness or output"]
+    end
+    classDef erp fill:#ecfdf5,stroke:#059669,color:#064e3b
     classDef posting fill:#fdf4ff,stroke:#a855f7,color:#581c87
-    classDef danger fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
-
-    class IEA pipeline
-    class IUA,POR,GRNR,RA,EA,RR,CS react
-    class RECON,MODE,PENG engine
-    class UP,APPR,TOUCHLESS,REVIEW,ERP terminal
-    class POST posting
-    class INV danger
+    classDef audit fill:#f0f9ff,stroke:#0ea5e9,color:#0c4a6e
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef fresh fill:#fef3c7,stroke:#d97706,color:#78350f
+    class C1,C2,C3,C4,SVC erp
+    class P1,P2,P3,P4,SUB posting
+    class RLOG,SLOG,PROV audit
+    class APPIN,ERPS neutral
+    class FRESH,OUT fresh
+    class RECON,POST,TOOLS neutral
+    class LEP1 erp
+    class LEP2 posting
+    class LEP3 audit
+    class LEP4 neutral
+    class LEP5 fresh
+            </div>{# /mermaid #}
+            </div>{# /diagram-zoom-wrap #}
+            <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-2">
+              <i class="bi bi-info-circle me-1"></i>
+              <strong>ERPResolutionService</strong> is the single shared facade used by reconciliation, posting, and agent tools -- never bypassed.
+              Resolution order is <strong>Cache &rarr; Mirror DB &rarr; Live API &rarr; DB Fallback</strong>.
+              PO fallback is two-tier: Tier 1 = <code>documents.PurchaseOrder</code> (conf=1.0, <code>MIRROR_DB</code>); Tier 2 = <code>ERPPOReference</code> snapshot (conf=0.75, <code>DB_FALLBACK</code>).
+              Staleness thresholds: transactional data 24 h, master data 7 days.
+              Full provenance stored per field on <code>ReconciliationResult</code> and <code>PostingRun</code>.
+              <a href="#agent-diagrams" class="ms-2">More diagrams &darr;</a>
+            </p>
           </div>
-        </div>
-        <div class="px-3 pb-3 small text-muted border-top pt-2">
-          <i class="bi bi-info-circle me-1"></i>
-          Agents use a <strong>ReAct loop</strong> (Reason &rarr; Act &rarr; Observe) with up to
-          <strong>{{ max_tool_rounds }}</strong> tool rounds. <strong>ReasoningPlanner</strong> makes an LLM call to order agents;
-          <strong>PolicyEngine</strong> is the deterministic fallback. The posting pipeline runs automatically after approval.
-          <a href="#agent-diagrams" class="ms-2">More diagrams &darr;</a>
+
         </div>
       </div>
 
-      <!-- Key stats row -->
-      <div class="row g-2 mb-2">
-        <div class="col-md-2 col-4">
-          <div class="card border-0 shadow-sm text-center py-2">
-            <div class="fs-3 fw-bold text-primary">{{ agents_info|length }}</div>
-            <div class="small text-muted">AI Agents</div>
-          </div>
-        </div>
-        <div class="col-md-2 col-4">
-          <div class="card border-0 shadow-sm text-center py-2">
-            <div class="fs-3 fw-bold text-info">{{ tools_info|length }}</div>
-            <div class="small text-muted">Tools</div>
-          </div>
-        </div>
-        <div class="col-md-2 col-4">
-          <div class="card border-0 shadow-sm text-center py-2">
-            <div class="fs-3 fw-bold text-warning">9</div>
-            <div class="small text-muted">Post Stages</div>
-          </div>
-        </div>
-        <div class="col-md-2 col-4">
-          <div class="card border-0 shadow-sm text-center py-2">
-            <div class="fs-3 fw-bold text-success">6</div>
-            <div class="small text-muted">ERP Connectors</div>
-          </div>
-        </div>
-        <div class="col-md-2 col-4">
-          <div class="card border-0 shadow-sm text-center py-2">
-            <div class="fs-3 fw-bold text-danger">7</div>
-            <div class="small text-muted">ERP Resolvers</div>
-          </div>
-        </div>
-        <div class="col-md-2 col-4">
-          <div class="card border-0 shadow-sm text-center py-2">
-            <div class="fs-3 fw-bold text-secondary">{{ prompts|length }}</div>
-            <div class="small text-muted">LLM Prompts</div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- ── INVOICE PIPELINE ── -->
@@ -458,7 +993,7 @@ flowchart TD
         <a href="#overview">Overview</a> section above.
       </p>
 
-      <ul class="nav nav-tabs mb-0" id="diagramTabs" role="tablist">
+      <ul class="nav nav-tabs mb-0" id="agentDiagramTabs" role="tablist">
         <li class="nav-item" role="presentation">
           <button class="nav-link active" id="diag-policy-tab" data-bs-toggle="tab"
                   data-bs-target="#diag-policy" type="button" role="tab">
@@ -471,19 +1006,21 @@ flowchart TD
             <i class="bi bi-wrench me-1"></i>Agent &rarr; Tool Map
           </button>
         </li>
-        <li class="nav-item" role="presentation">
-          <button class="nav-link" id="diag-extraction-tab" data-bs-toggle="tab"
-                  data-bs-target="#diag-extraction" type="button" role="tab">
-            <i class="bi bi-file-earmark-code me-1"></i>InvoiceExtractionAgent
-          </button>
-        </li>
       </ul>
 
       <div class="tab-content border border-top-0 rounded-bottom bg-white mb-4" id="diagramTabContent">
 
         <!-- Tab 1: PolicyEngine dispatch -->
-        <div class="tab-pane fade show active p-4" id="diag-policy" role="tabpanel">
-          <p class="small text-muted mb-3">How PolicyEngine / ReasoningPlanner evaluates a reconciliation result and selects agents. Conditions are checked in order; multiple branches can fire for the same result.</p>
+        <div class="tab-pane fade show active" id="diag-policy" role="tabpanel">
+          <p class="small text-muted mb-3 px-4 pt-3">How PolicyEngine / ReasoningPlanner evaluates a reconciliation result and selects agents. Conditions are checked in order; multiple branches can fire for the same result.</p>
+          <div class="diagram-zoom-toolbar">
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+            <span class="zoom-level">100%</span>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+          </div>
+          <div class="diagram-zoom-wrap p-3">
           <div class="mermaid">
 flowchart TD
     RES([Reconciliation Result]) --> C1{MATCHED AND\nhigh confidence?}
@@ -524,6 +1061,12 @@ flowchart TD
       R2["After INVOICE_UNDERSTANDING: if own confidence < 0.5\n--> add RECONCILIATION_ASSIST"]
     end
 
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LPE1["Agent scheduled to run"]
+        LPE2["Decision or condition"]
+        LPE3["Start, end, or skip"]
+    end
     classDef schedule fill:#d1fae5,stroke:#10b981,color:#064e3b
     classDef decision fill:#fef3c7,stroke:#f59e0b,color:#78350f
     classDef terminal fill:#f3f4f6,stroke:#9ca3af,color:#374151
@@ -531,12 +1074,24 @@ flowchart TD
     class IUA,POR,GRNR,RA,EA,RR,CS schedule
     class C1,C2,C3,C4,C5,C6,TAIL decision
     class RES,DONE,AUTOC,NOTHING,RUN terminal
-          </div>
+    class LPE1 schedule
+    class LPE2 decision
+    class LPE3 terminal
+          </div>{# /mermaid #}
+          </div>{# /diagram-zoom-wrap #}
         </div>
 
         <!-- Tab 3: Agent -> Tool ownership -->
-        <div class="tab-pane fade p-4" id="diag-tools" role="tabpanel">
-          <p class="small text-muted mb-3">Which tools each agent can invoke during its ReAct loop. Blue = agent, teal = tool. All tool calls are RBAC-guarded by <code>AgentGuardrailsService.authorize_tool()</code>.</p>
+        <div class="tab-pane fade" id="diag-tools" role="tabpanel">
+          <p class="small text-muted mb-3 px-4 pt-3">Which tools each agent can invoke during its ReAct loop. Blue = agent, teal = tool. All tool calls are RBAC-guarded by <code>AgentGuardrailsService.authorize_tool()</code>.</p>
+          <div class="diagram-zoom-toolbar">
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+            <span class="zoom-level">100%</span>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+          </div>
+          <div class="diagram-zoom-wrap p-3">
           <div class="mermaid">
 graph LR
     subgraph pipeline ["Pipeline Agents (no tools)"]
@@ -580,6 +1135,12 @@ graph LR
     EA --> T5
     EA --> T6
 
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LTM1["Pipeline agent (no tools)"]
+        LTM2["ReAct agent (uses tools)"]
+        LTM3["Registered tool (RBAC-guarded)"]
+    end
     classDef agentpipe fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
     classDef agentreact fill:#d1fae5,stroke:#10b981,color:#064e3b
     classDef tool fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
@@ -587,122 +1148,11 @@ graph LR
     class IEA agentpipe
     class IUA,POR,GRNR,RA,EA,RR,CS agentreact
     class T1,T2,T3,T4,T5,T6 tool
-          </div>
-        </div>
-
-        <!-- Tab 4: InvoiceExtractionAgent deep-dive -->
-        <div class="tab-pane fade p-4" id="diag-extraction" role="tabpanel">
-          <p class="small text-muted mb-3">
-            Internal flow of <strong>InvoiceExtractionAgent</strong> — the pipeline-only, single-shot extraction agent.
-            Runs right after Azure Document Intelligence OCR. No ReAct loop, no tools.
-          </p>
-          <div class="mermaid">
-flowchart TD
-    subgraph input ["Input"]
-      OCR["Azure DI OCR text\n(up to 60K chars)"]
-      META["Invoice metadata\n(category, country, currency)"]
-    end
-
-    subgraph compose ["InvoicePromptComposer"]
-      direction TB
-      BASE["1. extraction.invoice_base\n(or monolithic fallback)"]
-      CAT{"invoice_category?"}
-      GOODS["+ extraction.invoice_category_goods\n(HSN, qty/unit/rate)"]
-      SVC["+ extraction.invoice_category_service\n(SAC, fee/charge lines)"]
-      TRAVEL["+ extraction.invoice_category_travel\n(booking ref, base fare)"]
-      COUNTRY{"country / tax\nregime?"}
-      GST["+ extraction.country_india_gst\n(GSTIN, IRN, CGST/SGST/IGST)"]
-      VAT["+ extraction.country_generic_vat\n(VAT reg, net vs gross)"]
-      PROMPT["Composed system prompt\n(base + category + country)"]
-
-      BASE --> CAT
-      CAT -->|goods| GOODS --> COUNTRY
-      CAT -->|service| SVC --> COUNTRY
-      CAT -->|travel| TRAVEL --> COUNTRY
-      CAT -->|unclassified| COUNTRY
-      COUNTRY -->|IN/GST| GST --> PROMPT
-      COUNTRY -->|AE,SA,GB,DE VAT| VAT --> PROMPT
-      COUNTRY -->|other| PROMPT
-    end
-
-    subgraph llm ["LLM Call  (GPT-4o)"]
-      direction TB
-      SYSM["system: composed prompt"]
-      USERM["user: Extract invoice data from the following OCR text..."]
-      API["Azure OpenAI Chat\ntemperature=0.0\nmax_tokens=4096\nresponse_format=json_object"]
-      RAW["Raw JSON string response"]
-      SYSM --> API
-      USERM --> API
-      API --> RAW
-    end
-
-    subgraph parse ["Response parsing"]
-      RAW2["_parse_agent_json(content)"]
-      CONF["confidence = data.confidence"]
-      EVID["evidence = full extraction dict\n(vendor_name, invoice_number, line_items,\ntotals, tax, currency, dates)"]
-      OUT["AgentOutput\n(reasoning, confidence, evidence)"]
-      RAW2 --> CONF
-      RAW2 --> EVID
-      CONF --> OUT
-      EVID --> OUT
-    end
-
-    subgraph audit ["Audit trail (DB)"]
-      AR["AgentRun\n(status, tokens, duration_ms,\nllm_model_used, actor RBAC)"]
-      AM1["AgentMessage: role=system"]
-      AM2["AgentMessage: role=user"]
-      AM3["AgentMessage: role=assistant"]
-      AR --> AM1
-      AR --> AM2
-      AR --> AM3
-    end
-
-    subgraph langfuse ["Langfuse observability"]
-      LFT["start_trace: invoice_extraction\n(trace_id, invoice_id, session_id)"]
-      LFS["start_span: INVOICE_EXTRACTION\n(ocr_char_count, agent_run_id)"]
-      LFG["log_generation (via LLMClient)\n(model, prompt msgs, tokens)"]
-      LFSC["score_trace: extraction_confidence\n(0.0-1.0)"]
-      LFT --> LFS --> LFG --> LFSC
-    end
-
-    OCR --> compose
-    META --> compose
-    compose --> llm
-    OCR --> llm
-    llm --> parse
-    compose --> audit
-    llm -.->|tokens| audit
-    parse --> audit
-    parse --> langfuse
-
-    parse --> DOWNSTREAM["ExtractionAdapter\n_extract_from_agent_run()\nInvoice + InvoiceLineItems saved to DB"]
-
-    subgraph confidence ["Confidence routing (post-save)"]
-      CHK{"extraction_conf\n>= threshold (0.75)?"}
-      AUTO["Auto-approve\n(if EXTRACTION_AUTO_APPROVE = True)"]
-      IUA_FIRE["Fire InvoiceUnderstandingAgent\n(low confidence path)"]
-      CHK -->|Yes| AUTO
-      CHK -->|No| IUA_FIRE
-    end
-
-    DOWNSTREAM --> confidence
-
-    classDef input fill:#f0f9ff,stroke:#0ea5e9,color:#075985
-    classDef compose fill:#fef9c3,stroke:#eab308,color:#713f12
-    classDef llm fill:#f0fdf4,stroke:#22c55e,color:#14532d
-    classDef parse fill:#fdf4ff,stroke:#a855f7,color:#581c87
-    classDef audit fill:#fff7ed,stroke:#f97316,color:#7c2d12
-    classDef lf fill:#f8fafc,stroke:#94a3b8,color:#334155
-    classDef out fill:#f3f4f6,stroke:#9ca3af,color:#1f2937
-
-    class OCR,META input
-    class BASE,CAT,GOODS,SVC,TRAVEL,COUNTRY,GST,VAT,PROMPT compose
-    class SYSM,USERM,API,RAW llm
-    class RAW2,CONF,EVID,OUT parse
-    class AR,AM1,AM2,AM3 audit
-    class LFT,LFS,LFG,LFSC lf
-    class DOWNSTREAM,CHK,AUTO,IUA_FIRE out
-          </div>
+    class LTM1 agentpipe
+    class LTM2 agentreact
+    class LTM3 tool
+          </div>{# /mermaid #}
+          </div>{# /diagram-zoom-wrap #}
         </div>
 
       </div><!-- /tab-content -->
@@ -1376,33 +1826,86 @@ flowchart TD
     <div id="prompts" class="docs-section">
       <h2 class="docs-section-title"><i class="bi bi-chat-left-text me-2 text-secondary"></i>LLM Prompts</h2>
 
-      <div class="alert alert-info border-0 mb-4 small">
-        <div class="fw-semibold mb-2"><i class="bi bi-info-circle me-1"></i>Three prompt categories &mdash; different roles:</div>
+      {# ── Three-path architecture callout ── #}
+      <div class="alert alert-info border-0 mb-3 small">
+        <div class="fw-semibold mb-2"><i class="bi bi-info-circle me-1"></i>Three prompt paths &mdash; different builders, different callers:</div>
         <div class="row g-2">
           <div class="col-md-4">
-            <div class="bg-white border rounded p-2">
-              <span class="badge bg-primary mb-1">Extraction</span>
-              <div>Used by <code>InvoicePromptComposer</code> to build the OCR-to-JSON system prompt.
-              Modular: <strong>base</strong> + category overlay (goods/service/travel) + country overlay (GST/VAT).
-              Single-shot call at <code>temperature=0.0</code> &mdash; no tools, no ReAct loop.</div>
+            <div class="bg-white border rounded p-2 h-100">
+              <span class="badge bg-primary mb-1">Extraction (Path A &mdash; modular)</span>
+              <div>
+                <code>InvoicePromptComposer</code> assembles: <strong>base</strong> + category overlay
+                (goods / service / travel) + country overlay (GST / VAT). Composition result includes
+                <code>final_prompt</code>, <code>components</code> dict (slug&rarr;version), and a
+                16-char <code>prompt_hash</code> for deterministic dedup. Single-shot LLM call at
+                <code>temperature=0.0</code> &mdash; no tools, no ReAct loop.
+              </div>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="bg-white border rounded p-2">
+            <div class="bg-white border rounded p-2 h-100">
+              <span class="badge bg-secondary mb-1">Governed Enrichment (step 1b, inside Path A &mdash; schema-driven v2.0)</span>
+              <div>
+                Runs as <strong>step 1b of Path A</strong> via <code>_run_governed_pipeline()</code>,
+                wrapped in <code>try/except</code> &mdash; if it raises any exception, Path A continues
+                and labels the result <em>Legacy source</em>. Adds a governance audit trail only;
+                does not drive the primary <code>ExtractionResult</code>.
+              </div>
+              <div class="mt-1">
+                <code>PromptBuilderService</code> (<code>extraction_core/services/prompt_builder_service.py</code>,
+                <code>PROMPT_VERSION = "2.0"</code>) builds prompts dynamically from
+                <code>ExtractionSchemaDefinition</code> + <code>TaxJurisdictionProfile</code> &mdash;
+                zero hardcoded country text. Assembles <strong>7 sections</strong>: global rules &rarr;
+                jurisdiction context &rarr; document type &rarr; schema fields &rarr; tax guidance &rarr;
+                evidence/confidence rules &rarr; expected output schema.
+                Supports <strong>hybrid mode</strong> via <code>unresolved_field_keys</code>.
+                Persists <code>prompt_code</code> / <code>prompt_version</code> to
+                <code>ExtractionRun</code> for audit.
+              </div>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="bg-white border rounded p-2 h-100">
               <span class="badge bg-success mb-1">Agent</span>
-              <div>Used by <strong>ReAct reasoning agents</strong> in the case pipeline (exception analysis, PO/GRN retrieval, reconciliation assist, etc.).
-              Each agent has a dedicated <code>agent.*</code> slug. Runs tool-calling loops at <code>temperature=0.1</code>.</div>
-            </div>
-          </div>
-          <div class="col-md-4">
-            <div class="bg-white border rounded p-2">
-              <span class="badge bg-info text-dark mb-1">Case</span>
-              <div>Standalone prompts for case-level LLM calls: case summary, exception analysis narrative, non-PO validation reasoning, and the reviewer copilot assistant.
-              Fetched via <code>PromptRegistry</code> by slug (e.g. <code>case.case_summary</code>).</div>
+              <div>
+                <strong>ReAct reasoning agents</strong> in the case pipeline (exception analysis,
+                PO/GRN retrieval, reconciliation assist, etc.). Each agent has a dedicated
+                <code>agent.*</code> slug. Runs tool-calling loops at <code>temperature=0.1</code>.
+              </div>
+              <div class="mt-2">
+                <span class="badge bg-info text-dark mb-1">Case</span>
+                Standalone prompts for case-level LLM calls: case summary, exception analysis,
+                non-PO validation, reviewer copilot. Fetched via <code>PromptRegistry</code>
+                by slug (e.g. <code>case.case_summary</code>).
+              </div>
             </div>
           </div>
         </div>
-        <div class="mt-2 text-muted">All prompts are stored in the DB (<code>PromptTemplate</code>) and can be overridden via the Langfuse prompt editor or <code>seed_prompts</code> management command.</div>
+      </div>
+
+      {# ── Resolution order ── #}
+      <div class="alert alert-light border mb-3 small">
+        <div class="fw-semibold mb-1"><i class="bi bi-stack me-1"></i>Resolution order (highest to lowest priority &mdash; all paths):</div>
+        <ol class="mb-1 ps-3">
+          <li><strong>Langfuse</strong> &mdash; label <code>production</code>, 60 s in-process TTL cache. Source of truth in production.</li>
+          <li><strong>Database</strong> &mdash; <code>PromptTemplate</code> model (slug + <code>is_active=True</code>). Managed by <code>PromptRegistryService</code>.</li>
+          <li><strong>Hardcoded default</strong> &mdash; <code>_DEFAULTS[slug]</code> in <code>apps/core/prompt_registry.py</code>. Always present as ultimate fallback.</li>
+        </ol>
+        <div class="mt-1">
+          <span class="me-3"><i class="bi bi-terminal me-1"></i>Sync to Langfuse:</span>
+          <code>python manage.py push_prompts_to_langfuse</code>
+          <span class="text-muted ms-2">(flags: <code>--slug</code>, <code>--label staging</code>, <code>--dry-run</code>, <code>--purge</code>)</span>
+        </div>
+        <div class="mt-1">
+          <span class="me-3"><i class="bi bi-terminal me-1"></i>Seed DB records:</span>
+          <code>python manage.py seed_prompts</code>
+          <span class="text-muted ms-2">(<code>--force</code> to overwrite from hardcoded defaults)</span>
+        </div>
+        <div class="mt-2 text-muted">
+          <code>ExtractionPromptTemplate</code> (in <code>extraction_core</code>) is a separate versioned model for schema-driven prompts,
+          managed by <code>PromptRegistryService</code> with diff tracking on every update.
+          <code>PromptTemplate</code> (in <code>core</code>) holds the monolithic + modular + agent + case slugs.
+        </div>
       </div>
 
       <div class="row g-2 mb-4">
@@ -1414,8 +1917,16 @@ flowchart TD
         </div>
         <div class="col-md-3 col-6">
           <div class="card border-0 shadow-sm text-center py-3">
-            <div class="fs-2 fw-bold text-info">7</div>
-            <div class="small text-muted">Extraction</div>
+            <div class="fs-2 fw-bold text-primary">7</div>
+            <div class="small text-muted">Extraction (Path A)</div>
+            <div class="text-muted" style="font-size:.7rem">modular composer</div>
+          </div>
+        </div>
+        <div class="col-md-3 col-6">
+          <div class="card border-0 shadow-sm text-center py-3">
+            <div class="fs-2 fw-bold text-secondary">7</div>
+            <div class="small text-muted">Governed Enrichment</div>
+            <div class="text-muted" style="font-size:.7rem">step 1b inside Path A</div>
           </div>
         </div>
         <div class="col-md-3 col-6">
@@ -1424,13 +1935,146 @@ flowchart TD
             <div class="small text-muted">Agent (ReAct)</div>
           </div>
         </div>
-        <div class="col-md-3 col-6">
-          <div class="card border-0 shadow-sm text-center py-3">
-            <div class="fs-2 fw-bold text-warning">4</div>
-            <div class="small text-muted">Case</div>
+      </div>
+
+      {# ── Path B detail card ── #}
+      <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white fw-semibold small d-flex align-items-center gap-2">
+          <span class="badge bg-secondary">Governed Enrichment (step 1b)</span>
+          Schema-driven <code>PromptBuilderService</code> v2.0 &mdash; runs inside Path A, fail-silent
+          &mdash; <span class="text-muted fw-normal"><code>apps/extraction_core/services/prompt_builder_service.py</code></span>
+        </div>
+        <div class="card-body small">
+          <div class="row g-3">
+            <div class="col-lg-5">
+              <div class="fw-semibold mb-1">7-section system prompt assembly</div>
+              <ol class="mb-0 ps-3 text-muted">
+                <li>Global extraction rules (JSON-only, null policy, no hallucination)</li>
+                <li>Jurisdiction context (country, regime, tax ID label, currency, date formats)</li>
+                <li>Document type instruction</li>
+                <li>Schema fields (header / tax / line-item, data type, REQUIRED flag)</li>
+                <li>Tax extraction guidance (regime notes, tax ID regex, tax-flagged fields)</li>
+                <li>Evidence &amp; confidence rules (1.0 unambiguous / 0.7&ndash;0.9 inference / 0.3&ndash;0.6 ambiguous / 0.0 not found)</li>
+                <li>Expected output schema (rendered inline from <code>ExtractionSchemaDefinition</code>)</li>
+              </ol>
+            </div>
+            <div class="col-lg-4">
+              <div class="fw-semibold mb-1"><code>build()</code> return payload</div>
+              <pre class="bg-light border rounded p-2 mb-0" style="font-size:.78rem;white-space:pre">{
+  "prompt_code":    "extraction_core_v2",
+  "prompt_version": "2.0",
+  "system_message": "...",  // assembled
+  "user_message_template": "...",
+  "expected_schema": {...}, // dynamic
+  "field_count": 14         // or fewer in
+}                           // hybrid mode</pre>
+              <div class="mt-2 text-muted">
+                <strong>Hybrid mode</strong>: pass <code>unresolved_field_keys={"invoice_number"}</code>
+                to request only fields deterministic extraction could not resolve.
+                Sections 4 &amp; 7 are scoped to those keys only, reducing token usage.
+              </div>
+            </div>
+            <div class="col-lg-3">
+              <div class="fw-semibold mb-1">Per-field output envelope</div>
+              <pre class="bg-light border rounded p-2 mb-0" style="font-size:.78rem;white-space:pre">{
+  "invoice_number": {
+    "value": "INV-001",
+    "confidence": 0.97,
+    "evidence": "Invoice No..."
+  }
+}</pre>
+              <div class="mt-2 text-muted">Contrast with Path A flat output: <code>"invoice_number": "INV-001"</code></div>
+              <div class="mt-2 text-muted">
+                <code>LLMExtractionAdapter</code> wraps the LLM call with retry on JSON parse failure
+                and produces <code>LLMExtractionAudit</code> (model, tokens, latency, attempts, fields extracted).
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      {# ── Prompt architecture diagram ── #}
+      <h3 class="docs-h3 mt-4" id="prompt-architecture">Prompt Builder Architecture</h3>
+      <div class="diagram-zoom-toolbar">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+        <span class="zoom-level">100%</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+      </div>
+      <div class="diagram-zoom-wrap p-3 mb-4">
+      <div class="mermaid">
+flowchart TD
+    LF["Langfuse\nproduction label, 60 second in-process cache"]
+    DB["Database PromptTemplate\nactive slug records, managed by seed_prompts"]
+    HC["Hardcoded defaults\nalways-present fallback in prompt_registry.py"]
+    LF -->|"no entry"| DB -->|"no record"| HC
+
+    COMP["InvoicePromptComposer\nBase + category overlay + country overlay\nOutputs PromptComposition with 16-char hash"]
+    LLMA["Primary LLM extraction call\nTemperature 0.0, flat JSON output, no tools"]
+    STEP1B["Step 1b: _run_governed_pipeline()\nCalls ExtractionPipeline wrapped in try/except"]
+    PARSE["Steps 2 to 7\nParse, normalise, validate, and persist"]
+    XRES["ExtractionResult\nPrimary output to reconciliation, posting, and agents"]
+
+    EPR["ExtractionPipeline.run()\nSchema selection and jurisdiction resolution"]
+    PBS["PromptBuilderService.build()\n7-section schema-driven system message\nfrom ExtractionSchemaDefinition + TaxJurisdictionProfile"]
+    LLA["LLMExtractionAdapter\nLLM call with retry on JSON parse failure\nRecords LLMExtractionAudit"]
+    GRW["Writes governance records only\nExtractionRun, ExtractionFieldValue, ExtractionLineItem\nNot the primary ExtractionResult"]
+
+    AGS["PromptRegistry resolves agent slug\ne.g. agent.exception_analysis"]
+    AGL["ReAct tool-calling loop\nTemperature 0.1, up to 6 iterations"]
+    CAS["PromptRegistry resolves case slug\ne.g. case.case_summary"]
+    CAL["Single LLM call\nCase summary, exception narrative, or copilot answer"]
+
+    M1["push_prompts_to_langfuse\n--slug  --label staging  --dry-run  --purge"]
+    M2["seed_prompts\n--force to overwrite from hardcoded defaults"]
+
+    LF --> COMP
+    LF --> EPR
+    LF --> AGS
+    LF --> CAS
+
+    COMP --> LLMA --> STEP1B
+    STEP1B -->|"calls ExtractionPipeline"| EPR
+    STEP1B -.->|"on exception: swallowed, result labelled Legacy"| PARSE
+    EPR --> PBS --> LLA --> GRW
+    GRW -->|"on success: Path A resumes"| PARSE
+    PARSE --> XRES
+
+    AGS --> AGL
+    CAS --> CAL
+
+    M1 -.-> LF
+    M2 -.-> DB
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LA["Path A: InvoiceExtractionAgent\nprimary pipeline, all Celery callers"]
+        LB["Governed enrichment: step 1b inside Path A\nfail-silent, writes audit records only"]
+        LC["Path C and D: ReAct agents and case calls"]
+        LS["Shared prompt store\nLangfuse then DB then hardcoded"]
+        LM["Management commands"]
+    end
+
+    classDef pathA fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a
+    classDef governed fill:#f5f3ff,stroke:#8b5cf6,color:#4c1d95
+    classDef agent fill:#f0fdf4,stroke:#22c55e,color:#14532d
+    classDef storage fill:#f0f9ff,stroke:#0ea5e9,color:#0c4a6e
+    classDef mgmt fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef result fill:#ecfdf5,stroke:#059669,color:#065f46
+    class COMP,LLMA,STEP1B,PARSE pathA
+    class XRES result
+    class EPR,PBS,LLA,GRW governed
+    class AGS,AGL,CAS,CAL agent
+    class LF,DB,HC storage
+    class M1,M2 mgmt
+    class LA pathA
+    class LB governed
+    class LC agent
+    class LS storage
+    class LM mgmt
+      </div>{# /mermaid #}
+      </div>{# /diagram-zoom-wrap #}
 
       {% regroup prompts by category as prompt_groups %}
       {% for group in prompt_groups %}
@@ -2002,22 +2646,37 @@ flowchart TD
 // Re-run on Bootstrap tab shown so diagrams in hidden tabs render correctly.
 mermaid.initialize({
   startOnLoad: false,
+  securityLevel: 'loose',
   theme: 'base',
   themeVariables: {
     fontFamily: 'system-ui, -apple-system, sans-serif',
     fontSize: '16px',
   },
-  flowchart: { curve: 'basis', useMaxWidth: true, nodeSpacing: 55, rankSpacing: 65 },
-  graph: { nodeSpacing: 55, rankSpacing: 65 },
+  flowchart: { curve: 'basis', useMaxWidth: false, nodeSpacing: 55, rankSpacing: 65 },
+  graph: { useMaxWidth: false, nodeSpacing: 55, rankSpacing: 65 },
 });
 
-function renderMermaid() {
-  document.querySelectorAll('.mermaid[data-processed]').forEach(function(el) {
-    el.removeAttribute('data-processed');
-    var src = el.getAttribute('data-mermaid-src');
-    if (src) { el.textContent = src; }
+// Mermaid click callback -- switches the diagram tab (called via: click NODE call switchTab(...))
+window.switchTab = function(tabId) {
+  var btn = document.querySelector('#diagramTabs button[data-bs-target="#' + tabId + '"]');
+  if (btn) { bootstrap.Tab.getOrCreateInstance(btn).show(); }
+};
+
+// Render mermaid diagrams inside a given pane element (or all panes on first load).
+// Resetting _zoomReady ensures auto-fit is re-applied when a tab is shown.
+function renderMermaid(pane) {
+  var nodes = Array.from((pane || document).querySelectorAll('.mermaid'));
+  nodes.forEach(function(el) {
+    if (el.hasAttribute('data-processed')) {
+      el.removeAttribute('data-processed');
+      var src = el.getAttribute('data-mermaid-src');
+      if (src) { el.textContent = src; }
+    }
+    // Allow zoom to re-initialize with fresh auto-fit after re-render
+    var wrap = el.closest('.diagram-zoom-wrap');
+    if (wrap) wrap._zoomReady = false;
   });
-  mermaid.run({ querySelector: '.mermaid' });
+  if (nodes.length) { mermaid.run({ nodes: nodes }); }
 }
 
 // Stash original source before first run so we can restore on repeated renders
@@ -2026,11 +2685,144 @@ document.querySelectorAll('.mermaid').forEach(function(el) {
 });
 
 document.addEventListener('DOMContentLoaded', function() {
+  // Initial render: all tabs
   renderMermaid();
-  document.querySelectorAll('#diagramTabs button[data-bs-toggle="tab"]').forEach(function(btn) {
-    btn.addEventListener('shown.bs.tab', function() { renderMermaid(); });
-  });
+  function attachTabRenderListener(navId) {
+    document.querySelectorAll('#' + navId + ' button[data-bs-toggle="tab"]').forEach(function(btn) {
+      btn.addEventListener('shown.bs.tab', function() {
+        // Only re-render the newly shown tab -- avoid disturbing other tabs that are animating out
+        var paneId = btn.getAttribute('data-bs-target');
+        var pane = paneId ? document.querySelector(paneId) : null;
+        renderMermaid(pane || undefined);
+      });
+    });
+  }
+  attachTabRenderListener('diagramTabs');
+  attachTabRenderListener('agentDiagramTabs');
+  // Bind zoom controls after every mermaid render (watch body so both tab groups are covered)
+  var observer = new MutationObserver(function() { initZoomControls(); });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+  setTimeout(initZoomControls, 600);
 });
+
+// -- Diagram pan/zoom engine --
+function initZoomControls() {
+  document.querySelectorAll('.diagram-zoom-wrap').forEach(function(wrap) {
+    if (wrap._zoomReady) return;
+    var target = wrap.querySelector('.mermaid');
+    if (!target || !target.querySelector('svg')) return;
+    wrap._zoomReady = true;
+
+    var scale = 1, ox = 0, oy = 0;
+    var toolbar = wrap.parentElement.querySelector('.diagram-zoom-toolbar');
+    var levelEl = toolbar ? toolbar.querySelector('.zoom-level') : null;
+
+    function applyTransform() {
+      target.style.transform = 'translate(' + ox + 'px,' + oy + 'px) scale(' + scale + ')';
+      if (levelEl) levelEl.textContent = Math.round(scale * 100) + '%';
+    }
+
+    function clampScale(s) { return Math.min(Math.max(s, 0.2), 5); }
+
+    function calcFitScale() {
+      var svgEl = target.querySelector('svg');
+      if (!svgEl) return 1;
+      var svgW = parseFloat(svgEl.getAttribute('width')) || svgEl.getBoundingClientRect().width;
+      var wrapW = wrap.clientWidth - 24;
+      return (wrapW > 0 && svgW > wrapW) ? wrapW / svgW : 1;
+    }
+
+    // Auto-fit on first render
+    scale = calcFitScale(); ox = 0; oy = 0;
+    applyTransform();
+
+    // Mouse wheel zoom toward cursor position
+    wrap.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var rect = wrap.getBoundingClientRect();
+      var mx = e.clientX - rect.left;
+      var my = e.clientY - rect.top;
+      var delta = e.deltaY < 0 ? 1.12 : 0.89;
+      var newScale = clampScale(scale * delta);
+      ox = mx - (mx - ox) * (newScale / scale);
+      oy = my - (my - oy) * (newScale / scale);
+      scale = newScale;
+      applyTransform();
+    }, { passive: false });
+
+    // Drag to pan
+    var dragging = false, startX, startY, startOx, startOy;
+    wrap.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;
+      dragging = true; startX = e.clientX; startY = e.clientY; startOx = ox; startOy = oy;
+      wrap.classList.add('is-grabbing');
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      ox = startOx + (e.clientX - startX);
+      oy = startOy + (e.clientY - startY);
+      applyTransform();
+    });
+    document.addEventListener('mouseup', function() {
+      dragging = false;
+      wrap.classList.remove('is-grabbing');
+    });
+
+    // Touch pinch + pan
+    var lastDist = null, lastTx, lastTy;
+    wrap.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 2) {
+        lastDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      } else if (e.touches.length === 1) {
+        lastTx = e.touches[0].clientX; lastTy = e.touches[0].clientY;
+      }
+    }, { passive: true });
+    wrap.addEventListener('touchmove', function(e) {
+      if (e.touches.length === 2 && lastDist) {
+        var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        scale = clampScale(scale * (d / lastDist)); lastDist = d; applyTransform();
+      } else if (e.touches.length === 1 && lastTx != null) {
+        ox += e.touches[0].clientX - lastTx; oy += e.touches[0].clientY - lastTy;
+        lastTx = e.touches[0].clientX; lastTy = e.touches[0].clientY; applyTransform();
+      }
+    }, { passive: true });
+
+    // Toolbar buttons
+    if (toolbar) {
+      toolbar.querySelector('.zoom-in').addEventListener('click', function() { scale = clampScale(scale * 1.25); applyTransform(); });
+      toolbar.querySelector('.zoom-out').addEventListener('click', function() { scale = clampScale(scale * 0.8); applyTransform(); });
+      toolbar.querySelector('.zoom-reset').addEventListener('click', function() { scale = calcFitScale(); ox = 0; oy = 0; applyTransform(); });
+      var fsBtn = toolbar.querySelector('.zoom-fullscreen');
+      var fsOverlay = null;
+      // Save original DOM position so we can restore on exit
+      var origParent = toolbar.parentElement;
+      var origToolbarNext = toolbar.nextSibling;
+      var origWrapNext = wrap.nextSibling;
+      fsBtn.addEventListener('click', function() {
+        if (fsOverlay) {
+          // Exit: restore toolbar + wrap to original positions
+          origParent.insertBefore(toolbar, origToolbarNext);
+          origParent.insertBefore(wrap, origWrapNext);
+          document.body.removeChild(fsOverlay);
+          fsOverlay = null;
+          fsBtn.innerHTML = '<i class="bi bi-fullscreen"></i>';
+          scale = 1; ox = 0; oy = 0; applyTransform();
+        } else {
+          // Enter: move toolbar + wrap into a fixed overlay on body
+          fsOverlay = document.createElement('div');
+          fsOverlay.className = 'diagram-fs-overlay';
+          fsOverlay.appendChild(toolbar);
+          fsOverlay.appendChild(wrap);
+          document.body.appendChild(fsOverlay);
+          fsBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+        }
+      });
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && fsOverlay) { fsBtn.click(); }
+      });
+    }
+  });
+}
 </script>
 <script>
 (function () {

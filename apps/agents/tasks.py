@@ -39,12 +39,56 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: 
 
     orchestrator = AgentOrchestrator()
 
+    # Before executing, attach the Celery task_id to the result's invoice session
+    # in Langfuse so the async task boundary is visible alongside the agent_pipeline
+    # trace that the orchestrator creates.  This is best-effort and fail-silent.
+    try:
+        from apps.core.langfuse_client import start_trace, end_span
+        _celery_task_id = self.request.id
+        if _celery_task_id:
+            _lf_wrapper = start_trace(
+                f"agent-task-{_celery_task_id}",
+                "agent_pipeline_task",
+                invoice_id=result.invoice_id,
+                user_id=actor_user_id,
+                session_id=f"invoice-{result.invoice_id}" if result.invoice_id else None,
+                metadata={
+                    "task_id": _celery_task_id,
+                    "reconciliation_result_id": reconciliation_result_id,
+                    "actor_user_id": actor_user_id,
+                },
+            )
+        else:
+            _lf_wrapper = None
+    except Exception:
+        _lf_wrapper = None
+
     try:
         outcome = orchestrator.execute(result, request_user=request_user)
     except Exception as exc:
         logger.exception("Agent pipeline failed for result %s", reconciliation_result_id)
+        try:
+            if _lf_wrapper is not None:
+                end_span(_lf_wrapper, output={"error": str(exc)[:200]}, level="ERROR")
+                _lf_wrapper = None
+        except Exception:
+            pass
         from apps.core.utils import safe_retry
         safe_retry(self, exc)
+
+    try:
+        if _lf_wrapper is not None:
+            end_span(
+                _lf_wrapper,
+                output={
+                    "agents_executed": outcome.agents_executed,
+                    "final_recommendation": outcome.final_recommendation,
+                    "skipped": outcome.skipped,
+                    "error": outcome.error or None,
+                },
+            )
+    except Exception:
+        pass
 
     return {
         "reconciliation_result_id": reconciliation_result_id,

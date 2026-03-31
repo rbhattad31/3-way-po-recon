@@ -518,6 +518,19 @@ class APCopilotService:
                 "Copilot session archived",
                 user=user, session_id=session_id,
             )
+            try:
+                from apps.core.langfuse_client import score_trace
+                msg_count = CopilotMessage.objects.filter(
+                    session__pk=session_id, session__user=user,
+                ).count()
+                score_trace(
+                    f"copilot-{session_id}",
+                    "copilot_session_length",
+                    float(msg_count),
+                    comment=f"session={session_id} messages={msg_count}",
+                )
+            except Exception:
+                pass
         return updated > 0
 
     @staticmethod
@@ -917,20 +930,44 @@ class APCopilotService:
         """Generate a structured copilot response.
 
         This is a **read-only** operation.  The copilot synthesises data from
-        existing models and produces guidance — it never modifies records.
+        existing models and produces guidance -- it never modifies records.
 
         In the current version the response is assembled deterministically
         from database queries.  A future version will route through an LLM
         with tool access for richer analysis.
         """
+        _lf_span = None
+        _topic = "unknown"
+        _session_trace_id = getattr(session, "trace_id", None) or f"copilot-{session.pk}"
+        try:
+            from apps.core.langfuse_client import start_trace
+            _lf_span = start_trace(
+                _session_trace_id,
+                "copilot_answer",
+                session_id=f"copilot-{session.pk}",
+                metadata={
+                    "session_id": str(session.pk),
+                    "case_id": session.linked_case_id,
+                },
+            )
+        except Exception:
+            pass
+
         case_id = session.linked_case_id
         primary_role = getattr(user, "role", "")
 
         # ── Small-talk short-circuit ─────────────────────────────
         small_talk_key = _detect_small_talk(message)
         if small_talk_key is not None:
+            _topic = "small_talk"
             response_text = _SMALL_TALK_RESPONSES.get(small_talk_key, _SMALL_TALK_RESPONSES["greeting"])
             follow_ups = APCopilotService.get_suggestions(user)
+            try:
+                from apps.core.langfuse_client import end_span
+                if _lf_span:
+                    end_span(_lf_span, output={"topic": _topic, "case_id": session.linked_case_id})
+            except Exception:
+                pass
             return {
                 "summary": response_text,
                 "evidence": [],
@@ -993,6 +1030,13 @@ class APCopilotService:
             evidence_data = topic_result["evidence"]
             follow_ups = topic_result["follow_ups"]
 
+        _topic = topic
+        try:
+            from apps.core.langfuse_client import end_span
+            if _lf_span:
+                end_span(_lf_span, output={"topic": _topic, "case_id": session.linked_case_id})
+        except Exception:
+            pass
         return {
             "summary": summary,
             "evidence": evidence_data,
