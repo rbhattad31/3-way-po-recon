@@ -37,6 +37,11 @@ class TestConstants:
         dc.RECOVERY_LANE_SUCCEEDED,
         dc.RECOVERY_LANE_FAILED,
         dc.RECOVERY_NOT_APPLICABLE,
+        # QR / e-invoice codes
+        dc.QR_DATA_VERIFIED,
+        dc.QR_MISMATCH,
+        dc.QR_IRN_PRESENT,
+        dc.IRN_DUPLICATE,
     ]
 
     def test_all_codes_are_strings(self):
@@ -273,3 +278,76 @@ class TestFailSilent:
     def test_none_all_args_returns_empty(self):
         result = derive_codes(None, None, None, "")
         assert result == []
+
+
+# ── derive_codes() — QR / e-invoice ──────────────────────────────────────────
+
+def _make_qr_data(irn="a" * 64, doc_type="INV"):
+    m = MagicMock()
+    m.irn = irn
+    m.doc_type = doc_type
+    return m
+
+
+def _make_fc_result_with_flags(flags: dict):
+    m = MagicMock()
+    m.header = {}
+    m.lines = []
+    m.evidence_flags = flags
+    return m
+
+
+class TestDeriveFromQRData:
+    def test_qr_with_irn_adds_irn_present_code(self):
+        qr = _make_qr_data()
+        codes = derive_codes(qr_data=qr)
+        assert dc.QR_IRN_PRESENT in codes
+
+    def test_qr_without_irn_no_irn_present_code(self):
+        qr = _make_qr_data(irn="")
+        codes = derive_codes(qr_data=qr)
+        assert dc.QR_IRN_PRESENT not in codes
+
+    def test_qr_no_field_conf_adds_qr_data_verified(self):
+        """When no field_conf_result, but IRN is present → QR_DATA_VERIFIED."""
+        qr = _make_qr_data()
+        codes = derive_codes(qr_data=qr)
+        assert dc.QR_DATA_VERIFIED in codes
+
+    def test_qr_confirmed_flags_adds_qr_data_verified(self):
+        qr = _make_qr_data()
+        fc = _make_fc_result_with_flags({"invoice_number": "qr_confirmed"})
+        codes = derive_codes(qr_data=qr, field_conf_result=fc)
+        assert dc.QR_DATA_VERIFIED in codes
+        assert dc.QR_MISMATCH not in codes
+
+    def test_qr_mismatch_flags_adds_qr_mismatch(self):
+        qr = _make_qr_data()
+        fc = _make_fc_result_with_flags({"invoice_number": "qr_mismatch:extracted=INV001|qr=INV002"})
+        codes = derive_codes(qr_data=qr, field_conf_result=fc)
+        assert dc.QR_MISMATCH in codes
+        assert dc.QR_DATA_VERIFIED not in codes
+
+    def test_qr_mismatch_is_in_hard_review_codes(self):
+        assert dc.QR_MISMATCH in HARD_REVIEW_CODES
+
+    def test_irn_duplicate_is_in_hard_review_codes(self):
+        assert dc.IRN_DUPLICATE in HARD_REVIEW_CODES
+
+    def test_qr_mismatch_routes_to_ap_review(self):
+        assert ROUTING_MAP[dc.QR_MISMATCH] == "AP_REVIEW"
+
+    def test_irn_duplicate_routes_to_exception_ops(self):
+        assert ROUTING_MAP[dc.IRN_DUPLICATE] == "EXCEPTION_OPS"
+
+    def test_no_qr_data_no_qr_codes(self):
+        codes = derive_codes()
+        assert dc.QR_DATA_VERIFIED not in codes
+        assert dc.QR_MISMATCH not in codes
+        assert dc.QR_IRN_PRESENT not in codes
+
+    def test_qr_data_verified_and_irn_present_both_emitted(self):
+        qr = _make_qr_data()
+        codes = derive_codes(qr_data=qr)
+        assert dc.QR_IRN_PRESENT in codes
+        assert dc.QR_DATA_VERIFIED in codes

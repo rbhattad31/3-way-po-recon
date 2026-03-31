@@ -65,6 +65,25 @@ RECOVERY_LANE_FAILED        = "RECOVERY_LANE_FAILED"
 RECOVERY_NOT_APPLICABLE     = "RECOVERY_NOT_APPLICABLE"
 """Named failure mode detected but recovery lane was suppressed (already valid / finalized)."""
 
+# ── QR / e-invoice ───────────────────────────────────────────────────────────
+
+QR_DATA_VERIFIED            = "QR_DATA_VERIFIED"
+"""Indian e-invoice QR decoded successfully; key fields (invoice_number, total,
+vendor GSTIN) confirmed against extracted values."""
+
+QR_MISMATCH                 = "QR_MISMATCH"
+"""At least one QR-verified field conflicts with the LLM-extracted value beyond
+the allowed tolerance — likely OCR/extraction error; requires human review."""
+
+QR_IRN_PRESENT              = "QR_IRN_PRESENT"
+"""IRN (Invoice Reference Number) is available in the QR payload — enables
+deterministic duplicate detection by IRN in addition to fuzzy invoice-number
+matching."""
+
+IRN_DUPLICATE               = "IRN_DUPLICATE"
+"""Same IRN seen on a previously processed invoice — hard duplicate, must be
+rejected or escalated."""
+
 # ── Review routing ────────────────────────────────────────────────────────────
 
 ROUTE_EXCEPTION_OPS         = "ROUTE_EXCEPTION_OPS"
@@ -82,9 +101,11 @@ ROUTING_MAP: dict[str, str] = {
     INV_NUM_UNRECOVERABLE:          "EXCEPTION_OPS",
     TOTAL_MISMATCH_HARD:            "EXCEPTION_OPS",
     LINE_TABLE_INCOMPLETE:          "EXCEPTION_OPS",
+    IRN_DUPLICATE:                  "EXCEPTION_OPS",
     TAX_ALLOC_AMBIGUOUS:            "TAX_REVIEW",
     TAX_BREAKDOWN_MISMATCH:         "TAX_REVIEW",
     VENDOR_MATCH_LOW:               "MASTER_DATA_REVIEW",
+    QR_MISMATCH:                    "AP_REVIEW",
     LOW_CONFIDENCE_CRITICAL_FIELD:  "AP_REVIEW",
     LINE_SUM_MISMATCH:              "AP_REVIEW",
     PROMPT_COMPOSITION_FALLBACK_USED: "AP_REVIEW",
@@ -95,6 +116,8 @@ HARD_REVIEW_CODES: frozenset[str] = frozenset({
     INV_NUM_UNRECOVERABLE,
     TOTAL_MISMATCH_HARD,
     LINE_TABLE_INCOMPLETE,
+    IRN_DUPLICATE,
+    QR_MISMATCH,
 })
 
 
@@ -103,21 +126,29 @@ def derive_codes(
     recon_val_result=None,
     field_conf_result=None,
     prompt_source_type: str = "",
+    qr_data=None,
 ) -> list[str]:
     """Derive the full list of applicable decision codes from pipeline outputs.
 
     Arguments are all optional — pass whatever is available.
     Fail-silent: any exception returns an empty list.
+
+    Args:
+        validation_result:   ValidationResult from ValidationService.
+        recon_val_result:    ReconciliationValidationResult from ReconciliationValidatorService.
+        field_conf_result:   FieldConfidenceResult from FieldConfidenceService.
+        prompt_source_type:  Prompt source type string from _prompt_meta.
+        qr_data:             Optional QRInvoiceData from QRCodeDecoderService.
     """
     try:
-        return _derive(validation_result, recon_val_result, field_conf_result, prompt_source_type)
+        return _derive(validation_result, recon_val_result, field_conf_result, prompt_source_type, qr_data)
     except Exception:
         import logging as _log
         _log.getLogger(__name__).exception("decision_codes.derive_codes failed")
         return []
 
 
-def _derive(validation_result, recon_val_result, field_conf_result, prompt_source_type: str) -> list[str]:
+def _derive(validation_result, recon_val_result, field_conf_result, prompt_source_type: str, qr_data=None) -> list[str]:
     codes: list[str] = []
 
     # ── From ValidationResult ─────────────────────────────────────────────────
@@ -163,6 +194,31 @@ def _derive(validation_result, recon_val_result, field_conf_result, prompt_sourc
     # ── Prompt source ─────────────────────────────────────────────────────────
     if prompt_source_type in ("monolithic_fallback", "agent_default"):
         codes.append(PROMPT_COMPOSITION_FALLBACK_USED)
+
+    # ── QR / e-invoice ────────────────────────────────────────────────────────
+    if qr_data is not None:
+        irn = getattr(qr_data, "irn", "") or ""
+        if irn:
+            codes.append(QR_IRN_PRESENT)
+
+        # evidence_flags from field_conf_result reveal whether QR matched or mismatched
+        qr_mismatch = False
+        qr_confirmed = False
+        if field_conf_result is not None:
+            ev_flags = getattr(field_conf_result, "evidence_flags", {}) or {}
+            for _flag_val in ev_flags.values():
+                if "qr_mismatch" in str(_flag_val):
+                    qr_mismatch = True
+                if "qr_confirmed" in str(_flag_val):
+                    qr_confirmed = True
+
+        if qr_mismatch:
+            codes.append(QR_MISMATCH)
+        elif qr_confirmed:
+            codes.append(QR_DATA_VERIFIED)
+        elif irn:
+            # QR decoded but confidence service hasn't compared yet (no field_conf_result)
+            codes.append(QR_DATA_VERIFIED)
 
     # Deduplicate while preserving order
     seen: set[str] = set()

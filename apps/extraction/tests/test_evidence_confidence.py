@@ -327,3 +327,166 @@ class TestCombinedEvidenceAndOCR:
             evidence_context=None,
         )
         assert isinstance(result, FieldConfidenceResult)
+
+
+# ── QR-verified ground truth ──────────────────────────────────────────────────
+
+class TestQRVerifiedGroundTruth:
+    """Tests for evidence_context['qr_verified'] dict → 0.99 or 0.40 cap."""
+
+    def test_qr_confirmed_invoice_number_sets_score_099(self):
+        """Invoice number matching QR payload → score 0.99."""
+        result = _score(
+            raw_json_overrides={"invoice_number": "INV/2024/001"},
+            norm_overrides={"normalized_invoice_number": "INV/2024/001"},
+            evidence_context={"qr_verified": {"invoice_number": "INV/2024/001"}},
+        )
+        assert result.header["invoice_number"] == 0.99
+
+    def test_qr_confirmed_invoice_number_with_separator_difference(self):
+        """Separators stripped before comparison: 'INV/2024/001' == 'INV2024001'."""
+        result = _score(
+            raw_json_overrides={"invoice_number": "INV2024001"},
+            norm_overrides={"normalized_invoice_number": "INV2024001"},
+            evidence_context={"qr_verified": {"invoice_number": "INV/2024/001"}},
+        )
+        assert result.header["invoice_number"] == 0.99
+
+    def test_qr_mismatch_invoice_number_caps_score_at_040(self):
+        """Mismatch between extracted and QR invoice number → score ≤ 0.40."""
+        result = _score(
+            raw_json_overrides={"invoice_number": "INV001"},
+            norm_overrides={"normalized_invoice_number": "INV001"},
+            evidence_context={"qr_verified": {"invoice_number": "INV999"}},
+        )
+        assert result.header["invoice_number"] <= 0.40
+
+    def test_qr_mismatch_sets_evidence_flag(self):
+        """QR mismatch adds a 'qr_mismatch:...' evidence flag."""
+        result = _score(
+            raw_json_overrides={"invoice_number": "INV001"},
+            norm_overrides={"normalized_invoice_number": "INV001"},
+            evidence_context={"qr_verified": {"invoice_number": "INV999"}},
+        )
+        assert "invoice_number" in result.evidence_flags
+        assert "qr_mismatch" in result.evidence_flags["invoice_number"]
+
+    def test_qr_confirmed_sets_evidence_flag(self):
+        """QR match adds a 'qr_confirmed' evidence flag."""
+        result = _score(
+            raw_json_overrides={"invoice_number": "INV2024001"},
+            norm_overrides={"normalized_invoice_number": "INV2024001"},
+            evidence_context={"qr_verified": {"invoice_number": "INV2024001"}},
+        )
+        assert "invoice_number" in result.evidence_flags
+        assert "qr_confirmed" in result.evidence_flags["invoice_number"]
+
+    def test_qr_confirmed_vendor_tax_id(self):
+        """vendor_tax_id matching QR seller_gstin → score 0.99."""
+        result = _score(
+            raw_json_overrides={"vendor_tax_id": "29AAAAA0000A1ZA"},
+            evidence_context={"qr_verified": {"vendor_tax_id": "29AAAAA0000A1ZA"}},
+        )
+        assert result.header["vendor_tax_id"] == 0.99
+
+    def test_qr_confirmed_total_amount(self):
+        """total_amount matching QR TotInvVal → score 0.99."""
+        result = _score(
+            raw_json_overrides={"total_amount": "11800.00"},
+            norm_overrides={"total_amount": Decimal("11800.00")},
+            evidence_context={"qr_verified": {"total_amount": "11800.00"}},
+        )
+        assert result.header["total_amount"] == 0.99
+
+    def test_empty_extracted_value_skipped_even_with_qr(self):
+        """If extracted value is empty, QR comparison is skipped (can't set 0.99 on 0.0)."""
+        result = _score(
+            raw_json_overrides={"invoice_number": ""},
+            norm_overrides={"normalized_invoice_number": ""},
+            evidence_context={"qr_verified": {"invoice_number": "INV2024001"}},
+        )
+        # Should remain at 0.0 (absent) — not boosted to 0.99
+        assert result.header["invoice_number"] == 0.0
+
+    def test_no_qr_verified_in_context_no_change(self):
+        """Absence of qr_verified key in evidence_context → no QR adjustment."""
+        result = _score(evidence_context={"extraction_method": "explicit"})
+        assert result.header["invoice_number"] == 1.0
+        assert result.evidence_flags == {}
+
+    def test_empty_qr_verified_dict_no_change(self):
+        result = _score(evidence_context={"qr_verified": {}})
+        assert result.header["invoice_number"] == 1.0
+
+    def test_qr_mismatch_cannot_lower_below_existing_zero(self):
+        """A field already at 0.0 cannot be lowered further by QR mismatch."""
+        result = _score(
+            raw_json_overrides={"invoice_number": ""},
+            norm_overrides={"normalized_invoice_number": ""},
+            evidence_context={"qr_verified": {"invoice_number": "INV999"}},
+        )
+        # Empty extracted value → skipped → stays at 0.0
+        assert result.header["invoice_number"] == 0.0
+
+    def test_fail_silent_on_bad_qr_verified(self):
+        """Malformed qr_verified should not crash."""
+        result = _score(evidence_context={"qr_verified": "not_a_dict"})
+        assert isinstance(result, FieldConfidenceResult)
+
+    # ── Date format-aware comparison ─────────────────────────────────────────
+
+    def test_qr_date_iso_vs_ddmmyyyy_treated_as_match(self):
+        """Extracted YYYY-MM-DD vs QR DD/MM/YYYY → same date → qr_confirmed."""
+        result = _score(
+            raw_json_overrides={"invoice_date": "2025-09-20"},
+            evidence_context={"qr_verified": {"invoice_date": "20/09/2025"}},
+        )
+        assert result.header["invoice_date"] == 0.99
+        assert "qr_confirmed" in result.evidence_flags.get("invoice_date", "")
+
+    def test_qr_date_ddmmyyyy_vs_ddmmyyyy_match(self):
+        """Both DD/MM/YYYY → match."""
+        result = _score(
+            raw_json_overrides={"invoice_date": "20/09/2025"},
+            evidence_context={"qr_verified": {"invoice_date": "20/09/2025"}},
+        )
+        assert result.header["invoice_date"] == 0.99
+
+    def test_qr_date_different_dates_mismatch(self):
+        """Different dates → mismatch regardless of format."""
+        result = _score(
+            raw_json_overrides={"invoice_date": "2025-09-21"},
+            evidence_context={"qr_verified": {"invoice_date": "20/09/2025"}},
+        )
+        assert result.header["invoice_date"] <= 0.40
+        assert "qr_mismatch" in result.evidence_flags.get("invoice_date", "")
+
+    # ── Amount format-aware comparison ───────────────────────────────────────
+
+    def test_qr_amount_int_vs_float_treated_as_match(self):
+        """QR '41958' vs extracted '41958.0' → same amount → qr_confirmed."""
+        result = _score(
+            raw_json_overrides={"total_amount": "41958.0"},
+            norm_overrides={"total_amount": Decimal("41958.0")},
+            evidence_context={"qr_verified": {"total_amount": "41958"}},
+        )
+        assert result.header["total_amount"] == 0.99
+        assert "qr_confirmed" in result.evidence_flags.get("total_amount", "")
+
+    def test_qr_amount_with_thousands_separator(self):
+        """Amount with comma thousands separator '41,958.00' → same as '41958'."""
+        result = _score(
+            raw_json_overrides={"total_amount": "41,958.00"},
+            norm_overrides={"total_amount": Decimal("41958.00")},
+            evidence_context={"qr_verified": {"total_amount": "41958"}},
+        )
+        assert result.header["total_amount"] == 0.99
+
+    def test_qr_amount_mismatch(self):
+        """Different amounts → mismatch."""
+        result = _score(
+            raw_json_overrides={"total_amount": "50000.0"},
+            norm_overrides={"total_amount": Decimal("50000")},
+            evidence_context={"qr_verified": {"total_amount": "41958"}},
+        )
+        assert result.header["total_amount"] <= 0.40

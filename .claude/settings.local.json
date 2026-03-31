@@ -16,7 +16,25 @@
       "Bash(python -m pytest apps/extraction/tests/test_decision_codes.py apps/extraction/tests/test_recovery_lane.py apps/extraction/tests/test_evidence_confidence.py apps/extraction/tests/test_prompt_source.py -x -q)",
       "Bash(python -m pytest apps/extraction/tests/test_recovery_lane.py -x -q)",
       "Bash(python -m pytest apps/extraction/tests/test_recovery_lane.py apps/extraction/tests/test_decision_codes.py apps/extraction/tests/test_evidence_confidence.py apps/extraction/tests/test_prompt_source.py -q)",
-      "Bash(python -m pytest --tb=short -q)"
+      "Bash(python -m pytest --tb=short -q)",
+      "Bash(python -m pytest apps/extraction/tests/test_qr_decoder_service.py apps/extraction/tests/test_decision_codes.py apps/extraction/tests/test_evidence_confidence.py -v --tb=short)",
+      "Bash(git stash:*)",
+      "Bash(python -m pytest apps/extraction/tests/test_response_repair_service.py::TestInvoiceNumberExclusion::test_cart_ref_value_triggers_exclusion apps/extraction/tests/test_response_repair_service.py::TestRepairServiceSafety::test_repair_metadata_embedded_in_key --tb=line -q)",
+      "Bash(pip show:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(python -c \"from azure.ai.formrecognizer import AnalysisFeature; print\\([f for f in dir\\(AnalysisFeature\\) if not f.startswith\\(''_''\\)]\\)\")",
+      "Bash(python -c \"from azure.ai.formrecognizer import DocumentAnalysisClient; import inspect; sig = inspect.signature\\(DocumentAnalysisClient.begin_analyze_document\\); print\\(sig\\)\")",
+      "Bash(python -c \"from azure.ai.formrecognizer import DocumentAnalysisClient; help\\(DocumentAnalysisClient.begin_analyze_document\\)\")",
+      "Bash(python -c \"from azure.ai.formrecognizer import AnalysisFeature; print\\(repr\\(AnalysisFeature.BARCODES\\)\\); print\\(type\\(AnalysisFeature.BARCODES\\)\\)\")",
+      "Bash(python -:*)",
+      "Bash(python manage.py shell -c \":*)",
+      "Bash(python manage.py test apps.extraction.tests -v 1 --pattern=\"test_qr*\")",
+      "Bash(python manage.py test apps.extraction)",
+      "Bash(python -m pytest apps/extraction/tests/ -x -q)",
+      "Bash(python -m pytest apps/extraction/tests/test_qr_decoder_service.py -x -q)",
+      "Bash(python manage.py shell -c \"import apps.extraction.tasks as t; print\\([x for x in dir\\(t\\) if not x.startswith\\(''''_''''\\)]\\)\")",
+      "Bash(python -m pytest apps/extraction/tests/test_evidence_confidence.py apps/extraction/tests/test_qr_decoder_service.py -x -q)",
+      "Bash(python -m pytest apps/extraction/tests/ -q --tb=no)"
     ]
   }
 }

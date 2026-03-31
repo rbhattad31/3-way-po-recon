@@ -121,10 +121,19 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         try:
             from apps.extraction.services.field_confidence_service import FieldConfidenceService
             repair_actions = (extraction_resp.raw_json.get("_repair") or {}).get("repair_actions", [])
+            # Build evidence_context — include QR-verified fields when available
+            _evidence_context: dict = {}
+            if extraction_resp.qr_data is not None:
+                try:
+                    _evidence_context.update(extraction_resp.qr_data.to_evidence_context())
+                except Exception:
+                    pass
             field_conf_result = FieldConfidenceService.score(
                 normalized,
                 extraction_resp.raw_json,
                 repair_actions,
+                ocr_text=extraction_resp.ocr_text,
+                evidence_context=_evidence_context if _evidence_context else None,
             )
             # Attach to normalized so ValidationService can read it
             normalized.field_confidence = {
@@ -179,6 +188,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 recon_val_result=recon_val_result,
                 field_conf_result=field_conf_result,
                 prompt_source_type=_prompt_source_type,
+                qr_data=extraction_resp.qr_data,
             )
             extraction_resp.raw_json["_decision_codes"] = decision_codes
         except Exception as dc_exc:
@@ -290,6 +300,10 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             _audit_meta["review_forced_by"] = validation_result.critical_failures
         if decision_codes:
             _audit_meta["decision_codes"] = decision_codes
+        if extraction_resp.qr_data is not None:
+            _audit_meta["qr_irn"] = extraction_resp.qr_data.irn
+            _audit_meta["qr_doc_type"] = extraction_resp.qr_data.doc_type
+            _audit_meta["qr_decode_strategy"] = extraction_resp.qr_data.decode_strategy
         if recovery_result is not None:
             _audit_meta["recovery_lane_invoked"] = recovery_result.invoked
             _audit_meta["recovery_lane_succeeded"] = recovery_result.succeeded

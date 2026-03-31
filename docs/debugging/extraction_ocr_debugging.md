@@ -24,7 +24,8 @@ When an invoice is uploaded, the system runs a multi-stage pipeline:
 | Raw OCR text | `ExtractionResult` | `ocr_text` | What was sent to LLM |
 | Governed pipeline OCR | `ExtractionDocument` | `ocr_text` | Only when governed pipeline succeeds |
 | Invoice normalized fields | `Invoice` | `invoice_number`, `vendor_tax_id`, `buyer_name`, `due_date`, `tax_breakdown`, etc. | Final persisted values |
-| Agent run details | `AgentRun` | `output_payload`, `prompt_tokens`, `input_payload` | Linked via `ExtractionResult.agent_run_id` |
+| Agent run details | `AgentRun` | `output_payload`, `prompt_tokens`, `input_payload` | Linked via `ExtractionResult.agent_run_id` (latest run); all runs for an upload queryable via `AgentRun.objects.filter(document_upload_id=...)` |
+| All extraction runs for upload | `AgentRun` | `document_upload` FK (indexed) | Added 2026-03-28. Token totals in the console are `SUM()` across all rows. |
 
 ---
 
@@ -123,6 +124,7 @@ If `status=FAILED`, the LLM call failed entirely — check `error_message` for A
 | OCR text is garbled | Low-quality scan or rotated page | Re-scan; ensure Azure DI is enabled. |
 | `raw_response` is null | `InvoiceExtractionAgent` failed | Check `AgentRun.error_message`; verify LLM API keys. |
 | `invoice_number` present in `raw_response` but blank in `Invoice` | Normalization stripped it | Check `normalize_invoice_number()` in `apps/core/utils.py`. |
+| `tax_percentage` 0.25% rejected on Indian invoice | Valid for precious stones (HSN 7102-7104, Chapter 71) but invoice not detected as such | `_is_precious_stone_invoice()` scans line item descriptions and vendor name for keywords (diamond, ruby, gemstone, etc.) and HSN codes 7102-7104. If keywords are absent, 0.25% is blocked as invalid. Add a keyword or correct the rate. |
 
 ---
 
@@ -141,6 +143,8 @@ Requires the `extraction.reprocess` permission.
 > **Note:** Reprocessing will NOT mark the invoice as a duplicate of itself. The duplicate check
 > correctly excludes the existing invoice on the same upload when reprocessing.
 
+> **Credits:** Every successful reprocess consumes 1 credit (charged independently per attempt with a unique `reference_id`). Token counts and costs shown in the Cost & Tokens panel are the **cumulative SUM across all extraction runs** for this document, not just the most recent. The "Extraction Runs" KPI card shows how many runs have been recorded.
+
 ---
 
 ## Known Issues & Fixes (changelog)
@@ -149,6 +153,9 @@ Requires the `extraction.reprocess` permission.
 |---|---|---|
 | 2026-03-28 | Invoice incorrectly marked as duplicate on reprocess | `DuplicateDetectionService.check()` now receives `exclude_invoice_id` set to the existing invoice on the same upload in both `tasks.py` and `template_views.py`. |
 | 2026-03-28 | Indian GST tax rate shows fractional values (e.g. 8.33%, 16.67%) | `ResponseRepairService._repair_tax_percentage()` now snaps the computed rate to the nearest standard GST slab (0/3/5/12/18/28%) within ±2 pp when CGST/SGST/IGST breakdown keys are detected. |
+| 2026-03-28 | Credits not deducting on 2nd+ reprocess | `reference_id` was `upload.pk` (never changes); idempotency guard treated every reprocess after the first as a duplicate and skipped it. Now uses `f"reprocess-{upload.pk}-{timestamp}"` — unique per attempt — passed as task kwargs `credit_ref_type` / `credit_ref_id`. |
+| 2026-03-28 | Token total in Cost & Tokens panel showed only the latest extraction run | `AgentRun` had no FK back to `DocumentUpload`; `ExtractionResult.agent_run_id` was overwritten on each reprocess. Added `AgentRun.document_upload` FK (migration 0009). Console now aggregates `SUM(prompt_tokens, completion_tokens, total_tokens)` across all runs for the upload. |
+| 2026-03-28 | 0.25% GST incorrectly rejected for precious stones | Added `_is_precious_stone_invoice()` keyword detection in `ValidationService`. 0.25% is allowed when the invoice line items or vendor name contain precious stone keywords or HSN codes 7102-7104 (Schedule I, Chapter 71). `ResponseRepairService._GST_STANDARD_RATES` also updated to include 0.25. |
 
 ---
 

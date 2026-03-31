@@ -204,3 +204,82 @@ class DurationTimer:
 
     def __exit__(self, *args):
         self.duration_ms = int((time.monotonic() - self.start_time) * 1000)
+
+
+# ============================================================================
+# Broken-pipe noise filter (Django dev server)
+# ============================================================================
+
+class BrokenPipeFilter(logging.Filter):
+    """
+    Suppresses the harmless 'Broken pipe from ...' INFO messages emitted by
+    Django's WSGIRequestHandler (django.server logger) when a browser closes
+    a connection before the response is fully written.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Broken pipe" not in record.getMessage()
+
+
+# ============================================================================
+# Loki handler with silent connection-error recovery
+# ============================================================================
+
+_LOKI_WARN_INTERVAL = 300  # seconds between "Loki unreachable" warnings
+_loki_last_warn: float = 0.0
+
+
+class SilentLokiHandler(logging.Handler):
+    """
+    Wraps logging_loki.LokiHandler and silently swallows network errors when
+    the Loki server is unreachable. Emits a single stderr warning at most once
+    every 5 minutes so the developer knows Loki is down without flooding the
+    console with full tracebacks.
+
+    Falls back gracefully: if logging_loki is not installed the class still
+    loads but emit() is a no-op.
+    """
+
+    def __init__(self, url: str, tags: dict, auth: tuple, version: str = "1", **kwargs):
+        super().__init__(**kwargs)
+        self._inner: Optional[logging.Handler] = None
+        try:
+            import logging_loki  # type: ignore
+
+            class _QuietLokiHandler(logging_loki.LokiHandler):
+                """LokiHandler that re-raises on connection failure instead of
+                printing a traceback, so SilentLokiHandler can catch and rate-limit."""
+                def handleError(self, record: logging.LogRecord) -> None:
+                    raise  # re-raise the active exception; caught by SilentLokiHandler.emit()
+
+            self._inner = _QuietLokiHandler(
+                url=url,
+                tags=tags,
+                auth=auth,
+                version=version,
+            )
+        except Exception:
+            pass  # logging_loki not installed or broken -- degrade silently
+
+    def setFormatter(self, fmt):  # type: ignore[override]
+        super().setFormatter(fmt)
+        if self._inner is not None:
+            self._inner.setFormatter(fmt)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self._inner is None:
+            return
+        global _loki_last_warn
+        try:
+            self._inner.emit(record)
+        except Exception:
+            # Swallow all handler errors. Warn at most once per interval.
+            now = time.monotonic()
+            if now - _loki_last_warn > _LOKI_WARN_INTERVAL:
+                _loki_last_warn = now
+                import sys
+                print(
+                    "WARNING: Loki handler unreachable -- log shipping paused "
+                    "(set LOKI_ENABLED=false to disable).",
+                    file=sys.stderr,
+                )

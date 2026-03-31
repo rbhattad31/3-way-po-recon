@@ -140,7 +140,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Cache-busting version counter — bump after static file changes
-STATIC_VERSION = "1.0.6"
+STATIC_VERSION = "1.0.8"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -291,8 +291,19 @@ LOGGING = {
         "handlers": _active_handlers,
         "level": "INFO",
     },
+    "filters": {
+        "no_broken_pipe": {
+            "()": "apps.core.logging_utils.BrokenPipeFilter",
+        },
+    },
     "loggers": {
         "django": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
+        "django.server": {
+            "handlers": _active_handlers,
+            "level": "INFO",
+            "propagate": False,
+            "filters": ["no_broken_pipe"],
+        },
         "apps": {"handlers": _active_handlers, "level": "DEBUG", "propagate": False},
         "apps.observed": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
         "apps.action": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
@@ -302,7 +313,7 @@ LOGGING = {
 
 if LOKI_ENABLED:
     LOGGING["handlers"]["loki"] = {
-        "class": "logging_loki.LokiHandler",
+        "class": "apps.core.logging_utils.SilentLokiHandler",
         "url": LOKI_URL,
         "tags": {
             "service": LOKI_APP_LABEL,

@@ -1818,6 +1818,15 @@ def extraction_console(request, pk):
             })
         correction_count = len(corrections)
 
+    # ── QR / e-invoice data from raw_response["_qr"] ──
+    qr_data = None
+    qr_decision_codes = []
+    if isinstance(extracted_data, dict):
+        _qr_raw = extracted_data.get("_qr")
+        if isinstance(_qr_raw, dict) and _qr_raw.get("irn"):
+            qr_data = _qr_raw
+        qr_decision_codes = extracted_data.get("_decision_codes") or []
+
     # ── Merged from result_detail: raw JSON, line item models, has_line_tax ──
     raw_json_pretty = ""
     if ext.raw_response:
@@ -1946,6 +1955,8 @@ def extraction_console(request, pk):
         "correction_count": correction_count,
         "raw_json_pretty": raw_json_pretty,
         "cost_token_data": cost_token_data,
+        "qr_data": qr_data,
+        "qr_decision_codes": qr_decision_codes,
     })
     response["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
