@@ -234,7 +234,7 @@
               <span class="fw-semibold">Vendor Resolution</span>
             </div>
             <div>
-              <span class="badge {% if erp_source_metadata.vendor.source_type == 'api' %}bg-success{% elif erp_source_metadata.vendor.source_type == 'cache' %}bg-info{% else %}bg-secondary{% endif %}">
+              <span class="badge {% if erp_source_metadata.vendor.source_type == 'API' %}bg-success{% elif erp_source_metadata.vendor.source_type == 'CACHE' %}bg-info{% elif erp_source_metadata.vendor.source_type == 'MIRROR_DB' %}bg-primary{% elif erp_source_metadata.vendor.source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
                 {{ erp_source_metadata.vendor.source_type|upper }}
               </span>
               {% if erp_source_metadata.vendor.fallback_used %}
@@ -264,7 +264,7 @@
               {% else %}
                 <span class="badge bg-success">No Duplicate</span>
               {% endif %}
-              <span class="badge {% if erp_source_metadata.duplicate_check.source_type == 'api' %}bg-success{% else %}bg-secondary{% endif %} ms-1">
+              <span class="badge {% if erp_source_metadata.duplicate_check.source_type == 'API' %}bg-success{% elif erp_source_metadata.duplicate_check.source_type == 'CACHE' %}bg-info{% elif erp_source_metadata.duplicate_check.source_type == 'MIRROR_DB' %}bg-primary{% else %}bg-secondary{% endif %} ms-1">
                 {{ erp_source_metadata.duplicate_check.source_type|upper }}
               </span>
             </div>
@@ -285,7 +285,7 @@
             </div>
             <div class="text-muted small">{{ erp_source_metadata.items|length }} line{{ erp_source_metadata.items|length|pluralize }} resolved</div>
             {% for item_meta in erp_source_metadata.items %}
-            <span class="badge {% if item_meta.source_type == 'api' %}bg-success{% elif item_meta.source_type == 'cache' %}bg-info{% else %}bg-secondary{% endif %} me-1 mt-1" title="Line {{ item_meta.line_index|add:1 }}">
+            <span class="badge {% if item_meta.source_type == 'API' %}bg-success{% elif item_meta.source_type == 'CACHE' %}bg-info{% elif item_meta.source_type == 'MIRROR_DB' %}bg-primary{% elif item_meta.source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-secondary{% endif %} me-1 mt-1" title="Line {{ item_meta.line_index|add:1 }}">
               L{{ item_meta.line_index|add:1 }}: {{ item_meta.source_type|upper }}{% if item_meta.fallback_used %} (FB){% endif %}
             </span>
             {% endfor %}

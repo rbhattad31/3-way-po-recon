@@ -1,6 +1,6 @@
 # 3-Way PO Reconciliation Platform — Comprehensive Project Documentation
 
-> **Version**: 1.1 · **Last Updated**: March 2026  
+> **Version**: 2.0 · **Last Updated**: March 2026  
 > **Stack**: Django 4.2 · MySQL · Celery + Redis · Azure OpenAI · Azure Document Intelligence · Bootstrap 5
 
 ---
@@ -29,6 +29,9 @@
 20. [Security & Permissions](#20-security--permissions)
 21. [Development Guide](#21-development-guide)
 22. [Status & Roadmap](#22-status--roadmap)
+23. [Invoice Posting Agent](#23-invoice-posting-agent)
+24. [ERP Integration Layer](#24-erp-integration-layer)
+25. [Procurement Intelligence Platform](#25-procurement-intelligence-platform)
 
 ---
 
@@ -44,12 +47,16 @@ The **3-Way PO Reconciliation Platform** is an enterprise Django application tha
 | **2-Way Matching** | Invoice ↔ PO comparison (header + line-level) with configurable tolerances |
 | **3-Way Matching** | Invoice ↔ PO ↔ GRN comparison including receipt verification |
 | **Mode Resolution** | Policy-based → heuristic → default cascade to determine 2-way vs 3-way per invoice |
-| **AI Agent Pipeline** | 7 specialized agents (ReAct loop with tool-calling) for exception analysis and resolution |
+| **AI Agent Pipeline** | 8 specialized agents (ReAct loop with tool-calling) for exception analysis and resolution |
 | **Auto-Close Logic** | Tiered tolerance bands (strict: 2%/1%/1%, auto-close: 5%/3%/3%) for automatic disposition |
 | **Case Management** | Full AP case lifecycle with state machine, stage-based processing, and copilot chat |
 | **Review Workflow** | Role-based assignment, review decision tracking, and field corrections |
-| **Governance** | Complete audit trail with 17 event types, agent trace visibility, and unified case timeline |
+| **Governance** | Complete audit trail with 38+ event types, agent trace visibility, and unified case timeline |
 | **Non-PO Processing** | Validation pipeline for invoices without PO references (9 checks including spend category and policy) |
+| **Invoice Posting Agent** | 9-stage pipeline mapping approved invoices to ERP-ready proposals (vendor, item, tax, cost-center resolution) |
+| **ERP Integration Layer** | Connector framework (Dynamics, Zoho, Salesforce, Custom) with cache, resolver, and fallback chain |
+| **Procurement Intelligence** | Product recommendation, should-cost benchmarking, and 6-dimension validation for procurement requests |
+| **Multi-Country Extraction** | Jurisdiction-aware extraction platform with credit system, OCR cost tracking, and country pack governance |
 
 ### Business Flow Summary
 
@@ -91,7 +98,7 @@ Invoice Upload → OCR Extraction → Validation → Mode Resolution (2-Way/3-Wa
 
 ```
 ReconciliationRunnerService
-├── POLookupService
+├── POLookupService (via ERPResolutionService)
 ├── ReconciliationModeResolver
 │   └── ReconciliationPolicy (DB)
 ├── ReconciliationExecutionRouter
@@ -101,13 +108,23 @@ ReconciliationRunnerService
 │   └── ThreeWayMatchService
 │       ├── HeaderMatchService → ToleranceEngine
 │       ├── LineMatchService → ToleranceEngine
-│       ├── GRNLookupService
+│       ├── GRNLookupService (via ERPResolutionService)
 │       └── GRNMatchService
 ├── ClassificationService
 ├── ExceptionBuilderService
 ├── ReconciliationResultService
 ├── ReviewWorkflowService
 └── AuditService
+
+ERPResolutionService (shared gateway — used by reconciliation + posting + tools)
+├── POResolver  → PODBFallback (MIRROR_DB: documents.PurchaseOrder)
+│                             (DB_FALLBACK: posting_core.ERPPOReference)
+├── GRNResolver → GRNDBFallback (MIRROR_DB: documents.GoodsReceiptNote)
+├── VendorResolver  → VendorDBFallback (DB_FALLBACK: posting_core.ERPVendorReference)
+├── ItemResolver    → ItemDBFallback
+├── TaxResolver     → TaxDBFallback
+├── CostCenterResolver → CostCenterDBFallback
+└── DuplicateInvoiceResolver
 
 AgentOrchestrator
 ├── PolicyEngine (deterministic agent plan)
@@ -177,19 +194,27 @@ factory-boy>=3.3            gunicorn>=21.2         whitenoise>=6.6
 
 ## 4. Application Structure
 
-The project contains **13 Django apps** under `apps/`:
+The project contains **20 Django apps** under `apps/`:
 
 | App | Purpose | Key Files |
 |---|---|---|
 | **accounts** | Custom User model (email login), enterprise RBAC (roles, permissions, overrides) | `models.py`, `rbac_models.py`, `rbac_services.py`, `managers.py`, `forms.py`, `template_views.py` |
-| **agents** | AI agent orchestration, ReAct loop, 7 agent types | `models.py`, `services/` (10 files) |
+| **agents** | AI agent orchestration, ReAct loop, 8 agent types | `models.py`, `services/` (10+ files) |
 | **auditlog** | Audit events, processing logs, governance views, observability API | `models.py`, `services.py`, `timeline_service.py`, `serializers.py`, `views.py` |
 | **cases** | AP Case lifecycle, state machine, stage orchestration | `models.py`, `orchestrators/`, `services/`, `state_machine/` |
+| **copilot** | AP Copilot conversational assistant (read-only Q&A) | `models.py`, `services/copilot_service.py`, `template_views.py` |
 | **core** | Base models, enums, constants, permissions, utilities, observability | `models.py`, `enums.py`, `constants.py`, `permissions.py`, `utils.py`, `trace.py`, `logging_utils.py`, `metrics.py`, `decorators.py` |
 | **dashboard** | Analytics, KPIs, summary endpoints | `services.py`, `api_views.py` |
 | **documents** | Invoice, PO, GRN data models & upload | `models.py`, `blob_service.py` |
-| **extraction** | OCR + LLM extraction pipeline (7 services) | `services/`, `tasks.py` |
+| **erp_integration** | ERP connector framework + resolution chain (cache → API → DB fallback) | `models.py`, `services/connectors/`, `services/resolution/`, `services/db_fallback/`, `services/submission/` |
+| **extraction** | OCR + LLM extraction pipeline (8 services), approval gate, bulk extraction | `services/`, `tasks.py`, `template_views.py` |
+| **extraction_configs** | Extraction configuration metadata and runtime settings | `models.py`, `services/` |
+| **extraction_core** | Multi-country extraction platform: 13 models, 30 service classes, 60+ API endpoints, jurisdiction resolution, schema-driven extraction, evidence capture, credit/OCR cost tracking | `models.py`, `services/`, `views.py` |
+| **extraction_documents** | Extraction document management | `models.py`, `views.py` |
 | **integrations** | External system connectors (PO/GRN API, RPA) | `models.py`, `contracts.py` |
+| **posting** | Invoice posting business layer: lifecycle state, review queues, user actions, templates | `models.py`, `services/`, `tasks.py`, `template_views.py` |
+| **posting_core** | Invoice posting platform layer: 9-stage pipeline, mapping engine, ERP reference import, governance trail | `models.py`, `services/`, `views.py` |
+| **procurement** | Procurement Intelligence Platform: recommendation, benchmarking, validation, quotation extraction | `models.py`, `services/`, `agents/`, `tasks.py`, `template_views.py` |
 | **reconciliation** | Matching engine (14 services), tolerance, classification | `services/` (14 files), `tasks.py` |
 | **reports** | Report generation tracking | `models.py` |
 | **reviews** | Review assignment, decisions, comments | `models.py`, `services.py` |
@@ -212,6 +237,13 @@ The project contains **13 Django apps** under `apps/`:
 | Enums | `apps/core/enums.py` |
 | Permissions | `apps/core/permissions.py` |
 | Utilities | `apps/core/utils.py` |
+| ERP Connectors | `apps/erp_integration/services/connectors/` |
+| ERP Resolvers | `apps/erp_integration/services/resolution/` |
+| ERP DB Fallbacks | `apps/erp_integration/services/db_fallback/` |
+| Posting Business Logic | `apps/posting/services/` |
+| Posting Core Pipeline | `apps/posting_core/services/` |
+| Posting ERP Reference Models | `apps/posting_core/models.py` |
+| Posting Import Pipeline | `apps/posting_core/services/import_pipeline/` |
 | Admin | `apps/<app>/admin.py` |
 | Templates | `templates/<app>/` |
 | Static files | `static/css/`, `static/js/` |
@@ -267,9 +299,13 @@ Legacy roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`, `AUDITOR` 
 
 #### Invoice Status Flow
 ```
-UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → READY_FOR_RECON → RECONCILED
-                                  ↘ INVALID                                  ↘ FAILED
+UPLOADED -> EXTRACTION_IN_PROGRESS -> EXTRACTED -> VALIDATED -> PENDING_APPROVAL -> READY_FOR_RECON -> RECONCILED
+                                   -> INVALID                -> (auto-approve)                       -> FAILED
+                                                             -> INVALID (rejected)
 ```
+
+- **PENDING_APPROVAL**: Human-in-the-loop gate after successful extraction. All valid extractions require approval (human or auto) before reconciliation.
+- Auto-approval triggers when `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence >= `EXTRACTION_AUTO_APPROVE_THRESHOLD`.
 
 ### 5.4 Extraction (`apps/extraction/models.py`)
 
@@ -306,17 +342,18 @@ MATCHED | PARTIAL_MATCH | UNMATCHED | REQUIRES_REVIEW | ERROR
 
 | Model | Key Fields | Notes |
 |---|---|---|
-| **AgentDefinition** | agent_type, name, description, config_json, allowed_tools, system_prompt, is_active, max_iterations | Registry of agent types |
-| **AgentRun** | agent_type, status, input/output_payload (JSON), confidence, summarized_reasoning, prompt_tokens/completion_tokens/total_tokens, duration_ms | FK: definition, reconciliation_result |
+| **AgentDefinition** | agent_type, name, description, purpose, entry_conditions, success_criteria, prohibited_actions, allowed_recommendation_types, default_fallback_recommendation, requires_tool_grounding, min_tool_calls, tool_failure_confidence_cap, output_schema_name, lifecycle_status, owner_team, capability_tags, domain_tags, config_json, allowed_tools, system_prompt, is_active, max_iterations | Registry of agent types; all fields are first-class DB columns (not in config_json) |
+| **AgentOrchestrationRun** | reconciliation_result FK, status (PLANNED/RUNNING/COMPLETED/PARTIAL/FAILED), plan_source, plan_confidence, planned_agents (JSON), executed_agents (JSON), final_recommendation, final_confidence, skip_reason, error_message, actor_user_id, trace_id, started_at, completed_at, duration_ms | Top-level pipeline invocation record; duplicate-run guard (RUNNING blocks re-entry for same result) |
+| **AgentRun** | agent_type, status, input/output_payload (JSON), confidence, summarized_reasoning, prompt_tokens/completion_tokens/total_tokens, duration_ms, trace_id, span_id, actor_primary_role, actor_roles_snapshot_json, permission_source, access_granted, invocation_reason, prompt_version, cost_estimate | FK: definition, reconciliation_result |
 | **AgentStep** | step_number, action, input/output_data (JSON), duration_ms | FK: agent_run |
 | **AgentMessage** | role (system/user/assistant/tool), content, tool_calls (JSON), tool_call_id, token_count | FK: agent_run |
-| **DecisionLog** | decision_type, rationale, confidence, evidence_refs (JSON), recommendation_type | FK: agent_run, reconciliation_result |
-| **AgentRecommendation** | recommendation_type, confidence, reasoning, evidence (JSON), accepted, accepted_by, accepted_at | FK: agent_run, reconciliation_result |
+| **DecisionLog** | decision_type, rationale, confidence, evidence_refs (JSON), recommendation_type, rule_name, rule_version, policy_code, trace_id, actor_primary_role | FK: agent_run, reconciliation_result |
+| **AgentRecommendation** | recommendation_type, confidence, reasoning, evidence (JSON), accepted, accepted_by, accepted_at | FK: agent_run, reconciliation_result; UniqueConstraint on (result, type, run) |
 | **AgentEscalation** | severity, reason, suggested_assignee_role, resolved, resolved_by | FK: agent_run, reconciliation_result |
 
 #### Agent Run Status
 ```
-PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
+PENDING -> RUNNING -> COMPLETED | FAILED | SKIPPED
 ```
 
 ### 5.8 Cases (`apps/cases/models.py`)
@@ -364,9 +401,66 @@ PENDING → ASSIGNED → IN_REVIEW → APPROVED | REJECTED | REPROCESSED
 | **IntegrationConfig** | integrations | External endpoint config (PO_API, GRN_API, RPA) |
 | **IntegrationLog** | integrations | Integration call audit log |
 | **ProcessingLog** | auditlog | Operational logging |
-| **AuditEvent** | auditlog | State change/governance events (17 types) |
+| **AuditEvent** | auditlog | State change/governance events (38+ types) |
 | **FileProcessingStatus** | auditlog | File upload lifecycle tracking |
 | **GeneratedReport** | reports | Report generation tracking |
+
+### 5.11 ERP Integration (`apps/erp_integration/models.py`)
+
+| Model | Key Fields | Notes |
+|---|---|---|
+| **ERPConnection** | connector_type, name, base_url, credentials_json, is_default, status, is_active | Active connector config; `ConnectorFactory.get_default_connector()` returns the active default |
+| **ERPReferenceCacheRecord** | resolution_type, cache_key, result_json, expires_at | TTL-based lookup cache; expiry controlled by `ERP_CACHE_TTL_SECONDS` (default 3600s) |
+| **ERPResolutionLog** | resolution_type, input_params, result_json, source (API/CACHE/DB_FALLBACK), duration_ms | Per-lookup audit trail |
+| **ERPSubmissionLog** | submission_type, payload_json, response_json, status, erp_document_number, duration_ms | Per-submission audit trail |
+
+ERP connector enums live in `apps/erp_integration/enums.py`: `ERPConnectorType`, `ERPConnectionStatus`, `ERPSourceType`, `ERPResolutionType`, `ERPSubmissionType`, `ERPSubmissionStatus`.
+
+### 5.12 Invoice Posting (`apps/posting/models.py`, `apps/posting_core/models.py`)
+
+**Business layer (`apps/posting/`)**:
+
+| Model | Key Fields | Notes |
+|---|---|---|
+| **InvoicePosting** | invoice (1:1), extraction_result, status (11 states), stage, posting_confidence, review_queue, is_touchless, mapping_summary_json, payload_snapshot_json, erp_document_number, retry_count | Primary lifecycle tracker; status: NOT_READY -> READY_FOR_POSTING -> MAPPING_IN_PROGRESS -> MAPPING_REVIEW_REQUIRED / READY_TO_SUBMIT -> SUBMISSION_IN_PROGRESS -> POSTED / POST_FAILED -> RETRY_PENDING / REJECTED / SKIPPED |
+| **InvoicePostingFieldCorrection** | field_name, old_value, new_value, corrected_by, reason | Field correction audit trail during review |
+
+**Platform layer (`apps/posting_core/`)**:
+
+| Model | Key Fields | Notes |
+|---|---|---|
+| **PostingRun** | invoice, status (PENDING/RUNNING/COMPLETED/FAILED/CANCELLED), stage_reached, error_code, error_message, erp_source_metadata_json | Authoritative execution record per pipeline invocation |
+| **PostingFieldValue** | field_name, resolved_value, source, confidence | Resolved header fields |
+| **PostingLineItem** | line_number, item_code, vendor_code, tax_code, cost_center_code, quantity, amount | Resolved line items |
+| **PostingIssue** | check_type, severity (INFO/WARNING/ERROR), message | Validation issues |
+| **PostingEvidence** | field_name, evidence_type, evidence_value, source_ref | Source provenance for resolved values |
+| **PostingApprovalRecord** | approved_by, approved_at, status, notes | Governance mirror (1:1 with PostingRun); sole writer: `PostingGovernanceTrailService` |
+| **ERPVendorReference** | vendor_code, vendor_name, normalized_name | ERP vendor master (imported from Excel) |
+| **ERPItemReference** | item_code, item_name, uom, tax_code, normalized_name | ERP item/material master |
+| **ERPTaxCodeReference** | tax_code, rate, country_code, description | ERP tax code catalog |
+| **ERPCostCenterReference** | cost_center_code, cost_center_name, department | ERP org structure |
+| **ERPPOReference** | po_number, po_line, vendor_code, item_code, open_qty, open_amount | Open PO lines for matching |
+| **ERPReferenceImportBatch** | batch_type, status, row_count, valid_row_count, invalid_row_count, checksum | Import batch metadata |
+| **VendorAliasMapping** | alias_name, normalized_alias, erp_vendor_code | Vendor name variant -> ERP code |
+| **ItemAliasMapping** | alias_description, normalized_alias, erp_item_code | Item description variant -> ERP code |
+| **PostingRule** | rule_type (TAX_CODE/COST_CENTER/LINE_TYPE), condition, action_value | Configurable posting rules |
+
+### 5.13 Procurement (`apps/procurement/models.py`)
+
+| Model | Key Fields | Notes |
+|---|---|---|
+| **ProcurementRequest** | request_id (UUID), title, description, domain_code, schema_code, request_type (RECOMMENDATION/BENCHMARK/BOTH), status (DRAFT -> READY -> PROCESSING -> COMPLETED/REVIEW_REQUIRED/FAILED), priority, currency, assigned_to, trace_id | Top-level business entity |
+| **ProcurementRequestAttribute** | request FK, attribute_code, attribute_label, data_type, value_text/number/json, is_required, normalized_value | Dynamic key-value requirements; unique on (request, attribute_code) |
+| **SupplierQuotation** | request FK, vendor_name, quotation_number, quotation_date, total_amount, currency, uploaded_document FK, extraction_status, extraction_confidence | Supplier quote linked to document upload |
+| **QuotationLineItem** | quotation FK, line_number, description, normalized_description, category_code, quantity, unit, unit_rate, total_amount, brand, model, extraction_confidence | Per-line priced item; unique on (quotation, line_number) |
+| **AnalysisRun** | run_id (UUID), request FK, run_type, status, started/completed_at, triggered_by, input_snapshot_json, output_summary, confidence_score, trace_id, error_message | Execution instance; one request can have many runs |
+| **RecommendationResult** | run (1:1), recommended_option, reasoning_summary, reasoning_details_json, confidence_score, constraints_json, compliance_status, output_payload_json | Recommendation output |
+| **BenchmarkResult** | run FK, quotation FK, total_quoted/benchmark_amount, variance_pct, risk_level, summary_json | Per-quotation benchmark header |
+| **BenchmarkResultLine** | benchmark_result FK, quotation_line FK, benchmark_min/avg/max, quoted_value, variance_pct, variance_status, remarks | Per-line comparison |
+| **ComplianceResult** | run (1:1), compliance_status, rules_checked_json, violations_json, recommendations_json | Compliance check output |
+| **ValidationRuleSet** | domain_code, schema_code, rule_set_code, rule_set_name, validation_type, is_active, priority, config_json | Reusable validation rules per domain/schema |
+| **ValidationResult** | run (1:1), overall_status (PASS/FAIL/NEEDS_REVIEW), score, dimensions_json, issues_json | Validation run output |
+| **ValidationResultItem** | validation_result FK, dimension, status, message, detail_json | Per-dimension finding |
 
 ### Entity Relationship Summary
 
@@ -415,7 +509,7 @@ ToolDefinition ──< ToolCall ── AgentRun
 
 ## 6. Business Enumerations
 
-All enums live in `apps/core/enums.py` (24 classes). Key enums:
+Core app enums live in `apps/core/enums.py` (25 classes). ERP-specific enums live in `apps/erp_integration/enums.py` (6 classes). Posting enums are inline in `apps/posting/models.py` and `apps/posting_core/models.py`. Key enums:
 
 ### Invoice & Documents
 | Enum | Values |
@@ -469,7 +563,25 @@ All enums live in `apps/core/enums.py` (24 classes). Key enums:
 ### Audit
 | Enum | Values |
 |---|---|
-| `AuditEventType` | INVOICE_UPLOADED, EXTRACTION_COMPLETED, EXTRACTION_FAILED, VALIDATION_FAILED, RECONCILIATION_STARTED, RECONCILIATION_COMPLETED, AGENT_RECOMMENDATION_CREATED, REVIEW_ASSIGNED, REVIEW_APPROVED, REVIEW_REJECTED, FIELD_CORRECTED, RECONCILIATION_RERUN, AGENT_RUN_STARTED, AGENT_RUN_COMPLETED, AGENT_RUN_FAILED, RECONCILIATION_MODE_RESOLVED, POLICY_APPLIED, MANUAL_MODE_OVERRIDE |
+| `AuditEventType` | INVOICE_UPLOADED, EXTRACTION_COMPLETED, EXTRACTION_FAILED, VALIDATION_FAILED, RECONCILIATION_STARTED, RECONCILIATION_COMPLETED, AGENT_RECOMMENDATION_CREATED, REVIEW_ASSIGNED, REVIEW_APPROVED, REVIEW_REJECTED, FIELD_CORRECTED, RECONCILIATION_RERUN, AGENT_RUN_STARTED, AGENT_RUN_COMPLETED, AGENT_RUN_FAILED, RECONCILIATION_MODE_RESOLVED, POLICY_APPLIED, MANUAL_MODE_OVERRIDE, GUARDRAIL_GRANTED, GUARDRAIL_DENIED, TOOL_CALL_AUTHORIZED, TOOL_CALL_DENIED, RECOMMENDATION_ACCEPTED, RECOMMENDATION_DENIED, AUTO_CLOSE_AUTHORIZED, AUTO_CLOSE_DENIED, SYSTEM_AGENT_USED, CASE_CLOSED, CASE_REJECTED, CASE_REPROCESSED, CASE_ESCALATED, CASE_FAILED, CASE_STATUS_CHANGED, POSTING_STARTED, POSTING_MAPPING_COMPLETED, POSTING_SUBMITTED, POSTING_SUCCEEDED, ERP_REFERENCE_IMPORT_COMPLETED, _(and more)_ |
+
+### Invoice Posting
+| Enum | Values |
+|---|---|
+| `InvoicePostingStatus` | NOT_READY, READY_FOR_POSTING, MAPPING_IN_PROGRESS, MAPPING_REVIEW_REQUIRED, READY_TO_SUBMIT, SUBMISSION_IN_PROGRESS, POSTED, POST_FAILED, REJECTED, RETRY_PENDING, SKIPPED |
+| `PostingRunStatus` | PENDING, RUNNING, COMPLETED, FAILED, CANCELLED |
+| `PostingStage` | ELIGIBILITY_CHECK, SNAPSHOT_BUILD, MAPPING, VALIDATION, CONFIDENCE, REVIEW_ROUTING, PAYLOAD_BUILD, SUBMISSION, FINALIZATION |
+| `PostingReviewQueue` | ITEM_MAPPING_REVIEW, VENDOR_MAPPING_REVIEW, TAX_REVIEW, COST_CENTER_REVIEW, PO_REVIEW, POSTING_OPS |
+
+### ERP Integration (`apps/erp_integration/enums.py`)
+| Enum | Values |
+|---|---|
+| `ERPConnectorType` | CUSTOM, DYNAMICS, ZOHO, SALESFORCE |
+| `ERPConnectionStatus` | ACTIVE, INACTIVE, ERROR |
+| `ERPSourceType` | API, CACHE, DB_FALLBACK |
+| `ERPResolutionType` | VENDOR, ITEM, TAX, COST_CENTER, PO, GRN, DUPLICATE_INVOICE |
+| `ERPSubmissionType` | CREATE_INVOICE, PARK_INVOICE |
+| `ERPSubmissionStatus` | PENDING, SUBMITTED, SUCCEEDED, FAILED |
 
 ---
 
@@ -586,8 +698,10 @@ The reconciliation engine performs deterministic matching of invoices against PO
 ReconciliationRunnerService.run(invoice_ids)
     │
     ├─ For each invoice:
-    │   ├─ 1. PO Lookup (POLookupService)
-    │   │      Strategy: exact → normalized → vendor+amount discovery
+    ├─ 1. PO Lookup (`POLookupService` via `ERPResolutionService`)
+    │   │      Chain: cache -> MIRROR_DB (documents.PurchaseOrder)
+    │   │               -> live API -> DB_FALLBACK (ERPPOReference)
+    │   │      Result carries: erp_source_type, erp_provenance, is_stale
     │   │
     │   ├─ 2. Mode Resolution (ReconciliationModeResolver)
     │   │      Cascade: policy → heuristic → config default
@@ -603,7 +717,9 @@ ReconciliationRunnerService.run(invoice_ids)
     │   │      → Create structured exception records
     │   │
     │   ├─ 6. Result Persistence (ReconciliationResultService)
-    │   │      → Save result + line results + exceptions
+    │   │      -> Save result + line results + exceptions
+    │   │      -> Persist ERP provenance: po_erp_source_type, grn_erp_source_type,
+    │   │         data_is_stale, erp_source_metadata_json
     │   │
     │   ├─ 7. Auto-Create ReviewAssignment (if REQUIRES_REVIEW)
     │   │
@@ -654,7 +770,10 @@ Extends 2-way with GRN verification:
 
 1. Header match (same as 2-way)
 2. Line match (same as 2-way)
-3. **GRN Lookup** (`GRNLookupService`) — Aggregate all GRNs for the PO
+3. **GRN Lookup** (`GRNLookupService` via `ERPResolutionService`) -- Resolves via
+   shared ERP layer (MIRROR_DB: documents.GoodsReceiptNote), hydrates ORM objects
+   from `grn_ids` in the resolution result for line-level matching.
+   Result carries: erp_source_type, erp_provenance, is_stale
 4. **GRN Match** (`GRNMatchService`) — Compare Invoice/PO quantities against received quantities:
    - Over-receipt: received > ordered
    - Under-receipt: received < ordered
@@ -774,7 +893,7 @@ Final Recommendation + Auto-Close / Escalation
 
 | Agent | Type | Purpose | Tools |
 |---|---|---|---|
-| **InvoiceExtractionAgent** | INVOICE_EXTRACTION | Extracts structured invoice data from OCR text (always runs, replaces direct GPT call) | None (single-shot, json_object mode) |
+| **InvoiceExtractionAgent** | INVOICE_EXTRACTION | Extracts structured invoice data from OCR text (always runs, single-shot json_object mode) | None |
 | **InvoiceUnderstandingAgent** | INVOICE_UNDERSTANDING | Validates low-confidence extractions within case orchestrator (conditional: confidence < 75%) | invoice_details, vendor_search |
 | **PORetrievalAgent** | PO_RETRIEVAL | Finds correct PO when deterministic lookup failed | po_lookup, vendor_search, invoice_details |
 | **GRNRetrievalAgent** | GRN_RETRIEVAL | Investigates GRN issues (3-way only) | grn_lookup, po_lookup, invoice_details |
@@ -798,7 +917,42 @@ All tools extend `BaseTool` and are registered via the `@register_tool` decorato
 
 Tool calls are logged via `ToolCallLogger` with status (REQUESTED/SUCCESS/FAILED), duration, and input/output. Authorization denials are logged as `TOOL_CALL_DENIED` audit events.
 
-### 9.4 Policy Engine
+### 9.4 ReasoningPlanner
+
+`ReasoningPlanner` is the entry point for planning agent execution. It always makes a single LLM call to produce a structured `AgentPlan`. If the LLM fails, `PolicyEngine` is the internal deterministic fallback. There is no feature flag — the LLM planner is always active.
+
+```python
+@dataclass
+class AgentPlan:
+    agents: List[str]          # ordered AgentType values to run
+    reason: str
+    skip_agents: bool          # True -> skip all agents (auto-close or high confidence)
+    auto_close: bool           # True -> mark result MATCHED without agents
+    reconciliation_mode: str
+    plan_source: str           # "deterministic" or "llm"
+    plan_confidence: float     # planner self-reported confidence
+```
+
+**LLM plan validation guards** (any violation falls back to deterministic):
+1. Empty agent list
+2. `CASE_SUMMARY` not last if present
+3. `GRN_RETRIEVAL` in a TWO_WAY plan
+
+### 9.5 AgentMemory
+
+`AgentMemory` is created by the orchestrator at pipeline start and passed through all agents via `AgentContext`. It accumulates findings so later agents have structured access to what earlier agents discovered.
+
+| Field | Purpose |
+|---|---|
+| `resolved_po_number` | PO recovered by PO_RETRIEVAL agent |
+| `resolved_grn_numbers` | GRNs recovered by GRN_RETRIEVAL agent |
+| `extraction_issues` | Issues flagged by INVOICE_UNDERSTANDING agent |
+| `agent_summaries` | Per-agent reasoning snippets (first 500 chars) |
+| `current_recommendation` | Highest-confidence recommendation seen so far |
+| `current_confidence` | Confidence associated with current recommendation |
+| `facts` | Pre-seeded: grn_available, grn_fully_received, is_two_way, vendor_name, match_status |
+
+### 9.6 Policy Engine
 
 `PolicyEngine` determines which agents to run based on deterministic rules (no LLM cost):
 
@@ -819,7 +973,7 @@ Tool calls are logged via `ToolCallLogger` with status (REQUESTED/SUCCESS/FAILED
 - All matched lines check passes
 - Mode-aware: skips GRN_RETRIEVAL in TWO_WAY mode
 
-### 9.5 Deterministic Resolver
+### 9.7 Deterministic Resolver
 
 `DeterministicResolver` replaces costly LLM calls for EXCEPTION_ANALYSIS, REVIEW_ROUTING, and CASE_SUMMARY with rule-based logic:
 
@@ -834,7 +988,7 @@ Tool calls are logged via `ToolCallLogger` with status (REQUESTED/SUCCESS/FAILED
 
 Creates synthetic AgentRun records for auditability.
 
-### 9.6 LLM Client
+### 9.8 LLM Client
 
 `LLMClient` wraps both Azure OpenAI and plain OpenAI APIs:
 
@@ -844,7 +998,7 @@ Creates synthetic AgentRun records for auditability.
 - `response_format` parameter: supports `{"type": "json_object"}` for deterministic JSON output (used by InvoiceExtractionAgent)
 - Returns: `LLMResponse` (content, tool_calls, finish_reason, token counts)
 
-### 9.7 Orchestration Flow
+### 9.9 Orchestration Flow
 
 `AgentOrchestrator.execute(result, request_user=None)`:
 
@@ -864,7 +1018,7 @@ Creates synthetic AgentRun records for auditability.
 
 Output: `OrchestrationResult` (agents_executed, agent_runs, final_recommendation, confidence)
 
-### 9.8 RBAC Guardrails
+### 9.10 RBAC Guardrails
 
 **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`) is the central RBAC enforcement point for the entire agent subsystem. All agent operations flow through this service before execution.
 
@@ -909,7 +1063,7 @@ All authorization decisions are logged as `AuditEvent` records:
 | `AUTO_CLOSE_DENIED` | Auto-close action blocked |
 | `SYSTEM_AGENT_USED` | SYSTEM_AGENT identity resolved for autonomous run |
 
-### 9.9 Tracing & Governance
+### 9.11 Tracing & Governance
 
 **AgentTraceService** provides unified tracing:
 - `start_agent_run()` / `finish_agent_run()`
@@ -1396,7 +1550,71 @@ All APIs are under `/api/v1/` using Django REST Framework.
 | `/` | GET, POST | List/create vendors (filterable by country/currency) |
 | `{id}/` | GET, PUT, DELETE | Vendor detail with aliases |
 
-### 14.9 API Standards
+### 14.9 Copilot API (`/api/v1/copilot/`)
+
+| Endpoint | Method | Description | Permission |
+|---|---|---|---|
+| `session/start/` | POST | Start or resume a session | `agents.use_copilot` |
+| `sessions/` | GET | List user's sessions | `agents.use_copilot` |
+| `session/<id>/` | GET, PATCH | Session detail; PATCH actions: archive, pin, link_case | `agents.use_copilot` |
+| `session/<id>/messages/` | GET | Paginated message history | `agents.use_copilot` |
+| `chat/` | POST | Send message and receive structured response | `agents.use_copilot` |
+| `case/<id>/context/` | GET | Full case context bundle | `cases.view` |
+| `case/<id>/timeline/` | GET | Case timeline | `cases.view` |
+| `case/<id>/evidence/` | GET | Evidence cards | `cases.view` |
+| `case/<id>/governance/` | GET | Governance data (privileged roles only) | `cases.view` |
+| `suggestions/` | GET | Role-aware suggested prompts | `agents.use_copilot` |
+| `cases/search/` | GET | Case search by keyword/status | `cases.view` |
+
+### 14.10 ERP Integration API (`/api/v1/erp/`)
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `resolve/<resolution_type>/` | GET, POST | On-demand ERP reference resolution (vendor/item/tax/cost_center/po/grn/duplicate_invoice) |
+
+### 14.11 Posting API (`/api/v1/posting/`)
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `postings/` | GET | List invoice postings (filter: status, review_queue) |
+| `postings/{id}/` | GET | Posting detail with corrections |
+| `postings/{id}/approve/` | POST | Approve posting (optional field corrections) |
+| `postings/{id}/reject/` | POST | Reject posting with reason |
+| `postings/{id}/submit/` | POST | Submit to ERP (Phase 1 mock) |
+| `postings/{id}/retry/` | POST | Retry failed posting |
+| `prepare/` | POST | Trigger posting pipeline for an invoice (async, returns 202) |
+
+### 14.12 Posting Core API (`/api/v1/posting-core/`)
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `runs/` | GET | List posting runs (filter: invoice, status) |
+| `runs/{id}/` | GET | Run detail (field values, lines, issues, evidence) |
+| `upload/` | POST | Upload ERP reference Excel/CSV (multipart) |
+| `import-batches/` | GET | List import batches |
+| `vendors/` | CRUD | ERP vendor references |
+| `items/` | CRUD | ERP item references |
+| `tax-codes/` | CRUD | ERP tax code references |
+| `cost-centers/` | CRUD | ERP cost center references |
+| `po-refs/` | CRUD | ERP PO references |
+| `vendor-aliases/` | CRUD | Vendor alias mappings |
+| `item-aliases/` | CRUD | Item alias mappings |
+| `rules/` | CRUD | Posting rules |
+
+### 14.13 Procurement API (`/api/v1/procurement/`)
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `requests/` | GET, POST | List/create procurement requests |
+| `requests/{id}/` | GET, PUT, DELETE | Request detail |
+| `requests/{id}/run-analysis/` | POST | Trigger analysis run (RECOMMENDATION/BENCHMARK/BOTH) |
+| `requests/{id}/run-validation/` | POST | Trigger validation run |
+| `requests/{id}/quotations/` | GET, POST | Quotations for a request |
+| `quotations/{id}/line-items/` | GET, POST | Line items for a quotation |
+| `validation-rulesets/` | GET | Available validation rule sets (read-only) |
+| `runs/{id}/` | GET | Analysis run detail with results |
+
+### 14.14 API Standards
 
 - **Authentication**: SessionAuthentication (Django sessions)
 - **Pagination**: 25 per page (PageNumberPagination)
@@ -1496,6 +1714,20 @@ templates/
 | `/accounts/admin-console/roles/<id>/` | `RoleDetailView` | Role detail/permission editor |
 | `/accounts/admin-console/permissions/` | `PermissionListView` | Permission catalog |
 | `/accounts/admin-console/role-matrix/` | `RolePermissionMatrixView` | Role-permission matrix |
+| `/copilot/` | `copilot_workspace` | AP Copilot main workspace with session list and suggestions |
+| `/copilot/case/<id>/` | `copilot_case` | Case-linked copilot workspace (auto-starts/resumes session) |
+| `/copilot/session/<id>/` | `copilot_session` | Resume a specific copilot session |
+| `/posting/` | `posting_workbench` | Invoice posting list with KPIs, filters, pagination |
+| `/posting/<id>/` | `posting_detail` | Posting detail with proposal, issues, and actions |
+| `/posting/<id>/approve/` | `posting_approve` | Approve posting |
+| `/posting/<id>/reject/` | `posting_reject` | Reject posting |
+| `/posting/<id>/submit/` | `posting_submit` | Submit to ERP |
+| `/posting/<id>/retry/` | `posting_retry` | Retry failed posting |
+| `/posting/imports/` | `reference_import_list` | ERP reference import batch history |
+| `/procurement/` | `request_list` | Procurement request listing |
+| `/procurement/new/` | `request_create` | Create procurement request |
+| `/procurement/<id>/` | `request_workspace` | Request detail with analysis runs |
+| `/procurement/runs/<id>/` | `run_detail` | Analysis run detail with results |
 
 ### 15.3 Static Assets
 
@@ -1519,12 +1751,16 @@ templates/
 
 | Task | App | Purpose | Settings |
 |---|---|---|---|
-| `process_invoice_upload_task` | extraction | Full extraction pipeline (OCR → parse → validate → persist) | bind=True, max_retries=3, acks_late=True |
+| `process_invoice_upload_task` | extraction | Full extraction pipeline (OCR -> parse -> validate -> persist) | bind=True, max_retries=3, acks_late=True |
 | `run_reconciliation_task` | reconciliation | Batch reconciliation run (2-way/3-way matching) | bind=True, max_retries=2 |
 | `reconcile_single_invoice_task` | reconciliation | Single invoice convenience wrapper | bind=True |
 | `run_agent_pipeline_task` | agents | Execute agent pipeline for non-MATCHED results; accepts optional `actor_user_id` for RBAC propagation | bind=True, max_retries=2 |
 | `process_case_task` | cases | Run CaseOrchestrator for APCase lifecycle | bind=True, max_retries=3, acks_late=True |
 | `reprocess_case_from_stage_task` | cases | Reprocess case from specific stage | bind=True |
+| `prepare_posting_task` | posting | Run PostingPipeline for an invoice; triggered automatically on extraction approval | bind=True, max_retries=2 |
+| `import_reference_excel_task` | posting | Import ERP reference data (vendor/item/tax/cost_center/po) from uploaded Excel/CSV | bind=True |
+| `run_analysis_task` | procurement | Execute recommendation or benchmarking analysis run | bind=True, max_retries=2 |
+| `run_validation_task` | procurement | Execute procurement validation run (6 dimensions) | bind=True |
 
 **Windows Development**: `CELERY_TASK_ALWAYS_EAGER=True` (default) runs tasks synchronously without Redis.
 
@@ -1651,11 +1887,17 @@ ssh finance-agents "cd /opt/finance-agents && source venv/bin/activate && python
 2. **Database** (PromptTemplate model) — configurable via admin
 3. **Defaults** (hardcoded) — fallback guarantee
 
-### 18.2 Registered Prompts (13 defaults)
+### 18.2 Registered Prompts (18 defaults)
 
 | Slug | Category | Purpose |
 |---|---|---|
-| `extraction.invoice_system` | extraction | System prompt for invoice data extraction |
+| `extraction.invoice_system` | extraction | System prompt for invoice data extraction (legacy single-prompt path) |
+| `extraction.invoice_base` | extraction | Base extraction instructions (Phase 2 composition base) |
+| `extraction.invoice_category_goods` | extraction | Goods invoice category overlay |
+| `extraction.invoice_category_service` | extraction | Service invoice category overlay |
+| `extraction.invoice_category_travel` | extraction | Travel invoice category overlay |
+| `extraction.country_india_gst` | extraction | India GST-specific extraction rules |
+| `extraction.country_generic_vat` | extraction | Generic VAT country overlay |
 | `agent.invoice_understanding` | agent | Invoice understanding agent system prompt |
 | `agent.po_retrieval` | agent | PO retrieval agent system prompt |
 | `agent.grn_retrieval` | agent | GRN retrieval agent system prompt |
@@ -1668,6 +1910,18 @@ ssh finance-agents "cd /opt/finance-agents && source venv/bin/activate && python
 | `case.review_routing` | case | Review routing guidance |
 | `case.copilot_system` | case | Copilot chat system prompt |
 | `case.copilot_user` | case | Copilot chat user template |
+
+All prompts are pushed to Langfuse via `python manage.py push_prompts_to_langfuse`. Dots in slug names are replaced with dashes for Langfuse naming (`extraction.invoice_base` -> `extraction-invoice_base`).
+
+**Phase 2 prompt composition** (`InvoicePromptComposer`):
+```
+extraction.invoice_base
+  + extraction.invoice_category_{goods|service|travel}
+  + extraction.country_{jurisdiction}_{regime}   (e.g. country_india_gst)
+  = final_prompt -> InvoiceExtractionAgent
+```
+
+`PromptRegistry` resolution per component: Langfuse (60s TTL) -> DB (PromptTemplate) -> hardcoded defaults.
 
 ### 18.3 Standard Agent Output Format
 
@@ -1721,6 +1975,10 @@ All agents produce JSON following this schema:
 | `DEFAULT_PAGE_SIZE` | 25 | API pagination |
 | `DEFAULT_RECONCILIATION_MODE` | THREE_WAY | Default matching mode |
 | `DEFAULT_CURRENCY` | USD | Default currency |
+| `POSTING_REFERENCE_FRESHNESS_HOURS` | 168 | Hours before ERP reference data is considered stale |
+| `ERP_CACHE_TTL_SECONDS` | 3600 | Seconds for ERP lookup cache TTL |
+| `EXTRACTION_AUTO_APPROVE_ENABLED` | False | Enable auto-approval of extractions at threshold |
+| `EXTRACTION_AUTO_APPROVE_THRESHOLD` | 0.90 | Confidence floor for auto-approval |
 
 ### 19.3 Allowed Upload Extensions
 
@@ -1742,6 +2000,14 @@ All agents produce JSON following this schema:
 | `DATABASE_URL` | Database connection string |
 | `REDIS_URL` | Redis connection URL |
 | `CELERY_TASK_ALWAYS_EAGER` | Run tasks synchronously (True/False) |
+| `EXTRACTION_AUTO_APPROVE_ENABLED` | Enable auto-approval of high-confidence extractions |
+| `EXTRACTION_AUTO_APPROVE_THRESHOLD` | Confidence threshold for auto-approval (default 0.90) |
+| `POSTING_REFERENCE_FRESHNESS_HOURS` | Max ERP reference age before staleness warnings (default 168h) |
+| `ERP_CACHE_TTL_SECONDS` | TTL for ERP resolution cache records (default 3600) |
+| `ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD` | Confidence threshold for ERP duplicate invoice fallback (default 0.8) |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key (enables LLM observability tracing) |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key |
+| `LANGFUSE_HOST` | Langfuse server URL (e.g. `https://us.cloud.langfuse.com`) |
 
 ---
 
@@ -2046,78 +2312,218 @@ celery -A config worker -l info
 
 ### Implemented
 
-- All data models, migrations, enums (25 enum classes), permissions, middleware
+- All data models, migrations, enums (25 core enums + 6 ERP enums), permissions, middleware
 - Two-agent extraction architecture: InvoiceExtractionAgent (always, single-shot, json_object) + InvoiceUnderstandingAgent (conditional: confidence < 75%)
 - **Phase 2 extraction upgrade**: `InvoiceCategoryClassifier` (goods/service/travel), `InvoicePromptComposer` (base + category + country overlays, prompt_hash), `ResponseRepairService` (5 deterministic repair rules pre-parser); wired into InvoiceExtractionAdapter
-- **Invoice model extended**: vendor_tax_id, buyer_name, due_date, tax_percentage, tax_breakdown (cgst/sgst/igst/vat) — migration 0009
+- **Invoice model extended**: vendor_tax_id, buyer_name, due_date, tax_percentage, tax_breakdown (cgst/sgst/igst/vat)
+- **Multi-country extraction platform** (`apps/extraction_core/`): 13 models, 30 service classes, 60+ API endpoints, jurisdiction resolution, schema-driven extraction, evidence capture, credit system, OCR cost tracking, country pack governance, Phase 2 hardening (decision codes, recovery lane, evidence-aware confidence, prompt-source audit trail), Indian e-invoice QR code decoding (NIC JWT + plain-JSON, Azure DI barcodes, OCR IRN fallback)
 - Extraction pipeline (Azure DI OCR + GPT-4o, 11 stages) with human-in-the-loop approval gate
-- **Extraction Approval**: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI with field correction tracking; configurable auto-approval threshold (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`)
+- **Extraction Approval**: `ExtractionApproval` + `ExtractionFieldCorrection` models; approve/reject/auto-approve with configurable threshold; touchless-rate analytics
 - Reconciliation engine (14 services; 2-way/3-way matching with mode resolver)
-- ReconciliationPolicy model with priority-ordered mode rules
-- Tiered tolerance (strict + auto-close bands)
-- AI agent orchestration (8 agents, policy engine, tool registry, LLM client with response_format support)
-- Agent RBAC guardrails: `AgentGuardrailsService` — central RBAC enforcement for all agent operations (orchestration, per-agent, per-tool, recommendation, post-policy authorization)
+- ReconciliationPolicy model with priority-ordered mode rules; tiered tolerance (strict + auto-close bands)
+- AI agent orchestration (8 agents, `ReasoningPlanner` LLM-based planner with `PolicyEngine` fallback, tool registry, LLM client with response_format support)
+- `AgentOrchestrationRun` model: top-level pipeline invocation record with duplicate-run guard (RUNNING blocks re-entry), status machine (PLANNED/RUNNING/COMPLETED/PARTIAL/FAILED)
+- `AgentMemory`: cross-agent structured memory propagated via `AgentContext`; pre-seeded facts and per-agent summary accumulation
+- `AgentDefinition` catalog: all fields are first-class DB columns (purpose, entry_conditions, success_criteria, prohibited_actions, tool_grounding contract, lifecycle_status, etc.)
+- Agent RBAC guardrails: `AgentGuardrailsService` -- central RBAC enforcement for all agent operations (orchestration, per-agent, per-tool, recommendation, post-policy, data-scope authorization)
+- `UserRole.scope_json`: per-assignment scope restrictions (allowed_business_units, allowed_vendor_ids)
 - SYSTEM_AGENT role (rank 100, `is_system_role=True`) with `system-agent@internal` service account for autonomous operations
-- Per-agent permission enforcement: `agents.run_*` (8 permissions) checked before each agent execution
-- Per-tool permission enforcement: `required_permission` on all 6 tools, checked via `authorize_tool()` before execution
-- Recommendation authorization: `recommendations.*` (6 permissions) checked before acceptance/rejection
-- Post-policy authorization: auto-close requires `recommendations.auto_close`, escalation requires `cases.escalate`
-- Agent RBAC audit: 9 new `AuditEventType` values (GUARDRAIL_GRANTED/DENIED, TOOL_CALL_AUTHORIZED/DENIED, RECOMMENDATION_ACCEPTED/DENIED, AUTO_CLOSE_AUTHORIZED/DENIED, SYSTEM_AGENT_USED)
-- `AgentRun` RBAC fields: `actor_primary_role`, `actor_roles_snapshot_json`, `permission_source`, `access_granted` — populated on every agent run
-- Governance dashboard: 4 new guardrail-specific metrics (agent RBAC compliance, guardrail decisions, tool authorization metrics, recommendation authorization audit)
-- Agent feedback loop (PO re-reconciliation)
-- Deterministic resolver (cost-saving LLM replacement)
-- Agent tracing and governance
-- Case management platform (state machine, 11 stages, 3 processing paths)
-- Non-PO validation (9 checks)
-- Review workflow with decision tracking
-- Dashboard analytics (7 API endpoints)
-- Audit logging (~38 event types including case lifecycle: CASE_CLOSED, CASE_REJECTED, CASE_REPROCESSED, CASE_ESCALATED, CASE_FAILED, CASE_STATUS_CHANGED)
-- CaseStateMachine audit trail: automatic AuditEvent logging for terminal state transitions (CLOSED, REJECTED, ESCALATED, FAILED)
-- Review lifecycle audit: REVIEWER_ASSIGNED, REVIEW_STARTED events tracked
-- Unified case timeline
-- Observability infrastructure: `TraceContext` (distributed tracing), structured JSON logging with PII redaction, in-process metrics service
-- Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
-- `RequestTraceMiddleware` for per-request trace context propagation with `X-Trace-ID` / `X-Request-ID` headers
-- RBAC-aware audit trail: `AuditEvent` with 20+ fields (trace IDs, actor RBAC snapshot, permission checks, cross-references, status changes, duration, error codes)
-- Enhanced `CaseTimelineService`: 8 event categories, RBAC badges, status changes, field corrections, duration tracking, decision logs, stage timeline
-- Enhanced governance API: 9 endpoints (4 original + 5 new: access history, stage timeline, permission denials, RBAC activity, agent performance)
-- Enhanced governance templates: RBAC columns + filters in audit list, access history tab + RBAC badges in invoice governance
-- `AgentRun` traceability: trace_id, span_id, invocation reason, prompt version, actor/permission tracking, cost estimate
-- `ProcessingLog` traceability: trace fields, service/task name tracking, duration, success/error tracking
-- DRF APIs with filtering, search, pagination
-- Vendor UI: list page (KPIs, country/currency/search filters, PO/invoice/alias counts) + detail page (aliases, recent POs/invoices/GRNs)
-- RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own invoices (configurable via `ap_processor_sees_all_cases` toggle)
-- RBAC permissions for vendors (`vendors.view`), purchase orders (`purchase_orders.view`), and GRNs (`grns.view`) — all roles granted, AP_PROCESSOR scoped
-- Sidebar navigation gated by RBAC permissions for all document pages (POs, GRNs, Vendors, Governance, Admin Console)
-- Agent reference page redesigned with 8 tabs: Invoice Pipeline, Case Lifecycle, Agents, Tools & Recommendations, Prompts, Audit & Governance, Observability, RBAC
-- Bootstrap 5 templates (34 templates including RBAC admin console, vendor pages)
-- Enterprise RBAC: Role, Permission, RolePermission, UserRole, UserPermissionOverride models
-- RBAC permission engine: code-level checks, middleware cache, template tags, DRF classes, CBV mixins, FBV decorators
-- RBAC admin console: 8 Bootstrap 5 screens (user CRUD, role CRUD, permission catalog, role-permission matrix)
-- RBAC audit: 9 event types logged via RBACEventService to AuditEvent + 9 agent guardrail event types
-- RBAC API: full REST endpoints for users, roles, permissions, matrix
-- RBAC seed: 6 roles (incl. SYSTEM_AGENT), 40 permissions (incl. 16 agent/recommendation/cases/extraction), full role-permission matrix
-- Prompt registry with 18 defaults (extraction.invoice_system, extraction.invoice_base, 3 category overlays, 2 country overlays, 12 agent prompts); pushed to Langfuse via `push_prompts_to_langfuse`
-- Seed data commands (4 commands including Saudi McD scenarios)
-- Azure Blob Storage integration
-- Admin panel registration
-- Windows synchronous dev mode
+- Agent RBAC audit: 9 `AuditEventType` values (GUARDRAIL_GRANTED/DENIED, TOOL_CALL_AUTHORIZED/DENIED, RECOMMENDATION_ACCEPTED/DENIED, AUTO_CLOSE_AUTHORIZED/DENIED, SYSTEM_AGENT_USED)
+- `AgentRun` RBAC fields: `actor_primary_role`, `actor_roles_snapshot_json`, `permission_source`, `access_granted` -- populated on every agent run
+- Agent feedback loop (PO re-reconciliation); deterministic resolver; agent tracing and governance
+- Case management platform (state machine, 11 stages, 3 processing paths); Non-PO validation (9 checks)
+- AP Copilot (`apps/copilot/`): read-only conversational assistant with session management, structured responses, role-aware visibility, and governance integration
+- Review workflow with decision tracking; Dashboard analytics (7 API endpoints)
+- **Invoice Posting Agent** (`apps/posting/` + `apps/posting_core/`): 9-stage pipeline (eligibility, snapshot, mapping, validation, confidence, review routing, payload build, finalization, status); 11 posting statuses; 6 review queues; Excel/CSV ERP reference import; governance trail; 17 posting audit event types; posting workbench + detail templates; full DRF API
+- **ERP Integration Layer** (`apps/erp_integration/`): `ERPConnection` model + `ConnectorFactory`; 4 connector implementations (Custom, Dynamics, Zoho, Salesforce); 7 resolver types with DB fallback + TTL cache; resolution + submission audit logs; wired into `PostingMappingEngine` and `POLookupTool`/`GRNLookupTool`
+- **Procurement Intelligence Platform** (`apps/procurement/`): product/solution recommendation, should-cost benchmarking, 6-dimension validation; `QuotationExtractionAgent` for LLM-based quotation data extraction; `AttributeMappingService` for field synonym mapping; DRF API + Bootstrap 5 templates
+- Audit logging (38+ event types including case lifecycle, RBAC guardrail, posting events); CaseTimelineService (8 event categories); governance views
+- Observability: TraceContext, structured JSON logging, MetricsService, RequestTraceMiddleware, @observed_service/@observed_action/@observed_task decorators; Langfuse integration (fail-silent tracing, scores, prompt management)
+- DRF APIs with filtering, search, pagination; vendor UI (list + detail)
+- RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own invoices
+- Enterprise RBAC: Role, Permission, RolePermission, UserRole (with scope_json), UserPermissionOverride; RBAC engine, middleware, template tags, DRF classes, CBV mixins, admin console (8 screens), API, seed (6 roles incl. SYSTEM_AGENT, 40 permissions)
+- Prompt registry with 18 defaults; pushed to Langfuse via `push_prompts_to_langfuse`
+- Seed data (4 commands): config, rbac, prompts, ap_data (30+ scenarios, 6-stage pipeline)
+- **Tests**: Reconciliation engine: 73. Extraction (base + Phase 2): 232+. Extraction core: 50+. Total: 355+ passing.
+- Azure Blob Storage integration; Windows synchronous dev mode; Admin panel registration
 
 ### Not Yet Implemented
 
 | Area | Description |
 |---|---|
-| **Tests** | Reconciliation engine: 73 tests (`apps/reconciliation/tests/`). Extraction Phase 2: 51 tests — category classifier (13), prompt composer (13), response repair (25). Total: 124+ passing. |
+| **Real ERP submission** | `PostingActionService.submit_posting()` is Phase 1 mock -- replace with live ERP connector call (SAP BAPI, Oracle REST, etc.) |
+| **Auto-submit (touchless posting)** | Auto-advance `is_touchless=True` postings to SUBMISSION_IN_PROGRESS without human approval |
+| **Feedback learning** | Train `VendorAliasMapping`/`ItemAliasMapping` from accepted field corrections |
+| **Scheduled ERP re-import** | Celery Beat periodic task to pull fresh master data from shared drive/ERP |
+| **LLM-assisted item mapping** | Use GPT for fuzzy item description matching in `PostingMappingEngine._resolve_item()` |
 | **Extraction Refinement** | Multi-page invoice support, edge-case layout handling |
-| **ERP Integrations** | Actual PO/GRN API connectors (models exist, not wired) |
 | **Report Exports** | Full CSV/Excel export (CSV exists for case console only) |
 | **Celery Beat** | No periodic task schedules configured |
 | **Email Notifications** | No notification system for review assignments |
 | **Docker/Deployment** | No Dockerfile or docker-compose |
 | **CI/CD** | No GitHub Actions or pipeline |
 | **Frontend Interactivity** | AJAX enhancements for server-rendered templates |
+| **Additional tests** | Factory-boy factories and integration tests for DRF endpoints, posting pipeline, ERP connectors, procurement |
 
 ---
 
 *This documentation was auto-generated from codebase analysis. Refer to source files for the most current implementation details.*
+
+---
+
+## 23. Invoice Posting Agent
+
+> Full reference: [POSTING_AGENT.md](POSTING_AGENT.md)
+
+The Invoice Posting Agent bridges approved invoices (past the reconciliation gate) into ERP-ready posting proposals. It spans two Django apps:
+
+- **`apps/posting/`** — business/UI layer: eligibility gate, orchestration, action service, workbench templates
+- **`apps/posting_core/`** — platform/core layer: 9-stage pipeline, mapping engine, validation, confidence scoring, review routing, governance trail
+
+### 23.1 Pipeline Stages
+
+| Stage | Name | Description |
+|---|---|---|
+| 1 | ELIGIBILITY_CHECK | Verify invoice status, PO link, prior run guard |
+| 2 | SNAPSHOT_BUILD | Capture immutable invoice + line snapshot |
+| 3 | MAPPING | Resolve vendor, item, tax code, cost center via ERP reference tables or live ERP API |
+| 4 | VALIDATION | Field-level completeness + business rule checks |
+| 5 | CONFIDENCE | 5-dimension weighted score (header 15%, vendor 25%, line 30%, tax 15%, freshness 15%) |
+| 6 | REVIEW_ROUTING | Determine queues needing attention; set `is_touchless` |
+| 7 | PAYLOAD_BUILD | Assemble ERP posting JSON payload |
+| 8 | FINALIZATION | Write `InvoicePosting.status`, log governance record |
+| 9 | STATUS | Emit audit event, update `PostingRun.status` |
+
+Stage 9b also runs a duplicate invoice check via the ERP integration layer.
+
+### 23.2 Mapping Engine Resolution Chain
+
+Each field follows: exact code match -> alias lookup -> name fuzzy match -> LLM fallback (item only, Phase 2).
+
+Resolution provenance per field is stored in `PostingRun.erp_source_metadata_json`.
+
+### 23.3 Posting Status Lifecycle
+
+```
+NOT_READY -> READY_FOR_POSTING -> MAPPING_IN_PROGRESS
+    -> MAPPING_REVIEW_REQUIRED | READY_TO_SUBMIT
+    -> SUBMISSION_IN_PROGRESS -> POSTED | POST_FAILED
+    -> RETRY_PENDING | REJECTED | SKIPPED
+```
+
+### 23.4 Review Queues
+
+`VENDOR_MAPPING_REVIEW`, `ITEM_MAPPING_REVIEW`, `TAX_REVIEW`, `COST_CENTER_REVIEW`, `PO_REVIEW`, `POSTING_OPS`
+
+### 23.5 ERP Reference Import
+
+`ExcelImportOrchestrator` ingests vendor/item/tax/cost-center/open-PO master data from Excel or CSV into the reference tables (`ERPVendorReference`, `ERPItemReference`, `ERPTaxCodeReference`, `ERPCostCenterReference`, `ERPPOReference`).
+
+---
+
+## 24. ERP Integration Layer
+
+> Full reference: [POSTING_AGENT.md](POSTING_AGENT.md) -- ERP Integration section
+
+`apps/erp_integration/` is a shared connectivity layer used by both the posting pipeline and agent tools.
+
+### 24.1 Architecture
+
+```
+Request -> ERPCacheService (TTL lookup)
+        -> BaseERPConnector.lookup() (live API)
+        -> DB Fallback Adapter (see tiers below)
+        -> ERPAuditService (log resolution + submission)
+```
+
+**DB Fallback tiers by resolution type:**
+
+| Resolution Type | Tier 1 (confidence 1.0) | Tier 2 (confidence 0.75) |
+|---|---|---|
+| PURCHASE_ORDER | `documents.PurchaseOrder` (full transactional record) | `posting_core.ERPPOReference` (ERP snapshot; adds `_source_tier` + `_warning`) |
+| GRN | `documents.GoodsReceiptNote` | -- (single tier) |
+| VENDOR | `posting_core.ERPVendorReference` | -- (single tier) |
+| ITEM | `posting_core.ERPItemReference` | -- (single tier) |
+| TAX_CODE | `posting_core.ERPTaxCodeReference` | -- (single tier) |
+| COST_CENTER | `posting_core.ERPCostCenterReference` | -- (single tier) |
+| DUPLICATE_INVOICE | `posting_core` duplicate check | -- (single tier) |
+
+The two-tier PO chain means the reconciliation agent and posting agent see the same PO universe: transactional POs created in the recon system (Tier 1) AND POs imported from ERP master data exports (Tier 2).
+
+### 24.2 Connectors
+
+| Connector | Class | Notes |
+|---|---|---|
+| Custom ERP | `CustomERPConnector` | Generic REST adapter |
+| Microsoft Dynamics 365 | `DynamicsConnector` | OAuth2 + OData |
+| Zoho Books | `ZohoConnector` | Zoho OAuth |
+| Salesforce | `SalesforceConnector` | SOQL queries |
+
+Add new connectors by extending `BaseERPConnector`, implementing capability flags, and registering in `ConnectorFactory._CONNECTOR_MAP`.
+
+### 24.3 Resolution Types
+
+`VENDOR`, `ITEM`, `TAX_CODE`, `COST_CENTER`, `PURCHASE_ORDER`, `GRN`, `DUPLICATE_INVOICE`
+
+### 24.4 Key Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `ERP_CACHE_TTL_SECONDS` | 3600 | Cache TTL for ERP reference lookups |
+| `ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD` | 0.8 | Min confidence for DB-fallback duplicate check |
+
+### 24.5 API Endpoint
+
+`POST /api/v1/erp/resolve/<resolution_type>/` -- on-demand ERP reference resolution
+
+### 24.6 Reference Data UI
+
+`/erp-connections/reference-data/` (`erp_integration:erp_reference_data`) -- browse all 5 imported reference tables (Vendors, Items, Tax Codes, Cost Centers, Open POs) in a tabbed interface with:
+- KPI cards showing record counts per table
+- Per-tab search and pagination
+- Import batch provenance column (batch ID, imported date)
+- Empty-state prompt linking to Import Reference Data
+- Help callout explaining the two-tier PO resolution chain
+
+Accessed from the **ERP Integration** sidebar section (separate from Posting Agent).
+
+---
+
+## 25. Procurement Intelligence Platform
+
+> Full reference: [PROCUREMENT.md](PROCUREMENT.md)
+
+`apps/procurement/` provides three intelligence flows before a purchase request reaches the PO stage.
+
+### 25.1 Intelligence Flows
+
+| Flow | Entry | Output |
+|---|---|---|
+| **Recommendation** | Product specification + budget | Ranked vendor shortlist with compliance score |
+| **Benchmark** | Line item + quantity | Should-cost estimate vs market data |
+| **Validation** | Draft PO or quotation | 6-dimension compliance score (policy, budget, vendor, quality, ESG, risk) |
+
+### 25.2 Agents
+
+| Agent | Class | Purpose |
+|---|---|---|
+| RecommendationAgent | `apps/procurement/agents/` | Vendor/product recommendation via LLM + catalog search |
+| BenchmarkAgent | `apps/procurement/agents/` | Should-cost analysis with market reference data |
+| ComplianceAgent | `apps/procurement/agents/` | Multi-dimension PO validation |
+| QuotationExtractionAgent | `apps/procurement/agents/quotation_extraction_agent.py` | LLM extraction of structured data from quotation PDFs (60K char OCR limit, `max_tokens=8192`) |
+
+### 25.3 Quotation Extraction Pipeline
+
+1. OCR via Azure Document Intelligence (60K char truncation)
+2. `QuotationDocumentPrefillService` calls `QuotationExtractionAgent.extract()`
+3. `AttributeMappingService` normalizes field synonyms (`_QUOTATION_FIELD_SYNONYMS`)
+4. Extracted data stored as JSON in `prefill_payload_json` -- NOT persisted to DB
+5. User review + confirmation via `PrefillReviewService.confirm_quotation_prefill()` triggers DB write
+
+### 25.4 Key Models
+
+`ProcurementRequest`, `VendorQuotation`, `QuotationLineItem`, `RecommendationRun`, `BenchmarkRun`, `ValidationRun`, `ComplianceScore`, `ProcurementPolicy`, `MarketReferenceData`, `ProcurementApproval`, `SupplierPerformance`, `ProcurementAuditEvent`, `CategoryBudget`
+
+### 25.5 API Base Path
+
+`/api/v1/procurement/` -- request CRUD, quotation management, recommendation/benchmark/validation runs, category budgets, supplier performance, market reference data

@@ -249,3 +249,109 @@ def erp_connection_test_ajax(request):
         return JsonResponse({"success": success, "message": message})
     except Exception as exc:
         return JsonResponse({"success": False, "message": str(exc)})
+
+
+# ────────────────────────────────────────────────────────────────
+# ERP Reference Data Browser
+# ────────────────────────────────────────────────────────────────
+@login_required
+@permission_required_code("invoices.view")
+@observed_action("erp.view_reference_data", permission="invoices.view", entity_type="ERPReferenceData")
+def erp_reference_data(request):
+    """Browse all imported ERP reference data (vendors, items, tax codes, cost centers, PO refs).
+
+    Each tab shows the live contents of the corresponding posting_core reference table
+    so operators can verify what master data the posting mapping engine will resolve against.
+    """
+    from apps.posting_core.models import (
+        ERPCostCenterReference,
+        ERPItemReference,
+        ERPPOReference,
+        ERPReferenceImportBatch,
+        ERPTaxCodeReference,
+        ERPVendorReference,
+    )
+
+    VALID_TABS = ("vendors", "items", "tax", "cost_centers", "po_refs")
+    active_tab = request.GET.get("tab", "vendors")
+    if active_tab not in VALID_TABS:
+        active_tab = "vendors"
+    search = request.GET.get("q", "").strip()
+
+    # KPI counts (active/open records only)
+    vendor_count = ERPVendorReference.objects.filter(is_active=True).count()
+    item_count = ERPItemReference.objects.filter(is_active=True).count()
+    tax_count = ERPTaxCodeReference.objects.filter(is_active=True).count()
+    cost_center_count = ERPCostCenterReference.objects.filter(is_active=True).count()
+    po_ref_count = ERPPOReference.objects.filter(is_open=True).count()
+    last_batch = ERPReferenceImportBatch.objects.order_by("-created_at").first()
+    total_batches = ERPReferenceImportBatch.objects.count()
+
+    # Build paginated queryset for the active tab
+    page_obj = None
+    if active_tab == "vendors":
+        qs = ERPVendorReference.objects.select_related("batch").order_by("vendor_code")
+        if search:
+            qs = qs.filter(
+                Q(vendor_code__icontains=search)
+                | Q(vendor_name__icontains=search)
+                | Q(vendor_group__icontains=search)
+            )
+        page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
+
+    elif active_tab == "items":
+        qs = ERPItemReference.objects.select_related("batch").order_by("item_code")
+        if search:
+            qs = qs.filter(
+                Q(item_code__icontains=search)
+                | Q(item_name__icontains=search)
+                | Q(category__icontains=search)
+            )
+        page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
+
+    elif active_tab == "tax":
+        qs = ERPTaxCodeReference.objects.select_related("batch").order_by("tax_code")
+        if search:
+            qs = qs.filter(
+                Q(tax_code__icontains=search)
+                | Q(tax_label__icontains=search)
+                | Q(country_code__icontains=search)
+            )
+        page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
+
+    elif active_tab == "cost_centers":
+        qs = ERPCostCenterReference.objects.select_related("batch").order_by("cost_center_code")
+        if search:
+            qs = qs.filter(
+                Q(cost_center_code__icontains=search)
+                | Q(cost_center_name__icontains=search)
+                | Q(department__icontains=search)
+                | Q(business_unit__icontains=search)
+            )
+        page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
+
+    elif active_tab == "po_refs":
+        qs = ERPPOReference.objects.select_related("batch").order_by("po_number", "po_line_number")
+        if search:
+            qs = qs.filter(
+                Q(po_number__icontains=search)
+                | Q(vendor_code__icontains=search)
+                | Q(item_code__icontains=search)
+                | Q(description__icontains=search)
+            )
+        page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
+
+    return render(request, "erp_integration/reference_data.html", {
+        "active_tab": active_tab,
+        "search": search,
+        "page_obj": page_obj,
+        "kpi": {
+            "vendor_count": vendor_count,
+            "item_count": item_count,
+            "tax_count": tax_count,
+            "cost_center_count": cost_center_count,
+            "po_ref_count": po_ref_count,
+            "total_batches": total_batches,
+        },
+        "last_batch": last_batch,
+    })

@@ -13,8 +13,8 @@
   {% include "extraction/console/_header_bar.html" %}
 
   {# ── MAIN WORKSPACE ── #}
-  <div class="row g-3 mt-1">
-    <div class="col-12">
+  <div class="row g-3 mt-1" id="excWorkspaceRow">
+    <div class="col-12" id="excWorkspaceCol">
       <div class="card exc-intel-panel">
         <div class="card-header p-0 border-bottom-0">
           <ul class="nav nav-pills exc-tab-nav" id="intelTabs" role="tablist">
@@ -76,6 +76,21 @@
                 {% endif %}
               </button>
             </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link {% if not qr_data %}text-muted{% endif %}" id="tab-qr" data-bs-toggle="pill"
+                      data-bs-target="#panel-qr" type="button" role="tab"
+                      aria-controls="panel-qr" aria-selected="false"
+                      title="{% if qr_data %}Indian e-Invoice QR data decoded{% else %}No e-Invoice QR code found in this document{% endif %}">
+                <i class="bi bi-qr-code me-1"></i>e-Invoice QR
+                {% if qr_data %}
+                  {% if "QR_MISMATCH" in qr_decision_codes %}
+                    <span class="badge bg-danger ms-1">Mismatch</span>
+                  {% else %}
+                    <span class="badge bg-success ms-1">✓</span>
+                  {% endif %}
+                {% endif %}
+              </button>
+            </li>
           </ul>
         </div>
         <div class="card-body p-0">
@@ -108,11 +123,16 @@
             <div class="tab-pane fade" id="panel-cost" role="tabpanel" aria-labelledby="tab-cost">
               {% include "extraction/console/_cost_tokens_panel.html" %}
             </div>
+            {# Tab 9: e-Invoice QR #}
+            <div class="tab-pane fade" id="panel-qr" role="tabpanel" aria-labelledby="tab-qr">
+              {% include "extraction/console/_qr_panel.html" %}
+            </div>
           </div>
         </div>
       </div>
     </div>
   </div>
+
 
   {# ── BOTTOM TIMELINE PANEL ── #}
   {% include "extraction/console/_bottom_timeline.html" %}
@@ -130,6 +150,8 @@
 
 {% block extra_js %}
 <script src="{% static 'js/extraction_console.js' %}?v={{ static_version }}"></script>
+
+
 {% if invoice %}
 <script>
 (function() {

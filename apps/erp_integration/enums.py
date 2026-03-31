@@ -3,11 +3,32 @@ from django.db import models
 
 
 class ERPSourceType(models.TextChoices):
-    """Source of a resolved ERP value."""
+    """Source of a resolved ERP value.
+
+    Source priority (highest to lowest freshness guarantee):
+      API          -- Live call to external ERP system.
+      CACHE        -- TTL-based in-DB cache of a recent API result.
+      MIRROR_DB    -- Internal canonical mirror tables (documents.PurchaseOrder,
+                      documents.GoodsReceiptNote). Updated when AP team loads
+                      transactional documents from ERP.
+      DB_FALLBACK  -- Imported ERP reference snapshots (ERPVendorReference,
+                      ERPItemReference, ERPTaxCodeReference, ERPCostCenterReference,
+                      ERPPOReference). Updated via Excel/CSV import batches.
+      MANUAL_OVERRIDE -- Value was set or corrected by a human user.
+      NONE         -- Resolution failed; no data returned.
+    """
     API = "API", "ERP API"
-    DB_FALLBACK = "DB_FALLBACK", "Database Fallback"
     CACHE = "CACHE", "Cache"
+    MIRROR_DB = "MIRROR_DB", "Internal ERP Mirror"
+    DB_FALLBACK = "DB_FALLBACK", "Reference Import Snapshot"
+    MANUAL_OVERRIDE = "MANUAL_OVERRIDE", "Manual Override"
     NONE = "NONE", "Not Resolved"
+
+
+class ERPDataDomain(models.TextChoices):
+    """Data domain used to select the appropriate freshness threshold."""
+    TRANSACTIONAL = "TRANSACTIONAL", "Transactional (PO, GRN)"
+    MASTER = "MASTER", "Master Reference (Vendor, Item, Tax, Cost Center)"
 
 
 class ERPConnectorType(models.TextChoices):

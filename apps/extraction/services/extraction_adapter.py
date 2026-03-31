@@ -53,6 +53,8 @@ class ExtractionResponse:
     was_repaired: bool = False
     repair_actions: Any = field(default_factory=list)
     repair_warnings: Any = field(default_factory=list)
+    # QR code data — populated when an Indian e-invoice QR is detected
+    qr_data: Any = None  # Optional[QRInvoiceData] — avoid circular import at module level
 
 
 # ---------------------------------------------------------------------------
@@ -73,12 +75,13 @@ class InvoiceExtractionAdapter:
             ocr_enabled = self._is_ocr_enabled()
 
             if ocr_enabled:
-                # Step 1a: OCR via Azure Document Intelligence
-                ocr_text, ocr_page_count, ocr_duration_ms = self._ocr_document(file_path)
+                # Step 1a: OCR via Azure Document Intelligence (also returns raw QR strings)
+                ocr_text, ocr_page_count, ocr_duration_ms, qr_texts = self._ocr_document(file_path)
             else:
                 # Step 1b: Native PDF text extraction (no Azure DI cost)
                 logger.info("OCR disabled -- using native PDF text extraction for %s", file_path)
                 ocr_text, ocr_page_count, ocr_duration_ms = self._extract_text_native(file_path)
+                qr_texts = []
 
             ocr_char_count = len(ocr_text)
             if not ocr_text.strip():
@@ -91,7 +94,17 @@ class InvoiceExtractionAdapter:
                 )
 
             logger.info("OCR completed: %d characters, %d pages from %s", ocr_char_count, ocr_page_count, file_path)
-            print("Document extraction results:", ocr_text)
+
+            # Step 1c: QR code decode — Indian e-invoice IRN / GSTIN data (fail-silent)
+            qr_data = self._decode_qr(file_path, ocr_text, qr_texts)
+            if qr_data:
+                logger.info(
+                    "e-invoice QR decoded (strategy=%s): IRN=%s... DocNo=%s TotVal=%s",
+                    qr_data.decode_strategy,
+                    qr_data.irn[:16],
+                    qr_data.doc_number,
+                    qr_data.total_value,
+                )
 
             # Step 2a: Invoice category classification (new)
             category_result = self._classify_category(ocr_text)
@@ -127,6 +140,13 @@ class InvoiceExtractionAdapter:
                     "warnings": repair_result.warnings,
                 }
 
+            # Embed QR metadata in raw_json for persistence
+            if qr_data is not None:
+                try:
+                    raw_json["_qr"] = qr_data.to_serializable()
+                except Exception:
+                    pass
+
             elapsed = int((time.time() - start) * 1000)
 
             return ExtractionResponse(
@@ -152,6 +172,8 @@ class InvoiceExtractionAdapter:
                 was_repaired=repair_result.was_repaired,
                 repair_actions=list(repair_result.repair_actions),
                 repair_warnings=list(repair_result.warnings),
+                # QR data
+                qr_data=qr_data,
             )
         except Exception as exc:
             elapsed = int((time.time() - start) * 1000)
@@ -186,10 +208,13 @@ class InvoiceExtractionAdapter:
     # ------------------------------------------------------------------
     @staticmethod
     def _ocr_document(file_path: str) -> tuple:
-        """Use Azure Document Intelligence to extract text from a document.
+        """Use Azure Document Intelligence to extract text + barcodes from a document.
 
         Returns:
-            (ocr_text, page_count, duration_ms)
+            (ocr_text, page_count, duration_ms, qr_texts)
+            where qr_texts is a list of decoded QR code strings from Azure DI's
+            barcodes API (empty list if no barcodes detected or SDK version
+            doesn't support barcodes).
         """
         from azure.ai.formrecognizer import DocumentAnalysisClient
         from azure.core.credentials import AzureKeyCredential
@@ -200,6 +225,8 @@ class InvoiceExtractionAdapter:
         if not endpoint or not key:
             raise ValueError("Azure Document Intelligence credentials not configured (AZURE_DI_ENDPOINT / AZURE_DI_KEY)")
 
+        from azure.ai.formrecognizer import AnalysisFeature
+
         client = DocumentAnalysisClient(
             endpoint=endpoint,
             credential=AzureKeyCredential(key),
@@ -207,19 +234,63 @@ class InvoiceExtractionAdapter:
 
         ocr_start = time.time()
         with open(file_path, "rb") as f:
-            poller = client.begin_analyze_document("prebuilt-read", document=f)
+            poller = client.begin_analyze_document(
+                "prebuilt-read",
+                document=f,
+                # Request barcode add-on to get QR code values from Indian e-invoices.
+                # AnalysisFeature.BARCODES = 'barcodes' — available from API version
+                # 2023-07-31 (azure-ai-formrecognizer >= 3.3.0).
+                # Without this flag, page.barcodes is always an empty list even when
+                # the document contains QR codes; the decoder falls back to OCR-text
+                # and pyzbar strategies automatically.
+                features=[AnalysisFeature.BARCODES],
+            )
 
         result = poller.result()
         ocr_duration_ms = int((time.time() - ocr_start) * 1000)
 
-        # Concatenate all pages' text
+        # Concatenate all pages' text lines
         page_count = len(result.pages) if result.pages else 0
         lines = []
+        qr_texts: list = []
         for page in result.pages:
             for line in page.lines:
                 lines.append(line.content)
+            # Extract QR code strings from Azure DI barcodes add-on.
+            # Azure DI returns kind="QRCode" (PascalCase); .upper() normalises to
+            # "QRCODE" for a case-insensitive comparison.
+            for barcode in getattr(page, "barcodes", []):
+                kind = str(getattr(barcode, "kind", "")).upper()
+                if kind == "QRCODE":
+                    val = getattr(barcode, "value", "")
+                    if val:
+                        qr_texts.append(val)
 
-        return "\n".join(lines), page_count, ocr_duration_ms
+        if qr_texts:
+            logger.info("Azure DI returned %d QR code(s) for %s", len(qr_texts), file_path)
+
+        return "\n".join(lines), page_count, ocr_duration_ms, qr_texts
+
+    @staticmethod
+    def _decode_qr(
+        file_path: str,
+        ocr_text: str,
+        qr_texts: Optional[list] = None,
+    ):
+        """Decode e-invoice QR data. Fail-silent — returns None on any failure.
+
+        Returns QRInvoiceData or None.
+        """
+        try:
+            from apps.extraction.services.qr_decoder_service import QRCodeDecoderService
+            return QRCodeDecoderService.decode(
+                file_path,
+                ocr_text=ocr_text,
+                qr_texts=qr_texts or [],
+            )
+        except Exception as exc:
+            logger.debug("QR decode failed (non-fatal): %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Step 1b: Native PDF text extraction (no OCR cost)

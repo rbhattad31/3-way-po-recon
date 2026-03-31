@@ -41,6 +41,10 @@ class GRNMatchResult:
     has_receipt_issues: bool = False
     latest_receipt_date: Optional['date'] = None
     grn_count: int = 0
+    # ERP provenance (copied from GRNSummary by ThreeWayMatchService)
+    erp_source_type: str = ""
+    erp_provenance: dict = field(default_factory=dict)
+    is_stale: bool = False
 
 
 class GRNMatchService:

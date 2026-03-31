@@ -76,10 +76,59 @@ class PostingPipeline:
         # Link extraction records if available
         cls._link_extraction(posting_run, invoice)
 
+        # ------------------------------------------------------------------
+        # Langfuse: open root trace for this posting pipeline run.
+        # Trace ID uses str(posting_run.pk) so the two quality scores
+        # (posting_confidence, posting_requires_review) that are already
+        # emitted with the same trace_id will link correctly in Langfuse.
+        # ------------------------------------------------------------------
+        _trace_id = str(posting_run.pk)
+        _lf_trace = None
+        try:
+            from apps.core.langfuse_client import start_trace
+            _lf_trace = start_trace(
+                _trace_id,
+                "posting_pipeline",
+                invoice_id=invoice.pk,
+                user_id=user.pk if user else None,
+                session_id=f"invoice-{invoice.pk}",
+                metadata={
+                    "posting_run_pk": posting_run.pk,
+                    "invoice_id": invoice.pk,
+                    "invoice_number": invoice.invoice_number or "",
+                },
+            )
+        except Exception:
+            pass
+
+        def _open_stage_span(name: str, extra_meta: dict = None):
+            """Open a child span for a pipeline stage. Fail-silent."""
+            try:
+                if _lf_trace is not None:
+                    from apps.core.langfuse_client import start_span
+                    return start_span(
+                        _lf_trace,
+                        name,
+                        metadata={"posting_run_pk": posting_run.pk, "invoice_id": invoice.pk, **(extra_meta or {})},
+                    )
+            except Exception:
+                pass
+            return None
+
+        def _close_stage_span(span, output: dict = None, failed: bool = False):
+            """Close a stage span with output. Fail-silent."""
+            try:
+                if span is not None:
+                    from apps.core.langfuse_client import end_span
+                    end_span(span, output=output or {}, level="ERROR" if failed else "DEFAULT")
+            except Exception:
+                pass
+
         try:
             # Stage 1: Eligibility check (delegated to caller via eligibility_service)
             posting_run.stage_code = PostingStage.ELIGIBILITY_CHECK
             posting_run.save(update_fields=["stage_code", "updated_at"])
+            _lf_s1 = _open_stage_span("eligibility_check")
 
             PostingAuditService.log_event(
                 AuditEventType.POSTING_ELIGIBILITY_PASSED,
@@ -88,19 +137,23 @@ class PostingPipeline:
                 posting_run_id=posting_run.pk,
                 user=user,
             )
+            _close_stage_span(_lf_s1, output={"passed": True})
 
             # Stage 2: Snapshot build
             posting_run.stage_code = PostingStage.SNAPSHOT_BUILD
             posting_run.save(update_fields=["stage_code", "updated_at"])
+            _lf_s2 = _open_stage_span("snapshot_build")
             snapshot = PostingSnapshotBuilder.build_invoice_snapshot(invoice)
             posting_run.source_invoice_snapshot_json = snapshot
+            _close_stage_span(_lf_s2, output={"built": True})
 
             # Stage 3: Reference resolution + Stage 4: Mapping
             posting_run.stage_code = PostingStage.MAPPING
             posting_run.save(update_fields=["stage_code", "updated_at"])
+            _lf_s3 = _open_stage_span("mapping")
 
             connector = cls._get_erp_connector()
-            engine = PostingMappingEngine(connector=connector)
+            engine = PostingMappingEngine(connector=connector, lf_parent_span=_lf_s3)
             line_items = list(invoice.line_items.order_by("line_number"))
             proposal = engine.resolve(
                 invoice,
@@ -124,10 +177,17 @@ class PostingPipeline:
                     "issues_count": len(proposal.issues),
                 },
             )
+            _close_stage_span(_lf_s3, output={
+                "vendor_resolved": bool(proposal.header.vendor_code),
+                "lines_count": len(proposal.lines),
+                "mapping_issues": len(proposal.issues),
+                "connector_used": bool(connector),
+            })
 
             # Stage 5: Validation
             posting_run.stage_code = PostingStage.VALIDATION
             posting_run.save(update_fields=["stage_code", "updated_at"])
+            _lf_s4 = _open_stage_span("validation")
             validation_issues = PostingValidationService.validate(proposal, invoice)
             all_issues = proposal.issues + validation_issues
 
@@ -138,45 +198,53 @@ class PostingPipeline:
                 posting_run_id=posting_run.pk,
                 user=user,
             )
+            _close_stage_span(_lf_s4, output={"total_issues": len(all_issues)})
 
             # Stage 6: Confidence
+            _lf_s5 = _open_stage_span("confidence_scoring")
             confidence = PostingConfidenceService.calculate(proposal, all_issues)
             posting_run.overall_confidence = confidence
 
             try:
                 from apps.core.langfuse_client import score_trace
-                _trace_id = getattr(posting_run, "trace_id", "") or str(posting_run.pk)
+                _trace_id = str(posting_run.pk)
                 score_trace(
                     _trace_id,
                     "posting_confidence",
                     float(confidence),
                     comment=(
                         f"invoice={invoice.pk} "
-                        f"requires_review={'pending'} "
+                        f"requires_review='pending' "
                         f"issues={len(all_issues)}"
                     ),
                 )
             except Exception:
                 pass
+            _close_stage_span(_lf_s5, output={"confidence": float(confidence), "issue_count": len(all_issues)})
 
             # Stage 7: Review routing
             posting_run.stage_code = PostingStage.REVIEW_ROUTING
             posting_run.save(update_fields=["stage_code", "updated_at"])
+            _lf_s6 = _open_stage_span("review_routing")
             requires_review, primary_queue, review_reasons = (
                 PostingReviewRoutingService.route(proposal, all_issues, confidence)
             )
 
             try:
                 from apps.core.langfuse_client import score_trace
-                _trace_id = getattr(posting_run, "trace_id", "") or str(posting_run.pk)
                 score_trace(
-                    _trace_id,
+                    str(posting_run.pk),
                     "posting_requires_review",
                     1.0 if requires_review else 0.0,
                     comment=f"queue={primary_queue} reasons={len(review_reasons)}",
                 )
             except Exception:
                 pass
+            _close_stage_span(_lf_s6, output={
+                "requires_review": requires_review,
+                "queue": primary_queue or "",
+                "reason_count": len(review_reasons),
+            })
 
             posting_run.requires_review = requires_review
             posting_run.review_queue = primary_queue
@@ -185,6 +253,7 @@ class PostingPipeline:
             # Stage 8: Payload build
             posting_run.stage_code = PostingStage.PAYLOAD_BUILD
             posting_run.save(update_fields=["stage_code", "updated_at"])
+            _lf_s7 = _open_stage_span("payload_build")
             payload = PostingPayloadBuilder.build(proposal)
             posting_run.posting_payload_json = payload
             posting_run.normalized_posting_data_json = {
@@ -204,14 +273,23 @@ class PostingPipeline:
                     for lp in proposal.lines
                 ],
             }
+            _close_stage_span(_lf_s7, output={"lines_in_payload": len(proposal.lines)})
 
             # Stage 9: Persist run artifacts
             posting_run.stage_code = PostingStage.FINALIZATION
             posting_run.save(update_fields=["stage_code", "updated_at"])
+            _lf_s8 = _open_stage_span("finalization")
             cls._persist_artifacts(posting_run, proposal, all_issues)
+            _close_stage_span(_lf_s8, output={"artifacts_persisted": True})
 
             # Stage 9b: Duplicate invoice check (ERP integration)
+            _lf_s9 = _open_stage_span("duplicate_check")
             cls._check_duplicate(posting_run, invoice, proposal, connector)
+            _dup_meta = (posting_run.erp_source_metadata_json or {}).get("duplicate_check", {})
+            _close_stage_span(_lf_s9, output={
+                "is_duplicate": _dup_meta.get("is_duplicate", False),
+                "source_type": _dup_meta.get("source_type", ""),
+            })
 
             # Stage 10: Finalize status
             has_blocking = any(
@@ -233,6 +311,23 @@ class PostingPipeline:
                 posting_run.pk, elapsed, confidence, requires_review,
             )
 
+            # Close root Langfuse trace on success
+            try:
+                if _lf_trace is not None:
+                    from apps.core.langfuse_client import end_span
+                    end_span(
+                        _lf_trace,
+                        output={
+                            "status": posting_run.status,
+                            "confidence": float(posting_run.overall_confidence or 0.0),
+                            "requires_review": posting_run.requires_review,
+                            "review_queue": posting_run.review_queue or "",
+                            "duration_ms": elapsed,
+                        },
+                    )
+            except Exception:
+                pass
+
             return posting_run
 
         except Exception as exc:
@@ -252,6 +347,23 @@ class PostingPipeline:
                 user=user,
             )
             logger.exception("PostingPipeline: run %s failed", posting_run.pk)
+
+            # Close root Langfuse trace on failure
+            try:
+                if _lf_trace is not None:
+                    from apps.core.langfuse_client import end_span
+                    end_span(
+                        _lf_trace,
+                        output={
+                            "status": "FAILED",
+                            "error_code": posting_run.error_code,
+                            "duration_ms": int((time.time() - start) * 1000),
+                        },
+                        level="ERROR",
+                    )
+            except Exception:
+                pass
+
             raise
 
     @staticmethod

@@ -404,7 +404,7 @@
                 {% endif %}
               </td>
               <td>
-                <span class="badge {% if log.source_type == 'API' %}bg-success{% elif log.source_type == 'CACHE' %}bg-info{% elif log.source_type == 'DB_FALLBACK' %}bg-secondary{% else %}bg-light text-dark{% endif %}">
+                <span class="badge {% if log.source_type == 'API' %}bg-success{% elif log.source_type == 'CACHE' %}bg-info{% elif log.source_type == 'MIRROR_DB' %}bg-primary{% elif log.source_type == 'DB_FALLBACK' %}bg-secondary{% elif log.source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %}">
                   {{ log.source_type }}
                 </span>
               </td>
@@ -461,7 +461,7 @@
             <tr>
               <td><span class="badge bg-light text-dark">{{ entry.resolution_type }}</span></td>
               <td>
-                <span class="badge {% if entry.source_type == 'API' %}bg-success{% elif entry.source_type == 'DB_FALLBACK' %}bg-secondary{% else %}bg-info{% endif %}">
+                <span class="badge {% if entry.source_type == 'API' %}bg-success{% elif entry.source_type == 'CACHE' %}bg-info{% elif entry.source_type == 'MIRROR_DB' %}bg-primary{% elif entry.source_type == 'DB_FALLBACK' %}bg-secondary{% elif entry.source_type == 'MANUAL_OVERRIDE' %}bg-warning text-dark{% else %}bg-light text-dark{% endif %}">
                   {{ entry.source_type }}
                 </span>
               </td>

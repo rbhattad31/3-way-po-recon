@@ -1,5 +1,25 @@
 {# extraction/console/_extracted_data.html — Primary review tab #}
 
+<div class="exc-data-split-row">
+
+{# ── LEFT: PDF viewer ── #}
+<div class="exc-pdf-pane" id="excPdfPane">
+  <div class="exc-pdf-pane-header px-3 py-2 border-bottom d-flex align-items-center justify-content-between">
+    <span class="small fw-semibold text-muted">
+      <i class="bi bi-file-earmark-pdf text-danger me-1"></i>Source Document
+    </span>
+    <a href="{% url 'extraction:view_pdf' ext.pk %}" target="_blank"
+       class="btn btn-link btn-sm p-0 text-muted" title="Open in new tab">
+      <i class="bi bi-box-arrow-up-right"></i>
+    </a>
+  </div>
+  <iframe src="{% url 'extraction:view_pdf' ext.pk %}"
+          class="exc-pdf-iframe"
+          title="Source invoice document"></iframe>
+</div>
+
+{# ── RIGHT: extracted fields ── #}
+<div class="exc-data-content" id="excDataContent">
 <div class="p-3">
   {# Filter controls #}
   <div class="d-flex align-items-center justify-content-between mb-3">
@@ -16,77 +36,41 @@
     </div>
   </div>
 
-  {# ── Header Fields Card ── #}
+  {# ── Header Fields — compact label grid ── #}
   <div class="card exc-field-card mb-3">
     <div class="card-header py-2 px-3 d-flex align-items-center">
       <i class="bi bi-card-heading me-2 text-primary"></i>
-      <span class="fw-semibold small">Header Fields</span>
-      <span class="badge bg-light text-dark ms-auto small">{{ header_fields|length|default:"0" }} fields</span>
+      <span class="fw-semibold small">Invoice Details</span>
     </div>
-    <div class="card-body p-0">
-      <table class="table table-sm exc-field-table mb-0">
-        <thead>
-          <tr>
-            <th style="width:28%">Field</th>
-            <th style="width:37%">Value</th>
-            <th style="width:15%">Confidence</th>
-            <th style="width:10%">Method</th>
-            <th style="width:10%"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for key, field in header_fields.items %}
-          <tr class="exc-field-row {% if field.confidence < 0.5 %}exc-low-confidence{% elif field.confidence < 0.75 %}exc-med-confidence{% endif %}{% if key in validation_field_issues %} exc-flagged{% endif %}"
-              data-field-key="{{ key }}" data-category="header">
-            <td>
-              <span class="exc-field-label">{{ field.display_name|default:key }}</span>
-              {% if field.is_mandatory %}<i class="bi bi-asterisk text-danger small" title="Mandatory"></i>{% endif %}
-            </td>
-            <td>
-              <span class="exc-field-value" id="val-{{ key }}">{{ field.value|default:"—" }}</span>
-              {% if field.raw_value and field.raw_value != field.value %}
-              <small class="text-muted d-block" title="Raw value">{{ field.raw_value }}</small>
-              {% endif %}
-            </td>
-            <td>
-              {% include "extraction/console/_confidence_badge.html" with confidence=field.confidence %}
-            </td>
-            <td>
-              <span class="badge bg-light text-dark border small">{{ field.method|default:"DET" }}</span>
-            </td>
-            <td class="text-end">
-              {% if key in validation_field_issues %}
-              <i class="bi bi-exclamation-triangle text-warning" 
-                 title="Validation issue" data-field="{{ key }}"></i>
-              {% endif %}
-            </td>
-          </tr>
-          {# Inline evidence row #}
-          {% with ev=evidence_map|default:"" %}
-          {% if ev %}
-          <tr class="exc-evidence-inline" data-field-key="{{ key }}">
-            <td colspan="5" class="py-1 ps-4 border-0" style="background: var(--bs-light, #f8f9fa);">
-              <div class="d-flex align-items-center gap-3 small text-muted">
-                <i class="bi bi-search text-primary opacity-50"></i>
-                <span><i class="bi bi-file-earmark me-1"></i>Page 1</span>
-                <span><i class="bi bi-robot me-1"></i>LLM</span>
-                {% if field.confidence >= 0.85 %}
-                <span class="text-success"><i class="bi bi-check-circle me-1"></i>High confidence</span>
-                {% elif field.confidence >= 0.5 %}
-                <span class="text-warning"><i class="bi bi-dash-circle me-1"></i>Medium confidence</span>
-                {% else %}
-                <span class="text-danger"><i class="bi bi-x-circle me-1"></i>Low confidence</span>
-                {% endif %}
-              </div>
-            </td>
-          </tr>
+    <div class="card-body p-2">
+      <div class="exc-header-grid">
+        {% for key, field in header_fields.items %}
+        <div class="exc-header-cell
+              {% if field.confidence < 0.5 %}exc-cell-low{% elif field.confidence < 0.75 %}exc-cell-med{% endif %}
+              {% if key in validation_field_issues %}exc-cell-flagged{% endif %}"
+             data-field-key="{{ key }}" data-category="header">
+          <div class="exc-cell-label">
+            {{ field.display_name|default:key }}
+            {% if field.is_mandatory %}<span class="text-danger ms-1" title="Required">*</span>{% endif %}
+            {% if key in validation_field_issues %}
+            <i class="bi bi-exclamation-triangle-fill text-warning ms-1" title="Validation issue"></i>
+            {% endif %}
+          </div>
+          <div class="exc-cell-value" id="val-{{ key }}">{{ field.value|default:"—" }}</div>
+          {% if field.raw_value and field.raw_value != field.value %}
+          <div class="exc-cell-raw">{{ field.raw_value }}</div>
           {% endif %}
-          {% endwith %}
-          {% empty %}
-          <tr><td colspan="5" class="text-center text-muted py-3">No header fields extracted</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+          <div class="exc-cell-meta">
+            {% include "extraction/console/_confidence_badge.html" with confidence=field.confidence %}
+            {% if field.method %}
+            <span class="badge bg-light text-secondary border" style="font-size:0.65rem;">{{ field.method }}</span>
+            {% endif %}
+          </div>
+        </div>
+        {% empty %}
+        <p class="text-muted small p-2 mb-0">No header fields extracted</p>
+        {% endfor %}
+      </div>
     </div>
   </div>
 
@@ -400,4 +384,7 @@
     <p class="text-muted mt-2 mb-0">No fields match the selected filter</p>
     <button class="btn btn-sm btn-outline-secondary mt-2" data-filter="all">Show All Fields</button>
   </div>
-</div>
+</div>{# /p-3 #}
+</div>{# /excDataContent #}
+
+</div>{# /exc-data-split-row #}

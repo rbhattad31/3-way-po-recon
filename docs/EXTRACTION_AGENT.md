@@ -2,7 +2,7 @@
 
 > **Modules**: `apps/extraction/` (Application Layer — UI, Task, Core Models) + `apps/extraction_core/` (Platform Layer — Configuration, Execution, Governance)
 > **Dependencies**: Azure Document Intelligence (OCR), Azure OpenAI GPT-4o (LLM), Agent Framework (`apps/agents/`)
-> **Status**: Human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking + Phase 2 modular prompt composition + deterministic response repair + field-level confidence scoring + critical field validation + hard reconciliation math checks + **Phase 2 hardening: decision codes, recovery lane, evidence-aware field confidence, prompt-source audit trail**. 766 service-level tests — see `apps/extraction/tests/`. ERP connectors and Celery Beat schedules are pending.
+> **Status**: Human-in-the-loop approval gate + multi-country extraction platform + credit-based usage control + OCR cost tracking + Phase 2 modular prompt composition + deterministic response repair + field-level confidence scoring + critical field validation + hard reconciliation math checks + **Phase 2 hardening: decision codes, recovery lane, evidence-aware field confidence, prompt-source audit trail** + **Indian e-invoice QR code decoding (NIC JWT + plain-JSON formats, Azure DI barcodes add-on, OCR plain-text IRN fallback)**. 355 passing, 2 pre-existing failures, 1 skipped (total collected ~358) — see `apps/extraction/tests/`. ERP connectors and Celery Beat schedules are pending.
 
 ---
 
@@ -30,6 +30,7 @@
 20. [File Reference](#20-file-reference)
 21. [Bulk Extraction Intake (Phase 1)](#21-bulk-extraction-intake-phase-1)
 22. [Phase 2 Hardening](#22-phase-2-hardening)
+23. [Indian e-Invoice QR Code Support](#23-indian-e-invoice-qr-code-support)
 
 ---
 
@@ -160,8 +161,18 @@ User uploads PDF/Image
   ┌──────────────────────────────────┐
   │  Stage 1: OCR                    │
   │  Azure Document Intelligence     │
-  │  (or native PDF text layer)      │
-  │  → raw OCR text                  │
+  │  features=[BARCODES]             │
+  │  → raw OCR text + qr_texts[]     │
+  └──────────────┬───────────────────┘
+                 │
+                 ▼
+  ┌──────────────────────────────────┐
+  │  Stage 1c: QR Decode             │   ← NEW (Indian e-invoice)
+  │  QRCodeDecoderService            │
+  │  Strategy 1: Azure DI barcodes   │
+  │  Strategy 2: OCR text IRN regex  │
+  │  Strategy 3: pyzbar (optional)   │
+  │  → QRInvoiceData (or None)       │
   └──────────────┬───────────────────┘
                  │
                  ▼
@@ -219,7 +230,7 @@ User uploads PDF/Image
   ExtractionResultPersistenceService  (save engine metadata)
   → ExtractionResult.raw_response includes:
       _repair, _field_confidence, _validation,
-      _prompt_meta, _decision_codes, _recovery
+      _prompt_meta, _decision_codes, _recovery, _qr
          │
          ▼
   ┌─────────────────────────────────────────┐
@@ -268,9 +279,10 @@ ExtractionParserService → NormalizationService → ValidationService
 | Step | Service | Description |
 |------|---------|-------------|
 | 0 | `CreditService.reserve()` | Reserve 1 credit (`ref_type="document_upload"`, `ref_id=upload.pk`). Hard-stop if insufficient. |
-| 1 | `InvoiceExtractionAdapter` | OCR + LLM extraction → `ExtractionResponse` (includes `_repair` metadata in `raw_json`) |
+| 1 | `InvoiceExtractionAdapter` | OCR (with `features=[AnalysisFeature.BARCODES]`) + LLM extraction → `ExtractionResponse` (includes `_repair`, `_qr` metadata in `raw_json`) |
 | 1a | `DocumentTypeClassifier` | Classify OCR text → reject non-invoices (GRN, PO, DELIVERY_NOTE, STATEMENT) with credit refund. Rejection requires `confidence ≥ 0.60` **and** `not is_ambiguous`. |
 | 1b | `_run_governed_pipeline()` | Wire governed extraction pipeline (`ExtractionPipeline.run()`) as an enrichment step. Creates `ExtractionDocument` linked to the upload, passes OCR text + invoice reference. Wrapped in try/except for graceful degradation — if the governed pipeline fails, the legacy pipeline continues and the result shows "Legacy" source. |
+| 1c | `QRCodeDecoderService` | Decode Indian e-invoice QR (IRN, GSTIN, total, doc type). Three strategies: Azure DI barcodes → OCR text IRN regex → pyzbar pixel decode. Sets `ExtractionResponse.qr_data`; embeds `_qr` in `raw_json`. Fail-silent — `None` when no QR found. |
 | 2 | `ExtractionParserService` | Parse raw JSON → `ParsedInvoice` dataclass |
 | 3 | `NormalizationService` | Normalize fields (dates, amounts, PO numbers) → `NormalizedInvoice` |
 | 3a | `FieldConfidenceService` | Deterministic per-field confidence scoring (0.0–1.0) based on presence, parse success, repair actions. Attaches `field_confidence` dict to `NormalizedInvoice`. Embeds `_field_confidence` in `raw_json` for persistence. |
@@ -279,7 +291,7 @@ ExtractionParserService → NormalizationService → ValidationService
 | 4b | `derive_codes()` | Maps ValidationResult + ReconciliationValidationResult + FieldConfidenceResult + prompt_source_type → list of machine-readable decision codes. Embedded into `raw_json["_decision_codes"]`. |
 | 4c | `RecoveryLaneService` | Deterministic policy evaluation against named failure modes. When triggered, invokes `InvoiceUnderstandingAgent` with bounded recovery context. Output embedded into `raw_json["_recovery"]`. Fail-silent. |
 | 5 | `DuplicateDetectionService` | Detect re-submitted invoices |
-| 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database (sets `extraction_run` FK). `ExtractionResult.raw_response` contains `_repair`, `_field_confidence`, `_validation`, `_prompt_meta`, `_decision_codes`, and `_recovery` metadata. |
+| 6 | `InvoicePersistenceService` + `ExtractionResultPersistenceService` | Persist to database (sets `extraction_run` FK). `ExtractionResult.raw_response` contains `_repair`, `_field_confidence`, `_validation`, `_prompt_meta`, `_decision_codes`, `_recovery`, and `_qr` metadata. |
 | 6a | `CreditService.consume()` / `.refund()` | On success → consume; on OCR failure → refund (see §17 decision table) |
 | 7 | Approval Gate | Auto-approve or queue for human review. `requires_review_override=True` skips auto-approval entirely (critical field confidence failure). |
 
@@ -439,17 +451,29 @@ Orchestrates the two-stage extraction pipeline:
 ```python
 ocr_enabled = self._is_ocr_enabled()  # Check ExtractionRuntimeSettings → settings.EXTRACTION_OCR_ENABLED
 if ocr_enabled:
-    ocr_text, ocr_page_count, ocr_duration_ms = self._ocr_document(file_path)
+    ocr_text, ocr_page_count, ocr_duration_ms, qr_texts = self._ocr_document(file_path)
 else:
     ocr_text, ocr_page_count, ocr_duration_ms = self._extract_text_native(file_path)
+    qr_texts = []
+
+# Stage 1c — QR decode (after OCR, before category classification)
+qr_data = self._decode_qr(file_path, ocr_text, qr_texts)
 ```
 
 **`_ocr_document(file_path)`** — Azure Document Intelligence:
-- Uses `DocumentAnalysisClient` from `azure.ai.formrecognizer` with `prebuilt-read` model
-- Concatenates all pages' text lines
-- Returns `(text, page_count, duration_ms)` tuple
+- Uses `DocumentAnalysisClient` from `azure.ai.formrecognizer` with `prebuilt-read` model and **`features=[AnalysisFeature.BARCODES]`**
+- The `features` kwarg is **required** for barcode extraction — without it, `page.barcodes` is always empty even when the document contains QR codes
+- Concatenates all pages' text lines; collects `kind="QRCode"` barcode values into `qr_texts`
+- Returns `(text, page_count, duration_ms, qr_texts)` **4-tuple** (changed from 3-tuple)
 - Credentials: `AZURE_DI_ENDPOINT`, `AZURE_DI_KEY`
-- Cost: $1.50 per 1,000 pages
+- Cost: $1.50 per 1,000 pages (barcode add-on is free)
+
+> **Azure DI barcode API notes:**
+> - Available from `azure-ai-formrecognizer >= 3.3.0` (API version `2023-07-31`)
+> - Barcode `kind` is `"QRCode"` (PascalCase) — the code calls `.upper()` before comparing, making it case-insensitive
+> - If `page.barcodes` attribute is absent (older SDK), `getattr(page, "barcodes", [])` returns `[]` safely
+> - When Azure DI does not decode the QR (e.g. very small/distorted QR), the pipeline falls through to OCR-text regex and pyzbar strategies automatically
+> - The QR value returned by Azure DI is typically a **NIC-signed JWT** (RS256, `iss="NIC"`), not plain JSON. `QRCodeDecoderService.decode_from_texts()` calls `_unwrap_jwt()` before attempting JSON parsing.
 
 **`_extract_text_native(file_path)`** — PyPDF2 fallback (no OCR cost):
 - Uses `PyPDF2.PdfReader` to extract embedded text layer from native PDFs
@@ -482,7 +506,7 @@ The `document_upload_id` parameter is supplied by the Celery task (`process_invo
 | Field | Type | Description |
 |-------|------|-------------|
 | `success` | bool | Whether extraction succeeded |
-| `raw_json` | dict | Extracted JSON data |
+| `raw_json` | dict | Extracted JSON data (contains `_repair`, `_qr`, `_prompt_meta` etc.) |
 | `confidence` | float | 0.0–1.0 confidence |
 | `engine_name` | str | `"azure_di_gpt4o_agent"` (OCR) or `"native_pdf_gpt4o_agent"` (no OCR) |
 | `engine_version` | str | `"2.0"` |
@@ -492,6 +516,13 @@ The `document_upload_id` parameter is supplied by the Celery task (`process_invo
 | `ocr_page_count` | int | Number of pages processed (default: 0) |
 | `ocr_duration_ms` | int | OCR processing duration in ms (default: 0) |
 | `ocr_char_count` | int | Characters extracted (default: 0) |
+| `invoice_category` | str | `"goods"` / `"service"` / `"travel"` from category classifier |
+| `category_confidence` | float | Category classification confidence |
+| `prompt_components` | dict | Modular prompt component keys used |
+| `prompt_hash` | str | SHA-256 of the final composed prompt |
+| `was_repaired` | bool | Whether `ResponseRepairService` made any change |
+| `repair_actions` | list | List of repair action strings applied |
+| `qr_data` | `QRInvoiceData \| None` | Decoded e-invoice QR payload (see §23); `None` when no QR found |
 
 **Fallback**: Direct LLM extraction without agent framework via `_llm_extract(ocr_text)` — uses `response_format={"type": "json_object"}`, temperature=0.0, max_tokens=4096.
 
@@ -683,6 +714,15 @@ FieldConfidenceService.score(
 | `extraction_method=explicit` | No cap — baseline scoring applies |
 | OCR substring match (≥ 3 chars) | Boosts score by +0.10, capped at 0.95 |
 | Evidence snippet present (≥ 2 chars) | Boosts score by +0.05, capped at 0.90 |
+| `qr_verified[field]` matches extracted value | Sets score to **0.99**; flag `"qr_confirmed"` |
+| `qr_verified[field]` mismatches extracted value | Caps score at **0.40**; flag `"qr_mismatch:extracted=...\|qr=..."` |
+
+**QR verification** (`evidence_context["qr_verified"]` dict, populated from `QRInvoiceData.to_evidence_context()`):
+- Applied as step 4 of evidence-aware scoring (after method caps, OCR boost, and snippet boost)
+- Comparison is separator-normalised: strips `/`, `-`, and spaces; uppercases both sides before comparing
+- Fields verified: `invoice_number`, `invoice_date`, `vendor_tax_id`, `total_amount`
+- If extracted value is empty (field absent), QR comparison is **skipped** — the 0.0 score stands
+- `QR_MISMATCH` decision code is emitted when any field has `"qr_mismatch"` in its flag (see §5.4e)
 
 **Persistence**: `FieldConfidenceService.to_serializable(result)` is embedded into `raw_response["_field_confidence"]` by the pipeline task before `ExtractionResult` is saved.
 
@@ -753,15 +793,27 @@ Centralised machine-readable constants + `derive_codes()` helper. Maps pipeline 
 | `RECOVERY_LANE_INVOKED` | Added by task when recovery lane runs |
 | `RECOVERY_LANE_SUCCEEDED` | Added by task when recovery lane produces output |
 | `RECOVERY_LANE_FAILED` | Added by task when recovery lane errors |
+| `QR_IRN_PRESENT` | `qr_data.irn` is a non-empty 64-char string — IRN available for dedup/audit |
+| `QR_DATA_VERIFIED` | QR decoded and ≥ 1 field confirmed (no mismatch detected) |
+| `QR_MISMATCH` | `"qr_mismatch"` flag in any `evidence_flags` entry — hard review required |
+| `IRN_DUPLICATE` | Same IRN seen on a previously processed invoice — hard duplicate |
 
-**`derive_codes(validation_result, recon_val_result, field_conf_result, prompt_source_type)`**:
-- Accepts all four pipeline outputs (all optional)
+**`derive_codes(validation_result, recon_val_result, field_conf_result, prompt_source_type, qr_data=None)`**:
+- Accepts all five inputs (all optional)
 - Returns a deduplicated list of applicable codes in a stable order
+- `qr_data` (`QRInvoiceData | None`): emits `QR_IRN_PRESENT` when IRN present; reads `evidence_flags` to choose `QR_DATA_VERIFIED` vs `QR_MISMATCH`
 - Fail-silent: returns `[]` on any exception
 
-**`ROUTING_MAP`**: Maps each code → canonical review queue string (`EXCEPTION_OPS`, `TAX_REVIEW`, `MASTER_DATA_REVIEW`, `AP_REVIEW`).
+**`ROUTING_MAP`**: Maps each code → canonical review queue string.
 
-**`HARD_REVIEW_CODES`**: Frozenset of codes that always require human review regardless of confidence score.
+| Code | Queue |
+|------|-------|
+| `INV_NUM_UNRECOVERABLE`, `TOTAL_MISMATCH_HARD`, `LINE_TABLE_INCOMPLETE`, `IRN_DUPLICATE` | `EXCEPTION_OPS` |
+| `TAX_ALLOC_AMBIGUOUS`, `TAX_BREAKDOWN_MISMATCH` | `TAX_REVIEW` |
+| `VENDOR_MATCH_LOW` | `MASTER_DATA_REVIEW` |
+| `QR_MISMATCH`, `LOW_CONFIDENCE_CRITICAL_FIELD`, `LINE_SUM_MISMATCH`, `PROMPT_COMPOSITION_FALLBACK_USED` | `AP_REVIEW` |
+
+**`HARD_REVIEW_CODES`**: `{INV_NUM_UNRECOVERABLE, TOTAL_MISMATCH_HARD, LINE_TABLE_INCOMPLETE, IRN_DUPLICATE, QR_MISMATCH}` — always require human review regardless of confidence score.
 
 **Persistence**: Embedded into `raw_response["_decision_codes"]` and included in `AuditService` metadata.
 
@@ -1519,88 +1571,282 @@ A deeper analysis agent that runs after extraction for low-confidence or ambiguo
 
 ---
 
-## 10. LLM Prompt
+## 10. LLM Prompts
 
-**Registry key**: `extraction.invoice_system` (monolithic fallback) + `extraction.invoice_base` (modular base — see §10b)
-**File**: `apps/core/prompt_registry.py` (hardcoded defaults) + Langfuse (production label, 60s cache TTL) + DB (`PromptTemplate` model)
+The prompt layer has three builder strategies. The **modular composition** path is the outer primary pipeline; the **schema-driven v2.0** path runs *inside* it at step 1b as a governed enrichment layer (fail-silent, wrapped in `try/except`). Agent and case prompts are resolved via the monolithic `PromptRegistry` path.
 
-### JSON Output Schema
+> **Key relationship**: Callers always invoke `InvoiceExtractionAgent` (modular composition). `InvoiceExtractionAgent` internally calls `ExtractionPipeline.run()` at step 1b via `_run_governed_pipeline()`. The schema-driven path is *not* a parallel entry point that callers choose -- it runs automatically inside Path A and produces governance records only. If it fails, Path A continues and labels the result "Legacy source".
 
-The extraction prompt instructs the LLM to return valid JSON with this exact structure:
+| Path | Role | Primary class | File | Used by |
+|---|---|---|---|---|
+| **Modular composition** | Primary outer pipeline | `InvoicePromptComposer` | `apps/extraction/services/invoice_prompt_composer.py` | `InvoiceExtractionAgent` -- all Celery tasks and direct callers |
+| **Schema-driven v2.0** | Step 1b enrichment (fail-silent, inside Path A) | `PromptBuilderService` | `apps/extraction_core/services/prompt_builder_service.py` | `ExtractionPipeline`, `LLMExtractionAdapter` -- called from inside `InvoiceExtractionAgent` |
+| **Monolithic** | Agent + case resolution | `PromptRegistry` | `apps/core/prompt_registry.py` | All 8 ReAct agents, case-level calls, `InvoiceUnderstandingAgent` |
+
+---
+
+### 10.1 Monolithic path -- `PromptRegistry`
+
+**File**: `apps/core/prompt_registry.py`
+
+Used by the agent-based extraction path and all 8 ReAct agents. Resolution order (highest to lowest priority):
+
+1. **Langfuse** (name: `extraction-invoice_system`, label `production`, 60s in-process TTL cache)
+2. **Database** -- `PromptTemplate` model (slug `extraction.invoice_system`, `is_active=True`)
+3. **Hardcoded default** -- `_DEFAULTS["extraction.invoice_system"]` in `prompt_registry.py`
+
+```python
+from apps.core.prompt_registry import PromptRegistry
+
+prompt = PromptRegistry.get("extraction.invoice_system")
+prompt = PromptRegistry.get("agent.exception_analysis", mode_context="3-WAY ...")
+```
+
+**18 managed prompts** total -- 2 extraction + 8 agent + 8 overlay/country prompts. Sync to Langfuse:
+
+```bash
+python manage.py push_prompts_to_langfuse            # push all to Langfuse (production label)
+python manage.py push_prompts_to_langfuse --slug extraction.invoice_system
+python manage.py push_prompts_to_langfuse --label staging   # staging label for testing
+python manage.py push_prompts_to_langfuse --purge    # delete all then re-seed (fixes misnamed prompts)
+
+python manage.py seed_prompts          # create DB PromptTemplate records for missing slugs
+python manage.py seed_prompts --force  # overwrite existing with hardcoded defaults
+```
+
+The Langfuse version is **source of truth in production**. If no Langfuse key is set, falls through to DB then hardcoded default automatically.
+
+---
+
+### 10.2 Schema-driven path -- `PromptBuilderService` v2.0
+
+**File**: `apps/extraction_core/services/prompt_builder_service.py`
+**Used by**: `ExtractionPipeline._build_prompt()` (step 3), `LLMExtractionAdapter`
+
+Generates fully dynamic prompts from `ExtractionSchemaDefinition` + `TaxJurisdictionProfile`. Zero hardcoded country-specific text -- everything is derived from schema field definitions and jurisdiction config.
+
+**Version constants**: `PROMPT_VERSION = "2.0"`, `PROMPT_CODE = "extraction_core_v2"`
+
+#### Public API
+
+```python
+from apps.extraction_core.services.prompt_builder_service import PromptBuilderService
+
+payload = PromptBuilderService.build(
+    country_code="IN",
+    regime_code="GST",
+    document_type="invoice",
+    schema=schema_definition,              # ExtractionSchemaDefinition instance
+    jurisdiction_profile=jurisdiction,     # TaxJurisdictionProfile -- optional
+    field_definitions=field_defs,          # list[ExtractionFieldDefinition] -- optional
+    unresolved_field_keys={"invoice_number", "vendor_name"},  # hybrid mode -- optional
+)
+# Returns dict:
+# {
+#     "prompt_code": "extraction_core_v2",
+#     "prompt_version": "2.0",
+#     "system_message": "<7-section assembled prompt>",
+#     "user_message_template": "<template with OCR placeholder>",
+#     "expected_schema": {...},   # dynamic JSON schema from schema definition
+#     "field_count": 14,          # number of fields requested (reduced in hybrid mode)
+# }
+
+user_message = PromptBuilderService.build_user_message(ocr_text)
+# Wraps ocr_text[:60000] in a standard extraction request envelope
+```
+
+#### 7-section prompt assembly
+
+The system message is assembled from these sections in order; empty sections are silently dropped:
+
+| # | Section method | What it contains |
+|---|---|---|
+| 1 | `_global_instructions()` | Extraction rules: JSON-only output, null policy, value vs confidence vs evidence envelope, monetary/date formatting, no markdown |
+| 2 | `_country_regime_instructions()` | Country code, tax regime label, tax ID label, expected currency, date formats, `extraction_notes` from `jurisdiction_profile.config_json` |
+| 3 | `_document_type_instructions()` | Document type label and per-document guidance |
+| 4 | `_schema_fields_section()` | Header fields, tax fields, line-item fields from `ExtractionSchemaDefinition`; each annotated with display name, data type, and `[REQUIRED]` flag |
+| 5 | `_tax_instructions()` | Regime-specific notes, `tax_id_regex` from jurisdiction profile, list of tax-flagged field keys with display names |
+| 6 | `_evidence_confidence_rules()` | Confidence band definitions: 1.0 (unambiguous) / 0.7-0.9 (inference) / 0.3-0.6 (ambiguous) / 0.0 + null (not found); verbatim snippet requirement |
+| 7 | `_output_format_section()` | Expected JSON schema rendered inline so the LLM knows the exact output shape |
+
+#### Hybrid mode (`unresolved_field_keys`)
+
+When `unresolved_field_keys` is provided, sections 4 and 7 include only those fields. Used when deterministic extraction already resolved some fields -- the LLM call is scoped to the remainder, reducing token usage and improving focus:
+
+```python
+payload = PromptBuilderService.build(
+    ...,
+    unresolved_field_keys={"invoice_number", "po_number"},
+)
+# payload["field_count"] == 2
+# payload["expected_schema"] contains only those 2 fields
+```
+
+#### Schema-driven expected output
+
+`build_expected_schema()` reads `ExtractionSchemaDefinition.header_fields_json`, `tax_fields_json`, and `line_item_fields_json` to produce a dynamic JSON schema. This schema is:
+- Embedded in section 7 of the system prompt so the LLM sees the exact required shape
+- Used downstream by `LLMExtractionAdapter` to validate and parse the LLM response
+- Stored on `ExtractionRun` via `prompt_code` / `prompt_version` for audit traceability
+
+Each extracted field uses this per-field envelope (schema-driven path):
 
 ```json
 {
-  "confidence": 0.0,
-  "vendor_name": "<supplier name>",
-  "vendor_tax_id": "<GSTIN/VAT number>",
-  "buyer_name": "<billed to company>",
-  "invoice_number": "<invoice number>",
-  "invoice_date": "<YYYY-MM-DD>",
-  "due_date": "<YYYY-MM-DD>",
-  "po_number": "<purchase order number>",
-  "currency": "<ISO code>",
-  "subtotal": 0,
-  "tax_percentage": 0,
-  "tax_amount": 0,
-  "tax_breakdown": {
-    "cgst": 0,
-    "sgst": 0,
-    "igst": 0,
-    "vat": 0
+  "header_fields": {
+    "invoice_number": { "value": "INV-2024-001", "confidence": 0.97, "evidence": "Invoice No. INV-2024-001" },
+    "vendor_name":    { "value": "Acme Pvt Ltd",  "confidence": 1.0,  "evidence": "ACME PRIVATE LIMITED" }
   },
-  "total_amount": 0,
-  "document_type": "invoice",
+  "tax_fields": {
+    "tax_amount": { "value": "1800.00", "confidence": 0.95, "evidence": "GST 18% = 1800.00" },
+    "cgst":       { "value": "900.00",  "confidence": 0.95, "evidence": "CGST @ 9% = 900.00" }
+  },
   "line_items": [
     {
-      "item_description": "<description>",
-      "item_category": "<category>",
-      "quantity": 0,
-      "unit_price": 0,
-      "tax_percentage": 0,
-      "tax_amount": 0,
-      "line_amount": 0
+      "item_description": { "value": "Cloud Hosting", "confidence": 1.0,  "evidence": "Cloud Hosting Services" },
+      "quantity":         { "value": "1",             "confidence": 0.90, "evidence": "Qty: 1" },
+      "unit_price":       { "value": "10000.00",      "confidence": 0.90, "evidence": "Rate: 10000" }
     }
   ]
 }
 ```
 
-### Key Extraction Rules (in the prompt)
+Compare with the **monolithic path** flat output (used by `InvoiceExtractionAgent`):
+
+```json
+{
+  "confidence": 0.94,
+  "vendor_name": "Acme Pvt Ltd",
+  "invoice_number": "INV-2024-001",
+  "total_amount": 11800,
+  "line_items": [{ "item_description": "Cloud Hosting", "quantity": 1 }]
+}
+```
+
+---
+
+### 10.3 `LLMExtractionAdapter`
+
+**File**: `apps/extraction_core/services/llm_extraction_adapter.py`
+
+Wraps `LLMClient` to drive a schema-driven extraction call. Uses `prompt_builder.py` (the earlier `PromptBuilderService` variant that works with `ExtractionTemplate` / `FieldSpec` objects) to build messages, then invokes the LLM with retry on JSON parse failures.
+
+```python
+adapter = LLMExtractionAdapter()
+results, audit = adapter.extract_fields(
+    template=template,           # ExtractionTemplate (header/tax/line-item FieldSpec lists)
+    ocr_text=ocr_text,
+    jurisdiction_profile=jurisdiction,
+    unresolved_field_keys=None,  # None = extract all; set[str] = hybrid mode
+)
+# results : list[FieldResult]       (value, confidence, evidence, method per field)
+# audit   : LLMExtractionAudit      (see fields below)
+```
+
+**`LLMExtractionAudit` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `model` | `str` | Deployment name used for the call |
+| `prompt_tokens` | `int` | Tokens in the request |
+| `completion_tokens` | `int` | Tokens in the response |
+| `total_tokens` | `int` | Combined token count |
+| `duration_ms` | `int` | Wall-clock latency |
+| `attempts` | `int` | LLM calls made (1 + retries on parse failure) |
+| `success` | `bool` | True if at least one attempt returned parseable JSON |
+| `error_message` | `str` | Last error string if all attempts failed |
+| `fields_extracted` | `int` | Number of non-null field results returned |
+
+---
+
+### 10.4 `PromptRegistryService` -- `ExtractionPromptTemplate` lifecycle
+
+**File**: `apps/extraction_core/services/prompt_registry_service.py`
+**Model**: `ExtractionPromptTemplate` (in `extraction_core` app, separate from `core.PromptTemplate`)
+
+Manages versioned prompt templates scoped to the extraction schema system.
+
+```python
+from apps.extraction_core.services.prompt_registry_service import PromptRegistryService
+
+# List with filters
+qs = PromptRegistryService.list_prompts({
+    "prompt_code": "extraction_core_v2",
+    "country_code": "IN",
+    "regime_code": "GST",
+    "status": "ACTIVE",
+})
+
+# Create
+prompt = PromptRegistryService.create_prompt({
+    "prompt_code": "extraction_core_v2",
+    "prompt_category": "extraction",
+    "country_code": "IN",
+    "regime_code": "GST",
+    "document_type": "invoice",
+    "schema_code": "invoice_v1",
+    "prompt_text": "...",
+    "variables_json": [],
+    "effective_from": date.today(),
+}, user=request.user)
+
+# Update (diff stored for audit)
+PromptRegistryService.update_prompt(prompt.pk, {"prompt_text": "..."}, user=request.user)
+```
+
+Filterable fields: `prompt_code`, `prompt_category`, `country_code`, `regime_code`, `document_type`, `schema_code`, `status`, `search`. `update_prompt()` computes and stores a diff of `prompt_text` changes for auditability.
+
+---
+
+### 10.5 How `ExtractionPipeline` wires the prompt layer
+
+`ExtractionPipeline` is the new primary entry point for governed extraction. Step 3 of 12 calls `PromptBuilderService.build()` and persists the prompt identity back to `ExtractionRun`:
+
+```python
+# ExtractionPipeline._build_prompt()  (step 3)
+prompt_payload = PromptBuilderService.build(
+    country_code=resolution.country_code,
+    regime_code=resolution.regime_code or "",
+    document_type=document_type,
+    schema=schema,                           # selected by SchemaRegistryService (step 2)
+    jurisdiction_profile=resolution.jurisdiction,
+)
+run.prompt_code = prompt_payload["prompt_code"]       # "extraction_core_v2"
+run.prompt_version = prompt_payload["prompt_version"] # "2.0"
+run.save(update_fields=["prompt_code", "prompt_version", "updated_at"])
+ExtractionAuditService.log_prompt_selected(...)       # audit event emitted
+```
+
+The assembled `system_message` is passed to `LLMClient.chat()` as the system turn. `build_user_message(ocr_text)` provides the user turn (OCR text wrapped in a standard envelope, truncated at 60 000 characters).
+
+`InvoiceExtractionAgent` is the outer orchestrator used by all Celery tasks. It uses `InvoicePromptComposer` overlays for its own primary LLM call, then invokes `ExtractionPipeline.run()` at step 1b as a fail-silent enrichment step that produces the governance records described above. The agent is the outer pipeline; `ExtractionPipeline` is called from inside it, not the other way around.
+
+---
+
+### 10.6 Key extraction rules (monolithic path)
+
+Embedded in `extraction.invoice_system` and applied by `InvoiceExtractionAgent`:
 
 | Rule | Description |
 |------|-------------|
 | **Pre-extraction analysis** | Mandatory step: identify document type, table vs pricing breakdown structure, tax regime, quantity logic |
 | **Label binding** | Values bound to nearest explicit label; no identifier guessing by format alone |
-| **Header block recovery** | When label and value are on separate OCR lines, search the nearby header section (not the whole doc) |
+| **Header block recovery** | When label and value are on separate OCR lines, search the nearby header section only |
 | **invoice_number sources** | Only from: Invoice Number, Invoice No, Tax Invoice No, Bill No |
-| **Reference exclusions** | CART Ref. No., Client Code, IRN, Document No., Booking Confirmation No., Hotel Booking ID, Requisition Number, Passenger Name, Employee Code, Cost Center Code — **never** used as invoice_number |
+| **Reference exclusions** | CART Ref. No., Client Code, IRN, Document No., Booking Confirmation No., Hotel Booking ID, Requisition Number, Passenger Name, Employee Code, Cost Center Code -- **never** used as invoice_number |
 | **po_number** | Only when explicitly labeled (PO Number / P.O. No / Purchase Order), else `""` |
 | **vendor_name** | English characters only; transliterate/translate if OCR contains Arabic/Urdu/non-English |
-| **vendor_tax_id** | GSTIN or VAT registration number of the vendor |
+| **vendor_tax_id** | GSTIN or VAT registration number of the vendor (not buyer) |
 | **buyer_name** | Entity under "Bill To" |
 | **due_date** | Extract if present, else `""` |
-| **tax_breakdown** | Map CGST→cgst, SGST→sgst, IGST→igst, VAT→vat; default 0 if missing |
+| **tax_breakdown** | Map CGST->cgst, SGST->sgst, IGST->igst, VAT->vat; default 0 if missing |
 | **document_type** | Always `"invoice"` |
 | **item_category** | One of: Food, Logistics, Packaging, Maintenance, Utilities, Equipment, Services, Materials, Other |
 | **subtotal** | Sum of ALL pre-tax components (base fare, service charges, fees); exclude GST/VAT, roundoff, total |
-| **tax_percentage** | Computed: `(tax_amount / subtotal) × 100`; NOT copied from component-level rate |
-| **Travel invoice** | Convert pricing breakdown (Base Fare, Service Charges) into line items; consolidate Basic Fare + Hotel Taxes → Total Fare |
-| **Consistency** | `subtotal + tax_amount ≈ total_amount` (±2%); `Σ line_amounts ≈ subtotal` (±5%); prefer computed if mismatch |
-| **Defaults** | Missing text → `""`; missing numbers → `0` |
-
-### Prompt Versioning
-
-The prompt is resolved in this priority order:
-1. **Langfuse** (`extraction-invoice_system`, label `production`) — 60s in-process TTL cache
-2. **Database** — `PromptTemplate` model (slug `extraction.invoice_system`)
-3. **Hardcoded default** — `_DEFAULTS["extraction.invoice_system"]` in `prompt_registry.py`
-
-The Langfuse version is the **source of truth in production**. Run `python manage.py push_prompts_to_langfuse` to sync codebase defaults to Langfuse (18 prompts total).
-- Parse dates to YYYY-MM-DD (applies to both `invoice_date` and `due_date`)
-- Extract PO number from anywhere (header, footer, references)
-- `tax_breakdown`: populate whichever components (CGST/SGST/IGST/VAT) appear on the invoice; use 0 for absent components
-- `tax_percentage`: headline tax rate as a plain number (e.g. `"18"` for 18% GST); leave empty string when not stated
-- Return ONLY valid JSON — no markdown or explanation
-- **vendor_name MUST be English-only** — if Arabic/Urdu/non-English script detected, translate/transliterate to official English company name
+| **tax_percentage** | Computed: `(tax_amount / subtotal) x 100`; NOT copied from component-level rate |
+| **Travel invoice** | Convert pricing breakdown (Base Fare, Service Charges) into line items; consolidate Basic Fare + Hotel Taxes -> Total Fare |
+| **Consistency** | `subtotal + tax_amount ~= total_amount` (+-2%); `sum(line_amounts) ~= subtotal` (+-5%); prefer computed if mismatch |
+| **Defaults** | Missing text -> `""`; missing numbers -> `0` |
 
 ---
 
@@ -2496,13 +2742,14 @@ Each reprocess re-runs the full pipeline (OCR + LLM). `AgentRun.document_upload`
 | `apps/extraction/template_views.py` | All 15 template views (workbench, upload, approval queue, console, country packs) |
 | `apps/extraction/urls.py` | URL routing (15 routes) |
 | `apps/extraction/api_urls.py` | API URL routing (empty) |
-| `apps/extraction/services/extraction_adapter.py` | Azure DI OCR + LLM extraction orchestration |
+| `apps/extraction/services/extraction_adapter.py` | Azure DI OCR (with `features=[BARCODES]`) + QR decode + LLM extraction orchestration |
+| `apps/extraction/services/qr_decoder_service.py` | `QRCodeDecoderService` — decode Indian e-invoice QR (4 strategies: `azure_barcode`, `ocr_text`, `ocr_irn_text`, `pyzbar`); `_unwrap_jwt()` for NIC-signed JWT detection; `_PLAIN_IRN_RE` for plain-text `IRN :` label fallback; `QRInvoiceData` dataclass; serialized to `raw_response["_qr"]` |
 | `apps/extraction/services/parser_service.py` | JSON → ParsedInvoice dataclass parsing |
 | `apps/extraction/services/normalization_service.py` | Field normalization (dates, amounts, strings) |
-| `apps/extraction/services/field_confidence_service.py` | Per-field confidence scoring (0.0–1.0) + evidence-aware adjustments (`ocr_text`, `evidence_context`); serialized to `raw_response["_field_confidence"]` |
+| `apps/extraction/services/field_confidence_service.py` | Per-field confidence scoring (0.0–1.0) + evidence-aware adjustments (`ocr_text`, `evidence_context`, `qr_verified`); QR match → 0.99, QR mismatch → cap 0.40; serialized to `raw_response["_field_confidence"]` |
 | `apps/extraction/services/reconciliation_validator.py` | 6 deterministic math checks; structured issues with severity (ERROR/WARNING/INFO); serialized to `raw_response["_validation"]` |
 | `apps/extraction/services/validation_service.py` | Mandatory field validation + deterministic confidence scoring + critical field check (reads `field_confidence`, sets `requires_review_override`) |
-| `apps/extraction/decision_codes.py` | Centralized machine-readable decision code constants + `derive_codes()` + `ROUTING_MAP` + `HARD_REVIEW_CODES`; serialized to `raw_response["_decision_codes"]` |
+| `apps/extraction/decision_codes.py` | Centralized machine-readable decision code constants + `derive_codes()` (accepts `qr_data`) + `ROUTING_MAP` + `HARD_REVIEW_CODES`; includes `QR_DATA_VERIFIED`, `QR_MISMATCH`, `QR_IRN_PRESENT`, `IRN_DUPLICATE`; serialized to `raw_response["_decision_codes"]` |
 | `apps/extraction/services/recovery_lane_service.py` | `RecoveryLaneService` — deterministic policy evaluation + fail-silent `InvoiceUnderstandingAgent` invocation; serialized to `raw_response["_recovery"]` |
 | `apps/extraction/services/duplicate_detection_service.py` | Duplicate invoice detection |
 | `apps/extraction/services/persistence_service.py` | Invoice + LineItem + ExtractionResult persistence |
@@ -2848,10 +3095,11 @@ This section documents the five hardening changes added after Phase 2 (modular p
 
 Machine-readable string constants for every named failure mode in the pipeline. Replaces ad-hoc string matching in routing and recovery logic.
 
-**`derive_codes(validation_result, recon_val_result, field_conf_result, prompt_source_type)`**:
+**`derive_codes(validation_result, recon_val_result, field_conf_result, prompt_source_type, qr_data=None)`**:
 - Called at pipeline step 4b (after all validation and math checks)
 - Returns a deduplicated, stable-order list of applicable codes
 - Embedded into `raw_response["_decision_codes"]` and audit metadata
+- `qr_data` (optional `QRInvoiceData`) adds QR-specific codes: `QR_IRN_PRESENT`, `QR_DATA_VERIFIED`, `QR_MISMATCH`
 - Fail-silent: returns `[]` on any exception
 
 **Usage in downstream components**:
@@ -2911,8 +3159,9 @@ derive_codes()
 - **`evidence_context: dict`** — Extraction evidence hints:
   - `"extraction_method"`: `"explicit"` | `"repaired"` | `"recovered"` | `"derived"` — caps critical field scores when the overall extraction was not explicit.
   - `"snippets"`: dict mapping field name → raw text snippet from the document. Each present snippet boosts the field score by +0.05 (capped at 0.90).
+  - `"qr_verified"`: dict mapping field name → QR ground-truth value (populated by `QRInvoiceData.to_evidence_context()`). QR match → score **0.99**; QR mismatch → score capped at **0.40**. See §23 for full QR verification flow.
 
-**`evidence_flags`** (new field on `FieldConfidenceResult`): records why each adjusted field was modified. Included in `raw_response["_field_confidence"]["evidence_flags"]`.
+**`evidence_flags`** (new field on `FieldConfidenceResult`): records why each adjusted field was modified. Included in `raw_response["_field_confidence"]["evidence_flags"]`. QR-specific flags: `"qr_confirmed"` and `"qr_mismatch:extracted=...|qr=..."`.
 
 **Backward compatible**: Both params are optional; existing call sites without them produce identical results (no `evidence_flags` populated).
 
@@ -2969,8 +3218,253 @@ All Phase 2 hardening outputs are embedded as private keys in `ExtractionResult.
 | Key | Set by | Content |
 |-----|--------|---------|
 | `_repair` | `ResponseRepairService` | Repair actions applied, fields modified |
-| `_field_confidence` | `FieldConfidenceService` | Per-field scores + `evidence_flags` |
+| `_field_confidence` | `FieldConfidenceService` | Per-field scores + `evidence_flags` (incl. QR match/mismatch flags) |
 | `_validation` | `ReconciliationValidatorService` | 6 math check results + severity |
 | `_prompt_meta` | `InvoiceExtractionAgent.run()` | Prompt source type, hash, component versions |
-| `_decision_codes` | `derive_codes()` | List of machine-readable code strings |
+| `_decision_codes` | `derive_codes()` | List of machine-readable code strings (incl. QR codes) |
 | `_recovery` | `RecoveryLaneService.invoke()` | Agent output, trigger codes, succeeded flag |
+| `_qr` | `QRCodeDecoderService` (via adapter) | Decoded e-invoice QR payload: `irn`, `irn_date`, `seller_gstin`, `buyer_gstin`, `doc_number`, `doc_date`, `total_value`, `item_count`, `main_hsn`, `doc_type`, `decode_strategy`, `signature_verified` |
+
+---
+
+## 23. Indian e-Invoice QR Code Support
+
+> **Added**: 2026-03-28
+
+### Background
+
+All B2B invoices from Indian businesses with turnover > ₹5 Cr are mandated under the GST e-invoice scheme (GSTN notification). Before being shared with the buyer, every invoice is registered on the **Invoice Registration Portal (IRP / NIC)**, which:
+1. Validates the invoice
+2. Assigns an **IRN** (Invoice Reference Number) — a 64-character SHA-256 hash
+3. Stamps a **digitally-signed QR code** containing key invoice fields
+
+This QR code is printed on every compliant Indian B2B invoice and is the **highest-confidence source of ground truth** available for extraction — more reliable than OCR text because it is:
+- Machine-generated (no OCR errors)
+- Cryptographically tied to the invoice via IRP's digital signature
+- Canonical (the same values the government's portal accepted)
+
+### QR Payload (GSTN e-Invoice Spec v1.1)
+
+IRP QR payload format — two variants:
+
+**a. Plain JSON** (spec v1.0 / some vendors):
+```json
+{
+  "Version":    "1.1",
+  "Irn":        "<64-char sha256 hex>",
+  "IrnDt":      "2024-01-15 10:30:00",
+  "SellerGstin":"29AAAAA0000A1ZA",
+  "BuyerGstin": "07BBBBB0000B1ZD",
+  "DocNo":      "INV/2024/001",
+  "DocDt":      "15/01/2024",
+  "TotInvVal":  11800.00,
+  "ItemCnt":    3,
+  "MainHsnCode":"8471",
+  "DocTyp":     "INV"
+}
+```
+
+**b. NIC-signed JWT** (spec v1.1 — production standard):
+```
+<base64url_header>.<base64url_payload>.<signature>
+JWT header:   {"alg": "RS256", "typ": "JWT"}
+JWT payload:  {"iss": "NIC", "data": "<stringified e-invoice JSON>"}
+```
+The invoice fields live inside `payload["data"]` as a JSON string. `_unwrap_jwt()` handles detection and unwrapping before `_parse_einvoice_json` is called.
+
+`DocTyp` values: `"INV"` (invoice), `"CRN"` (credit note), `"DBN"` (debit note).
+
+### QRCodeDecoderService
+
+**File**: `apps/extraction/services/qr_decoder_service.py`
+
+Stateless, fail-silent. All methods are `@staticmethod`. Returns `Optional[QRInvoiceData]` — never raises.
+
+**Four decode strategies** (attempted in order, first success wins):
+
+| # | Strategy | Source | Requires |
+|---|----------|--------|---------|
+| 1 | **Azure DI barcodes** | `qr_texts` list from `_ocr_document()` — `decode_from_texts` calls `_unwrap_jwt` then `_parse_einvoice_json` | `features=[AnalysisFeature.BARCODES]` in API call |
+| 2 | **OCR text — JSON inline** | `ocr_text` from Azure DI or native PDF | Nothing extra — `_decode_from_ocr_text` Path A searches for 64-char IRN JSON pattern |
+| 3 | **OCR text — plain-text IRN label** | `ocr_text` | Nothing extra — `_decode_from_ocr_text` Path B matches `IRN :` label on invoice face |
+| 4 | **pyzbar pixel decode** | Raw image bytes from file | `pip install pyzbar Pillow` (optional) + PyMuPDF or pdf2image for PDFs |
+
+**`_unwrap_jwt(text: str) -> Optional[str]`** — called by `decode_from_texts` before JSON parsing:
+- Detects JWT format: text with 3 `.`-separated parts
+- Base64url-decodes the middle part (JWT payload)
+- Extracts `payload["data"]` (the stringified e-invoice JSON) and returns it for `_parse_einvoice_json`
+- If `payload` itself contains `"Irn"` key (no nested `"data"`), serialises payload as JSON
+- Returns `None` if text is not a JWT — falls through to direct JSON parse
+
+**`_decode_from_ocr_text` — two paths:**
+
+**Path A** (existing): QR JSON payload appears inline in OCR text. Azure DI sometimes includes decoded barcode text in the OCR output. Searches for `"Irn"\s*:\s*"<64hex>"` pattern.
+
+**Path B** (new): plain-text IRN label detection — fallback when no QR JSON is found in OCR text:
+- Pre-processing: joins PDF hyphenated line-breaks (`-\n` followed by hex char → remove hyphen+newline)
+- Regex: `_PLAIN_IRN_RE = re.compile(r'\bIRN\b\s*[:\-]?\s*([a-fA-F0-9]{64})', re.IGNORECASE)`
+- Builds minimal `QRInvoiceData(irn=..., seller_gstin=..., buyer_gstin=..., decode_strategy="ocr_irn_text")`
+- GSTINs harvested from full OCR text via `_GSTIN_RE`
+- `doc_number`, `doc_date`, `total_value` are **empty** — only IRN + GSTINs are recoverable this way
+- Useful for confirming e-invoice registration when the QR cannot be decoded
+
+**`decode_strategy` field values:**
+
+| Strategy | Description | Fields available |
+|----------|-------------|-----------------|
+| `azure_barcode` | Azure DI barcodes add-on decoded the QR (JWT or plain JSON) | All fields |
+| `ocr_text` | QR JSON found inline in OCR text | All fields |
+| `ocr_irn_text` | IRN extracted from plain-text `IRN :` label on invoice face | IRN + GSTINs only; `doc_number`, `doc_date`, `total_value` are empty |
+| `pyzbar` | pyzbar pixel-level image decode | All fields |
+
+**Strategy 1 is the primary path** because Azure DI pre-decodes the QR to a text string before passing it to our service. Strategies 2–4 are fallbacks for cases where:
+- The Azure DI barcodes API did not decode the QR (very small/distorted QR, or older SDK without features support)
+- Native PDF extraction was used instead of Azure DI (OCR disabled)
+- `pyzbar` is available for high-accuracy pixel-level decode as a last resort
+
+**What happens when OCR doesn't return the barcode value?**
+
+Azure DI returns barcodes **only when `features=[AnalysisFeature.BARCODES]` is explicitly passed** to `begin_analyze_document()`. Without this flag, `page.barcodes` is always empty. The pipeline handles this gracefully:
+
+```
+Azure DI call WITHOUT features=BARCODES
+    → page.barcodes = []
+    → qr_texts = []
+    → Strategy 1: no-op (empty list)
+    → Strategy 2: OCR text Path A — IRN JSON regex scan
+        → If the QR was decoded into text by Azure DI's text layer
+          (unusual but possible for large/clear QR codes): finds JSON
+        → Otherwise: no match
+    → Strategy 3: OCR text Path B — plain-text IRN label scan
+        → Matches "IRN : <64hex>" on invoice face
+        → Returns partial QRInvoiceData (IRN + GSTINs only)
+    → Strategy 4: pyzbar pixel decode (if installed)
+        → Decodes QR from raw image pixels — works regardless of
+          what Azure DI returned in text
+    → If all strategies fail: qr_data = None
+        → pipeline continues without QR data (no degradation)
+```
+
+The `features=[AnalysisFeature.BARCODES]` flag is now set in `_ocr_document()`. If the flag is removed or the SDK is downgraded, strategies 2–4 remain as fallbacks.
+
+### QRInvoiceData Dataclass
+
+```python
+@dataclass
+class QRInvoiceData:
+    irn: str              # 64-char IRN (sha256 hex)
+    irn_date: str         # "YYYY-MM-DD HH:MM:SS"
+    seller_gstin: str     # Supplier's 15-char GSTIN (uppercased)
+    buyer_gstin: str      # Buyer's 15-char GSTIN (empty for B2C)
+    doc_number: str       # Invoice number as registered on IRP
+    doc_date: str         # "DD/MM/YYYY" or "YYYY-MM-DD"
+    total_value: Decimal | None
+    item_count: int
+    main_hsn: str         # HSN/SAC of primary line
+    doc_type: str         # "INV" | "CRN" | "DBN"
+    decode_strategy: str  # "azure_barcode" | "ocr_text" | "ocr_irn_text" | "pyzbar"
+    signature_verified: bool  # Always False (NIC cert verification not implemented)
+```
+
+**`to_evidence_context()`** — builds the `evidence_context` dict for `FieldConfidenceService.score()`:
+```python
+{
+    "qr_verified": {
+        "invoice_number": qr.doc_number,
+        "invoice_date":   qr.doc_date,
+        "vendor_tax_id":  qr.seller_gstin,
+        "total_amount":   str(qr.total_value),
+    },
+    "qr_irn":        qr.irn,
+    "qr_doc_type":   qr.doc_type,
+    "qr_item_count": qr.item_count,
+    "qr_buyer_gstin": qr.buyer_gstin,
+}
+```
+
+### How QR Data Flows Through the Pipeline
+
+```
+_ocr_document()
+    ├─ features=[AnalysisFeature.BARCODES]
+    └─ Returns (ocr_text, page_count, duration_ms, qr_texts)
+                                               │
+                                               ▼
+                                    _decode_qr(file_path, ocr_text, qr_texts)
+                                               │
+                                               ▼ (fail-silent)
+                                    QRInvoiceData or None
+                                               │
+                  ┌────────────────────────────┤
+                  │                            │
+                  ▼                            ▼
+    raw_json["_qr"] =              ExtractionResponse.qr_data
+    qr_data.to_serializable()
+                                               │
+                                ┌──────────────┤
+                                │              │
+                                ▼              ▼
+            evidence_context =       derive_codes(
+            qr_data.to_evidence_context()  qr_data=qr_data)
+                                │                   │
+                                ▼                   ▼
+            FieldConfidenceService     QR_IRN_PRESENT
+            .score(... evidence_context)  QR_DATA_VERIFIED
+                                │       or QR_MISMATCH
+                                ▼
+              evidence_flags["invoice_number"] = "qr_confirmed"
+              → score 0.99
+              OR
+              evidence_flags["invoice_number"] = "qr_mismatch:..."
+              → score capped at 0.40
+```
+
+### Impact on Confidence and Routing
+
+| Scenario | Field Score | Decision Code | Route |
+|----------|-------------|---------------|-------|
+| QR present, all checked fields match | 0.99 per field | `QR_DATA_VERIFIED`, `QR_IRN_PRESENT` | Normal approval flow |
+| QR present, any field mismatches | ≤ 0.40 per mismatched field | `QR_MISMATCH`, `QR_IRN_PRESENT` | Hard review — `AP_REVIEW` queue |
+| IRN seen before on another invoice | — | `IRN_DUPLICATE` | `EXCEPTION_OPS` — rejection required |
+| No QR found | Unchanged | (no QR codes emitted) | Normal scoring |
+
+`QR_MISMATCH` and `IRN_DUPLICATE` are both in `HARD_REVIEW_CODES` — they bypass auto-approval unconditionally.
+
+### Audit Trail
+
+The QR decode result is included in:
+- `ExtractionResult.raw_response["_qr"]` — full serialised `QRInvoiceData`
+- `AuditService` metadata on `EXTRACTION_COMPLETED` event: `qr_irn`, `qr_doc_type`, `qr_decode_strategy`
+- `raw_response["_decision_codes"]` — QR-specific codes
+- `raw_response["_field_confidence"]["evidence_flags"]` — per-field QR match/mismatch detail
+
+### SDK Requirement
+
+| Requirement | Detail |
+|-------------|--------|
+| SDK package | `azure-ai-formrecognizer >= 3.3.0` (current: 3.3.2) |
+| API version | `2023-07-31` or later (barcode add-on feature added) |
+| Feature flag | `features=[AnalysisFeature.BARCODES]` in `begin_analyze_document()` |
+| Barcode `kind` | `"QRCode"` (PascalCase) — code uses `.upper()` for case-insensitive match |
+| Optional deps | `pyzbar`, `Pillow`, PyMuPDF / pdf2image (strategy 3 only) |
+
+### FieldConfidenceService — QR Ground-Truth Comparison Normalisation
+
+When `FieldConfidenceService.score()` compares an extracted field value against the QR ground-truth value, it applies field-type-aware normalisation before comparing (simple separator-stripping is insufficient for production data):
+
+| Field type | Normalisation | Example |
+|-----------|---------------|---------|
+| Date fields (`"date" in fname`) | `_norm_date()` — tries 6 format patterns, returns `YYYYMMDD` | `"20/09/2025"` and `"2025-09-20"` → both `"20250920"` |
+| Amount fields (`"amount" or "total" in fname`) | `_norm_amount()` — strips commas, round-trips through `float(v)` | `"41958"` and `"41958.0"` → both `"41958.0"` |
+| All other fields | `_sep_re.sub("", v).upper().strip()` — strip `[\s\-/]`, uppercase | `"VNR/1639/25-26"` → `"VNR163925-26"` |
+
+Supported date formats in `_DATE_FMTS`: `%d/%m/%Y`, `%Y-%m-%d`, `%d-%m-%Y`, `%m/%d/%Y`, `%d/%m/%y`, `%Y/%m/%d`
+
+### Limitations
+
+- **JWT signature not verified** — The NIC digital signature (RS256) is decoded but not cryptographically verified. Fields are used as high-confidence hints, not as a security control. The NIC public certificate is at `https://einvoice1.gst.gov.in/Others/PublicKey`; verification would require the `cryptography` package.
+- **`ocr_irn_text` strategy is partial** — Only IRN + GSTINs are available; `doc_number`, `doc_date`, `total_value` cannot be recovered from plain text alone. The QR panel shows a warning and prompts reprocessing with the BARCODES feature.
+- **pyzbar not available in this deployment** — Strategy 4 is always skipped. Install `pip install pyzbar Pillow` to enable.
+- **B2C invoices** — `BuyerGstin` is empty for B2C (end-consumer) invoices; `buyer_gstin` will be `""`.
+- **Credit notes / debit notes** — `DocTyp = "CRN"` / `"DBN"` are handled; `QR_DATA_VERIFIED` is still emitted. The consuming reconciliation flow should check `qr_doc_type` for credit/debit note handling.
+- **Older invoices** — Pre-e-invoice mandate invoices (before 2020-10-01 for the first tranche) will not have QR codes; `qr_data = None` is the normal outcome.

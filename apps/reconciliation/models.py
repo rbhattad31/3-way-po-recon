@@ -232,6 +232,24 @@ class ReconciliationResult(BaseModel):
     is_two_way_result = models.BooleanField(default=False, db_index=True)
     is_three_way_result = models.BooleanField(default=False, db_index=True)
 
+    # ERP source provenance
+    po_erp_source_type = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="ERPSourceType value for the PO data used in this match",
+    )
+    grn_erp_source_type = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="ERPSourceType value for the GRN data used in this match",
+    )
+    data_is_stale = models.BooleanField(
+        default=False,
+        help_text="True if any ERP source data exceeded the configured freshness threshold",
+    )
+    erp_source_metadata_json = models.JSONField(
+        default=dict, blank=True,
+        help_text="Full ERP resolution provenance for PO and GRN sources (to_provenance_dict output)",
+    )
+
     class Meta:
         db_table = "reconciliation_result"
         ordering = ["-created_at"]

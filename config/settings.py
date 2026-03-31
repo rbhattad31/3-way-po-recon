@@ -140,7 +140,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Cache-busting version counter — bump after static file changes
-STATIC_VERSION = "1.0.6"
+STATIC_VERSION = "1.0.8"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -199,6 +199,37 @@ ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD = float(
     os.getenv("ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD", "0.8")
 )
 ERP_CACHE_TTL_SECONDS = int(os.getenv("ERP_CACHE_TTL_SECONDS", "3600"))
+
+# ---------------------------------------------------------------------------
+# ERP Shared Resolution Policy
+# How stale can data be before we flag it or attempt a live refresh?
+# TRANSACTIONAL = PO headers, GRN records  (short-lived, changes frequently)
+# MASTER        = vendor/item/tax/cost-center reference data (more stable)
+# ---------------------------------------------------------------------------
+ERP_TRANSACTIONAL_FRESHNESS_HOURS = int(
+    os.getenv("ERP_TRANSACTIONAL_FRESHNESS_HOURS", "24")
+)
+ERP_MASTER_FRESHNESS_HOURS = int(
+    os.getenv("ERP_MASTER_FRESHNESS_HOURS", "168")  # 7 days
+)
+# When True, a live ERP API call is attempted if the mirror lookup misses.
+ERP_ENABLE_LIVE_REFRESH_ON_MISS = (
+    os.getenv("ERP_ENABLE_LIVE_REFRESH_ON_MISS", "false").lower() == "true"
+)
+# When True, a live ERP API call is attempted if the resolved data is stale.
+ERP_ENABLE_LIVE_REFRESH_ON_STALE = (
+    os.getenv("ERP_ENABLE_LIVE_REFRESH_ON_STALE", "false").lower() == "true"
+)
+# Use internal mirror tables (documents.PurchaseOrder / GoodsReceiptNote) as
+# the primary source for reconciliation PO/GRN lookups.
+ERP_RECON_USE_MIRROR_AS_PRIMARY = (
+    os.getenv("ERP_RECON_USE_MIRROR_AS_PRIMARY", "true").lower() == "true"
+)
+# Use internal reference import tables as the primary source for posting
+# vendor/item/tax/cost-center resolution.
+ERP_POSTING_USE_MIRROR_AS_PRIMARY = (
+    os.getenv("ERP_POSTING_USE_MIRROR_AS_PRIMARY", "true").lower() == "true"
+)
 
 # ---------------------------------------------------------------------------
 # LLM / AI service configuration
@@ -291,8 +322,19 @@ LOGGING = {
         "handlers": _active_handlers,
         "level": "INFO",
     },
+    "filters": {
+        "no_broken_pipe": {
+            "()": "apps.core.logging_utils.BrokenPipeFilter",
+        },
+    },
     "loggers": {
         "django": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
+        "django.server": {
+            "handlers": _active_handlers,
+            "level": "INFO",
+            "propagate": False,
+            "filters": ["no_broken_pipe"],
+        },
         "apps": {"handlers": _active_handlers, "level": "DEBUG", "propagate": False},
         "apps.observed": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
         "apps.action": {"handlers": _active_handlers, "level": "INFO", "propagate": False},
@@ -302,7 +344,7 @@ LOGGING = {
 
 if LOKI_ENABLED:
     LOGGING["handlers"]["loki"] = {
-        "class": "logging_loki.LokiHandler",
+        "class": "apps.core.logging_utils.SilentLokiHandler",
         "url": LOKI_URL,
         "tags": {
             "service": LOKI_APP_LABEL,

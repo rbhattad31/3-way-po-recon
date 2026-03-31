@@ -84,12 +84,31 @@ class ReconciliationRunnerService:
             triggered_by=triggered_by,
         )
 
-        # Langfuse: open root trace for this reconciliation run
+        # Langfuse: open a "reconciliation_run" span.
+        # If a task-level parent trace was provided (lf_trace), create this
+        # span as a child so the hierarchy in Langfuse is:
+        #   reconciliation_task (task root)
+        #     -- reconciliation_run (this span)
+        #          -- recon_mode_resolution / recon_matching / ... (per invoice)
+        # If no parent trace exists, open a standalone root trace.
         _trace_id = getattr(recon_run, "trace_id", None) or str(recon_run.pk)
-        _lf_run_trace = lf_trace
+        _lf_run_trace = None
         _lf_run_trace_is_mine = False
         try:
-            if _lf_run_trace is None:
+            if lf_trace is not None:
+                # Create child span under the task-level trace.
+                from apps.core.langfuse_client import start_span
+                _lf_run_trace = start_span(
+                    lf_trace,
+                    "reconciliation_run",
+                    metadata={
+                        "run_pk": recon_run.pk,
+                        "total_invoices": len(invoices),
+                        "config": self.config.name,
+                    },
+                )
+                _lf_run_trace_is_mine = True
+            else:
                 from apps.core.langfuse_client import start_trace
                 _lf_run_trace = start_trace(
                     _trace_id,

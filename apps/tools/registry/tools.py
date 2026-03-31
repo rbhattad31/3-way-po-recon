@@ -111,19 +111,16 @@ class POLookupTool(BaseTool):
         })
 
     def _resolve_via_erp(self, po_number: str, vendor_id: int = 0, **kwargs):
-        """Attempt resolution via the ERP integration layer.
+        """Attempt resolution via ERPResolutionService.
 
         Returns a ToolResult if resolved (found or not found), or None to
         fall through to legacy direct DB lookup.
         """
         try:
-            from apps.erp_integration.services.connector_factory import ConnectorFactory
-            from apps.erp_integration.services.resolution.po_resolver import POResolver
+            from apps.erp_integration.services.resolution_service import ERPResolutionService
 
-            connector = ConnectorFactory.get_default_connector()
-            resolver = POResolver()
-            result = resolver.resolve(
-                connector,
+            svc = ERPResolutionService.with_default_connector()
+            result = svc.resolve_po(
                 po_number=po_number,
                 reconciliation_result_id=kwargs.get("reconciliation_result_id"),
             )
@@ -140,10 +137,11 @@ class POLookupTool(BaseTool):
             data["_erp_source"] = result.source_type
             data["_erp_confidence"] = result.confidence
             data["_erp_fallback_used"] = result.fallback_used
+            data["_erp_is_stale"] = result.is_stale
             data["found"] = True
             return ToolResult(success=True, data=data)
         except Exception:
-            logger.debug("ERP resolver not available for PO lookup, using direct DB", exc_info=True)
+            logger.debug("ERPResolutionService not available for PO lookup", exc_info=True)
             return None
 
 
@@ -211,19 +209,16 @@ class GRNLookupTool(BaseTool):
         })
 
     def _resolve_via_erp(self, po_number: str, **kwargs):
-        """Attempt resolution via the ERP integration layer.
+        """Attempt resolution via ERPResolutionService.
 
         Returns a ToolResult if resolved (found or not found), or None to
         fall through to legacy direct DB lookup.
         """
         try:
-            from apps.erp_integration.services.connector_factory import ConnectorFactory
-            from apps.erp_integration.services.resolution.grn_resolver import GRNResolver
+            from apps.erp_integration.services.resolution_service import ERPResolutionService
 
-            connector = ConnectorFactory.get_default_connector()
-            resolver = GRNResolver()
-            result = resolver.resolve(
-                connector,
+            svc = ERPResolutionService.with_default_connector()
+            result = svc.resolve_grn(
                 po_number=po_number,
                 reconciliation_result_id=kwargs.get("reconciliation_result_id"),
             )
@@ -240,11 +235,12 @@ class GRNLookupTool(BaseTool):
             data["_erp_source"] = result.source_type
             data["_erp_confidence"] = result.confidence
             data["_erp_fallback_used"] = result.fallback_used
+            data["_erp_is_stale"] = result.is_stale
             data["found"] = True
             data["po_number"] = po_number
             return ToolResult(success=True, data=data)
         except Exception:
-            logger.debug("ERP resolver not available for GRN lookup, using direct DB", exc_info=True)
+            logger.debug("ERPResolutionService not available for GRN lookup", exc_info=True)
             return None
 
 

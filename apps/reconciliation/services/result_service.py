@@ -78,6 +78,17 @@ class ReconciliationResultService:
             policy_applied=mode_resolution.policy_code if mode_resolution else "",
             is_two_way_result=is_two_way,
             is_three_way_result=not is_two_way,
+            # ERP source provenance
+            po_erp_source_type=getattr(po_result, "erp_source_type", ""),
+            grn_erp_source_type=getattr(grn_result, "erp_source_type", ""),
+            data_is_stale=(
+                getattr(po_result, "is_stale", False)
+                or getattr(grn_result, "is_stale", False)
+            ),
+            erp_source_metadata_json={
+                "po": getattr(po_result, "erp_provenance", {}),
+                "grn": getattr(grn_result, "erp_provenance", {}),
+            },
         )
 
         # Line-level results

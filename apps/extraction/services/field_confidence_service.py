@@ -262,6 +262,97 @@ class FieldConfidenceService:
                         evidence_flags.get(fname, "") + " snippet_present"
                     ).strip()
 
+        # 4. QR-verified ground truth — highest confidence source for Indian e-invoices
+        #    evidence_context["qr_verified"] maps field_name → QR value (str).
+        #    Comparison is normalised (strip / upper / remove separators).
+        #    Date fields use calendar-aware normalisation so that "20/09/2025" and
+        #    "2025-09-20" are treated as equal.
+        qr_verified: dict = evidence_context.get("qr_verified") or {}
+        if qr_verified:
+            import re as _re
+            from datetime import datetime as _dt
+            _sep_re = _re.compile(r"[\s\-/]")
+
+            _DATE_FMTS = [
+                "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y",
+                "%d/%m/%y", "%Y/%m/%d",
+            ]
+
+            def _norm(v: str) -> str:
+                return _sep_re.sub("", str(v)).upper().strip()
+
+            def _norm_date(v: str) -> str:
+                """Try to parse *v* as a date; return YYYYMMDD if successful,
+                otherwise fall back to separator-stripped string."""
+                v = v.strip()
+                for fmt in _DATE_FMTS:
+                    try:
+                        return _dt.strptime(v, fmt).strftime("%Y%m%d")
+                    except ValueError:
+                        continue
+                return _norm(v)
+
+            def _norm_amount(v: str) -> str:
+                """Round-trip through float to canonicalise 41958 == 41958.0."""
+                v = v.strip().replace(",", "")
+                try:
+                    return str(round(float(v), 2))
+                except (ValueError, TypeError):
+                    return _norm(v)
+
+            for fname, qr_val in qr_verified.items():
+                if not qr_val or fname not in header:
+                    continue
+
+                # Field-type-aware normalisation
+                if "date" in fname:
+                    qr_norm = _norm_date(str(qr_val))
+                elif "amount" in fname or "total" in fname:
+                    qr_norm = _norm_amount(str(qr_val))
+                else:
+                    qr_norm = _norm(str(qr_val))
+
+                if not qr_norm:
+                    continue
+
+                # Determine extracted value for comparison
+                extracted_val = ""
+                if fname == "invoice_number":
+                    extracted_val = raw_json.get("invoice_number") or ""
+                elif fname == "invoice_date":
+                    extracted_val = raw_json.get("invoice_date") or ""
+                elif fname == "vendor_tax_id":
+                    extracted_val = raw_json.get("vendor_tax_id") or ""
+                elif fname == "total_amount":
+                    extracted_val = str(raw_json.get("total_amount") or "")
+                else:
+                    extracted_val = str(raw_json.get(fname) or "")
+
+                if "date" in fname:
+                    extracted_norm = _norm_date(extracted_val)
+                elif "amount" in fname or "total" in fname:
+                    extracted_norm = _norm_amount(extracted_val)
+                else:
+                    extracted_norm = _norm(extracted_val)
+
+                if not extracted_norm:
+                    # Extracted value is empty but QR has it — treat as low confidence
+                    # (field is absent; don't override the 0.0 score with 0.99)
+                    continue
+
+                if extracted_norm == qr_norm:
+                    # Exact match with QR ground truth — set to 0.99
+                    header[fname] = 0.99
+                    evidence_flags[fname] = (
+                        evidence_flags.get(fname, "") + " qr_confirmed"
+                    ).strip()
+                else:
+                    # Mismatch — cap score at 0.40 and flag
+                    header[fname] = min(header[fname], 0.40)
+                    evidence_flags[fname] = (
+                        evidence_flags.get(fname, "") + f" qr_mismatch:extracted={extracted_norm[:30]}|qr={qr_norm[:30]}"
+                    ).strip()
+
         # Summarize weakest critical field and low-confidence list
         low_conf = [f for f, s in header.items() if s < 0.6]
         worst_crit_name = ""
