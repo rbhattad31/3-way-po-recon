@@ -65,7 +65,8 @@ def run_reconciliation_task(
     #          -- recon_result_persist  (per invoice)
     #          -- recon_exception_build (per invoice)
     _lf_task_trace = None
-    _lf_task_trace_id = f"recon-task-{self.request.id}" if self.request.id else None
+    # Celery task IDs are UUIDs; strip hyphens to get a valid 32-char hex trace ID.
+    _lf_task_trace_id = self.request.id.replace("-", "") if self.request.id else None
     try:
         from apps.core.langfuse_client import start_trace
         if _lf_task_trace_id:

@@ -271,7 +271,8 @@ class VendorSearchTool(BaseTool):
 
     def run(self, *, query: str = "", **kwargs) -> ToolResult:
         from apps.core.utils import normalize_string
-        from apps.vendors.models import Vendor, VendorAlias
+        from apps.vendors.models import Vendor
+        from apps.posting_core.models import VendorAliasMapping
 
         if not query:
             return ToolResult(success=False, error="query is required")
@@ -294,17 +295,17 @@ class VendorSearchTool(BaseTool):
             })
 
         # Alias search
-        aliases = VendorAlias.objects.filter(
-            normalized_alias=norm,
+        aliases = VendorAliasMapping.objects.filter(
+            normalized_alias=norm, is_active=True,
         ).select_related("vendor")[:5]
         seen = {r["vendor_id"] for r in results}
         for a in aliases:
-            if a.vendor_id not in seen:
+            if a.vendor and a.vendor_id not in seen:
                 results.append({
                     "vendor_id": a.vendor_id,
                     "code": a.vendor.code,
                     "name": a.vendor.name,
-                    "alias": a.alias_name,
+                    "alias": a.alias_text,
                     "match_type": "alias",
                 })
 

@@ -16,7 +16,8 @@ def process_case_task(self, case_id: int):
     from apps.cases.models import APCase
     from apps.cases.orchestrators.case_orchestrator import CaseOrchestrator
 
-    _trace_id = f"case-{case_id}"
+    import hashlib
+    _trace_id = hashlib.md5(f"case-{case_id}".encode()).hexdigest()
     _lf_trace = None
     try:
         from apps.core.langfuse_client import start_trace
@@ -65,7 +66,8 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
     from apps.cases.models import APCase
     from apps.cases.orchestrators.case_orchestrator import CaseOrchestrator
 
-    _trace_id = f"case-{case_id}"
+    import hashlib
+    _trace_id = hashlib.md5(f"case-{case_id}-{stage}".encode()).hexdigest()
     _lf_trace = None
     try:
         from apps.core.langfuse_client import start_trace

@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404, render
 from apps.core.enums import UserRole
 from apps.core.permissions import permission_required_code
 from apps.documents.models import Invoice
-from apps.vendors.models import Vendor, VendorAlias
+from apps.vendors.models import Vendor
 
 
 def _scope_vendors_for_user(qs, user):
@@ -73,7 +73,8 @@ def vendor_list(request):
     total = scoped_base.count()
     with_po = scoped_base.filter(purchase_orders__isnull=False).distinct().count()
     with_invoice = scoped_base.filter(invoices__isnull=False).distinct().count()
-    total_aliases = VendorAlias.objects.filter(vendor__in=scoped_base).count()
+    from apps.posting_core.models import VendorAliasMapping
+    total_aliases = VendorAliasMapping.objects.filter(vendor__in=scoped_base, is_active=True).count()
 
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))

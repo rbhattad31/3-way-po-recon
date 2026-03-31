@@ -504,16 +504,32 @@ class ERPPOReference(TimestampMixin):
 
 
 class VendorAliasMapping(BaseModel):
-    """Business-owned alias mapping for vendor name matching."""
+    """Canonical vendor alias table used by extraction, reconciliation, posting, and ERP layers."""
 
     alias_text = models.CharField(max_length=500)
     normalized_alias = models.CharField(max_length=500, db_index=True)
+    # FK to Django Vendor master (used by extraction/reconciliation to resolve invoice.vendor)
+    vendor = models.ForeignKey(
+        "vendors.Vendor",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="alias_mappings",
+        help_text="Resolved Vendor record (used by extraction and reconciliation)",
+    )
+    # FK to ERP reference record (used by posting pipeline to map to ERP vendor code)
     vendor_reference = models.ForeignKey(
         ERPVendorReference,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="aliases",
+    )
+    source = models.CharField(
+        max_length=50,
+        blank=True,
+        default="manual",
+        help_text="Origin: manual, extraction, erp",
     )
     confidence = models.FloatField(default=1.0)
     is_active = models.BooleanField(default=True)

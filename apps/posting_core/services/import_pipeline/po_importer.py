@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Tuple
 
+from django.db import transaction
+
 from apps.posting_core.models import ERPPOReference, ERPReferenceImportBatch
 from apps.posting_core.services.import_pipeline.import_parsers import (
     normalize_text,
@@ -16,9 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 class POImporter:
-    """Imports PO reference rows into ERPPOReference."""
+    """Imports PO reference rows into ERPPOReference.
+
+    Natural key: (po_number, po_line_number).
+    Skips intra-file duplicates and rows already present in this batch.
+    """
 
     @staticmethod
+    @transaction.atomic
     def import_rows(
         batch: ERPReferenceImportBatch,
         rows: List[Dict[str, Any]],
@@ -26,6 +33,7 @@ class POImporter:
         valid_records: List[ERPPOReference] = []
         errors: List[str] = []
         invalid_count = 0
+        seen_keys: set = set()
 
         for idx, row in enumerate(rows, start=1):
             is_valid, row_errors = validate_row("OPEN_PO", row, idx)
@@ -34,12 +42,23 @@ class POImporter:
                 invalid_count += 1
                 continue
 
-            description = str(row.get("description", "")).strip()
+            po_number = str(row.get("po_number", "")).strip()
+            po_line = str(row.get("po_line_number", "")).strip()
+            key = (po_number, po_line)
 
+            if key in seen_keys:
+                errors.append(
+                    f"Row {idx}: duplicate (po_number, po_line_number) '{po_number}/{po_line}' in file — skipped"
+                )
+                invalid_count += 1
+                continue
+            seen_keys.add(key)
+
+            description = str(row.get("description", "")).strip()
             valid_records.append(ERPPOReference(
                 batch=batch,
-                po_number=str(row.get("po_number", "")).strip(),
-                po_line_number=str(row.get("po_line_number", "")).strip(),
+                po_number=po_number,
+                po_line_number=po_line,
                 vendor_code=str(row.get("vendor_code", "")).strip(),
                 item_code=str(row.get("item_code", "")).strip(),
                 description=description,
@@ -54,7 +73,26 @@ class POImporter:
             ))
 
         if valid_records:
-            ERPPOReference.objects.bulk_create(valid_records)
+            existing_keys = set(
+                ERPPOReference.objects
+                .filter(
+                    batch=batch,
+                    po_number__in=[r.po_number for r in valid_records],
+                )
+                .values_list("po_number", "po_line_number")
+            )
+            if existing_keys:
+                logger.warning(
+                    "POImporter: %d (po_number, po_line) pair(s) already in batch %s — skipping",
+                    len(existing_keys), batch.pk,
+                )
+                valid_records = [
+                    r for r in valid_records
+                    if (r.po_number, r.po_line_number) not in existing_keys
+                ]
+
+            if valid_records:
+                ERPPOReference.objects.bulk_create(valid_records)
 
         logger.info(
             "POImporter: imported %d valid, %d invalid for batch %s",

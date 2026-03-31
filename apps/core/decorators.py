@@ -247,11 +247,10 @@ def observed_task(
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Reconstruct trace context from kwargs
-            trace_headers = {k: v for k, v in kwargs.items() if k.startswith("trace_") or k in (
-                "invoice_id", "case_id", "actor_user_id", "actor_email",
-                "actor_primary_role", "span_id", "parent_span_id",
-            )}
+            # Reconstruct trace context from kwargs — only strip actual trace
+            # propagation headers (keys starting with "trace_"), never task
+            # payload arguments like invoice_id, case_id, user_id, etc.
+            trace_headers = {k: v for k, v in kwargs.items() if k.startswith("trace_")}
 
             if trace_headers.get("trace_id"):
                 parent_ctx = TraceContext.from_celery_headers(trace_headers)

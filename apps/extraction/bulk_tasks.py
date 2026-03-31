@@ -33,7 +33,8 @@ def run_bulk_job_task(self, job_id: int) -> dict:
         logger.error("BulkExtractionJob %s not found", job_id)
         return {"status": "error", "message": f"Job {job_id} not found"}
 
-    _trace_id = getattr(job, "trace_id", None) or str(job.pk)
+    import hashlib as _hl
+    _trace_id = getattr(job, "trace_id", None) or _hl.md5(f"bulk-job-{job.pk}".encode()).hexdigest()
     _lf_trace = None
     try:
         from apps.core.langfuse_client import start_trace

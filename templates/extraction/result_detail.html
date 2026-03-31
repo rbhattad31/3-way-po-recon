@@ -156,7 +156,14 @@
         <div class="row mb-4" style="font-size:var(--ap-font-size-sm)">
           <div class="col-sm-4 mb-3">
             <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Vendor</div>
-            <div style="font-weight:500">{{ invoice.vendor.name|default:invoice.raw_vendor_name|default:"—" }}</div>
+            <div style="font-weight:500">
+              {{ invoice.vendor.name|default:invoice.raw_vendor_name|default:"—" }}
+              {% if invoice.vendor %}
+                <span class="badge bg-success ms-1" style="font-size:.6rem;vertical-align:middle" title="Matched to Vendor #{{ invoice.vendor.pk }}"><i class="bi bi-link-45deg"></i> Linked</span>
+              {% else %}
+                <span class="badge bg-warning text-dark ms-1" style="font-size:.6rem;vertical-align:middle" title="No vendor record matched — raw OCR text only"><i class="bi bi-exclamation-triangle"></i> Unlinked</span>
+              {% endif %}
+            </div>
           </div>
           <div class="col-sm-4 mb-3">
             <div style="font-weight:600;color:var(--ap-text-muted);font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.25rem">Invoice Number</div>

@@ -384,6 +384,35 @@ class CaseOrchestrator:
         """Sync vendor and PO from the invoice if they were linked after case creation."""
         invoice = self.case.invoice
         changed = []
+
+        # If invoice has no vendor FK yet, try to resolve it from raw_vendor_name
+        # (covers cases where the vendor record was created after extraction/approval)
+        if not invoice.vendor_id and invoice.raw_vendor_name:
+            try:
+                from apps.core.utils import normalize_string
+                from apps.vendors.models import Vendor
+                from apps.posting_core.models import VendorAliasMapping
+                norm = normalize_string(invoice.raw_vendor_name)
+                vendor = Vendor.objects.filter(normalized_name=norm, is_active=True).first()
+                if not vendor:
+                    alias = VendorAliasMapping.objects.filter(
+                        normalized_alias=norm, is_active=True
+                    ).select_related("vendor").first()
+                    if alias and alias.vendor:
+                        vendor = alias.vendor
+                if vendor:
+                    invoice.vendor = vendor
+                    invoice.save(update_fields=["vendor", "updated_at"])
+                    logger.info(
+                        "Vendor resolved during reprocess for invoice %s: %s",
+                        invoice.pk, vendor.name,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Vendor re-resolution failed during reprocess for invoice %s: %s",
+                    invoice.pk, exc,
+                )
+
         if invoice.vendor_id and self.case.vendor_id != invoice.vendor_id:
             self.case.vendor_id = invoice.vendor_id
             changed.append("vendor_id")

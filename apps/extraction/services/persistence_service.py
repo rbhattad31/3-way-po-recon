@@ -223,16 +223,17 @@ class InvoicePersistenceService:
 
     @staticmethod
     def _resolve_vendor(normalized_vendor_name: str) -> Optional[Vendor]:
-        """Try to match vendor by normalised name, then by alias."""
+        """Try to match vendor by normalised name, then by VendorAliasMapping."""
         if not normalized_vendor_name:
             return None
         vendor = Vendor.objects.filter(normalized_name=normalized_vendor_name, is_active=True).first()
         if vendor:
             return vendor
-        # Check aliases
-        from apps.vendors.models import VendorAlias
-        alias = VendorAlias.objects.filter(normalized_alias=normalized_vendor_name).select_related("vendor").first()
-        if alias:
+        from apps.posting_core.models import VendorAliasMapping
+        alias = VendorAliasMapping.objects.filter(
+            normalized_alias=normalized_vendor_name, is_active=True
+        ).select_related("vendor").first()
+        if alias and alias.vendor:
             return alias.vendor
         return None
 

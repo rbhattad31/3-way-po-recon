@@ -38,10 +38,12 @@ def get_client():
                 public_key=pk,
                 secret_key=sk,
                 host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+                environment=os.getenv("LANGFUSE_ENVIRONMENT", "development"),
             )
             logger.info(
-                "Langfuse client initialised (host=%s)",
+                "Langfuse client initialised (host=%s, environment=%s)",
                 os.getenv("LANGFUSE_HOST", "cloud"),
+                os.getenv("LANGFUSE_ENVIRONMENT", "development"),
             )
         except Exception as exc:
             logger.debug("Langfuse init failed (disabled): %s", exc)
@@ -91,15 +93,17 @@ def start_trace(
         # These populate the Users and Sessions tabs in the Langfuse UI.
         if span is not None:
             try:
-                from langfuse._client.attributes import TRACE_USER_ID, TRACE_SESSION_ID
+                from langfuse._client.attributes import TRACE_USER_ID, TRACE_SESSION_ID, ENVIRONMENT
                 otel_span = getattr(span, "_otel_span", None)
                 if otel_span is not None:
                     if user_id:
                         otel_span.set_attribute(TRACE_USER_ID, str(user_id))
                     if session_id:
                         otel_span.set_attribute(TRACE_SESSION_ID, session_id)
+                    _env = os.getenv("LANGFUSE_ENVIRONMENT", "development")
+                    otel_span.set_attribute(ENVIRONMENT, _env)
             except Exception:
-                pass  # Non-fatal — traces still work, just without user/session
+                pass  # Non-fatal -- traces still work, just without user/session/environment
         return span
     except Exception as exc:
         logger.debug("Langfuse start_trace failed: %s", exc)
