@@ -90,9 +90,11 @@ class CaseSelectors:
             return qs.none()
         user_role = getattr(user, "role", None)
 
-        # REVIEWER sees only cases assigned to them
+        # REVIEWER sees cases assigned to them + unassigned review-ready cases
         if user_role == UserRole.REVIEWER:
-            return qs.filter(assigned_to=user)
+            return qs.filter(
+                Q(assigned_to=user) | Q(assigned_to__isnull=True)
+            )
 
         if user_role != UserRole.AP_PROCESSOR:
             return qs  # ADMIN, FINANCE_MANAGER, AUDITOR see everything
