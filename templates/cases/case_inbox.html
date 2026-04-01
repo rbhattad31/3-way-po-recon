@@ -5,6 +5,7 @@
 
 {% block extra_css %}
 <link href="{% static 'css/case-inbox.css' %}?v=2" rel="stylesheet">
+<style>.spin-slow{animation:spin-slow 3s linear infinite}@keyframes spin-slow{to{transform:rotate(360deg)}}</style>
 {% endblock %}
 
 {% block breadcrumb %}
@@ -95,7 +96,56 @@
 </div>
 {% endif %}
 
-{# ── Filter Toolbar ── #}
+{# -- In-Progress Cases (currently being processed in background) -- #}
+{% if in_progress_cases %}
+<div class="ap-card mb-3 border-info">
+  <div class="ap-card-header d-flex justify-content-between align-items-center" style="background:var(--ap-info-bg, #cff4fc)">
+    <span><i class="bi bi-gear-wide-connected text-info me-2 spin-slow"></i><strong>{{ in_progress_cases|length }} Case{{ in_progress_cases|length|pluralize }} In Progress</strong> <small class="text-muted ms-2">Currently being processed in background</small></span>
+  </div>
+  <div class="ap-card-body-flush" style="overflow-x:auto">
+    <table class="ap-table table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Case</th>
+          <th>Invoice #</th>
+          <th>Vendor</th>
+          <th>Status</th>
+          <th>Assigned To</th>
+          <th>Updated</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for case in in_progress_cases %}
+        <tr>
+          <td>
+            <a href="{% url 'cases:case_agent_view' case.pk %}" class="fw-bold text-decoration-none text-primary">
+              {{ case.case_number }}
+            </a>
+          </td>
+          <td>{{ case.invoice.invoice_number|default:"--"|truncatechars:22 }}</td>
+          <td>{{ case.vendor.name|default:case.invoice.raw_vendor_name|default:"--"|truncatechars:24 }}</td>
+          <td><span class="ap-badge ap-badge-info"><i class="bi bi-arrow-repeat"></i> {{ case.get_status_display }}</span></td>
+          <td>
+            {% if case.assigned_to %}
+              <span class="ap-badge ap-badge-muted"><i class="bi bi-person"></i> {{ case.assigned_to.get_short_name|truncatechars:16 }}</span>
+            {% else %}--{% endif %}
+          </td>
+          <td><small class="text-muted">{{ case.updated_at|timesince }} ago</small></td>
+          <td>
+            <a href="{% url 'cases:case_agent_view' case.pk %}" class="btn btn-sm btn-outline-info py-0 px-2" title="View progress">
+              <i class="bi bi-eye"></i>
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# -- Filter Toolbar -- #}
 <form method="get" class="ap-filter-bar" id="filterForm">
   <div class="position-relative" style="width:240px">
     <i class="bi bi-search position-absolute" style="left:.75rem;top:50%;transform:translateY(-50%);color:var(--ap-text-muted);font-size:.8rem"></i>

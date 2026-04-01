@@ -308,6 +308,19 @@ def case_inbox(request):
         elif assigned_to_id == "unassigned":
             selected_assignee_name = "Unassigned"
 
+    # ----- In-progress cases (currently being processed in background) -----
+    in_progress_statuses = [
+        s.value for s in CaseStatus if "IN_PROGRESS" in s.value
+    ] + [CaseStatus.NEW]
+    in_progress_cases = (
+        CaseSelectors.scope_for_user(
+            APCase.objects.filter(status__in=in_progress_statuses, is_active=True)
+            .select_related("invoice", "vendor", "assigned_to")
+            .order_by("-updated_at"),
+            request.user,
+        )[:20]
+    )
+
     # ----- Pending invoices: approved / READY_FOR_RECON but no active case -----
     from apps.documents.models import Invoice
     from apps.core.enums import InvoiceStatus
@@ -327,6 +340,7 @@ def case_inbox(request):
         "page_obj": page_obj,
         "stats": stats,
         "pending_invoices": pending_invoices,
+        "in_progress_cases": in_progress_cases,
         "status_choices": CaseStatus.choices,
         "path_choices": ProcessingPath.choices,
         "priority_choices": CasePriority.choices,
@@ -362,6 +376,11 @@ def reprocess_case(request, pk):
         messages.warning(request, "No stage specified for reprocessing.")
         return redirect(redirect_view, pk=pk)
 
+    # Assign the case to the reviewer who triggered reprocessing
+    if not case.assigned_to:
+        case.assigned_to = request.user
+        case.save(update_fields=["assigned_to", "updated_at"])
+
     from apps.cases.tasks import reprocess_case_from_stage_task
     from apps.core.utils import dispatch_task
 
@@ -392,6 +411,8 @@ def create_case_for_invoice(request, invoice_pk):
 
     from apps.cases.services.case_creation_service import CaseCreationService
     case = CaseCreationService.create_from_upload(invoice, uploaded_by=request.user)
+    case.assigned_to = request.user
+    case.save(update_fields=["assigned_to", "updated_at"])
 
     # Kick off processing
     from apps.cases.tasks import process_case_task
