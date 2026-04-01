@@ -314,7 +314,6 @@ def case_inbox(request):
     pending_invoices = (
         Invoice.objects.filter(
             status=InvoiceStatus.READY_FOR_RECON,
-            is_active=True,
         )
         .exclude(
             pk__in=APCase.objects.filter(is_active=True).values_list("invoice_id", flat=True)
