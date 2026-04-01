@@ -446,3 +446,104 @@ def flush() -> None:
         lf.flush()
     except Exception as exc:
         logger.debug("Langfuse flush failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Safe convenience aliases (thin wrappers for inline use in pipelines)
+# ---------------------------------------------------------------------------
+# The core functions above are already fail-silent, but callers must still
+# guard each import + call in try/except.  These aliases let pipeline code
+# call a single function with no import ceremony and no risk of propagation.
+
+
+def start_trace_safe(
+    trace_id: str,
+    name: str,
+    *,
+    invoice_id: Optional[int] = None,
+    result_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Identical to ``start_trace`` but guaranteed to never raise."""
+    try:
+        return start_trace(
+            trace_id, name,
+            invoice_id=invoice_id,
+            result_id=result_id,
+            user_id=user_id,
+            session_id=session_id,
+            metadata=metadata,
+        )
+    except Exception:
+        return None
+
+
+def start_span_safe(
+    parent: Any,
+    name: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Identical to ``start_span`` but guaranteed to never raise."""
+    try:
+        return start_span(parent, name, metadata=metadata)
+    except Exception:
+        return None
+
+
+def end_span_safe(
+    span: Any,
+    *,
+    output: Optional[Any] = None,
+    level: str = "DEFAULT",
+    is_root: bool = False,
+) -> None:
+    """Identical to ``end_span`` but guaranteed to never raise."""
+    try:
+        end_span(span, output=output, level=level, is_root=is_root)
+    except Exception:
+        pass
+
+
+def score_trace_safe(
+    trace_id: str,
+    name: str,
+    value: float,
+    *,
+    comment: str = "",
+) -> None:
+    """Identical to ``score_trace`` but guaranteed to never raise."""
+    try:
+        score_trace(trace_id, name, value, comment=comment)
+    except Exception:
+        pass
+
+
+def score_observation_safe(
+    observation: Any,
+    name: str,
+    value: float,
+    *,
+    comment: str = "",
+) -> None:
+    """Identical to ``score_observation`` but guaranteed to never raise."""
+    try:
+        score_observation(observation, name, value, comment=comment)
+    except Exception:
+        pass
+
+
+def update_trace_safe(
+    span: Any,
+    *,
+    output: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    is_root: bool = False,
+) -> None:
+    """Identical to ``update_trace`` but guaranteed to never raise."""
+    try:
+        update_trace(span, output=output, metadata=metadata, is_root=is_root)
+    except Exception:
+        pass

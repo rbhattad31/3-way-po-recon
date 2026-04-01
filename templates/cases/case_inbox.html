@@ -32,12 +32,68 @@
 {# ── KPI Strip ── #}
 <div class="ci-kpi-row">
   <div class="ci-kpi"><span class="ci-kpi-num">{{ stats.total|default:"0" }}</span> Total</div>
+  <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-info">{{ stats.in_progress|default:"0" }}</span> In Progress</div>
   <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-warn">{{ stats.by_status.READY_FOR_REVIEW|default:"0" }}</span> Awaiting Review</div>
   <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-ok">{{ stats.by_status.CLOSED|default:"0" }}</span> Closed</div>
+  <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-bad">{{ stats.failed|default:"0" }}</span> Failed</div>
   <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-info">{{ stats.agent_processed|default:"0" }}</span> Agent Processed</div>
   <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-warn">{{ stats.human_involved|default:"0" }}</span> Human Involved</div>
   <div class="ci-kpi"><span class="ci-kpi-num ci-kpi-bad">{{ stats.overdue|default:"0" }}</span> Overdue</div>
 </div>
+
+{# -- Pending Invoices (approved / Ready for Recon, but no case yet) -- #}
+{% if pending_invoices %}
+<div class="ap-card mb-3 border-warning">
+  <div class="ap-card-header d-flex justify-content-between align-items-center" style="background:var(--ap-warning-bg, #fff3cd)">
+    <span><i class="bi bi-exclamation-triangle-fill text-warning me-2"></i><strong>{{ pending_invoices|length }} Invoice{{ pending_invoices|length|pluralize }} Ready for Processing</strong> <small class="text-muted ms-2">Approved but no case created yet</small></span>
+  </div>
+  <div class="ap-card-body-flush" style="overflow-x:auto">
+    <table class="ap-table table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Invoice #</th>
+          <th>Vendor</th>
+          <th>Amount</th>
+          <th>Uploaded By</th>
+          <th>Approved</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inv in pending_invoices %}
+        <tr>
+          <td>
+            <a href="{% url 'documents:invoice_detail' inv.pk %}" class="fw-bold text-decoration-none text-primary">
+              {{ inv.invoice_number|default:"--"|truncatechars:22 }}
+            </a>
+          </td>
+          <td>{{ inv.vendor.name|default:inv.raw_vendor_name|default:"--"|truncatechars:24 }}</td>
+          <td>
+            {% if inv.total_amount %}
+              <span class="fw-semibold">{{ inv.currency|default:"" }} {{ inv.total_amount|floatformat:2 }}</span>
+            {% else %}--{% endif %}
+          </td>
+          <td>
+            {% if inv.document_upload and inv.document_upload.uploaded_by %}
+              {{ inv.document_upload.uploaded_by.get_short_name|default:inv.document_upload.uploaded_by.email|truncatechars:18 }}
+            {% else %}--{% endif %}
+          </td>
+          <td><small class="text-muted">{{ inv.updated_at|timesince }} ago</small></td>
+          <td>
+            <form method="post" action="{% url 'cases:create_case_for_invoice' inv.pk %}" style="display:inline" onsubmit="this.querySelector('button').disabled=true">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-sm btn-warning py-0 px-2" title="Create case and start processing">
+                <i class="bi bi-play-fill me-1"></i>Process
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 
 {# ── Filter Toolbar ── #}
 <form method="get" class="ap-filter-bar" id="filterForm">
@@ -274,10 +330,23 @@
           </td>
           <td><small class="text-muted">{{ case.created_at|timesince }}</small></td>
           <td>
+            <div class="d-flex gap-1">
             <a href="{% url 'cases:case_agent_view' case.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2" title="Investigate"
                onclick="event.stopPropagation()">
               <i class="bi bi-robot"></i>
             </a>
+            {% if case.status == "FAILED" or case.status == "NEW" %}
+            <form method="post" action="{% url 'cases:reprocess_case' case.pk %}" style="display:inline"
+                  onclick="event.stopPropagation()" onsubmit="this.querySelector('button').disabled=true">
+              {% csrf_token %}
+              <input type="hidden" name="stage" value="INTAKE">
+              <input type="hidden" name="next" value="agent">
+              <button type="submit" class="btn btn-sm btn-outline-warning py-0 px-2" title="Retrigger pipeline from start">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+            </form>
+            {% endif %}
+            </div>
           </td>
         </tr>
         {% empty %}

@@ -58,6 +58,10 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: 
                     "task_id": _celery_task_id,
                     "reconciliation_result_id": reconciliation_result_id,
                     "actor_user_id": actor_user_id,
+                    "prior_match_status": str(getattr(result, "match_status", "")),
+                    "reconciliation_mode": getattr(result, "reconciliation_mode", ""),
+                    "trigger": "auto",
+                    "source": "agentic",
                 },
             )
         else:

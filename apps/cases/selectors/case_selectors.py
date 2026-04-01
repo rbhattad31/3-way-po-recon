@@ -157,6 +157,15 @@ class CaseSelectors:
             requires_human_review=True,
         ).count()
 
+        # In-progress: all *_IN_PROGRESS statuses + NEW (pipeline not yet complete)
+        in_progress_statuses = [
+            s for s in CaseStatus
+            if "IN_PROGRESS" in s.value or s == CaseStatus.NEW
+        ]
+        in_progress = base.filter(status__in=in_progress_statuses).count()
+
+        failed = by_status.get(CaseStatus.FAILED, 0)
+
         return {
             "total": total,
             "by_status": by_status,
@@ -164,6 +173,8 @@ class CaseSelectors:
             "overdue": overdue,
             "agent_processed": agent_processed,
             "human_involved": human_involved,
+            "in_progress": in_progress,
+            "failed": failed,
         }
 
     @staticmethod

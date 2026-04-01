@@ -142,6 +142,27 @@ class AgentOrchestrator:
         TraceContext.set_current(trace_ctx)
 
         _lf_trace = None
+        _recon_mode = getattr(result, "reconciliation_mode", "") or ""
+        _prior_match_status = str(getattr(result, "match_status", "") or "")
+        _exc_count = result.exceptions.count() if hasattr(result, "exceptions") else 0
+        _vendor_name = ""
+        if result.invoice and result.invoice.vendor:
+            _vendor_name = result.invoice.vendor.name[:60]
+        elif result.invoice:
+            _vendor_name = (result.invoice.raw_vendor_name or "")[:60]
+
+        # Resolve case_id if this result is linked to an APCase
+        _case_id = None
+        _case_number = None
+        try:
+            from apps.cases.models import APCase
+            _ap_case = APCase.objects.filter(reconciliation_result=result).values("pk", "case_number").first()
+            if _ap_case:
+                _case_id = _ap_case["pk"]
+                _case_number = _ap_case["case_number"]
+        except Exception:
+            pass
+
         try:
             from apps.core.langfuse_client import start_trace
             _lf_trace = start_trace(
@@ -152,8 +173,21 @@ class AgentOrchestrator:
                 user_id=actor.pk if actor else None,
                 session_id=f"invoice-{result.invoice_id}" if result.invoice_id else None,
                 metadata={
-                    "reconciliation_mode": getattr(result, "reconciliation_mode", ""),
-                    "match_status": str(getattr(result, "match_status", "")),
+                    "invoice_id": result.invoice_id,
+                    "reconciliation_result_id": result.pk,
+                    "case_id": _case_id,
+                    "case_number": _case_number,
+                    "reconciliation_mode": _recon_mode,
+                    "prior_match_status": _prior_match_status,
+                    "exception_count": _exc_count,
+                    "po_number": (
+                        result.purchase_order.po_number if result.purchase_order else ""
+                    ),
+                    "vendor_name": _vendor_name,
+                    "vendor_id": getattr(result.invoice, "vendor_id", None) if result.invoice else None,
+                    "grn_available": getattr(result, "grn_available", False),
+                    "actor_user_id": actor.pk if actor else None,
+                    "source": "agentic",
                 },
             )
         except Exception:
@@ -463,19 +497,45 @@ class AgentOrchestrator:
         if _lf_trace is not None:
             try:
                 from apps.core.langfuse_client import end_span, score_trace
+                _has_recommendation = bool(orch_result.final_recommendation)
+                _has_escalation = orch_result.final_recommendation == "ESCALATE_TO_MANAGER"
+                _auto_close_candidate = orch_result.final_recommendation == "AUTO_CLOSE"
                 end_span(_lf_trace, output={
                     "final_recommendation": orch_result.final_recommendation,
                     "final_confidence": orch_result.final_confidence,
                     "agents_executed": orch_result.agents_executed,
+                    "planner_source": orch_result.plan_source,
+                    "planned_agents": plan.agents if plan else [],
                     "error": orch_result.error or None,
-                })
-                if orch_result.final_confidence:
+                }, is_root=True)
+                # Pipeline-level scores
+                if orch_result.final_confidence is not None:
                     score_trace(
                         trace_ctx.trace_id,
-                        "final_confidence",
+                        "agent_pipeline_final_confidence",
                         orch_result.final_confidence,
                         comment=orch_result.final_recommendation or "",
                     )
+                score_trace(
+                    trace_ctx.trace_id,
+                    "agent_pipeline_recommendation_present",
+                    1.0 if _has_recommendation else 0.0,
+                )
+                score_trace(
+                    trace_ctx.trace_id,
+                    "agent_pipeline_escalation_triggered",
+                    1.0 if _has_escalation else 0.0,
+                )
+                score_trace(
+                    trace_ctx.trace_id,
+                    "agent_pipeline_auto_close_candidate",
+                    1.0 if _auto_close_candidate else 0.0,
+                )
+                score_trace(
+                    trace_ctx.trace_id,
+                    "agent_pipeline_agents_executed_count",
+                    float(len(orch_result.agents_executed)),
+                )
             except Exception:
                 pass
 

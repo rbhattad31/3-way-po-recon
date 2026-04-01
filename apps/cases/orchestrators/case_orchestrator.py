@@ -89,10 +89,16 @@ class CaseOrchestrator:
 
     def __init__(self, case: APCase):
         self.case = case
+        self._lf_trace = None
+        self._lf_trace_id = None
+        self._stage_index = 0
 
     @observed_service("cases.orchestrator.run", audit_event="CASE_PROCESSING_STARTED", entity_type="APCase")
-    def run(self) -> APCase:
+    def run(self, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
         """Execute the case from its current position through completion."""
+        self._lf_trace = lf_trace
+        self._lf_trace_id = lf_trace_id
+        self._stage_index = 0
         logger.info("Orchestrating case %s (status=%s, path=%s)",
                      self.case.case_number, self.case.status, self.case.processing_path)
 
@@ -116,10 +122,45 @@ class CaseOrchestrator:
             # Stage 4+: Path-specific processing
             self._execute_path_stages()
 
+            # -- Langfuse: final case-level trace metadata and scores
+            try:
+                from apps.core.langfuse_client import update_trace_safe, score_trace_safe
+                _is_closed = self.case.status in (CaseStatus.CLOSED, CaseStatus.AUTO_CLOSED) if hasattr(CaseStatus, "AUTO_CLOSED") else self.case.status == CaseStatus.CLOSED
+                _is_terminal = CaseStateMachine.is_terminal(self.case.status)
+                update_trace_safe(self._lf_trace, metadata={
+                    "final_status": self.case.status,
+                    "final_stage": self.case.current_stage or "",
+                    "processing_path": self.case.processing_path or "",
+                    "stages_executed": self._stage_index,
+                    "reconciliation_result_id": self.case.reconciliation_result_id,
+                    "reconciliation_mode": self.case.reconciliation_mode or "",
+                }, is_root=True)
+                score_trace_safe(
+                    self._lf_trace_id, "case_stages_executed",
+                    float(self._stage_index),
+                    comment=f"path={self.case.processing_path}",
+                )
+                score_trace_safe(
+                    self._lf_trace_id, "case_closed",
+                    1.0 if _is_closed else 0.0,
+                    comment=f"status={self.case.status}",
+                )
+                score_trace_safe(
+                    self._lf_trace_id, "case_terminal",
+                    1.0 if _is_terminal else 0.0,
+                )
+            except Exception:
+                pass
+
         except Exception:
             logger.exception("Case %s orchestration failed", self.case.case_number)
             self.case.status = CaseStatus.FAILED
             self.case.save(update_fields=["status", "updated_at"])
+            try:
+                from apps.core.langfuse_client import score_trace_safe
+                score_trace_safe(self._lf_trace_id, "case_processing_success", 0.0, comment="orchestration_failed")
+            except Exception:
+                pass
             raise
 
         return self.case
@@ -139,8 +180,11 @@ class CaseOrchestrator:
         CaseStageType.CASE_SUMMARY: CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS,
     }
 
-    def run_from(self, stage: str) -> APCase:
+    def run_from(self, stage: str, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
         """Reprocess from a specific stage forward."""
+        self._lf_trace = lf_trace
+        self._lf_trace_id = lf_trace_id
+        self._stage_index = 0
         logger.info("Reprocessing case %s from stage %s", self.case.case_number, stage)
 
         # Mark subsequent stages as skipped
@@ -158,7 +202,7 @@ class CaseOrchestrator:
         else:
             self.case.save(update_fields=["current_stage", "updated_at"])
 
-        return self.run()
+        return self.run(lf_trace=self._lf_trace, lf_trace_id=self._lf_trace_id)
 
     def _execute_path_stages(self):
         """Execute the path-specific stages based on resolved processing path."""
@@ -259,8 +303,11 @@ class CaseOrchestrator:
         self._execute_stage(CaseStageType.CASE_SUMMARY)
 
     def _execute_stage(self, stage_name: str):
-        """Execute a single stage via the StageExecutor."""
+        """Execute a single stage via the StageExecutor, wrapped in a Langfuse span."""
         from apps.cases.orchestrators.stage_executor import StageExecutor
+
+        self._stage_index += 1
+        _lf_span = None
 
         self.case.current_stage = stage_name
         self.case.save(update_fields=["current_stage", "updated_at"])
@@ -277,6 +324,25 @@ class CaseOrchestrator:
         stage.started_at = timezone.now()
         stage.save(update_fields=["stage_status", "started_at", "updated_at"])
 
+        # -- Langfuse: per-stage span
+        try:
+            from apps.core.langfuse_client import start_span_safe
+            _lf_span = start_span_safe(
+                self._lf_trace,
+                name=f"case_stage_{stage_name}",
+                metadata={
+                    "stage_index": self._stage_index,
+                    "stage_name": stage_name,
+                    "case_id": self.case.pk,
+                    "case_number": self.case.case_number,
+                    "processing_path": self.case.processing_path or "",
+                    "case_status_before": self.case.status or "",
+                    "retry_count": stage.retry_count,
+                },
+            )
+        except Exception:
+            pass
+
         try:
             output = StageExecutor.execute(self.case, stage_name)
 
@@ -285,14 +351,104 @@ class CaseOrchestrator:
             stage.output_payload = output or {}
             stage.save(update_fields=["stage_status", "completed_at", "output_payload", "updated_at"])
 
+            # -- Langfuse: end span with output + observation scores
+            try:
+                from apps.core.langfuse_client import end_span_safe, score_observation_safe
+                _span_output = {
+                    "stage_status": "COMPLETED",
+                    "case_status_after": self.case.status or "",
+                }
+                if output:
+                    # Include key fields from stage output (limit size)
+                    for k in ("match_status", "po_found", "resolved_path", "auto_closed",
+                              "agents_executed", "final_recommendation", "confidence",
+                              "extraction_confidence", "overall_status", "assignment_id"):
+                        if k in output:
+                            _span_output[k] = output[k]
+                end_span_safe(_lf_span, output=_span_output)
+
+                # Stage-specific observation scores
+                if output and _lf_span:
+                    self._emit_stage_scores(_lf_span, stage_name, output)
+            except Exception:
+                pass
+
         except Exception as exc:
             stage.stage_status = StageStatus.FAILED
             stage.completed_at = timezone.now()
             stage.notes = str(exc)[:1000]
             stage.save(update_fields=["stage_status", "completed_at", "notes", "updated_at"])
+            try:
+                from apps.core.langfuse_client import end_span_safe, score_observation_safe
+                end_span_safe(_lf_span, output={"stage_status": "FAILED", "error": str(exc)[:200]}, level="ERROR")
+                score_observation_safe(_lf_span, f"case_stage_{stage_name}_success", 0.0)
+            except Exception:
+                pass
             raise
 
         self.case.refresh_from_db()
+
+    def _emit_stage_scores(self, lf_span, stage_name: str, output: dict):
+        """Emit deterministic observation-level scores for a completed case stage."""
+        try:
+            from apps.core.langfuse_client import score_observation_safe, score_trace_safe
+            # Universal: stage completed = 1.0
+            score_observation_safe(lf_span, f"case_stage_{stage_name}_success", 1.0)
+
+            if stage_name == CaseStageType.PATH_RESOLUTION:
+                path = output.get("resolved_path", "")
+                score_trace_safe(
+                    self._lf_trace_id, "case_path_resolved",
+                    1.0 if path in ("TWO_WAY", "THREE_WAY", "NON_PO") else 0.0,
+                    comment=f"path={path}",
+                )
+            elif stage_name in (CaseStageType.TWO_WAY_MATCHING, CaseStageType.THREE_WAY_MATCHING):
+                ms = output.get("match_status", "")
+                _match_scores = {"MATCHED": 1.0, "PARTIAL_MATCH": 0.5, "REQUIRES_REVIEW": 0.3, "UNMATCHED": 0.0}
+                score_observation_safe(lf_span, "case_match_result", _match_scores.get(ms, 0.0))
+                score_trace_safe(
+                    self._lf_trace_id, "case_match_status",
+                    _match_scores.get(ms, 0.0),
+                    comment=f"match_status={ms}",
+                )
+            elif stage_name == CaseStageType.PO_RETRIEVAL:
+                score_observation_safe(
+                    lf_span, "case_po_found",
+                    1.0 if output.get("po_found") else 0.0,
+                )
+            elif stage_name == CaseStageType.EXCEPTION_ANALYSIS:
+                auto_closed = output.get("auto_closed", False)
+                score_observation_safe(
+                    lf_span, "case_auto_closed",
+                    1.0 if auto_closed else 0.0,
+                )
+                score_trace_safe(
+                    self._lf_trace_id, "case_auto_closed",
+                    1.0 if auto_closed else 0.0,
+                    comment=f"rec={output.get('final_recommendation', '')}",
+                )
+                if output.get("confidence") is not None:
+                    score_observation_safe(
+                        lf_span, "case_agent_confidence",
+                        float(output["confidence"]),
+                    )
+            elif stage_name == CaseStageType.REVIEW_ROUTING:
+                score_trace_safe(
+                    self._lf_trace_id, "case_routed_to_review",
+                    1.0 if output.get("assignment_id") else 0.0,
+                )
+            elif stage_name == CaseStageType.NON_PO_VALIDATION:
+                score_observation_safe(
+                    lf_span, "case_non_po_approval_ready",
+                    1.0 if output.get("approval_ready") else 0.0,
+                )
+                if output.get("risk_score") is not None:
+                    score_observation_safe(
+                        lf_span, "case_non_po_risk_score",
+                        min(float(output["risk_score"]) / 100.0, 1.0),
+                    )
+        except Exception:
+            pass
 
     def _needs_grn_analysis(self) -> bool:
         """Check if GRN analysis is needed based on reconciliation exceptions."""

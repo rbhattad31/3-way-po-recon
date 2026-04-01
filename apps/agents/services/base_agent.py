@@ -150,6 +150,7 @@ class BaseAgent(ABC):
                     _lf_trace,
                     name=str(self.agent_type),
                     metadata={
+                        "agent_type": str(self.agent_type),
                         "agent_run_id": agent_run.pk,
                         "invoice_id": ctx.invoice_id,
                         "result_id": (
@@ -157,6 +158,8 @@ class BaseAgent(ABC):
                             if ctx.reconciliation_result else None
                         ),
                         "prompt_version": getattr(agent_run, "prompt_version", ""),
+                        "reconciliation_mode": getattr(ctx, "reconciliation_mode", ""),
+                        "po_number": ctx.po_number or "",
                     },
                 )
             except Exception:
@@ -375,7 +378,10 @@ class BaseAgent(ABC):
 
                     if _tool_span is not None:
                         try:
-                            from apps.core.langfuse_client import end_span
+                            from apps.core.langfuse_client import end_span, score_observation
+                            _tool_source = ""
+                            if isinstance(tool_result.data, dict):
+                                _tool_source = tool_result.data.get("source", tool_result.data.get("lookup_source", ""))
                             end_span(
                                 _tool_span,
                                 output={
@@ -383,8 +389,13 @@ class BaseAgent(ABC):
                                     "duration_ms": tool_result.duration_ms,
                                     "data_keys": list(tool_result.data.keys()) if isinstance(tool_result.data, dict) else None,
                                     "error": tool_result.error or None,
+                                    "source_used": _tool_source or None,
                                 },
                                 level="ERROR" if not tool_result.success else "DEFAULT",
+                            )
+                            score_observation(
+                                _tool_span, "tool_call_success",
+                                1.0 if tool_result.success else 0.0,
                             )
                         except Exception:
                             pass
@@ -472,12 +483,35 @@ class BaseAgent(ABC):
             self._finalise_run(agent_run, output, start, agent_def=agent_def)
             if _lf_span is not None:
                 try:
-                    from apps.core.langfuse_client import end_span, score_trace
+                    from apps.core.langfuse_client import end_span, score_trace, score_observation
+                    _tool_success_rate = (
+                        (total_tool_calls - failed_tool_count) / max(total_tool_calls, 1)
+                    )
                     end_span(_lf_span, output={
                         "recommendation": output.recommendation_type,
                         "confidence": output.confidence,
                         "tools_used": output.tools_used,
+                        "evidence_keys": list((output.evidence or {}).keys())[:10],
+                        "decision_count": len(output.decisions) if hasattr(output, "decisions") else 0,
+                        "total_tool_calls": total_tool_calls,
+                        "failed_tool_count": failed_tool_count,
                     })
+                    # Per-agent observation scores
+                    score_observation(
+                        _lf_span, "agent_confidence",
+                        output.confidence,
+                        comment=f"{self.agent_type} confidence",
+                    )
+                    score_observation(
+                        _lf_span, "agent_recommendation_present",
+                        1.0 if output.recommendation_type else 0.0,
+                    )
+                    score_observation(
+                        _lf_span, "agent_tool_success_rate",
+                        _tool_success_rate,
+                        comment=f"{total_tool_calls - failed_tool_count}/{total_tool_calls}",
+                    )
+                    # Keep the existing trace-level score for backwards compat
                     if ctx.trace_id:
                         score_trace(
                             ctx.trace_id,

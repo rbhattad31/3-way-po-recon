@@ -308,10 +308,26 @@ def case_inbox(request):
         elif assigned_to_id == "unassigned":
             selected_assignee_name = "Unassigned"
 
+    # ----- Pending invoices: approved / READY_FOR_RECON but no active case -----
+    from apps.documents.models import Invoice
+    from apps.core.enums import InvoiceStatus
+    pending_invoices = (
+        Invoice.objects.filter(
+            status=InvoiceStatus.READY_FOR_RECON,
+            is_active=True,
+        )
+        .exclude(
+            pk__in=APCase.objects.filter(is_active=True).values_list("invoice_id", flat=True)
+        )
+        .select_related("document_upload__uploaded_by", "vendor")
+        .order_by("-created_at")[:50]
+    )
+
     return render(request, "cases/case_inbox.html", {
         "cases": page_obj,
         "page_obj": page_obj,
         "stats": stats,
+        "pending_invoices": pending_invoices,
         "status_choices": CaseStatus.choices,
         "path_choices": ProcessingPath.choices,
         "priority_choices": CasePriority.choices,
