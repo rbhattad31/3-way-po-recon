@@ -1844,11 +1844,38 @@ def extraction_console(request, pk):
     # ── QR / e-invoice data from raw_response["_qr"] ──
     qr_data = None
     qr_decision_codes = []
+    qr_date_match = None  # None = not comparable, True = match, False = mismatch
     if isinstance(extracted_data, dict):
         _qr_raw = extracted_data.get("_qr")
         if isinstance(_qr_raw, dict) and _qr_raw.get("irn"):
             qr_data = _qr_raw
         qr_decision_codes = extracted_data.get("_decision_codes") or []
+
+    qr_amount_match = None  # None = not comparable, True = match, False = mismatch
+    # Compare QR doc_date with invoice.invoice_date (different formats)
+    if qr_data and invoice and invoice.invoice_date:
+        _qr_date_str = qr_data.get("doc_date", "")
+        if _qr_date_str:
+            import datetime as _dt
+            _parsed_qr_date = None
+            for _fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"):
+                try:
+                    _parsed_qr_date = _dt.datetime.strptime(_qr_date_str, _fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if _parsed_qr_date is not None:
+                qr_date_match = (_parsed_qr_date == invoice.invoice_date)
+
+    # Compare QR total_value with invoice.total_amount (numeric comparison)
+    if qr_data and invoice and invoice.total_amount is not None:
+        _qr_total = qr_data.get("total_value")
+        if _qr_total is not None:
+            try:
+                from decimal import Decimal as _Dec
+                qr_amount_match = (abs(_Dec(str(_qr_total)) - _Dec(str(invoice.total_amount))) < _Dec("0.01"))
+            except Exception:
+                pass
 
     # ── Merged from result_detail: raw JSON, line item models, has_line_tax ──
     raw_json_pretty = ""
@@ -1980,6 +2007,8 @@ def extraction_console(request, pk):
         "cost_token_data": cost_token_data,
         "qr_data": qr_data,
         "qr_decision_codes": qr_decision_codes,
+        "qr_date_match": qr_date_match,
+        "qr_amount_match": qr_amount_match,
     })
     response["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
