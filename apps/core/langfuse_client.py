@@ -89,21 +89,46 @@ def start_trace(
                 "django_trace_id": trace_id,
             },
         )
-        # Set user_id and session_id as OTel span attributes (Langfuse v4 API).
-        # These populate the Users and Sessions tabs in the Langfuse UI.
+        # Set trace-level attributes + user/session via OTel span attributes (Langfuse v4 API).
+        # start_observation creates a child span; the trace-level record itself
+        # only gets name/input/metadata when we set them as OTel attributes.
         if span is not None:
             try:
-                from langfuse._client.attributes import TRACE_USER_ID, TRACE_SESSION_ID, ENVIRONMENT
+                from langfuse._client.attributes import LangfuseOtelSpanAttributes as _A
                 otel_span = getattr(span, "_otel_span", None)
                 if otel_span is not None:
+                    # Trace-level name, input, metadata
+                    otel_span.set_attribute(_A.TRACE_NAME, name)
+                    _trace_input = {
+                        "invoice_id": invoice_id,
+                        "result_id": result_id,
+                        "user_id": user_id,
+                    }
+                    try:
+                        import json as _json
+                        otel_span.set_attribute(_A.TRACE_INPUT, _json.dumps(_trace_input, default=str))
+                    except Exception:
+                        pass
+                    _trace_meta = {
+                        **(metadata or {}),
+                        "invoice_id": invoice_id,
+                        "result_id": result_id,
+                        "django_trace_id": trace_id,
+                    }
+                    try:
+                        import json as _json
+                        otel_span.set_attribute(_A.TRACE_METADATA, _json.dumps(_trace_meta, default=str))
+                    except Exception:
+                        pass
+                    # User and session attribution
                     if user_id:
-                        otel_span.set_attribute(TRACE_USER_ID, str(user_id))
+                        otel_span.set_attribute(_A.TRACE_USER_ID, str(user_id))
                     if session_id:
-                        otel_span.set_attribute(TRACE_SESSION_ID, session_id)
+                        otel_span.set_attribute(_A.TRACE_SESSION_ID, session_id)
                     _env = os.getenv("LANGFUSE_ENVIRONMENT", "development")
-                    otel_span.set_attribute(ENVIRONMENT, _env)
+                    otel_span.set_attribute(_A.ENVIRONMENT, _env)
             except Exception:
-                pass  # Non-fatal -- traces still work, just without user/session/environment
+                pass  # Non-fatal -- traces still work, just without trace-level fields
         return span
     except Exception as exc:
         logger.debug("Langfuse start_trace failed: %s", exc)
@@ -169,13 +194,32 @@ def end_span(
     *,
     output: Optional[Any] = None,
     level: str = "DEFAULT",
+    is_root: bool = False,
 ) -> None:
-    """Close a Langfuse span, optionally setting output. Fail-silent."""
+    """Close a Langfuse span, optionally setting output. Fail-silent.
+
+    When *is_root* is True, also sets the trace-level output via OTel attribute
+    so the output appears on the trace row in the Langfuse UI (not just on the
+    child span).
+    """
     if not span:
         return
     try:
         if output is not None:
             span.update(output=output)
+            # Propagate output to trace-level record
+            if is_root:
+                try:
+                    import json as _json
+                    from langfuse._client.attributes import LangfuseOtelSpanAttributes as _A
+                    otel_span = getattr(span, "_otel_span", None)
+                    if otel_span is not None:
+                        otel_span.set_attribute(
+                            _A.TRACE_OUTPUT,
+                            _json.dumps(output, default=str),
+                        )
+                except Exception:
+                    pass
         if level and level != "DEFAULT":
             span.update(level=level)
         span.end()
@@ -247,8 +291,12 @@ def update_trace(
     *,
     output: Optional[Any] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    is_root: bool = False,
 ) -> None:
-    """Update an existing trace/span with additional output or metadata. Fail-silent."""
+    """Update an existing trace/span with additional output or metadata. Fail-silent.
+
+    When *is_root* is True, also propagates to trace-level OTel attributes.
+    """
     if not span:
         return
     try:
@@ -258,6 +306,20 @@ def update_trace(
         if metadata is not None:
             kwargs["metadata"] = metadata
         if kwargs:
+            span.update(**kwargs)
+        # Propagate to trace-level OTel attributes
+        if is_root:
+            try:
+                import json as _json
+                from langfuse._client.attributes import LangfuseOtelSpanAttributes as _A
+                otel_span = getattr(span, "_otel_span", None)
+                if otel_span is not None:
+                    if output is not None:
+                        otel_span.set_attribute(_A.TRACE_OUTPUT, _json.dumps(output, default=str))
+                    if metadata is not None:
+                        otel_span.set_attribute(_A.TRACE_METADATA, _json.dumps(metadata, default=str))
+            except Exception:
+                pass
             span.update(**kwargs)
     except Exception as exc:
         logger.debug("Langfuse update_trace failed: %s", exc)

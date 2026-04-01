@@ -138,7 +138,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         if not upload.blob_path:
             _fail_upload(upload, "No blob_path set -- document not in Azure Blob Storage")
             _lf_end(_s_ocr, output={"error": "no_blob_path"}, level="ERROR")
-            _lf_end(_lf_root, output={"status": "error"}, level="ERROR")
+            _lf_end(_lf_root, output={"status": "error"}, level="ERROR", is_root=True)
             return {"status": "error", "message": "No blob_path set on upload"}
 
         from apps.documents.blob_service import download_blob_to_tempfile
@@ -176,7 +176,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             ExtractionResultPersistenceService.save(upload, None, extraction_resp)
             _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
             _lf_score_trace(_trace_id, "extraction_success", 0.0, comment="OCR/LLM failed")
-            _lf_end(_lf_root, output={"status": "error", "error": extraction_resp.error_message[:200]}, level="ERROR")
+            _lf_end(_lf_root, output={"status": "error", "error": extraction_resp.error_message[:200]}, level="ERROR", is_root=True)
             return {"status": "error", "message": extraction_resp.error_message}
 
         # 1a. Document type classification -- reject non-invoices early
@@ -207,7 +207,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 doc_type_result.confidence, doc_type_result.matched_keywords,
             )
             _lf_score_trace(_trace_id, "extraction_success", 0.0, comment=f"rejected: {_doc_type_str}")
-            _lf_end(_lf_root, output={"status": "rejected", "document_type": _doc_type_str}, level="WARNING")
+            _lf_end(_lf_root, output={"status": "rejected", "document_type": _doc_type_str}, level="WARNING", is_root=True)
             return {"status": "rejected", "message": reject_msg, "document_type": doc_type_result.document_type}
 
         # 1b. Run governed extraction pipeline (enrichment)
@@ -569,13 +569,13 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         _consume_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
 
         # ── Close Langfuse root trace ──
-        _lf_update(_lf_root, metadata={
+        _lf_update(_lf_root, is_root=True, metadata={
             "invoice_id": invoice.pk,
             "invoice_number": invoice.invoice_number or "",
             "invoice_status": invoice.status,
             "langfuse_trace_id": _trace_id,
         })
-        _lf_end(_lf_root, output={
+        _lf_end(_lf_root, is_root=True, output={
             "status": "ok",
             "invoice_id": invoice.pk,
             "invoice_status": invoice.status,
@@ -603,7 +603,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         # ── Close Langfuse root trace on error ──
         _lf_score_trace(_trace_id, "extraction_success", 0.0,
                         comment=f"exception: {str(exc)[:100]}")
-        _lf_end(_lf_root, output={"status": "error", "error": str(exc)[:300]}, level="ERROR")
+        _lf_end(_lf_root, output={"status": "error", "error": str(exc)[:300]}, level="ERROR", is_root=True)
         # Audit: extraction failed
         try:
             from apps.auditlog.services import AuditService
