@@ -178,6 +178,10 @@ def extraction_workbench(request):
         approval_qs = approval_qs.filter(
             invoice__document_upload__uploaded_by=request.user,
         )
+    # Role-scoped pending count (before status/search filters)
+    approval_pending_count = approval_qs.filter(
+        status=ExtractionApprovalStatus.PENDING,
+    ).count()
     if approval_status_filter and approval_status_filter != "ALL":
         approval_qs = approval_qs.filter(status=approval_status_filter)
     approval_q = request.GET.get("approval_q", "").strip()
@@ -243,6 +247,7 @@ def extraction_workbench(request):
         "approval_page_obj": approval_page,
         "approval_status_filter": approval_status_filter,
         "approval_analytics": approval_analytics,
+        "approval_pending_count": approval_pending_count,
         "analytics_cached_at": analytics_cached_at,
         "approval_statuses": ExtractionApprovalStatus.choices,
         "active_tab": active_tab,

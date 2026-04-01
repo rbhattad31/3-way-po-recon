@@ -122,7 +122,7 @@ ROLE_MATRIX = {
         "extraction.bulk_view", "extraction.bulk_create",
     ],
     "REVIEWER": [
-        "invoices.view",
+        "invoices.view", "invoices.create",
         "reconciliation.view",
         "cases.view",
         "cases.add_comment",

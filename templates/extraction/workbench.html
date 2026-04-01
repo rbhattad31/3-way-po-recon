@@ -48,8 +48,8 @@
             data-bs-target="#approvals-pane" type="button" role="tab" aria-controls="approvals-pane"
             aria-selected="{% if active_tab == 'approvals' %}true{% else %}false{% endif %}">
       <i class="bi bi-clipboard-check me-1"></i>Approvals
-      {% if approval_analytics.pending %}
-      <span class="badge bg-warning text-dark ms-1">{{ approval_analytics.pending }}</span>
+      {% if approval_pending_count %}
+      <span class="badge bg-warning text-dark ms-1">{{ approval_pending_count }}</span>
       {% endif %}
     </button>
   </li>
@@ -459,7 +459,7 @@
   <div class="col-sm-6 col-lg-3 col-xl">
     <div class="ap-card h-100">
       <div class="ap-card-body text-center py-3">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-warning)">{{ approval_analytics.pending }}</div>
+        <div style="font-size:1.5rem;font-weight:700;color:var(--ap-warning)">{{ approval_pending_count }}</div>
         <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);text-transform:uppercase;letter-spacing:.5px">Pending</div>
       </div>
     </div>
