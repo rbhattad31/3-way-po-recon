@@ -634,7 +634,11 @@ score_trace(
     "score_name",    # from the conventions table above
     float_value,     # always a float in range 0.0-1.0 (or raw count)
     comment=f"context={...}",    # human-readable, optional but encouraged
+    span=_lf_trace,  # REQUIRED: pass the Langfuse span so the real OTel trace_id is extracted
 )
+```
+
+**Important**: Always pass `span=` to `score_trace()` / `score_trace_safe()`. In Langfuse SDK v4, the real OTel trace_id differs from our application-level string trace_id. Without `span=`, scores are orphaned and show blank session_id/user_id. The `_extract_otel_trace_id(span)` helper extracts the 128-bit OTel trace_id from the span's `_otel_span` context.
 ```
 
 ### Guard pattern (all Langfuse calls must be guarded)
@@ -680,7 +684,8 @@ except Exception:
 ### Debugging Langfuse
 
 - **No traces appearing**: Verify `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set. Check logs for `Langfuse disabled` or `start_trace failed`.
-- **Scores unlinked**: The pipeline is not creating a root trace -- `score_trace` scores are recorded but float free. Add a `start_trace` at pipeline entry and pass the same `trace_id` to `score_trace`.
+- **Scores unlinked**: The pipeline is not creating a root trace -- `score_trace` scores are recorded but float free. Add a `start_trace` at pipeline entry and pass the same `trace_id` to `score_trace`. Also ensure `span=` is passed to `score_trace`/`score_trace_safe` (see below).
+- **Scores show blank session_id/user_id**: In Langfuse SDK v4, the real OTel trace_id differs from our application-level string trace_id. Pass `span=` to `score_trace_safe()` so `_extract_otel_trace_id()` can extract the real 128-bit OTel trace_id. Without it, scores cannot be linked to the parent trace (which carries user/session attributes).
 - **Users/Sessions tab empty**: Confirm SDK is v4.x. User/session attribution uses `_otel_span.set_attribute()` -- not constructor kwargs.
 - **Prompt 404 in logs**: Run `python manage.py push_prompts_to_langfuse`. If names are wrong, run with `--purge`.
 - **`start_trace` returns None**: Set `LANGFUSE_LOG_LEVEL=debug`; look for `TypeError` from unknown kwargs or bad host URL (must not have trailing slash).

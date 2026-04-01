@@ -49,11 +49,12 @@ tracing calls become no-ops.
 | `start_span(parent, name, *, ...)` | Opens a child span under a parent span. Inherits user/session from root. |
 | `log_generation(span, name, *, ...)` | Records an LLM call (tokens, model, messages, completion) as a child generation. |
 | `end_span(span, *, ...)` | Closes a span, optionally setting output and level. |
-| `score_trace(trace_id, name, value, *, comment)` | Attaches a numeric score to a trace by `trace_id`. `comment` is optional human-readable context. |
+| `score_trace(trace_id, name, value, *, comment, span)` | Attaches a numeric score to a trace. When `span` is provided, extracts the real OTel trace_id from it (see Issue 4). `comment` is optional. |
 | `score_observation(observation, name, value, *, comment)` | Attaches a numeric score to a specific span/observation. |
 | `update_trace(span, *, output, metadata)` | Updates an existing span with additional output or metadata. |
 | `push_prompt(slug, content, *, labels)` | Pushes a prompt to Langfuse prompt management. |
 | `get_prompt(slug, *, label, fallback)` | Fetches a prompt from Langfuse (with fallback to local default). |
+| `_extract_otel_trace_id(span)` | Extracts the real OTel 128-bit trace_id hex string from a Langfuse span's `_otel_span`. Returns `None` on failure. |
 | `slug_to_langfuse_name(slug)` | Converts `extraction.invoice_system` -> `extraction-invoice_system`. |
 
 **Safe aliases** (guaranteed to never raise, double-wrapped in try/except):
@@ -1142,6 +1143,71 @@ so `extraction.invoice_system` becomes `extraction-invoice_system`.
 **Fix**: Run `python manage.py push_prompts_to_langfuse --purge` to delete all
 existing prompts and reseed with the correct names.
 
+### Issue 4 -- Scores orphaned / blank session_id and user_id on scores (Langfuse SDK v4 OTel trace_id mismatch)
+
+**Symptom**: Scores appeared in Langfuse but showed blank session_id, blank
+user_id, and were not linked to their parent trace observation. The
+"observation" column was empty for case_pipeline and reconciliation_run scores.
+
+**Root cause**: In Langfuse SDK v4, `start_observation()` creates an
+OpenTelemetry span with an auto-generated 128-bit trace_id. Our application-level
+trace_id strings (e.g. `"case-42"`, `"recon-task-abc"`, `"review-7"`) are set
+as `TraceContext` correlation IDs but are **not** the same as the OTel trace_id
+that Langfuse uses internally. When `score_trace(trace_id, ...)` was called with
+our application string, Langfuse could not match it to any existing trace, so
+scores floated free -- no parent trace meant no inherited user_id or session_id.
+
+**Fix** (`apps/core/langfuse_client.py`):
+
+1. Added `_extract_otel_trace_id(span)` helper that reads the real OTel
+   trace_id from a span object:
+
+   ```python
+   def _extract_otel_trace_id(span: Any) -> Optional[str]:
+       otel_span = getattr(span, "_otel_span", None)
+       if otel_span is not None:
+           sc = otel_span.get_span_context()
+           if sc is not None:
+               tid = getattr(sc, "trace_id", 0)
+               if tid:
+                   return format(tid, "032x")  # 128-bit int -> 32-char hex
+       return None
+   ```
+
+2. Updated `score_trace()` and `score_trace_safe()` to accept an optional
+   `span` parameter. When provided, the real OTel trace_id is extracted and
+   used instead of the application-level string:
+
+   ```python
+   def score_trace(trace_id, name, value, *, comment="", span=None):
+       real_tid = _extract_otel_trace_id(span) if span else None
+       lf.create_score(trace_id=real_tid or trace_id, name=name, value=value, ...)
+   ```
+
+3. Updated all `score_trace_safe()` call sites across 5 files to pass `span=`:
+
+   | File | Calls updated | `span=` value |
+   |---|---|---|
+   | `apps/cases/tasks.py` | 6 | `_lf_trace` |
+   | `apps/cases/orchestrators/case_orchestrator.py` | 8 | `self._lf_trace` |
+   | `apps/reconciliation/tasks.py` | 3 | `_lf_task_trace` |
+   | `apps/reconciliation/services/runner_service.py` | 10 | `lf_trace` |
+   | `apps/reviews/services.py` | 8 | `_lf_trace` or `_lf_span` |
+
+   **Total**: 35 `score_trace_safe()` calls now pass `span=`.
+
+**Pattern for new code**: Always pass `span=` when calling `score_trace_safe()`:
+
+```python
+score_trace_safe(
+    _trace_id,              # application-level ID (used as fallback)
+    "my_score_name",
+    1.0,
+    comment="context",
+    span=_lf_trace,         # the Langfuse span from start_trace/start_span
+)
+```
+
 ---
 
 ## Debugging
@@ -1153,4 +1219,5 @@ existing prompts and reseed with the correct names.
 | Prompt 404 warning in logs | Run `push_prompts_to_langfuse`. If names are wrong, run with `--purge`. |
 | Old prompt content being served | Langfuse client caches prompts for 60 seconds. Wait or restart to force refresh. |
 | `start_trace` returns None | Set `LANGFUSE_LOG_LEVEL=debug` and check for exceptions in the client init. Ensure host URL has no trailing slash. |
-| Scores appear in Langfuse but not linked to a trace | Confirm the pipeline that emits the score also calls `start_trace` before the score. The posting, reconciliation, and bulk extraction pipelines all create root traces — scores from these pipelines are always linked. |
+| Scores appear in Langfuse but not linked to a trace | Confirm the pipeline that emits the score also calls `start_trace` before the score. The posting, reconciliation, and bulk extraction pipelines all create root traces -- scores from these pipelines are always linked. Also ensure `span=` is passed to `score_trace_safe()` (see Issue 4). |
+| Scores exist but show blank session_id / user_id | The `score_trace()` call was using the application-level trace_id string instead of the real OTel trace_id. Pass `span=` to `score_trace_safe()` so the real OTel trace_id is extracted and scores are linked to the actual trace (which carries user/session attributes). See Issue 4. |
