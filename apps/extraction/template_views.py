@@ -173,6 +173,11 @@ def extraction_workbench(request):
         )
         .order_by("-created_at")
     )
+    # AP_PROCESSOR sees only approvals for invoices they uploaded
+    if getattr(request.user, "role", None) == UserRole.AP_PROCESSOR:
+        approval_qs = approval_qs.filter(
+            invoice__document_upload__uploaded_by=request.user,
+        )
     if approval_status_filter and approval_status_filter != "ALL":
         approval_qs = approval_qs.filter(status=approval_status_filter)
     approval_q = request.GET.get("approval_q", "").strip()
