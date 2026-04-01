@@ -139,15 +139,18 @@ class CaseOrchestrator:
                     self._lf_trace_id, "case_stages_executed",
                     float(self._stage_index),
                     comment=f"path={self.case.processing_path}",
+                    span=self._lf_trace,
                 )
                 score_trace_safe(
                     self._lf_trace_id, "case_closed",
                     1.0 if _is_closed else 0.0,
                     comment=f"status={self.case.status}",
+                    span=self._lf_trace,
                 )
                 score_trace_safe(
                     self._lf_trace_id, "case_terminal",
                     1.0 if _is_terminal else 0.0,
+                    span=self._lf_trace,
                 )
             except Exception:
                 pass
@@ -158,7 +161,7 @@ class CaseOrchestrator:
             self.case.save(update_fields=["status", "updated_at"])
             try:
                 from apps.core.langfuse_client import score_trace_safe
-                score_trace_safe(self._lf_trace_id, "case_processing_success", 0.0, comment="orchestration_failed")
+                score_trace_safe(self._lf_trace_id, "case_processing_success", 0.0, comment="orchestration_failed", span=self._lf_trace)
             except Exception:
                 pass
             raise
@@ -401,6 +404,7 @@ class CaseOrchestrator:
                     self._lf_trace_id, "case_path_resolved",
                     1.0 if path in ("TWO_WAY", "THREE_WAY", "NON_PO") else 0.0,
                     comment=f"path={path}",
+                    span=self._lf_trace,
                 )
             elif stage_name in (CaseStageType.TWO_WAY_MATCHING, CaseStageType.THREE_WAY_MATCHING):
                 ms = output.get("match_status", "")
@@ -410,6 +414,7 @@ class CaseOrchestrator:
                     self._lf_trace_id, "case_match_status",
                     _match_scores.get(ms, 0.0),
                     comment=f"match_status={ms}",
+                    span=self._lf_trace,
                 )
             elif stage_name == CaseStageType.PO_RETRIEVAL:
                 score_observation_safe(
@@ -426,6 +431,7 @@ class CaseOrchestrator:
                     self._lf_trace_id, "case_auto_closed",
                     1.0 if auto_closed else 0.0,
                     comment=f"rec={output.get('final_recommendation', '')}",
+                    span=self._lf_trace,
                 )
                 if output.get("confidence") is not None:
                     score_observation_safe(
@@ -436,6 +442,7 @@ class CaseOrchestrator:
                 score_trace_safe(
                     self._lf_trace_id, "case_routed_to_review",
                     1.0 if output.get("assignment_id") else 0.0,
+                    span=self._lf_trace,
                 )
             elif stage_name == CaseStageType.NON_PO_VALIDATION:
                 score_observation_safe(

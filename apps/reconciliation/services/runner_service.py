@@ -519,19 +519,20 @@ class ReconciliationRunnerService:
         score_trace_safe(
             _tid, "reconciliation_match", _score_value,
             comment=f"mode={reconciliation_mode} match_status={match_status} invoice={invoice.pk}",
+            span=lf_trace,
         )
-        score_trace_safe(_tid, "recon_final_status_matched", 1.0 if match_status == MatchStatus.MATCHED else 0.0)
-        score_trace_safe(_tid, "recon_final_status_partial_match", 1.0 if match_status == MatchStatus.PARTIAL_MATCH else 0.0)
-        score_trace_safe(_tid, "recon_final_status_requires_review", 1.0 if match_status == MatchStatus.REQUIRES_REVIEW else 0.0)
-        score_trace_safe(_tid, "recon_final_status_unmatched", 1.0 if match_status == MatchStatus.UNMATCHED else 0.0)
-        score_trace_safe(_tid, "recon_po_found", 1.0 if po_result.found else 0.0)
+        score_trace_safe(_tid, "recon_final_status_matched", 1.0 if match_status == MatchStatus.MATCHED else 0.0, span=lf_trace)
+        score_trace_safe(_tid, "recon_final_status_partial_match", 1.0 if match_status == MatchStatus.PARTIAL_MATCH else 0.0, span=lf_trace)
+        score_trace_safe(_tid, "recon_final_status_requires_review", 1.0 if match_status == MatchStatus.REQUIRES_REVIEW else 0.0, span=lf_trace)
+        score_trace_safe(_tid, "recon_final_status_unmatched", 1.0 if match_status == MatchStatus.UNMATCHED else 0.0, span=lf_trace)
+        score_trace_safe(_tid, "recon_po_found", 1.0 if po_result.found else 0.0, span=lf_trace)
         _grn_found_flag = bool(
             reconciliation_mode == "THREE_WAY" and _grn and getattr(_grn, "grn_available", False)
         )
-        score_trace_safe(_tid, "recon_grn_found", 1.0 if _grn_found_flag else 0.0)
-        score_trace_safe(_tid, "recon_auto_close_eligible", 1.0 if _is_auto_close else 0.0)
-        score_trace_safe(_tid, "recon_routed_to_review", 1.0 if _review_created else 0.0)
-        score_trace_safe(_tid, "recon_exception_count_final", float(len(exceptions)))
+        score_trace_safe(_tid, "recon_grn_found", 1.0 if _grn_found_flag else 0.0, span=lf_trace)
+        score_trace_safe(_tid, "recon_auto_close_eligible", 1.0 if _is_auto_close else 0.0, span=lf_trace)
+        score_trace_safe(_tid, "recon_routed_to_review", 1.0 if _review_created else 0.0, span=lf_trace)
+        score_trace_safe(_tid, "recon_exception_count_final", float(len(exceptions)), span=lf_trace)
 
         # Update root trace metadata with eval-ready summary
         _eval_meta = {

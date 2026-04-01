@@ -237,20 +237,43 @@ def end_span(
         logger.debug("Langfuse end_span failed: %s", exc)
 
 
+def _extract_otel_trace_id(span: Any) -> Optional[str]:
+    """Extract the real OTel trace_id hex string from a Langfuse span object."""
+    if not span:
+        return None
+    try:
+        otel_span = getattr(span, "_otel_span", None)
+        if otel_span is not None:
+            sc = getattr(otel_span, "get_span_context", lambda: None)()
+            if sc is not None:
+                tid = getattr(sc, "trace_id", 0)
+                if tid:
+                    return format(tid, "032x")
+    except Exception:
+        pass
+    return None
+
+
 def score_trace(
     trace_id: str,
     name: str,
     value: float,
     *,
     comment: str = "",
+    span: Any = None,
 ) -> None:
-    """Attach a numeric score to a trace (e.g. confidence). Fail-silent."""
+    """Attach a numeric score to a trace (e.g. confidence). Fail-silent.
+
+    When *span* is provided, the real OTel trace_id is extracted from it
+    so the score is correctly linked to the trace in Langfuse v4.
+    """
     lf = get_client()
     if not lf:
         return
     try:
+        real_tid = _extract_otel_trace_id(span) if span else None
         lf.create_score(
-            trace_id=trace_id,
+            trace_id=real_tid or trace_id,
             name=name,
             value=value,
             comment=comment or None,
@@ -513,10 +536,11 @@ def score_trace_safe(
     value: float,
     *,
     comment: str = "",
+    span: Any = None,
 ) -> None:
     """Identical to ``score_trace`` but guaranteed to never raise."""
     try:
-        score_trace(trace_id, name, value, comment=comment)
+        score_trace(trace_id, name, value, comment=comment, span=span)
     except Exception:
         pass
 

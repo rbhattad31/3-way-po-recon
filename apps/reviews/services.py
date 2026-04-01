@@ -68,7 +68,7 @@ class ReviewWorkflowService:
             _lf_trace_id = f"review-{assignment.pk}"
             _match_status = result.match_status or ""
             _exc_count = result.exceptions.count() if hasattr(result, "exceptions") else 0
-            start_trace_safe(
+            _lf_trace = start_trace_safe(
                 _lf_trace_id,
                 "review_assignment",
                 invoice_id=result.invoice_id,
@@ -96,12 +96,14 @@ class ReviewWorkflowService:
                     f"match_status={_match_status} "
                     f"exceptions={_exc_count}"
                 ),
+                span=_lf_trace,
             )
             score_trace_safe(
                 _lf_trace_id,
                 "review_assignment_created",
                 1.0,
                 comment=f"assignment={assignment.pk}",
+                span=_lf_trace,
             )
         except Exception:
             pass
@@ -259,6 +261,7 @@ class ReviewWorkflowService:
                     "review_fields_corrected_count",
                     float(_correction_count),
                     comment=f"field={field_name}",
+                    span=_lf_span,
                 )
         except Exception:
             pass
@@ -432,28 +435,33 @@ class ReviewWorkflowService:
                     f"invoice={_invoice_id} "
                     f"reviewer={getattr(user, 'pk', None)}"
                 ),
+                span=_lf_span,
             )
             # Additional eval scores
             score_trace_safe(
                 _trace_id,
                 "review_approved",
                 1.0 if decision_status == ReviewStatus.APPROVED else 0.0,
+                span=_lf_span,
             )
             score_trace_safe(
                 _trace_id,
                 "review_rejected",
                 1.0 if decision_status == ReviewStatus.REJECTED else 0.0,
+                span=_lf_span,
             )
             score_trace_safe(
                 _trace_id,
                 "review_reprocess_requested",
                 1.0 if decision_status == ReviewStatus.REPROCESSED else 0.0,
+                span=_lf_span,
             )
             score_trace_safe(
                 _trace_id,
                 "review_had_corrections",
                 1.0 if _corrections_count > 0 else 0.0,
                 comment=f"corrections={_corrections_count}",
+                span=_lf_span,
             )
         except Exception:
             pass

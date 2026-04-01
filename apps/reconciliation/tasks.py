@@ -148,9 +148,9 @@ def run_reconciliation_task(
             _total = run.total_invoices or 1
             _routed_agents = len(agent_result_ids)
             _routed_review = run.review_count or 0
-            score_trace_safe(_lf_task_trace_id, "recon_final_success", 1.0, comment=f"run={run.pk}")
-            score_trace_safe(_lf_task_trace_id, "recon_routed_to_agents", 1.0 if _routed_agents > 0 else 0.0)
-            score_trace_safe(_lf_task_trace_id, "recon_routed_to_review", 1.0 if _routed_review > 0 else 0.0)
+            score_trace_safe(_lf_task_trace_id, "recon_final_success", 1.0, comment=f"run={run.pk}", span=_lf_task_trace)
+            score_trace_safe(_lf_task_trace_id, "recon_routed_to_agents", 1.0 if _routed_agents > 0 else 0.0, span=_lf_task_trace)
+            score_trace_safe(_lf_task_trace_id, "recon_routed_to_review", 1.0 if _routed_review > 0 else 0.0, span=_lf_task_trace)
         except Exception:
             pass
 
