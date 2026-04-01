@@ -50,6 +50,8 @@ tracing calls become no-ops.
 | `log_generation(span, name, *, ...)` | Records an LLM call (tokens, model, messages, completion) as a child generation. |
 | `end_span(span, *, ...)` | Closes a span, optionally setting output and level. |
 | `score_trace(trace_id, name, value, *, comment)` | Attaches a numeric score to a trace by `trace_id`. `comment` is optional human-readable context. |
+| `score_observation(observation, name, value, *, comment)` | Attaches a numeric score to a specific span/observation. |
+| `update_trace(span, *, output, metadata)` | Updates an existing span with additional output or metadata. |
 | `push_prompt(slug, content, *, labels)` | Pushes a prompt to Langfuse prompt management. |
 | `get_prompt(slug, *, label, fallback)` | Fetches a prompt from Langfuse (with fallback to local default). |
 | `slug_to_langfuse_name(slug)` | Converts `extraction.invoice_system` -> `extraction-invoice_system`. |
@@ -94,6 +96,27 @@ The `PromptRegistry` resolution order for each component:
 
 ```
 root trace  (start_trace)
+  -- extraction_pipeline     (process_invoice_upload_task -- root trace per upload)
+     -- ocr_extraction       (OCR + LLM via adapter.extract(), scores: ocr_char_count)
+        -- INVOICE_EXTRACTION (InvoiceExtractionAgent -- inherits parent trace)
+           -- llm_chat       (log_generation, one per LLM call)
+     -- document_type_classification  (scores: doc_type_confidence)
+     -- governed_pipeline    (ExtractionPipeline.run())
+     -- parsing              (ExtractionParserService)
+     -- normalization        (NormalizationService)
+     -- field_confidence     (FieldConfidenceService, scores: weakest_critical_score)
+     -- validation           (ValidationService + ReconciliationValidatorService,
+                              scores: validation_is_valid)
+     -- decision_code_derivation (derive_codes(), scores: decision_code_count)
+     -- recovery_lane        (RecoveryLaneService, scores: recovery_invoked)
+     -- duplicate_detection  (DuplicateDetectionService, scores: is_duplicate)
+     -- persistence          (InvoicePersistenceService + ExtractionResultPersistenceService)
+     -- approval_gate        (ExtractionApprovalService, scores: requires_human_review)
+     Trace-level scores: extraction_confidence, extraction_success,
+       extraction_is_valid, extraction_is_duplicate, extraction_requires_review,
+       weakest_critical_field_score, decision_code_count, response_was_repaired,
+       qr_detected
+
   -- agent_pipeline / invoice_extraction
      -- EXCEPTION_ANALYSIS / INVOICE_EXTRACTION  (start_span per agent)
         -- llm_chat          (log_generation, one per LLM call)

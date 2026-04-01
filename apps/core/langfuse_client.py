@@ -205,6 +205,64 @@ def score_trace(
         logger.debug("Langfuse score_trace failed: %s", exc)
 
 
+def score_observation(
+    observation: Any,
+    name: str,
+    value: float,
+    *,
+    comment: str = "",
+) -> None:
+    """Attach a numeric score to a specific observation/span. Fail-silent.
+
+    Uses the observation's trace_id + observation_id so the score is linked
+    to both the trace and the specific span in the Langfuse UI.
+    """
+    if not observation:
+        return
+    lf = get_client()
+    if not lf:
+        return
+    try:
+        obs_id = getattr(observation, "id", None)
+        trace_id = None
+        # Try to read trace_id from the observation's OTel span context
+        otel_span = getattr(observation, "_otel_span", None)
+        if otel_span is not None:
+            sc = getattr(otel_span, "get_span_context", lambda: None)()
+            if sc is not None:
+                trace_id = format(getattr(sc, "trace_id", 0), "032x")
+        lf.create_score(
+            trace_id=trace_id or "",
+            observation_id=obs_id,
+            name=name,
+            value=value,
+            comment=comment or None,
+        )
+    except Exception as exc:
+        logger.debug("Langfuse score_observation failed: %s", exc)
+
+
+def update_trace(
+    span: Any,
+    *,
+    output: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Update an existing trace/span with additional output or metadata. Fail-silent."""
+    if not span:
+        return
+    try:
+        kwargs: Dict[str, Any] = {}
+        if output is not None:
+            kwargs["output"] = output
+        if metadata is not None:
+            kwargs["metadata"] = metadata
+        if kwargs:
+            span.update(**kwargs)
+    except Exception as exc:
+        logger.debug("Langfuse update_trace failed: %s", exc)
+
+
 def get_prompt(slug: str, label: str = "production") -> Optional[Any]:
     """Fetch a chat prompt from Langfuse by name (slug).
 

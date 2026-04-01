@@ -67,7 +67,7 @@ class InvoiceExtractionAdapter:
     """Two-step extraction: Azure Document Intelligence OCR -> Azure OpenAI LLM."""
 
     @observed_service("extraction.extract", entity_type="DocumentUpload", audit_event="EXTRACTION_STARTED")
-    def extract(self, file_path: str, *, actor_user_id: Optional[int] = None, document_upload_id: Optional[int] = None) -> ExtractionResponse:
+    def extract(self, file_path: str, *, actor_user_id: Optional[int] = None, document_upload_id: Optional[int] = None, langfuse_trace: Any = None) -> ExtractionResponse:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
         try:
@@ -119,6 +119,7 @@ class InvoiceExtractionAdapter:
                 composed_prompt=composition.final_prompt,
                 prompt_metadata=self._build_prompt_metadata(category_result, composition),
                 document_upload_id=document_upload_id,
+                langfuse_trace=langfuse_trace,
             )
             logger.info("Agent extraction completed (agent_run_id=%s)", agent_run_id)
 
@@ -388,6 +389,7 @@ class InvoiceExtractionAdapter:
         composed_prompt: str = "",
         prompt_metadata: Optional[Dict[str, Any]] = None,
         document_upload_id: Optional[int] = None,
+        langfuse_trace: Any = None,
     ) -> tuple:
         """Run the Invoice Extraction Agent on OCR text.
 
@@ -414,6 +416,7 @@ class InvoiceExtractionAdapter:
             invoice_id=0,  # Invoice not yet created
             actor_user_id=actor_user_id,
             extra=extra,
+            _langfuse_trace=langfuse_trace,
         )
 
         agent = agent_cls()

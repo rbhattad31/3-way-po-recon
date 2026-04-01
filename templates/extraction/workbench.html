@@ -243,6 +243,66 @@
   </div>
 </div>
 
+{# ── Pending / In-Progress Uploads (Celery) ── #}
+{% if pending_uploads_count %}
+<div class="ap-card mb-3 border-start border-warning border-3">
+  <div class="ap-card-body py-2 px-3">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <span style="font-size:var(--ap-font-size-sm);font-weight:600;color:var(--ap-warning-dark,var(--ap-warning))">
+        <span class="spinner-border spinner-border-sm me-1" style="width:.8rem;height:.8rem;border-width:2px;color:var(--ap-warning)" role="status" aria-hidden="true"></span>
+        {{ pending_uploads_count }} Invoice{{ pending_uploads_count|pluralize }} Being Processed
+      </span>
+      <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh page to check status
+      </span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="ap-table w-100" style="min-width:500px">
+        <thead>
+          <tr>
+            <th>Filename</th>
+            <th style="width:100px">Status</th>
+            <th style="width:80px">Size</th>
+            <th style="width:130px">Uploaded</th>
+            <th>Uploaded By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for upload in pending_uploads %}
+          <tr>
+            <td style="font-size:var(--ap-font-size-sm)">
+              <i class="bi bi-file-earmark-pdf me-1" style="color:var(--ap-danger)"></i>
+              {{ upload.original_filename|truncatechars:50 }}
+            </td>
+            <td>
+              {% if upload.processing_state == 'PROCESSING' %}
+              <span class="ap-badge ap-badge-warning" style="font-size:.65rem">
+                <span class="spinner-border spinner-border-sm me-1" style="width:.55rem;height:.55rem;border-width:2px" role="status" aria-hidden="true"></span>Extracting
+              </span>
+              {% else %}
+              <span class="ap-badge ap-badge-muted" style="font-size:.65rem">
+                <i class="bi bi-hourglass-split me-1"></i>Queued
+              </span>
+              {% endif %}
+            </td>
+            <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+              {% widthratio upload.file_size 1024 1 %} KB
+            </td>
+            <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+              {{ upload.created_at|date:"d M Y H:i" }}
+            </td>
+            <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+              {% if upload.uploaded_by %}{{ upload.uploaded_by.get_full_name|default:upload.uploaded_by.email }}{% else %}--{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {# ── Results Table ── #}
 <div class="ap-card">
   <div class="d-flex align-items-center justify-content-between px-3 pt-2">

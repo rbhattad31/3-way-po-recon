@@ -499,6 +499,7 @@ from apps.core.langfuse_client import (
 
 | Context | Trace ID pattern |
 |---|---|
+| Extraction pipeline (task) | `uuid4().hex` (generated per task run; session_id=`"extraction-upload-{upload_id}"`) |
 | Agent pipeline / extraction | `trace_ctx.trace_id` (from `TraceContext`) |
 | Reconciliation run | `run.trace_id` if set, else `str(run.pk)` |
 | Posting run | `posting_run.trace_id` if set, else `str(posting_run.pk)` |
@@ -515,8 +516,15 @@ from apps.core.langfuse_client import (
 | `reconciliation_match` | MATCHED=1.0, PARTIAL=0.5, REQUIRES_REVIEW=0.3, UNMATCHED=0.0 | After match classification |
 | `posting_confidence` | 0.0-1.0 composite | After stage 6 of posting pipeline |
 | `posting_requires_review` | 1.0 or 0.0 | After review routing (stage 7) |
-| `extraction_confidence` | 0.0-1.0 | After extraction pipeline step 9 |
+| `extraction_confidence` | 0.0-1.0 | After extraction pipeline persistence |
+| `extraction_success` | 1.0 or 0.0 | After extraction completes or fails |
+| `extraction_is_valid` | 1.0 or 0.0 | After validation stage |
+| `extraction_is_duplicate` | 1.0 or 0.0 | After duplicate detection |
 | `extraction_requires_review` | 1.0 or 0.0 | After routing in extraction pipeline |
+| `weakest_critical_field_score` | 0.0-1.0 | After field confidence scoring |
+| `decision_code_count` | integer as float | After decision code derivation |
+| `response_was_repaired` | 1.0 or 0.0 | When LLM response repair was applied |
+| `qr_detected` | 1.0 or 0.0 | When e-invoice QR code data found |
 | `review_priority` | priority / 10.0 (normalised to 0.0-1.0) | On `create_assignment()` |
 | `review_decision` | APPROVED=1.0, REPROCESSED=0.5, REJECTED=0.0 | On `_finalise()` |
 | `rbac_guardrail` | 1.0=GRANTED, 0.0=DENIED | Every guardrail decision |
@@ -629,6 +637,7 @@ except Exception:
 | ~~`apps/copilot/services/copilot_service.py` — `answer_question()`~~ | ~~Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive~~ **Done (2026-03-31)** |
 | ~~`apps/cases/tasks.py` — `process_case_task`, `reprocess_case_from_stage_task`~~ | ~~Root trace `"case_task"` per task invocation~~ **Done (2026-03-31)** |
 | ~~`apps/posting_core/services/posting_mapping_engine.py`~~ | ~~Pass the `mapping` stage span via `lf_parent_span` to `ERPResolutionService.resolve_vendor/resolve_item` calls so ERP spans appear nested under the `mapping` span in Langfuse~~ **Done (2026-03-31)** |
+| ~~`apps/extraction/tasks.py` -- `process_invoice_upload_task`~~ | ~~Root trace `"extraction_pipeline"` with 12 per-stage spans (ocr_extraction, document_type_classification, governed_pipeline, parsing, normalization, field_confidence, validation, decision_code_derivation, recovery_lane, duplicate_detection, persistence, approval_gate) + 10 trace-level scores + per-observation scores. Parent trace threaded into InvoiceExtractionAgent via `langfuse_trace` kwarg on adapter.extract(). `score_observation` and `update_trace` helpers added to langfuse_client.py.~~ **Done** |
 
 ### Debugging Langfuse
 

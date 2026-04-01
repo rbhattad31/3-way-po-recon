@@ -198,6 +198,20 @@ def extraction_workbench(request):
 
     active_tab = request.GET.get("tab", "runs")
 
+    # ── Pending / in-progress uploads (Celery processing) ──
+    pending_uploads_qs = (
+        DocumentUpload.objects
+        .filter(processing_state__in=[
+            FileProcessingState.QUEUED,
+            FileProcessingState.PROCESSING,
+        ])
+        .order_by("-created_at")
+    )
+    if getattr(request.user, "role", None) == UserRole.AP_PROCESSOR:
+        pending_uploads_qs = pending_uploads_qs.filter(uploaded_by=request.user)
+    pending_uploads = list(pending_uploads_qs[:50])
+    pending_uploads_count = len(pending_uploads)
+
     # ── Failed / rejected uploads (no ExtractionResult created) ──
     failed_uploads_qs = (
         DocumentUpload.objects
@@ -231,6 +245,8 @@ def extraction_workbench(request):
         "failed_uploads": failed_uploads_page,
         "failed_uploads_page_obj": failed_uploads_page,
         "failed_uploads_count": failed_uploads_count,
+        "pending_uploads": pending_uploads,
+        "pending_uploads_count": pending_uploads_count,
     })
 
 
@@ -1330,14 +1346,15 @@ def extraction_console(request, pk):
             val = getattr(invoice, attr, None)
             raw_attr = f"raw_{attr}" if hasattr(invoice, f"raw_{attr}") else None
             raw_val = getattr(invoice, raw_attr) if raw_attr else None
+            has_value = val is not None and str(val).strip() != ""
             header_fields[attr] = {
                 "display_name": display,
                 "value": str(val) if val is not None else "",
                 "raw_value": str(raw_val) if raw_val else None,
-                "confidence": ext.confidence,
-                "method": "LLM",
+                "confidence": ext.confidence if has_value else None,
+                "method": "LLM" if has_value else None,
                 "is_mandatory": mandatory,
-                "evidence": True,
+                "evidence": has_value,
             }
 
         # Tax fields
@@ -1349,13 +1366,14 @@ def extraction_console(request, pk):
         ]
         for attr, display in _tax_map:
             val = getattr(invoice, attr, None)
+            has_value = val is not None and str(val).strip() != ""
             tax_fields[f"tax_{attr}"] = {
                 "display_name": display,
                 "value": str(val) if val is not None else "",
-                "confidence": ext.confidence,
-                "method": "LLM",
+                "confidence": ext.confidence if has_value else None,
+                "method": "LLM" if has_value else None,
                 "is_mandatory": False,
-                "evidence": True,
+                "evidence": has_value,
             }
         # Add individual breakdown components
         _breakdown_labels = {

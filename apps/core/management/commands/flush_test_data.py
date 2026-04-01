@@ -165,9 +165,7 @@ class Command(BaseCommand):
             self.stdout.write(f"  {model.__name__}: {count}")
 
         # --- Vendors ---
-        from apps.vendors.models import VendorAlias, Vendor
+        from apps.vendors.models import Vendor
 
-        count = VendorAlias.objects.all().delete()[0]
-        self.stdout.write(f"  VendorAlias: {count}")
         count = Vendor.objects.all().delete()[0]
         self.stdout.write(f"  Vendor: {count}")
