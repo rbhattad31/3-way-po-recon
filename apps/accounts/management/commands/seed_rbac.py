@@ -118,7 +118,7 @@ ROLE_MATRIX = {
         "reviews.view",
         "agents.view", "agents.use_copilot",
         "purchase_orders.view", "grns.view", "vendors.view",
-        "extraction.approve", "extraction.reject", "extraction.reprocess",
+        "extraction.reject", "extraction.reprocess",
         "extraction.bulk_view", "extraction.bulk_create",
     ],
     "REVIEWER": [
@@ -131,6 +131,7 @@ ROLE_MATRIX = {
         "governance.view",
         "purchase_orders.view", "grns.view", "vendors.view",
         "recommendations.route_review",
+        "extraction.approve", "extraction.reject",
     ],
     "FINANCE_MANAGER": [
         "invoices.view",
