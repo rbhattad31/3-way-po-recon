@@ -84,6 +84,7 @@ class LLMClient:
         else:
             self._client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self._langfuse_span: Any = None
+        self._langfuse_prompt: Any = None
         self._langfuse_metadata: dict = {}
 
     # ------------------------------------------------------------------
@@ -136,6 +137,7 @@ class LLMClient:
                         "finish_reason": parsed.finish_reason,
                         **self._langfuse_metadata,
                     },
+                    prompt=self._langfuse_prompt,
                 )
             except Exception:
                 pass

@@ -462,14 +462,16 @@ class InvoiceExtractionAdapter:
         _trace_id = _uuid.uuid4().hex
         _lf_trace = None
         _lf_span = None
+        _lf_prompt = None
         try:
-            from apps.core.langfuse_client import start_trace, start_span, log_generation, end_span
+            from apps.core.langfuse_client import start_trace, start_span, log_generation, end_span, get_prompt, slug_to_langfuse_name
             _lf_trace = start_trace(
                 _trace_id,
                 "llm_extract_fallback",
                 metadata={"ocr_char_count": len(ocr_text)},
             )
             _lf_span = start_span(_lf_trace, "LLM_EXTRACT_FALLBACK") if _lf_trace else None
+            _lf_prompt = get_prompt(slug_to_langfuse_name("extraction.invoice_system"))
         except Exception:
             pass
 
@@ -509,6 +511,7 @@ class InvoiceExtractionAdapter:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     total_tokens=prompt_tokens + completion_tokens,
+                    prompt=_lf_prompt,
                 )
                 end_span(_lf_span, output={"completion_length": len(content or "")})
                 if _lf_trace:

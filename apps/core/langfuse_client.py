@@ -166,12 +166,19 @@ def log_generation(
     completion_tokens: int = 0,
     total_tokens: int = 0,
     metadata: Optional[Dict[str, Any]] = None,
+    prompt: Any = None,
 ) -> None:
-    """Log an LLM generation as a child of the given span. Fail-silent."""
+    """Log an LLM generation as a child of the given span. Fail-silent.
+
+    Args:
+        prompt: A Langfuse ChatPromptClient object (from ``get_prompt()``).
+                When provided, Langfuse links this generation to the managed
+                prompt so observation counts and per-version metrics are tracked.
+    """
     if not span:
         return
     try:
-        gen = span.start_observation(
+        kwargs: Dict[str, Any] = dict(
             name=name,
             as_type="generation",
             model=model,
@@ -184,6 +191,9 @@ def log_generation(
             },
             metadata=metadata or {},
         )
+        if prompt is not None:
+            kwargs["prompt"] = prompt
+        gen = span.start_observation(**kwargs)
         gen.end()
     except Exception as exc:
         logger.debug("Langfuse log_generation failed: %s", exc)

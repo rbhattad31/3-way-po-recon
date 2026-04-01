@@ -162,6 +162,18 @@ class BaseAgent(ABC):
             except Exception:
                 _lf_span = None
         self.llm._langfuse_span = _lf_span
+        # Resolve the Langfuse prompt object so generations are linked to the
+        # managed prompt and observation counts are tracked in the Prompts tab.
+        _lf_prompt = None
+        try:
+            from apps.core.langfuse_client import get_prompt, slug_to_langfuse_name
+            from apps.core.prompt_registry import _AGENT_TYPE_TO_PROMPT_KEY
+            _prompt_slug = _AGENT_TYPE_TO_PROMPT_KEY.get(self.agent_type, "")
+            if _prompt_slug:
+                _lf_prompt = get_prompt(slug_to_langfuse_name(_prompt_slug))
+        except Exception:
+            pass
+        self.llm._langfuse_prompt = _lf_prompt
         self.llm._langfuse_metadata = {
             "agent_type": str(self.agent_type),
             "invoice_id": ctx.invoice_id,
@@ -496,6 +508,7 @@ class BaseAgent(ABC):
             agent_run.save()
 
         self.llm._langfuse_span = None
+        self.llm._langfuse_prompt = None
         self.llm._langfuse_metadata = {}
         return agent_run
 
