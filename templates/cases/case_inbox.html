@@ -335,7 +335,9 @@
                onclick="event.stopPropagation()">
               <i class="bi bi-robot"></i>
             </a>
-            {% if case.status == "FAILED" or case.status == "NEW" %}
+            {% if case.status != "CLOSED" and case.status != "REJECTED" %}
+            {% has_permission "cases.edit" as can_retrigger %}
+            {% if can_retrigger %}
             <form method="post" action="{% url 'cases:reprocess_case' case.pk %}" style="display:inline"
                   onclick="event.stopPropagation()" onsubmit="this.querySelector('button').disabled=true">
               {% csrf_token %}
@@ -345,6 +347,7 @@
                 <i class="bi bi-arrow-clockwise"></i>
               </button>
             </form>
+            {% endif %}
             {% endif %}
             </div>
           </td>

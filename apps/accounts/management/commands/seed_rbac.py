@@ -124,7 +124,7 @@ ROLE_MATRIX = {
     "REVIEWER": [
         "invoices.view", "invoices.create",
         "reconciliation.view",
-        "cases.view",
+        "cases.view", "cases.edit",
         "cases.add_comment",
         "reviews.view", "reviews.decide",
         "agents.view", "agents.use_copilot",
@@ -136,7 +136,7 @@ ROLE_MATRIX = {
     "FINANCE_MANAGER": [
         "invoices.view",
         "reconciliation.view", "reconciliation.override",
-        "cases.view", "cases.assign", "cases.escalate",
+        "cases.view", "cases.edit", "cases.assign", "cases.escalate",
         "cases.add_comment",
         "reviews.view", "reviews.assign", "reviews.decide",
         "governance.view",
