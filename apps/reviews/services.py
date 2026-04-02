@@ -64,33 +64,46 @@ class ReviewWorkflowService:
         logger.info("Created review assignment %s for result %s", assignment.pk, result.pk)
 
         try:
-            from apps.core.langfuse_client import start_trace
+            from apps.core.langfuse_client import start_trace_safe, score_trace_safe
             _lf_trace_id = f"review-{assignment.pk}"
-            start_trace(
+            _match_status = result.match_status or ""
+            _exc_count = result.exceptions.count() if hasattr(result, "exceptions") else 0
+            _lf_trace = start_trace_safe(
                 _lf_trace_id,
                 "review_assignment",
+                invoice_id=result.invoice_id,
+                session_id=f"invoice-{result.invoice_id}",
                 metadata={
                     "assignment_pk": assignment.pk,
-                    "reconciliation_result_id": assignment.reconciliation_result_id,
+                    "reconciliation_result_id": result.pk,
                     "assigned_to": getattr(assignment.assigned_to, "pk", None),
                     "review_type": getattr(assignment, "review_type", None),
+                    "match_status": _match_status,
+                    "exception_count": _exc_count,
+                    "priority": priority,
+                    "invoice_id": result.invoice_id,
+                    "po_number": getattr(result, "po_number", "") or "",
+                    "source": "review",
                 },
             )
-        except Exception:
-            pass
-
-        try:
-            from apps.core.langfuse_client import score_trace
-            _trace_id = f"review-{assignment.pk}"
-            score_trace(
-                _trace_id,
+            score_trace_safe(
+                _lf_trace_id,
                 "review_priority",
                 float(priority) / 10.0,
                 comment=(
                     f"assignment={assignment.pk} "
                     f"invoice={result.invoice_id} "
-                    f"result={result.pk}"
+                    f"match_status={_match_status} "
+                    f"exceptions={_exc_count}"
                 ),
+                span=_lf_trace,
+            )
+            score_trace_safe(
+                _lf_trace_id,
+                "review_assignment_created",
+                1.0,
+                comment=f"assignment={assignment.pk}",
+                span=_lf_trace,
             )
         except Exception:
             pass
@@ -105,12 +118,17 @@ class ReviewWorkflowService:
         _lf_span = None
         try:
             from apps.core.langfuse_client import get_client
-            lf = get_client()
-            if lf:
-                _lf_span = lf.span(
+            _lf = get_client()
+            if _lf:
+                _lf_span = _lf.span(
                     trace_id=f"review-{assignment.pk}",
                     name="review_assign_reviewer",
-                    metadata={"reviewer_id": getattr(user, "pk", None)},
+                    metadata={
+                        "reviewer_id": getattr(user, "pk", None),
+                        "reviewer_email": getattr(user, "email", ""),
+                        "assignment_id": assignment.pk,
+                        "status_before": assignment.status or "",
+                    },
                 )
         except Exception:
             pass
@@ -137,8 +155,8 @@ class ReviewWorkflowService:
             )
         finally:
             try:
-                if _lf_span:
-                    _lf_span.end(output={"status": assignment.status})
+                from apps.core.langfuse_client import end_span_safe
+                end_span_safe(_lf_span, output={"status": assignment.status, "reviewer_assigned": True})
             except Exception:
                 pass
 
@@ -149,12 +167,16 @@ class ReviewWorkflowService:
         _lf_span = None
         try:
             from apps.core.langfuse_client import get_client
-            lf = get_client()
-            if lf:
-                _lf_span = lf.span(
+            _lf = get_client()
+            if _lf:
+                _lf_span = _lf.span(
                     trace_id=f"review-{assignment.pk}",
                     name="review_start",
-                    metadata={"assignment_id": assignment.pk},
+                    metadata={
+                        "assignment_id": assignment.pk,
+                        "reviewer_id": getattr(assignment.assigned_to, "pk", None),
+                        "status_before": assignment.status or "",
+                    },
                 )
         except Exception:
             pass
@@ -178,8 +200,8 @@ class ReviewWorkflowService:
             )
         finally:
             try:
-                if _lf_span:
-                    _lf_span.end(output={"status": assignment.status})
+                from apps.core.langfuse_client import end_span_safe
+                end_span_safe(_lf_span, output={"status": assignment.status, "review_started": True})
             except Exception:
                 pass
 
@@ -208,6 +230,42 @@ class ReviewWorkflowService:
             reason=reason,
         )
 
+        # -- Langfuse: record action span
+        try:
+            from apps.core.langfuse_client import get_client, end_span_safe, score_trace_safe
+            _lf = get_client()
+            _lf_span = None
+            if _lf:
+                _lf_span = _lf.span(
+                    trace_id=f"review-{assignment.pk}",
+                    name="review_record_action",
+                    metadata={
+                        "action_type": action_type,
+                        "field_name": field_name,
+                        "user_id": getattr(user, "pk", None),
+                    },
+                )
+            end_span_safe(_lf_span, output={
+                "action_id": action.pk,
+                "action_type": action_type,
+                "field_name": field_name,
+                "is_correction": action_type == ReviewActionType.CORRECT_FIELD,
+            })
+            if action_type == ReviewActionType.CORRECT_FIELD:
+                # Running count of corrections -- emit as score for eval
+                _correction_count = ManualReviewAction.objects.filter(
+                    assignment=assignment, action_type=ReviewActionType.CORRECT_FIELD,
+                ).count()
+                score_trace_safe(
+                    f"review-{assignment.pk}",
+                    "review_fields_corrected_count",
+                    float(_correction_count),
+                    comment=f"field={field_name}",
+                    span=_lf_span,
+                )
+        except Exception:
+            pass
+
         # Audit: field correction
         if action_type == ReviewActionType.CORRECT_FIELD and field_name:
             from apps.auditlog.services import AuditService
@@ -230,12 +288,29 @@ class ReviewWorkflowService:
         body: str,
         is_internal: bool = True,
     ) -> ReviewComment:
-        return ReviewComment.objects.create(
+        comment = ReviewComment.objects.create(
             assignment=assignment,
             author=user,
             body=body,
             is_internal=is_internal,
         )
+        try:
+            from apps.core.langfuse_client import get_client, end_span_safe
+            _lf = get_client()
+            _lf_span = None
+            if _lf:
+                _lf_span = _lf.span(
+                    trace_id=f"review-{assignment.pk}",
+                    name="review_add_comment",
+                    metadata={
+                        "user_id": getattr(user, "pk", None),
+                        "is_internal": is_internal,
+                    },
+                )
+            end_span_safe(_lf_span, output={"comment_id": comment.pk})
+        except Exception:
+            pass
+        return comment
 
     # ------------------------------------------------------------------
     # Final decisions
@@ -268,16 +343,30 @@ class ReviewWorkflowService:
         reason: str,
     ) -> ReviewDecision:
         _lf_span = None
+        _trace_id = f"review-{assignment.pk}"
+
+        # Gather pre-decision metrics for metadata
+        _action_count = ManualReviewAction.objects.filter(assignment=assignment).count()
+        _comment_count = ReviewComment.objects.filter(assignment=assignment).count()
+        _corrections_count = ManualReviewAction.objects.filter(
+            assignment=assignment, action_type=ReviewActionType.CORRECT_FIELD,
+        ).count()
+
         try:
             from apps.core.langfuse_client import get_client
-            lf = get_client()
-            if lf:
-                _lf_span = lf.span(
-                    trace_id=f"review-{assignment.pk}",
+            _lf = get_client()
+            if _lf:
+                _lf_span = _lf.span(
+                    trace_id=_trace_id,
                     name="review_finalise",
                     metadata={
                         "decision_status": decision_status,
                         "user_id": getattr(user, "pk", None),
+                        "status_before": assignment.status or "",
+                        "action_count": _action_count,
+                        "comment_count": _comment_count,
+                        "fields_corrected_count": _corrections_count,
+                        "invoice_id": getattr(assignment.reconciliation_result, "invoice_id", None),
                     },
                 )
         except Exception:
@@ -327,7 +416,7 @@ class ReviewWorkflowService:
         logger.info("Review %s decided: %s by %s", assignment.pk, decision_status, user)
 
         try:
-            from apps.core.langfuse_client import score_trace
+            from apps.core.langfuse_client import score_trace_safe
             _decision_score = {
                 ReviewStatus.APPROVED: 1.0,
                 ReviewStatus.REJECTED: 0.0,
@@ -337,8 +426,7 @@ class ReviewWorkflowService:
                 getattr(assignment, "reconciliation_result", None),
                 "invoice_id", None
             )
-            _trace_id = f"review-{assignment.pk}"
-            score_trace(
+            score_trace_safe(
                 _trace_id,
                 "review_decision",
                 _decision_score,
@@ -347,13 +435,45 @@ class ReviewWorkflowService:
                     f"invoice={_invoice_id} "
                     f"reviewer={getattr(user, 'pk', None)}"
                 ),
+                span=_lf_span,
+            )
+            # Additional eval scores
+            score_trace_safe(
+                _trace_id,
+                "review_approved",
+                1.0 if decision_status == ReviewStatus.APPROVED else 0.0,
+                span=_lf_span,
+            )
+            score_trace_safe(
+                _trace_id,
+                "review_rejected",
+                1.0 if decision_status == ReviewStatus.REJECTED else 0.0,
+                span=_lf_span,
+            )
+            score_trace_safe(
+                _trace_id,
+                "review_reprocess_requested",
+                1.0 if decision_status == ReviewStatus.REPROCESSED else 0.0,
+                span=_lf_span,
+            )
+            score_trace_safe(
+                _trace_id,
+                "review_had_corrections",
+                1.0 if _corrections_count > 0 else 0.0,
+                comment=f"corrections={_corrections_count}",
+                span=_lf_span,
             )
         except Exception:
             pass
 
         try:
-            if _lf_span:
-                _lf_span.end(output={"status": decision_status})
+            from apps.core.langfuse_client import end_span_safe
+            end_span_safe(_lf_span, output={
+                "status": decision_status,
+                "action_count": _action_count,
+                "corrections_count": _corrections_count,
+                "comment_count": _comment_count,
+            })
         except Exception:
             pass
 

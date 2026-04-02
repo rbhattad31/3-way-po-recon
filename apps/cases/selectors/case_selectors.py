@@ -90,9 +90,11 @@ class CaseSelectors:
             return qs.none()
         user_role = getattr(user, "role", None)
 
-        # REVIEWER sees only cases assigned to them
+        # REVIEWER sees cases assigned to them + unassigned review-ready cases
         if user_role == UserRole.REVIEWER:
-            return qs.filter(assigned_to=user)
+            return qs.filter(
+                Q(assigned_to=user) | Q(assigned_to__isnull=True)
+            )
 
         if user_role != UserRole.AP_PROCESSOR:
             return qs  # ADMIN, FINANCE_MANAGER, AUDITOR see everything
@@ -157,6 +159,15 @@ class CaseSelectors:
             requires_human_review=True,
         ).count()
 
+        # In-progress: all *_IN_PROGRESS statuses + NEW (pipeline not yet complete)
+        in_progress_statuses = [
+            s for s in CaseStatus
+            if "IN_PROGRESS" in s.value or s == CaseStatus.NEW
+        ]
+        in_progress = base.filter(status__in=in_progress_statuses).count()
+
+        failed = by_status.get(CaseStatus.FAILED, 0)
+
         return {
             "total": total,
             "by_status": by_status,
@@ -164,6 +175,8 @@ class CaseSelectors:
             "overdue": overdue,
             "agent_processed": agent_processed,
             "human_involved": human_involved,
+            "in_progress": in_progress,
+            "failed": failed,
         }
 
     @staticmethod

@@ -1,17 +1,18 @@
 """Celery tasks for the extraction pipeline.
 
 EXECUTION OWNERSHIP
-───────────────────
+-------------------
 The authoritative execution record is ExtractionRun (apps.extraction_core).
 This task creates DocumentUpload records and triggers extraction, but the
 ExtractionRun model is the runtime source of truth once extraction starts.
-Credit lifecycle: reserve (view) → consume (task, on OCR success) or
+Credit lifecycle: reserve (view) -> consume (task, on OCR success) or
 refund (task, on OCR failure). reference_type="document_upload",
 reference_id=<DocumentUpload.pk>.
 """
 from __future__ import annotations
 
 import logging
+import uuid
 
 from celery import shared_task
 from django.db import transaction
@@ -22,6 +23,58 @@ from apps.core.metrics import MetricsService
 from apps.documents.models import DocumentUpload
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Langfuse helpers -- fail-silent wrappers
+# ---------------------------------------------------------------------------
+
+def _lf_start_trace(trace_id, name, **kwargs):
+    try:
+        from apps.core.langfuse_client import start_trace
+        return start_trace(trace_id, name, **kwargs)
+    except Exception:
+        return None
+
+
+def _lf_span(parent, name, **kwargs):
+    try:
+        from apps.core.langfuse_client import start_span
+        return start_span(parent, name, **kwargs) if parent else None
+    except Exception:
+        return None
+
+
+def _lf_end(span, **kwargs):
+    try:
+        from apps.core.langfuse_client import end_span
+        end_span(span, **kwargs)
+    except Exception:
+        pass
+
+
+def _lf_score_trace(trace_id, name, value, **kwargs):
+    try:
+        from apps.core.langfuse_client import score_trace
+        score_trace(trace_id, name, value, **kwargs)
+    except Exception:
+        pass
+
+
+def _lf_score_obs(obs, name, value, **kwargs):
+    try:
+        from apps.core.langfuse_client import score_observation
+        score_observation(obs, name, value, **kwargs)
+    except Exception:
+        pass
+
+
+def _lf_update(span, **kwargs):
+    try:
+        from apps.core.langfuse_client import update_trace
+        update_trace(span, **kwargs)
+    except Exception:
+        pass
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
@@ -48,21 +101,44 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         ExtractionResultPersistenceService,
     )
 
+    # ── Langfuse root trace ──────────────────────────────────────────────
+    _trace_id = uuid.uuid4().hex
+    _session_id = f"extraction-upload-{upload_id}"
+    _lf_root = None
+    _celery_task_id = getattr(getattr(self, "request", None), "id", None)
+
     try:
         upload = DocumentUpload.objects.get(pk=upload_id)
     except DocumentUpload.DoesNotExist:
         logger.error("DocumentUpload %s not found", upload_id)
         return {"status": "error", "message": f"Upload {upload_id} not found"}
 
+    # Start Langfuse root trace with upload metadata
+    _lf_root = _lf_start_trace(
+        _trace_id,
+        "extraction_pipeline",
+        user_id=upload.uploaded_by_id,
+        session_id=_session_id,
+        metadata={
+            "upload_id": upload_id,
+            "filename": upload.original_filename or "",
+            "celery_task_id": _celery_task_id,
+            "blob_path": upload.blob_path or "",
+        },
+    )
+
     upload.processing_state = FileProcessingState.PROCESSING
     upload.save(update_fields=["processing_state", "updated_at"])
 
     try:
-        # 1. Extract
+        # 1. Extract (OCR + LLM)
+        _s_ocr = _lf_span(_lf_root, "ocr_extraction", metadata={"upload_id": upload_id})
         adapter = InvoiceExtractionAdapter()
         # Download from Azure Blob Storage
         if not upload.blob_path:
-            _fail_upload(upload, "No blob_path set — document not in Azure Blob Storage")
+            _fail_upload(upload, "No blob_path set -- document not in Azure Blob Storage")
+            _lf_end(_s_ocr, output={"error": "no_blob_path"}, level="ERROR")
+            _lf_end(_lf_root, output={"status": "error"}, level="ERROR", is_root=True)
             return {"status": "error", "message": "No blob_path set on upload"}
 
         from apps.documents.blob_service import download_blob_to_tempfile
@@ -73,6 +149,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 file_path,
                 actor_user_id=upload.uploaded_by_id,
                 document_upload_id=upload.pk,
+                langfuse_trace=_lf_root,
             )
         finally:
             import os
@@ -81,14 +158,40 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             except OSError:
                 pass
 
+        # Score: OCR stage
+        _lf_end(_s_ocr, output={
+            "success": extraction_resp.success,
+            "ocr_char_count": extraction_resp.ocr_char_count,
+            "ocr_page_count": extraction_resp.ocr_page_count,
+            "ocr_duration_ms": extraction_resp.ocr_duration_ms,
+            "engine": extraction_resp.engine_name,
+            "was_repaired": extraction_resp.was_repaired,
+        })
+        if extraction_resp.ocr_char_count:
+            _lf_score_obs(_s_ocr, "ocr_char_count", float(extraction_resp.ocr_char_count),
+                          comment=f"pages={extraction_resp.ocr_page_count}")
+
         if not extraction_resp.success:
             _fail_upload(upload, extraction_resp.error_message)
             ExtractionResultPersistenceService.save(upload, None, extraction_resp)
             _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
+            _lf_score_trace(_trace_id, "extraction_success", 0.0, comment="OCR/LLM failed")
+            _lf_end(_lf_root, output={"status": "error", "error": extraction_resp.error_message[:200]}, level="ERROR", is_root=True)
             return {"status": "error", "message": extraction_resp.error_message}
 
-        # 1a. Document type classification — reject non-invoices early
+        # 1a. Document type classification -- reject non-invoices early
+        _s_doctype = _lf_span(_lf_root, "document_type_classification", metadata={"upload_id": upload_id})
         doc_type_result = _classify_document(extraction_resp.ocr_text)
+        _doc_type_str = doc_type_result.document_type if doc_type_result else "UNKNOWN"
+        _doc_type_conf = doc_type_result.confidence if doc_type_result else 0.0
+        _lf_end(_s_doctype, output={
+            "document_type": _doc_type_str,
+            "confidence": _doc_type_conf,
+            "matched_keywords": list(doc_type_result.matched_keywords) if doc_type_result else [],
+        })
+        _lf_score_obs(_s_doctype, "doc_type_confidence", _doc_type_conf,
+                      comment=f"type={_doc_type_str}")
+
         if doc_type_result and doc_type_result.document_type not in ("INVOICE", "CREDIT_NOTE", "DEBIT_NOTE") \
                 and doc_type_result.confidence >= 0.60 and not doc_type_result.is_ambiguous:
             reject_msg = (
@@ -103,20 +206,39 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 upload_id, doc_type_result.document_type,
                 doc_type_result.confidence, doc_type_result.matched_keywords,
             )
+            _lf_score_trace(_trace_id, "extraction_success", 0.0, comment=f"rejected: {_doc_type_str}")
+            _lf_end(_lf_root, output={"status": "rejected", "document_type": _doc_type_str}, level="WARNING", is_root=True)
             return {"status": "rejected", "message": reject_msg, "document_type": doc_type_result.document_type}
 
         # 1b. Run governed extraction pipeline (enrichment)
+        _s_governed = _lf_span(_lf_root, "governed_pipeline", metadata={"upload_id": upload_id})
         _run_governed_pipeline(upload, extraction_resp)
+        _lf_end(_s_governed, output={"status": "completed"})
 
         # 2. Parse
+        _s_parse = _lf_span(_lf_root, "parsing", metadata={"upload_id": upload_id})
         parser = ExtractionParserService()
         parsed = parser.parse(extraction_resp.raw_json)
+        _lf_end(_s_parse, output={
+            "line_items_count": len(parsed.line_items),
+            "has_vendor": bool(parsed.raw_vendor_name),
+            "has_invoice_number": bool(parsed.raw_invoice_number),
+        })
 
         # 3. Normalise
+        _s_norm = _lf_span(_lf_root, "normalization", metadata={"upload_id": upload_id})
         normalizer = NormalizationService()
         normalized = normalizer.normalize(parsed)
+        _lf_end(_s_norm, output={
+            "vendor_normalized": normalized.vendor_name_normalized or "",
+            "invoice_number_normalized": normalized.normalized_invoice_number or "",
+            "currency": normalized.currency or "",
+            "total_amount": str(normalized.total_amount) if normalized.total_amount else "",
+            "line_items_count": len(normalized.line_items),
+        })
 
         # 3a. Field-level confidence scoring
+        _s_field_conf = _lf_span(_lf_root, "field_confidence", metadata={"upload_id": upload_id})
         field_conf_result = None
         try:
             from apps.extraction.services.field_confidence_service import FieldConfidenceService
@@ -142,8 +264,18 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             }
         except Exception as fc_exc:
             logger.warning("FieldConfidenceService failed (non-fatal): %s", fc_exc)
+        _lf_end(_s_field_conf, output={
+            "weakest_critical_field": field_conf_result.weakest_critical_field if field_conf_result else "",
+            "weakest_critical_score": field_conf_result.weakest_critical_score if field_conf_result else 1.0,
+            "low_confidence_fields": field_conf_result.low_confidence_fields if field_conf_result else [],
+        })
+        if field_conf_result:
+            _lf_score_obs(_s_field_conf, "weakest_critical_score",
+                          field_conf_result.weakest_critical_score,
+                          comment=f"field={field_conf_result.weakest_critical_field}")
 
         # 4. Validate
+        _s_validate = _lf_span(_lf_root, "validation", metadata={"upload_id": upload_id})
         validator = ValidationService()
         validation_result = validator.validate(normalized)
 
@@ -161,6 +293,16 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                     )
         except Exception as rv_exc:
             logger.warning("ReconciliationValidatorService failed (non-fatal): %s", rv_exc)
+        _lf_end(_s_validate, output={
+            "is_valid": validation_result.is_valid,
+            "error_count": len(validation_result.errors),
+            "warning_count": len(validation_result.warnings),
+            "requires_review_override": getattr(validation_result, "requires_review_override", False),
+            "recon_errors": len(recon_val_result.errors) if recon_val_result else 0,
+            "recon_checks_passed": recon_val_result.checks_passed if recon_val_result else 0,
+        })
+        _lf_score_obs(_s_validate, "validation_is_valid", 1.0 if validation_result.is_valid else 0.0,
+                      comment=f"errors={len(validation_result.errors)}")
 
         # Embed field confidence and reconciliation metadata into raw_json for persistence
         if field_conf_result is not None:
@@ -177,6 +319,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 pass
 
         # 4b. Derive machine-readable decision codes from all pipeline outputs
+        _s_decision = _lf_span(_lf_root, "decision_code_derivation", metadata={"upload_id": upload_id})
         decision_codes: list = []
         try:
             from apps.extraction.decision_codes import derive_codes
@@ -193,8 +336,12 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             extraction_resp.raw_json["_decision_codes"] = decision_codes
         except Exception as dc_exc:
             logger.warning("derive_codes failed (non-fatal): %s", dc_exc)
+        _lf_end(_s_decision, output={"decision_codes": decision_codes})
+        _lf_score_obs(_s_decision, "decision_code_count", float(len(decision_codes)),
+                      comment=", ".join(decision_codes[:5]) if decision_codes else "none")
 
-        # 4c. Recovery lane — invoke only for named failure modes
+        # 4c. Recovery lane -- invoke only for named failure modes
+        _s_recovery = _lf_span(_lf_root, "recovery_lane", metadata={"upload_id": upload_id})
         recovery_result = None
         try:
             from apps.extraction.services.recovery_lane_service import RecoveryLaneService
@@ -214,9 +361,19 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 extraction_resp.raw_json["_recovery"] = recovery_result.to_serializable()
         except Exception as rl_exc:
             logger.warning("RecoveryLaneService failed (non-fatal): %s", rl_exc)
+        _recovery_invoked = recovery_result.invoked if recovery_result else False
+        _recovery_succeeded = recovery_result.succeeded if recovery_result else False
+        _lf_end(_s_recovery, output={
+            "invoked": _recovery_invoked,
+            "succeeded": _recovery_succeeded,
+            "trigger_codes": recovery_decision.trigger_codes if 'recovery_decision' in dir() and hasattr(recovery_decision, 'trigger_codes') else [],
+        })
+        _lf_score_obs(_s_recovery, "recovery_invoked", 1.0 if _recovery_invoked else 0.0,
+                      comment=f"succeeded={_recovery_succeeded}")
 
-        # 5. Duplicate check — exclude the existing invoice for this upload so a
+        # 5. Duplicate check -- exclude the existing invoice for this upload so a
         # reprocess does not flag the invoice as a duplicate of itself.
+        _s_dup = _lf_span(_lf_root, "duplicate_detection", metadata={"upload_id": upload_id})
         from apps.documents.models import Invoice as _InvoiceModel
         _existing_inv = (
             _InvoiceModel.objects
@@ -227,8 +384,16 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         )
         dup_service = DuplicateDetectionService()
         dup_result = dup_service.check(normalized, exclude_invoice_id=_existing_inv)
+        _lf_end(_s_dup, output={
+            "is_duplicate": dup_result.is_duplicate,
+            "duplicate_invoice_id": dup_result.duplicate_invoice_id,
+            "reason": dup_result.reason,
+        })
+        _lf_score_obs(_s_dup, "is_duplicate", 1.0 if dup_result.is_duplicate else 0.0,
+                      comment=dup_result.reason or "unique")
 
         # 6. Persist
+        _s_persist = _lf_span(_lf_root, "persistence", metadata={"upload_id": upload_id})
         persistence = InvoicePersistenceService()
         invoice = persistence.save(
             normalized=normalized,
@@ -238,6 +403,12 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             duplicate_result=dup_result,
         )
         ext_result = ExtractionResultPersistenceService.save(upload, invoice, extraction_resp)
+        _lf_end(_s_persist, output={
+            "invoice_id": invoice.pk,
+            "invoice_number": invoice.invoice_number or "",
+            "invoice_status": invoice.status,
+            "extraction_confidence": invoice.extraction_confidence,
+        })
 
         # 7. Finalise upload state
         upload.processing_state = FileProcessingState.COMPLETED
@@ -255,6 +426,9 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 logger.warning("Blob move to processed/ failed: %s", mv_err)
 
         # If valid and not duplicate, gate through extraction approval
+        _s_approval = _lf_span(_lf_root, "approval_gate", metadata={
+            "upload_id": upload_id, "invoice_id": invoice.pk,
+        })
         if validation_result.is_valid and not dup_result.is_duplicate:
             from apps.extraction.services.approval_service import ExtractionApprovalService
 
@@ -265,7 +439,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             # Skip auto-approval entirely when critical field review is forced
             auto_approval = None if review_forced else ExtractionApprovalService.try_auto_approve(invoice, ext_result)
             if not auto_approval:
-                # Human approval required — set PENDING_APPROVAL
+                # Human approval required -- set PENDING_APPROVAL
                 invoice.status = InvoiceStatus.PENDING_APPROVAL
                 invoice.save(update_fields=["status", "updated_at"])
                 ExtractionApprovalService.create_pending_approval(invoice, ext_result)
@@ -280,6 +454,54 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                     metadata={"upload_id": upload_id, "confidence": invoice.extraction_confidence},
                 )
 
+        # Close approval gate span
+        _approval_outcome = "skipped"
+        if validation_result.is_valid and not dup_result.is_duplicate:
+            if 'auto_approval' in dir() and auto_approval:
+                _approval_outcome = "auto_approved"
+            elif getattr(validation_result, "requires_review_override", False):
+                _approval_outcome = "review_forced"
+            else:
+                _approval_outcome = "pending_human"
+        elif dup_result.is_duplicate:
+            _approval_outcome = "duplicate"
+        elif not validation_result.is_valid:
+            _approval_outcome = "invalid"
+        _lf_end(_s_approval, output={"outcome": _approval_outcome, "invoice_status": invoice.status})
+        _lf_score_obs(_s_approval, "requires_human_review",
+                      0.0 if _approval_outcome == "auto_approved" else 1.0,
+                      comment=_approval_outcome)
+        _lf_score_trace(_trace_id, "extraction_requires_review",
+                        0.0 if _approval_outcome == "auto_approved" else 1.0,
+                        comment=_approval_outcome)
+
+        # ── Trace-level scores ──────────────────────────────────────
+        _lf_score_trace(_trace_id, "extraction_confidence",
+                        float(invoice.extraction_confidence or 0.0),
+                        comment=f"invoice={invoice.pk}")
+        _lf_score_trace(_trace_id, "extraction_success", 1.0,
+                        comment=f"status={invoice.status}")
+        _lf_score_trace(_trace_id, "extraction_is_valid",
+                        1.0 if validation_result.is_valid else 0.0,
+                        comment=f"errors={len(validation_result.errors)}")
+        _lf_score_trace(_trace_id, "extraction_is_duplicate",
+                        1.0 if dup_result.is_duplicate else 0.0,
+                        comment=dup_result.reason or "unique")
+        if field_conf_result:
+            _lf_score_trace(_trace_id, "weakest_critical_field_score",
+                            field_conf_result.weakest_critical_score,
+                            comment=f"field={field_conf_result.weakest_critical_field}")
+        if decision_codes:
+            _lf_score_trace(_trace_id, "decision_code_count",
+                            float(len(decision_codes)),
+                            comment=", ".join(decision_codes[:5]))
+        if extraction_resp.was_repaired:
+            _lf_score_trace(_trace_id, "response_was_repaired", 1.0,
+                            comment=f"actions={len(extraction_resp.repair_actions)}")
+        if extraction_resp.qr_data is not None:
+            _lf_score_trace(_trace_id, "qr_detected", 1.0,
+                            comment=f"strategy={extraction_resp.qr_data.decode_strategy}")
+
         # Audit: extraction completed
         from apps.auditlog.services import AuditService
         from apps.core.enums import AuditEventType
@@ -287,6 +509,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             "upload_id": upload_id,
             "is_duplicate": dup_result.is_duplicate,
             "is_valid": validation_result.is_valid,
+            "langfuse_trace_id": _trace_id,
         }
         if field_conf_result is not None:
             _audit_meta["weakest_critical_field"] = field_conf_result.weakest_critical_field
@@ -345,6 +568,23 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         # ── Credit: consume reserved credit on successful extraction ──
         _consume_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
 
+        # ── Close Langfuse root trace ──
+        _lf_update(_lf_root, is_root=True, metadata={
+            "invoice_id": invoice.pk,
+            "invoice_number": invoice.invoice_number or "",
+            "invoice_status": invoice.status,
+            "langfuse_trace_id": _trace_id,
+        })
+        _lf_end(_lf_root, is_root=True, output={
+            "status": "ok",
+            "invoice_id": invoice.pk,
+            "invoice_status": invoice.status,
+            "confidence": invoice.extraction_confidence,
+            "is_duplicate": dup_result.is_duplicate,
+            "is_valid": validation_result.is_valid,
+            "case_id": case_id,
+        })
+
         return {
             "status": "ok",
             "upload_id": upload_id,
@@ -358,8 +598,12 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
     except Exception as exc:
         logger.exception("Extraction pipeline failed for upload %s", upload_id)
         _fail_upload(upload, str(exc))
-        # ── Credit: refund reserved credit — extraction failed (OCR/pipeline error) ──
+        # ── Credit: refund reserved credit -- extraction failed (OCR/pipeline error) ──
         _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
+        # ── Close Langfuse root trace on error ──
+        _lf_score_trace(_trace_id, "extraction_success", 0.0,
+                        comment=f"exception: {str(exc)[:100]}")
+        _lf_end(_lf_root, output={"status": "error", "error": str(exc)[:300]}, level="ERROR", is_root=True)
         # Audit: extraction failed
         try:
             from apps.auditlog.services import AuditService

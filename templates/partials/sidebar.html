@@ -19,8 +19,8 @@
       {# ── Extraction Agent ── #}
       <li class="hr my-2 border-bottom"></li>
       <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Extraction Agent</li>
-      {% has_permission "invoices.create" as can_extract %}
-      {% if can_extract %}
+      {% has_permission "invoices.view" as can_view_extraction %}
+      {% if can_view_extraction %}
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'extraction' and request.resolver_match.url_name == 'workbench' %}active fw-bold{% endif %}" href="{% url 'extraction:workbench' %}">
           <i class="bi bi-robot me-2"></i>Invoice Extraction

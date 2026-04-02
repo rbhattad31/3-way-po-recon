@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Tuple
 
+from django.db import transaction
+
 from apps.posting_core.models import ERPItemReference, ERPReferenceImportBatch
 from apps.posting_core.services.import_pipeline.import_parsers import normalize_text, safe_bool
 from apps.posting_core.services.import_pipeline.import_validators import validate_row
@@ -12,9 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class ItemImporter:
-    """Imports item reference rows into ERPItemReference."""
+    """Imports item reference rows into ERPItemReference.
+
+    Natural key: item_code.
+    Skips intra-file duplicates and rows already present in this batch.
+    """
 
     @staticmethod
+    @transaction.atomic
     def import_rows(
         batch: ERPReferenceImportBatch,
         rows: List[Dict[str, Any]],
@@ -22,6 +29,7 @@ class ItemImporter:
         valid_records: List[ERPItemReference] = []
         errors: List[str] = []
         invalid_count = 0
+        seen_codes: set = set()
 
         for idx, row in enumerate(rows, start=1):
             is_valid, row_errors = validate_row("ITEM", row, idx)
@@ -32,6 +40,12 @@ class ItemImporter:
 
             item_code = str(row.get("item_code", "")).strip()
             item_name = str(row.get("item_name", "")).strip()
+
+            if item_code in seen_codes:
+                errors.append(f"Row {idx}: duplicate item_code '{item_code}' in file — skipped")
+                invalid_count += 1
+                continue
+            seen_codes.add(item_code)
 
             valid_records.append(ERPItemReference(
                 batch=batch,
@@ -47,7 +61,20 @@ class ItemImporter:
             ))
 
         if valid_records:
-            ERPItemReference.objects.bulk_create(valid_records)
+            existing_codes = set(
+                ERPItemReference.objects
+                .filter(batch=batch, item_code__in=[r.item_code for r in valid_records])
+                .values_list("item_code", flat=True)
+            )
+            if existing_codes:
+                logger.warning(
+                    "ItemImporter: %d item_code(s) already in batch %s — skipping: %s",
+                    len(existing_codes), batch.pk, sorted(existing_codes),
+                )
+                valid_records = [r for r in valid_records if r.item_code not in existing_codes]
+
+            if valid_records:
+                ERPItemReference.objects.bulk_create(valid_records)
 
         logger.info(
             "ItemImporter: imported %d valid, %d invalid for batch %s",

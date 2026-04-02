@@ -1,14 +1,17 @@
 """Vendor API serializers."""
 from rest_framework import serializers
 
-from apps.vendors.models import Vendor, VendorAlias
+from apps.vendors.models import Vendor
 
 
-class VendorAliasSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = VendorAlias
-        fields = ["id", "alias_name", "normalized_alias", "source", "created_at"]
-        read_only_fields = ["id", "normalized_alias", "created_at"]
+class VendorAliasSerializer(serializers.Serializer):
+    """Read-only alias serializer backed by VendorAliasMapping."""
+    id = serializers.IntegerField(read_only=True)
+    alias_name = serializers.CharField(source="alias_text")
+    normalized_alias = serializers.CharField()
+    source = serializers.CharField()
+    confidence = serializers.FloatField()
+    created_at = serializers.DateTimeField(read_only=True)
 
 
 class VendorListSerializer(serializers.ModelSerializer):
@@ -21,7 +24,7 @@ class VendorListSerializer(serializers.ModelSerializer):
 
 
 class VendorDetailSerializer(serializers.ModelSerializer):
-    aliases = VendorAliasSerializer(many=True, read_only=True)
+    aliases = VendorAliasSerializer(source="alias_mappings", many=True, read_only=True)
 
     class Meta:
         model = Vendor

@@ -37,7 +37,7 @@ from apps.documents.models import (
     PurchaseOrderLineItem,
 )
 from apps.extraction.models import ExtractionResult
-from apps.vendors.models import Vendor, VendorAlias
+from apps.vendors.models import Vendor
 
 from .constants import (
     AP_PROCESSOR_USER,
@@ -143,17 +143,19 @@ def create_vendors(ap_user: User) -> dict[str, Vendor]:
 def create_vendor_aliases(vendors: dict[str, Vendor], ap_user: User) -> int:
     """Create vendor aliases including OCR variation names."""
     total_created = 0
+    from apps.posting_core.models import VendorAliasMapping
     for v_data in THREE_WAY_VENDORS:
         vendor = vendors.get(v_data["code"])
         if not vendor:
             continue
         for alias_name in v_data.get("aliases", []):
-            normalized = alias_name.upper().strip()
-            _, was_created = VendorAlias.objects.get_or_create(
-                vendor=vendor,
+            from apps.core.utils import normalize_string
+            normalized = normalize_string(alias_name)
+            _, was_created = VendorAliasMapping.objects.get_or_create(
                 normalized_alias=normalized,
                 defaults={
-                    "alias_name": alias_name,
+                    "alias_text": alias_name,
+                    "vendor": vendor,
                     "source": "manual",
                     "created_by": ap_user,
                     "updated_by": ap_user,
@@ -833,7 +835,7 @@ def collect_stats(results: dict[int, dict]) -> dict[str, Any]:
     """Collect summary statistics from seeded data."""
     stats = {
         "vendors_created": Vendor.objects.filter(code__startswith="V3W-").count(),
-        "aliases_created": VendorAlias.objects.filter(vendor__code__startswith="V3W-").count(),
+        "aliases_created": __import__('apps.posting_core.models', fromlist=['VendorAliasMapping']).VendorAliasMapping.objects.filter(vendor__code__startswith="V3W-").count(),
         "invoices_created": 0,
         "pos_created": 0,
         "grns_created": 0,

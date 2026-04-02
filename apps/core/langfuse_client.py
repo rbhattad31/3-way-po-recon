@@ -38,10 +38,12 @@ def get_client():
                 public_key=pk,
                 secret_key=sk,
                 host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+                environment=os.getenv("LANGFUSE_ENVIRONMENT", "development"),
             )
             logger.info(
-                "Langfuse client initialised (host=%s)",
+                "Langfuse client initialised (host=%s, environment=%s)",
                 os.getenv("LANGFUSE_HOST", "cloud"),
+                os.getenv("LANGFUSE_ENVIRONMENT", "development"),
             )
         except Exception as exc:
             logger.debug("Langfuse init failed (disabled): %s", exc)
@@ -87,19 +89,46 @@ def start_trace(
                 "django_trace_id": trace_id,
             },
         )
-        # Set user_id and session_id as OTel span attributes (Langfuse v4 API).
-        # These populate the Users and Sessions tabs in the Langfuse UI.
+        # Set trace-level attributes + user/session via OTel span attributes (Langfuse v4 API).
+        # start_observation creates a child span; the trace-level record itself
+        # only gets name/input/metadata when we set them as OTel attributes.
         if span is not None:
             try:
-                from langfuse._client.attributes import TRACE_USER_ID, TRACE_SESSION_ID
+                from langfuse._client.attributes import LangfuseOtelSpanAttributes as _A
                 otel_span = getattr(span, "_otel_span", None)
                 if otel_span is not None:
+                    # Trace-level name, input, metadata
+                    otel_span.set_attribute(_A.TRACE_NAME, name)
+                    _trace_input = {
+                        "invoice_id": invoice_id,
+                        "result_id": result_id,
+                        "user_id": user_id,
+                    }
+                    try:
+                        import json as _json
+                        otel_span.set_attribute(_A.TRACE_INPUT, _json.dumps(_trace_input, default=str))
+                    except Exception:
+                        pass
+                    _trace_meta = {
+                        **(metadata or {}),
+                        "invoice_id": invoice_id,
+                        "result_id": result_id,
+                        "django_trace_id": trace_id,
+                    }
+                    try:
+                        import json as _json
+                        otel_span.set_attribute(_A.TRACE_METADATA, _json.dumps(_trace_meta, default=str))
+                    except Exception:
+                        pass
+                    # User and session attribution
                     if user_id:
-                        otel_span.set_attribute(TRACE_USER_ID, str(user_id))
+                        otel_span.set_attribute(_A.TRACE_USER_ID, str(user_id))
                     if session_id:
-                        otel_span.set_attribute(TRACE_SESSION_ID, session_id)
+                        otel_span.set_attribute(_A.TRACE_SESSION_ID, session_id)
+                    _env = os.getenv("LANGFUSE_ENVIRONMENT", "development")
+                    otel_span.set_attribute(_A.ENVIRONMENT, _env)
             except Exception:
-                pass  # Non-fatal — traces still work, just without user/session
+                pass  # Non-fatal -- traces still work, just without trace-level fields
         return span
     except Exception as exc:
         logger.debug("Langfuse start_trace failed: %s", exc)
@@ -137,12 +166,19 @@ def log_generation(
     completion_tokens: int = 0,
     total_tokens: int = 0,
     metadata: Optional[Dict[str, Any]] = None,
+    prompt: Any = None,
 ) -> None:
-    """Log an LLM generation as a child of the given span. Fail-silent."""
+    """Log an LLM generation as a child of the given span. Fail-silent.
+
+    Args:
+        prompt: A Langfuse ChatPromptClient object (from ``get_prompt()``).
+                When provided, Langfuse links this generation to the managed
+                prompt so observation counts and per-version metrics are tracked.
+    """
     if not span:
         return
     try:
-        gen = span.start_observation(
+        kwargs: Dict[str, Any] = dict(
             name=name,
             as_type="generation",
             model=model,
@@ -155,6 +191,9 @@ def log_generation(
             },
             metadata=metadata or {},
         )
+        if prompt is not None:
+            kwargs["prompt"] = prompt
+        gen = span.start_observation(**kwargs)
         gen.end()
     except Exception as exc:
         logger.debug("Langfuse log_generation failed: %s", exc)
@@ -165,18 +204,54 @@ def end_span(
     *,
     output: Optional[Any] = None,
     level: str = "DEFAULT",
+    is_root: bool = False,
 ) -> None:
-    """Close a Langfuse span, optionally setting output. Fail-silent."""
+    """Close a Langfuse span, optionally setting output. Fail-silent.
+
+    When *is_root* is True, also sets the trace-level output via OTel attribute
+    so the output appears on the trace row in the Langfuse UI (not just on the
+    child span).
+    """
     if not span:
         return
     try:
         if output is not None:
             span.update(output=output)
+            # Propagate output to trace-level record
+            if is_root:
+                try:
+                    import json as _json
+                    from langfuse._client.attributes import LangfuseOtelSpanAttributes as _A
+                    otel_span = getattr(span, "_otel_span", None)
+                    if otel_span is not None:
+                        otel_span.set_attribute(
+                            _A.TRACE_OUTPUT,
+                            _json.dumps(output, default=str),
+                        )
+                except Exception:
+                    pass
         if level and level != "DEFAULT":
             span.update(level=level)
         span.end()
     except Exception as exc:
         logger.debug("Langfuse end_span failed: %s", exc)
+
+
+def _extract_otel_trace_id(span: Any) -> Optional[str]:
+    """Extract the real OTel trace_id hex string from a Langfuse span object."""
+    if not span:
+        return None
+    try:
+        otel_span = getattr(span, "_otel_span", None)
+        if otel_span is not None:
+            sc = getattr(otel_span, "get_span_context", lambda: None)()
+            if sc is not None:
+                tid = getattr(sc, "trace_id", 0)
+                if tid:
+                    return format(tid, "032x")
+    except Exception:
+        pass
+    return None
 
 
 def score_trace(
@@ -185,20 +260,102 @@ def score_trace(
     value: float,
     *,
     comment: str = "",
+    span: Any = None,
 ) -> None:
-    """Attach a numeric score to a trace (e.g. confidence). Fail-silent."""
+    """Attach a numeric score to a trace (e.g. confidence). Fail-silent.
+
+    When *span* is provided, the real OTel trace_id is extracted from it
+    so the score is correctly linked to the trace in Langfuse v4.
+    """
     lf = get_client()
     if not lf:
         return
     try:
+        real_tid = _extract_otel_trace_id(span) if span else None
         lf.create_score(
-            trace_id=trace_id,
+            trace_id=real_tid or trace_id,
             name=name,
             value=value,
             comment=comment or None,
         )
     except Exception as exc:
         logger.debug("Langfuse score_trace failed: %s", exc)
+
+
+def score_observation(
+    observation: Any,
+    name: str,
+    value: float,
+    *,
+    comment: str = "",
+) -> None:
+    """Attach a numeric score to a specific observation/span. Fail-silent.
+
+    Uses the observation's trace_id + observation_id so the score is linked
+    to both the trace and the specific span in the Langfuse UI.
+    """
+    if not observation:
+        return
+    lf = get_client()
+    if not lf:
+        return
+    try:
+        obs_id = getattr(observation, "id", None)
+        trace_id = None
+        # Try to read trace_id from the observation's OTel span context
+        otel_span = getattr(observation, "_otel_span", None)
+        if otel_span is not None:
+            sc = getattr(otel_span, "get_span_context", lambda: None)()
+            if sc is not None:
+                trace_id = format(getattr(sc, "trace_id", 0), "032x")
+        lf.create_score(
+            trace_id=trace_id or "",
+            observation_id=obs_id,
+            name=name,
+            value=value,
+            comment=comment or None,
+        )
+    except Exception as exc:
+        logger.debug("Langfuse score_observation failed: %s", exc)
+
+
+def update_trace(
+    span: Any,
+    *,
+    output: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    is_root: bool = False,
+) -> None:
+    """Update an existing trace/span with additional output or metadata. Fail-silent.
+
+    When *is_root* is True, also propagates to trace-level OTel attributes.
+    """
+    if not span:
+        return
+    try:
+        kwargs: Dict[str, Any] = {}
+        if output is not None:
+            kwargs["output"] = output
+        if metadata is not None:
+            kwargs["metadata"] = metadata
+        if kwargs:
+            span.update(**kwargs)
+        # Propagate to trace-level OTel attributes
+        if is_root:
+            try:
+                import json as _json
+                from langfuse._client.attributes import LangfuseOtelSpanAttributes as _A
+                otel_span = getattr(span, "_otel_span", None)
+                if otel_span is not None:
+                    if output is not None:
+                        otel_span.set_attribute(_A.TRACE_OUTPUT, _json.dumps(output, default=str))
+                    if metadata is not None:
+                        otel_span.set_attribute(_A.TRACE_METADATA, _json.dumps(metadata, default=str))
+            except Exception:
+                pass
+            span.update(**kwargs)
+    except Exception as exc:
+        logger.debug("Langfuse update_trace failed: %s", exc)
 
 
 def get_prompt(slug: str, label: str = "production") -> Optional[Any]:
@@ -312,3 +469,105 @@ def flush() -> None:
         lf.flush()
     except Exception as exc:
         logger.debug("Langfuse flush failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Safe convenience aliases (thin wrappers for inline use in pipelines)
+# ---------------------------------------------------------------------------
+# The core functions above are already fail-silent, but callers must still
+# guard each import + call in try/except.  These aliases let pipeline code
+# call a single function with no import ceremony and no risk of propagation.
+
+
+def start_trace_safe(
+    trace_id: str,
+    name: str,
+    *,
+    invoice_id: Optional[int] = None,
+    result_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Identical to ``start_trace`` but guaranteed to never raise."""
+    try:
+        return start_trace(
+            trace_id, name,
+            invoice_id=invoice_id,
+            result_id=result_id,
+            user_id=user_id,
+            session_id=session_id,
+            metadata=metadata,
+        )
+    except Exception:
+        return None
+
+
+def start_span_safe(
+    parent: Any,
+    name: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Identical to ``start_span`` but guaranteed to never raise."""
+    try:
+        return start_span(parent, name, metadata=metadata)
+    except Exception:
+        return None
+
+
+def end_span_safe(
+    span: Any,
+    *,
+    output: Optional[Any] = None,
+    level: str = "DEFAULT",
+    is_root: bool = False,
+) -> None:
+    """Identical to ``end_span`` but guaranteed to never raise."""
+    try:
+        end_span(span, output=output, level=level, is_root=is_root)
+    except Exception:
+        pass
+
+
+def score_trace_safe(
+    trace_id: str,
+    name: str,
+    value: float,
+    *,
+    comment: str = "",
+    span: Any = None,
+) -> None:
+    """Identical to ``score_trace`` but guaranteed to never raise."""
+    try:
+        score_trace(trace_id, name, value, comment=comment, span=span)
+    except Exception:
+        pass
+
+
+def score_observation_safe(
+    observation: Any,
+    name: str,
+    value: float,
+    *,
+    comment: str = "",
+) -> None:
+    """Identical to ``score_observation`` but guaranteed to never raise."""
+    try:
+        score_observation(observation, name, value, comment=comment)
+    except Exception:
+        pass
+
+
+def update_trace_safe(
+    span: Any,
+    *,
+    output: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    is_root: bool = False,
+) -> None:
+    """Identical to ``update_trace`` but guaranteed to never raise."""
+    try:
+        update_trace(span, output=output, metadata=metadata, is_root=is_root)
+    except Exception:
+        pass

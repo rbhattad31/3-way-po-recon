@@ -499,6 +499,7 @@ from apps.core.langfuse_client import (
 
 | Context | Trace ID pattern |
 |---|---|
+| Extraction pipeline (task) | `uuid4().hex` (generated per task run; session_id=`"extraction-upload-{upload_id}"`) |
 | Agent pipeline / extraction | `trace_ctx.trace_id` (from `TraceContext`) |
 | Reconciliation run | `run.trace_id` if set, else `str(run.pk)` |
 | Posting run | `posting_run.trace_id` if set, else `str(posting_run.pk)` |
@@ -515,14 +516,55 @@ from apps.core.langfuse_client import (
 | `reconciliation_match` | MATCHED=1.0, PARTIAL=0.5, REQUIRES_REVIEW=0.3, UNMATCHED=0.0 | After match classification |
 | `posting_confidence` | 0.0-1.0 composite | After stage 6 of posting pipeline |
 | `posting_requires_review` | 1.0 or 0.0 | After review routing (stage 7) |
-| `extraction_confidence` | 0.0-1.0 | After extraction pipeline step 9 |
+| `extraction_confidence` | 0.0-1.0 | After extraction pipeline persistence |
+| `extraction_success` | 1.0 or 0.0 | After extraction completes or fails |
+| `extraction_is_valid` | 1.0 or 0.0 | After validation stage |
+| `extraction_is_duplicate` | 1.0 or 0.0 | After duplicate detection |
 | `extraction_requires_review` | 1.0 or 0.0 | After routing in extraction pipeline |
+| `weakest_critical_field_score` | 0.0-1.0 | After field confidence scoring |
+| `decision_code_count` | integer as float | After decision code derivation |
+| `response_was_repaired` | 1.0 or 0.0 | When LLM response repair was applied |
+| `qr_detected` | 1.0 or 0.0 | When e-invoice QR code data found |
 | `review_priority` | priority / 10.0 (normalised to 0.0-1.0) | On `create_assignment()` |
 | `review_decision` | APPROVED=1.0, REPROCESSED=0.5, REJECTED=0.0 | On `_finalise()` |
 | `rbac_guardrail` | 1.0=GRANTED, 0.0=DENIED | Every guardrail decision |
 | `rbac_data_scope` | 0.0 only (deny path) | `authorize_data_scope()` deny |
 | `bulk_job_success_rate` | 0.0-1.0 (processed / total) | After bulk job completes |
 | `copilot_session_length` | message count (raw int as float) | On session archive |
+| `recon_final_success` | 1.0 or 0.0 | After reconciliation task completes or fails |
+| `recon_routed_to_agents` | float (count of non-MATCHED results) | After reconciliation run |
+| `recon_routed_to_review` | float (count of REQUIRES_REVIEW results) | After reconciliation run |
+| `recon_final_status_matched` | 1.0 or 0.0 per invoice | After match classification |
+| `recon_final_status_partial_match` | 1.0 or 0.0 per invoice | After match classification |
+| `recon_final_status_requires_review` | 1.0 or 0.0 per invoice | After match classification |
+| `recon_final_status_unmatched` | 1.0 or 0.0 per invoice | After match classification |
+| `recon_po_found` | 1.0 or 0.0 per invoice | After PO lookup |
+| `recon_grn_found` | 1.0 or 0.0 per invoice (THREE_WAY) | After GRN lookup |
+| `recon_auto_close_eligible` | 1.0 or 0.0 per invoice | After classification |
+| `recon_exception_count_final` | integer as float per invoice | After exception build |
+| `agent_pipeline_final_confidence` | 0.0-1.0 | After agent orchestrator execute() |
+| `agent_pipeline_recommendation_present` | 1.0 or 0.0 | After agent pipeline |
+| `agent_pipeline_escalation_triggered` | 1.0 or 0.0 | After agent pipeline |
+| `agent_pipeline_auto_close_candidate` | 1.0 or 0.0 | After agent pipeline |
+| `agent_pipeline_agents_executed_count` | integer as float | After agent pipeline |
+| `agent_confidence` | 0.0-1.0 per agent | After each agent run |
+| `agent_recommendation_present` | 1.0 or 0.0 per agent | After each agent run |
+| `agent_tool_success_rate` | 0.0-1.0 per agent | After each agent run |
+| `case_processing_success` | 1.0 or 0.0 | After case task completes or fails |
+| `case_stages_executed` | integer as float | After case orchestrator run |
+| `case_closed` | 1.0 or 0.0 | After case orchestrator run |
+| `case_terminal` | 1.0 or 0.0 | After case orchestrator run |
+| `case_path_resolved` | 1.0 or 0.0 | After PATH_RESOLUTION stage |
+| `case_match_status` | MATCHED=1.0, PARTIAL=0.5, REVIEW=0.3, UNMATCHED=0.0 | After matching stage |
+| `case_auto_closed` | 1.0 or 0.0 | After EXCEPTION_ANALYSIS stage |
+| `case_routed_to_review` | 1.0 or 0.0 | After REVIEW_ROUTING stage |
+| `case_reprocessed` | 1.0 or 0.0 | After reprocess task completes |
+| `review_assignment_created` | 1.0 | On create_assignment() |
+| `review_approved` | 1.0 or 0.0 | On _finalise() |
+| `review_rejected` | 1.0 or 0.0 | On _finalise() |
+| `review_reprocess_requested` | 1.0 or 0.0 | On _finalise() |
+| `review_had_corrections` | 1.0 or 0.0 | On _finalise() |
+| `review_fields_corrected_count` | integer as float | On record_action() for CORRECT_FIELD |
 
 ### When adding a new Celery task that triggers a pipeline
 
@@ -592,7 +634,11 @@ score_trace(
     "score_name",    # from the conventions table above
     float_value,     # always a float in range 0.0-1.0 (or raw count)
     comment=f"context={...}",    # human-readable, optional but encouraged
+    span=_lf_trace,  # REQUIRED: pass the Langfuse span so the real OTel trace_id is extracted
 )
+```
+
+**Important**: Always pass `span=` to `score_trace()` / `score_trace_safe()`. In Langfuse SDK v4, the real OTel trace_id differs from our application-level string trace_id. Without `span=`, scores are orphaned and show blank session_id/user_id. The `_extract_otel_trace_id(span)` helper extracts the 128-bit OTel trace_id from the span's `_otel_span` context.
 ```
 
 ### Guard pattern (all Langfuse calls must be guarded)
@@ -620,20 +666,26 @@ except Exception:
 | ~~`apps/extraction/bulk_tasks.py` — `run_bulk_job_task`~~ | ~~Root trace `"bulk_job"` wrapping the entire job; score `bulk_job_success_rate` at the end~~ **Done (already implemented)** |
 | ~~`apps/extraction/services/bulk_service.py` — `_process_item()`~~ | ~~Child span per item; mark `level="ERROR"` on failure~~ **Done (already implemented)** |
 | ~~`apps/extraction/services/bulk_source_adapters.py` — `GoogleDriveBulkSourceAdapter`, `OneDriveBulkSourceAdapter`~~ | ~~Span per `test_connection()`, `list_files()`, `download_file()` to surface latency and auth failures~~ **Done (already implemented)** |
-| ~~`apps/reconciliation/tasks.py` — `run_reconciliation_task`~~ | ~~Root trace `"reconciliation_task"` forwarded into `ReconciliationRunnerService`~~ **Done (2026-03-31)** |
+| ~~`apps/reconciliation/tasks.py` -- `run_reconciliation_task`~~ | ~~Root trace `"reconciliation_task"` forwarded into `ReconciliationRunnerService`~~ **Done (2026-03-31)** -- **Enriched**: session_id, trigger, invoices_preview; 3 task-level scores (recon_final_success, recon_routed_to_agents, recon_routed_to_review) |
 | ~~`apps/posting_core/services/posting_pipeline.py`~~ | ~~Root trace `"posting_pipeline"` opened at stage 1 so `posting_confidence` and `posting_requires_review` scores are linked~~ **Done (2026-03-31): 9 per-stage spans + root trace added** |
-| ~~`apps/reconciliation/services/runner_service.py`~~ | ~~Root trace `"reconciliation_run"` so `reconciliation_match` scores are linked~~ **Done: now a child span under `reconciliation_task`** |
+| ~~`apps/reconciliation/services/runner_service.py`~~ | ~~Root trace `"reconciliation_run"` so `reconciliation_match` scores are linked~~ **Done** -- **Enriched**: 8 per-invoice spans (po_lookup, mode_resolution, grn_lookup, match_execution, classification, result_persist, exception_build, review_workflow_trigger) + 15+ observation scores + 11 trace-level scores + eval-ready root trace metadata |
 | ~~`apps/erp_integration/services/resolution_service.py`~~ | ~~ERP resolution Langfuse spans~~ **Done (2026-03-31): `_trace_resolve` helper + `lf_parent_span` kwarg on all resolve_* methods** |
-| ~~`apps/agents/tasks.py` — `run_agent_pipeline_task`~~ | ~~Root trace at task level (the orchestrator already creates one but the Celery wrapper does not)~~ **Done (2026-03-31): `agent_pipeline_task` wrapper trace with Celery task_id** |
+| ~~`apps/agents/tasks.py` -- `run_agent_pipeline_task`~~ | ~~Root trace at task level~~ **Done** -- **Enriched**: prior_match_status, reconciliation_mode, trigger=auto metadata |
+| ~~`apps/agents/services/orchestrator.py`~~ | ~~Agent pipeline trace~~ **Done** -- **Enriched**: case_id, case_number, prior_match_status, exception_count, vendor info; 5 pipeline-level scores (agent_pipeline_final_confidence, recommendation_present, escalation_triggered, auto_close_candidate, agents_executed_count) |
+| ~~`apps/agents/services/base_agent.py`~~ | ~~Per-agent and per-tool spans~~ **Done** -- **Enriched**: agent_type, reconciliation_mode, po_number metadata; 3 per-agent scores (agent_confidence, agent_recommendation_present, agent_tool_success_rate); tool spans include source_used + tool_call_success score |
 | `apps/erp_integration/services/submission/posting_submit_resolver.py` | Inherit parent trace ID from posting pipeline instead of creating isolated traces (Phase 2 -- ERP submission is mock in Phase 1) |
-| ~~`apps/copilot/services/copilot_service.py` — `answer_question()`~~ | ~~Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive~~ **Done (2026-03-31)** |
-| ~~`apps/cases/tasks.py` — `process_case_task`, `reprocess_case_from_stage_task`~~ | ~~Root trace `"case_task"` per task invocation~~ **Done (2026-03-31)** |
+| ~~`apps/copilot/services/copilot_service.py` -- `answer_question()`~~ | ~~Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive~~ **Done (2026-03-31)** |
+| ~~`apps/cases/tasks.py` -- `process_case_task`, `reprocess_case_from_stage_task`~~ | ~~Root trace `"case_task"` per task invocation~~ **Done** -- **Enriched**: session_id, invoice_id, case_number, vendor metadata; lf_trace passed to CaseOrchestrator; case_processing_success + case_reprocessed scores |
+| ~~`apps/cases/orchestrators/case_orchestrator.py`~~ | ~~Per-stage spans in case pipeline~~ **Done** -- **Enriched**: per-stage Langfuse spans with stage_index, processing_path, case_status_before; stage-specific observation scores; 4 trace-level scores (case_stages_executed, case_closed, case_terminal, case_path_resolved, case_match_status, case_auto_closed, case_routed_to_review) |
+| ~~`apps/reviews/services.py`~~ | ~~Review workflow spans and scores~~ **Done** -- **Enriched**: create_assignment trace with match_status, exception_count, session_id; record_action spans + review_fields_corrected_count score; add_comment spans; _finalise enriched with 5 decision scores (review_approved, review_rejected, review_reprocess_requested, review_had_corrections, review_fields_corrected_count) |
 | ~~`apps/posting_core/services/posting_mapping_engine.py`~~ | ~~Pass the `mapping` stage span via `lf_parent_span` to `ERPResolutionService.resolve_vendor/resolve_item` calls so ERP spans appear nested under the `mapping` span in Langfuse~~ **Done (2026-03-31)** |
+| ~~`apps/extraction/tasks.py` -- `process_invoice_upload_task`~~ | ~~Root trace `"extraction_pipeline"` with 12 per-stage spans + 10 trace-level scores + per-observation scores.~~ **Done** |
 
 ### Debugging Langfuse
 
 - **No traces appearing**: Verify `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set. Check logs for `Langfuse disabled` or `start_trace failed`.
-- **Scores unlinked**: The pipeline is not creating a root trace -- `score_trace` scores are recorded but float free. Add a `start_trace` at pipeline entry and pass the same `trace_id` to `score_trace`.
+- **Scores unlinked**: The pipeline is not creating a root trace -- `score_trace` scores are recorded but float free. Add a `start_trace` at pipeline entry and pass the same `trace_id` to `score_trace`. Also ensure `span=` is passed to `score_trace`/`score_trace_safe` (see below).
+- **Scores show blank session_id/user_id**: In Langfuse SDK v4, the real OTel trace_id differs from our application-level string trace_id. Pass `span=` to `score_trace_safe()` so `_extract_otel_trace_id()` can extract the real 128-bit OTel trace_id. Without it, scores cannot be linked to the parent trace (which carries user/session attributes).
 - **Users/Sessions tab empty**: Confirm SDK is v4.x. User/session attribution uses `_otel_span.set_attribute()` -- not constructor kwargs.
 - **Prompt 404 in logs**: Run `python manage.py push_prompts_to_langfuse`. If names are wrong, run with `--purge`.
 - **`start_trace` returns None**: Set `LANGFUSE_LOG_LEVEL=debug`; look for `TypeError` from unknown kwargs or bad host URL (must not have trailing slash).

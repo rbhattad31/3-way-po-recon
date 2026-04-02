@@ -46,8 +46,10 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: 
         from apps.core.langfuse_client import start_trace, end_span
         _celery_task_id = self.request.id
         if _celery_task_id:
+            # Strip UUID hyphens to get a valid 32-char hex Langfuse trace ID.
             _lf_wrapper = start_trace(
-                f"agent-task-{_celery_task_id}",
+                _celery_task_id.replace("-", ""),
+
                 "agent_pipeline_task",
                 invoice_id=result.invoice_id,
                 user_id=actor_user_id,
@@ -56,6 +58,10 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: 
                     "task_id": _celery_task_id,
                     "reconciliation_result_id": reconciliation_result_id,
                     "actor_user_id": actor_user_id,
+                    "prior_match_status": str(getattr(result, "match_status", "")),
+                    "reconciliation_mode": getattr(result, "reconciliation_mode", ""),
+                    "trigger": "auto",
+                    "source": "agentic",
                 },
             )
         else:

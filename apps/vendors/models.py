@@ -1,4 +1,4 @@
-"""Vendor and VendorAlias models."""
+"""Vendor model."""
 from django.db import models
 
 from apps.core.models import BaseModel
@@ -30,30 +30,3 @@ class Vendor(BaseModel, SoftDeleteMixin):
 
     def __str__(self) -> str:
         return f"{self.code} – {self.name}"
-
-
-class VendorAlias(BaseModel):
-    """Alternative names / spellings for a vendor used in alias resolution."""
-
-    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name="aliases")
-    alias_name = models.CharField(max_length=255, db_index=True)
-    normalized_alias = models.CharField(max_length=255, blank=True, db_index=True)
-    source = models.CharField(
-        max_length=50,
-        blank=True,
-        default="manual",
-        help_text="Origin of alias: manual, extraction, erp",
-    )
-
-    class Meta:
-        db_table = "vendors_vendor_alias"
-        ordering = ["alias_name"]
-        verbose_name = "Vendor Alias"
-        verbose_name_plural = "Vendor Aliases"
-        unique_together = [("vendor", "normalized_alias")]
-        indexes = [
-            models.Index(fields=["normalized_alias"], name="idx_valias_norm"),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.alias_name} → {self.vendor.name}"

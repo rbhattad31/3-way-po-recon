@@ -124,7 +124,11 @@ class ExtractionApprovalService:
 
         # Transition invoice to READY_FOR_RECON
         invoice.status = InvoiceStatus.READY_FOR_RECON
-        invoice.save(update_fields=["status", "updated_at"])
+
+        # Re-attempt vendor resolution in case vendor was created after extraction
+        cls._try_resolve_vendor(invoice)
+
+        invoice.save(update_fields=["status", "vendor", "updated_at"])
 
         # Audit
         cls._log_audit(
@@ -233,7 +237,11 @@ class ExtractionApprovalService:
 
         # Transition invoice to READY_FOR_RECON
         invoice.status = InvoiceStatus.READY_FOR_RECON
-        invoice.save(update_fields=["status", "updated_at"])
+
+        # Re-attempt vendor resolution in case vendor was created after extraction
+        cls._try_resolve_vendor(invoice)
+
+        invoice.save(update_fields=["status", "vendor", "updated_at"])
 
         # ── If this was a duplicate, supersede the original ──────
         if invoice.is_duplicate and invoice.duplicate_of_id:
@@ -574,6 +582,40 @@ class ExtractionApprovalService:
             ExtractionFieldCorrection.objects.bulk_create(records)
 
         return records
+
+    @staticmethod
+    def _try_resolve_vendor(invoice: Invoice) -> None:
+        """Re-attempt vendor FK resolution if not already linked.
+
+        Called at approval time so invoices extracted before a vendor record
+        was created still get matched automatically.
+        """
+        if invoice.vendor or not invoice.raw_vendor_name:
+            return
+        try:
+            from apps.core.utils import normalize_string
+            from apps.documents.models import Invoice as _Inv
+            from apps.vendors.models import Vendor
+            from apps.posting_core.models import VendorAliasMapping
+            norm = normalize_string(invoice.raw_vendor_name)
+            vendor = Vendor.objects.filter(normalized_name=norm, is_active=True).first()
+            if not vendor:
+                alias = VendorAliasMapping.objects.filter(
+                    normalized_alias=norm, is_active=True
+                ).select_related("vendor").first()
+                if alias and alias.vendor:
+                    vendor = alias.vendor
+            if vendor:
+                invoice.vendor = vendor
+                logger.info(
+                    "Vendor resolved at approval time for invoice %s: %s (pk=%s)",
+                    invoice.pk, vendor.name, vendor.pk,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Vendor re-resolution failed at approval for invoice %s: %s",
+                invoice.pk, exc,
+            )
 
     @staticmethod
     def _build_values_snapshot(invoice: Invoice) -> dict:

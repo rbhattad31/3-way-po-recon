@@ -66,7 +66,7 @@ class POLookupService:
     def __init__(self, erp_service: Optional[ERPResolutionService] = None):
         self._erp = erp_service or ERPResolutionService.with_default_connector()
 
-    def lookup(self, invoice: Invoice) -> POLookupResult:
+    def lookup(self, invoice: Invoice, skip_vendor_amount: bool = False) -> POLookupResult:
         """Resolve PO for a single invoice.
 
         Args:
@@ -110,7 +110,7 @@ class POLookupService:
         # Fallback: deterministic vendor + amount discovery.
         # Only when the invoice has NO PO number reference at all (not just a failed lookup).
         has_po_reference = bool(invoice.po_number or invoice.raw_po_number)
-        if not has_po_reference:
+        if not has_po_reference and not skip_vendor_amount:
             discovery = self._discover_by_vendor_amount(invoice)
             if discovery.found:
                 return discovery
@@ -219,11 +219,12 @@ class POLookupService:
 
     @staticmethod
     def _resolve_vendor_from_name(raw_name: str) -> Optional[Any]:
-        """Attempt to resolve a vendor from a raw name string via aliases."""
+        """Attempt to resolve a vendor from a raw name string via VendorAliasMapping."""
         if not raw_name:
             return None
         try:
-            from apps.vendors.models import Vendor, VendorAlias
+            from apps.vendors.models import Vendor
+            from apps.posting_core.models import VendorAliasMapping
             norm = normalize_string(raw_name)
             vendor = (
                 Vendor.objects.filter(normalized_name=norm, is_active=True).first()
@@ -231,7 +232,9 @@ class POLookupService:
             )
             if vendor:
                 return vendor
-            alias = VendorAlias.objects.filter(normalized_alias=norm).select_related("vendor").first()
-            return alias.vendor if alias else None
+            alias = VendorAliasMapping.objects.filter(
+                normalized_alias=norm, is_active=True
+            ).select_related("vendor").first()
+            return alias.vendor if alias and alias.vendor else None
         except Exception:
             return None

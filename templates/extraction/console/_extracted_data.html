@@ -46,7 +46,7 @@
       <div class="exc-header-grid">
         {% for key, field in header_fields.items %}
         <div class="exc-header-cell
-              {% if field.confidence < 0.5 %}exc-cell-low{% elif field.confidence < 0.75 %}exc-cell-med{% endif %}
+              {% if field.confidence is not None and field.confidence < 0.5 %}exc-cell-low{% elif field.confidence is not None and field.confidence < 0.75 %}exc-cell-med{% endif %}
               {% if key in validation_field_issues %}exc-cell-flagged{% endif %}"
              data-field-key="{{ key }}" data-category="header">
           <div class="exc-cell-label">

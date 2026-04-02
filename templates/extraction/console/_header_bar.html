@@ -193,8 +193,9 @@
           <i class="bi bi-chat-dots me-1"></i>Comment
         </button>
 
-        {# JSON download #}
-        {% if ext.raw_response %}
+        {# JSON download — admin/auditor only #}
+        {% has_permission "governance.view" as can_view_json %}
+        {% if can_view_json and ext.raw_response %}
         <a href="{% url 'extraction:result_json' ext.pk %}" class="btn btn-outline-secondary btn-sm" title="Download JSON">
           <i class="bi bi-download me-1"></i>JSON
         </a>
@@ -205,8 +206,9 @@
           <i class="bi bi-file-earmark-pdf me-1"></i>View PDF
         </a>
 
-        {# Invoice Detail link #}
-        {% if invoice %}
+        {# Invoice Detail link — admin/auditor only #}
+        {% has_permission "governance.view" as can_view_invoice_detail %}
+        {% if can_view_invoice_detail and invoice %}
         <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="btn btn-outline-primary btn-sm" title="Full invoice view">
           <i class="bi bi-file-earmark-text me-1"></i>Invoice
         </a>

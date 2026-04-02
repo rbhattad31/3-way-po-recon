@@ -49,10 +49,26 @@ tracing calls become no-ops.
 | `start_span(parent, name, *, ...)` | Opens a child span under a parent span. Inherits user/session from root. |
 | `log_generation(span, name, *, ...)` | Records an LLM call (tokens, model, messages, completion) as a child generation. |
 | `end_span(span, *, ...)` | Closes a span, optionally setting output and level. |
-| `score_trace(trace_id, name, value, *, comment)` | Attaches a numeric score to a trace by `trace_id`. `comment` is optional human-readable context. |
+| `score_trace(trace_id, name, value, *, comment, span)` | Attaches a numeric score to a trace. When `span` is provided, extracts the real OTel trace_id from it (see Issue 4). `comment` is optional. |
+| `score_observation(observation, name, value, *, comment)` | Attaches a numeric score to a specific span/observation. |
+| `update_trace(span, *, output, metadata)` | Updates an existing span with additional output or metadata. |
 | `push_prompt(slug, content, *, labels)` | Pushes a prompt to Langfuse prompt management. |
 | `get_prompt(slug, *, label, fallback)` | Fetches a prompt from Langfuse (with fallback to local default). |
+| `_extract_otel_trace_id(span)` | Extracts the real OTel 128-bit trace_id hex string from a Langfuse span's `_otel_span`. Returns `None` on failure. |
 | `slug_to_langfuse_name(slug)` | Converts `extraction.invoice_system` -> `extraction-invoice_system`. |
+
+**Safe aliases** (guaranteed to never raise, double-wrapped in try/except):
+
+| Function | Wraps |
+|---|---|
+| `start_trace_safe(...)` | `start_trace(...)` |
+| `start_span_safe(...)` | `start_span(...)` |
+| `end_span_safe(...)` | `end_span(...)` |
+| `score_trace_safe(...)` | `score_trace(...)` |
+| `score_observation_safe(...)` | `score_observation(...)` |
+| `update_trace_safe(...)` | `update_trace(...)` |
+
+Use the `_safe` variants in hot paths (reconciliation per-invoice loop, case per-stage loop, agent per-tool loop) where a Langfuse failure must never propagate.
 
 ### Prompt naming convention
 
@@ -94,6 +110,27 @@ The `PromptRegistry` resolution order for each component:
 
 ```
 root trace  (start_trace)
+  -- extraction_pipeline     (process_invoice_upload_task -- root trace per upload)
+     -- ocr_extraction       (OCR + LLM via adapter.extract(), scores: ocr_char_count)
+        -- INVOICE_EXTRACTION (InvoiceExtractionAgent -- inherits parent trace)
+           -- llm_chat       (log_generation, one per LLM call)
+     -- document_type_classification  (scores: doc_type_confidence)
+     -- governed_pipeline    (ExtractionPipeline.run())
+     -- parsing              (ExtractionParserService)
+     -- normalization        (NormalizationService)
+     -- field_confidence     (FieldConfidenceService, scores: weakest_critical_score)
+     -- validation           (ValidationService + ReconciliationValidatorService,
+                              scores: validation_is_valid)
+     -- decision_code_derivation (derive_codes(), scores: decision_code_count)
+     -- recovery_lane        (RecoveryLaneService, scores: recovery_invoked)
+     -- duplicate_detection  (DuplicateDetectionService, scores: is_duplicate)
+     -- persistence          (InvoicePersistenceService + ExtractionResultPersistenceService)
+     -- approval_gate        (ExtractionApprovalService, scores: requires_human_review)
+     Trace-level scores: extraction_confidence, extraction_success,
+       extraction_is_valid, extraction_is_duplicate, extraction_requires_review,
+       weakest_critical_field_score, decision_code_count, response_was_repaired,
+       qr_detected
+
   -- agent_pipeline / invoice_extraction
      -- EXCEPTION_ANALYSIS / INVOICE_EXTRACTION  (start_span per agent)
         -- llm_chat          (log_generation, one per LLM call)
@@ -129,20 +166,65 @@ root trace  (start_trace)
 
   -- reconciliation_task     (run_reconciliation_task Celery task wrapper -- root trace)
      -- reconciliation_run   (ReconciliationRunnerService.run() -- child span)
-        -- recon_mode_resolution  (per invoice)
-        -- recon_matching         (per invoice -- router + classifier)
-        -- recon_result_persist   (per invoice -- result_service.save)
-        -- recon_exception_build  (per invoice -- exception_builder.build)
-        -- recon_mode_resolution  (next invoice...)
-        -- ...
+        -- po_lookup              (per invoice: PO lookup with erp_source_type, is_stale metadata)
+        -- mode_resolution        (per invoice: mode resolver with policy_source, resolution_method)
+        -- grn_lookup             (per invoice, THREE_WAY only: GRN lookup with grn_count, is_stale)
+        -- match_execution        (per invoice: 2-way/3-way matcher with header/line/grn ratios, amount_delta)
+        -- classification         (per invoice: match status classification with auto_close_candidate flag)
+        -- result_persist         (per invoice: result_service.save)
+        -- exception_build        (per invoice: exception_builder.build with blocking/warning counts)
+        -- review_workflow_trigger (per invoice: creates ReviewAssignment when needed)
+     Trace-level scores: reconciliation_match, recon_final_status_matched,
+       recon_final_status_partial_match, recon_final_status_requires_review,
+       recon_final_status_unmatched, recon_po_found, recon_grn_found,
+       recon_auto_close_eligible, recon_routed_to_review, recon_exception_count_final,
+       recon_final_success, recon_routed_to_agents, recon_routed_to_review
+     Observation-level scores (per span): recon_po_lookup_success, recon_po_lookup_fresh,
+       recon_po_authoritative, recon_header_match_ratio, recon_line_match_ratio,
+       recon_tolerance_passed, recon_grn_match_ratio, recon_match_is_clean,
+       recon_match_needs_review, recon_grn_lookup_success, recon_grn_fresh,
+       recon_grn_authoritative, recon_exception_has_blocking, recon_exception_severity_ratio,
+       recon_review_assignment_created
 
   -- agent_pipeline_task     (run_agent_pipeline_task Celery task wrapper)
-     (standalone root trace carrying Celery task_id; the orchestrator's
-      agent_pipeline trace runs concurrently under its own trace_id)
+     (root trace with prior_match_status, reconciliation_mode, trigger metadata;
+      the orchestrator's agent_pipeline trace runs under its own trace_id)
+  -- agent_pipeline          (AgentOrchestrator.execute() -- root trace)
+     -- EXCEPTION_ANALYSIS / INVOICE_UNDERSTANDING / ...  (per-agent spans)
+        -- llm_chat          (log_generation, one per LLM round in ReAct loop)
+        -- tool_po_lookup    (per tool call, with source_used and tool_call_success score)
+        -- tool_grn_lookup
+        -- tool_invoice_details
+     Pipeline-level scores: agent_pipeline_final_confidence,
+       agent_pipeline_recommendation_present, agent_pipeline_escalation_triggered,
+       agent_pipeline_auto_close_candidate, agent_pipeline_agents_executed_count
+     Per-agent scores: agent_confidence, agent_recommendation_present, agent_tool_success_rate
 
-  -- case_task               (process_case_task / reprocess_case_from_stage_task)
-     (root trace per Celery task invocation, trace_id=case-{case_id},
-      metadata includes task_id, case_id, and stage)
+  -- case_pipeline           (process_case_task / reprocess_case_from_stage_task)
+     -- case_stage_INTAKE           (per stage span with stage_index, case_status_before)
+     -- case_stage_EXTRACTION       (scores: case_stage_EXTRACTION_success)
+     -- case_stage_PATH_RESOLUTION  (scores: case_path_resolved)
+     -- case_stage_PO_RETRIEVAL     (scores: case_po_found)
+     -- case_stage_TWO_WAY_MATCHING (scores: case_match_result, case_match_status)
+     -- case_stage_THREE_WAY_MATCHING (scores: case_match_result, case_match_status)
+     -- case_stage_EXCEPTION_ANALYSIS (scores: case_auto_closed, case_agent_confidence)
+     -- case_stage_REVIEW_ROUTING   (scores: case_routed_to_review)
+     -- case_stage_NON_PO_VALIDATION (scores: case_non_po_approval_ready, case_non_po_risk_score)
+     -- case_stage_CASE_SUMMARY
+     Trace-level scores: case_processing_success, case_stages_executed,
+       case_closed, case_terminal, case_reprocessed (reprocess only),
+       case_path_resolved, case_match_status, case_auto_closed, case_routed_to_review
+
+  -- review_assignment       (ReviewWorkflowService.create_assignment() -- root trace)
+     -- review_assign_reviewer (when reviewer assigned)
+     -- review_start           (when review begins)
+     -- review_record_action   (per reviewer action -- field corrections, etc.)
+     -- review_add_comment     (per comment)
+     -- review_finalise        (approve/reject/reprocess decision)
+     Trace-level scores: review_priority, review_assignment_created,
+       review_decision, review_approved, review_rejected,
+       review_reprocess_requested, review_had_corrections,
+       review_fields_corrected_count
 
   -- copilot_answer          (APCopilotService.answer_question())
      (root trace per answer call; trace_id from session.trace_id or copilot-{session.pk};
@@ -1061,6 +1143,71 @@ so `extraction.invoice_system` becomes `extraction-invoice_system`.
 **Fix**: Run `python manage.py push_prompts_to_langfuse --purge` to delete all
 existing prompts and reseed with the correct names.
 
+### Issue 4 -- Scores orphaned / blank session_id and user_id on scores (Langfuse SDK v4 OTel trace_id mismatch)
+
+**Symptom**: Scores appeared in Langfuse but showed blank session_id, blank
+user_id, and were not linked to their parent trace observation. The
+"observation" column was empty for case_pipeline and reconciliation_run scores.
+
+**Root cause**: In Langfuse SDK v4, `start_observation()` creates an
+OpenTelemetry span with an auto-generated 128-bit trace_id. Our application-level
+trace_id strings (e.g. `"case-42"`, `"recon-task-abc"`, `"review-7"`) are set
+as `TraceContext` correlation IDs but are **not** the same as the OTel trace_id
+that Langfuse uses internally. When `score_trace(trace_id, ...)` was called with
+our application string, Langfuse could not match it to any existing trace, so
+scores floated free -- no parent trace meant no inherited user_id or session_id.
+
+**Fix** (`apps/core/langfuse_client.py`):
+
+1. Added `_extract_otel_trace_id(span)` helper that reads the real OTel
+   trace_id from a span object:
+
+   ```python
+   def _extract_otel_trace_id(span: Any) -> Optional[str]:
+       otel_span = getattr(span, "_otel_span", None)
+       if otel_span is not None:
+           sc = otel_span.get_span_context()
+           if sc is not None:
+               tid = getattr(sc, "trace_id", 0)
+               if tid:
+                   return format(tid, "032x")  # 128-bit int -> 32-char hex
+       return None
+   ```
+
+2. Updated `score_trace()` and `score_trace_safe()` to accept an optional
+   `span` parameter. When provided, the real OTel trace_id is extracted and
+   used instead of the application-level string:
+
+   ```python
+   def score_trace(trace_id, name, value, *, comment="", span=None):
+       real_tid = _extract_otel_trace_id(span) if span else None
+       lf.create_score(trace_id=real_tid or trace_id, name=name, value=value, ...)
+   ```
+
+3. Updated all `score_trace_safe()` call sites across 5 files to pass `span=`:
+
+   | File | Calls updated | `span=` value |
+   |---|---|---|
+   | `apps/cases/tasks.py` | 6 | `_lf_trace` |
+   | `apps/cases/orchestrators/case_orchestrator.py` | 8 | `self._lf_trace` |
+   | `apps/reconciliation/tasks.py` | 3 | `_lf_task_trace` |
+   | `apps/reconciliation/services/runner_service.py` | 10 | `lf_trace` |
+   | `apps/reviews/services.py` | 8 | `_lf_trace` or `_lf_span` |
+
+   **Total**: 35 `score_trace_safe()` calls now pass `span=`.
+
+**Pattern for new code**: Always pass `span=` when calling `score_trace_safe()`:
+
+```python
+score_trace_safe(
+    _trace_id,              # application-level ID (used as fallback)
+    "my_score_name",
+    1.0,
+    comment="context",
+    span=_lf_trace,         # the Langfuse span from start_trace/start_span
+)
+```
+
 ---
 
 ## Debugging
@@ -1072,4 +1219,5 @@ existing prompts and reseed with the correct names.
 | Prompt 404 warning in logs | Run `push_prompts_to_langfuse`. If names are wrong, run with `--purge`. |
 | Old prompt content being served | Langfuse client caches prompts for 60 seconds. Wait or restart to force refresh. |
 | `start_trace` returns None | Set `LANGFUSE_LOG_LEVEL=debug` and check for exceptions in the client init. Ensure host URL has no trailing slash. |
-| Scores appear in Langfuse but not linked to a trace | Confirm the pipeline that emits the score also calls `start_trace` before the score. The posting, reconciliation, and bulk extraction pipelines all create root traces — scores from these pipelines are always linked. |
+| Scores appear in Langfuse but not linked to a trace | Confirm the pipeline that emits the score also calls `start_trace` before the score. The posting, reconciliation, and bulk extraction pipelines all create root traces -- scores from these pipelines are always linked. Also ensure `span=` is passed to `score_trace_safe()` (see Issue 4). |
+| Scores exist but show blank session_id / user_id | The `score_trace()` call was using the application-level trace_id string instead of the real OTel trace_id. Pass `span=` to `score_trace_safe()` so the real OTel trace_id is extracted and scores are linked to the actual trace (which carries user/session attributes). See Issue 4. |

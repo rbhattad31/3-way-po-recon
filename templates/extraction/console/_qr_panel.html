@@ -137,12 +137,19 @@
               </tr>
               {% endwith %}
 
-              {# Invoice Date #}
+              {# Invoice Date — compared server-side because formats differ #}
               {% with qr_val=qr_data.doc_date ext_val=invoice.invoice_date|default:"" %}
-              <tr>
+              <tr class="{% if qr_date_match == True %}table-success{% elif qr_date_match == False %}table-danger{% endif %}">
                 <td class="text-muted small ps-3">Invoice Date</td>
-                <td class="small fw-semibold">{{ qr_val|default:"—" }}</td>
-                <td class="small">{{ ext_val|default:"—" }}</td>
+                <td class="small fw-semibold">{{ qr_val|default:"--" }}</td>
+                <td class="small">
+                  {{ ext_val|default:"--" }}
+                  {% if qr_date_match == True %}
+                  <i class="bi bi-check-circle-fill text-success ms-1" title="Match"></i>
+                  {% elif qr_date_match == False %}
+                  <i class="bi bi-x-circle-fill text-danger ms-1" title="Mismatch"></i>
+                  {% endif %}
+                </td>
               </tr>
               {% endwith %}
 
@@ -173,14 +180,21 @@
               </tr>
               {% endif %}
 
-              {# Total Value #}
+              {# Total Value -- compared server-side because format/precision may differ #}
               {% with qr_val=qr_data.total_value ext_val=invoice.total_amount|default:"" %}
-              <tr class="{% if qr_val and ext_val %}{% if qr_val|stringformat:'s' != ext_val|stringformat:'s' %}table-warning{% else %}table-success{% endif %}{% endif %}">
+              <tr class="{% if qr_amount_match == True %}table-success{% elif qr_amount_match == False %}table-danger{% endif %}">
                 <td class="text-muted small ps-3">Total Amount</td>
                 <td class="small fw-semibold">
-                  {% if qr_val %}{{ qr_val }}{% else %}—{% endif %}
+                  {% if qr_val %}{{ qr_val }}{% else %}--{% endif %}
                 </td>
-                <td class="small">{{ ext_val|default:"—" }}</td>
+                <td class="small">
+                  {{ ext_val|default:"--" }}
+                  {% if qr_amount_match == True %}
+                  <i class="bi bi-check-circle-fill text-success ms-1" title="Match"></i>
+                  {% elif qr_amount_match == False %}
+                  <i class="bi bi-x-circle-fill text-danger ms-1" title="Mismatch"></i>
+                  {% endif %}
+                </td>
               </tr>
               {% endwith %}
 
