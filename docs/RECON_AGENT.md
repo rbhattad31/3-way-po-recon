@@ -1520,9 +1520,20 @@ The reconciliation and agent pipeline emits rich Langfuse traces. All Langfuse c
 ```
 Root trace: "reconciliation_run" (trace_id = run.trace_id or str(run.pk))
   |
+  +--> child span: "po_lookup"      (per invoice, step 1 -- PO lookup with ERP provenance)
+  |     |
+  |     +--> child span: "erp_resolution"  (when ERP connector available via lf_parent_span)
+  |           +--> "erp_cache_lookup"      (BaseResolver cache check)
+  |           +--> "erp_live_lookup"       (BaseResolver live API call)
+  |           +--> "erp_db_fallback"       (BaseResolver DB fallback)
+  |
   +--> child span: "mode_resolution"  (per invoice, step 2)
-  +--> child span: "match_execution"  (per invoice, step 3)
-  +--> child span: "result_save"      (per invoice, step 6)
+  +--> child span: "grn_lookup"       (per invoice, THREE_WAY only, step 3)
+  +--> child span: "match_execution"  (per invoice, step 4)
+  +--> child span: "classification"   (per invoice, step 5)
+  +--> child span: "result_persist"   (per invoice, step 6)
+  +--> child span: "exception_build"  (per invoice, step 7)
+  +--> child span: "review_workflow_trigger" (per invoice, step 8)
   |
   +--> score: "reconciliation_match" (MATCHED=1.0 | PARTIAL=0.5 | REQUIRES_REVIEW=0.3 | UNMATCHED=0.0)
 
@@ -1531,11 +1542,29 @@ Root trace: "agent_pipeline" (trace_id = reconciliation_result.agent_trace_id)
   +--> child span per agent: "agent_{AGENT_TYPE}"
   |     |
   |     +--> child span per tool call: "tool_{tool_name}"
+  |           |
+  |           +--> child span: "erp_resolution"  (for po_lookup / grn_lookup tools)
+  |                 +--> "erp_cache_lookup" / "erp_live_lookup" / "erp_db_fallback"
   |
   +--> score: "agent_confidence" per agent run
   +--> score: "rbac_guardrail" per guardrail decision (1.0=granted | 0.0=denied)
   +--> score: "rbac_data_scope" (0.0 on deny path only)
 ```
+
+### ERP resolution span threading
+
+`POLookupService.lookup()` and `GRNLookupService.lookup()` accept `lf_parent_span=`
+and pass it to `ERPResolutionService.resolve_po/grn()`. In the reconciliation runner,
+`_lf_po` (the po_lookup span) is passed as the parent so ERP spans nest properly.
+
+For agent tools, `BaseAgent._execute_tool()` injects `lf_parent_span=_tool_span`
+into tool kwargs. `POLookupTool` and `GRNLookupTool` forward it to the ERP resolver.
+
+ERP resolution spans emit 6 observation scores (success, latency_ok, result_present,
+fresh, authoritative, used_fallback). Per-stage spans (cache, live, fallback) emit
+additional scores. All metadata is sanitised via `langfuse_helpers.sanitize_erp_metadata()`.
+
+**Full ERP tracing reference**: [LANGFUSE_INTEGRATION.md](../docs/LANGFUSE_INTEGRATION.md) Section 11.
 
 ### Score value conventions
 

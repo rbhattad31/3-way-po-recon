@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional
 from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 
+from apps.core.evaluation_constants import RBAC_DATA_SCOPE, RBAC_GUARDRAIL
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -161,7 +163,7 @@ class AgentGuardrailsService:
                         pass
                     score_trace(
                         _tid,
-                        "rbac_guardrail",
+                        RBAC_GUARDRAIL,
                         1.0,
                         comment=(
                             f"rbac_guardrail GRANTED method=authorize_agent"
@@ -194,7 +196,7 @@ class AgentGuardrailsService:
                         pass
                     score_trace(
                         _tid,
-                        "rbac_guardrail",
+                        RBAC_GUARDRAIL,
                         1.0,
                         comment=(
                             f"rbac_guardrail GRANTED method=authorize_tool"
@@ -351,7 +353,7 @@ class AgentGuardrailsService:
             if _trace_id:
                 score_trace(
                     _trace_id,
-                    "rbac_guardrail",
+                    RBAC_GUARDRAIL,
                     1.0 if granted else 0.0,
                     comment=(
                         f"action={action} "
@@ -561,7 +563,7 @@ class AgentGuardrailsService:
                 if _trace_id:
                     score_trace(
                         _trace_id,
-                        "rbac_data_scope",
+                        RBAC_DATA_SCOPE,
                         0.0,
                         comment=(
                             f"actor={getattr(actor, 'pk', None)} "

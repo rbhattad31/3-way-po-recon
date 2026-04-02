@@ -424,6 +424,42 @@ Every posting operation is fully auditable:
 
 ---
 
+## Langfuse Observability
+
+The posting pipeline emits rich Langfuse traces with 9 per-stage spans plus
+ERP resolution child spans nested under the `mapping` stage.
+
+### Trace hierarchy
+
+```
+posting_pipeline (root trace -- one per PostingRun)
+  -- eligibility_check    (stage 1)
+  -- snapshot_build       (stage 2)
+  -- mapping              (stage 3)
+     -- erp_resolution    (per resolve_vendor / resolve_item / resolve_tax / etc.)
+        -- erp_cache_lookup
+        -- erp_live_lookup
+        -- erp_db_fallback
+  -- validation           (stage 4)
+  -- confidence_scoring   (stage 5, emits posting_confidence score)
+  -- review_routing       (stage 6, emits posting_requires_review score)
+  -- payload_build        (stage 7)
+  -- finalization         (stage 8)
+  -- duplicate_check      (stage 9b)
+     -- erp_resolution    (duplicate invoice check)
+```
+
+ERP resolution spans are created by `ERPResolutionService._trace_resolve()` via
+`apps/erp_integration/services/langfuse_helpers.py`. Metadata is automatically
+sanitised (no API keys, tokens, or passwords) and values >2000 chars are truncated.
+
+`PostingMappingEngine` passes `lf_parent_span=self._lf_mapping_span` to all
+`resolve_*()` calls so ERP spans nest under the `mapping` stage.
+
+**Full reference**: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Sections 6 and 11.
+
+---
+
 ## Phase 2+ Extension Points
 
 The system is designed for incremental enhancement:

@@ -123,6 +123,7 @@ class POLookupTool(BaseTool):
             result = svc.resolve_po(
                 po_number=po_number,
                 reconciliation_result_id=kwargs.get("reconciliation_result_id"),
+                lf_parent_span=kwargs.get("lf_parent_span"),
             )
 
             if not result.resolved:
@@ -221,6 +222,7 @@ class GRNLookupTool(BaseTool):
             result = svc.resolve_grn(
                 po_number=po_number,
                 reconciliation_result_id=kwargs.get("reconciliation_result_id"),
+                lf_parent_span=kwargs.get("lf_parent_span"),
             )
 
             if not result.resolved:

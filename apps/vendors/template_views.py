@@ -30,7 +30,7 @@ def _scope_vendors_for_user(qs, user):
 @permission_required_code("vendors.view")
 def vendor_list(request):
     qs = Vendor.objects.annotate(
-        alias_count=Count("aliases"),
+        alias_count=Count("alias_mappings"),
         po_count=Count("purchase_orders", distinct=True),
         invoice_count=Count("invoices", distinct=True),
     ).order_by("name")
@@ -97,7 +97,7 @@ def vendor_list(request):
 @permission_required_code("vendors.view")
 def vendor_detail(request, pk):
     vendor = get_object_or_404(
-        Vendor.objects.prefetch_related("aliases"),
+        Vendor.objects.prefetch_related("alias_mappings"),
         pk=pk,
     )
 

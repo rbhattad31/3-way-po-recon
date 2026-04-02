@@ -164,7 +164,7 @@ def extraction_workbench(request):
     # ── Approval tab data ──
     from apps.extraction.services.approval_service import ExtractionApprovalService
 
-    approval_status_filter = request.GET.get("approval_status", "ALL")
+    approval_status_filter = request.GET.get("approval_status", "PENDING")
     approval_qs = (
         ExtractionApproval.objects
         .select_related(
@@ -1451,12 +1451,6 @@ def extraction_console(request, pk):
                 "match_type": "EXACT",
                 "entity_name": vendor.name if hasattr(vendor, "name") else str(vendor),
                 "entity_code": getattr(vendor, "vendor_code", ""),
-            }
-        elif invoice.raw_vendor_name:
-            vendor_match = {
-                "match_type": "RAW",
-                "entity_name": invoice.raw_vendor_name,
-                "entity_code": "",
             }
         po_lookup = {"found": False}
         if po_num:

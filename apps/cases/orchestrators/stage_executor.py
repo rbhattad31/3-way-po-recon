@@ -425,6 +425,13 @@ class StageExecutor:
         return {"grn_analysis": "pending_agent_integration"}
 
     @staticmethod
+    def _mark_invoice_reconciled(case: APCase) -> None:
+        """Mark the invoice as RECONCILED when the case reaches CLOSED status."""
+        if case.invoice and case.invoice.status != InvoiceStatus.RECONCILED:
+            case.invoice.status = InvoiceStatus.RECONCILED
+            case.invoice.save(update_fields=["status", "updated_at"])
+
+    @staticmethod
     def _execute_non_po_validation(case: APCase) -> Dict:
         """
         Non-PO validation: deterministic checks + agent reasoning.
@@ -439,11 +446,9 @@ class StageExecutor:
 
         result = NonPOValidationService.validate(case)
 
-        # Transition invoice status -- non-PO cases skip reconciliation,
-        # so we mark the invoice as RECONCILED here (validation complete).
-        if case.invoice and case.invoice.status != InvoiceStatus.RECONCILED:
-            case.invoice.status = InvoiceStatus.RECONCILED
-            case.invoice.save(update_fields=["status", "updated_at"])
+        # NOTE: Invoice stays at READY_FOR_RECON until the case is actually
+        # closed/approved.  The RECONCILED transition happens in
+        # _mark_invoice_reconciled() when the case reaches CLOSED status.
 
         # Advance to exception analysis
         CaseStateMachine.transition(
@@ -485,6 +490,10 @@ class StageExecutor:
                 CaseStateMachine.transition(case, CaseStatus.ESCALATED, PerformedByType.AGENT)
             else:
                 CaseStateMachine.transition(case, CaseStatus.READY_FOR_REVIEW, PerformedByType.AGENT)
+
+            # When closing, mark the invoice as RECONCILED
+            if auto_closed:
+                StageExecutor._mark_invoice_reconciled(case)
 
             # When auto-closing on a clean match, mark eligible for posting
             # and enqueue the posting pipeline so the invoice appears on the

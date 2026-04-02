@@ -3,6 +3,13 @@
 from celery import shared_task
 import logging
 
+from apps.core.evaluation_constants import (
+    CASE_PROCESSING_SUCCESS,
+    CASE_REPROCESSED,
+    TRACE_CASE_PIPELINE,
+)
+from apps.core.observability_helpers import build_observability_context, derive_session_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,10 +58,13 @@ def process_case_task(self, case_id: int):
         from apps.core.langfuse_client import start_trace_safe
         _lf_trace = start_trace_safe(
             _trace_id,
-            "case_pipeline",
+            TRACE_CASE_PIPELINE,
             invoice_id=_case_meta.get("invoice_id"),
             user_id=None,
-            session_id=f"invoice-{_case_meta['invoice_id']}" if _case_meta.get("invoice_id") else None,
+            session_id=derive_session_id(
+                invoice_id=_case_meta.get("invoice_id"),
+                case_id=case_id,
+            ),
             metadata=_case_meta,
         )
     except Exception:
@@ -79,7 +89,7 @@ def process_case_task(self, case_id: int):
                 "case_number": case.case_number,
                 "final_stage": case.current_stage,
             }, is_root=True)
-            score_trace_safe(_trace_id, "case_processing_success", 1.0, comment=f"case={case.case_number}", span=_lf_trace)
+            score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 1.0, comment=f"case={case.case_number}", span=_lf_trace)
         except Exception:
             pass
     except APCase.DoesNotExist:
@@ -87,7 +97,7 @@ def process_case_task(self, case_id: int):
         try:
             from apps.core.langfuse_client import end_span_safe, score_trace_safe
             end_span_safe(_lf_trace, output={"error": "not_found"}, level="ERROR")
-            score_trace_safe(_trace_id, "case_processing_success", 0.0, comment="case not found", span=_lf_trace)
+            score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 0.0, comment="case not found", span=_lf_trace)
         except Exception:
             pass
     except Exception as exc:
@@ -95,7 +105,7 @@ def process_case_task(self, case_id: int):
         try:
             from apps.core.langfuse_client import end_span_safe, score_trace_safe
             end_span_safe(_lf_trace, output={"error": str(exc)[:200]}, level="ERROR")
-            score_trace_safe(_trace_id, "case_processing_success", 0.0, comment=str(exc)[:100], span=_lf_trace)
+            score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 0.0, comment=str(exc)[:100], span=_lf_trace)
         except Exception:
             pass
         from apps.core.utils import safe_retry
@@ -132,9 +142,12 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
         from apps.core.langfuse_client import start_trace_safe
         _lf_trace = start_trace_safe(
             _trace_id,
-            "case_pipeline",
+            TRACE_CASE_PIPELINE,
             invoice_id=_case_meta.get("invoice_id"),
-            session_id=f"invoice-{_case_meta['invoice_id']}" if _case_meta.get("invoice_id") else None,
+            session_id=derive_session_id(
+                invoice_id=_case_meta.get("invoice_id"),
+                case_id=case_id,
+            ),
             metadata=_case_meta,
         )
     except Exception:
@@ -148,8 +161,8 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
         try:
             from apps.core.langfuse_client import end_span_safe, score_trace_safe
             end_span_safe(_lf_trace, output={"status": case.status, "stage": stage}, is_root=True)
-            score_trace_safe(_trace_id, "case_processing_success", 1.0, span=_lf_trace)
-            score_trace_safe(_trace_id, "case_reprocessed", 1.0, span=_lf_trace)
+            score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 1.0, span=_lf_trace)
+            score_trace_safe(_trace_id, CASE_REPROCESSED, 1.0, span=_lf_trace)
         except Exception:
             pass
     except APCase.DoesNotExist:
@@ -157,7 +170,7 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
         try:
             from apps.core.langfuse_client import end_span_safe, score_trace_safe
             end_span_safe(_lf_trace, output={"error": "not_found"}, level="ERROR")
-            score_trace_safe(_trace_id, "case_processing_success", 0.0, span=_lf_trace)
+            score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 0.0, span=_lf_trace)
         except Exception:
             pass
     except Exception as exc:
@@ -165,7 +178,7 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
         try:
             from apps.core.langfuse_client import end_span_safe, score_trace_safe
             end_span_safe(_lf_trace, output={"error": str(exc)[:200]}, level="ERROR")
-            score_trace_safe(_trace_id, "case_processing_success", 0.0, span=_lf_trace)
+            score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 0.0, span=_lf_trace)
         except Exception:
             pass
         from apps.core.utils import safe_retry

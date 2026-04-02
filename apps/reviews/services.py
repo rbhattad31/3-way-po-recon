@@ -14,6 +14,16 @@ from apps.core.enums import (
     RecommendationType,
 )
 from apps.core.decorators import observed_service
+from apps.core.evaluation_constants import (
+    REVIEW_APPROVED,
+    REVIEW_ASSIGNMENT_CREATED,
+    REVIEW_DECISION,
+    REVIEW_FIELDS_CORRECTED_COUNT,
+    REVIEW_HAD_CORRECTIONS,
+    REVIEW_PRIORITY,
+    REVIEW_REJECTED,
+    REVIEW_REPROCESS_REQUESTED,
+)
 from apps.core.metrics import MetricsService
 from apps.reconciliation.models import ReconciliationResult
 from apps.reviews.models import (
@@ -88,7 +98,7 @@ class ReviewWorkflowService:
             )
             score_trace_safe(
                 _lf_trace_id,
-                "review_priority",
+                REVIEW_PRIORITY,
                 float(priority) / 10.0,
                 comment=(
                     f"assignment={assignment.pk} "
@@ -100,7 +110,7 @@ class ReviewWorkflowService:
             )
             score_trace_safe(
                 _lf_trace_id,
-                "review_assignment_created",
+                REVIEW_ASSIGNMENT_CREATED,
                 1.0,
                 comment=f"assignment={assignment.pk}",
                 span=_lf_trace,
@@ -258,7 +268,7 @@ class ReviewWorkflowService:
                 ).count()
                 score_trace_safe(
                     f"review-{assignment.pk}",
-                    "review_fields_corrected_count",
+                    REVIEW_FIELDS_CORRECTED_COUNT,
                     float(_correction_count),
                     comment=f"field={field_name}",
                     span=_lf_span,
@@ -428,7 +438,7 @@ class ReviewWorkflowService:
             )
             score_trace_safe(
                 _trace_id,
-                "review_decision",
+                REVIEW_DECISION,
                 _decision_score,
                 comment=(
                     f"decision={decision_status} "
@@ -440,25 +450,25 @@ class ReviewWorkflowService:
             # Additional eval scores
             score_trace_safe(
                 _trace_id,
-                "review_approved",
+                REVIEW_APPROVED,
                 1.0 if decision_status == ReviewStatus.APPROVED else 0.0,
                 span=_lf_span,
             )
             score_trace_safe(
                 _trace_id,
-                "review_rejected",
+                REVIEW_REJECTED,
                 1.0 if decision_status == ReviewStatus.REJECTED else 0.0,
                 span=_lf_span,
             )
             score_trace_safe(
                 _trace_id,
-                "review_reprocess_requested",
+                REVIEW_REPROCESS_REQUESTED,
                 1.0 if decision_status == ReviewStatus.REPROCESSED else 0.0,
                 span=_lf_span,
             )
             score_trace_safe(
                 _trace_id,
-                "review_had_corrections",
+                REVIEW_HAD_CORRECTIONS,
                 1.0 if _corrections_count > 0 else 0.0,
                 comment=f"corrections={_corrections_count}",
                 span=_lf_span,

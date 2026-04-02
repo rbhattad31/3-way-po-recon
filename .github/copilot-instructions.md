@@ -53,11 +53,12 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Cache** (`ERPCacheService`): TTL-based DB cache (`ERPReferenceCacheRecord`), controlled by `ERP_CACHE_TTL_SECONDS` env var (default 3600s).
 - **Audit** (`ERPAuditService`): logs every resolution + submission to `ERPResolutionLog` / `ERPSubmissionLog` and `AuditEvent`.
 - **`PostingMappingEngine`** now accepts `connector=` kwarg; when provided, vendor/item resolution goes through the ERP resolver chain first, then falls back to direct DB. Source metadata per field is stored in `PostingRun.erp_source_metadata_json`.
-- **`POLookupTool` / `GRNLookupTool`** now attempt ERP resolution first (`_resolve_via_erp()`); fall through to direct DB only if the resolver import fails.
+- **`POLookupTool` / `GRNLookupTool`** now attempt ERP resolution first (`_resolve_via_erp()`); fall through to direct DB only if the resolver import fails. Agent tool spans are threaded via `lf_parent_span` kwarg from `BaseAgent._execute_tool()`.
 - **Settings**: `ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD` (default 0.8), `ERP_CACHE_TTL_SECONDS` (default 3600).
 - **API**: `GET/POST /api/v1/erp/resolve/<resolution_type>/` — on-demand ERP reference resolution.
 - **Reference Data UI**: `/erp-connections/reference-data/` (`erp_integration:erp_reference_data`) — browse all 5 imported reference tables (Vendors, Items, Tax Codes, Cost Centers, Open POs) with search, pagination, KPI cards, and import-batch provenance. Sidebar: ERP Integration section (Reference Data, Import Reference Data, ERP Connections).
 - **ERP connector enums** live in `apps/erp_integration/enums.py` (not `apps/core/enums.py`): `ERPConnectorType`, `ERPConnectionStatus`, `ERPSourceType`, `ERPResolutionType`, `ERPSubmissionType`, `ERPSubmissionStatus`.
+- **Langfuse tracing** (`apps/erp_integration/services/langfuse_helpers.py`): ERP-specific helpers for fail-silent tracing. `sanitize_erp_metadata()` redacts API keys/tokens/passwords and truncates large values. `sanitize_erp_error()` maps raw errors to safe categories. `start_erp_span()` / `end_erp_span()` auto-sanitize metadata. Per-stage traced wrappers (`trace_erp_cache_lookup`, `trace_erp_live_lookup`, `trace_erp_db_fallback`, `trace_erp_submission`) create child spans with observation scores. Source provenance helpers: `build_source_chain()`, `freshness_status_label()`, `is_authoritative_source()`. All callers thread `lf_parent_span` through `ERPResolutionService._trace_resolve()` -> `BaseResolver.resolve()` -> per-stage wrappers.
 
 ### Invoice Posting Agent (`apps/posting/` + `apps/posting_core/`)
 - **Two-layer architecture**: `apps/posting/` (business/UI layer) + `apps/posting_core/` (platform/core layer), mirroring the extraction system.
@@ -157,6 +158,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | ERP Resolvers | `apps/erp_integration/services/resolution/` |
 | ERP DB Fallbacks | `apps/erp_integration/services/db_fallback/` |
 | ERP Submission | `apps/erp_integration/services/submission/` |
+| ERP Langfuse Helpers | `apps/erp_integration/services/langfuse_helpers.py` (sanitization, span/score wrappers, source provenance) |
 | ERP Connection Config | `apps/erp_integration/models.py` (`ERPConnection`, `ERPReferenceCacheRecord`, `ERPResolutionLog`, `ERPSubmissionLog`) |
 | Posting Business Logic | `apps/posting/services/` (eligibility, orchestrator, action service) |
 | Posting Core Pipeline | `apps/posting_core/services/` (mapping engine, pipeline, validation, confidence, review routing, governance trail) |
@@ -470,6 +472,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/erp_integration/services/resolution/base.py` | `BaseResolver` — cache → API → DB fallback pattern |
 | `apps/erp_integration/services/connector_factory.py` | `ConnectorFactory` — instantiates connectors from `ERPConnection` records |
 | `apps/erp_integration/models.py` | `ERPConnection`, `ERPReferenceCacheRecord`, `ERPResolutionLog`, `ERPSubmissionLog` |
+| `apps/erp_integration/services/langfuse_helpers.py` | ERP-specific Langfuse tracing helpers -- sanitization, span/score wrappers, source provenance utilities |
 | `apps/posting_core/services/posting_mapping_engine.py` | Core posting value resolution + ERP connector integration |
 | `apps/posting_core/services/posting_pipeline.py` | 9-stage posting pipeline orchestration (incl. duplicate check) |
 | `apps/posting/services/posting_orchestrator.py` | Orchestrates `prepare_posting` lifecycle |
@@ -565,6 +568,24 @@ from apps.core.langfuse_client import (
 | `review_reprocess_requested` | 1.0 or 0.0 | On _finalise() |
 | `review_had_corrections` | 1.0 or 0.0 | On _finalise() |
 | `review_fields_corrected_count` | integer as float | On record_action() for CORRECT_FIELD |
+| `erp_resolution_success` | 1.0 or 0.0 | After ERP resolution (per resolve call) |
+| `erp_resolution_latency_ok` | 1.0 if <=5s, 0.0 if >5s | After ERP resolution (per resolve call) |
+| `erp_resolution_result_present` | 1.0 or 0.0 | After ERP resolution (per resolve call) |
+| `erp_resolution_fresh` | 1.0 or 0.0 (stale check) | After ERP resolution (per resolve call) |
+| `erp_resolution_authoritative` | 1.0 if API/CACHE, 0.0 if fallback | After ERP resolution (per resolve call) |
+| `erp_resolution_used_fallback` | 1.0 or 0.0 | After ERP resolution (per resolve call) |
+| `erp_cache_hit` | 1.0 or 0.0 | After cache check in BaseResolver |
+| `erp_live_lookup_success` | 1.0 or 0.0 | After live API call in BaseResolver |
+| `erp_live_lookup_latency_ok` | 1.0 if <=5s, 0.0 if >5s | After live API call in BaseResolver |
+| `erp_live_lookup_rate_limited` | 1.0 or 0.0 | After live API call in BaseResolver |
+| `erp_live_lookup_timeout` | 1.0 or 0.0 | After live API call in BaseResolver |
+| `erp_db_fallback_used` | 1.0 (always, only emitted when fallback runs) | After DB fallback in BaseResolver |
+| `erp_db_fallback_success` | 1.0 or 0.0 | After DB fallback in BaseResolver |
+| `erp_submission_attempted` | 1.0 (always) | On ERP submission call |
+| `erp_submission_success` | 1.0 or 0.0 | After ERP submission completes |
+| `erp_submission_latency_ok` | 1.0 if <=5s, 0.0 if >5s | After ERP submission completes |
+| `erp_submission_retryable_failure` | 1.0 or 0.0 | After ERP submission failure |
+| `erp_submission_document_number_present` | 1.0 or 0.0 | After successful ERP submission |
 
 ### When adding a new Celery task that triggers a pipeline
 
@@ -673,7 +694,7 @@ except Exception:
 | ~~`apps/agents/tasks.py` -- `run_agent_pipeline_task`~~ | ~~Root trace at task level~~ **Done** -- **Enriched**: prior_match_status, reconciliation_mode, trigger=auto metadata |
 | ~~`apps/agents/services/orchestrator.py`~~ | ~~Agent pipeline trace~~ **Done** -- **Enriched**: case_id, case_number, prior_match_status, exception_count, vendor info; 5 pipeline-level scores (agent_pipeline_final_confidence, recommendation_present, escalation_triggered, auto_close_candidate, agents_executed_count) |
 | ~~`apps/agents/services/base_agent.py`~~ | ~~Per-agent and per-tool spans~~ **Done** -- **Enriched**: agent_type, reconciliation_mode, po_number metadata; 3 per-agent scores (agent_confidence, agent_recommendation_present, agent_tool_success_rate); tool spans include source_used + tool_call_success score |
-| `apps/erp_integration/services/submission/posting_submit_resolver.py` | Inherit parent trace ID from posting pipeline instead of creating isolated traces (Phase 2 -- ERP submission is mock in Phase 1) |
+| ~~`apps/erp_integration/services/submission/posting_submit_resolver.py`~~ | ~~Inherit parent trace ID from posting pipeline instead of creating isolated traces~~ **Done**: Full tracing via `langfuse_helpers.py` -- `erp_submission` span with 5 scores (attempted, success, latency_ok, retryable_failure, document_number_present); metadata sanitized via `sanitize_erp_error()`; standalone root trace when no parent |
 | ~~`apps/copilot/services/copilot_service.py` -- `answer_question()`~~ | ~~Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive~~ **Done (2026-03-31)** |
 | ~~`apps/cases/tasks.py` -- `process_case_task`, `reprocess_case_from_stage_task`~~ | ~~Root trace `"case_task"` per task invocation~~ **Done** -- **Enriched**: session_id, invoice_id, case_number, vendor metadata; lf_trace passed to CaseOrchestrator; case_processing_success + case_reprocessed scores |
 | ~~`apps/cases/orchestrators/case_orchestrator.py`~~ | ~~Per-stage spans in case pipeline~~ **Done** -- **Enriched**: per-stage Langfuse spans with stage_index, processing_path, case_status_before; stage-specific observation scores; 4 trace-level scores (case_stages_executed, case_closed, case_terminal, case_path_resolved, case_match_status, case_auto_closed, case_routed_to_review) |

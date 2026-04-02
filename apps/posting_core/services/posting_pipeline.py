@@ -28,6 +28,10 @@ from apps.core.enums import (
     PostingRunStatus,
     PostingStage,
 )
+from apps.core.evaluation_constants import (
+    POSTING_FINAL_CONFIDENCE,
+    POSTING_FINAL_REQUIRES_REVIEW,
+)
 from apps.core.decorators import observed_service
 from apps.documents.models import Invoice
 from apps.posting_core.models import (
@@ -84,6 +88,12 @@ class PostingPipeline:
         # ------------------------------------------------------------------
         _trace_id = str(posting_run.pk)
         _lf_trace = None
+        # Persist trace_id to PostingRun for cross-referencing
+        try:
+            posting_run.langfuse_trace_id = _trace_id
+            posting_run.save(update_fields=["langfuse_trace_id", "updated_at"])
+        except Exception:
+            pass
         try:
             from apps.core.langfuse_client import start_trace
             _lf_trace = start_trace(
@@ -210,7 +220,7 @@ class PostingPipeline:
                 _trace_id = str(posting_run.pk)
                 score_trace(
                     _trace_id,
-                    "posting_confidence",
+                    POSTING_FINAL_CONFIDENCE,
                     float(confidence),
                     comment=(
                         f"invoice={invoice.pk} "
@@ -234,7 +244,7 @@ class PostingPipeline:
                 from apps.core.langfuse_client import score_trace
                 score_trace(
                     str(posting_run.pk),
-                    "posting_requires_review",
+                    POSTING_FINAL_REQUIRES_REVIEW,
                     1.0 if requires_review else 0.0,
                     comment=f"queue={primary_queue} reasons={len(review_reasons)}",
                 )
@@ -284,7 +294,7 @@ class PostingPipeline:
 
             # Stage 9b: Duplicate invoice check (ERP integration)
             _lf_s9 = _open_stage_span("duplicate_check")
-            cls._check_duplicate(posting_run, invoice, proposal, connector)
+            cls._check_duplicate(posting_run, invoice, proposal, connector, lf_parent_span=_lf_s9)
             _dup_meta = (posting_run.erp_source_metadata_json or {}).get("duplicate_check", {})
             _close_stage_span(_lf_s9, output={
                 "is_duplicate": _dup_meta.get("is_duplicate", False),
@@ -481,7 +491,7 @@ class PostingPipeline:
             return None
 
     @staticmethod
-    def _check_duplicate(posting_run, invoice, proposal, connector) -> None:
+    def _check_duplicate(posting_run, invoice, proposal, connector, lf_parent_span=None) -> None:
         """Run duplicate invoice check via ERP integration layer."""
         try:
             from apps.erp_integration.services.resolution.duplicate_invoice_resolver import (
@@ -496,6 +506,7 @@ class PostingPipeline:
                 exclude_invoice_id=invoice.pk,
                 invoice_id=invoice.pk,
                 posting_run_id=posting_run.pk,
+                lf_parent_span=lf_parent_span,
             )
             if result.resolved and result.value and result.value.get("is_duplicate"):
                 posting_run.requires_review = True

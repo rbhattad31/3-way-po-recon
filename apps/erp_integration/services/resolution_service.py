@@ -81,53 +81,168 @@ class ERPResolutionService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _trace_resolve(resolution_name: str, resolve_fn, safe_meta: dict, lf_parent_span):
+    def _trace_resolve(
+        resolution_name: str,
+        resolve_fn,
+        safe_meta: dict,
+        lf_parent_span,
+        *,
+        operation_type: str = "",
+        entity_type: str = "",
+        entity_key: str = "",
+        connector_name: str = "",
+        connector_type: str = "",
+        invoice_id: Optional[int] = None,
+        posting_run_id: Optional[int] = None,
+        reconciliation_result_id: Optional[int] = None,
+        case_id: Optional[int] = None,
+    ):
         """Wrap a resolver call with an optional Langfuse child span.
 
-        Creates a child span under ``lf_parent_span`` (when provided), calls
-        ``resolve_fn()``, then closes the span with safe provenance metadata.
+        Creates an ``erp_resolution`` parent span and passes it to
+        ``resolve_fn(erp_span)`` so that BaseResolver can create its own
+        child spans (erp_cache_lookup, erp_live_lookup, erp_db_fallback)
+        underneath it.
+
+        ``resolve_fn`` must accept a single positional argument (the span
+        or None). When Langfuse is unavailable the span will be None.
+
         Never raises -- Langfuse errors are swallowed so resolution always
         proceeds regardless of observability state.
-
-        The output recorded in Langfuse is limited to non-sensitive metadata:
-        resolved, source_type, cache_hit, fallback_used, confidence, is_stale.
-        Full ERP payloads are never logged.
         """
+        if lf_parent_span is None:
+            return resolve_fn(None)
+
+        try:
+            from apps.erp_integration.services.langfuse_helpers import (
+                start_erp_span,
+                end_erp_span,
+                score_erp_observation,
+                sanitize_erp_error,
+                freshness_status_label,
+                is_authoritative_source,
+                ERP_LATENCY_THRESHOLD_MS,
+                SOURCE_CACHE,
+                SOURCE_LIVE_API,
+                SOURCE_MIRROR_DB,
+                SOURCE_DB_FALLBACK,
+                SOURCE_NONE,
+            )
+        except Exception:
+            return resolve_fn(None)
+
+        import time as _time
+        _start = _time.monotonic()
+
+        # Build safe metadata
+        meta = {
+            "operation_type": operation_type or f"lookup_{resolution_name.replace('resolve_', '')}",
+            "entity_type": entity_type,
+            "entity_key": entity_key,
+            "connector_name": connector_name,
+            "connector_type": connector_type,
+            "invoice_id": invoice_id,
+            "posting_run_id": posting_run_id,
+            "reconciliation_result_id": reconciliation_result_id,
+            "case_id": case_id,
+        }
+        if safe_meta:
+            meta.update(safe_meta)
+
         _lf_span = None
         try:
-            if lf_parent_span is not None:
-                from apps.core.langfuse_client import start_span
-                _lf_span = start_span(
-                    lf_parent_span,
-                    f"erp_{resolution_name}",
-                    metadata=safe_meta,
-                )
+            _lf_span = start_erp_span(lf_parent_span, "erp_resolution", metadata=meta)
         except Exception:
             pass
 
         result = None
+        error_msg = None
         try:
-            result = resolve_fn()
+            result = resolve_fn(_lf_span)
             return result
+        except Exception as exc:
+            error_msg = str(exc)
+            raise
         finally:
+            # Emit span output and scores
             try:
                 if _lf_span is not None:
-                    from apps.core.langfuse_client import end_span
-                    from apps.erp_integration.enums import ERPSourceType as _ST
-                    _out = {"resolved": False}
+                    elapsed_ms = int((_time.monotonic() - _start) * 1000)
+                    resolved = False
+                    source_type = SOURCE_NONE
+                    cache_hit = False
+                    fallback_used = False
+                    confidence = 0.0
+                    is_stale = False
+                    stale_reason = ""
+                    warnings_count = 0
+
                     if result is not None:
-                        _out = {
-                            "resolved": bool(result.resolved),
-                            "source_type": str(result.source_type) if result.source_type else "",
-                            "cache_hit": str(result.source_type) == str(_ST.CACHE),
-                            "fallback_used": bool(result.fallback_used),
-                            "confidence": float(result.confidence or 0.0),
-                            "is_stale": bool(getattr(result, "is_stale", False)),
-                        }
-                    end_span(
-                        _lf_span,
-                        output=_out,
-                        level="DEFAULT" if (result is not None and result.resolved) else "WARNING",
+                        resolved = bool(getattr(result, "resolved", False))
+                        source_type = str(getattr(result, "source_type", SOURCE_NONE))
+                        cache_hit = source_type == SOURCE_CACHE
+                        fallback_used = bool(getattr(result, "fallback_used", False))
+                        confidence = float(getattr(result, "confidence", 0.0))
+                        is_stale = bool(getattr(result, "is_stale", False))
+                        stale_reason = str(getattr(result, "stale_reason", ""))
+                        warnings_count = len(getattr(result, "warnings", []))
+
+                    _fresh = freshness_status_label(is_stale, source_type)
+                    _authoritative = is_authoritative_source(source_type)
+
+                    output = {
+                        "resolved": resolved,
+                        "source_type": source_type,
+                        "source_used": source_type,
+                        "cache_hit": cache_hit,
+                        "db_fallback_used": fallback_used,
+                        "confidence": confidence,
+                        "freshness_status": _fresh,
+                        "is_stale": is_stale,
+                        "latency_ms": elapsed_ms,
+                        "normalized_result_present": resolved,
+                        "warnings_count": warnings_count,
+                        "success": resolved,
+                    }
+                    if error_msg:
+                        output["error_type"] = sanitize_erp_error(error_msg)
+                    if stale_reason:
+                        output["stale_reason"] = stale_reason[:200]
+
+                    level = "DEFAULT"
+                    if error_msg or not resolved:
+                        level = "WARNING"
+
+                    end_erp_span(_lf_span, output=output, level=level)
+
+                    # Observation-level scores
+                    score_erp_observation(
+                        _lf_span, "erp_resolution_success",
+                        1.0 if resolved else 0.0,
+                        comment=f"resolution={resolution_name} key={entity_key}",
+                    )
+                    score_erp_observation(
+                        _lf_span, "erp_resolution_latency_ok",
+                        1.0 if elapsed_ms <= ERP_LATENCY_THRESHOLD_MS else 0.0,
+                        comment=f"{elapsed_ms}ms",
+                    )
+                    score_erp_observation(
+                        _lf_span, "erp_resolution_result_present",
+                        1.0 if resolved else 0.0,
+                    )
+                    score_erp_observation(
+                        _lf_span, "erp_resolution_fresh",
+                        0.0 if is_stale else 1.0,
+                        comment=_fresh,
+                    )
+                    score_erp_observation(
+                        _lf_span, "erp_resolution_authoritative",
+                        1.0 if _authoritative else 0.0,
+                        comment=source_type,
+                    )
+                    score_erp_observation(
+                        _lf_span, "erp_resolution_used_fallback",
+                        1.0 if fallback_used else 0.0,
                     )
             except Exception:
                 pass
@@ -172,7 +287,7 @@ class ERPResolutionService:
         from apps.erp_integration.services.resolution.po_resolver import POResolver
         resolver = POResolver()
 
-        def _resolve():
+        def _resolve(_erp_span=None):
             result = resolver.resolve(
                 self._connector,
                 po_number=po_number,
@@ -180,6 +295,7 @@ class ERPResolutionService:
                 invoice_id=invoice_id,
                 reconciliation_result_id=reconciliation_result_id,
                 posting_run_id=posting_run_id,
+                lf_parent_span=_erp_span,
             )
             return self._apply_freshness(result, ERPDataDomain.TRANSACTIONAL)
 
@@ -188,6 +304,13 @@ class ERPResolutionService:
             _resolve,
             {"po_number": po_number, "vendor_code": vendor_code, "invoice_id": invoice_id},
             lf_parent_span,
+            operation_type="lookup_po",
+            entity_type="purchase_order",
+            entity_key=po_number,
+            connector_name=getattr(self._connector, "connector_name", ""),
+            invoice_id=invoice_id,
+            posting_run_id=posting_run_id,
+            reconciliation_result_id=reconciliation_result_id,
         )
 
     def resolve_grn(
@@ -210,13 +333,14 @@ class ERPResolutionService:
         from apps.erp_integration.services.resolution.grn_resolver import GRNResolver
         resolver = GRNResolver()
 
-        def _resolve():
+        def _resolve(_erp_span=None):
             result = resolver.resolve(
                 self._connector,
                 po_number=po_number,
                 grn_number=grn_number,
                 invoice_id=invoice_id,
                 reconciliation_result_id=reconciliation_result_id,
+                lf_parent_span=_erp_span,
             )
             return self._apply_freshness(result, ERPDataDomain.TRANSACTIONAL)
 
@@ -225,6 +349,12 @@ class ERPResolutionService:
             _resolve,
             {"po_number": po_number, "grn_number": grn_number, "invoice_id": invoice_id},
             lf_parent_span,
+            operation_type="lookup_grn",
+            entity_type="goods_receipt_note",
+            entity_key=po_number or grn_number,
+            connector_name=getattr(self._connector, "connector_name", ""),
+            invoice_id=invoice_id,
+            reconciliation_result_id=reconciliation_result_id,
         )
 
     def refresh_po(
@@ -297,13 +427,14 @@ class ERPResolutionService:
         from apps.erp_integration.services.resolution.vendor_resolver import VendorResolver
         resolver = VendorResolver()
 
-        def _resolve():
+        def _resolve(_erp_span=None):
             result = resolver.resolve(
                 self._connector,
                 vendor_code=vendor_code,
                 vendor_name=vendor_name,
                 invoice_id=invoice_id,
                 posting_run_id=posting_run_id,
+                lf_parent_span=_erp_span,
             )
             return self._apply_freshness(result, ERPDataDomain.MASTER)
 
@@ -312,6 +443,12 @@ class ERPResolutionService:
             _resolve,
             {"vendor_code": vendor_code, "invoice_id": invoice_id},
             lf_parent_span,
+            operation_type="lookup_vendor",
+            entity_type="vendor",
+            entity_key=vendor_code or vendor_name,
+            connector_name=getattr(self._connector, "connector_name", ""),
+            invoice_id=invoice_id,
+            posting_run_id=posting_run_id,
         )
 
     def resolve_item(
@@ -327,13 +464,14 @@ class ERPResolutionService:
         from apps.erp_integration.services.resolution.item_resolver import ItemResolver
         resolver = ItemResolver()
 
-        def _resolve():
+        def _resolve(_erp_span=None):
             result = resolver.resolve(
                 self._connector,
                 item_code=item_code,
                 description=description,
                 invoice_id=invoice_id,
                 posting_run_id=posting_run_id,
+                lf_parent_span=_erp_span,
             )
             return self._apply_freshness(result, ERPDataDomain.MASTER)
 
@@ -342,6 +480,12 @@ class ERPResolutionService:
             _resolve,
             {"item_code": item_code, "invoice_id": invoice_id},
             lf_parent_span,
+            operation_type="lookup_item",
+            entity_type="item",
+            entity_key=item_code or description,
+            connector_name=getattr(self._connector, "connector_name", ""),
+            invoice_id=invoice_id,
+            posting_run_id=posting_run_id,
         )
 
     def resolve_tax_code(
@@ -356,12 +500,13 @@ class ERPResolutionService:
         from apps.erp_integration.services.resolution.tax_resolver import TaxResolver
         resolver = TaxResolver()
 
-        def _resolve():
+        def _resolve(_erp_span=None):
             result = resolver.resolve(
                 self._connector,
                 tax_code=tax_code,
                 rate=rate,
                 posting_run_id=posting_run_id,
+                lf_parent_span=_erp_span,
             )
             return self._apply_freshness(result, ERPDataDomain.MASTER)
 
@@ -370,6 +515,11 @@ class ERPResolutionService:
             _resolve,
             {"tax_code": tax_code},
             lf_parent_span,
+            operation_type="lookup_tax_code",
+            entity_type="tax_code",
+            entity_key=tax_code,
+            connector_name=getattr(self._connector, "connector_name", ""),
+            posting_run_id=posting_run_id,
         )
 
     def resolve_cost_center(
@@ -383,11 +533,12 @@ class ERPResolutionService:
         from apps.erp_integration.services.resolution.cost_center_resolver import CostCenterResolver
         resolver = CostCenterResolver()
 
-        def _resolve():
+        def _resolve(_erp_span=None):
             result = resolver.resolve(
                 self._connector,
                 cost_center_code=cost_center_code,
                 posting_run_id=posting_run_id,
+                lf_parent_span=_erp_span,
             )
             return self._apply_freshness(result, ERPDataDomain.MASTER)
 
@@ -396,6 +547,11 @@ class ERPResolutionService:
             _resolve,
             {"cost_center_code": cost_center_code},
             lf_parent_span,
+            operation_type="lookup_cost_center",
+            entity_type="cost_center",
+            entity_key=cost_center_code,
+            connector_name=getattr(self._connector, "connector_name", ""),
+            posting_run_id=posting_run_id,
         )
 
     def check_invoice_duplicate(
@@ -411,13 +567,14 @@ class ERPResolutionService:
         from apps.erp_integration.services.resolution.duplicate_invoice_resolver import DuplicateInvoiceResolver
         resolver = DuplicateInvoiceResolver()
 
-        def _resolve():
+        def _resolve(_erp_span=None):
             return resolver.resolve(
                 self._connector,
                 invoice_number=invoice_number,
                 vendor_code=vendor_code,
                 invoice_id=invoice_id,
                 posting_run_id=posting_run_id,
+                lf_parent_span=_erp_span,
             )
 
         return self._trace_resolve(
@@ -425,6 +582,12 @@ class ERPResolutionService:
             _resolve,
             {"invoice_id": invoice_id},
             lf_parent_span,
+            operation_type="duplicate_invoice_check",
+            entity_type="invoice",
+            entity_key=invoice_number,
+            connector_name=getattr(self._connector, "connector_name", ""),
+            invoice_id=invoice_id,
+            posting_run_id=posting_run_id,
         )
 
     # ------------------------------------------------------------------

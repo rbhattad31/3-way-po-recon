@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock, patch, call
 import apps.core.langfuse_client as lf_module
+from apps.core.evaluation_constants import RECON_RECONCILIATION_MATCH
 
 
 # ─── Fixture: reset the singleton between tests ───────────────────────────────
@@ -199,17 +200,17 @@ class TestEndSpan:
 class TestScoreTrace:
     def test_no_op_when_client_is_none(self, disabled_client):
         """score_trace() is a no-op when Langfuse is disabled."""
-        lf_module.score_trace("trace-001", "reconciliation_match", 1.0)  # no raise
+        lf_module.score_trace("trace-001", RECON_RECONCILIATION_MATCH, 1.0)  # no raise
 
     def test_calls_create_score_when_client_active(self):
         """score_trace() calls client.create_score with correct args."""
         mock_client = MagicMock()
         with patch("apps.core.langfuse_client.get_client", return_value=mock_client):
-            lf_module.score_trace("trace-001", "reconciliation_match", 1.0,
+            lf_module.score_trace("trace-001", RECON_RECONCILIATION_MATCH, 1.0,
                                   comment="mode=TWO_WAY")
         mock_client.create_score.assert_called_once_with(
             trace_id="trace-001",
-            name="reconciliation_match",
+            name=RECON_RECONCILIATION_MATCH,
             value=1.0,
             comment="mode=TWO_WAY",
         )
@@ -231,7 +232,7 @@ class TestScoreTrace:
 
     def test_no_op_when_score_is_zero(self, disabled_client):
         """score_trace() with value=0.0 is still a no-op (valid input)."""
-        lf_module.score_trace("trace-001", "reconciliation_match", 0.0)  # no raise
+        lf_module.score_trace("trace-001", RECON_RECONCILIATION_MATCH, 0.0)  # no raise
 
 
 # ─── slug_to_langfuse_name / langfuse_name_to_slug ───────────────────────────

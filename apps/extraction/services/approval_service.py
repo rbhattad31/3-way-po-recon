@@ -28,6 +28,12 @@ from apps.extraction.models import (
     ExtractionResult,
 )
 from apps.core.decorators import observed_service
+from apps.core.evaluation_constants import (
+    EXTRACTION_APPROVAL_CONFIDENCE,
+    EXTRACTION_APPROVAL_DECISION,
+    EXTRACTION_AUTO_APPROVE_CONFIDENCE,
+    EXTRACTION_CORRECTIONS_COUNT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +156,7 @@ class ExtractionApprovalService:
             from apps.core.langfuse_client import score_trace
             score_trace(
                 f"approval-{approval.pk}",
-                "extraction_auto_approve_confidence",
+                EXTRACTION_AUTO_APPROVE_CONFIDENCE,
                 float(confidence),
                 comment=(
                     f"invoice={invoice.pk} "
@@ -319,7 +325,7 @@ class ExtractionApprovalService:
             _trace_id = f"approval-{approval.pk}"
             score_trace(
                 _trace_id,
-                "extraction_approval_decision",
+                EXTRACTION_APPROVAL_DECISION,
                 1.0,
                 comment=(
                     f"invoice={invoice.pk} "
@@ -330,14 +336,14 @@ class ExtractionApprovalService:
             )
             score_trace(
                 _trace_id,
-                "extraction_approval_confidence",
+                EXTRACTION_APPROVAL_CONFIDENCE,
                 float(approval.confidence_at_review or 0.0),
                 comment=f"invoice={invoice.pk}",
             )
             if correction_records:
                 score_trace(
                     _trace_id,
-                    "extraction_corrections_count",
+                    EXTRACTION_CORRECTIONS_COUNT,
                     float(len(correction_records)),
                     comment=f"invoice={invoice.pk}",
                 )
@@ -403,7 +409,7 @@ class ExtractionApprovalService:
             from apps.core.langfuse_client import score_trace
             score_trace(
                 f"approval-{approval.pk}",
-                "extraction_approval_decision",
+                EXTRACTION_APPROVAL_DECISION,
                 0.0,
                 comment=(
                     f"invoice={approval.invoice.pk} "

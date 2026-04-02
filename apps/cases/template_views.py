@@ -760,6 +760,13 @@ def case_decide(request, pk):
         case.save(update_fields=["status", "updated_at"])
         messages.success(request, f"Case {case.case_number} marked as {case.get_status_display()}.")
 
+        # When the case is approved/closed, mark the invoice as RECONCILED
+        if new_status == CaseStatus.CLOSED and case.invoice:
+            from apps.core.enums import InvoiceStatus
+            if case.invoice.status != InvoiceStatus.RECONCILED:
+                case.invoice.status = InvoiceStatus.RECONCILED
+                case.invoice.save(update_fields=["status", "updated_at"])
+
         # Audit: case status change from decision
         from apps.auditlog.services import AuditService
         from apps.core.enums import AuditEventType

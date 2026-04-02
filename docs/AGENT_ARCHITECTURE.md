@@ -700,6 +700,31 @@ class MyTool(BaseTool):
 3. Seed the permission (`module.action`) in `seed_rbac` if it is new.
 4. Reference the tool in Section 7 under the relevant agent's "Tools used".
 
+### 5.6 Tool Langfuse Trace Threading
+
+`BaseAgent._execute_tool()` injects `lf_parent_span=_tool_span` into the tool's
+kwargs before calling `tool.execute(**arguments)`. This allows ERP-backed tools
+(e.g. `POLookupTool`, `GRNLookupTool`) to forward the span to
+`ERPResolutionService.resolve_*()` so ERP resolution spans nest under the agent's
+tool call span in Langfuse.
+
+The span object is removed from `arguments` after execution (before audit
+persistence via `ToolCallLogger` and `AgentStep`) to avoid serialisation errors.
+
+Tools that use ERP resolution should extract the span from kwargs:
+
+```python
+def _resolve_via_erp(self, po_number, **kwargs):
+    svc = ERPResolutionService.with_default_connector()
+    result = svc.resolve_po(
+        po_number=po_number,
+        lf_parent_span=kwargs.get("lf_parent_span"),
+    )
+```
+
+See [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11.4 for the
+full caller threading table.
+
 ---
 
 ## 6. Prompting and Output Contracts
@@ -1205,6 +1230,10 @@ end_span(_tool_span, output={"success": ..., "duration_ms": ..., "error": ...},
 ```
 
 Failed tool calls appear highlighted in red in the Langfuse UI.
+
+`_execute_tool()` injects `lf_parent_span=_tool_span` into tool kwargs so
+ERP-backed tools (`POLookupTool`, `GRNLookupTool`) create ERP resolution child
+spans under the tool span. See Section 5.6 for details.
 
 #### RBAC guardrail scores
 

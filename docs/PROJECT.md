@@ -206,7 +206,7 @@ The project contains **20 Django apps** under `apps/`:
 | **core** | Base models, enums, constants, permissions, utilities, observability | `models.py`, `enums.py`, `constants.py`, `permissions.py`, `utils.py`, `trace.py`, `logging_utils.py`, `metrics.py`, `decorators.py` |
 | **dashboard** | Analytics, KPIs, summary endpoints | `services.py`, `api_views.py` |
 | **documents** | Invoice, PO, GRN data models & upload | `models.py`, `blob_service.py` |
-| **erp_integration** | ERP connector framework + resolution chain (cache → API → DB fallback) | `models.py`, `services/connectors/`, `services/resolution/`, `services/db_fallback/`, `services/submission/` |
+| **erp_integration** | ERP connector framework + resolution chain (cache → API → DB fallback) + Langfuse tracing helpers | `models.py`, `services/connectors/`, `services/resolution/`, `services/db_fallback/`, `services/submission/`, `services/langfuse_helpers.py` |
 | **extraction** | OCR + LLM extraction pipeline (8 services), approval gate, bulk extraction | `services/`, `tasks.py`, `template_views.py` |
 | **extraction_configs** | Extraction configuration metadata and runtime settings | `models.py`, `services/` |
 | **extraction_core** | Multi-country extraction platform: 13 models, 30 service classes, 60+ API endpoints, jurisdiction resolution, schema-driven extraction, evidence capture, credit/OCR cost tracking | `models.py`, `services/`, `views.py` |
@@ -240,6 +240,7 @@ The project contains **20 Django apps** under `apps/`:
 | ERP Connectors | `apps/erp_integration/services/connectors/` |
 | ERP Resolvers | `apps/erp_integration/services/resolution/` |
 | ERP DB Fallbacks | `apps/erp_integration/services/db_fallback/` |
+| ERP Langfuse Helpers | `apps/erp_integration/services/langfuse_helpers.py` |
 | Posting Business Logic | `apps/posting/services/` |
 | Posting Core Pipeline | `apps/posting_core/services/` |
 | Posting ERP Reference Models | `apps/posting_core/models.py` |
@@ -1428,6 +1429,26 @@ Invoice Governance enhancements:
 - **RBAC badges** in timeline entries: role, permission, granted/denied icons
 - **Status change** display in timeline events
 - **Field correction** display in timeline events
+
+### 13.7 ERP Langfuse Tracing
+
+`apps/erp_integration/services/langfuse_helpers.py` provides fail-silent tracing helpers for the ERP integration layer:
+
+| Helper | Purpose |
+|---|---|
+| `sanitize_erp_metadata()` | Redacts API keys, tokens, passwords, and truncates large values before attaching to spans |
+| `sanitize_erp_error()` | Maps raw exceptions to safe error categories (auth, timeout, rate_limit, validation, unknown) |
+| `start_erp_span()` / `end_erp_span()` | Auto-sanitising span lifecycle wrappers |
+| `score_erp_observation()` / `score_erp_trace()` | Score wrappers using the `erp_*` naming conventions |
+| `trace_erp_cache_lookup()` | Context manager for cache check spans -- emits `erp_cache_hit` score |
+| `trace_erp_live_lookup()` | Context manager for live API call spans -- emits `erp_live_lookup_success`, `_latency_ok`, `_rate_limited`, `_timeout` scores |
+| `trace_erp_db_fallback()` | Context manager for DB fallback spans -- emits `erp_db_fallback_used`, `_success` scores |
+| `trace_erp_submission()` | Context manager for ERP submission spans -- emits 5 submission scores |
+| `build_source_chain()` / `freshness_status_label()` / `is_authoritative_source()` | Source provenance utilities |
+
+All callers thread `lf_parent_span` through `ERPResolutionService._trace_resolve()` -> `BaseResolver.resolve()` -> per-stage wrappers. Callers include `PostingMappingEngine`, `POLookupService`, `GRNLookupService`, `POLookupTool`, `GRNLookupTool`, and the ERP Resolution API view.
+
+> Full reference: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11 -- ERP Integration Layer Tracing
 - **Trace ID** display per timeline entry
 
 Role-based visibility: ADMIN and AUDITOR see full agent trace data and access history.
@@ -2338,7 +2359,7 @@ celery -A config worker -l info
 - **ERP Integration Layer** (`apps/erp_integration/`): `ERPConnection` model + `ConnectorFactory`; 4 connector implementations (Custom, Dynamics, Zoho, Salesforce); 7 resolver types with DB fallback + TTL cache; resolution + submission audit logs; wired into `PostingMappingEngine` and `POLookupTool`/`GRNLookupTool`
 - **Procurement Intelligence Platform** (`apps/procurement/`): product/solution recommendation, should-cost benchmarking, 6-dimension validation; `QuotationExtractionAgent` for LLM-based quotation data extraction; `AttributeMappingService` for field synonym mapping; DRF API + Bootstrap 5 templates
 - Audit logging (38+ event types including case lifecycle, RBAC guardrail, posting events); CaseTimelineService (8 event categories); governance views
-- Observability: TraceContext, structured JSON logging, MetricsService, RequestTraceMiddleware, @observed_service/@observed_action/@observed_task decorators; Langfuse integration (fail-silent tracing, scores, prompt management)
+- Observability: TraceContext, structured JSON logging, MetricsService, RequestTraceMiddleware, @observed_service/@observed_action/@observed_task decorators; Langfuse integration (fail-silent tracing, scores, prompt management); ERP-specific Langfuse tracing helpers (`langfuse_helpers.py` -- metadata sanitisation, per-stage span wrappers, 19 ERP scores)
 - DRF APIs with filtering, search, pagination; vendor UI (list + detail)
 - RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own invoices
 - Enterprise RBAC: Role, Permission, RolePermission, UserRole (with scope_json), UserPermissionOverride; RBAC engine, middleware, template tags, DRF classes, CBV mixins, admin console (8 screens), API, seed (6 roles incl. SYSTEM_AGENT, 40 permissions)
@@ -2486,6 +2507,17 @@ Add new connectors by extending `BaseERPConnector`, implementing capability flag
 - Help callout explaining the two-tier PO resolution chain
 
 Accessed from the **ERP Integration** sidebar section (separate from Posting Agent).
+
+### 24.7 Langfuse Observability
+
+`apps/erp_integration/services/langfuse_helpers.py` provides ERP-specific tracing via context-manager wrappers (`trace_erp_cache_lookup`, `trace_erp_live_lookup`, `trace_erp_db_fallback`, `trace_erp_submission`). Key points:
+
+- **Metadata sanitisation**: `sanitize_erp_metadata()` redacts credentials before attaching to spans.
+- **19 ERP-specific scores**: resolution (6), cache (1), live API (4), DB fallback (2), submission (5), duplicate check (1).
+- **Span threading**: All `resolve_*()` methods accept `lf_parent_span` so ERP resolution spans nest under the caller's trace (posting mapping, reconciliation PO lookup, agent tool calls).
+- **Error categorisation**: `sanitize_erp_error()` maps raw exceptions to safe categories for observability without leaking stack traces.
+
+> Full reference: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11
 
 ---
 

@@ -39,6 +39,14 @@ from apps.agents.services.policy_engine import PolicyEngine
 from apps.agents.services.reasoning_planner import ReasoningPlanner
 from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
 from apps.core.decorators import observed_service
+from apps.core.evaluation_constants import (
+    AGENT_PIPELINE_AGENTS_EXECUTED_COUNT,
+    AGENT_PIPELINE_AUTO_CLOSE_CANDIDATE,
+    AGENT_PIPELINE_ESCALATION_TRIGGERED,
+    AGENT_PIPELINE_FINAL_CONFIDENCE,
+    AGENT_PIPELINE_RECOMMENDATION_PRESENT,
+    TRACE_AGENT_PIPELINE,
+)
 from apps.core.metrics import MetricsService
 
 # Only these agents should emit formal recommendations to avoid duplicates.
@@ -165,30 +173,36 @@ class AgentOrchestrator:
 
         try:
             from apps.core.langfuse_client import start_trace
+            from apps.core.observability_helpers import (
+                build_observability_context,
+                derive_session_id,
+            )
             _lf_trace = start_trace(
                 trace_id=trace_ctx.trace_id,
-                name="agent_pipeline",
+                name=TRACE_AGENT_PIPELINE,
                 invoice_id=result.invoice_id,
                 result_id=result.pk,
                 user_id=actor.pk if actor else None,
-                session_id=f"invoice-{result.invoice_id}" if result.invoice_id else None,
-                metadata={
-                    "invoice_id": result.invoice_id,
-                    "reconciliation_result_id": result.pk,
-                    "case_id": _case_id,
-                    "case_number": _case_number,
-                    "reconciliation_mode": _recon_mode,
-                    "prior_match_status": _prior_match_status,
-                    "exception_count": _exc_count,
-                    "po_number": (
+                session_id=derive_session_id(invoice_id=result.invoice_id),
+                metadata=build_observability_context(
+                    invoice_id=result.invoice_id,
+                    reconciliation_result_id=result.pk,
+                    case_id=_case_id,
+                    case_number=_case_number,
+                    reconciliation_mode=_recon_mode,
+                    match_status=_prior_match_status,
+                    actor_user_id=actor.pk if actor else None,
+                    po_number=(
                         result.purchase_order.po_number if result.purchase_order else ""
                     ),
-                    "vendor_name": _vendor_name,
-                    "vendor_id": getattr(result.invoice, "vendor_id", None) if result.invoice else None,
-                    "grn_available": getattr(result, "grn_available", False),
-                    "actor_user_id": actor.pk if actor else None,
-                    "source": "agentic",
-                },
+                    vendor_name=_vendor_name,
+                    source="agentic",
+                    **{
+                        "exception_count": _exc_count,
+                        "vendor_id": getattr(result.invoice, "vendor_id", None) if result.invoice else None,
+                        "grn_available": getattr(result, "grn_available", False),
+                    },
+                ),
             )
         except Exception:
             _lf_trace = None
@@ -512,28 +526,28 @@ class AgentOrchestrator:
                 if orch_result.final_confidence is not None:
                     score_trace(
                         trace_ctx.trace_id,
-                        "agent_pipeline_final_confidence",
+                        AGENT_PIPELINE_FINAL_CONFIDENCE,
                         orch_result.final_confidence,
                         comment=orch_result.final_recommendation or "",
                     )
                 score_trace(
                     trace_ctx.trace_id,
-                    "agent_pipeline_recommendation_present",
+                    AGENT_PIPELINE_RECOMMENDATION_PRESENT,
                     1.0 if _has_recommendation else 0.0,
                 )
                 score_trace(
                     trace_ctx.trace_id,
-                    "agent_pipeline_escalation_triggered",
+                    AGENT_PIPELINE_ESCALATION_TRIGGERED,
                     1.0 if _has_escalation else 0.0,
                 )
                 score_trace(
                     trace_ctx.trace_id,
-                    "agent_pipeline_auto_close_candidate",
+                    AGENT_PIPELINE_AUTO_CLOSE_CANDIDATE,
                     1.0 if _auto_close_candidate else 0.0,
                 )
                 score_trace(
                     trace_ctx.trace_id,
-                    "agent_pipeline_agents_executed_count",
+                    AGENT_PIPELINE_AGENTS_EXECUTED_COUNT,
                     float(len(orch_result.agents_executed)),
                 )
             except Exception:

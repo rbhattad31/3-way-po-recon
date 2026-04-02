@@ -244,24 +244,47 @@ class NonPOValidationService:
             details={"category": matched_category},
         )
 
-    @staticmethod
-    def _check_policies(invoice, case: APCase) -> CheckResult:
+    # Currency-aware approval thresholds (finance manager / VP).
+    # Values are in the invoice's own currency.
+    _POLICY_THRESHOLDS: dict = {
+        "USD": (100_000, 250_000),
+        "EUR": (100_000, 250_000),
+        "GBP": (80_000, 200_000),
+        "SAR": (375_000, 940_000),
+        "AED": (370_000, 920_000),
+        "INR": (8_500_000, 21_000_000),
+        "JPY": (15_000_000, 37_500_000),
+    }
+    _DEFAULT_THRESHOLDS: tuple = (100_000, 250_000)
+
+    @classmethod
+    def _check_policies(cls, invoice, case: APCase) -> CheckResult:
         """Check business rules and policy compliance."""
         amount = invoice.total_amount or Decimal("0")
+        currency = (getattr(invoice, "currency", "") or "USD").upper()
+        fm_limit, vp_limit = cls._POLICY_THRESHOLDS.get(
+            currency, cls._DEFAULT_THRESHOLDS,
+        )
         issues = []
 
-        # Amount threshold checks
-        if amount > 100000:
-            issues.append("Amount exceeds $100K — requires finance manager approval")
-        if amount > 250000:
-            issues.append("Amount exceeds $250K — requires VP approval")
+        # Amount threshold checks (currency-aware)
+        if amount > fm_limit:
+            issues.append(
+                f"Amount exceeds {currency} {fm_limit:,.0f}"
+                " -- requires finance manager approval"
+            )
+        if amount > vp_limit:
+            issues.append(
+                f"Amount exceeds {currency} {vp_limit:,.0f}"
+                " -- requires VP approval"
+            )
 
         if issues:
             return CheckResult(
                 check_name="policy",
                 status="WARNING",
                 message="; ".join(issues),
-                details={"amount": str(amount), "issues": issues},
+                details={"amount": str(amount), "currency": currency, "issues": issues},
             )
         return CheckResult(
             check_name="policy",

@@ -6,6 +6,7 @@ import logging
 from celery import shared_task
 
 from apps.core.decorators import observed_task
+from apps.core.evaluation_constants import EXTRACTION_BULK_JOB_SUCCESS_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def run_bulk_job_task(self, job_id: int) -> dict:
                 total = getattr(job, "total_found", 1) or 1
                 score_trace(
                     _trace_id,
-                    "bulk_job_success_rate",
+                    EXTRACTION_BULK_JOB_SUCCESS_RATE,
                     processed / total,
                     comment=f"processed={processed} total={total}",
                 )

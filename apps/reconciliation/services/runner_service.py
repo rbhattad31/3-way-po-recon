@@ -35,7 +35,35 @@ from apps.reconciliation.services.po_lookup_service import POLookupService
 from apps.reconciliation.services.result_service import ReconciliationResultService
 from apps.reconciliation.services.tolerance_engine import ToleranceEngine
 from apps.core.decorators import observed_service
+from apps.core.evaluation_constants import (
+    RECON_AUTO_CLOSE_ELIGIBLE,
+    RECON_BLOCKING_EXCEPTION_COUNT,
+    RECON_CLASSIFIED_AUTO_CLOSE,
+    RECON_CLASSIFIED_REQUIRES_REVIEW,
+    RECON_EXCEPTION_COUNT_FINAL,
+    RECON_FINAL_STATUS_MATCHED,
+    RECON_FINAL_STATUS_PARTIAL_MATCH,
+    RECON_FINAL_STATUS_REQUIRES_REVIEW,
+    RECON_FINAL_STATUS_UNMATCHED,
+    RECON_GRN_FOUND,
+    RECON_GRN_LOOKUP_AUTHORITATIVE,
+    RECON_GRN_LOOKUP_FRESH,
+    RECON_GRN_LOOKUP_SUCCESS,
+    RECON_GRN_MATCH_RATIO,
+    RECON_HEADER_MATCH_RATIO,
+    RECON_LINE_MATCH_RATIO,
+    RECON_PO_FOUND,
+    RECON_PO_LOOKUP_AUTHORITATIVE,
+    RECON_PO_LOOKUP_FRESH,
+    RECON_PO_LOOKUP_SUCCESS,
+    RECON_RECONCILIATION_MATCH,
+    RECON_ROUTED_TO_REVIEW,
+    RECON_TOLERANCE_PASSED,
+    RECON_WARNING_EXCEPTION_COUNT,
+    REVIEW_ASSIGNMENT_CREATED,
+)
 from apps.core.metrics import MetricsService
+from apps.core.observability_helpers import derive_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +260,7 @@ class ReconciliationRunnerService:
             "invoice_id": invoice.pk,
             "po_number": invoice.po_number or "",
         })
-        po_result = self.po_lookup.lookup(invoice)
+        po_result = self.po_lookup.lookup(invoice, lf_parent_span=_lf_po)
         _po_meta = {
             "po_found": po_result.found,
             "po_number": getattr(po_result.purchase_order, "po_number", "") if po_result.found else "",
@@ -245,10 +273,10 @@ class ReconciliationRunnerService:
             ),
         }
         end_span_safe(_lf_po, output=_po_meta)
-        score_observation_safe(_lf_po, "recon_po_lookup_success", 1.0 if po_result.found else 0.0)
-        score_observation_safe(_lf_po, "recon_po_lookup_fresh", 0.0 if po_result.is_stale else 1.0)
+        score_observation_safe(_lf_po, RECON_PO_LOOKUP_SUCCESS, 1.0 if po_result.found else 0.0)
+        score_observation_safe(_lf_po, RECON_PO_LOOKUP_FRESH, 0.0 if po_result.is_stale else 1.0)
         score_observation_safe(
-            _lf_po, "recon_po_lookup_authoritative",
+            _lf_po, RECON_PO_LOOKUP_AUTHORITATIVE,
             1.0 if po_result.erp_source_type in ("MIRROR_DB", "API") else 0.0,
         )
 
@@ -357,11 +385,11 @@ class ReconciliationRunnerService:
             "amount_delta": round(_amount_delta, 2),
         }
         end_span_safe(_lf_match, output=_match_meta)
-        score_observation_safe(_lf_match, "recon_header_match_ratio", _header_ratio)
-        score_observation_safe(_lf_match, "recon_line_match_ratio", _line_ratio)
-        score_observation_safe(_lf_match, "recon_tolerance_passed", 1.0 if _tolerance_passed else 0.0)
+        score_observation_safe(_lf_match, RECON_HEADER_MATCH_RATIO, _header_ratio)
+        score_observation_safe(_lf_match, RECON_LINE_MATCH_RATIO, _line_ratio)
+        score_observation_safe(_lf_match, RECON_TOLERANCE_PASSED, 1.0 if _tolerance_passed else 0.0)
         if reconciliation_mode == "THREE_WAY":
-            score_observation_safe(_lf_match, "recon_grn_match_ratio", _grn_ratio)
+            score_observation_safe(_lf_match, RECON_GRN_MATCH_RATIO, _grn_ratio)
 
         # ---------------------------------------------------------------
         # 3b. GRN Lookup span (if 3-way, emit separate observation)
@@ -379,13 +407,13 @@ class ReconciliationRunnerService:
                 "is_stale": getattr(_grn, "is_stale", False) if _grn else False,
             }
             end_span_safe(_lf_grn, output=_grn_meta)
-            score_observation_safe(_lf_grn, "recon_grn_lookup_success", 1.0 if _grn_found else 0.0)
+            score_observation_safe(_lf_grn, RECON_GRN_LOOKUP_SUCCESS, 1.0 if _grn_found else 0.0)
             score_observation_safe(
-                _lf_grn, "recon_grn_lookup_fresh",
+                _lf_grn, RECON_GRN_LOOKUP_FRESH,
                 0.0 if (_grn and getattr(_grn, "is_stale", False)) else 1.0,
             )
             score_observation_safe(
-                _lf_grn, "recon_grn_lookup_authoritative",
+                _lf_grn, RECON_GRN_LOOKUP_AUTHORITATIVE,
                 1.0 if (_grn and getattr(_grn, "erp_source_type", "") in ("MIRROR_DB", "API")) else 0.0,
             )
 
@@ -414,8 +442,8 @@ class ReconciliationRunnerService:
             "is_auto_close_candidate": _is_auto_close,
         }
         end_span_safe(_lf_class, output=_class_meta)
-        score_observation_safe(_lf_class, "recon_classified_requires_review", 1.0 if _requires_review else 0.0)
-        score_observation_safe(_lf_class, "recon_classified_auto_close_candidate", 1.0 if _is_auto_close else 0.0)
+        score_observation_safe(_lf_class, RECON_CLASSIFIED_REQUIRES_REVIEW, 1.0 if _requires_review else 0.0)
+        score_observation_safe(_lf_class, RECON_CLASSIFIED_AUTO_CLOSE, 1.0 if _is_auto_close else 0.0)
 
         # ---------------------------------------------------------------
         # 5. Result Persistence
@@ -480,8 +508,8 @@ class ReconciliationRunnerService:
             "exception_codes": _exc_codes,
         }
         end_span_safe(_lf_exc, output=_exc_meta)
-        score_observation_safe(_lf_exc, "recon_blocking_exception_count", float(_blocking))
-        score_observation_safe(_lf_exc, "recon_warning_exception_count", float(_warning))
+        score_observation_safe(_lf_exc, RECON_BLOCKING_EXCEPTION_COUNT, float(_blocking))
+        score_observation_safe(_lf_exc, RECON_WARNING_EXCEPTION_COUNT, float(_warning))
 
         # ---------------------------------------------------------------
         # 7. Review Workflow Trigger
@@ -500,7 +528,7 @@ class ReconciliationRunnerService:
             )
             _review_created = True
         end_span_safe(_lf_review, output={"review_assignment_created": _review_created})
-        score_observation_safe(_lf_review, "recon_review_assignment_created", 1.0 if _review_created else 0.0)
+        score_observation_safe(_lf_review, REVIEW_ASSIGNMENT_CREATED, 1.0 if _review_created else 0.0)
 
         # ---------------------------------------------------------------
         # 8. Invoice status transition
@@ -517,22 +545,22 @@ class ReconciliationRunnerService:
             MatchStatus.REQUIRES_REVIEW: 0.3,
         }.get(match_status, 0.0)
         score_trace_safe(
-            _tid, "reconciliation_match", _score_value,
+            _tid, RECON_RECONCILIATION_MATCH, _score_value,
             comment=f"mode={reconciliation_mode} match_status={match_status} invoice={invoice.pk}",
             span=lf_trace,
         )
-        score_trace_safe(_tid, "recon_final_status_matched", 1.0 if match_status == MatchStatus.MATCHED else 0.0, span=lf_trace)
-        score_trace_safe(_tid, "recon_final_status_partial_match", 1.0 if match_status == MatchStatus.PARTIAL_MATCH else 0.0, span=lf_trace)
-        score_trace_safe(_tid, "recon_final_status_requires_review", 1.0 if match_status == MatchStatus.REQUIRES_REVIEW else 0.0, span=lf_trace)
-        score_trace_safe(_tid, "recon_final_status_unmatched", 1.0 if match_status == MatchStatus.UNMATCHED else 0.0, span=lf_trace)
-        score_trace_safe(_tid, "recon_po_found", 1.0 if po_result.found else 0.0, span=lf_trace)
+        score_trace_safe(_tid, RECON_FINAL_STATUS_MATCHED, 1.0 if match_status == MatchStatus.MATCHED else 0.0, span=lf_trace)
+        score_trace_safe(_tid, RECON_FINAL_STATUS_PARTIAL_MATCH, 1.0 if match_status == MatchStatus.PARTIAL_MATCH else 0.0, span=lf_trace)
+        score_trace_safe(_tid, RECON_FINAL_STATUS_REQUIRES_REVIEW, 1.0 if match_status == MatchStatus.REQUIRES_REVIEW else 0.0, span=lf_trace)
+        score_trace_safe(_tid, RECON_FINAL_STATUS_UNMATCHED, 1.0 if match_status == MatchStatus.UNMATCHED else 0.0, span=lf_trace)
+        score_trace_safe(_tid, RECON_PO_FOUND, 1.0 if po_result.found else 0.0, span=lf_trace)
         _grn_found_flag = bool(
             reconciliation_mode == "THREE_WAY" and _grn and getattr(_grn, "grn_available", False)
         )
-        score_trace_safe(_tid, "recon_grn_found", 1.0 if _grn_found_flag else 0.0, span=lf_trace)
-        score_trace_safe(_tid, "recon_auto_close_eligible", 1.0 if _is_auto_close else 0.0, span=lf_trace)
-        score_trace_safe(_tid, "recon_routed_to_review", 1.0 if _review_created else 0.0, span=lf_trace)
-        score_trace_safe(_tid, "recon_exception_count_final", float(len(exceptions)), span=lf_trace)
+        score_trace_safe(_tid, RECON_GRN_FOUND, 1.0 if _grn_found_flag else 0.0, span=lf_trace)
+        score_trace_safe(_tid, RECON_AUTO_CLOSE_ELIGIBLE, 1.0 if _is_auto_close else 0.0, span=lf_trace)
+        score_trace_safe(_tid, RECON_ROUTED_TO_REVIEW, 1.0 if _review_created else 0.0, span=lf_trace)
+        score_trace_safe(_tid, RECON_EXCEPTION_COUNT_FINAL, float(len(exceptions)), span=lf_trace)
 
         # Update root trace metadata with eval-ready summary
         _eval_meta = {
