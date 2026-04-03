@@ -1222,7 +1222,7 @@ def extraction_approve(request, pk):
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return JsonResponse({"ok": True, "status": "APPROVED"})
 
-    messages.success(request, f"Extraction approved for Invoice {invoice.invoice_number}.")
+    messages.success(request, f"Extraction approved for Invoice {approval.invoice.invoice_number}.")
     return redirect("extraction:approval_queue")
 
 
