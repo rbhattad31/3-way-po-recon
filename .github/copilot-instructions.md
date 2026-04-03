@@ -2,7 +2,7 @@
 
 ## Project Context
 
-This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with **16 Django apps** (added: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`).
+This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with **17 Django apps** (added: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`, `core_eval`).
 
 **Read [PROJECT.md](../PROJECT.md) for full architecture, models, services, and data flow.**
 
@@ -165,6 +165,12 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Posting Core Pipeline | `apps/posting_core/services/` (mapping engine, pipeline, validation, confidence, review routing, governance trail) |
 | Posting ERP Reference Models | `apps/posting_core/models.py` (`ERPVendorReference`, `ERPItemReference`, `ERPTaxCodeReference`, `ERPCostCenterReference`, `ERPPOReference`, alias/rule models) |
 | Posting Import Pipeline | `apps/posting_core/services/import_pipeline/` (parsers, validators, type importers, orchestrator) |
+| Eval & Learning Models | `apps/core_eval/models.py` (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction) |
+| Eval & Learning Services | `apps/core_eval/services/` (eval_run_service, eval_metric_service, eval_field_outcome_service, learning_signal_service, learning_action_service, learning_engine) |
+| Eval Adapters | `apps/extraction/services/eval_adapter.py` (ExtractionEvalAdapter -- extraction <-> core_eval bridge) |
+| Learning Engine Command | `apps/core_eval/management/commands/run_learning_engine.py` |
+| Eval & Learning Views | `apps/core_eval/template_views.py` (5 FBV views: eval_run_list, eval_run_detail, learning_signal_list, learning_action_list, learning_action_detail) |
+| Eval & Learning URLs | `apps/core_eval/urls.py` (mounted at `/eval/`) |
 | Static files | `static/css/`, `static/js/` |
 | Config | `config/settings.py`, `config/urls.py`, `config/celery.py` |
 
@@ -224,6 +230,14 @@ ERPConnection (erp_integration)
 ERPReferenceCacheRecord (erp_integration) — TTL cache for ERP lookups
 ERPResolutionLog (erp_integration) — audit log per lookup attempt
 ERPSubmissionLog (erp_integration) — audit log per ERP submission
+
+EvalRun (core_eval) — one evaluation pass per entity
+  +--< EvalMetric (N) — named metrics (numeric, text, JSON)
+  +--< EvalFieldOutcome (N) — per-field predicted vs ground truth
+  +--< LearningSignal (N) — atomic observations from production
+
+LearningAction (core_eval) — proposed corrective action
+  status: PROPOSED -> APPROVED -> APPLIED | REJECTED | FAILED
 
 InvoicePosting (posting) — 1:1 Invoice; lifecycle state + review queue + payload snapshot
 InvoicePostingFieldCorrection (posting) — per-field correction audit trail
@@ -308,6 +322,16 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 3. Add the new `ERPConnectorType` value to `apps/erp_integration/enums.py`.
 4. Register in `_CONNECTOR_MAP` in `apps/erp_integration/services/connector_factory.py`.
 5. Create an `ERPConnection` record (via admin or seed) with `connector_type` set to the new value.
+
+### When adding a new eval adapter for a pipeline
+1. Create `apps/<module>/services/eval_adapter.py` following the `ExtractionEvalAdapter` pattern.
+2. Define signal type constants (e.g., `SIG_MATCH_OUTCOME = "match_outcome"`).
+3. Call `EvalRunService.create_or_update()` to upsert an `EvalRun` per pipeline execution.
+4. Call `EvalMetricService.upsert()` for each numeric metric.
+5. Call `LearningSignalService.record()` for each observable event.
+6. Wire the adapter call into the pipeline task/service inside a `try/except` block (fail-silent).
+7. Optionally add new rules to `LearningEngine` if new signal types warrant pattern detection.
+8. Add tests: adapter unit tests + end-to-end tests with the engine.
 
 ### When adding a new ERP resolver
 1. Create class in `apps/erp_integration/services/resolution/` extending `BaseResolver`.
@@ -396,12 +420,14 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **ERP Integration Layer** (`apps/erp_integration/`): `ERPConnection` model + `ConnectorFactory`; 4 connector implementations (Custom, Dynamics, Zoho, Salesforce); 7 resolver types with DB fallback (PO fallback is two-tier: `documents.PurchaseOrder` -> `posting_core.ERPPOReference`); TTL cache; resolution + submission audit logs; `POST /api/v1/erp/resolve/<type>/`; reference data browse UI at `/erp-connections/reference-data/`; wired into `PostingMappingEngine` (connector kwarg) and `POLookupTool`/`GRNLookupTool` (ERP-first with legacy DB fallback).
 - `PostingRun.erp_source_metadata_json` field — captures ERP resolution provenance per pipeline run.
 
+- **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` wired into extraction task + approval service; `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation; 81 tests (22 unit + 13 e2e + 29 RBAC view + 17 adapter/integration). See [EVAL_LEARNING.md](../docs/EVAL_LEARNING.md).
+
 ### ⬜ Not yet implemented (next steps)
-- **Tests**: pytest + factory-boy configured but no tests written. Need unit tests for services, integration tests for API endpoints, and factory classes for all models.
+- **Tests**: Need additional unit tests for services, integration tests for API endpoints, and factory classes for all models. Existing: reconciliation (73), extraction (282+), extraction_core (50+), eval & learning (81).
 - **Extraction refinement**: Tune LLM extraction prompts, add support for multi-page invoices, handle edge-case layouts.
 - **Real ERP submission**: `PostingActionService.submit_posting()` is Phase 1 mock — replace with live ERP connector call (SAP BAPI, Oracle REST, etc.).
 - **Auto-submit**: Auto-advance touchless postings (`is_touchless=True`, confidence ≥ threshold) directly to `SUBMISSION_IN_PROGRESS` without human approval.
-- **Feedback learning**: Train `VendorAliasMapping` / `ItemAliasMapping` from accepted field corrections.
+- **Feedback learning**: Train `VendorAliasMapping` / `ItemAliasMapping` from accepted field corrections. `LearningEngine` proposes actions; auto-apply not yet implemented.
 - **Scheduled ERP reference re-import**: Celery Beat task to pull fresh master data from shared drive/ERP.
 - **LLM-assisted item mapping**: Use GPT for fuzzy item description matching in `PostingMappingEngine._resolve_item()`.
 - **Report export services**: GeneratedReport model exists but full CSV/Excel export logic not built (CSV export exists for case console only).
@@ -481,6 +507,9 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/posting_core/services/posting_pipeline.py` | 9-stage posting pipeline orchestration (incl. duplicate check) |
 | `apps/posting/services/posting_orchestrator.py` | Orchestrates `prepare_posting` lifecycle |
 | `apps/posting/services/posting_action_service.py` | Approve / reject / submit / retry actions |
+| `apps/core_eval/models.py` | EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction |
+| `apps/core_eval/services/learning_engine.py` | Deterministic learning engine (5 rules, aggregation, safety controls) |
+| `apps/extraction/services/eval_adapter.py` | ExtractionEvalAdapter (extraction <-> core_eval bridge) |
 
 ---
 

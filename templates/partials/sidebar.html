@@ -166,6 +166,28 @@
       </li>
       {% endif %}
 
+      {# ── Eval & Learning ── #}
+      {% has_permission "eval.view" as can_view_eval %}
+      {% if can_view_eval %}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Eval &amp; Learning</li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'core_eval' and request.resolver_match.url_name == 'eval_run_list' or request.resolver_match.url_name == 'eval_run_detail' %}active fw-bold{% endif %}" href="{% url 'core_eval:eval_run_list' %}">
+          <i class="bi bi-clipboard-data me-2"></i>Eval Runs
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'learning_signal_list' %}active fw-bold{% endif %}" href="{% url 'core_eval:learning_signal_list' %}">
+          <i class="bi bi-broadcast me-2"></i>Learning Signals
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'learning_action_list' or request.resolver_match.url_name == 'learning_action_detail' %}active fw-bold{% endif %}" href="{% url 'core_eval:learning_action_list' %}">
+          <i class="bi bi-lightning me-2"></i>Learning Actions
+        </a>
+      </li>
+      {% endif %}
+
       {# ── Governance ── #}
       {% has_permission "governance.view" as can_view_governance %}
       {% if can_view_governance %}

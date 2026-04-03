@@ -196,7 +196,7 @@ factory-boy>=3.3            gunicorn>=21.2         whitenoise>=6.6
 
 ## 4. Application Structure
 
-The project contains **20 Django apps** under `apps/`:
+The project contains **21 Django apps** under `apps/`:
 
 | App | Purpose | Key Files |
 |---|---|---|
@@ -217,6 +217,7 @@ The project contains **20 Django apps** under `apps/`:
 | **posting** | Invoice posting business layer: lifecycle state, review queues, user actions, templates | `models.py`, `services/`, `tasks.py`, `template_views.py` |
 | **posting_core** | Invoice posting platform layer: 9-stage pipeline, mapping engine, ERP reference import, governance trail | `models.py`, `services/`, `views.py` |
 | **procurement** | Procurement Intelligence Platform: recommendation, benchmarking, validation, quotation extraction | `models.py`, `services/`, `agents/`, `tasks.py`, `template_views.py` |
+| **core_eval** | Domain-agnostic evaluation & learning framework: EvalRun, metrics, field outcomes, learning signals, learning engine | `models.py`, `services/` (6 files), `template_views.py`, `urls.py`, `management/commands/` |
 | **reconciliation** | Matching engine (14 services), tolerance, classification | `services/` (14 files), `tasks.py` |
 | **reports** | Report generation tracking | `models.py` |
 | **reviews** | Review assignment, decisions, comments | `models.py`, `services.py` |
@@ -2375,7 +2376,8 @@ celery -A config worker -l info
 - Enterprise RBAC: Role, Permission, RolePermission, UserRole (with scope_json), UserPermissionOverride; RBAC engine, middleware, template tags, DRF classes, CBV mixins, admin console (8 screens), API, seed (6 roles incl. SYSTEM_AGENT, 40 permissions)
 - Prompt registry with 18 defaults; pushed to Langfuse via `push_prompts_to_langfuse`
 - Seed data (4 commands): config, rbac, prompts, ap_data (30+ scenarios, 6-stage pipeline)
-- **Tests**: Reconciliation engine: 73. Extraction (base + Phase 2): 232+. Extraction core: 50+. Total: 355+ passing.
+- **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` bridges extraction/approval into eval layer; `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation. See [EVAL_LEARNING.md](EVAL_LEARNING.md).
+- **Tests**: Reconciliation engine: 73. Extraction (base + Phase 2): 232+. Extraction core: 50+. Eval & Learning: 81 (22 unit + 13 e2e + 29 RBAC view + 17 adapter/integration). Total: 436+ passing.
 - Azure Blob Storage integration; Windows synchronous dev mode; Admin panel registration
 
 ### Not Yet Implemented
@@ -2384,7 +2386,7 @@ celery -A config worker -l info
 |---|---|
 | **Real ERP submission** | `PostingActionService.submit_posting()` is Phase 1 mock -- replace with live ERP connector call (SAP BAPI, Oracle REST, etc.) |
 | **Auto-submit (touchless posting)** | Auto-advance `is_touchless=True` postings to SUBMISSION_IN_PROGRESS without human approval |
-| **Feedback learning** | Train `VendorAliasMapping`/`ItemAliasMapping` from accepted field corrections |
+| **Feedback learning** | Train `VendorAliasMapping`/`ItemAliasMapping` from accepted field corrections. `LearningEngine` proposes actions; auto-apply is not yet implemented. |
 | **Scheduled ERP re-import** | Celery Beat periodic task to pull fresh master data from shared drive/ERP |
 | **LLM-assisted item mapping** | Use GPT for fuzzy item description matching in `PostingMappingEngine._resolve_item()` |
 | **Extraction Refinement** | Multi-page invoice support, edge-case layout handling |
@@ -2395,6 +2397,41 @@ celery -A config worker -l info
 | **CI/CD** | No GitHub Actions or pipeline |
 | **Frontend Interactivity** | AJAX enhancements for server-rendered templates |
 | **Additional tests** | Factory-boy factories and integration tests for DRF endpoints, posting pipeline, ERP connectors, procurement |
+| **Eval adapters for recon/posting/agents** | Only extraction has an eval adapter today. Reconciliation, posting, and agent pipelines need adapters to emit LearningSignals. |
+
+### 26.5 RBAC & Permissions
+
+| Permission Code | Granted To | Description |
+|---|---|---|
+| `eval.view` | ADMIN, FINANCE_MANAGER, REVIEWER, AUDITOR | View eval runs, learning signals, and actions |
+| `eval.manage` | ADMIN, FINANCE_MANAGER | Approve, reject, or apply learning actions |
+
+Views use `@permission_required_code("eval.view")`. Sidebar gated by `{% has_permission "eval.view" %}`.
+
+### 26.6 Audit Events
+
+| Event Type | Fired By |
+|---|---|
+| `LEARNING_ENGINE_RUN` | `LearningEngine.run()` |
+| `LEARNING_ACTION_PROPOSED` | `LearningEngine._propose_action()` |
+| `LEARNING_ACTION_APPROVED` | `LearningActionService.approve()` |
+| `LEARNING_ACTION_REJECTED` | `LearningActionService.mark_rejected()` |
+| `LEARNING_ACTION_APPLIED` | `LearningActionService.mark_applied()` |
+| `LEARNING_ACTION_FAILED` | `LearningActionService.mark_failed()` |
+
+All audit calls are fail-silent (never block the calling operation).
+
+### 26.7 UI Views
+
+| URL | View | Description |
+|---|---|---|
+| `/eval/` | `eval_run_list` | List with KPI cards, filters, pagination |
+| `/eval/runs/<pk>/` | `eval_run_detail` | Detail with metrics, field outcomes, signals |
+| `/eval/signals/` | `learning_signal_list` | Filterable signal list |
+| `/eval/actions/` | `learning_action_list` | List with KPI cards, filters |
+| `/eval/actions/<pk>/` | `learning_action_detail` | Full detail with JSON payloads |
+
+Templates in `templates/core_eval/`. Sidebar section: "Eval & Learning" (Eval Runs, Learning Signals, Learning Actions).
 
 ---
 
@@ -2569,3 +2606,54 @@ Accessed from the **ERP Integration** sidebar section (separate from Posting Age
 ### 25.5 API Base Path
 
 `/api/v1/procurement/` -- request CRUD, quotation management, recommendation/benchmark/validation runs, category budgets, supplier performance, market reference data
+
+---
+
+## 26. Evaluation & Learning Framework
+
+> Full reference: [EVAL_LEARNING.md](EVAL_LEARNING.md)
+
+A domain-agnostic quality-tracking and controlled-learning layer that sits alongside production pipelines without modifying them.
+
+- **`apps/core_eval/`** -- 5 models (`EvalRun`, `EvalMetric`, `EvalFieldOutcome`, `LearningSignal`, `LearningAction`), 6 service classes, deterministic `LearningEngine`
+- **Adapters** bridge production pipelines into the eval layer. Currently implemented: `ExtractionEvalAdapter` (wired into extraction task + approval service)
+- **LearningEngine** scans accumulated signals, detects patterns via 5 threshold rules, and proposes `LearningAction` records for human review
+- Actions are **never auto-applied** -- all proposals require explicit human approval
+- All adapter methods are **fail-silent** -- errors never propagate to calling pipelines
+
+### 26.1 Models
+
+```
+EvalRun (core_eval) -- one eval pass per entity
+  +--< EvalMetric (N) -- named metrics (numeric, text, JSON)
+  +--< EvalFieldOutcome (N) -- per-field predicted vs ground truth
+  +--< LearningSignal (N) -- atomic observations from production
+
+LearningAction (core_eval) -- proposed corrective action
+  status: PROPOSED -> APPROVED -> APPLIED | REJECTED | FAILED
+```
+
+### 26.2 LearningEngine Rules
+
+| Rule | Action Proposed | Threshold |
+|---|---|---|
+| Field Correction Hotspot | `field_normalization_candidate` | >= 20 corrections on same field |
+| Prompt Weakness | `prompt_review` | >= 30% correction rate (min 10 corrections) |
+| Auto-Approve Risk | `threshold_tune` | >= 5 auto-approved items later corrected |
+| Validation Failure Cluster | `validation_rule_candidate` | >= 10 identical validation errors |
+| Vendor-Specific Issue | `vendor_rule_candidate` | >= 10 corrections for same vendor/group |
+
+### 26.3 Management Command
+
+```bash
+python manage.py run_learning_engine [--module extraction] [--days 14] [--dry-run]
+```
+
+### 26.4 Integration Points
+
+| Pipeline | Adapter | Status |
+|---|---|---|
+| Extraction (task + approval) | `ExtractionEvalAdapter` | Implemented |
+| Reconciliation | -- | Not yet implemented |
+| Posting | -- | Not yet implemented |
+| Agent orchestrator | -- | Not yet implemented |

@@ -42,6 +42,8 @@ def run_bulk_job_task(self, job_id: int) -> dict:
         _lf_trace = start_trace(
             _trace_id,
             "bulk_extraction_job",
+            user_id=getattr(job, "started_by_id", None),
+            session_id=f"bulk-job-{job.pk}",
             metadata={
                 "task_id": self.request.id,
                 "job_pk": job.pk,
@@ -98,6 +100,7 @@ def run_bulk_job_task(self, job_id: int) -> dict:
                     _trace_id,
                     EXTRACTION_BULK_JOB_SUCCESS_RATE,
                     processed / total,
+                    span=_lf_trace,
                     comment=f"processed={processed} total={total}",
                 )
                 end_span(_lf_trace, output={"status": job.status, "processed": processed})

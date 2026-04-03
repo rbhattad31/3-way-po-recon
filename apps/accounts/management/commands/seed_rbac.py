@@ -107,6 +107,9 @@ PERMISSIONS = [
     # Bulk Extraction
     {"code": "extraction.bulk_view", "name": "View Bulk Extraction", "module": "extraction", "action": "bulk_view", "description": "View bulk extraction jobs and items"},
     {"code": "extraction.bulk_create", "name": "Create Bulk Extraction", "module": "extraction", "action": "bulk_create", "description": "Start new bulk extraction jobs"},
+    # Eval & Learning
+    {"code": "eval.view", "name": "View Eval & Learning", "module": "eval", "action": "view", "description": "View eval runs, learning signals, and learning actions"},
+    {"code": "eval.manage", "name": "Manage Learning Actions", "module": "eval", "action": "manage", "description": "Approve, reject, and apply learning actions"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -115,7 +118,7 @@ PERMISSIONS = [
 # ADMIN gets everything (handled in code: admin bypass), but we also
 # explicitly grant all permissions for visibility in the matrix UI.
 ROLE_MATRIX = {
-    "ADMIN": [p["code"] for p in PERMISSIONS],  # everything
+    "ADMIN": [p["code"] for p in PERMISSIONS],  # everything (incl. eval.view, eval.manage)
     "AP_PROCESSOR": [
         "invoices.view", "invoices.create", "invoices.edit",
         "invoices.trigger_reconciliation",
@@ -140,6 +143,8 @@ ROLE_MATRIX = {
         "recommendations.route_review",
         "extraction.approve", "extraction.reject",
         "extraction.reprocess", "extraction.correct",
+        # Eval & Learning read-only
+        "eval.view",
     ],
     "FINANCE_MANAGER": [
         "invoices.view",
@@ -160,6 +165,8 @@ ROLE_MATRIX = {
         "procurement.view", "procurement.view_results",
         # Credits
         "credits.view", "credits.manage",
+        # Eval & Learning
+        "eval.view", "eval.manage",
     ],
     "AUDITOR": [
         "invoices.view",
@@ -173,6 +180,8 @@ ROLE_MATRIX = {
         "procurement.view", "procurement.view_results",
         # Bulk extraction read-only
         "extraction.bulk_view",
+        # Eval & Learning read-only
+        "eval.view",
     ],
     "SYSTEM_AGENT": [
         # Scoped agent orchestration + execution

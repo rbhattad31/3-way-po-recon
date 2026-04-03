@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Eval Run #{{ run.pk }} -- Eval &amp; Learning{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'core_eval:eval_run_list' %}">Eval Runs</a></li>
+  <li class="breadcrumb-item active">Run #{{ run.pk }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-clipboard-data me-2"></i>Eval Run #{{ run.pk }}</h4>
+  <span class="ap-badge
+    {% if run.status == 'COMPLETED' %}ap-badge-matched
+    {% elif run.status == 'FAILED' %}ap-badge-unmatched
+    {% elif run.status == 'RUNNING' %}ap-badge-partial
+    {% else %}ap-badge-status-new{% endif %} fs-6">{{ run.status }}</span>
+</div>
+
+{# -- Run Summary -- #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body">
+    <div class="row">
+      <div class="col-md-6">
+        <table class="table table-sm table-borderless mb-0">
+          <tr><th class="text-muted" style="width:140px">Module</th><td>{{ run.app_module }}</td></tr>
+          <tr><th class="text-muted">Entity Type</th><td>{{ run.entity_type }}</td></tr>
+          <tr><th class="text-muted">Entity ID</th><td>{{ run.entity_id }}</td></tr>
+          {% if run.run_key %}<tr><th class="text-muted">Run Key</th><td><code class="small">{{ run.run_key }}</code></td></tr>{% endif %}
+          {% if run.tenant_id %}<tr><th class="text-muted">Tenant</th><td>{{ run.tenant_id }}</td></tr>{% endif %}
+          {% if run.prompt_slug %}<tr><th class="text-muted">Prompt Slug</th><td>{{ run.prompt_slug }}</td></tr>{% endif %}
+          {% if run.prompt_hash %}<tr><th class="text-muted">Prompt Hash</th><td><code class="small">{{ run.prompt_hash|truncatechars:16 }}</code></td></tr>{% endif %}
+        </table>
+      </div>
+      <div class="col-md-6">
+        <table class="table table-sm table-borderless mb-0">
+          <tr><th class="text-muted" style="width:140px">Created</th><td>{{ run.created_at|date:"M d, Y H:i:s" }}</td></tr>
+          {% if run.started_at %}<tr><th class="text-muted">Started</th><td>{{ run.started_at|date:"M d, Y H:i:s" }}</td></tr>{% endif %}
+          {% if run.completed_at %}<tr><th class="text-muted">Completed</th><td>{{ run.completed_at|date:"M d, Y H:i:s" }}</td></tr>{% endif %}
+          {% if run.duration_ms is not None %}<tr><th class="text-muted">Duration</th><td>{{ run.duration_ms }}ms</td></tr>{% endif %}
+          {% if run.trace_id %}<tr><th class="text-muted">Trace ID</th><td><code class="small">{{ run.trace_id }}</code></td></tr>{% endif %}
+          {% if run.triggered_by %}<tr><th class="text-muted">Triggered By</th><td>{{ run.triggered_by.email }}</td></tr>{% endif %}
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# -- Input Snapshot / Config / Result JSON -- #}
+{% if input_snapshot_pretty or config_pretty or result_pretty or error_pretty %}
+<div class="row mb-3">
+  {% if input_snapshot_pretty %}
+  <div class="col-md-{% if result_pretty or error_pretty %}6{% else %}12{% endif %}">
+    <h6 class="text-muted mb-1"><i class="bi bi-box-arrow-in-right me-1"></i>Input Snapshot</h6>
+    <div class="ap-card"><div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ input_snapshot_pretty }}</pre></div></div>
+  </div>
+  {% endif %}
+  {% if result_pretty %}
+  <div class="col-md-6">
+    <h6 class="text-muted mb-1"><i class="bi bi-box-arrow-right me-1"></i>Result</h6>
+    <div class="ap-card"><div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ result_pretty }}</pre></div></div>
+  </div>
+  {% endif %}
+  {% if error_pretty %}
+  <div class="col-md-6">
+    <h6 class="text-muted mb-1"><i class="bi bi-exclamation-triangle me-1 text-danger"></i>Error</h6>
+    <div class="ap-card border-danger"><div class="ap-card-body p-2"><pre class="mb-0 small text-danger" style="max-height:220px;overflow:auto">{{ error_pretty }}</pre></div></div>
+  </div>
+  {% endif %}
+  {% if config_pretty %}
+  <div class="col-md-6">
+    <h6 class="text-muted mb-1"><i class="bi bi-gear me-1"></i>Config</h6>
+    <div class="ap-card"><div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ config_pretty }}</pre></div></div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# -- Metrics -- #}
+<h5 class="mt-4 mb-2"><i class="bi bi-graph-up me-2"></i>Metrics <span class="badge bg-secondary">{{ metrics|length }}</span></h5>
+{% if metrics %}
+<div class="ap-card mb-3">
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table w-100 mb-0">
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Value</th>
+          <th>Unit</th>
+          <th style="width:140px">Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in metrics %}
+        <tr>
+          <td><code>{{ m.metric_name }}</code></td>
+          <td>
+            {% if m.metric_value is not None %}
+              {{ m.metric_value }}
+            {% elif m.string_value %}
+              {{ m.string_value|truncatechars:60 }}
+            {% elif m.json_value is not None %}
+              <small class="text-muted">[JSON]</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ m.unit|default:"--" }}</small></td>
+          <td><small class="text-muted">{{ m.created_at|date:"M d, H:i:s" }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="ap-card mb-3"><div class="ap-card-body text-center text-muted py-3">No metrics recorded.</div></div>
+{% endif %}
+
+{# -- Field Outcomes -- #}
+<h5 class="mt-4 mb-2"><i class="bi bi-check2-square me-2"></i>Field Outcomes <span class="badge bg-secondary">{{ field_outcomes|length }}</span></h5>
+{% if field_outcomes %}
+<div class="ap-card mb-3">
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table w-100 mb-0">
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Status</th>
+          <th>Predicted</th>
+          <th>Ground Truth</th>
+          <th>Confidence</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fo in field_outcomes %}
+        <tr>
+          <td><code>{{ fo.field_name }}</code></td>
+          <td>
+            <span class="ap-badge
+              {% if fo.status == 'CORRECT' %}ap-badge-matched
+              {% elif fo.status == 'INCORRECT' %}ap-badge-unmatched
+              {% elif fo.status == 'MISSING' %}ap-badge-partial
+              {% else %}ap-badge-status-new{% endif %}">{{ fo.status }}</span>
+          </td>
+          <td><small>{{ fo.predicted_value|truncatechars:40|default:"--" }}</small></td>
+          <td><small>{{ fo.ground_truth_value|truncatechars:40|default:"--" }}</small></td>
+          <td>
+            {% if fo.confidence is not None %}
+              <small>{% widthratio fo.confidence 1 100 %}%</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="ap-card mb-3"><div class="ap-card-body text-center text-muted py-3">No field outcomes recorded.</div></div>
+{% endif %}
+
+{# -- Linked Signals -- #}
+<h5 class="mt-4 mb-2"><i class="bi bi-broadcast me-2"></i>Linked Signals <span class="badge bg-secondary">{{ signals|length }}</span></h5>
+{% if signals %}
+<div class="ap-card mb-3">
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table w-100 mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Signal Type</th>
+          <th>Field</th>
+          <th>Old / New</th>
+          <th style="width:140px">Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sig in signals %}
+        <tr>
+          <td><span class="text-muted">#{{ sig.pk }}</span></td>
+          <td><span class="ap-badge ap-badge-partial">{{ sig.signal_type }}</span></td>
+          <td>{% if sig.field_name %}<code class="small">{{ sig.field_name }}</code>{% else %}<small class="text-muted">--</small>{% endif %}</td>
+          <td>
+            {% if sig.old_value or sig.new_value %}
+              <small class="text-danger">{{ sig.old_value|truncatechars:20 }}</small>
+              {% if sig.old_value and sig.new_value %}<i class="bi bi-arrow-right mx-1 text-muted"></i>{% endif %}
+              <small class="text-success">{{ sig.new_value|truncatechars:20 }}</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ sig.created_at|date:"M d, H:i:s" }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="ap-card mb-3"><div class="ap-card-body text-center text-muted py-3">No linked learning signals.</div></div>
+{% endif %}
+{% endblock %}

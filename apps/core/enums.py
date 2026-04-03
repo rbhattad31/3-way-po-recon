@@ -301,6 +301,13 @@ class AuditEventType(models.TextChoices):
     USER_LOGOUT = "USER_LOGOUT", "User Logout"
     USER_LOGIN_FAILED = "USER_LOGIN_FAILED", "User Login Failed"
     PASSWORD_CHANGED = "PASSWORD_CHANGED", "Password Changed"
+    # Eval & Learning events
+    LEARNING_ENGINE_RUN = "LEARNING_ENGINE_RUN", "Learning Engine Run"
+    LEARNING_ACTION_PROPOSED = "LEARNING_ACTION_PROPOSED", "Learning Action Proposed"
+    LEARNING_ACTION_APPROVED = "LEARNING_ACTION_APPROVED", "Learning Action Approved"
+    LEARNING_ACTION_REJECTED = "LEARNING_ACTION_REJECTED", "Learning Action Rejected"
+    LEARNING_ACTION_APPLIED = "LEARNING_ACTION_APPLIED", "Learning Action Applied"
+    LEARNING_ACTION_FAILED = "LEARNING_ACTION_FAILED", "Learning Action Failed"
 
 
 class PermissionOverrideType(models.TextChoices):

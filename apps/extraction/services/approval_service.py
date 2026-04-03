@@ -98,6 +98,8 @@ class ExtractionApprovalService:
         cls,
         invoice: Invoice,
         extraction_result: Optional[ExtractionResult] = None,
+        lf_trace_id: Optional[str] = None,
+        lf_span=None,
     ) -> Optional[ExtractionApproval]:
         """Auto-approve if confidence meets the configured threshold.
 
@@ -152,12 +154,21 @@ class ExtractionApprovalService:
         # ── Create AP Case and trigger case pipeline ──
         cls._ensure_case_and_process(invoice, user=None)
 
+        # ── core_eval: persist auto-approval learning signal ──
+        try:
+            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+            ExtractionEvalAdapter.sync_for_approval(approval, user=None)
+        except Exception:
+            logger.debug("core_eval auto-approve sync failed (non-fatal)")
+
         try:
             from apps.core.langfuse_client import score_trace
+            _score_tid = lf_trace_id or f"approval-{approval.pk}"
             score_trace(
-                f"approval-{approval.pk}",
+                _score_tid,
                 EXTRACTION_AUTO_APPROVE_CONFIDENCE,
                 float(confidence),
+                span=lf_span,
                 comment=(
                     f"invoice={invoice.pk} "
                     f"threshold={threshold:.2f} "
@@ -180,6 +191,8 @@ class ExtractionApprovalService:
         approval: ExtractionApproval,
         user,
         corrections: Optional[dict] = None,
+        lf_trace_id: Optional[str] = None,
+        lf_span=None,
     ) -> ExtractionApproval:
         """Approve an extraction after optional field corrections.
 
@@ -317,6 +330,15 @@ class ExtractionApprovalService:
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
         cls._record_governance_trail(approval, "APPROVE", user)
 
+        # ── core_eval: persist approval learning signals ──
+        try:
+            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+            ExtractionEvalAdapter.sync_for_approval(
+                approval, user=user, correction_records=correction_records,
+            )
+        except Exception:
+            logger.debug("core_eval approval sync failed (non-fatal)")
+
         # ── Create AP Case and trigger case pipeline ──
         # The case orchestrator handles reconciliation, agents, review
         # routing, and posting internally via its stage sequence.
@@ -324,11 +346,12 @@ class ExtractionApprovalService:
 
         try:
             from apps.core.langfuse_client import score_trace
-            _trace_id = f"approval-{approval.pk}"
+            _score_tid = lf_trace_id or f"approval-{approval.pk}"
             score_trace(
-                _trace_id,
+                _score_tid,
                 EXTRACTION_APPROVAL_DECISION,
                 1.0,
+                span=lf_span,
                 comment=(
                     f"invoice={invoice.pk} "
                     f"reviewer={getattr(user, 'pk', None)} "
@@ -337,16 +360,18 @@ class ExtractionApprovalService:
                 ),
             )
             score_trace(
-                _trace_id,
+                _score_tid,
                 EXTRACTION_APPROVAL_CONFIDENCE,
                 float(approval.confidence_at_review or 0.0),
+                span=lf_span,
                 comment=f"invoice={invoice.pk}",
             )
             if correction_records:
                 score_trace(
-                    _trace_id,
+                    _score_tid,
                     EXTRACTION_CORRECTIONS_COUNT,
                     float(len(correction_records)),
+                    span=lf_span,
                     comment=f"invoice={invoice.pk}",
                 )
         except Exception:
@@ -365,6 +390,8 @@ class ExtractionApprovalService:
         approval: ExtractionApproval,
         user,
         reason: str = "",
+        lf_trace_id: Optional[str] = None,
+        lf_span=None,
     ) -> ExtractionApproval:
         """Reject an extraction — invoice stays in PENDING_APPROVAL.
 
@@ -407,12 +434,21 @@ class ExtractionApprovalService:
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
         cls._record_governance_trail(approval, "REJECT", user, reason)
 
+        # ── core_eval: persist rejection learning signal ──
+        try:
+            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+            ExtractionEvalAdapter.sync_for_approval(approval, user=user)
+        except Exception:
+            logger.debug("core_eval reject sync failed (non-fatal)")
+
         try:
             from apps.core.langfuse_client import score_trace
+            _score_tid = lf_trace_id or f"approval-{approval.pk}"
             score_trace(
-                f"approval-{approval.pk}",
+                _score_tid,
                 EXTRACTION_APPROVAL_DECISION,
                 0.0,
+                span=lf_span,
                 comment=(
                     f"invoice={approval.invoice.pk} "
                     f"reviewer={getattr(user, 'pk', None)} "

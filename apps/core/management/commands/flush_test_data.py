@@ -2,11 +2,13 @@
 Flush all transactional / test data while preserving configuration.
 
 Deletes: invoices, POs, GRNs, documents, cases, reconciliation, agents,
-         reviews, tools, audit events, extraction results, vendors, bulk jobs.
+         reviews, tools, audit events, extraction results, vendors, bulk jobs,
+         eval runs, learning signals, learning actions.
 
 Preserves: users, roles, permissions, RBAC, agent definitions, tool definitions,
            reconciliation config/policies, prompt templates, extraction configs,
            control center settings, credit accounts, credit transaction ledger.
+Also deletes all Langfuse traces and scores (if Langfuse is configured).
 
 Usage:
     python manage.py flush_test_data
@@ -170,6 +172,20 @@ class Command(BaseCommand):
         count = Vendor.objects.all().delete()[0]
         self.stdout.write(f"  Vendor: {count}")
 
+        # --- Eval & Learning ---
+        from apps.core_eval.models import (
+            EvalFieldOutcome, EvalMetric, EvalRun, LearningAction, LearningSignal,
+        )
+
+        for model in [
+            LearningAction, LearningSignal, EvalFieldOutcome, EvalMetric, EvalRun,
+        ]:
+            count = model.objects.all().delete()[0]
+            self.stdout.write(f"  {model.__name__}: {count}")
+
+        # --- Langfuse traces & scores ---
+        self._flush_langfuse_traces()
+
         # --- Reset auto-increment IDs ---
         self._reset_auto_increments(flushed_models=[
             ProcessingLog, FileProcessingStatus, AuditEvent,
@@ -189,6 +205,7 @@ class Command(BaseCommand):
             PurchaseOrderLineItem, PurchaseOrder,
             DocumentUpload,
             Vendor,
+            LearningAction, LearningSignal, EvalFieldOutcome, EvalMetric, EvalRun,
         ])
 
     def _reset_auto_increments(self, flushed_models):
@@ -217,3 +234,56 @@ class Command(BaseCommand):
                         self.style.WARNING(f"  Could not reset {table}: {exc}")
                     )
         self.stdout.write(f"  Auto-increment reset for {reset_count} tables.")
+
+    def _flush_langfuse_traces(self):
+        """Delete all Langfuse traces (and their scores/observations).
+
+        Uses the Langfuse API client if configured. Silently skips if
+        Langfuse is not set up or the SDK is unavailable.
+        """
+        import os
+
+        pk = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+        sk = os.getenv("LANGFUSE_SECRET_KEY", "")
+        if not pk or not sk:
+            self.stdout.write("  Langfuse: skipped (not configured)")
+            return
+
+        try:
+            from langfuse.api.client import LangfuseAPI
+
+            api = LangfuseAPI(
+                base_url=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+                username=pk,
+                password=sk,
+            )
+        except Exception as exc:
+            self.stdout.write(
+                self.style.WARNING(f"  Langfuse: skipped (client init failed: {exc})")
+            )
+            return
+
+        total_deleted = 0
+        page = 1
+        batch_size = 100
+
+        try:
+            while True:
+                traces = api.trace.list(page=page, limit=batch_size)
+                trace_ids = [t.id for t in (traces.data or [])]
+                if not trace_ids:
+                    break
+
+                api.trace.delete_multiple(trace_ids=trace_ids)
+                total_deleted += len(trace_ids)
+                self.stdout.write(f"  Langfuse: deleted batch of {len(trace_ids)} traces...")
+
+                # Always fetch page 1 since previous traces were deleted
+                page = 1
+
+        except Exception as exc:
+            self.stdout.write(
+                self.style.WARNING(f"  Langfuse: error during flush ({exc})")
+            )
+
+        self.stdout.write(f"  Langfuse traces deleted: {total_deleted}")

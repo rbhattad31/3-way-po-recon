@@ -76,10 +76,10 @@ def _lf_end(span, **kwargs):
         pass
 
 
-def _lf_score_trace(trace_id, name, value, **kwargs):
+def _lf_score_trace(trace_id, name, value, span=None, **kwargs):
     try:
         from apps.core.langfuse_client import score_trace
-        score_trace(trace_id, name, value, **kwargs)
+        score_trace(trace_id, name, value, span=span, **kwargs)
     except Exception:
         pass
 
@@ -199,7 +199,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             _fail_upload(upload, extraction_resp.error_message)
             ExtractionResultPersistenceService.save(upload, None, extraction_resp)
             _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
-            _lf_score_trace(_trace_id, EXTRACTION_SUCCESS, 0.0, comment="OCR/LLM failed")
+            _lf_score_trace(_trace_id, EXTRACTION_SUCCESS, 0.0, span=_lf_root, comment="OCR/LLM failed")
             _lf_end(_lf_root, output={"status": "error", "error": extraction_resp.error_message[:200]}, level="ERROR", is_root=True)
             return {"status": "error", "message": extraction_resp.error_message}
 
@@ -230,7 +230,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 upload_id, doc_type_result.document_type,
                 doc_type_result.confidence, doc_type_result.matched_keywords,
             )
-            _lf_score_trace(_trace_id, EXTRACTION_SUCCESS, 0.0, comment=f"rejected: {_doc_type_str}")
+            _lf_score_trace(_trace_id, EXTRACTION_SUCCESS, 0.0, span=_lf_root, comment=f"rejected: {_doc_type_str}")
             _lf_end(_lf_root, output={"status": "rejected", "document_type": _doc_type_str}, level="WARNING", is_root=True)
             return {"status": "rejected", "message": reject_msg, "document_type": doc_type_result.document_type}
 
@@ -491,7 +491,9 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
 
             # Try auto-approve first (disabled by default — threshold = 1.1)
             # Skip auto-approval entirely when critical field review is forced
-            auto_approval = None if review_forced else ExtractionApprovalService.try_auto_approve(invoice, ext_result)
+            auto_approval = None if review_forced else ExtractionApprovalService.try_auto_approve(
+                invoice, ext_result, lf_trace_id=_trace_id, lf_span=_lf_root,
+            )
             if not auto_approval:
                 # Human approval required -- set PENDING_APPROVAL
                 invoice.status = InvoiceStatus.PENDING_APPROVAL
@@ -527,34 +529,50 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                       comment=_approval_outcome)
         _lf_score_trace(_trace_id, EXTRACTION_REQUIRES_REVIEW,
                         0.0 if _approval_outcome == "auto_approved" else 1.0,
-                        comment=_approval_outcome)
+                        span=_lf_root, comment=_approval_outcome)
 
         # ── Trace-level scores ──────────────────────────────────────
         _lf_score_trace(_trace_id, EXTRACTION_CONFIDENCE,
                         float(invoice.extraction_confidence or 0.0),
-                        comment=f"invoice={invoice.pk}")
+                        span=_lf_root, comment=f"invoice={invoice.pk}")
         _lf_score_trace(_trace_id, EXTRACTION_SUCCESS, 1.0,
-                        comment=f"status={invoice.status}")
+                        span=_lf_root, comment=f"status={invoice.status}")
         _lf_score_trace(_trace_id, EXTRACTION_IS_VALID,
                         1.0 if validation_result.is_valid else 0.0,
-                        comment=f"errors={len(validation_result.errors)}")
+                        span=_lf_root, comment=f"errors={len(validation_result.errors)}")
         _lf_score_trace(_trace_id, EXTRACTION_IS_DUPLICATE,
                         1.0 if dup_result.is_duplicate else 0.0,
-                        comment=dup_result.reason or "unique")
+                        span=_lf_root, comment=dup_result.reason or "unique")
         if field_conf_result:
             _lf_score_trace(_trace_id, EXTRACTION_WEAKEST_CRITICAL_FIELD_SCORE,
                             field_conf_result.weakest_critical_score,
-                            comment=f"field={field_conf_result.weakest_critical_field}")
+                            span=_lf_root, comment=f"field={field_conf_result.weakest_critical_field}")
         if decision_codes:
             _lf_score_trace(_trace_id, EXTRACTION_DECISION_CODE_COUNT,
                             float(len(decision_codes)),
-                            comment=", ".join(decision_codes[:5]))
+                            span=_lf_root, comment=", ".join(decision_codes[:5]))
         if extraction_resp.was_repaired:
             _lf_score_trace(_trace_id, EXTRACTION_RESPONSE_REPAIRED, 1.0,
-                            comment=f"actions={len(extraction_resp.repair_actions)}")
+                            span=_lf_root, comment=f"actions={len(extraction_resp.repair_actions)}")
         if extraction_resp.qr_data is not None:
             _lf_score_trace(_trace_id, EXTRACTION_QR_DETECTED, 1.0,
-                            comment=f"strategy={extraction_resp.qr_data.decode_strategy}")
+                            span=_lf_root, comment=f"strategy={extraction_resp.qr_data.decode_strategy}")
+
+        # ── core_eval: persist extraction eval run + metrics + field outcomes ──
+        try:
+            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+            ExtractionEvalAdapter.sync_for_extraction_result(
+                ext_result,
+                invoice,
+                validation_result=validation_result,
+                field_conf_result=field_conf_result,
+                dup_result=dup_result,
+                decision_codes=decision_codes,
+                extraction_resp=extraction_resp,
+                trace_id=_trace_id,
+            )
+        except Exception:
+            logger.debug("core_eval sync failed (non-fatal)")
 
         # Audit: extraction completed
         from apps.auditlog.services import AuditService
@@ -656,7 +674,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         _refund_credit_for_upload(upload, credit_ref_type=credit_ref_type, credit_ref_id=credit_ref_id)
         # ── Close Langfuse root trace on error ──
         _lf_score_trace(_trace_id, EXTRACTION_SUCCESS, 0.0,
-                        comment=f"exception: {str(exc)[:100]}")
+                        span=_lf_root, comment=f"exception: {str(exc)[:100]}")
         _lf_end(_lf_root, output={"status": "error", "error": str(exc)[:300]}, level="ERROR", is_root=True)
         # Audit: extraction failed
         try:

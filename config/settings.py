@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.posting",
     "apps.posting_core",
     "apps.erp_integration",
+    "apps.core_eval",
 ]
 
 MIDDLEWARE = [
@@ -311,7 +312,7 @@ LOGGING = {
             "formatter": "dev_traced" if DEBUG else "json",
         },
         "file": {
-            "class": "logging.handlers.RotatingFileHandler",
+            "class": "apps.core.logging_utils.SafeRotatingFileHandler",
             "filename": BASE_DIR / "logs" / "po_recon.log",
             "maxBytes": 10 * 1024 * 1024,
             "backupCount": 5,

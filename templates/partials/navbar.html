@@ -125,95 +125,91 @@
     </div>
     {% endif %}
 
-    {# More dropdown (Reports, Procurement, Copilot, Governance, Admin) #}
-    <div class="ap-nav-dropdown">
+    {# More mega menu #}
+    <div class="ap-nav-dropdown ap-mega-dropdown">
       <button class="ap-nav-link" data-bs-toggle="dropdown" aria-expanded="false">
-        <i class="bi bi-three-dots me-1"></i>More<i class="bi bi-chevron-down ms-1" style="font-size:.6rem"></i>
+        <i class="bi bi-grid-3x3-gap me-1"></i>More<i class="bi bi-chevron-down ms-1" style="font-size:.6rem"></i>
       </button>
-      <ul class="dropdown-menu dropdown-menu-dark shadow">
-        {# Copilot #}
-        {% has_permission "agents.use_copilot" as can_use_copilot %}
-        {% if can_use_copilot %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.app_name == 'copilot' %}active{% endif %}"
-             href="{% url 'copilot:workspace' %}">
-            <i class="bi bi-stars me-2 opacity-75"></i>AP Copilot
-          </a>
-        </li>
-        <li><hr class="dropdown-divider"></li>
-        {% endif %}
+      <div class="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow ap-mega-menu">
+        <div class="ap-mega-grid">
 
-        {# Reports #}
-        {% has_permission "cases.view" as can_view_case_ops %}
-        {% if can_view_case_ops %}
-        <li class="dropdown-header">Reports</li>
-        <li>
-          <a class="dropdown-item" href="{% url 'dashboard:agent_monitor' %}">
-            <i class="bi bi-activity me-2 opacity-75"></i>Case Operations
-          </a>
-        </li>
-        {% endif %}
-        {% has_permission "agents.view" as can_view_agents %}
-        {% if can_view_agents %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_performance' %}active{% endif %}"
-             href="{% url 'dashboard:agent_performance' %}">
-            <i class="bi bi-robot me-2 opacity-75"></i>Agent Performance
-          </a>
-        </li>
-        {% endif %}
+          {# Column 1: AI & Copilot #}
+          <div class="ap-mega-col">
+            <div class="ap-mega-heading"><i class="bi bi-stars me-1"></i>AI &amp; Copilot</div>
+            {% has_permission "agents.use_copilot" as can_use_copilot %}
+            {% if can_use_copilot %}
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'copilot' %}active{% endif %}"
+               href="{% url 'copilot:workspace' %}">
+              <i class="bi bi-stars me-2 opacity-75"></i>AP Copilot
+            </a>
+            {% endif %}
+            {% has_permission "agents.view" as can_view_agent_runs %}
+            {% if can_view_agent_runs %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_runs_list' %}active{% endif %}"
+               href="{% url 'agents:agent_runs_list' %}">
+              <i class="bi bi-diagram-3 me-2 opacity-75"></i>Agent Runs
+            </a>
+            {% endif %}
+            {% has_permission "procurement.view" as can_view_procurement %}
+            {% if can_view_procurement %}
+            <div class="ap-mega-heading mt-3"><i class="bi bi-cart4 me-1"></i>Procurement</div>
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'procurement' %}active{% endif %}"
+               href="{% url 'procurement:request_list' %}">
+              <i class="bi bi-cart4 me-2 opacity-75"></i>Requests
+            </a>
+            {% endif %}
+          </div>
 
-        {# Procurement #}
-        {% has_permission "procurement.view" as can_view_procurement %}
-        {% if can_view_procurement %}
-        <li><hr class="dropdown-divider"></li>
-        <li class="dropdown-header">Procurement</li>
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.app_name == 'procurement' %}active{% endif %}"
-             href="{% url 'procurement:request_list' %}">
-            <i class="bi bi-cart4 me-2 opacity-75"></i>Requests
-          </a>
-        </li>
-        {% endif %}
+          {# Column 2: Reports #}
+          <div class="ap-mega-col">
+            <div class="ap-mega-heading"><i class="bi bi-bar-chart me-1"></i>Reports</div>
+            {% has_permission "cases.view" as can_view_case_ops %}
+            {% if can_view_case_ops %}
+            <a class="dropdown-item" href="{% url 'dashboard:agent_monitor' %}">
+              <i class="bi bi-activity me-2 opacity-75"></i>Case Operations
+            </a>
+            {% endif %}
+            {% has_permission "agents.view" as can_view_agents %}
+            {% if can_view_agents %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_performance' %}active{% endif %}"
+               href="{% url 'dashboard:agent_performance' %}">
+              <i class="bi bi-robot me-2 opacity-75"></i>Agent Performance
+            </a>
+            {% endif %}
+          </div>
 
-        {# Governance #}
-        {% has_permission "governance.view" as can_view_governance %}
-        {% if can_view_governance %}
-        <li><hr class="dropdown-divider"></li>
-        <li class="dropdown-header">Governance</li>
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.app_name == 'governance' %}active{% endif %}"
-             href="{% url 'governance:audit_event_list' %}">
-            <i class="bi bi-shield-lock me-2 opacity-75"></i>Audit Log
-          </a>
-        </li>
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_governance' %}active{% endif %}"
-             href="{% url 'dashboard:agent_governance' %}">
-            <i class="bi bi-shield-check me-2 opacity-75"></i>Agent Governance
-          </a>
-        </li>
-        {% endif %}
-        {% has_permission "agents.view" as can_view_agent_runs %}
-        {% if can_view_agent_runs %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_runs_list' %}active{% endif %}"
-             href="{% url 'agents:agent_runs_list' %}">
-            <i class="bi bi-diagram-3 me-2 opacity-75"></i>Agent Runs
-          </a>
-        </li>
-        {% endif %}
+          {# Column 3: Governance #}
+          <div class="ap-mega-col">
+            <div class="ap-mega-heading"><i class="bi bi-shield-lock me-1"></i>Governance</div>
+            {% has_permission "governance.view" as can_view_governance %}
+            {% if can_view_governance %}
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'governance' %}active{% endif %}"
+               href="{% url 'governance:audit_event_list' %}">
+              <i class="bi bi-shield-lock me-2 opacity-75"></i>Audit Log
+            </a>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_governance' %}active{% endif %}"
+               href="{% url 'dashboard:agent_governance' %}">
+              <i class="bi bi-shield-check me-2 opacity-75"></i>Agent Governance
+            </a>
+            {% endif %}
+            {% has_permission "eval.view" as can_view_eval %}
+            {% if can_view_eval %}
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'core_eval' %}active{% endif %}"
+               href="{% url 'core_eval:eval_run_list' %}">
+              <i class="bi bi-mortarboard me-2 opacity-75"></i>Eval &amp; Learning
+            </a>
+            {% endif %}
+          </div>
 
-        {# Documentation #}
-        <li><hr class="dropdown-divider"></li>
-        <li>
+        </div>
+        {# Bottom bar: Reference #}
+        <div class="ap-mega-footer">
           <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_reference' %}active{% endif %}"
              href="{% url 'agents:agent_reference' %}">
             <i class="bi bi-book me-2 opacity-75"></i>Platform Reference
           </a>
-        </li>
-
-      </ul>
+        </div>
+      </div>
     </div>
   </div>
 

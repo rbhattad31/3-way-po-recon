@@ -6,6 +6,7 @@ Covers:
 - ExtractionApprovalService.approve() transitions invoice status
 - Approval triggers case creation via _ensure_case()
 - Approval triggers reconciliation via _enqueue_reconciliation()
+- core_eval integration: approval/rejection creates learning signals + metrics
 """
 from __future__ import annotations
 
@@ -338,3 +339,201 @@ class TestApprovalServiceIntegration:
         approval.refresh_from_db()
         assert approval.is_touchless is True
         assert approval.fields_corrected_count == 0
+
+
+# ===========================================================================
+# core_eval integration tests
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestApprovalEvalIntegration:
+    """Verify that ExtractionApprovalService writes core_eval records."""
+
+    def test_approve_creates_eval_learning_signal(self, db):
+        """approve() should create an approval_outcome LearningSignal."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        ExtractionApprovalService.approve(approval, user)
+
+        signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="approval_outcome",
+            entity_id=str(invoice.pk),
+        )
+        assert signals.count() == 1
+        sig = signals.first()
+        assert sig.payload_json["status"] == "APPROVED"
+        assert sig.payload_json["approval_id"] == approval.pk
+
+    def test_reject_creates_eval_learning_signal(self, db):
+        """reject() should create an approval_outcome LearningSignal with REJECTED."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        ExtractionApprovalService.reject(approval, user, reason="Bad OCR quality")
+
+        signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="approval_outcome",
+            entity_id=str(invoice.pk),
+        )
+        assert signals.count() == 1
+        sig = signals.first()
+        assert sig.payload_json["status"] == "REJECTED"
+
+    def test_approve_with_corrections_creates_field_signals(self, db):
+        """approve() with corrections should create field_correction signals."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        corrections = {
+            "header": {"invoice_number": "CORRECTED-002", "currency": "EUR"},
+        }
+        ExtractionApprovalService.approve(approval, user, corrections=corrections)
+
+        field_signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="field_correction",
+            entity_id=str(invoice.pk),
+        )
+        assert field_signals.count() == 2
+        corrected_fields = set(field_signals.values_list("field_name", flat=True))
+        assert "invoice_number" in corrected_fields
+        assert "currency" in corrected_fields
+
+    def test_approve_with_corrections_creates_review_override_signal(self, db):
+        """Non-touchless approval should create a review_override signal."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        corrections = {"header": {"total_amount": "1050"}}
+        ExtractionApprovalService.approve(approval, user, corrections=corrections)
+
+        override_signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="review_override",
+            entity_id=str(invoice.pk),
+        )
+        assert override_signals.count() == 1
+        sig = override_signals.first()
+        assert sig.payload_json["fields_corrected"] >= 1
+        assert "total_amount" in sig.payload_json["corrected_field_names"]
+
+    def test_approve_with_corrections_updates_eval_metrics(self, db):
+        """approve() with corrections should upsert extraction_corrections_count metric."""
+        from apps.core_eval.models import EvalMetric, EvalRun
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+        from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+
+        # Pre-create the extraction EvalRun (as tasks.py would)
+        ExtractionEvalAdapter.sync_for_extraction_result(
+            er, invoice,
+            validation_result=type("V", (), {"is_valid": True, "errors": []})(),
+            dup_result=type("D", (), {"is_duplicate": False, "reason": "unique"})(),
+            trace_id="test-metric-update",
+        )
+
+        approval = _make_approval(invoice, er)
+        corrections = {"header": {"invoice_number": "FIXED-001"}}
+        ExtractionApprovalService.approve(approval, user, corrections=corrections)
+
+        run = EvalRun.objects.get(
+            app_module="extraction",
+            entity_type="ExtractionResult",
+            entity_id=str(er.pk),
+        )
+        corr_metric = EvalMetric.objects.filter(
+            eval_run=run,
+            metric_name="extraction_corrections_count",
+        ).first()
+        assert corr_metric is not None
+        assert corr_metric.metric_value >= 1.0
+
+        decision_metric = EvalMetric.objects.filter(
+            eval_run=run,
+            metric_name="extraction_approval_decision",
+        ).first()
+        assert decision_metric is not None
+        assert decision_metric.metric_value == 1.0
+
+    def test_touchless_approve_no_field_signals(self, db):
+        """Touchless approval (no corrections) should not create field_correction signals."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        ExtractionApprovalService.approve(approval, user, corrections=None)
+
+        field_signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="field_correction",
+            entity_id=str(invoice.pk),
+        )
+        assert field_signals.count() == 0
+
+        override_signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="review_override",
+            entity_id=str(invoice.pk),
+        )
+        assert override_signals.count() == 0
+
+    def test_auto_approve_creates_auto_approve_signal(self, db, settings):
+        """try_auto_approve() should create an auto_approve_outcome signal."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        settings.EXTRACTION_AUTO_APPROVE_ENABLED = True
+        settings.EXTRACTION_AUTO_APPROVE_THRESHOLD = 0.50
+
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload, extraction_confidence=0.95)
+        er = _make_extraction_result(upload, invoice)
+
+        result = ExtractionApprovalService.try_auto_approve(invoice, er)
+        assert result is not None
+
+        signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="auto_approve_outcome",
+            entity_id=str(invoice.pk),
+        )
+        assert signals.count() == 1
+        sig = signals.first()
+        assert sig.payload_json["is_touchless"] is True
