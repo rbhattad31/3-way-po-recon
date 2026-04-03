@@ -1820,6 +1820,17 @@ def extraction_console(request, pk):
     extraction_ctx["requires_review"] = exec_ctx.requires_review
     extraction_ctx["extraction_source"] = exec_ctx.source
 
+    # Populate jurisdiction from ExtractionRun if not already set from raw_response
+    if not extraction_ctx.get("resolved_jurisdiction") and extraction_run:
+        j = getattr(extraction_run, "jurisdiction", None)
+        if j:
+            extraction_ctx["resolved_jurisdiction"] = {
+                "country_code": j.country_code,
+                "regime_code": j.tax_regime,
+            }
+            extraction_ctx["jurisdiction_source"] = extraction_run.jurisdiction_source
+            extraction_ctx["jurisdiction_confidence"] = extraction_run.jurisdiction_confidence
+
     # ── Also include ExtractionFieldCorrection records (from Edit Values / Approval) ──
     if approval:
         from apps.extraction.models import ExtractionFieldCorrection

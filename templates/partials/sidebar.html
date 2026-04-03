@@ -1,5 +1,5 @@
 {% load rbac_tags %}
-<nav id="sidebar" class="bg-light border-end position-fixed" style="top:56px;width:250px;height:calc(100vh - 56px);overflow-y:auto;z-index:1030">
+<nav id="sidebar" class="bg-dark" style="overflow-y:auto;">
   <div class="p-3">
     <ul class="nav flex-column">
       {% has_permission "agents.use_copilot" as can_use_copilot %}

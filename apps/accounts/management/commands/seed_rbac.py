@@ -76,6 +76,7 @@ PERMISSIONS = [
     {"code": "extraction.reprocess", "name": "Reprocess Extraction", "module": "extraction", "action": "reprocess", "description": "Re-trigger invoice extraction"},
     {"code": "extraction.approve", "name": "Approve Extraction", "module": "extraction", "action": "approve", "description": "Approve extracted invoice data before reconciliation"},
     {"code": "extraction.reject", "name": "Reject Extraction", "module": "extraction", "action": "reject", "description": "Reject extracted data and request re-extraction"},
+    {"code": "extraction.correct", "name": "Correct Extraction Values", "module": "extraction", "action": "correct", "description": "Edit and correct extracted field values"},
     # Document scoping
     {"code": "purchase_orders.view", "name": "View Purchase Orders", "module": "purchase_orders", "action": "view", "description": "View purchase order data"},
     {"code": "grns.view", "name": "View GRNs", "module": "grns", "action": "view", "description": "View goods receipt note data"},
@@ -125,13 +126,14 @@ ROLE_MATRIX = {
         "invoices.view", "invoices.create",
         "reconciliation.view",
         "cases.view", "cases.edit",
-        "cases.add_comment",
+        "cases.add_comment", "cases.escalate",
         "reviews.view", "reviews.decide",
         "agents.view", "agents.use_copilot",
         "governance.view",
         "purchase_orders.view", "grns.view", "vendors.view",
         "recommendations.route_review",
         "extraction.approve", "extraction.reject",
+        "extraction.reprocess", "extraction.correct",
     ],
     "FINANCE_MANAGER": [
         "invoices.view",

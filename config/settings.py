@@ -140,7 +140,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Cache-busting version counter — bump after static file changes
-STATIC_VERSION = "1.0.8"
+STATIC_VERSION = "1.1.2"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"

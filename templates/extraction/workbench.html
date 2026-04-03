@@ -24,6 +24,12 @@
     </p>
   </div>
   <div class="d-flex gap-2">
+    {% has_permission "extraction.bulk_view" as can_bulk %}
+    {% if can_bulk %}
+    <a href="{% url 'extraction:bulk_job_list' %}" class="btn btn-outline-secondary btn-sm" title="Bulk Extraction">
+      <i class="bi bi-collection me-1"></i>Bulk Extraction
+    </a>
+    {% endif %}
     <a href="{% url 'extraction_control_center:overview' %}" class="btn btn-outline-secondary btn-sm" title="Extraction Control Center">
       <i class="bi bi-sliders me-1"></i>Control Center
     </a>

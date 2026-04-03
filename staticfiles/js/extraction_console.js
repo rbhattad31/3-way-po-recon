@@ -32,13 +32,29 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   function applyFieldFilter(filter) {
+    // Header cells (grid layout)
+    var headerCells = document.querySelectorAll('.exc-header-cell');
+    headerCells.forEach(function (cell) {
+      if (filter === 'all') {
+        cell.classList.remove('d-none');
+      } else if (filter === 'flagged') {
+        var isFlagged = cell.classList.contains('exc-cell-flagged') ||
+                        cell.classList.contains('exc-cell-low') ||
+                        cell.classList.contains('exc-cell-med');
+        cell.classList.toggle('d-none', !isFlagged);
+      } else if (filter === 'low-confidence') {
+        var isLow = cell.classList.contains('exc-cell-low');
+        cell.classList.toggle('d-none', !isLow);
+      }
+    });
+
+    // Table rows: tax fields (.exc-field-row) and line items (.exc-line-row)
     var rows = document.querySelectorAll('.exc-field-row, .exc-line-row');
     rows.forEach(function (row) {
       if (filter === 'all') {
         row.classList.remove('d-none');
       } else if (filter === 'flagged') {
-        var isFlagged = row.classList.contains('exc-flagged') ||
-                        row.classList.contains('exc-low-confidence') ||
+        var isFlagged = row.classList.contains('exc-low-confidence') ||
                         row.classList.contains('exc-med-confidence');
         row.classList.toggle('d-none', !isFlagged);
       } else if (filter === 'low-confidence') {
@@ -47,10 +63,10 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
 
-    // Hide/show inline evidence rows to follow their parent field row
+    // Hide/show inline evidence rows to follow their parent field
     document.querySelectorAll('.exc-evidence-inline').forEach(function (evRow) {
       var fieldKey = evRow.dataset.fieldKey;
-      var parentRow = document.querySelector('.exc-field-row[data-field-key="' + fieldKey + '"]');
+      var parentRow = document.querySelector('.exc-header-cell[data-field-key="' + fieldKey + '"], .exc-field-row[data-field-key="' + fieldKey + '"]');
       if (parentRow) {
         evRow.classList.toggle('d-none', parentRow.classList.contains('d-none'));
       }
@@ -62,10 +78,10 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // Show empty-state message if all rows hidden
-    var visibleRows = document.querySelectorAll('.exc-field-row:not(.d-none), .exc-line-row:not(.d-none)');
+    var visibleItems = document.querySelectorAll('.exc-header-cell:not(.d-none), .exc-field-row:not(.d-none), .exc-line-row:not(.d-none)');
     var emptyMsg = document.getElementById('filterEmptyState');
     if (emptyMsg) {
-      emptyMsg.classList.toggle('d-none', visibleRows.length > 0);
+      emptyMsg.classList.toggle('d-none', visibleItems.length > 0);
     }
   }
 

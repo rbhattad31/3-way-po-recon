@@ -36,26 +36,6 @@
                 {% endif %}
               </button>
             </li>
-            {% has_permission "agents.orchestrate" as can_view_reasoning %}
-            {% if can_view_reasoning %}
-            <li class="nav-item" role="presentation">
-              <button class="nav-link" id="tab-reasoning" data-bs-toggle="pill"
-                      data-bs-target="#panel-reasoning" type="button" role="tab"
-                      aria-controls="panel-reasoning" aria-selected="false">
-                <i class="bi bi-cpu me-1"></i>Agent Reasoning
-              </button>
-            </li>
-            {% endif %}
-            {% has_permission "governance.view" as can_view_audit %}
-            {% if can_view_audit %}
-            <li class="nav-item" role="presentation">
-              <button class="nav-link" id="tab-audit" data-bs-toggle="pill"
-                      data-bs-target="#panel-audit" type="button" role="tab"
-                      aria-controls="panel-audit" aria-selected="false">
-                <i class="bi bi-clock-history me-1"></i>Audit Trail
-              </button>
-            </li>
-            {% endif %}
             <li class="nav-item" role="presentation">
               <button class="nav-link" id="tab-corrections" data-bs-toggle="pill"
                       data-bs-target="#panel-corrections" type="button" role="tab"
@@ -66,7 +46,27 @@
                 {% endif %}
               </button>
             </li>
-            {% if can_view_audit %}
+            {% has_permission "agents.orchestrate" as can_view_reasoning %}
+            {% if can_view_reasoning %}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-reasoning" data-bs-toggle="pill"
+                      data-bs-target="#panel-reasoning" type="button" role="tab"
+                      aria-controls="panel-reasoning" aria-selected="false">
+                <i class="bi bi-cpu me-1"></i>Agent Reasoning
+              </button>
+            </li>
+            {% endif %}
+            {% has_role "ADMIN" as is_admin_user %}
+            {% if is_admin_user %}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-audit" data-bs-toggle="pill"
+                      data-bs-target="#panel-audit" type="button" role="tab"
+                      aria-controls="panel-audit" aria-selected="false">
+                <i class="bi bi-clock-history me-1"></i>Audit Trail
+              </button>
+            </li>
+            {% endif %}
+            {% if is_admin_user %}
             <li class="nav-item" role="presentation">
               <button class="nav-link" id="tab-rawjson" data-bs-toggle="pill"
                       data-bs-target="#panel-rawjson" type="button" role="tab"
@@ -122,7 +122,7 @@
             </div>
             {% endif %}
             {# Tab 5: Audit Trail #}
-            {% if can_view_audit %}
+            {% if is_admin_user %}
             <div class="tab-pane fade" id="panel-audit" role="tabpanel" aria-labelledby="tab-audit">
               {% include "extraction/console/_audit_trail.html" %}
             </div>
@@ -132,7 +132,7 @@
               {% include "extraction/console/_corrections_panel.html" %}
             </div>
             {# Tab 7: Raw JSON & Document Details #}
-            {% if can_view_audit %}
+            {% if is_admin_user %}
             <div class="tab-pane fade" id="panel-rawjson" role="tabpanel" aria-labelledby="tab-rawjson">
               {% include "extraction/console/_raw_json_panel.html" %}
             </div>
