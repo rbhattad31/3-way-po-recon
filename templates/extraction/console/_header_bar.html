@@ -178,9 +178,11 @@
         {% endif %}
 
         {% if permissions.can_reprocess and ext.document_upload.blob_path %}
+        {% if not approval or approval.status == 'PENDING' %}
         <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#reprocessModal">
           <i class="bi bi-arrow-repeat me-1"></i>Reprocess
         </button>
+        {% endif %}
         {% endif %}
 
         {% if permissions.can_escalate %}

@@ -35,7 +35,7 @@
               <span class="ap-badge ap-sev-low">Low</span>
             {% endif %}
           </td>
-          <td style="font-size:var(--ap-font-size-xs)">{{ exc.description|truncatechars:100 }}</td>
+          <td style="font-size:var(--ap-font-size-xs)">{{ exc.message|truncatechars:100 }}</td>
         </tr>
         {% endfor %}
       </tbody>

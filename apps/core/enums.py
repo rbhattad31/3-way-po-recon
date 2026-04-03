@@ -25,6 +25,7 @@ class ExtractionApprovalStatus(models.TextChoices):
 class ReconciliationMode(models.TextChoices):
     TWO_WAY = "TWO_WAY", "2-Way (Invoice vs PO)"
     THREE_WAY = "THREE_WAY", "3-Way (Invoice vs PO vs GRN)"
+    NON_PO = "NON_PO", "Non-PO (No PO matching)"
 
 
 class ReconciliationModeApplicability(models.TextChoices):

@@ -16,7 +16,13 @@
       <i class="bi bi-cpu me-1"></i>Command Center
     </a>
 
-    {# Extraction dropdown #}
+    {# Pipeline #}
+    <a class="ap-nav-link {% if request.resolver_match.url_name == 'invoice_pipeline' %}active{% endif %}"
+       href="{% url 'dashboard:invoice_pipeline' %}">
+      <i class="bi bi-kanban me-1"></i>Pipeline
+    </a>
+
+    {# Extraction #}
     {% has_permission "invoices.view" as can_view_extraction %}
     {% if can_view_extraction %}
     <a class="ap-nav-link {% if request.resolver_match.app_name == 'extraction' or request.resolver_match.app_name == 'extraction_control_center' %}active{% endif %}"

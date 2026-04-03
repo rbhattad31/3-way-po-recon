@@ -149,6 +149,12 @@ class ExtractionApprovalService:
             "Auto-approved extraction for invoice %s (confidence=%.2f)",
             invoice.pk, confidence,
         )
+        # ── Create AP Case (every invoice must have one) ──
+        cls._ensure_case(invoice, user=None)
+
+        # ── Trigger reconciliation pipeline (auto) ──
+        cls._enqueue_reconciliation(invoice, user=None)
+
         # ── Trigger posting pipeline ──
         cls._enqueue_posting(invoice, user=None)
 
@@ -316,6 +322,12 @@ class ExtractionApprovalService:
 
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
         cls._record_governance_trail(approval, "APPROVE", user)
+
+        # ── Create AP Case (every invoice must have one) ──
+        cls._ensure_case(invoice, user)
+
+        # ── Trigger reconciliation pipeline (auto) ──
+        cls._enqueue_reconciliation(invoice, user)
 
         # ── Trigger posting pipeline ──
         cls._enqueue_posting(invoice, user)
@@ -689,6 +701,51 @@ class ExtractionApprovalService:
             logger.exception(
                 "GovernanceTrailService.record_approval_decision failed for approval %s",
                 approval.pk,
+            )
+
+    @staticmethod
+    def _ensure_case(invoice, user=None):
+        """Create an APCase for this invoice if one doesn't exist yet.
+
+        Every invoice must have a case for end-to-end tracking.
+        Best-effort: failures are logged but never block the approval path.
+        """
+        try:
+            from apps.cases.services.case_creation_service import CaseCreationService
+            uploaded_by = user or (
+                invoice.document_upload.uploaded_by
+                if invoice.document_upload_id else None
+            )
+            case = CaseCreationService.create_from_upload(
+                invoice=invoice,
+                uploaded_by=uploaded_by,
+            )
+            logger.info("Ensured AP Case %s for invoice %s", case.case_number, invoice.pk)
+        except Exception:
+            logger.exception(
+                "Failed to create AP Case for invoice %s", invoice.pk,
+            )
+
+    @staticmethod
+    def _enqueue_reconciliation(invoice, user=None):
+        """Enqueue reconciliation for the newly-approved invoice.
+
+        Best-effort: failures are logged but never block the approval path.
+        The reconciliation task will pick up the invoice (now READY_FOR_RECON),
+        run matching, and automatically trigger the agent pipeline for
+        non-MATCHED results.
+        """
+        try:
+            from apps.reconciliation.tasks import run_reconciliation_task
+            user_id = user.pk if user else None
+            run_reconciliation_task.delay(
+                invoice_ids=[invoice.pk],
+                triggered_by_id=user_id,
+            )
+            logger.info("Enqueued reconciliation for invoice %s", invoice.pk)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue reconciliation for invoice %s", invoice.pk,
             )
 
     @staticmethod

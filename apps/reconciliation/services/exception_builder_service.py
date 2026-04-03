@@ -37,17 +37,19 @@ class ExceptionBuilderService:
     ) -> List[ReconciliationException]:
         """Return a list of unsaved ReconciliationException instances."""
         is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
+        is_non_po = reconciliation_mode == ReconciliationMode.NON_PO
         exceptions: List[ReconciliationException] = []
 
-        # PO not found
+        # PO not found -- skip for NON_PO invoices (no PO expected)
         if not po_result.found:
-            exceptions.append(self._make(
-                result=result,
-                exc_type=ExceptionType.PO_NOT_FOUND,
-                severity=ExceptionSeverity.HIGH,
-                message=f"Purchase order not found for PO number '{result.invoice.po_number}'",
-                details={"po_number": result.invoice.po_number},
-            ))
+            if not is_non_po:
+                exceptions.append(self._make(
+                    result=result,
+                    exc_type=ExceptionType.PO_NOT_FOUND,
+                    severity=ExceptionSeverity.HIGH,
+                    message=f"Purchase order not found for PO number '{result.invoice.po_number}'",
+                    details={"po_number": result.invoice.po_number},
+                ))
             return exceptions  # No further checks possible
 
         # Duplicate invoice

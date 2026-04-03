@@ -1217,23 +1217,6 @@ def extraction_approve(request, pk):
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
-    # If this came from the full pipeline, trigger case creation now
-    invoice = approval.invoice
-    if invoice.status == InvoiceStatus.READY_FOR_RECON:
-        try:
-            from apps.cases.services.case_creation_service import CaseCreationService
-            from apps.cases.tasks import process_case_task
-            from apps.core.utils import dispatch_task
-
-            case = CaseCreationService.create_from_upload(
-                invoice=invoice,
-                uploaded_by=invoice.document_upload.uploaded_by if invoice.document_upload else None,
-            )
-            dispatch_task(process_case_task, case_id=case.pk)
-            logger.info("Created AP Case %s after extraction approval for invoice %s", case.case_number, invoice.invoice_number)
-        except Exception as exc:
-            logger.exception("AP Case creation failed after approval for invoice %s: %s", invoice.pk, exc)
-
     _invalidate_extraction_caches(request.user)
 
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
