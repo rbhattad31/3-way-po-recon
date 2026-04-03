@@ -77,15 +77,16 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 ### Agent System
 - **Full architecture reference:** See [AGENT_ARCHITECTURE.md](../AGENT_ARCHITECTURE.md) for the complete agentic layer documentation, including all agent implementations, the PolicyEngine decision matrix, the DeterministicResolver rule table, RBAC guardrails, the reasoning engine upgrade path, best-practice upgrade guide per agent, and open source observability tool recommendations.
 - **No special characters in agent output stored to DB** -- this rule extends beyond source code. LLM-generated text written to `AgentRun.summarized_reasoning`, `ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, and `DecisionLog.rationale` must use ASCII only. Apply the `_sanitise_text()` helper (defined in `AGENT_ARCHITECTURE.md` Section 17.3) before any `.save()` call on agent-generated content.
-- All agents extend `BaseAgent` (in `apps/agents/services/`).
-- Agents use **ReAct loop**: LLM -> parse tool calls -> execute tools -> loop (max 6 iterations).
+- All LLM agents extend `BaseAgent` (in `apps/agents/services/`).
+- LLM agents use **ReAct loop**: LLM -> parse tool calls -> execute tools -> loop (max 6 iterations).
+- **Deterministic system agents** extend `DeterministicSystemAgent` (`apps/agents/services/deterministic_system_agent.py`) which skips the ReAct loop entirely. Subclasses implement `execute_deterministic(ctx) -> AgentOutput`. Five concrete system agents in `apps/agents/services/system_agent_classes.py`: `SystemReviewRoutingAgent` (`SYSTEM_REVIEW_ROUTING`), `SystemCaseSummaryAgent` (`SYSTEM_CASE_SUMMARY`), `SystemBulkExtractionIntakeAgent` (`SYSTEM_BULK_EXTRACTION_INTAKE`), `SystemCaseIntakeAgent` (`SYSTEM_CASE_INTAKE`), `SystemPostingPreparationAgent` (`SYSTEM_POSTING_PREPARATION`). All produce standard `AgentRun`, `DecisionLog`, Langfuse spans, and audit events without LLM calls.
 - Tool-calling uses **OpenAI-compliant format**: `tool_calls` array on assistant messages, `tool_call_id` + `name` on tool response messages.
 - Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`. Each tool declares `required_permission` (e.g., `"purchase_orders.view"`).
 - **`ReasoningPlanner`** is the entry point for planning: always makes a single LLM call to decide which agents to run and in what order; falls back to `PolicyEngine` (deterministic) on any LLM error. There is no feature flag -- the LLM planner is always active.
 - `PolicyEngine` handles **auto-close logic**: `should_auto_close()` and `_within_auto_close_band()` check if PARTIAL_MATCH falls within wider auto-close thresholds (qty: 5%, price: 3%, amount: 3%).
 - **`AgentOrchestrationRun`** (`apps/agents/models.py`): Top-level DB record for one `AgentOrchestrator.execute()` invocation. Status machine: PLANNED -> RUNNING -> COMPLETED | PARTIAL | FAILED. Acts as duplicate-run guard: a RUNNING record blocks re-entry for the same `ReconciliationResult`.
 - Agent pipeline is **wired to run automatically** after reconciliation for non-MATCHED results (sync via `start_reconciliation` view, async via `run_agent_pipeline_task`).
-- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations — orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` × 8), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` × 6), post-policy authorization (auto-close, escalation), and **data-scope authorization** (`authorize_data_scope()` checks business-unit and vendor-id scope from `UserRole.scope_json`; called immediately after `authorize_orchestration()`).
+- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations -- orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` x 13, including 5 `agents.run_system_*`), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` x 6), post-policy authorization (auto-close, escalation), and **data-scope authorization** (`authorize_data_scope()` checks business-unit and vendor-id scope from `UserRole.scope_json`; called immediately after `authorize_orchestration()`).
 - **`UserRole.scope_json`** (nullable JSON on `rbac_models.py`): Per-assignment scope restrictions. Supported keys: `allowed_business_units` (list[str]), `allowed_vendor_ids` (list[int]). Null means unrestricted. ADMIN and SYSTEM_AGENT always bypass scope checks.
 - **SYSTEM_AGENT** identity: When no human user context is available (Celery async, system-triggered), `AgentGuardrailsService.resolve_actor()` returns a dedicated service account (`system-agent@internal`) with the `SYSTEM_AGENT` role (rank 100, `is_system_role=True`).
 - Every agent run, message, tool call, and decision is persisted for auditability via `AgentTraceService`.
@@ -150,8 +151,8 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Agent Guardrails | `apps/agents/services/guardrails_service.py` |
 | Observability | `apps/core/trace.py`, `apps/core/logging_utils.py`, `apps/core/metrics.py`, `apps/core/decorators.py` |
 | Utilities | `apps/core/utils.py` |
-| Seed Commands | `apps/core/management/commands/seed_config.py`, `seed_prompts.py`; `apps/cases/management/commands/seed_ap_data.py` |
-| Seed Helpers | `apps/cases/management/commands/seed_helpers/` (constants, master_data, transactional_data, case_builder, agent_review_data, observability_data, bulk_generator) |
+| Seed Commands | `apps/core/management/commands/seed_all.py` (unified), `seed_config.py`, `seed_prompts.py`; `apps/accounts/.../seed_rbac.py`; `apps/agents/.../seed_agent_contracts.py`; `apps/extraction_core/.../seed_extraction_config.py`, `seed_control_center.py`; `apps/extraction/.../seed_credits.py` |
+| Flush Command | `apps/core/management/commands/flush_test_data.py` (deletes transactional data, preserves config/users/RBAC) |
 | Admin | `apps/<app>/admin.py` |
 | Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views, `templates/vendors/` for vendor UI) |
 | ERP Connectors | `apps/erp_integration/services/connectors/` |
@@ -358,7 +359,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
 - `ReconciliationPolicy` model: vendor, item_category, location_code, business_unit, is_service_invoice, is_stock_invoice, priority-ordered matching
 - Mode-aware classification, exception building (applies_to_mode tagging), result persistence (mode metadata + confidence weights)
-- Agent orchestration (8 agents, policy engine with auto-close logic + mode-aware GRN suppression, tool registry, LLM client, decision log service)
+- Agent orchestration (13 agents: 8 LLM + 5 deterministic system agents, policy engine with auto-close logic + mode-aware GRN suppression, tool registry, LLM client, decision log service)
+- Deterministic system agents: `DeterministicSystemAgent` base class + 5 concrete agents (`SystemReviewRoutingAgent`, `SystemCaseSummaryAgent`, `SystemBulkExtractionIntakeAgent`, `SystemCaseIntakeAgent`, `SystemPostingPreparationAgent`) -- produce `AgentRun`, `DecisionLog`, Langfuse spans, and `SYSTEM_AGENT_RUN_COMPLETED`/`SYSTEM_AGENT_RUN_FAILED` audit events without LLM calls
 - Agent RBAC guardrails: `AgentGuardrailsService` — central RBAC enforcement (orchestration, per-agent, per-tool, recommendation, post-policy authorization); SYSTEM_AGENT identity for autonomous runs; 9 guardrail audit event types; AgentRun RBAC fields populated on every run
 - Mode-aware agents: `AgentContext.reconciliation_mode`, `_mode_context()` helper on all agent types, PolicyEngine suppresses GRN_RETRIEVAL in 2-way
 - Agent feedback loop: `AgentFeedbackService` re-reconciles when PO/GRN agent recovers missing document (atomic)
@@ -385,9 +387,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Observability infrastructure: TraceContext (distributed tracing), structured JSON logging with PII redaction, in-process MetricsService, RequestTraceMiddleware
 - Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
 - Enhanced governance API: 9 endpoints (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance)
-- Seed data: `seed_config` (6 users, 7 agent defs, 6 tool defs, recon config, 7 policies), `seed_rbac` (6 roles incl. SYSTEM_AGENT, 40 permissions, matrix, user sync), `seed_prompts` (12 prompt templates), `seed_ap_data` (30 deterministic scenarios: TWO_WAY/THREE_WAY/NON_PO + cross-cutting, with 6-stage pipeline: users → vendors → transactional → cases/recon → agent/review → observability)
-- Seed observability data (stage 6 of `seed_ap_data`): AgentStep (~280), AgentMessage (~568), ToolCall (~137), DecisionLog (~78), AgentEscalation (~2), ProcessingLog (~193), ManualReviewAction (~9); enriches AgentRun with trace_id/tokens/cost and AuditEvent with RBAC/cross-refs
-- Seed helpers architecture in `apps/cases/management/commands/seed_helpers/`: constants.py, master_data.py, transactional_data.py, case_builder.py, agent_review_data.py, observability_data.py, bulk_generator.py
+- **Unified seed**: `python manage.py seed_all [--flush] [--skip STEP]` runs 7 steps in order: seed_config -> seed_rbac -> seed_prompts -> seed_agent_contracts -> seed_extraction_config -> seed_control_center -> seed_credits
+- **Flush transactional data**: `python manage.py flush_test_data [--confirm]` deletes invoices, POs, GRNs, cases, agents, reviews, vendors, audit events, extraction results, copilot sessions, bulk jobs. Preserves users, RBAC, agent/tool definitions, recon config/policies, prompts, extraction configs, control center settings, credit accounts.
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
@@ -426,6 +427,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **Posting stuck in MAPPING_IN_PROGRESS?** Check `PostingRun` for `error_code`; inspect `PostingIssue` records with `severity=ERROR`. Also verify ERP reference tables are populated via `/posting/imports/`.
 - **ERP cache stale?** `ERPReferenceCacheRecord` entries expire per `ERP_CACHE_TTL_SECONDS` (default 3600s). Delete cache records or reduce TTL to force re-resolution.
 - **`PostingMappingEngine` not using ERP?** Confirm `PostingPipeline._get_erp_connector()` returns a non-None connector — requires at least one active default `ERPConnection` record.
+- **Need a clean slate?** `python manage.py flush_test_data --confirm` deletes all transactional data while preserving config, users, and RBAC. Then `python manage.py seed_all` to re-seed platform config.
 
 ---
 
@@ -444,7 +446,9 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/reconciliation/services/agent_feedback_service.py` | Agent PO/GRN re-reconciliation loop |
 | `apps/agents/services/orchestrator.py` | Agent pipeline orchestration |
 | `apps/agents/services/base_agent.py` | Base agent with ReAct loop |
-| `apps/agents/services/agent_classes.py` | All 8 agent implementations |
+| `apps/agents/services/agent_classes.py` | All 8 LLM agent implementations |
+| `apps/agents/services/deterministic_system_agent.py` | DeterministicSystemAgent base class (skip ReAct) |
+| `apps/agents/services/system_agent_classes.py` | 5 concrete system agents |
 | `apps/tools/registry/tools.py` | All 6 tool classes |
 | `apps/tools/registry/base.py` | BaseTool, ToolRegistry, @register_tool |
 | `apps/core/trace.py` | TraceContext for distributed tracing |

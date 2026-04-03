@@ -34,6 +34,30 @@ class StageExecutor:
     """
 
     @staticmethod
+    def _build_rbac_kwargs(case: APCase) -> dict:
+        """Return RBAC + trace kwargs for AgentContext created by stage executors."""
+        import uuid
+        rbac: dict = {
+            "trace_id": getattr(case, "trace_id", "") or uuid.uuid4().hex,
+        }
+        try:
+            from apps.agents.services.guardrails_service import AgentGuardrailsService
+            actor = AgentGuardrailsService.resolve_actor(None)
+            snapshot = AgentGuardrailsService.build_rbac_snapshot(actor)
+            rbac["actor_user_id"] = actor.pk
+            rbac["actor_primary_role"] = snapshot.get("actor_primary_role", "")
+            rbac["actor_roles_snapshot"] = snapshot.get("actor_roles_snapshot", [])
+            rbac["permission_source"] = snapshot.get("permission_source", "SYSTEM_AGENT")
+            rbac["permission_checked"] = "cases.process"
+            rbac["access_granted"] = True
+        except Exception:
+            rbac.setdefault("actor_primary_role", "SYSTEM_AGENT")
+            rbac.setdefault("permission_source", "SYSTEM_AGENT")
+            rbac.setdefault("permission_checked", "cases.process")
+            rbac.setdefault("access_granted", True)
+        return rbac
+
+    @staticmethod
     def execute(case: APCase, stage_name: str) -> Optional[Dict[str, Any]]:
         """Dispatch to the correct stage handler."""
         handlers = {
@@ -132,6 +156,7 @@ class StageExecutor:
                 return {"skipped": True, "reason": "agent_not_registered"}
 
             invoice = case.invoice
+            _rbac = StageExecutor._build_rbac_kwargs(case)
             ctx = AgentContext(
                 reconciliation_result=None,
                 invoice_id=invoice.pk,
@@ -143,6 +168,7 @@ class StageExecutor:
                     "case_number": case.case_number,
                     "stage": "extraction_validation",
                 },
+                **_rbac,
             )
 
             agent = agent_cls()
@@ -266,6 +292,7 @@ class StageExecutor:
                 return {"po_found": False, "agent_attempted": False}
 
             invoice = case.invoice
+            _rbac = StageExecutor._build_rbac_kwargs(case)
             ctx = AgentContext(
                 reconciliation_result=None,
                 invoice_id=invoice.pk,
@@ -275,6 +302,7 @@ class StageExecutor:
                     "total_amount": str(invoice.total_amount) if invoice.total_amount else "unknown",
                     "case_number": case.case_number,
                 },
+                **_rbac,
             )
 
             agent = agent_cls()

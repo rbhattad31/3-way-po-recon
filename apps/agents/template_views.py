@@ -1,10 +1,13 @@
-"""Agent template views -- reference pages for end users."""
+"""Agent template views -- reference pages and agent run explorer."""
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import render
+from django.core.paginator import Paginator
+from django.shortcuts import get_object_or_404, render
 
 from apps.core.prompt_registry import PromptRegistry
+from apps.core.permissions import permission_required_code
 
+from apps.agents.models import AgentRun, DecisionLog, AgentRecommendation
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
 from apps.agents.services.guardrails_service import (
     AGENT_PERMISSIONS,
@@ -18,6 +21,7 @@ from apps.agents.services.guardrails_service import (
 from apps.cases.orchestrators.case_orchestrator import PATH_STAGES, STAGE_TO_STATUS
 from apps.cases.state_machine.case_state_machine import CASE_TRANSITIONS, TERMINAL_STATES
 from apps.core.enums import (
+    AgentRunStatus,
     AgentType,
     AuditEventType,
     CaseStageType,
@@ -1109,3 +1113,190 @@ def agent_reference(request):
     response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response["Pragma"] = "no-cache"
     return response
+
+
+# ---------------------------------------------------------------------------
+# Agent Runs -- browsable list + detail
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("agents.view")
+def agent_runs_list(request):
+    """Browsable agent run log with filtering."""
+    qs = AgentRun.objects.select_related(
+        "reconciliation_result", "reconciliation_result__invoice",
+        "agent_definition", "document_upload",
+    ).order_by("-created_at")
+
+    # ---- Filters ----
+    agent_type = request.GET.get("agent_type", "").strip()
+    status = request.GET.get("status", "").strip()
+    trace_id = request.GET.get("trace_id", "").strip()
+    role = request.GET.get("role", "").strip()
+    model_used = request.GET.get("model_used", "").strip()
+    date_from = request.GET.get("date_from", "").strip()
+    date_to = request.GET.get("date_to", "").strip()
+    min_conf = request.GET.get("min_confidence", "").strip()
+    max_conf = request.GET.get("max_confidence", "").strip()
+    invoice_number = request.GET.get("invoice_number", "").strip()
+
+    if agent_type:
+        qs = qs.filter(agent_type=agent_type)
+    if status:
+        qs = qs.filter(status=status)
+    if trace_id:
+        qs = qs.filter(trace_id=trace_id)
+    if role:
+        qs = qs.filter(actor_primary_role=role)
+    if model_used:
+        qs = qs.filter(llm_model_used=model_used)
+    if date_from:
+        qs = qs.filter(created_at__date__gte=date_from)
+    if date_to:
+        qs = qs.filter(created_at__date__lte=date_to)
+    if min_conf:
+        try:
+            qs = qs.filter(confidence__gte=float(min_conf) / 100.0)
+        except (ValueError, TypeError):
+            pass
+    if max_conf:
+        try:
+            qs = qs.filter(confidence__lte=float(max_conf) / 100.0)
+        except (ValueError, TypeError):
+            pass
+    if invoice_number:
+        qs = qs.filter(
+            reconciliation_result__invoice__invoice_number__icontains=invoice_number,
+        )
+
+    paginator = Paginator(qs, 50)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    # Annotate recovery trigger codes for template access
+    # (Django templates cannot access dict keys starting with underscore)
+    for run in page_obj:
+        payload = run.input_payload or {}
+        meta = payload.get("_recovery_meta") or {}
+        run.recovery_trigger_codes = meta.get("trigger_codes", [])
+
+    # Resolve invoice for runs that lack reconciliation_result (e.g. extraction/case runs)
+    upload_ids = [
+        r.document_upload_id for r in page_obj
+        if r.document_upload_id and not (r.reconciliation_result and r.reconciliation_result.invoice)
+    ]
+    _upload_invoice_map: dict = {}
+    if upload_ids:
+        try:
+            from apps.extraction.models import ExtractionResult
+            for ext in (
+                ExtractionResult.objects
+                .filter(document_upload_id__in=upload_ids, invoice__isnull=False)
+                .select_related("invoice")
+                .order_by("document_upload_id", "-created_at")
+            ):
+                _upload_invoice_map.setdefault(ext.document_upload_id, ext.invoice)
+        except Exception:
+            pass
+    for run in page_obj:
+        if run.reconciliation_result and run.reconciliation_result.invoice:
+            run.resolved_invoice = run.reconciliation_result.invoice
+        else:
+            run.resolved_invoice = _upload_invoice_map.get(run.document_upload_id)
+
+    # Dropdown choices
+    agent_type_choices = AgentType.choices
+    status_choices = AgentRunStatus.choices
+    roles = (
+        AgentRun.objects.exclude(actor_primary_role="")
+        .order_by("actor_primary_role")
+        .values_list("actor_primary_role", flat=True)
+        .distinct()
+    )
+    models_used = (
+        AgentRun.objects.exclude(llm_model_used="")
+        .order_by("llm_model_used")
+        .values_list("llm_model_used", flat=True)
+        .distinct()
+    )
+
+    # KPI summary (scoped to *filtered* queryset for relevance)
+    from django.db.models import Avg, Count, Q, Sum
+
+    kpi_qs = qs  # re-use filtered queryset
+    total_count = paginator.count
+    completed_count = kpi_qs.filter(status=AgentRunStatus.COMPLETED).count()
+    failed_count = kpi_qs.filter(status=AgentRunStatus.FAILED).count()
+    avg_confidence = kpi_qs.filter(confidence__isnull=False).aggregate(
+        avg=Avg("confidence"),
+    )["avg"]
+    total_tokens = kpi_qs.aggregate(tokens=Sum("total_tokens"))["tokens"] or 0
+
+    return render(request, "agents/agent_runs_list.html", {
+        "page_obj": page_obj,
+        "runs": page_obj,
+        # Filter choices
+        "agent_type_choices": agent_type_choices,
+        "status_choices": status_choices,
+        "roles": roles,
+        "models_used": models_used,
+        # Current filter values
+        "current_agent_type": agent_type,
+        "current_status": status,
+        "current_trace_id": trace_id,
+        "current_role": role,
+        "current_model_used": model_used,
+        "current_date_from": date_from,
+        "current_date_to": date_to,
+        "current_min_confidence": min_conf,
+        "current_max_confidence": max_conf,
+        "current_invoice_number": invoice_number,
+        # KPIs
+        "total_count": total_count,
+        "completed_count": completed_count,
+        "failed_count": failed_count,
+        "avg_confidence": avg_confidence,
+        "total_tokens": total_tokens,
+    })
+
+
+@login_required
+@permission_required_code("agents.view")
+def agent_run_detail(request, pk):
+    """Detail view for a single agent run with steps, messages, decisions, and recommendations."""
+    run = get_object_or_404(
+        AgentRun.objects.select_related(
+            "reconciliation_result", "reconciliation_result__invoice",
+            "agent_definition", "document_upload",
+        ),
+        pk=pk,
+    )
+    steps = run.steps.order_by("step_number")
+    agent_messages = run.messages.order_by("message_index")
+    decisions = run.decisions.order_by("-created_at")
+    recommendations = run.recommendations.select_related(
+        "reconciliation_result", "invoice",
+    ).order_by("-created_at")
+
+    # Resolve invoice: via reconciliation_result, or via document_upload -> extraction -> invoice
+    linked_invoice = None
+    if run.reconciliation_result and run.reconciliation_result.invoice:
+        linked_invoice = run.reconciliation_result.invoice
+    elif run.document_upload:
+        try:
+            from apps.extraction.models import ExtractionResult
+            ext = ExtractionResult.objects.filter(
+                document_upload=run.document_upload,
+            ).select_related("invoice").order_by("-created_at").first()
+            if ext and ext.invoice:
+                linked_invoice = ext.invoice
+        except Exception:
+            pass
+
+    return render(request, "agents/agent_run_detail.html", {
+        "run": run,
+        "steps": steps,
+        "agent_messages": agent_messages,
+        "decisions": decisions,
+        "recommendations": recommendations,
+        "linked_invoice": linked_invoice,
+    })

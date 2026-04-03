@@ -1,0 +1,340 @@
+"""Integration tests for extraction approval flow.
+
+Covers:
+- extraction_approve view returns correct responses (AJAX + redirect)
+- extraction_reject view returns correct responses
+- ExtractionApprovalService.approve() transitions invoice status
+- Approval triggers case creation via _ensure_case()
+- Approval triggers reconciliation via _enqueue_reconciliation()
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.test import RequestFactory
+
+from apps.core.enums import (
+    ExtractionApprovalStatus,
+    InvoiceStatus,
+    UserRole as UserRoleEnum,
+)
+from apps.documents.models import DocumentUpload, Invoice
+from apps.extraction.models import ExtractionApproval, ExtractionResult
+
+User = get_user_model()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_upload(db):
+    return DocumentUpload.objects.create(
+        original_filename="test.pdf",
+        file_size=1024,
+        content_type="application/pdf",
+    )
+
+
+def _make_invoice(upload, **kwargs):
+    defaults = dict(
+        invoice_number="INV-TEST-001",
+        currency="USD",
+        total_amount=1000,
+        status=InvoiceStatus.PENDING_APPROVAL,
+        extraction_confidence=0.92,
+        document_upload=upload,
+        po_number="",
+    )
+    defaults.update(kwargs)
+    return Invoice.objects.create(**defaults)
+
+
+def _make_extraction_result(upload, invoice):
+    return ExtractionResult.objects.create(
+        document_upload=upload,
+        invoice=invoice,
+        success=True,
+        confidence=0.92,
+    )
+
+
+def _make_approval(invoice, extraction_result=None):
+    return ExtractionApproval.objects.create(
+        invoice=invoice,
+        extraction_result=extraction_result,
+        status=ExtractionApprovalStatus.PENDING,
+        confidence_at_review=invoice.extraction_confidence,
+    )
+
+
+def _admin_user(db):
+    return User.objects.create_user(
+        email="admin-test@example.com",
+        password="testpass123",
+        first_name="Admin",
+        last_name="Tester",
+        role=UserRoleEnum.ADMIN,
+    )
+
+
+# ===========================================================================
+# View tests
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestExtractionApproveView:
+    """Tests for the extraction_approve view function."""
+
+    def _call_view(self, approval, user, ajax=False, body=None):
+        from apps.extraction.template_views import extraction_approve
+        from django.contrib.sessions.backends.db import SessionStore
+        from django.contrib.messages.storage.fallback import FallbackStorage
+
+        factory = RequestFactory()
+        data = json.dumps(body).encode() if body else b""
+        request = factory.post(
+            f"/extraction/approvals/{approval.pk}/approve/",
+            data=data,
+            content_type="application/json",
+        )
+        request.user = user
+        # Required for django.contrib.messages
+        request.session = SessionStore()
+        request._messages = FallbackStorage(request)
+        if ajax:
+            request.META["HTTP_X_REQUESTED_WITH"] = "XMLHttpRequest"
+        return extraction_approve(request, approval.pk)
+
+    def test_ajax_approve_returns_json(self, db):
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        response = self._call_view(approval, user, ajax=True)
+
+        assert response.status_code == 200
+        data = json.loads(response.content)
+        assert data["ok"] is True
+        assert data["status"] == "APPROVED"
+
+    def test_non_ajax_approve_redirects(self, db):
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        response = self._call_view(approval, user, ajax=False)
+
+        assert response.status_code == 302
+        assert "approvals" in response.url or "approval_queue" in response.url
+
+    def test_approve_transitions_invoice_past_pending_approval(self, db):
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        self._call_view(approval, user, ajax=True)
+
+        invoice.refresh_from_db()
+        # Invoice should have moved past PENDING_APPROVAL (at minimum READY_FOR_RECON)
+        assert invoice.status != InvoiceStatus.PENDING_APPROVAL
+
+    def test_approve_sets_approval_status(self, db):
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        self._call_view(approval, user, ajax=True)
+
+        approval.refresh_from_db()
+        assert approval.status == ExtractionApprovalStatus.APPROVED
+        assert approval.reviewed_by == user
+
+    def test_double_approve_returns_400(self, db):
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        # First approve
+        self._call_view(approval, user, ajax=True)
+        # Second approve
+        response = self._call_view(approval, user, ajax=True)
+
+        assert response.status_code == 400
+        data = json.loads(response.content)
+        assert data["ok"] is False
+
+    def test_approve_with_corrections(self, db):
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        corrections = {"header": {"invoice_number": "CORRECTED-001"}}
+        self._call_view(approval, user, ajax=True, body=corrections)
+
+        approval.refresh_from_db()
+        assert approval.status == ExtractionApprovalStatus.APPROVED
+        assert approval.fields_corrected_count >= 1
+        assert approval.is_touchless is False
+
+        invoice.refresh_from_db()
+        assert invoice.invoice_number == "CORRECTED-001"
+
+
+@pytest.mark.django_db
+class TestExtractionRejectView:
+    """Tests for the extraction_reject view function."""
+
+    def _call_view(self, approval, user, ajax=False, reason=""):
+        from apps.extraction.template_views import extraction_reject
+        from django.contrib.sessions.backends.db import SessionStore
+        from django.contrib.messages.storage.fallback import FallbackStorage
+
+        factory = RequestFactory()
+        body = json.dumps({"reason": reason}).encode()
+        request = factory.post(
+            f"/extraction/approvals/{approval.pk}/reject/",
+            data=body,
+            content_type="application/json",
+        )
+        request.user = user
+        request.session = SessionStore()
+        request._messages = FallbackStorage(request)
+        if ajax:
+            request.META["HTTP_X_REQUESTED_WITH"] = "XMLHttpRequest"
+        return extraction_reject(request, approval.pk)
+
+    def test_ajax_reject_returns_json(self, db):
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        approval = _make_approval(invoice)
+
+        response = self._call_view(approval, user, ajax=True, reason="Bad data")
+
+        assert response.status_code == 200
+        data = json.loads(response.content)
+        assert data["ok"] is True
+        assert data["status"] == "REJECTED"
+
+    def test_reject_sets_status(self, db):
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        approval = _make_approval(invoice)
+
+        self._call_view(approval, user, ajax=True, reason="Bad data")
+
+        approval.refresh_from_db()
+        assert approval.status == ExtractionApprovalStatus.REJECTED
+
+
+# ===========================================================================
+# Service integration tests
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestApprovalServiceIntegration:
+    """Tests for ExtractionApprovalService.approve() integration behavior."""
+
+    def test_approve_creates_ap_case(self, db):
+        """Approving an extraction should create an APCase for the invoice."""
+        from apps.cases.models import APCase
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+        ExtractionApprovalService.approve(approval, user)
+
+        cases = APCase.objects.filter(invoice=invoice, is_active=True)
+        assert cases.count() == 1
+        case = cases.first()
+        assert case.case_number.startswith("AP-")
+
+    def test_approve_triggers_case_processing(self, db, settings):
+        """Approving should trigger the case pipeline (eager mode = sync execution)."""
+        from apps.cases.models import APCase
+
+        settings.CELERY_TASK_ALWAYS_EAGER = True
+        settings.CELERY_TASK_EAGER_PROPAGATES = False  # Don't propagate agent errors
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        # Need a recon config for the case pipeline's matching stage
+        from apps.reconciliation.models import ReconciliationConfig
+        ReconciliationConfig.objects.create(
+            name="Default",
+            is_default=True,
+            quantity_tolerance_pct=2.0,
+            price_tolerance_pct=1.0,
+            amount_tolerance_pct=1.0,
+        )
+
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+        ExtractionApprovalService.approve(approval, user)
+
+        # Case should exist and should have advanced beyond NEW
+        case = APCase.objects.filter(invoice=invoice, is_active=True).first()
+        assert case is not None
+        assert case.status != "NEW", f"Case should have advanced beyond NEW, got {case.status}"
+
+    def test_approve_idempotent_case_creation(self, db):
+        """Calling approve twice should not create duplicate cases."""
+        from apps.cases.models import APCase
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+
+        # Pre-create case
+        from apps.cases.services.case_creation_service import CaseCreationService
+        CaseCreationService.create_from_upload(invoice=invoice, uploaded_by=user)
+        assert APCase.objects.filter(invoice=invoice).count() == 1
+
+        approval = _make_approval(invoice, er)
+        ExtractionApprovalService.approve(approval, user)
+
+        # Should still be 1
+        assert APCase.objects.filter(invoice=invoice, is_active=True).count() == 1
+
+    def test_touchless_approval_no_corrections(self, db):
+        """Approval without corrections should be marked touchless."""
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        ExtractionApprovalService.approve(approval, user, corrections=None)
+
+        approval.refresh_from_db()
+        assert approval.is_touchless is True
+        assert approval.fields_corrected_count == 0

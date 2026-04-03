@@ -72,6 +72,39 @@ def process_case_task(self, case_id: int):
 
     try:
         case = APCase.objects.get(id=case_id)
+
+        # --- System agent: governance-visible case intake record ---
+        try:
+            from apps.agents.services.system_agent_classes import (
+                SystemCaseIntakeAgent,
+            )
+            from apps.agents.services.base_agent import AgentContext
+
+            _intake_ctx = AgentContext(
+                reconciliation_result=None,
+                invoice_id=case.invoice_id or 0,
+                extra={
+                    "case_id": case.pk,
+                    "case_number": case.case_number or "",
+                    "processing_path": case.processing_path or "",
+                    "priority": case.priority or 0,
+                    "stage_count": case.stages.count(),
+                    "trigger": _case_meta.get("trigger", "full"),
+                },
+                actor_primary_role="SYSTEM_AGENT",
+                actor_roles_snapshot=["SYSTEM_AGENT"],
+                permission_source="system",
+                access_granted=True,
+                trace_id=_trace_id or "",
+                _langfuse_trace=_lf_trace,
+            )
+            SystemCaseIntakeAgent().run(_intake_ctx)
+        except Exception:
+            logger.debug(
+                "SystemCaseIntakeAgent skipped for case %s",
+                case_id, exc_info=True,
+            )
+
         orchestrator = CaseOrchestrator(case)
         orchestrator.run(lf_trace=_lf_trace, lf_trace_id=_trace_id)
         logger.info("Case %s processing completed (status=%s)", case.case_number, case.status)

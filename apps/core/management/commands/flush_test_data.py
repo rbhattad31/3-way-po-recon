@@ -13,7 +13,7 @@ Usage:
     python manage.py flush_test_data --confirm   # skip interactive prompt
 """
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import connection, transaction
 
 
 class Command(BaseCommand):
@@ -169,3 +169,51 @@ class Command(BaseCommand):
 
         count = Vendor.objects.all().delete()[0]
         self.stdout.write(f"  Vendor: {count}")
+
+        # --- Reset auto-increment IDs ---
+        self._reset_auto_increments(flushed_models=[
+            ProcessingLog, FileProcessingStatus, AuditEvent,
+            APCaseActivity, APCaseComment, APCaseSummary,
+            APCaseAssignment, APCaseArtifact, APCaseDecision, APCaseStage,
+            APCase,
+            ReviewDecision, ManualReviewAction, ReviewComment, ReviewAssignment,
+            AgentEscalation, AgentRecommendation, DecisionLog,
+            AgentMessage, AgentStep, AgentRun,
+            ToolCall,
+            ReconciliationException, ReconciliationResultLine,
+            ReconciliationResult, ReconciliationRun,
+            ExtractionResult,
+            CopilotSessionArtifact, CopilotMessage, CopilotSession,
+            GRNLineItem, GoodsReceiptNote,
+            InvoiceLineItem, Invoice,
+            PurchaseOrderLineItem, PurchaseOrder,
+            DocumentUpload,
+            Vendor,
+        ])
+
+    def _reset_auto_increments(self, flushed_models):
+        """Reset AUTO_INCREMENT to 1 for all flushed tables."""
+        # Conditionally add models that may not be importable
+        try:
+            from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection
+            flushed_models.extend([ExtractionFieldCorrection, ExtractionApproval])
+        except ImportError:
+            pass
+        try:
+            from apps.extraction.bulk_models import BulkExtractionItem, BulkExtractionJob
+            flushed_models.extend([BulkExtractionItem, BulkExtractionJob])
+        except ImportError:
+            pass
+
+        reset_count = 0
+        with connection.cursor() as cursor:
+            for model in flushed_models:
+                table = model._meta.db_table
+                try:
+                    cursor.execute(f"ALTER TABLE `{table}` AUTO_INCREMENT = 1")
+                    reset_count += 1
+                except Exception as exc:
+                    self.stdout.write(
+                        self.style.WARNING(f"  Could not reset {table}: {exc}")
+                    )
+        self.stdout.write(f"  Auto-increment reset for {reset_count} tables.")

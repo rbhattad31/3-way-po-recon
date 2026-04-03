@@ -2,7 +2,7 @@
 
 **App paths:** `apps/reconciliation/` + `apps/agents/` + `apps/tools/`
 **Dependencies:** `apps/documents/`, `apps/erp_integration/`, `apps/reviews/`, `apps/auditlog/`, `apps/core/`
-**Status:** Production-ready -- deterministic engine (2-way + 3-way), LLM agent pipeline (8 agent types), ERP-backed source resolution, full RBAC enforcement, Langfuse tracing.
+**Status:** Production-ready -- deterministic engine (2-way + 3-way), LLM agent pipeline (8 LLM + 5 deterministic system agents = 13 total), ERP-backed source resolution, full RBAC enforcement, Langfuse tracing.
 
 ---
 
@@ -635,7 +635,7 @@ AgentOrchestrator()
 7. **Skip check**: If `plan.skip_agents`: create COMPLETED orchestration run, optionally auto-close, return.
 8. **Duplicate-run guard**: Query for any `RUNNING` `AgentOrchestrationRun` for this result. If found, return `OrchestrationResult(skipped=True)`.
 9. **Create `AgentOrchestrationRun`** (status=RUNNING).
-10. **Partition plan**: Split `plan.agents` into `llm_agents` (non-deterministic) and `deterministic_tail` (EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY -- may be replaced by `DeterministicResolver`).
+10. **Partition plan**: Split `plan.agents` into `llm_agents` (non-deterministic) and `deterministic_tail` (EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY -- replaced by `DeterministicResolver` / `DeterministicSystemAgent` subclasses).
 11. **Build `AgentContext`**: Attach `result`, `invoice_id`, `po_number`, `exceptions`, `reconciliation_mode`, RBAC fields.
 12. **Build `AgentMemory`**: Pre-seed facts: `grn_available`, `grn_fully_received`, `is_two_way`, `vendor_name`, `match_status`, `extraction_confidence`.
 13. **Execute LLM agents**: For each `agent_type` in `llm_agents`:
@@ -645,7 +645,7 @@ AgentOrchestrator()
     - Update `AgentMemory.record_agent_output()`.
     - Check feedback: `AgentFeedbackService.maybe_re_reconcile(agent_type, agent_run, ctx)`.
     - Emit `score_trace("agent_confidence", ...)`.
-14. **Execute deterministic tail**: Call `DeterministicResolver.resolve()` to produce `DeterministicResolution`. Create synthetic `AgentRun` records for auditability.
+14. **Execute deterministic tail**: For REVIEW_ROUTING and CASE_SUMMARY, instantiate their system agent replacements (`SystemReviewRoutingAgent`, `SystemCaseSummaryAgent`) from `_SYSTEM_AGENT_REPLACEMENTS` and call `agent.run(ctx)`. For EXCEPTION_ANALYSIS, call `DeterministicResolver.resolve()` directly with synthetic `AgentRun` records. All produce `DeterministicResolution` with full auditability.
 15. **Recommendations**: If plan includes `_RECOMMENDING_AGENTS`, call `RecommendationService.create()` with dedup guard.
 16. **Finalize**: Update `AgentOrchestrationRun` to COMPLETED (or PARTIAL if any LLM agent failed).
 
@@ -746,6 +746,11 @@ Replaces the `EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, and `CASE_SUMMARY` agents w
 ```python
 DeterministicResolver.REPLACED_AGENTS = {"EXCEPTION_ANALYSIS", "REVIEW_ROUTING", "CASE_SUMMARY"}
 ```
+
+REVIEW_ROUTING and CASE_SUMMARY are now executed as `DeterministicSystemAgent` subclasses
+(`SystemReviewRoutingAgent`, `SystemCaseSummaryAgent`) that wrap `DeterministicResolver.resolve()`
+internally while producing standard `AgentRun`, `DecisionLog`, Langfuse spans, and audit events.
+EXCEPTION_ANALYSIS still uses `DeterministicResolver` directly with synthetic `AgentRun` records.
 
 ### Resolution rules (priority order)
 
@@ -1699,10 +1704,12 @@ Single entry point for recording all agent activity:
 | `services/reasoning_planner.py` | LLM-backed planner (always active); PolicyEngine fallback |
 | `services/policy_engine.py` | Deterministic 7-rule agent selector; auto-close checks |
 | `services/base_agent.py` | BaseAgent with ReAct loop; AgentContext; AgentOutput |
-| `services/agent_classes.py` | All 8 agent implementations + AGENT_CLASS_REGISTRY |
+| `services/agent_classes.py` | All 8 LLM agent implementations + 5 system agents + AGENT_CLASS_REGISTRY |
 | `services/agent_memory.py` | AgentMemory shared in-process state |
 | `services/guardrails_service.py` | RBAC checks; SYSTEM_AGENT identity; guardrail audit logging |
 | `services/deterministic_resolver.py` | Rule-based replacement for 3 LLM agents |
+| `services/deterministic_system_agent.py` | DeterministicSystemAgent base class (skip ReAct loop) |
+| `services/system_agent_classes.py` | 5 concrete system agents (review routing, case summary, bulk intake, case intake, posting prep) |
 | `services/agent_trace_service.py` | Unified governance tracing |
 | `services/recommendation_service.py` | AgentRecommendation create/accept with dedup |
 | `services/decision_log_service.py` | DecisionLog persistence |

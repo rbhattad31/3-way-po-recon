@@ -62,6 +62,7 @@ class AgentContext:
     access_granted: bool = False
     trace_id: str = ""
     span_id: str = ""
+    document_upload_id: Optional[int] = None
     # Structured in-process memory shared across all agents in the pipeline.
     memory: Optional[AgentMemory] = None
     _langfuse_trace: Any = None
@@ -119,6 +120,7 @@ class BaseAgent(ABC):
             agent_definition=agent_def,
             agent_type=self.agent_type,
             reconciliation_result=ctx.reconciliation_result,
+            document_upload_id=ctx.document_upload_id,
             status=AgentRunStatus.RUNNING,
             input_payload=self._serialise_context(ctx),
             started_at=timezone.now(),

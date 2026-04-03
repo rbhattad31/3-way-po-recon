@@ -128,10 +128,12 @@ ERPResolutionService (shared gateway — used by reconciliation + posting + tool
 
 AgentOrchestrator
 ├── PolicyEngine (deterministic agent plan)
-├── AGENT_CLASS_REGISTRY (7 agent classes)
-│   └── BaseAgent (ReAct loop)
-│       ├── LLMClient (Azure OpenAI / OpenAI)
-│       └── ToolRegistry (6 tools)
+├── AGENT_CLASS_REGISTRY (8 LLM + 5 system agent classes)
+│   ├── BaseAgent (ReAct loop)
+│   │   ├── LLMClient (Azure OpenAI / OpenAI)
+│   │   └── ToolRegistry (6 tools)
+│   └── DeterministicSystemAgent (skip ReAct)
+│       └── 5 system agents (review routing, case summary, bulk intake, case intake, posting prep)
 ├── DeterministicResolver (cost-saving replacement for some agents)
 ├── AgentFeedbackService → ReconciliationRunnerService (re-reconcile)
 ├── DecisionLogService
@@ -534,7 +536,7 @@ Core app enums live in `apps/core/enums.py` (25 classes). ERP-specific enums liv
 ### Agents
 | Enum | Values |
 |---|---|
-| `AgentType` | INVOICE_EXTRACTION, INVOICE_UNDERSTANDING, PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY |
+| `AgentType` | INVOICE_EXTRACTION, INVOICE_UNDERSTANDING, PO_RETRIEVAL, GRN_RETRIEVAL, RECONCILIATION_ASSIST, EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY, SYSTEM_REVIEW_ROUTING, SYSTEM_CASE_SUMMARY, SYSTEM_BULK_EXTRACTION_INTAKE, SYSTEM_CASE_INTAKE, SYSTEM_POSTING_PREPARATION |
 | `AgentRunStatus` | PENDING, RUNNING, COMPLETED, FAILED, SKIPPED |
 | `RecommendationType` | AUTO_CLOSE, SEND_TO_AP_REVIEW, SEND_TO_PROCUREMENT, SEND_TO_VENDOR_CLARIFICATION, REPROCESS_EXTRACTION, ESCALATE_TO_MANAGER |
 | `ToolCallStatus` | REQUESTED, SUCCESS, FAILED |
@@ -988,6 +990,14 @@ class AgentPlan:
 | 6 | Default | SEND_TO_AP_REVIEW |
 
 Creates synthetic AgentRun records for auditability.
+
+REVIEW_ROUTING and CASE_SUMMARY are executed as `DeterministicSystemAgent` subclasses
+(`SystemReviewRoutingAgent`, `SystemCaseSummaryAgent`) that wrap the resolver and produce
+full `AgentRun`, `DecisionLog`, Langfuse spans, and audit events without LLM calls.
+Three additional system agents (`SystemBulkExtractionIntakeAgent`, `SystemCaseIntakeAgent`,
+`SystemPostingPreparationAgent`) provide observability for platform-level operations.
+All system agents are in `apps/agents/services/system_agent_classes.py` and extend
+`DeterministicSystemAgent` (`deterministic_system_agent.py`).
 
 ### 9.8 LLM Client
 

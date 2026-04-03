@@ -214,3 +214,21 @@ TRACE_POSTING_PIPELINE = "posting_pipeline"
 TRACE_ERP_SUBMISSION_PIPELINE = "erp_submission_pipeline"
 TRACE_REVIEW_WORKFLOW = "review_workflow"
 TRACE_COPILOT_SESSION = "copilot_session"
+
+
+# =====================================================================
+# SYSTEM AGENTS (deterministic system-agent scores)
+# =====================================================================
+SYSTEM_AGENT_SUCCESS = "system_agent_success"                       # 1.0 / 0.0 -- deterministic agent completed
+SYSTEM_AGENT_DECISION_COUNT = "system_agent_decision_count"         # int as float -- decisions logged
+SYSTEM_REVIEW_ROUTING_SUCCESS = "system_review_routing_success"     # 1.0 / 0.0
+SYSTEM_CASE_SUMMARY_SUCCESS = "system_case_summary_success"         # 1.0 / 0.0
+SYSTEM_BULK_INTAKE_SUCCESS = "system_bulk_intake_success"           # 1.0 / 0.0
+SYSTEM_CASE_INTAKE_SUCCESS = "system_case_intake_success"           # 1.0 / 0.0
+SYSTEM_POSTING_PREPARATION_SUCCESS = "system_posting_preparation_success"  # 1.0 / 0.0
+
+# Root trace names for system agent pipelines
+TRACE_SYSTEM_AGENT = "system_agent"
+TRACE_SYSTEM_BULK_INTAKE = "system_bulk_intake"
+TRACE_SYSTEM_CASE_INTAKE = "system_case_intake"
+TRACE_SYSTEM_POSTING_PREPARATION = "system_posting_preparation"

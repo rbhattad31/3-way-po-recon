@@ -179,10 +179,11 @@ class InvoicePersistenceService:
         """Recalculate subtotal/total from line items if they disagree.
 
         Only trusts line items over the header total when the line-item
-        sum is GREATER than the extracted total — this indicates the
-        header was misread.  When line items sum to LESS than the header
-        total, it usually means the LLM missed some line items, so we
-        keep the original header total.
+        sum is GREATER than the extracted total AND the line sum is
+        closer to total_amount than the header subtotal.  When line
+        items diverge significantly from total_amount, it usually means
+        the line amounts were mis-extracted (OCR table misalignment),
+        so we keep the original header total.
         """
         if not line_objs:
             return
@@ -198,16 +199,34 @@ class InvoicePersistenceService:
         if stored_subtotal == computed_subtotal:
             return
 
-        # Only override when line items sum to MORE than header —
+        # Only override when line items sum to MORE than header --
         # this indicates the header was misread or truncated.
         # When line items sum to LESS, the LLM likely missed items.
         if computed_subtotal < stored_subtotal:
             logger.info(
-                "Invoice %s: line items sum (%s) < extracted subtotal (%s) — "
+                "Invoice %s: line items sum (%s) < extracted subtotal (%s) -- "
                 "keeping header total (likely missing line items)",
                 invoice.pk, computed_subtotal, stored_subtotal,
             )
             return
+
+        # Guard: when the delta is large (>10%), check which value is
+        # closer to total_amount.  If the header subtotal is closer,
+        # the line amounts are likely wrong (OCR table misalignment).
+        total = invoice.total_amount or Decimal("0.00")
+        if stored_subtotal > 0 and total > 0:
+            delta_pct = abs(float(computed_subtotal - stored_subtotal)) / float(stored_subtotal) * 100
+            if delta_pct > 10.0:
+                header_gap = abs(float(stored_subtotal - total))
+                line_gap = abs(float(computed_subtotal - total))
+                if header_gap < line_gap:
+                    logger.info(
+                        "Invoice %s: line sum (%s) diverges %.1f%% from header "
+                        "subtotal (%s); header is closer to total (%s) -- "
+                        "keeping header value (likely line extraction errors)",
+                        invoice.pk, computed_subtotal, delta_pct, stored_subtotal, total,
+                    )
+                    return
 
         tax = invoice.tax_amount or Decimal("0.00")
         new_total = computed_subtotal + tax

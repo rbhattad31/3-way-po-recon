@@ -417,6 +417,43 @@ class ResponseRepairService:
         if current_subtotal is not None and abs(float(line_sum - current_subtotal)) <= 1.0:
             return
 
+        # ── Guard: when header subtotal is closer to total_amount, trust
+        # the header rather than the (possibly mis-extracted) line sums.
+        # A large divergence (>10%) between line_sum and header subtotal
+        # usually means the line amounts are wrong, not the header.
+        total_amount = _to_decimal(data.get("total_amount"))
+        tax_amount = _to_decimal(data.get("tax_amount"))
+        if current_subtotal is not None and current_subtotal > 0 and total_amount is not None and total_amount > 0:
+            # Guard 1: if current subtotal + tax already reconciles to
+            # total_amount, it is almost certainly correct.  Do not
+            # override with a line_sum that would break that equation.
+            if tax_amount is not None and tax_amount >= 0:
+                header_total = current_subtotal + tax_amount
+                if abs(float(header_total - total_amount)) <= 1.0:
+                    line_total = line_sum + tax_amount
+                    if abs(float(line_total - total_amount)) > 1.0:
+                        warnings.append(
+                            f"subtotal: header subtotal ({current_subtotal}) + tax "
+                            f"({tax_amount}) = {header_total} matches total_amount "
+                            f"({total_amount}); line sum ({line_sum}) would break "
+                            f"this -- kept header value"
+                        )
+                        return
+
+            # Guard 2: header subtotal closer to total_amount than line sum
+            header_gap = abs(float(current_subtotal - total_amount)) / float(total_amount)
+            line_gap = abs(float(line_sum - total_amount)) / float(total_amount)
+            delta_pct = abs(float(line_sum - current_subtotal)) / float(current_subtotal) * 100
+            if delta_pct > 10.0 and header_gap < line_gap:
+                # Header subtotal is closer to total_amount than line sum --
+                # the lines are suspect, not the header.  Skip the repair.
+                warnings.append(
+                    f"subtotal: line sum ({line_sum}) diverges {delta_pct:.1f}% "
+                    f"from header subtotal ({current_subtotal}); header is closer "
+                    f"to total_amount ({total_amount}) -- kept header value"
+                )
+                return
+
         data["subtotal"] = str(line_sum)
         actions.append(
             f"subtotal: aligned to sum of pre-tax line amounts "

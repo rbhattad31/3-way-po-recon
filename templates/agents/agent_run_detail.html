@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}Agent Run #{{ run.pk }} – AP Ops{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'agents:agent_runs_list' %}">Agent Runs</a></li>
+  <li class="breadcrumb-item active">#{{ run.pk }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+
+{# ── Header ── #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">
+    <i class="bi bi-diagram-3 me-2"></i>Agent Run #{{ run.pk }}
+    <span class="ap-badge ms-2
+      {% if run.status == 'COMPLETED' %}ap-badge-success
+      {% elif run.status == 'FAILED' %}ap-badge-danger
+      {% elif run.status == 'RUNNING' %}ap-badge-info
+      {% elif run.status == 'SKIPPED' %}ap-badge-muted
+      {% else %}ap-badge-partial{% endif %}">
+      {{ run.get_status_display }}
+    </span>
+  </h4>
+  <a href="{% url 'agents:agent_runs_list' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to list
+  </a>
+</div>
+
+{# ── Summary Cards ── #}
+<div class="row g-2 mb-3">
+  <div class="col-md-8">
+    <div class="ap-card h-100">
+      <div class="ap-card-header"><i class="bi bi-info-circle me-2"></i>Run Details</div>
+      <div class="ap-card-body">
+        <div class="row g-2">
+          <div class="col-sm-6">
+            <table class="table table-sm table-borderless mb-0">
+              <tr>
+                <td class="ap-label" style="width:130px">Agent Type</td>
+                <td>
+                  <span class="ap-badge {% if 'SYSTEM_' in run.agent_type %}ap-badge-muted{% else %}ap-badge-info{% endif %}">
+                    {{ run.get_agent_type_display }}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td class="ap-label">Definition</td>
+                <td>{{ run.agent_definition.name|default:"--" }}</td>
+              </tr>
+              <tr>
+                <td class="ap-label">Confidence</td>
+                <td>
+                  {% if run.confidence is not None %}
+                    {% widthratio run.confidence 1 100 as conf_pct %}
+                    <span class="fw-semibold {% if run.confidence >= 0.8 %}text-success{% elif run.confidence >= 0.5 %}text-warning{% else %}text-danger{% endif %}">{{ conf_pct }}%</span>
+                  {% else %}--{% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td class="ap-label">Duration</td>
+                <td>{{ run.duration_ms|default:"--" }}{% if run.duration_ms %} ms{% endif %}</td>
+              </tr>
+              <tr>
+                <td class="ap-label">LLM Model</td>
+                <td>{{ run.llm_model_used|default:"deterministic" }}</td>
+              </tr>
+              <tr>
+                <td class="ap-label">Invocation</td>
+                <td><small>{{ run.invocation_reason|default:"--" }}</small></td>
+              </tr>
+            </table>
+          </div>
+          <div class="col-sm-6">
+            <table class="table table-sm table-borderless mb-0">
+              <tr>
+                <td class="ap-label" style="width:130px">Invoice</td>
+                <td>
+                  {% if linked_invoice %}
+                    <a href="{% url 'governance:invoice_governance' linked_invoice.pk %}">
+                      {{ linked_invoice.invoice_number|default:"-" }}
+                    </a>
+                  {% elif run.document_upload %}
+                    Upload #{{ run.document_upload_id }}
+                  {% else %}--{% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td class="ap-label">Actor Role</td>
+                <td>
+                  {% if run.actor_primary_role %}
+                    <span class="badge bg-secondary" style="font-size:.7em">{{ run.actor_primary_role }}</span>
+                  {% else %}--{% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td class="ap-label">Permission</td>
+                <td>
+                  {% if run.permission_source or run.permission_checked %}
+                    <small class="font-monospace">{{ run.permission_source|default:run.permission_checked }}</small>
+                    {% if run.access_granted == False %}
+                      <i class="bi bi-x-circle-fill text-danger ms-1" title="Denied"></i>
+                    {% elif run.access_granted %}
+                      <i class="bi bi-check-circle-fill text-success ms-1" title="Granted"></i>
+                    {% endif %}
+                  {% else %}--{% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td class="ap-label">Trace ID</td>
+                <td>
+                  {% if run.trace_id %}
+                    <small class="font-monospace" title="{{ run.trace_id }}">{{ run.trace_id|truncatechars:24 }}</small>
+                  {% else %}--{% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td class="ap-label">Created</td>
+                <td><small>{{ run.created_at|date:"M d, Y H:i:s" }}</small></td>
+              </tr>
+              <tr>
+                <td class="ap-label">Completed</td>
+                <td><small>{{ run.completed_at|date:"M d, Y H:i:s"|default:"--" }}</small></td>
+              </tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="ap-card h-100">
+      <div class="ap-card-header"><i class="bi bi-lightning-charge me-2"></i>Token Usage</div>
+      <div class="ap-card-body text-center">
+        <div class="row g-2">
+          <div class="col-4">
+            <div class="ap-font-size-xs text-muted">Prompt</div>
+            <div class="fw-bold">{{ run.prompt_tokens|default:"--" }}</div>
+          </div>
+          <div class="col-4">
+            <div class="ap-font-size-xs text-muted">Completion</div>
+            <div class="fw-bold">{{ run.completion_tokens|default:"--" }}</div>
+          </div>
+          <div class="col-4">
+            <div class="ap-font-size-xs text-muted">Total</div>
+            <div class="fw-bold">{{ run.total_tokens|default:"--" }}</div>
+          </div>
+        </div>
+        {% if run.cost_estimate %}
+        <div class="mt-2">
+          <span class="ap-font-size-xs text-muted">Est. Cost:</span>
+          <span class="fw-semibold">${{ run.cost_estimate|floatformat:4 }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Summarized Reasoning ── #}
+{% if run.summarized_reasoning %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-chat-text me-2"></i>Summarized Reasoning</div>
+  <div class="ap-card-body">
+    <p class="mb-0 small" style="white-space:pre-wrap;">{{ run.summarized_reasoning }}</p>
+  </div>
+</div>
+{% endif %}
+
+{# ── Error Message ── #}
+{% if run.error_message %}
+<div class="ap-card mb-3 border-danger">
+  <div class="ap-card-header text-danger"><i class="bi bi-exclamation-triangle me-2"></i>Error</div>
+  <div class="ap-card-body">
+    <pre class="mb-0 small text-danger" style="white-space:pre-wrap;">{{ run.error_message }}</pre>
+  </div>
+</div>
+{% endif %}
+
+{# ── Decisions ── #}
+{% if decisions %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-signpost-split me-2"></i>Decisions ({{ decisions|length }})</div>
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table mb-0">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Decision</th>
+          <th>Confidence</th>
+          <th>Deterministic</th>
+          <th>Rationale</th>
+          <th>When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in decisions %}
+        <tr>
+          <td><span class="ap-badge ap-badge-info">{{ d.decision_type|default:"--" }}</span></td>
+          <td><small>{{ d.decision|truncatewords:15 }}</small></td>
+          <td>
+            {% if d.confidence is not None %}
+              {% widthratio d.confidence 1 100 as dconf %}
+              {{ dconf }}%
+            {% else %}--{% endif %}
+          </td>
+          <td>
+            {% if d.deterministic_flag %}
+              <i class="bi bi-gear-fill text-primary" title="Rule-based"></i>
+            {% else %}
+              <i class="bi bi-robot text-success" title="LLM-generated"></i>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ d.rationale|truncatewords:20|default:"--" }}</small></td>
+          <td><small class="text-muted">{{ d.created_at|date:"H:i:s" }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Recommendations ── #}
+{% if recommendations %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-lightbulb me-2"></i>Recommendations ({{ recommendations|length }})</div>
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table mb-0">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Action</th>
+          <th>Confidence</th>
+          <th>Status</th>
+          <th>Reasoning</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rec in recommendations %}
+        <tr>
+          <td><span class="ap-badge ap-badge-partial">{{ rec.get_recommendation_type_display }}</span></td>
+          <td><small>{{ rec.recommended_action|default:"--"|truncatewords:12 }}</small></td>
+          <td>
+            {% if rec.confidence is not None %}
+              {% widthratio rec.confidence 1 100 as rconf %}
+              {{ rconf }}%
+            {% else %}--{% endif %}
+          </td>
+          <td>
+            {% if rec.accepted is None %}
+              <span class="ap-badge ap-badge-muted">Pending</span>
+            {% elif rec.accepted %}
+              <span class="ap-badge ap-badge-success">Accepted</span>
+            {% else %}
+              <span class="ap-badge ap-badge-danger">Rejected</span>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ rec.reasoning|truncatewords:15|default:"--" }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Steps ── #}
+{% if steps %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-list-ol me-2"></i>Steps ({{ steps|length }})</div>
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table mb-0">
+      <thead>
+        <tr>
+          <th style="width:60px">#</th>
+          <th>Action</th>
+          <th>Success</th>
+          <th>Duration</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for step in steps %}
+        <tr {% if not step.success %}class="table-danger"{% endif %}>
+          <td>{{ step.step_number }}</td>
+          <td><small>{{ step.action }}</small></td>
+          <td>
+            {% if step.success %}
+              <i class="bi bi-check-circle-fill text-success"></i>
+            {% else %}
+              <i class="bi bi-x-circle-fill text-danger"></i>
+            {% endif %}
+          </td>
+          <td><small>{{ step.duration_ms|default:"--" }}{% if step.duration_ms %} ms{% endif %}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Messages ── #}
+{% if agent_messages %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-chat-dots me-2"></i>Messages ({{ agent_messages|length }})
+    <button class="btn btn-sm btn-outline-secondary float-end" type="button" data-bs-toggle="collapse" data-bs-target="#messagesPanel">
+      <i class="bi bi-chevron-down"></i>
+    </button>
+  </div>
+  <div class="collapse" id="messagesPanel">
+    <div class="ap-card-body" style="max-height:500px; overflow-y:auto;">
+      {% for msg in agent_messages %}
+      <div class="mb-2 p-2 rounded {% if msg.role == 'assistant' %}bg-light{% elif msg.role == 'system' %}bg-dark bg-opacity-10{% elif msg.role == 'tool' %}bg-info bg-opacity-10{% endif %}">
+        <div class="d-flex justify-content-between">
+          <strong class="ap-font-size-sm">
+            {% if msg.role == 'system' %}<i class="bi bi-gear me-1"></i>
+            {% elif msg.role == 'assistant' %}<i class="bi bi-robot me-1"></i>
+            {% elif msg.role == 'user' %}<i class="bi bi-person me-1"></i>
+            {% elif msg.role == 'tool' %}<i class="bi bi-wrench me-1"></i>
+            {% endif %}
+            {{ msg.role|title }}
+          </strong>
+          {% if msg.token_count %}<small class="text-muted">{{ msg.token_count }} tokens</small>{% endif %}
+        </div>
+        <pre class="mb-0 small mt-1" style="white-space:pre-wrap; word-break:break-word;">{{ msg.content|truncatechars:2000 }}</pre>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Raw I/O (collapsible) ── #}
+{% if run.input_payload or run.output_payload %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header">
+    <i class="bi bi-code-square me-2"></i>Raw Input / Output
+    <button class="btn btn-sm btn-outline-secondary float-end" type="button" data-bs-toggle="collapse" data-bs-target="#rawIOPanel">
+      <i class="bi bi-chevron-down"></i>
+    </button>
+  </div>
+  <div class="collapse" id="rawIOPanel">
+    <div class="ap-card-body">
+      {% if run.input_payload %}
+      <h6 class="ap-font-size-sm text-muted">Input Payload</h6>
+      <pre class="small bg-light p-2 rounded" style="max-height:300px; overflow:auto;">{{ run.input_payload }}</pre>
+      {% endif %}
+      {% if run.output_payload %}
+      <h6 class="ap-font-size-sm text-muted">Output Payload</h6>
+      <pre class="small bg-light p-2 rounded" style="max-height:300px; overflow:auto;">{{ run.output_payload }}</pre>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -149,14 +149,8 @@ class ExtractionApprovalService:
             "Auto-approved extraction for invoice %s (confidence=%.2f)",
             invoice.pk, confidence,
         )
-        # ── Create AP Case (every invoice must have one) ──
-        cls._ensure_case(invoice, user=None)
-
-        # ── Trigger reconciliation pipeline (auto) ──
-        cls._enqueue_reconciliation(invoice, user=None)
-
-        # ── Trigger posting pipeline ──
-        cls._enqueue_posting(invoice, user=None)
+        # ── Create AP Case and trigger case pipeline ──
+        cls._ensure_case_and_process(invoice, user=None)
 
         try:
             from apps.core.langfuse_client import score_trace
@@ -323,14 +317,10 @@ class ExtractionApprovalService:
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
         cls._record_governance_trail(approval, "APPROVE", user)
 
-        # ── Create AP Case (every invoice must have one) ──
-        cls._ensure_case(invoice, user)
-
-        # ── Trigger reconciliation pipeline (auto) ──
-        cls._enqueue_reconciliation(invoice, user)
-
-        # ── Trigger posting pipeline ──
-        cls._enqueue_posting(invoice, user)
+        # ── Create AP Case and trigger case pipeline ──
+        # The case orchestrator handles reconciliation, agents, review
+        # routing, and posting internally via its stage sequence.
+        cls._ensure_case_and_process(invoice, user)
 
         try:
             from apps.core.langfuse_client import score_trace
@@ -701,6 +691,39 @@ class ExtractionApprovalService:
             logger.exception(
                 "GovernanceTrailService.record_approval_decision failed for approval %s",
                 approval.pk,
+            )
+
+    @staticmethod
+    def _ensure_case_and_process(invoice, user=None):
+        """Create an APCase and enqueue the full case processing pipeline.
+
+        The case orchestrator handles the complete lifecycle:
+        INTAKE -> EXTRACTION -> PATH_RESOLUTION -> MATCHING -> EXCEPTION_ANALYSIS
+        -> REVIEW_ROUTING -> CASE_SUMMARY (including reconciliation, agents,
+        review routing, and posting internally).
+
+        Best-effort: failures are logged but never block the approval path.
+        """
+        try:
+            from apps.cases.services.case_creation_service import CaseCreationService
+            uploaded_by = user or (
+                invoice.document_upload.uploaded_by
+                if invoice.document_upload_id else None
+            )
+            case = CaseCreationService.create_from_upload(
+                invoice=invoice,
+                uploaded_by=uploaded_by,
+            )
+            logger.info("Ensured AP Case %s for invoice %s", case.case_number, invoice.pk)
+
+            # Enqueue the case orchestrator to process through all stages
+            from apps.cases.tasks import process_case_task
+            from apps.core.utils import dispatch_task
+            dispatch_task(process_case_task, case.pk)
+            logger.info("Enqueued case processing for case %s (invoice %s)", case.case_number, invoice.pk)
+        except Exception:
+            logger.exception(
+                "Failed to create/process AP Case for invoice %s", invoice.pk,
             )
 
     @staticmethod

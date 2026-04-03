@@ -194,6 +194,15 @@
           </a>
         </li>
         {% endif %}
+        {% has_permission "agents.view" as can_view_agent_runs %}
+        {% if can_view_agent_runs %}
+        <li>
+          <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_runs_list' %}active{% endif %}"
+             href="{% url 'agents:agent_runs_list' %}">
+            <i class="bi bi-diagram-3 me-2 opacity-75"></i>Agent Runs
+          </a>
+        </li>
+        {% endif %}
 
         {# Documentation #}
         <li><hr class="dropdown-divider"></li>
@@ -204,56 +213,6 @@
           </a>
         </li>
 
-        {# Admin #}
-        {% has_permission "users.manage" as can_manage_users %}
-        {% has_permission "roles.manage" as can_manage_roles %}
-        {% if can_manage_users or can_manage_roles %}
-        <li><hr class="dropdown-divider"></li>
-        <li class="dropdown-header">Admin Console</li>
-        {% if can_manage_users %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_detail' %}active{% endif %}"
-             href="{% url 'accounts:user_list' %}">
-            <i class="bi bi-people me-2 opacity-75"></i>Users
-          </a>
-        </li>
-        {% endif %}
-        {% if can_manage_roles %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'role_list' %}active{% endif %}"
-             href="{% url 'accounts:role_list' %}">
-            <i class="bi bi-shield me-2 opacity-75"></i>Roles
-          </a>
-        </li>
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'permission_list' %}active{% endif %}"
-             href="{% url 'accounts:permission_list' %}">
-            <i class="bi bi-key me-2 opacity-75"></i>Permissions
-          </a>
-        </li>
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'role_matrix' %}active{% endif %}"
-             href="{% url 'accounts:role_matrix' %}">
-            <i class="bi bi-grid-3x3 me-2 opacity-75"></i>Role Matrix
-          </a>
-        </li>
-        {% endif %}
-        {% has_permission "credits.manage" as can_manage_credits %}
-        {% if can_manage_credits %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'credit_account_list' %}active{% endif %}"
-             href="{% url 'extraction:credit_account_list' %}">
-            <i class="bi bi-coin me-2 opacity-75"></i>Credits
-          </a>
-        </li>
-        {% endif %}
-        <li>
-          <a class="dropdown-item {% if request.resolver_match.url_name == 'recon_settings' %}active{% endif %}"
-             href="{% url 'reconciliation:recon_settings' %}">
-            <i class="bi bi-gear me-2 opacity-75"></i>Settings
-          </a>
-        </li>
-        {% endif %}
       </ul>
     </div>
   </div>
@@ -264,11 +223,64 @@
     <i class="bi bi-list"></i>
   </button>
 
-  {# Global search #}
-  <div class="ap-topbar-search position-relative d-none d-md-block">
-    <i class="bi bi-search"></i>
-    <input type="text" class="form-control" placeholder="Search cases, invoices, POs..." id="globalSearch" autocomplete="off">
+  {# Admin dropdown #}
+  {% has_permission "users.manage" as can_manage_users %}
+  {% has_permission "roles.manage" as can_manage_roles %}
+  {% if can_manage_users or can_manage_roles %}
+  <div class="dropdown d-none d-md-block">
+    <button class="btn btn-sm btn-light dropdown-toggle d-flex align-items-center gap-1" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+      <i class="bi bi-gear"></i>
+      <span class="d-none d-lg-inline">Admin</span>
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+      {% if can_manage_users %}
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_detail' %}active{% endif %}"
+           href="{% url 'accounts:user_list' %}">
+          <i class="bi bi-people me-2 opacity-75"></i>Users
+        </a>
+      </li>
+      {% endif %}
+      {% if can_manage_roles %}
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'role_list' %}active{% endif %}"
+           href="{% url 'accounts:role_list' %}">
+          <i class="bi bi-shield me-2 opacity-75"></i>Roles
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'permission_list' %}active{% endif %}"
+           href="{% url 'accounts:permission_list' %}">
+          <i class="bi bi-key me-2 opacity-75"></i>Permissions
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'role_matrix' %}active{% endif %}"
+           href="{% url 'accounts:role_matrix' %}">
+          <i class="bi bi-grid-3x3 me-2 opacity-75"></i>Role Matrix
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "credits.manage" as can_manage_credits %}
+      {% if can_manage_credits %}
+      <li><hr class="dropdown-divider"></li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'credit_account_list' %}active{% endif %}"
+           href="{% url 'extraction:credit_account_list' %}">
+          <i class="bi bi-coin me-2 opacity-75"></i>Credits
+        </a>
+      </li>
+      {% endif %}
+      <li><hr class="dropdown-divider"></li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'recon_settings' %}active{% endif %}"
+           href="{% url 'reconciliation:recon_settings' %}">
+          <i class="bi bi-gear me-2 opacity-75"></i>Settings
+        </a>
+      </li>
+    </ul>
   </div>
+  {% endif %}
 
   {# Right actions #}
   <div class="ap-topbar-actions">

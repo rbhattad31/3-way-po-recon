@@ -67,7 +67,7 @@ class InvoiceExtractionAdapter:
     """Two-step extraction: Azure Document Intelligence OCR -> Azure OpenAI LLM."""
 
     @observed_service("extraction.extract", entity_type="DocumentUpload", audit_event="EXTRACTION_STARTED")
-    def extract(self, file_path: str, *, actor_user_id: Optional[int] = None, document_upload_id: Optional[int] = None, langfuse_trace: Any = None) -> ExtractionResponse:
+    def extract(self, file_path: str, *, actor_user_id: Optional[int] = None, document_upload_id: Optional[int] = None, langfuse_trace: Any = None, trace_id: str = "") -> ExtractionResponse:
         """Run OCR + LLM extraction on *file_path* and return structured output."""
         start = time.time()
         try:
@@ -120,6 +120,7 @@ class InvoiceExtractionAdapter:
                 prompt_metadata=self._build_prompt_metadata(category_result, composition),
                 document_upload_id=document_upload_id,
                 langfuse_trace=langfuse_trace,
+                trace_id=trace_id,
             )
             logger.info("Agent extraction completed (agent_run_id=%s)", agent_run_id)
 
@@ -390,6 +391,7 @@ class InvoiceExtractionAdapter:
         prompt_metadata: Optional[Dict[str, Any]] = None,
         document_upload_id: Optional[int] = None,
         langfuse_trace: Any = None,
+        trace_id: str = "",
     ) -> tuple:
         """Run the Invoice Extraction Agent on OCR text.
 
@@ -411,10 +413,32 @@ class InvoiceExtractionAdapter:
         if prompt_metadata:
             extra["prompt_metadata"] = prompt_metadata
 
+        # Resolve RBAC metadata from the actor user
+        _actor_role = ""
+        _actor_roles_snapshot: list = []
+        if actor_user_id:
+            try:
+                from apps.accounts.models import User
+                _user = User.objects.get(pk=actor_user_id)
+                _actor_role = getattr(_user, "role", "") or ""
+                _actor_roles_snapshot = list(
+                    _user.user_roles.filter(is_active=True)
+                    .values_list("role__code", flat=True)
+                ) if hasattr(_user, "user_roles") else []
+            except Exception:
+                pass
+
         ctx = AgentContext(
             reconciliation_result=None,
             invoice_id=0,  # Invoice not yet created
             actor_user_id=actor_user_id,
+            actor_primary_role=_actor_role,
+            actor_roles_snapshot=_actor_roles_snapshot,
+            permission_checked="invoices.upload",
+            permission_source="extraction_pipeline",
+            access_granted=True,
+            document_upload_id=document_upload_id,
+            trace_id=trace_id,
             extra=extra,
             _langfuse_trace=langfuse_trace,
         )
@@ -433,14 +457,6 @@ class InvoiceExtractionAdapter:
 
         if not raw_json:
             raise RuntimeError("Invoice Extraction Agent returned empty extraction data")
-
-        # Stamp the upload FK so we can aggregate tokens across all reprocess runs
-        if document_upload_id and agent_run.pk:
-            try:
-                from apps.agents.models import AgentRun as _AgentRun
-                _AgentRun.objects.filter(pk=agent_run.pk).update(document_upload_id=document_upload_id)
-            except Exception:
-                pass
 
         return raw_json, agent_run.pk
 

@@ -173,6 +173,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 actor_user_id=upload.uploaded_by_id,
                 document_upload_id=upload.pk,
                 langfuse_trace=_lf_root,
+                trace_id=_trace_id,
             )
         finally:
             import os
@@ -349,12 +350,14 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             _prompt_source_type = (
                 (extraction_resp.raw_json.get("_prompt_meta") or {}).get("prompt_source_type", "")
             )
+            _repair_meta = extraction_resp.raw_json.get("_repair") or {}
             decision_codes = derive_codes(
                 validation_result=validation_result,
                 recon_val_result=recon_val_result,
                 field_conf_result=field_conf_result,
                 prompt_source_type=_prompt_source_type,
                 qr_data=extraction_resp.qr_data,
+                repair_metadata=_repair_meta,
             )
             extraction_resp.raw_json["_decision_codes"] = decision_codes
         except Exception as dc_exc:
@@ -363,36 +366,18 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         _lf_score_obs(_s_decision, EXTRACTION_DECISION_CODE_COUNT, float(len(decision_codes)),
                       comment=", ".join(decision_codes[:5]) if decision_codes else "none")
 
-        # 4c. Recovery lane -- invoke only for named failure modes
+        # 4c. Recovery lane -- evaluate trigger (invocation deferred to after persistence)
         _s_recovery = _lf_span(_lf_root, "recovery_lane", metadata={"upload_id": upload_id})
         recovery_result = None
+        recovery_decision = None
         try:
             from apps.extraction.services.recovery_lane_service import RecoveryLaneService
             recovery_decision = RecoveryLaneService.evaluate(decision_codes)
-            if recovery_decision.should_invoke:
-                logger.info(
-                    "Recovery lane triggered for upload %s — codes: %s",
-                    upload_id, recovery_decision.trigger_codes,
-                )
-                recovery_result = RecoveryLaneService.invoke(
-                    recovery_decision,
-                    invoice_id=0,  # invoice not persisted yet; agent uses invoice_details tool
-                    validation_result=validation_result,
-                    field_conf_result=field_conf_result,
-                    actor_user_id=upload.uploaded_by_id,
-                )
-                extraction_resp.raw_json["_recovery"] = recovery_result.to_serializable()
         except Exception as rl_exc:
-            logger.warning("RecoveryLaneService failed (non-fatal): %s", rl_exc)
-        _recovery_invoked = recovery_result.invoked if recovery_result else False
-        _recovery_succeeded = recovery_result.succeeded if recovery_result else False
-        _lf_end(_s_recovery, output={
-            "invoked": _recovery_invoked,
-            "succeeded": _recovery_succeeded,
-            "trigger_codes": recovery_decision.trigger_codes if 'recovery_decision' in dir() and hasattr(recovery_decision, 'trigger_codes') else [],
-        })
-        _lf_score_obs(_s_recovery, EXTRACTION_RECOVERY_INVOKED, 1.0 if _recovery_invoked else 0.0,
-                      comment=f"succeeded={_recovery_succeeded}")
+            logger.warning("RecoveryLaneService.evaluate failed (non-fatal): %s", rl_exc)
+        # Invocation is deferred to after step 6 (persistence) so the agent
+        # can access the real invoice via invoice_details tool.
+        # _s_recovery span will be closed after invocation below.
 
         # 5. Duplicate check -- exclude the existing invoice for this upload so a
         # reprocess does not flag the invoice as a duplicate of itself.
@@ -454,6 +439,45 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 upload.save(update_fields=["blob_path", "updated_at"])
             except Exception as mv_err:
                 logger.warning("Blob move to processed/ failed: %s", mv_err)
+
+        # 7b. Recovery lane invocation (deferred from step 4c -- now invoice is persisted)
+        try:
+            if recovery_decision and recovery_decision.should_invoke:
+                logger.info(
+                    "Recovery lane triggered for upload %s -- codes: %s",
+                    upload_id, recovery_decision.trigger_codes,
+                )
+                from apps.extraction.services.recovery_lane_service import RecoveryLaneService
+                recovery_result = RecoveryLaneService.invoke(
+                    recovery_decision,
+                    invoice_id=invoice.pk,
+                    validation_result=validation_result,
+                    field_conf_result=field_conf_result,
+                    actor_user_id=upload.uploaded_by_id,
+                    document_upload_id=upload.pk,
+                    trace_id=_trace_id,
+                )
+                # Persist recovery data into the extraction result
+                if ext_result and recovery_result:
+                    try:
+                        raw = ext_result.raw_response or {}
+                        raw["_recovery"] = recovery_result.to_serializable()
+                        ext_result.raw_response = raw
+                        ext_result.save(update_fields=["raw_response", "updated_at"])
+                    except Exception as persist_exc:
+                        logger.warning("Failed to persist recovery data: %s", persist_exc)
+        except Exception as rl_exc:
+            logger.warning("RecoveryLaneService.invoke failed (non-fatal): %s", rl_exc)
+        # Close recovery lane span
+        _recovery_invoked = recovery_result.invoked if recovery_result else False
+        _recovery_succeeded = recovery_result.succeeded if recovery_result else False
+        _lf_end(_s_recovery, output={
+            "invoked": _recovery_invoked,
+            "succeeded": _recovery_succeeded,
+            "trigger_codes": recovery_decision.trigger_codes if recovery_decision else [],
+        })
+        _lf_score_obs(_s_recovery, EXTRACTION_RECOVERY_INVOKED, 1.0 if _recovery_invoked else 0.0,
+                      comment=f"succeeded={_recovery_succeeded}")
 
         # If valid and not duplicate, gate through extraction approval
         _s_approval = _lf_span(_lf_root, "approval_gate", metadata={

@@ -147,9 +147,37 @@ def run_reconciliation_task(
         except Exception:
             pass
 
+    # Link reconciliation results back to their APCase records.
+    # Cases are created during extraction approval (before recon runs),
+    # so we need to attach the result + update processing_path.
+    from apps.reconciliation.models import ReconciliationResult
+    if run:
+        try:
+            from apps.cases.models import APCase
+            from apps.core.enums import ProcessingPath, ReconciliationMode
+            _mode_to_path = {
+                ReconciliationMode.TWO_WAY: ProcessingPath.TWO_WAY,
+                ReconciliationMode.THREE_WAY: ProcessingPath.THREE_WAY,
+                ReconciliationMode.NON_PO: ProcessingPath.NON_PO,
+            }
+            for rr in ReconciliationResult.objects.filter(run=run).select_related("invoice"):
+                ap_case = APCase.objects.filter(
+                    invoice=rr.invoice, is_active=True, reconciliation_result__isnull=True,
+                ).first()
+                if ap_case:
+                    ap_case.reconciliation_result = rr
+                    _path = _mode_to_path.get(rr.reconciliation_mode, ProcessingPath.UNRESOLVED)
+                    ap_case.processing_path = _path
+                    ap_case.save(update_fields=["reconciliation_result", "processing_path", "updated_at"])
+                    logger.info(
+                        "Linked ReconResult %s to APCase %s (path=%s)",
+                        rr.pk, ap_case.case_number, _path,
+                    )
+        except Exception:
+            logger.exception("Failed to link reconciliation results to AP cases")
+
     # Chain agent pipeline for non-matched results
     from apps.agents.tasks import run_agent_pipeline_task
-    from apps.reconciliation.models import ReconciliationResult
 
     agent_result_ids = list(
         ReconciliationResult.objects.filter(run=run)

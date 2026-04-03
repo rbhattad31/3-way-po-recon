@@ -83,6 +83,12 @@ class AgentType(models.TextChoices):
     EXCEPTION_ANALYSIS = "EXCEPTION_ANALYSIS", "Exception Analysis"
     REVIEW_ROUTING = "REVIEW_ROUTING", "Review Routing"
     CASE_SUMMARY = "CASE_SUMMARY", "Case Summary"
+    # Deterministic system agents
+    SYSTEM_REVIEW_ROUTING = "SYSTEM_REVIEW_ROUTING", "System Review Routing"
+    SYSTEM_CASE_SUMMARY = "SYSTEM_CASE_SUMMARY", "System Case Summary"
+    SYSTEM_BULK_EXTRACTION_INTAKE = "SYSTEM_BULK_EXTRACTION_INTAKE", "System Bulk Extraction Intake"
+    SYSTEM_CASE_INTAKE = "SYSTEM_CASE_INTAKE", "System Case Intake"
+    SYSTEM_POSTING_PREPARATION = "SYSTEM_POSTING_PREPARATION", "System Posting Preparation"
 
 
 class ToolCallStatus(models.TextChoices):
@@ -215,6 +221,9 @@ class AuditEventType(models.TextChoices):
     AUTO_CLOSE_AUTHORIZED = "AUTO_CLOSE_AUTHORIZED", "Auto-Close Authorized"
     AUTO_CLOSE_DENIED = "AUTO_CLOSE_DENIED", "Auto-Close Denied"
     SYSTEM_AGENT_USED = "SYSTEM_AGENT_USED", "System Agent Used"
+    # System agent lifecycle events
+    SYSTEM_AGENT_RUN_COMPLETED = "SYSTEM_AGENT_RUN_COMPLETED", "System Agent Run Completed"
+    SYSTEM_AGENT_RUN_FAILED = "SYSTEM_AGENT_RUN_FAILED", "System Agent Run Failed"
     # Copilot audit events
     COPILOT_SESSION_CREATED = "COPILOT_SESSION_CREATED", "Copilot Session Created"
     COPILOT_SESSION_VIEWED = "COPILOT_SESSION_VIEWED", "Copilot Session Viewed"
