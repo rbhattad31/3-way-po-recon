@@ -1197,11 +1197,30 @@ def agent_runs_list(request):
                 _upload_invoice_map.setdefault(ext.document_upload_id, ext.invoice)
         except Exception:
             pass
+    # Pre-load invoice lookups from input_payload for runs without recon_result/upload
+    _payload_invoice_map = {}
+    _payload_inv_ids = set()
+    for run in page_obj:
+        if not (run.reconciliation_result and run.reconciliation_result.invoice) and not run.document_upload_id:
+            _inv_id = (run.input_payload or {}).get("invoice_id")
+            if _inv_id:
+                _payload_inv_ids.add(_inv_id)
+    if _payload_inv_ids:
+        try:
+            from apps.documents.models import Invoice
+            for inv in Invoice.objects.filter(pk__in=_payload_inv_ids).select_related("vendor"):
+                _payload_invoice_map[inv.pk] = inv
+        except Exception:
+            pass
+
     for run in page_obj:
         if run.reconciliation_result and run.reconciliation_result.invoice:
             run.resolved_invoice = run.reconciliation_result.invoice
-        else:
+        elif run.document_upload_id:
             run.resolved_invoice = _upload_invoice_map.get(run.document_upload_id)
+        else:
+            _inv_id = (run.input_payload or {}).get("invoice_id")
+            run.resolved_invoice = _payload_invoice_map.get(_inv_id) if _inv_id else None
 
     # Dropdown choices
     agent_type_choices = AgentType.choices
@@ -1277,7 +1296,8 @@ def agent_run_detail(request, pk):
         "reconciliation_result", "invoice",
     ).order_by("-created_at")
 
-    # Resolve invoice: via reconciliation_result, or via document_upload -> extraction -> invoice
+    # Resolve invoice: via reconciliation_result, or via document_upload -> extraction -> invoice,
+    # or via input_payload.invoice_id (system agents store it there)
     linked_invoice = None
     if run.reconciliation_result and run.reconciliation_result.invoice:
         linked_invoice = run.reconciliation_result.invoice
@@ -1291,6 +1311,14 @@ def agent_run_detail(request, pk):
                 linked_invoice = ext.invoice
         except Exception:
             pass
+    if not linked_invoice:
+        _inv_id = (run.input_payload or {}).get("invoice_id")
+        if _inv_id:
+            try:
+                from apps.documents.models import Invoice
+                linked_invoice = Invoice.objects.select_related("vendor").get(pk=_inv_id)
+            except Exception:
+                pass
 
     return render(request, "agents/agent_run_detail.html", {
         "run": run,

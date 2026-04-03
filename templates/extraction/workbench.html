@@ -327,6 +327,7 @@
           <th style="width:110px">Confidence</th>
           <th style="width:80px">Status</th>
           <th style="width:100px">Approval</th>
+          <th style="width:100px">Case</th>
           <th style="width:130px">Processed</th>
           <th style="width:60px"></th>
         </tr>
@@ -404,6 +405,20 @@
               <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">—</span>
             {% endif %}
           </td>
+          <td>
+            {% if r.invoice_id %}
+              {% get_case case_map r.invoice_id as inv_case %}
+              {% if inv_case %}
+              <a href="{% url 'cases:case_agent_view' inv_case.pk %}" class="text-decoration-none" style="font-size:.7rem">
+                <span class="ap-badge {% if inv_case.status == 'CLOSED' %}ap-badge-success{% elif inv_case.status == 'FAILED' %}ap-badge-danger{% elif inv_case.status == 'ESCALATED' %}ap-badge-warning{% else %}ap-badge-info{% endif %}">{{ inv_case.case_number }}</span>
+              </a>
+              {% else %}
+              <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>
+              {% endif %}
+            {% else %}
+            <span style="color:var(--ap-text-muted);font-size:var(--ap-font-size-xs)">--</span>
+            {% endif %}
+          </td>
           <td style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
             {{ r.created_at|date:"d M Y H:i" }}
           </td>
@@ -415,7 +430,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="8" class="text-center py-5" style="color:var(--ap-text-muted)">
+          <td colspan="9" class="text-center py-5" style="color:var(--ap-text-muted)">
             <i class="bi bi-robot d-block mb-2" style="font-size:2rem"></i>
             No agent runs yet. Upload an invoice to run the extraction agent.
           </td>

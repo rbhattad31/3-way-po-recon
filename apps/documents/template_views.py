@@ -332,6 +332,13 @@ def pending_uploads_status(request):
 
 @login_required
 def invoice_detail(request, pk):
+    # Redirect to extraction console if an ExtractionResult exists for this invoice
+    from apps.extraction.models import ExtractionResult
+    ext = ExtractionResult.objects.filter(invoice_id=pk).order_by("-created_at").first()
+    if ext:
+        from django.shortcuts import redirect
+        return redirect("extraction:console", pk=ext.pk)
+
     invoice = get_object_or_404(
         Invoice.objects.select_related("vendor", "document_upload", "document_upload__uploaded_by", "duplicate_of", "reprocessed_from").prefetch_related("line_items"),
         pk=pk,

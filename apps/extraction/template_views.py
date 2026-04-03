@@ -151,6 +151,13 @@ def extraction_workbench(request):
         for ea in ExtractionApproval.objects.filter(invoice_id__in=invoice_ids):
             approval_map[ea.invoice_id] = ea
 
+    # Pre-load case data for invoices that have cases
+    case_map = {}
+    if invoice_ids:
+        from apps.cases.models import APCase
+        for c in APCase.objects.filter(invoice_id__in=invoice_ids, is_active=True).select_related("reconciliation_result"):
+            case_map[c.invoice_id] = c
+
     # Pre-load execution context (governed pipeline or legacy fallback)
     from apps.extraction.services.execution_context import get_execution_context
     for r in page_obj:
@@ -243,6 +250,7 @@ def extraction_workbench(request):
         "stats": stats,
         "stats_cached_at": stats_cached_at,
         "approval_map": approval_map,
+        "case_map": case_map,
         "approvals": approval_page,
         "approval_page_obj": approval_page,
         "approval_status_filter": approval_status_filter,

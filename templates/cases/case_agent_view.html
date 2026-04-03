@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% load static %}
 {% load rbac_tags %}
-{% block title %}{{ case.case_number }} – Agent View{% endblock %}
+{% block title %}{{ case.case_number }} -- Case Console{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/case-agent-view.css' %}" rel="stylesheet">
+<link href="{% static 'css/case-console.css' %}" rel="stylesheet">
 {% endblock %}
 
 {% block breadcrumb %}
@@ -18,927 +18,1111 @@
 {% endblock %}
 
 {% block content %}
+<div class="cc-console"
+     data-decide-url="{% url 'cases:case_decide' case.pk %}"
+     data-reprocess-url="{% url 'cases:reprocess_case' case.pk %}"
+     data-open-exceptions="{{ open_exceptions_count|default:'0' }}"
+     data-failed-validations="{{ failed_validations_count|default:'0' }}"
+     data-failed-stages="{{ failed_stages_count|default:'0' }}">
 
-{# ── COMPACT IDENTITY STRIP ── #}
-<div class="av-identity">
-  <span class="av-identity__case">{{ case.case_number }}</span>
+  {# ================================================================== #}
+  {# HEADER BAR                                                         #}
+  {# ================================================================== #}
+  <div class="card cc-header-bar mb-3">
+    <div class="card-body py-2 px-3">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
 
-  {# Status #}
-  {% if case.status == "CLOSED" %}
-    <span class="ap-badge ap-badge-success"><i class="bi bi-check-circle"></i> Closed</span>
-  {% elif case.status == "FAILED" %}
-    <span class="ap-badge ap-badge-danger"><i class="bi bi-x-circle"></i> Failed</span>
-  {% elif case.status == "REJECTED" %}
-    <span class="ap-badge ap-badge-danger"><i class="bi bi-slash-circle"></i> Rejected</span>
-  {% elif case.status == "ESCALATED" %}
-    <span class="ap-badge ap-badge-warning"><i class="bi bi-exclamation-triangle"></i> Escalated</span>
-  {% elif case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
-    <span class="ap-badge ap-badge-warning"><i class="bi bi-eye"></i> {{ case.get_status_display }}</span>
-  {% elif case.status == "NEW" %}
-    <span class="ap-badge ap-badge-muted"><i class="bi bi-plus-circle"></i> New</span>
-  {% else %}
-    <span class="ap-badge ap-badge-info">{{ case.get_status_display }}</span>
-  {% endif %}
+        {# LEFT: Case ID + badges #}
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <h5 class="mb-0 fw-bold cc-case-id">{{ case.case_number }}</h5>
 
-  {% include "cases/partials/_path_badge.html" with path=case.processing_path %}
-
-  {% if case.priority == "CRITICAL" %}
-    <span class="ap-badge ap-sev-critical"><i class="bi bi-fire"></i> Critical</span>
-  {% elif case.priority == "HIGH" %}
-    <span class="ap-badge ap-sev-high"><i class="bi bi-arrow-up-circle"></i> High</span>
-  {% endif %}
-
-  <span class="av-identity__sep"></span>
-  <span class="av-identity__meta"><i class="bi bi-file-earmark-text"></i> {{ invoice.invoice_number|default:"—" }}</span>
-  <span class="av-identity__sep"></span>
-  <span class="av-identity__meta"><i class="bi bi-building"></i> {% firstof invoice.raw_vendor_name case.vendor.name "Unknown" %}</span>
-  {% if invoice.total_amount %}
-  <span class="av-identity__sep"></span>
-  <span class="av-identity__meta"><i class="bi bi-currency-dollar"></i> {{ invoice.currency }}&nbsp;{{ invoice.total_amount|floatformat:2 }}</span>
-  {% endif %}
-
-  <div class="av-identity__actions"
-       data-reprocess-url="{% url 'cases:reprocess_case' case.pk %}"
-       data-decide-url="{% url 'cases:case_decide' case.pk %}"
-       data-open-exceptions="{{ open_exceptions_count|default:'0' }}"
-       data-failed-validations="{{ failed_validations_count|default:'0' }}"
-       data-failed-stages="{{ failed_stages_count|default:'0' }}">
-    {% csrf_token %}
-    {% has_permission "reviews.decide" as can_decide %}
-    {% has_permission "cases.edit" as can_edit_case %}
-    {% if show_actions or case.status == "FAILED" %}
-      {% if show_actions and can_decide %}
-      <button class="btn btn-success btn-sm" onclick="caseAction('approve')" title="Approve"><i class="bi bi-check-circle me-1"></i>Approve</button>
-      <button class="btn btn-danger btn-sm" onclick="caseAction('reject')" title="Reject"><i class="bi bi-x-circle me-1"></i>Reject</button>
-      {% endif %}
-      {% if can_edit_case %}
-      <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
-      {% endif %}
-    {% endif %}
-    {% has_permission "cases.assign" as can_assign_case %}
-    {% if can_assign_case %}
-    <form method="post" action="{% url 'cases:case_assign' case.pk %}" class="d-inline-flex align-items-center" style="gap:4px">
-      {% csrf_token %}
-      <select name="assigned_to" class="form-select form-select-sm" style="width:160px;font-size:.72rem;padding:2px 24px 2px 6px" onchange="this.form.submit()">
-        <option value="">— Unassigned —</option>
-        {% for rid, fname, lname, email in reviewers %}
-        <option value="{{ rid }}" {% if case.assigned_to_id == rid %}selected{% endif %}>{{ fname }} {{ lname }}</option>
-        {% endfor %}
-      </select>
-    </form>
-    {% elif case.assigned_to %}
-    <span class="ap-badge ap-badge-muted" style="font-size:.68rem"><i class="bi bi-person-check me-1"></i>{{ case.assigned_to.get_full_name }}</span>
-    {% endif %}
-    {% if invoice %}
-    {% has_permission "invoices.view" as can_view_invoice %}
-    {% if can_view_invoice and invoice.document_upload %}
-    <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" class="btn btn-sm btn-outline-info" title="View Invoice Document" target="_blank">
-      <i class="bi bi-file-earmark-pdf"></i>
-    </a>
-    {% endif %}
-    <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Governance">
-      <i class="bi bi-shield-lock"></i>
-    </a>
-    {% endif %}
-    <a href="{% url 'copilot:case' case.pk %}" class="btn btn-sm btn-outline-primary av-chat-toggle" id="avChatToggle" title="Case Copilot">
-      <i class="bi bi-chat-dots"></i>
-    </a>
-  </div>
-</div>
-
-{# ── TWO-COLUMN AGENT LAYOUT ── #}
-<div class="agent-view" id="agentView">
-
-  {# ══════════ LEFT: CONVERSATION FEED ══════════ #}
-  <div class="av-feed">
-
-    {# Filter bar #}
-    <div class="av-filters">
-      <button class="av-filter-btn active" data-filter="overview"><i class="bi bi-house me-1"></i>Overview</button>
-      <button class="av-filter-btn" data-filter="timeline"><i class="bi bi-clock-history me-1"></i>Timeline</button>
-      <button class="av-filter-btn" data-filter="exception"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions{% if total_issues_count %}<span class="ap-badge ap-badge-danger ms-1" style="font-size:.6rem">{{ total_issues_count }}</span>{% endif %}</button>
-      <button class="av-filter-btn" data-filter="system"><i class="bi bi-gear me-1"></i>System</button>
-      <button class="av-filter-btn" data-filter="human"><i class="bi bi-person me-1"></i>Human</button>
-      <span class="ms-auto text-muted" style="font-size:var(--ap-font-size-xs)" id="eventCount"></span>
-    </div>
-
-    {# Scrollable conversation area #}
-    <div class="av-feed__scroll" id="feedScroll">
-
-      {# ── OVERVIEW PANEL (default view) ── #}
-      <div id="avOverview" class="av-overview">
-
-        {# Recommended Action (above summary) #}
-        {% if summary.recommendation %}
-        <div class="av-msg" data-category="overview">
-          <div class="av-avatar" style="background:rgba(234,179,8,.12);color:#ca8a04"><i class="bi bi-lightbulb"></i></div>
-          <div class="av-body">
-            <div class="av-header">
-              <span class="av-sender">Recommended Action</span>
-              <span class="av-label" style="background:rgba(234,179,8,.10);color:#a16207;font-size:.55rem">Action</span>
-            </div>
-            <div class="av-text" style="font-weight:500">{{ summary.recommendation }}</div>
-          </div>
-        </div>
-        {% endif %}
-
-        {# AI Summary #}
-        {% if summary %}
-        <div class="av-msg" data-category="overview">
-          <div class="av-avatar av-avatar--agent"><i class="bi bi-stars"></i></div>
-          <div class="av-body">
-            <div class="av-header">
-              <span class="av-sender">Case Summary</span>
-              <span class="av-label av-label--agent">AI</span>
-            </div>
-            <div class="av-text">
-              {% if summary.latest_summary %}{{ summary.latest_summary }}{% elif summary.is_fallback %}{{ summary.latest_summary }}{% endif %}
-            </div>
-          </div>
-        </div>
-        {% endif %}
-
-        {# Empty overview state #}
-        {% if not summary %}
-        <div class="av-empty">
-          <i class="bi bi-robot"></i>
-          <div class="av-empty__text">No summary available yet. Use the chat below to ask about this case, or switch to a tab to explore details.</div>
-        </div>
-        {% endif %}
-
-        {# ── Comment History ── #}
-        {% if review_comments %}
-        <div class="av-msg" data-category="overview">
-          <div class="av-avatar av-avatar--human"><i class="bi bi-chat-left-text"></i></div>
-          <div class="av-body">
-            <div class="av-header">
-              <span class="av-sender">Comment History</span>
-              <span class="ap-badge ap-badge-muted" style="font-size:.55rem">{{ review_comments|length }}</span>
-            </div>
-            <div class="av-text">
-              {% for rc in review_comments %}
-              <div class="d-flex justify-content-between align-items-start {% if not forloop.last %}mb-2 pb-2 border-bottom{% endif %}" style="font-size:var(--ap-font-size-sm)">
-                <div>
-                  <strong style="font-size:var(--ap-font-size-xs)">{{ rc.author.get_full_name|default:"System" }}</strong>
-                  <div style="margin-top:2px">{% firstof rc.body rc.content "" %}</div>
-                </div>
-                <span class="text-muted flex-shrink-0 ms-3" style="font-size:.6rem;white-space:nowrap">{{ rc.created_at|timesince }} ago</span>
-              </div>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
-        {% endif %}
-
-      </div>{# /avOverview #}
-
-      {# ── Pipeline Progress (compact tracker) ── #}
-      {% if stages %}
-      <div class="av-msg" data-category="system">
-        <div class="av-avatar av-avatar--system"><i class="bi bi-diagram-3"></i></div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">Processing Pipeline</span>
-            <span class="av-label av-label--system">System</span>
-          </div>
-          <div class="av-pipeline">
-            {% for stage in stages %}
-            <div class="av-pipeline__step {% if stage.stage_status == 'COMPLETED' %}av-pipeline__step--done{% elif stage.stage_status == 'IN_PROGRESS' %}av-pipeline__step--active{% elif stage.stage_status == 'FAILED' %}av-pipeline__step--fail{% elif stage.stage_status == 'SKIPPED' %}av-pipeline__step--skip{% endif %}">
-              <div class="av-pipeline__icon">
-                {% if stage.stage_status == "COMPLETED" %}<i class="bi bi-check-circle-fill"></i>
-                {% elif stage.stage_status == "IN_PROGRESS" %}<i class="bi bi-arrow-repeat"></i>
-                {% elif stage.stage_status == "FAILED" %}<i class="bi bi-x-circle-fill"></i>
-                {% elif stage.stage_status == "SKIPPED" %}<i class="bi bi-dash-circle"></i>
-                {% else %}<i class="bi bi-circle"></i>{% endif %}
-              </div>
-              <span class="av-pipeline__name">{{ stage.get_stage_name_display }}</span>
-              {% if stage.error_message %}
-              <span class="av-pipeline__err" title="{{ stage.error_message }}"><i class="bi bi-exclamation-triangle-fill"></i></span>
-              {% endif %}
-            </div>
-            {% if not forloop.last %}<div class="av-pipeline__connector"></div>{% endif %}
-            {% endfor %}
-          </div>
-        </div>
-      </div>
-      {% endif %}
-
-      {# ── Exceptions ── #}
-      {% for exc in exceptions %}
-      <div class="av-msg" data-category="exception">
-        <div class="av-avatar av-avatar--exception"><i class="bi bi-exclamation-triangle"></i></div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">{{ exc.get_exception_type_display }}</span>
-            <span class="av-label av-label--exception">Exception</span>
-            {% if exc.severity == "CRITICAL" %}
-              <span class="ap-badge ap-sev-critical"><i class="bi bi-fire"></i> Critical</span>
-            {% elif exc.severity == "HIGH" %}
-              <span class="ap-badge ap-sev-high">High</span>
-            {% elif exc.severity == "MEDIUM" %}
-              <span class="ap-badge ap-sev-medium">Medium</span>
-            {% else %}
-              <span class="ap-badge ap-sev-low">Low</span>
-            {% endif %}
-          </div>
-          <div class="av-exception av-exception--{{ exc.severity|lower }}">
-            <div>
-              {% if exc.description %}{{ exc.description }}{% elif exc.message %}{{ exc.message }}{% endif %}
-              {% if exc.expected_value or exc.actual_value %}
-              <div style="margin-top:.25rem;font-family:var(--ap-font-mono)">
-                {% if exc.expected_value %}Expected: <strong>{{ exc.expected_value }}</strong>{% endif %}
-                {% if exc.actual_value %} &rarr; Actual: <strong>{{ exc.actual_value }}</strong>{% endif %}
-                {% if exc.variance_amount %} ({{ exc.variance_amount|floatformat:2 }} variance){% endif %}
-              </div>
-              {% endif %}
-            </div>
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-
-      {# ── Validation Issues (Non-PO) ── #}
-      {% for issue in validation_issues %}
-      <div class="av-msg" data-category="exception">
-        <div class="av-avatar av-avatar--exception"><i class="bi bi-clipboard-x"></i></div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">{{ issue.check_name }}</span>
-            <span class="av-label av-label--exception">Validation</span>
-            {% if issue.status == "FAIL" %}
-              <span class="ap-badge ap-sev-high">Fail</span>
-            {% else %}
-              <span class="ap-badge ap-sev-medium">Warning</span>
-            {% endif %}
-          </div>
-          <div class="av-exception av-exception--{% if issue.status == 'FAIL' %}high{% else %}medium{% endif %}">
-            {{ issue.message }}
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-
-      {# ══════════ UNIFIED AGENT TIMELINE (agents + decisions interleaved) ══════════ #}
-      {% for entry in agent_timeline %}
-
-      {# ── Decision card ── #}
-      {% if entry.kind == 'decision' %}
-      <div class="av-msg av-tl-decision-highlight" data-category="timeline">
-        <div class="av-tl-stripe av-tl-stripe--decision"></div>
-        <div class="av-avatar av-avatar--decision"><i class="bi bi-signpost-2"></i></div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">{{ entry.decision.get_decision_type_display }}</span>
-            <span class="av-label av-label--decision">Decision</span>
-            <span class="ap-badge {% if entry.decision.decision_source == 'DETERMINISTIC' %}ap-src-deterministic{% elif entry.decision.decision_source == 'POLICY' %}ap-src-policy{% elif entry.decision.decision_source == 'AGENT' %}ap-src-agent{% elif entry.decision.decision_source == 'HUMAN' %}ap-src-human{% else %}ap-badge-muted{% endif %}" style="font-size:.6rem">
-              {{ entry.decision.get_decision_source_display }}
-            </span>
-            <span class="av-time">{{ entry.timestamp|timesince }} ago</span>
-          </div>
-          <div class="av-decision-card">
-            <div class="av-decision-card__value">{{ entry.decision.decision_value }}</div>
-            {% if entry.decision.rationale %}
-            <div class="av-decision-card__rationale">{{ entry.decision.rationale|truncatechars:300 }}</div>
-            {% endif %}
-            {% if entry.decision.confidence %}
-            <div class="mt-1">
-              <div class="ap-confidence">
-                <div class="ap-confidence-bar" style="width:60px">
-                  <div class="ap-confidence-fill {% if entry.decision.confidence >= 0.8 %}high{% elif entry.decision.confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                       style="width:{% widthratio entry.decision.confidence 1 100 %}%"></div>
-                </div>
-                <span style="font-size:.625rem">{% widthratio entry.decision.confidence 1 100 %}% confidence</span>
-              </div>
-            </div>
-            {% endif %}
-          </div>
-        </div>
-      </div>
-
-      {# ── Agent card ── #}
-      {% elif entry.kind == 'agent' %}
-      {% with ag=entry %}
-      <div class="av-msg av-tl-agent" data-category="timeline">
-        <div class="av-tl-stripe av-tl-stripe--agent"></div>
-        <div class="av-avatar av-avatar--agent"><i class="bi bi-robot"></i></div>
-        <div class="av-body">
-          {# Agent header row #}
-          <div class="av-header">
-            <span class="av-sender">{{ ag.agent_name }}</span>
-            <span class="av-label av-label--agent">Agent</span>
-            {% if ag.run.status == "COMPLETED" %}
-              <span class="ap-badge ap-badge-success">Completed</span>
-            {% elif ag.run.status == "RUNNING" %}
-              <span class="ap-badge ap-badge-info">Running</span>
-            {% elif ag.run.status == "FAILED" %}
-              <span class="ap-badge ap-badge-danger">Failed</span>
-            {% elif ag.run.status == "SKIPPED" %}
-              <span class="ap-badge ap-badge-muted">Skipped</span>
-            {% else %}
-              <span class="ap-badge ap-badge-muted">{{ ag.run.status }}</span>
-            {% endif %}
-            {% if ag.run.confidence %}
-            <span class="ap-confidence ms-1">
-              <div class="ap-confidence-bar">
-                <div class="ap-confidence-fill {% if ag.run.confidence >= 0.8 %}high{% elif ag.run.confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                     style="width:{% widthratio ag.run.confidence 1 100 %}%"></div>
-              </div>
-              <span>{% widthratio ag.run.confidence 1 100 %}%</span>
-            </span>
-            {% endif %}
-            <span class="av-time">{{ ag.run.created_at|timesince }} ago</span>
-          </div>
-
-          {# Agent reasoning #}
-          {% if ag.run.summarized_reasoning %}
-          <div class="av-text">{{ ag.run.summarized_reasoning }}</div>
+          {# Status badge #}
+          {% if case.status == "CLOSED" %}
+            <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Closed</span>
+          {% elif case.status == "FAILED" %}
+            <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Failed</span>
+          {% elif case.status == "REJECTED" %}
+            <span class="badge bg-danger"><i class="bi bi-slash-circle me-1"></i>Rejected</span>
+          {% elif case.status == "ESCALATED" %}
+            <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle me-1"></i>Escalated</span>
+          {% elif case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
+            <span class="badge bg-warning text-dark"><i class="bi bi-eye me-1"></i>{{ case.get_status_display }}</span>
+          {% elif case.status == "NEW" %}
+            <span class="badge bg-secondary"><i class="bi bi-plus-circle me-1"></i>New</span>
+          {% else %}
+            <span class="badge bg-info">{{ case.get_status_display }}</span>
           {% endif %}
 
-          {# Compact stats bar #}
-          <div class="av-tl-stats">
-            {% if ag.step_count %}<span><i class="bi bi-layers"></i> {{ ag.step_count }} step{{ ag.step_count|pluralize }}</span>{% endif %}
-            {% if ag.tool_count %}<span><i class="bi bi-tools"></i> {{ ag.tool_count }} tool{{ ag.tool_count|pluralize }}</span>{% endif %}
-            {% if ag.run.duration_seconds %}<span><i class="bi bi-clock"></i> {{ ag.run.duration_seconds|floatformat:1 }}s</span>{% endif %}
-            {% if show_full_trace and ag.run.total_tokens %}<span><i class="bi bi-cpu"></i> {{ ag.run.total_tokens }} tokens</span>{% endif %}
-          </div>
+          {% include "cases/partials/_path_badge.html" with path=recon_mode|default:case.processing_path %}
 
-          {# ── Accordion: Steps & Tools ── #}
-          {% if ag.children %}
-          <div class="av-tl-accordion">
-            <button class="av-tl-accordion__toggle" type="button"
-                    data-bs-toggle="collapse" data-bs-target="#agDetail{{ ag.run.pk }}" aria-expanded="false">
-              <i class="bi bi-chevron-right"></i>
-              <span>Steps &amp; Tools</span>
-              <span class="av-tl-accordion__count">{{ ag.children|length }}</span>
-            </button>
-            <div id="agDetail{{ ag.run.pk }}" class="collapse">
-              <div class="av-tl-children">
-                {% for child in ag.children %}
+          {% if case.priority == "CRITICAL" %}
+            <span class="badge bg-danger"><i class="bi bi-fire me-1"></i>Critical</span>
+          {% elif case.priority == "HIGH" %}
+            <span class="badge bg-warning text-dark"><i class="bi bi-arrow-up-circle me-1"></i>High</span>
+          {% endif %}
 
-                  {# ── Step ── #}
-                  {% if child.type == 'step' %}
-                  <div class="av-tl-child av-tl-child--step">
-                    <div class="av-tl-child__icon av-tl-child__icon--step"><i class="bi bi-gear-wide-connected"></i></div>
-                    <div class="av-tl-child__body">
-                      <div class="av-tl-child__header">
-                        <span class="av-tl-child__name">Step {{ child.obj.step_number }}</span>
-                        <span class="av-label av-label--step">{{ child.obj.action|default:'Reasoning' }}</span>
-                        {% if child.obj.success %}
-                          <span class="av-tool-status av-tool-status--success">OK</span>
-                        {% elif child.obj.success == False %}
-                          <span class="av-tool-status av-tool-status--error">ERR</span>
-                        {% endif %}
-                        {% if child.obj.duration_ms %}<span class="av-tool-duration">{{ child.obj.duration_ms }}ms</span>{% endif %}
-                        <span class="av-time">{{ child.timestamp|timesince }} ago</span>
-                      </div>
-                      {% if child.obj.output_data %}
-                      <div class="av-tl-child__detail">
-                        <button class="av-tool-header" type="button" data-bs-toggle="collapse" data-bs-target="#step{{ child.obj.pk }}" aria-expanded="false">
-                          <i class="bi bi-chevron-right"></i>
-                          <span>Detail</span>
-                        </button>
-                        <div id="step{{ child.obj.pk }}" class="collapse">
-                          <div class="av-tool-io">
-                            {% if child.obj.input_data %}
-                            <div class="av-tool-io__label">Input</div>
-                            <pre>{{ child.obj.input_data }}</pre>
-                            {% endif %}
-                            <div class="av-tool-io__label mt-2">Output</div>
-                            <pre>{{ child.obj.output_data|truncatechars:500 }}</pre>
-                          </div>
-                        </div>
-                      </div>
+          {# Reconciliation match badge #}
+          {% if recon_match_status %}
+          <span class="cc-sep"></span>
+          {% if recon_match_status == "MATCHED" %}
+            <span class="badge bg-success"><i class="bi bi-check2-all me-1"></i>Matched</span>
+          {% elif recon_match_status == "PARTIAL_MATCH" %}
+            <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-circle me-1"></i>Partial Match</span>
+          {% elif recon_match_status == "UNMATCHED" %}
+            <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Unmatched</span>
+          {% elif recon_match_status == "REQUIRES_REVIEW" %}
+            <span class="badge bg-info"><i class="bi bi-eye me-1"></i>Review Required</span>
+          {% else %}
+            <span class="badge bg-secondary">{{ recon_match_status }}</span>
+          {% endif %}
+          {% endif %}
+
+          {# Document reference chips #}
+          <span class="cc-sep"></span>
+          {% if invoice %}
+          <span class="cc-meta-chip">
+            <i class="bi bi-file-earmark-text"></i>
+            <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="text-decoration-none">{{ invoice.invoice_number|default:"--" }}</a>
+          </span>
+          {% endif %}
+          {% if invoice.total_amount %}
+          <span class="cc-meta-chip fw-semibold">
+            <i class="bi bi-currency-dollar"></i> {{ invoice.currency }}&nbsp;{{ invoice.total_amount|floatformat:2 }}
+          </span>
+          {% endif %}
+          <span class="cc-meta-chip">
+            <i class="bi bi-building"></i> {% firstof invoice.raw_vendor_name case.vendor.name "Unknown" %}
+          </span>
+          {% if po %}
+          <span class="cc-meta-chip">
+            <i class="bi bi-cart-check"></i> PO {{ po.po_number }}
+          </span>
+          {% endif %}
+          {% if invoice.extraction_confidence %}
+          <span class="cc-meta-chip">
+            <span class="cc-conf-dot {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}med{% else %}low{% endif %}"></span>
+            {% widthratio invoice.extraction_confidence 1 100 %}%
+          </span>
+          {% endif %}
+        </div>
+
+        {# RIGHT: Action buttons #}
+        <div class="d-flex align-items-center gap-1 flex-wrap">
+          {% csrf_token %}
+          {% has_permission "reviews.decide" as can_decide %}
+          {% has_permission "cases.edit" as can_edit_case %}
+          {% if show_actions or case.status == "FAILED" %}
+            {% if show_actions and can_decide %}
+            <button class="btn btn-success btn-sm" onclick="caseAction('approve')" title="Approve"><i class="bi bi-check-circle me-1"></i>Approve</button>
+            <button class="btn btn-danger btn-sm" onclick="caseAction('reject')" title="Reject"><i class="bi bi-x-circle me-1"></i>Reject</button>
+            {% endif %}
+            {% if can_edit_case %}
+            <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+            {% endif %}
+          {% endif %}
+
+          {% has_permission "cases.assign" as can_assign_case %}
+          {% if can_assign_case %}
+          <form method="post" action="{% url 'cases:case_assign' case.pk %}" class="d-inline-flex align-items-center" style="gap:4px">
+            {% csrf_token %}
+            <select name="assigned_to" class="form-select form-select-sm" style="width:150px;font-size:.72rem;padding:2px 24px 2px 6px" onchange="this.form.submit()">
+              <option value="">-- Unassigned --</option>
+              {% for rid, fname, lname, email in reviewers %}
+              <option value="{{ rid }}" {% if case.assigned_to_id == rid %}selected{% endif %}>{{ fname }} {{ lname }}</option>
+              {% endfor %}
+            </select>
+          </form>
+          {% elif case.assigned_to %}
+          <span class="badge bg-light text-dark border" style="font-size:.68rem"><i class="bi bi-person-check me-1"></i>{{ case.assigned_to.get_full_name }}</span>
+          {% endif %}
+
+          {% if invoice %}
+          {% has_permission "invoices.view" as can_view_invoice %}
+          {% if can_view_invoice and invoice.document_upload %}
+          <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" class="btn btn-sm btn-outline-info" title="View PDF" target="_blank"><i class="bi bi-file-earmark-pdf"></i></a>
+          {% endif %}
+          <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Governance"><i class="bi bi-shield-lock"></i></a>
+          {% endif %}
+          <a href="{% url 'copilot:case' case.pk %}" class="btn btn-sm btn-outline-primary" title="Copilot"><i class="bi bi-chat-dots"></i></a>
+          <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-secondary" title="Back to Case"><i class="bi bi-arrow-left"></i></a>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  {# ================================================================== #}
+  {# TABBED WORKSPACE                                                   #}
+  {# ================================================================== #}
+  <div class="row g-3">
+    <div class="col-12">
+      <div class="card cc-intel-panel">
+        <div class="card-header p-0 border-bottom-0">
+          <ul class="nav nav-pills cc-tab-nav" id="caseTabs" role="tablist">
+
+            {# Tab 1: Overview #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="tab-overview" data-bs-toggle="pill"
+                      data-bs-target="#panel-overview" type="button" role="tab">
+                <i class="bi bi-house me-1"></i>Overview
+              </button>
+            </li>
+
+            {# Tab 2: Exceptions #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-exceptions" data-bs-toggle="pill"
+                      data-bs-target="#panel-exceptions" type="button" role="tab">
+                <i class="bi bi-exclamation-triangle me-1"></i>Exceptions
+                {% if total_issues_count %}
+                <span class="badge bg-danger ms-1">{{ total_issues_count }}</span>
+                {% endif %}
+              </button>
+            </li>
+
+            {# Tab 3: Agent Pipeline #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-agents" data-bs-toggle="pill"
+                      data-bs-target="#panel-agents" type="button" role="tab">
+                <i class="bi bi-robot me-1"></i>Agents
+                {% if agent_runs %}
+                <span class="badge bg-info ms-1">{{ agent_runs|length }}</span>
+                {% endif %}
+              </button>
+            </li>
+
+            {# Tab 4: Pipeline Stages #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-pipeline" data-bs-toggle="pill"
+                      data-bs-target="#panel-pipeline" type="button" role="tab">
+                <i class="bi bi-signpost-split me-1"></i>Pipeline
+                {% if failed_stages_count %}
+                <span class="badge bg-danger ms-1">{{ failed_stages_count }}</span>
+                {% endif %}
+              </button>
+            </li>
+
+            {# Tab 5: Documents #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-documents" data-bs-toggle="pill"
+                      data-bs-target="#panel-documents" type="button" role="tab">
+                <i class="bi bi-folder me-1"></i>Documents
+              </button>
+            </li>
+
+            {# Tab 6: Review & Notes #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-review" data-bs-toggle="pill"
+                      data-bs-target="#panel-review" type="button" role="tab">
+                <i class="bi bi-clipboard-check me-1"></i>Review
+                {% if review_decision %}
+                <span class="badge bg-success ms-1"><i class="bi bi-check2"></i></span>
+                {% endif %}
+              </button>
+            </li>
+
+            {# Tab 7: Cost & Tokens #}
+            {% has_permission "credits.view" as can_view_cost %}
+            {% if can_view_cost %}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-cost" data-bs-toggle="pill"
+                      data-bs-target="#panel-cost" type="button" role="tab">
+                <i class="bi bi-coin me-1"></i>Cost
+              </button>
+            </li>
+            {% endif %}
+
+          </ul>
+        </div>
+
+        <div class="card-body p-0">
+          <div class="tab-content" id="caseTabContent">
+
+            {# ============================================================ #}
+            {# TAB 1: OVERVIEW                                              #}
+            {# ============================================================ #}
+            <div class="tab-pane fade show active p-3" id="panel-overview" role="tabpanel">
+
+              {# Recommended Action banner #}
+              {% if summary.recommendation %}
+              <div class="cc-recommendation mb-3">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                  <i class="bi bi-lightbulb-fill" style="color:#ca8a04"></i>
+                  <strong>Recommended Action</strong>
+                </div>
+                <div>{{ summary.recommendation }}</div>
+              </div>
+              {% endif %}
+
+              <div class="row g-3">
+                {# Left column: Summary + Decisions #}
+                <div class="col-lg-8">
+
+                  {# AI Summary #}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header">
+                      {% if summary.generated_by_agent_run %}
+                      <i class="bi bi-stars" style="color:var(--bs-primary)"></i> AI Case Summary
+                      <span class="badge bg-primary bg-opacity-10 text-primary ms-2" style="font-size:.65rem">
+                        <i class="bi bi-cpu me-1"></i>AI Generated
+                      </span>
+                      {% else %}
+                      <i class="bi bi-card-text"></i> Case Summary
                       {% endif %}
+                    </div>
+                    {% if summary %}
+                    <div class="cc-section-body">
+                      {% if summary.generated_by_agent_run %}
+                      <pre class="cc-summary-text">{{ summary.latest_summary }}</pre>
+                      {% else %}
+                      <div class="cc-summary-text">{{ summary.latest_summary }}</div>
+                      {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="cc-empty-state">
+                      <i class="bi bi-robot"></i>
+                      <div>No summary available yet</div>
+                    </div>
+                    {% endif %}
+                  </div>
+
+                  {# Decisions #}
+                  {% if decisions %}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header">
+                      <i class="bi bi-signpost-2"></i> Decisions
+                      <span class="badge bg-secondary ms-2">{{ decisions|length }}</span>
+                    </div>
+                    <div class="cc-section-body p-0">
+                      <div class="list-group list-group-flush">
+                        {% for d in decisions %}
+                        <div class="list-group-item px-3 py-2">
+                          <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="fw-semibold" style="font-size:.82rem">{{ d.get_decision_type_display }}</span>
+                            <span class="badge {% if d.decision_source == 'DETERMINISTIC' %}bg-info bg-opacity-10 text-info{% elif d.decision_source == 'POLICY' %}bg-secondary bg-opacity-10 text-secondary{% elif d.decision_source == 'AGENT' %}bg-primary bg-opacity-10 text-primary{% elif d.decision_source == 'HUMAN' %}bg-success bg-opacity-10 text-success{% else %}bg-light text-muted{% endif %}" style="font-size:.65rem">
+                              {{ d.get_decision_source_display }}
+                            </span>
+                          </div>
+                          <code class="bg-light px-1 rounded" style="font-size:.72rem">{{ d.decision_value }}</code>
+                          {% if d.rationale %}
+                          <div class="mt-1 text-muted" style="font-size:.78rem">{{ d.rationale|truncatechars:250 }}</div>
+                          {% endif %}
+                          {% if d.confidence %}
+                          <div class="mt-1">
+                            <div class="cc-conf-inline">
+                              <div class="cc-conf-bar">
+                                <div class="cc-conf-fill {% if d.confidence >= 0.8 %}high{% elif d.confidence >= 0.5 %}med{% else %}low{% endif %}"
+                                     style="width:{% widthratio d.confidence 1 100 %}%"></div>
+                              </div>
+                              <span>{% widthratio d.confidence 1 100 %}%</span>
+                            </div>
+                          </div>
+                          {% endif %}
+                        </div>
+                        {% endfor %}
+                      </div>
+                    </div>
+                  </div>
+                  {% endif %}
+
+                </div>
+
+                {# Right column: Key details #}
+                <div class="col-lg-4">
+
+                  {# Case Details card #}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header"><i class="bi bi-info-circle"></i> Case Details</div>
+                    <div class="cc-section-body p-0">
+                      <table class="table table-sm mb-0 cc-kv-table">
+                        <tbody>
+                          <tr><td class="text-muted">Status</td><td>{{ case.get_status_display }}</td></tr>
+                          <tr><td class="text-muted">Path</td><td>{{ case.get_processing_path_display }}</td></tr>
+                          <tr><td class="text-muted">Priority</td><td>{{ case.get_priority_display }}</td></tr>
+                          <tr><td class="text-muted">Assigned</td><td>{{ case.assigned_to.get_short_name|default:"Unassigned" }}</td></tr>
+                          <tr><td class="text-muted">Created</td><td>{{ case.created_at|timesince }} ago</td></tr>
+                          {% if recon_match_status %}
+                          <tr><td class="text-muted">Match</td><td>
+                            {% if recon_match_status == "MATCHED" %}<span class="badge bg-success">Matched</span>
+                            {% elif recon_match_status == "PARTIAL_MATCH" %}<span class="badge bg-warning text-dark">Partial</span>
+                            {% elif recon_match_status == "UNMATCHED" %}<span class="badge bg-danger">Unmatched</span>
+                            {% else %}<span class="badge bg-secondary">{{ recon_match_status }}</span>{% endif %}
+                          </td></tr>
+                          {% endif %}
+                          {% if recon_mode %}
+                          <tr><td class="text-muted">Mode</td><td>{{ recon_mode }}</td></tr>
+                          {% endif %}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
 
-                  {# ── Tool Call ── #}
-                  {% elif child.type == 'tool_call' %}
-                  <div class="av-tl-child av-tl-child--tool">
-                    <div class="av-tl-child__icon av-tl-child__icon--tool"><i class="bi bi-tools"></i></div>
-                    <div class="av-tl-child__body">
-                      <div class="av-tl-child__header">
-                        <span class="av-tl-child__name">{% firstof child.obj.tool_name child.obj.tool_definition.name "Unknown Tool" %}</span>
-                        <span class="av-label av-label--tool">Tool</span>
-                        {% if child.obj.status == "SUCCESS" %}
-                          <span class="av-tool-status av-tool-status--success">OK</span>
-                        {% elif child.obj.status == "FAILED" or child.obj.status == "ERROR" %}
-                          <span class="av-tool-status av-tool-status--error">ERR</span>
-                        {% elif child.obj.status == "EXECUTING" %}
-                          <span class="ap-badge ap-badge-info">Running</span>
-                        {% endif %}
-                        {% if child.obj.duration_ms %}<span class="av-tool-duration">{{ child.obj.duration_ms }}ms</span>{% endif %}
-                        <span class="av-time">{{ child.timestamp|timesince }} ago</span>
-                      </div>
-                      {% if child.obj.error_message %}
-                      <div class="text-danger" style="font-size:var(--ap-font-size-xs)">{{ child.obj.error_message|truncatechars:120 }}</div>
-                      {% endif %}
-                      <div class="av-tl-child__detail">
-                        <button class="av-tool-header" type="button" data-bs-toggle="collapse" data-bs-target="#tool{{ child.obj.pk }}" aria-expanded="false">
-                          <i class="bi bi-chevron-right"></i>
-                          <span>I/O</span>
-                        </button>
-                        <div id="tool{{ child.obj.pk }}" class="collapse">
-                          <div class="av-tool-io">
-                            {% if child.obj.input_payload %}
-                            <div class="av-tool-io__label">Input</div>
-                            <pre>{{ child.obj.input_payload }}</pre>
-                            {% endif %}
-                            {% if child.obj.output_payload %}
-                            <div class="av-tool-io__label mt-2">Output</div>
-                            <pre>{{ child.obj.output_payload|truncatechars:500 }}</pre>
-                            {% endif %}
-                          </div>
+                  {# Agent activity strip #}
+                  {% if agent_runs %}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header"><i class="bi bi-cpu"></i> Agent Activity</div>
+                    <div class="cc-section-body">
+                      <div class="cc-agent-strip">
+                        {% for run in agent_runs %}
+                        <div class="cc-agent-chip {% if run.status == 'COMPLETED' %}completed{% elif run.status == 'RUNNING' %}running{% elif run.status == 'FAILED' %}failed{% elif run.status == 'SKIPPED' %}skipped{% else %}pending{% endif %}"
+                             title="{{ run.agent_definition.name|default:run.agent_type }} -- {{ run.get_status_display }}">
+                          <span class="cc-chip-dot"></span>
+                          <span>{{ run.agent_definition.name|default:run.agent_type }}</span>
+                          {% if run.confidence %}
+                          <span class="cc-chip-conf">{% widthratio run.confidence 1 100 %}%</span>
+                          {% endif %}
                         </div>
+                        {% endfor %}
                       </div>
                     </div>
                   </div>
+                  {% endif %}
 
-                  {# ── Decision ── #}
-                  {% elif child.type == 'decision' %}
-                  <div class="av-tl-child av-tl-child--decision">
-                    <div class="av-tl-child__icon av-tl-child__icon--decision"><i class="bi bi-signpost-2"></i></div>
-                    <div class="av-tl-child__body">
-                      <div class="av-tl-child__header">
-                        <span class="av-tl-child__name">{{ child.obj.get_decision_type_display|default:child.obj.decision_type }}</span>
-                        <span class="av-label av-label--decision">Decision</span>
-                        {% if child.obj.deterministic_flag %}
-                          <span class="ap-badge ap-src-deterministic" style="font-size:.6rem">Rule</span>
-                        {% else %}
-                          <span class="ap-badge ap-src-agent" style="font-size:.6rem">Agent</span>
-                        {% endif %}
-                        {% if child.obj.confidence %}
-                        <span class="ap-confidence ms-1">
-                          <div class="ap-confidence-bar" style="width:50px">
-                            <div class="ap-confidence-fill {% if child.obj.confidence >= 0.8 %}high{% elif child.obj.confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                                 style="width:{% widthratio child.obj.confidence 1 100 %}%"></div>
-                          </div>
-                          <span style="font-size:.625rem">{% widthratio child.obj.confidence 1 100 %}%</span>
+                  {# Comment History #}
+                  {% if review_comments %}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header">
+                      <i class="bi bi-chat-left-text"></i> Comments
+                      <span class="badge bg-secondary ms-2">{{ review_comments|length }}</span>
+                    </div>
+                    <div class="cc-section-body" style="max-height:250px;overflow-y:auto">
+                      {% for rc in review_comments %}
+                      <div class="{% if not forloop.last %}mb-2 pb-2 border-bottom{% endif %}" style="font-size:.8rem">
+                        <div class="d-flex justify-content-between">
+                          <strong style="font-size:.72rem">{{ rc.author.get_full_name|default:"System" }}</strong>
+                          <small class="text-muted" style="font-size:.65rem">{{ rc.created_at|timesince }} ago</small>
+                        </div>
+                        <div class="mt-1">{% firstof rc.body rc.content "" %}</div>
+                      </div>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                </div>
+              </div>
+            </div>
+
+            {# ============================================================ #}
+            {# TAB 2: EXCEPTIONS                                            #}
+            {# ============================================================ #}
+            <div class="tab-pane fade p-3" id="panel-exceptions" role="tabpanel">
+
+              {# Reconciliation exceptions #}
+              {% if exceptions %}
+              <div class="cc-section mb-3">
+                <div class="cc-section-header">
+                  <i class="bi bi-exclamation-triangle"></i> Reconciliation Exceptions
+                  <span class="badge bg-danger ms-2">{{ exceptions|length }}</span>
+                </div>
+                <div class="cc-section-body p-0">
+                  <table class="table table-sm table-hover mb-0 cc-data-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Severity</th>
+                        <th>Description</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for exc in exceptions %}
+                      <tr>
+                        <td class="fw-semibold">{{ exc.get_exception_type_display }}</td>
+                        <td>
+                          {% if exc.severity == "CRITICAL" %}
+                            <span class="badge bg-danger"><i class="bi bi-fire me-1"></i>Critical</span>
+                          {% elif exc.severity == "HIGH" %}
+                            <span class="badge bg-warning text-dark">High</span>
+                          {% elif exc.severity == "MEDIUM" %}
+                            <span class="badge bg-info">Medium</span>
+                          {% else %}
+                            <span class="badge bg-secondary">Low</span>
+                          {% endif %}
+                        </td>
+                        <td style="font-size:.8rem">{{ exc.message|truncatechars:120 }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
+
+              {# Non-PO Validation Issues #}
+              {% if validation_issues %}
+              <div class="cc-section mb-3">
+                <div class="cc-section-header">
+                  <i class="bi bi-clipboard-check"></i> Validation Issues
+                  <span class="badge bg-warning text-dark ms-2">{{ validation_issues|length }}</span>
+                </div>
+                <div class="cc-section-body p-0">
+                  <table class="table table-sm table-hover mb-0 cc-data-table">
+                    <thead>
+                      <tr>
+                        <th>Check</th>
+                        <th>Status</th>
+                        <th>Description</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for issue in validation_issues %}
+                      <tr>
+                        <td class="fw-semibold">{{ issue.check_name }}</td>
+                        <td>
+                          {% if issue.status == "FAIL" %}<span class="badge bg-danger">Fail</span>
+                          {% else %}<span class="badge bg-warning text-dark">Warning</span>{% endif %}
+                        </td>
+                        <td style="font-size:.8rem">{{ issue.message|truncatechars:120 }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
+
+              {% if not exceptions and not validation_issues %}
+              <div class="cc-empty-state">
+                <i class="bi bi-check-circle" style="font-size:2rem;color:var(--bs-success)"></i>
+                <div class="mt-2">No exceptions or validation issues found</div>
+              </div>
+              {% endif %}
+            </div>
+
+            {# ============================================================ #}
+            {# TAB 3: AGENT PIPELINE                                        #}
+            {# ============================================================ #}
+            <div class="tab-pane fade p-3" id="panel-agents" role="tabpanel">
+
+              {% if agent_runs %}
+              <div class="accordion" id="agentRunsAccordion">
+                {% for run in agent_runs %}
+                <div class="accordion-item cc-agent-accordion-item">
+                  <h2 class="accordion-header">
+                    <button class="accordion-button collapsed py-2 px-3" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#agentRun{{ run.pk }}"
+                            style="font-size:.82rem;background:transparent">
+                      <span class="d-flex align-items-center gap-2 w-100">
+                        <span class="cc-chip-dot {% if run.status == 'COMPLETED' %}completed{% elif run.status == 'RUNNING' %}running{% elif run.status == 'FAILED' %}failed{% else %}pending{% endif %}"></span>
+                        <span class="fw-semibold">{{ run.agent_definition.name|default:run.agent_type }}</span>
+                        <span class="ms-auto d-flex align-items-center gap-2">
+                          {% if run.confidence %}
+                          <span class="cc-conf-inline">
+                            <span class="cc-conf-bar">
+                              <span class="cc-conf-fill {% if run.confidence >= 0.8 %}high{% elif run.confidence >= 0.5 %}med{% else %}low{% endif %}"
+                                    style="width:{% widthratio run.confidence 1 100 %}%"></span>
+                            </span>
+                            <span>{% widthratio run.confidence 1 100 %}%</span>
+                          </span>
+                          {% endif %}
+                          {% if run.status == "COMPLETED" %}
+                            <span class="badge bg-success">Done</span>
+                          {% elif run.status == "RUNNING" %}
+                            <span class="badge bg-info">Running</span>
+                          {% elif run.status == "FAILED" %}
+                            <span class="badge bg-danger">Failed</span>
+                          {% elif run.status == "SKIPPED" %}
+                            <span class="badge bg-secondary">Skipped</span>
+                          {% else %}
+                            <span class="badge bg-light text-muted">{{ run.status }}</span>
+                          {% endif %}
                         </span>
+                      </span>
+                    </button>
+                  </h2>
+                  <div id="agentRun{{ run.pk }}" class="accordion-collapse collapse" data-bs-parent="#agentRunsAccordion">
+                    <div class="accordion-body pt-0 px-3 pb-3">
+
+                      {# Reasoning #}
+                      {% if run.summarized_reasoning %}
+                      <div class="cc-evidence-box mb-2">{{ run.summarized_reasoning }}</div>
+                      {% endif %}
+
+                      {# Recommendations #}
+                      {% for rec in run.recommendations.all %}
+                      <div class="cc-recommendation mb-2">
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                          <i class="bi bi-lightbulb text-warning"></i>
+                          <span class="fw-semibold" style="font-size:.82rem">{{ rec.get_recommendation_type_display }}</span>
+                          {% if rec.confidence %}
+                          <span class="cc-conf-inline ms-auto">
+                            <span class="cc-conf-bar">
+                              <span class="cc-conf-fill {% if rec.confidence >= 0.8 %}high{% elif rec.confidence >= 0.5 %}med{% else %}low{% endif %}"
+                                    style="width:{% widthratio rec.confidence 1 100 %}%"></span>
+                            </span>
+                            <span>{% widthratio rec.confidence 1 100 %}%</span>
+                          </span>
+                          {% endif %}
+                        </div>
+                        {% if rec.rationale %}
+                        <div class="text-muted" style="font-size:.78rem">{{ rec.rationale|truncatechars:200 }}</div>
                         {% endif %}
                       </div>
-                      <div class="av-decision-card mt-1">
-                        <div class="av-decision-card__value">{{ child.obj.decision }}</div>
-                        {% if child.obj.rationale %}
-                        <div class="av-decision-card__rationale">{{ child.obj.rationale|truncatechars:300 }}</div>
+                      {% endfor %}
+
+                      {# Tool calls #}
+                      {% if run.tool_calls.count %}
+                      <div class="mt-2">
+                        <div class="fw-semibold mb-1" style="font-size:.72rem;color:var(--bs-secondary)">Tool Calls</div>
+                        {% for tc in run.tool_calls.all %}
+                        <div class="d-flex align-items-center gap-2 py-1 {% if not forloop.last %}border-bottom{% endif %}" style="font-size:.78rem">
+                          <i class="bi bi-tools" style="font-size:.7rem;opacity:.5"></i>
+                          <span class="fw-semibold">{{ tc.tool_name|default:tc.tool_definition.name }}</span>
+                          {% if tc.status == "SUCCESS" %}
+                            <span class="badge bg-success" style="font-size:.6rem">OK</span>
+                          {% elif tc.status == "ERROR" %}
+                            <span class="badge bg-danger" style="font-size:.6rem">Error</span>
+                          {% endif %}
+                          {% if tc.duration_ms %}<span class="text-muted" style="font-size:.65rem">{{ tc.duration_ms }}ms</span>{% endif %}
+                        </div>
+                        {% endfor %}
+                      </div>
+                      {% endif %}
+
+                      {# Trace info (admin/auditor) #}
+                      {% if show_full_trace %}
+                      <div class="mt-2 p-2 rounded" style="background:var(--bs-light);font-size:.72rem">
+                        <div class="d-flex gap-3 text-muted">
+                          <span><i class="bi bi-layers me-1"></i>Steps: {{ run.steps.count }}</span>
+                          <span><i class="bi bi-tools me-1"></i>Tools: {{ run.tool_calls.count }}</span>
+                          {% if run.recommendations.count %}<span><i class="bi bi-lightbulb me-1"></i>Recs: {{ run.recommendations.count }}</span>{% endif %}
+                          {% if run.duration_seconds %}<span><i class="bi bi-clock me-1"></i>{{ run.duration_seconds|floatformat:1 }}s</span>{% endif %}
+                        </div>
+                      </div>
+                      {% endif %}
+
+                    </div>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <div class="cc-empty-state">
+                <i class="bi bi-robot" style="font-size:2rem;opacity:.3"></i>
+                <div class="mt-2">No agent runs recorded for this case</div>
+              </div>
+              {% endif %}
+
+            </div>
+
+            {# ============================================================ #}
+            {# TAB 4: PIPELINE STAGES + AUDIT TRAIL                          #}
+            {# ============================================================ #}
+            <div class="tab-pane fade p-3" id="panel-pipeline" role="tabpanel">
+
+              {% if stages %}
+              {# Stepper visualization #}
+              <div class="cc-stepper mb-3">
+                {% for stage in stages reversed %}
+                <div class="cc-step {% if stage.stage_status == 'COMPLETED' %}completed{% elif stage.stage_status == 'IN_PROGRESS' %}in-progress{% elif stage.stage_status == 'FAILED' %}failed{% elif stage.stage_status == 'SKIPPED' %}skipped{% endif %}"
+                     title="{{ stage.get_stage_name_display }}: {{ stage.get_stage_status_display }}">
+                  <div class="cc-step-dot">
+                    {% if stage.stage_status == "COMPLETED" %}<i class="bi bi-check2"></i>
+                    {% elif stage.stage_status == "IN_PROGRESS" %}<i class="bi bi-arrow-repeat"></i>
+                    {% elif stage.stage_status == "FAILED" %}<i class="bi bi-x"></i>
+                    {% elif stage.stage_status == "SKIPPED" %}<i class="bi bi-dash"></i>
+                    {% else %}<span>{{ forloop.counter }}</span>{% endif %}
+                  </div>
+                  <div class="cc-step-label">{{ stage.get_stage_name_display }}</div>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <div class="cc-empty-state">
+                <i class="bi bi-diagram-3" style="font-size:2rem;opacity:.3"></i>
+                <div class="mt-2">No pipeline stages recorded</div>
+              </div>
+              {% endif %}
+
+              {# ── Audit Trail (inline, extraction-console style) ── #}
+              <div class="cc-section mt-3">
+                <div class="cc-section-header">
+                  <i class="bi bi-clock-history me-1"></i> Audit Trail
+                  {% if timeline %}<span class="badge bg-secondary ms-1">{{ timeline|length }}</span>{% endif %}
+                </div>
+                <div class="cc-section-body">
+                  {% if timeline %}
+                  <div class="cc-audit-timeline">
+                    {% for event in timeline %}
+                    <div class="cc-audit-entry d-flex mb-3">
+                      {# Vertical dot + connector line #}
+                      <div class="cc-audit-indicator me-3 text-center">
+                        <div class="cc-audit-dot cc-audit-dot-{{ event.event_category|default:'system' }}"></div>
+                        {% if not forloop.last %}
+                        <div class="cc-audit-line"></div>
+                        {% endif %}
+                      </div>
+
+                      {# Event content #}
+                      <div class="flex-grow-1">
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                          <span class="fw-semibold" style="font-size:.8rem">{{ event.description|default:event.event_type }}</span>
+                          <span class="badge bg-light text-dark border" style="font-size:.65rem">{{ event.event_type|default:"event" }}</span>
+                          <small class="text-muted ms-auto">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
+                        </div>
+
+                        {# Actor #}
+                        {% if event.actor %}
+                        <div class="text-muted mb-1" style="font-size:.75rem">
+                          <i class="bi bi-person me-1"></i>{{ event.actor }}
+                          {% if event.rbac %}
+                          <span class="badge bg-light text-dark border ms-1" style="font-size:.6rem">{{ event.rbac }}</span>
+                          {% endif %}
+                        </div>
+                        {% endif %}
+
+                        {# Status change #}
+                        {% if event.status_change %}
+                        <div class="cc-change-box p-2 rounded mb-1" style="font-size:.78rem">
+                          {% if event.status_change.before %}
+                          <div class="text-danger">
+                            <i class="bi bi-dash-circle me-1"></i><strong>Before:</strong> {{ event.status_change.before }}
+                          </div>
+                          {% endif %}
+                          {% if event.status_change.after %}
+                          <div class="text-success">
+                            <i class="bi bi-plus-circle me-1"></i><strong>After:</strong> {{ event.status_change.after }}
+                          </div>
+                          {% endif %}
+                        </div>
+                        {% endif %}
+
+                        {# Duration #}
+                        {% if event.duration_ms %}
+                        <div class="text-muted" style="font-size:.72rem">
+                          <i class="bi bi-stopwatch me-1"></i>{{ event.duration_ms }}ms
+                        </div>
+                        {% endif %}
+
+                        {# Extra metadata #}
+                        {% if event.metadata %}
+                        <div class="mt-1 text-muted" style="font-size:.72rem">
+                          {% for mk, mv in event.metadata.items %}
+                          <span class="me-2">{{ mk }}: {{ mv }}</span>
+                          {% endfor %}
+                        </div>
                         {% endif %}
                       </div>
                     </div>
+                    {% endfor %}
                   </div>
+                  {% else %}
+                  <div class="text-center py-3">
+                    <i class="bi bi-clock-history text-muted" style="font-size:1.5rem;opacity:.3"></i>
+                    <div class="text-muted mt-1" style="font-size:.8rem">No audit events recorded</div>
+                  </div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
 
-                  {# ── Recommendation ── #}
-                  {% elif child.type == 'recommendation' %}
-                  <div class="av-tl-child av-tl-child--recommendation">
-                    <div class="av-tl-child__icon av-tl-child__icon--recommendation"><i class="bi bi-lightbulb"></i></div>
-                    <div class="av-tl-child__body">
-                      <div class="av-tl-child__header">
-                        <span class="av-tl-child__name">{{ child.obj.get_recommendation_type_display }}</span>
-                        <span class="av-label av-label--recommendation">Recommendation</span>
-                        {% if child.obj.accepted == True %}
-                          <span class="ap-badge ap-badge-success">Accepted</span>
-                        {% elif child.obj.accepted == False %}
-                          <span class="ap-badge ap-badge-danger">Rejected</span>
-                        {% else %}
-                          <span class="ap-badge ap-badge-muted">Pending</span>
-                        {% endif %}
+            {# ============================================================ #}
+            {# TAB 5: DOCUMENTS                                             #}
+            {# ============================================================ #}
+            <div class="tab-pane fade p-3" id="panel-documents" role="tabpanel">
+              <div class="row g-3">
+
+                {# Invoice #}
+                <div class="col-lg-4">
+                  <div class="cc-section">
+                    <div class="cc-section-header"><i class="bi bi-file-earmark-text"></i> Invoice</div>
+                    {% if invoice %}
+                    <div class="cc-section-body p-0">
+                      <table class="table table-sm mb-0 cc-kv-table">
+                        <tbody>
+                          <tr><td class="text-muted">Invoice #</td><td class="fw-semibold"><a href="{% url 'documents:invoice_detail' invoice.pk %}" class="text-decoration-none">{{ invoice.invoice_number|default:"--" }}</a></td></tr>
+                          <tr><td class="text-muted">Vendor</td><td>{{ invoice.vendor.name|default:invoice.raw_vendor_name|default:"--" }}</td></tr>
+                          <tr><td class="text-muted">Date</td><td>{{ invoice.invoice_date|date:"d M Y"|default:"--" }}</td></tr>
+                          <tr><td class="text-muted">PO Ref</td><td>{{ invoice.po_number|default:"--" }}</td></tr>
+                          <tr><td class="text-muted">Amount</td><td class="fw-bold">{% if invoice.total_amount %}{{ invoice.currency }} {{ invoice.total_amount|floatformat:2 }}{% else %}--{% endif %}</td></tr>
+                          <tr><td class="text-muted">Tax</td><td>{% if invoice.tax_amount %}{{ invoice.currency }} {{ invoice.tax_amount|floatformat:2 }}{% else %}--{% endif %}</td></tr>
+                          <tr><td class="text-muted">Confidence</td><td>
+                            {% if invoice.extraction_confidence %}
+                            <div class="cc-conf-inline">
+                              <span class="cc-conf-bar"><span class="cc-conf-fill {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}med{% else %}low{% endif %}" style="width:{% widthratio invoice.extraction_confidence 1 100 %}%"></span></span>
+                              <span>{% widthratio invoice.extraction_confidence 1 100 %}%</span>
+                            </div>
+                            {% else %}--{% endif %}
+                          </td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {% else %}
+                    <div class="cc-empty-state"><i class="bi bi-file-earmark-text"></i><div>No invoice linked</div></div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                {# PO #}
+                <div class="col-lg-4">
+                  <div class="cc-section">
+                    <div class="cc-section-header"><i class="bi bi-cart-check"></i> Purchase Order</div>
+                    {% if po %}
+                    <div class="cc-section-body p-0">
+                      <table class="table table-sm mb-0 cc-kv-table">
+                        <tbody>
+                          <tr><td class="text-muted">PO #</td><td class="fw-semibold">{{ po.po_number }}</td></tr>
+                          <tr><td class="text-muted">Vendor</td><td>{{ po.vendor.name|default:"--" }}</td></tr>
+                          <tr><td class="text-muted">Status</td><td><span class="badge bg-secondary">{{ po.get_status_display }}</span></td></tr>
+                          <tr><td class="text-muted">Total</td><td class="fw-semibold">{% if po.total_amount %}{{ po.currency }} {{ po.total_amount|floatformat:2 }}{% else %}--{% endif %}</td></tr>
+                          <tr><td class="text-muted">Lines</td><td>{{ po.line_items.count }}</td></tr>
+                          {% if po.po_date %}<tr><td class="text-muted">PO Date</td><td>{{ po.po_date|date:"d M Y" }}</td></tr>{% endif %}
+                        </tbody>
+                      </table>
+                    </div>
+                    {% else %}
+                    <div class="cc-empty-state"><i class="bi bi-cart-check"></i><div>No PO linked</div></div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                {# GRNs #}
+                <div class="col-lg-4">
+                  <div class="cc-section">
+                    <div class="cc-section-header">
+                      <i class="bi bi-box-seam"></i> Goods Receipts
+                      {% if grns %}<span class="badge bg-secondary ms-2">{{ grns|length }}</span>{% endif %}
+                    </div>
+                    {% if grns %}
+                    <div class="cc-section-body p-0">
+                      <table class="table table-sm mb-0 cc-data-table">
+                        <thead>
+                          <tr><th>GRN #</th><th>Date</th><th>Lines</th></tr>
+                        </thead>
+                        <tbody>
+                          {% for grn in grns %}
+                          <tr>
+                            <td class="fw-semibold">{{ grn.grn_number }}</td>
+                            <td>{{ grn.receipt_date|date:"d M Y"|default:"--" }}</td>
+                            <td>{{ grn.line_items.count }}</td>
+                          </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                    {% else %}
+                    <div class="cc-empty-state"><i class="bi bi-box-seam"></i><div>No GRNs linked</div></div>
+                    {% endif %}
+                  </div>
+                </div>
+
+              </div>
+
+              {# Non-PO validation panel #}
+              {% if case.processing_path == "NON_PO" %}
+              <div class="cc-section mt-3">
+                <div class="cc-section-header">
+                  <i class="bi bi-file-earmark-x"></i> Non-PO Validation
+                  <span class="badge bg-info ms-2">Non-PO</span>
+                </div>
+                <div class="cc-section-body">
+                  <div class="list-group list-group-flush">
+                    <div class="list-group-item border-0 px-0 py-2 d-flex align-items-center gap-2">
+                      <i class="bi bi-check-circle-fill text-success"></i>
+                      <span style="font-size:.82rem">Vendor validated</span>
+                    </div>
+                    <div class="list-group-item border-0 px-0 py-2 d-flex align-items-center gap-2">
+                      {% if case.duplicate_risk_flag %}
+                        <i class="bi bi-exclamation-circle-fill text-warning"></i>
+                        <span style="font-size:.82rem">Potential duplicate detected</span>
+                      {% else %}
+                        <i class="bi bi-check-circle-fill text-success"></i>
+                        <span style="font-size:.82rem">No duplicates found</span>
+                      {% endif %}
+                    </div>
+                    <div class="list-group-item border-0 px-0 py-2 d-flex align-items-center gap-2">
+                      {% if case.budget_check_status == "PASSED" %}
+                        <i class="bi bi-check-circle-fill text-success"></i>
+                      {% elif case.budget_check_status == "FAILED" %}
+                        <i class="bi bi-x-circle-fill text-danger"></i>
+                      {% else %}
+                        <i class="bi bi-dash-circle text-muted"></i>
+                      {% endif %}
+                      <span style="font-size:.82rem">Budget check: {{ case.budget_check_status|default:"Pending" }}</span>
+                    </div>
+                    <div class="list-group-item border-0 px-0 py-2 d-flex align-items-center gap-2">
+                      {% if case.coding_status == "CODED" %}
+                        <i class="bi bi-check-circle-fill text-success"></i>
+                      {% else %}
+                        <i class="bi bi-dash-circle text-muted"></i>
+                      {% endif %}
+                      <span style="font-size:.82rem">GL Coding: {{ case.coding_status|default:"Pending" }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+
+            {# ============================================================ #}
+            {# TAB 6: REVIEW & NOTES                                        #}
+            {# ============================================================ #}
+            <div class="tab-pane fade p-3" id="panel-review" role="tabpanel">
+
+              <div class="row g-3">
+                <div class="col-lg-8">
+
+                  {# Review assignment status #}
+                  {% if review_assignment %}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header">
+                      <i class="bi bi-clipboard-check"></i> Review Assignment
+                      {% if review_assignment.status == "APPROVED" %}
+                        <span class="badge bg-success ms-2">Approved</span>
+                      {% elif review_assignment.status == "REJECTED" %}
+                        <span class="badge bg-danger ms-2">Rejected</span>
+                      {% elif review_assignment.status == "REPROCESSED" %}
+                        <span class="badge bg-warning text-dark ms-2">Reprocessed</span>
+                      {% elif review_assignment.status == "IN_REVIEW" %}
+                        <span class="badge bg-info ms-2">In Review</span>
+                      {% else %}
+                        <span class="badge bg-secondary ms-2">{{ review_assignment.status }}</span>
+                      {% endif %}
+                    </div>
+                    <div class="cc-section-body">
+                      <div class="d-flex gap-3 text-muted" style="font-size:.82rem">
+                        <span><i class="bi bi-person me-1"></i>{{ review_assignment.assigned_to.get_full_name|default:"Unassigned" }}</span>
+                        <span><i class="bi bi-flag me-1"></i>Priority: {{ review_assignment.priority }}</span>
+                        <span><i class="bi bi-clock me-1"></i>Created {{ review_assignment.created_at|timesince }} ago</span>
                       </div>
-                      {% if child.obj.reasoning %}
-                      <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-secondary);margin-top:.25rem">{{ child.obj.reasoning|truncatechars:300 }}</div>
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {# Review decision #}
+                  {% if review_decision %}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header"><i class="bi bi-check-circle"></i> Decision</div>
+                    <div class="cc-section-body">
+                      <div class="d-flex align-items-center gap-2 mb-1">
+                        <i class="bi bi-check-circle-fill {% if review_decision.decision == 'APPROVED' %}text-success{% elif review_decision.decision == 'REJECTED' %}text-danger{% else %}text-warning{% endif %}" style="font-size:1.2rem"></i>
+                        <strong>{{ review_decision.decision }}</strong>
+                        <span class="text-muted ms-2" style="font-size:.78rem">
+                          by {{ review_decision.decided_by.get_full_name|default:"System" }}
+                          -- {{ review_decision.created_at|timesince }} ago
+                        </span>
+                      </div>
+                      {% if review_decision.rationale %}
+                      <div class="mt-2 text-muted" style="font-size:.82rem">{{ review_decision.rationale }}</div>
                       {% endif %}
                     </div>
                   </div>
                   {% endif %}
 
-                {% endfor %}
-              </div>{# /av-tl-children #}
+                  {# Action log #}
+                  {% if review_actions %}
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header"><i class="bi bi-list-ul"></i> Action Log</div>
+                    <div class="cc-section-body p-0">
+                      <table class="table table-sm mb-0 cc-data-table">
+                        <thead>
+                          <tr><th>Action</th><th>By</th><th>When</th><th>Notes</th></tr>
+                        </thead>
+                        <tbody>
+                          {% for action in review_actions %}
+                          <tr>
+                            <td class="fw-semibold">{{ action.get_action_type_display|default:action.action_type }}</td>
+                            <td>{{ action.performed_by.get_short_name|default:"System" }}</td>
+                            <td style="font-size:.72rem">{{ action.created_at|timesince }} ago</td>
+                            <td style="font-size:.78rem">{{ action.notes|default:"--"|truncatechars:80 }}</td>
+                          </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  {% endif %}
+
+                </div>
+
+                {# Right: actions + add note #}
+                <div class="col-lg-4">
+                  <div class="cc-section mb-3">
+                    <div class="cc-section-header"><i class="bi bi-hand-index-thumb"></i> Actions</div>
+                    <div class="cc-section-body">
+                      {% if case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
+                      <div class="d-grid gap-2">
+                        <button class="btn btn-success btn-sm" onclick="caseAction('approve')"><i class="bi bi-check-circle me-1"></i>Approve</button>
+                        <button class="btn btn-danger btn-sm" onclick="caseAction('reject')"><i class="bi bi-x-circle me-1"></i>Reject</button>
+                        <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+                      </div>
+                      {% elif case.status == "CLOSED" %}
+                      <div class="text-center py-3">
+                        <i class="bi bi-check-circle-fill text-success" style="font-size:1.5rem"></i>
+                        <div class="mt-1 text-muted" style="font-size:.82rem">Case closed</div>
+                      </div>
+                      {% elif case.status == "FAILED" %}
+                      <button class="btn btn-warning btn-sm w-100" onclick="caseAction('reprocess')">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Retry Processing
+                      </button>
+                      {% else %}
+                      <div class="text-center py-3">
+                        <div class="spinner-border spinner-border-sm text-primary"></div>
+                        <div class="mt-1 text-muted" style="font-size:.82rem">Processing...</div>
+                      </div>
+                      {% endif %}
+                    </div>
+                  </div>
+
+                  {# Add note #}
+                  {% if case.status != "CLOSED" %}
+                  <div class="cc-section">
+                    <div class="cc-section-header"><i class="bi bi-plus-circle"></i> Add Note</div>
+                    <div class="cc-section-body">
+                      <textarea class="form-control form-control-sm" rows="3" id="caseComment" placeholder="Add a reviewer note..."></textarea>
+                      <button class="btn btn-sm btn-outline-secondary mt-2 w-100" onclick="addComment()" type="button">
+                        <i class="bi bi-plus-circle me-1"></i>Add Comment
+                      </button>
+                    </div>
+                  </div>
+                  {% endif %}
+                </div>
+              </div>
+
             </div>
-          </div>
-          {% endif %}
 
-          {# Thinking block (admin) #}
-          {% if show_full_trace and ag.run.raw_reasoning %}
-          <div class="av-thinking mt-2">
-            <button class="av-thinking__toggle" type="button" data-bs-toggle="collapse" data-bs-target="#thinking{{ ag.run.pk }}" aria-expanded="false">
-              <i class="bi bi-chevron-right"></i> Raw Reasoning
-            </button>
-            <div id="thinking{{ ag.run.pk }}" class="collapse">
-              <div class="av-thinking__content">{{ ag.run.raw_reasoning }}</div>
+            {# ============================================================ #}
+            {# TAB 7: COST & TOKENS                                        #}
+            {# ============================================================ #}
+            {% if can_view_cost %}
+            <div class="tab-pane fade p-3" id="panel-cost" role="tabpanel">
+
+              {% if cost_token_data %}
+              {# Summary KPIs #}
+              <div class="row g-3 mb-3">
+                <div class="col-sm-3">
+                  <div class="cc-kpi">
+                    <div class="cc-kpi-label">Total Tokens</div>
+                    <div class="cc-kpi-value">{{ cost_token_data.total_tokens|floatformat:0 }}</div>
+                    <div class="cc-kpi-detail">
+                      <span class="text-success">{{ cost_token_data.prompt_tokens|floatformat:0 }} in</span>
+                      <span class="text-info">{{ cost_token_data.completion_tokens|floatformat:0 }} out</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-sm-3">
+                  <div class="cc-kpi">
+                    <div class="cc-kpi-label">LLM Cost</div>
+                    <div class="cc-kpi-value">${{ cost_token_data.llm_cost }}</div>
+                  </div>
+                </div>
+                <div class="col-sm-3">
+                  <div class="cc-kpi">
+                    <div class="cc-kpi-label">Total Cost</div>
+                    <div class="cc-kpi-value">${{ cost_token_data.cost_estimate }}</div>
+                  </div>
+                </div>
+                <div class="col-sm-3">
+                  <div class="cc-kpi">
+                    <div class="cc-kpi-label">Agent Runs</div>
+                    <div class="cc-kpi-value">{{ cost_token_data.run_count }}</div>
+                    <div class="cc-kpi-detail">{{ cost_token_data.llm_model }}</div>
+                  </div>
+                </div>
+              </div>
+
+              {# Per-run breakdown #}
+              {% if cost_run_history %}
+              <div class="cc-section">
+                <div class="cc-section-header"><i class="bi bi-list-ul"></i> Per-Agent Breakdown</div>
+                <div class="cc-section-body p-0">
+                  <table class="table table-sm table-hover mb-0 cc-data-table">
+                    <thead>
+                      <tr>
+                        <th>Agent</th>
+                        <th>Model</th>
+                        <th>Tokens</th>
+                        <th>Cost</th>
+                        <th>Status</th>
+                        <th>Confidence</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for cr in cost_run_history %}
+                      <tr>
+                        <td class="fw-semibold">{{ cr.agent_type }}</td>
+                        <td><code style="font-size:.72rem">{{ cr.llm_model }}</code></td>
+                        <td>
+                          <span class="text-success" title="Input">{{ cr.prompt_tokens|floatformat:0 }}</span> /
+                          <span class="text-info" title="Output">{{ cr.completion_tokens|floatformat:0 }}</span>
+                        </td>
+                        <td>${{ cr.total_cost }}</td>
+                        <td>
+                          {% if cr.status == "COMPLETED" %}<span class="badge bg-success">Done</span>
+                          {% elif cr.status == "FAILED" %}<span class="badge bg-danger">Failed</span>
+                          {% else %}<span class="badge bg-secondary">{{ cr.status }}</span>{% endif %}
+                        </td>
+                        <td>
+                          {% if cr.confidence %}
+                          <span class="cc-conf-inline">
+                            <span class="cc-conf-bar"><span class="cc-conf-fill {% if cr.confidence >= 0.8 %}high{% elif cr.confidence >= 0.5 %}med{% else %}low{% endif %}" style="width:{% widthratio cr.confidence 1 100 %}%"></span></span>
+                            <span>{% widthratio cr.confidence 1 100 %}%</span>
+                          </span>
+                          {% else %}--{% endif %}
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
+
+              {% else %}
+              <div class="cc-empty-state">
+                <i class="bi bi-coin" style="font-size:2rem;opacity:.3"></i>
+                <div class="mt-2">No token usage data available</div>
+              </div>
+              {% endif %}
             </div>
-          </div>
-          {% endif %}
+            {% endif %}
 
-          {# Trace metadata (admin) #}
-          {% if show_full_trace and ag.run.trace_id %}
-          <div class="av-tl-trace">
-            <i class="bi bi-fingerprint"></i> {{ ag.run.trace_id|truncatechars:20 }}
-          </div>
-          {% endif %}
+          </div>{# /tab-content #}
         </div>
       </div>
-      {% endwith %}
-      {% endif %}
-      {% endfor %}
-
-      {# ── System Activity (audit, mode_resolution, case events only — exclude human actions) ── #}
-      {% for event in timeline %}
-      {% if event.event_category == 'audit' or event.event_category == 'mode_resolution' or event.event_category == 'case' %}
-      {% if event.event_type != 'CASE_ASSIGNED' and event.event_type != 'COMMENT_ADDED' %}
-      <div class="av-msg" data-category="system">
-        <div class="av-avatar av-avatar--system">
-          {% if event.event_category == "mode_resolution" %}<i class="bi bi-diagram-3"></i>
-          {% elif event.event_category == "case" %}<i class="bi bi-folder-plus"></i>
-          {% elif 'UPLOAD' in event.event_type %}<i class="bi bi-cloud-upload"></i>
-          {% elif 'EXTRACTION' in event.event_type %}<i class="bi bi-file-earmark-text"></i>
-          {% elif 'RECONCILIATION' in event.event_type %}<i class="bi bi-arrow-left-right"></i>
-          {% else %}<i class="bi bi-gear"></i>{% endif %}
-        </div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">{{ event.description|default:event.event_type }}</span>
-            <span class="av-label av-label--system" style="font-size:.55rem">
-              {% if event.event_category == 'mode_resolution' %}mode{% elif event.event_category == 'case' %}case{% else %}audit{% endif %}
-            </span>
-            <span class="av-time">{{ event.timestamp|timesince }} ago</span>
-          </div>
-          {% if event.status_change %}
-          <div style="font-size:var(--ap-font-size-xs);margin-top:.15rem">
-            <span class="text-muted">{{ event.status_change.before }}</span>
-            <i class="bi bi-arrow-right" style="font-size:.5rem;margin:0 .25rem"></i>
-            <span style="font-weight:600">{{ event.status_change.after }}</span>
-          </div>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-      {% elif event.event_category == 'review' or event.event_category == 'review_action' or event.event_category == 'review_decision' %}
-      <div class="av-msg" data-category="human">
-        <div class="av-avatar av-avatar--human"><i class="bi bi-person-check"></i></div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">{{ event.description|default:event.event_type }}</span>
-            <span class="av-label av-label--human" style="font-size:.55rem">review</span>
-            <span class="av-time">{{ event.timestamp|timesince }} ago</span>
-          </div>
-        </div>
-      </div>
-      {% endif %}
-      {% endfor %}
-
-      {# ── Human Actions from timeline (assignment, comments) ── #}
-      {% for event in timeline %}
-      {% if event.event_type == 'CASE_ASSIGNED' or event.event_type == 'COMMENT_ADDED' %}
-      <div class="av-msg" data-category="human">
-        <div class="av-avatar av-avatar--human">
-          {% if event.event_type == 'CASE_ASSIGNED' %}<i class="bi bi-person-plus"></i>
-          {% else %}<i class="bi bi-chat-left-text"></i>{% endif %}
-        </div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">{{ event.description|default:event.event_type }}</span>
-            <span class="av-label av-label--human" style="font-size:.55rem">
-              {% if event.event_type == 'CASE_ASSIGNED' %}assign{% else %}comment{% endif %}
-            </span>
-            <span class="av-time">{{ event.timestamp|timesince }} ago</span>
-          </div>
-          {% if event.status_change %}
-          <div style="font-size:var(--ap-font-size-xs);margin-top:.15rem">
-            <span class="text-muted">{{ event.status_change.before }}</span>
-            <i class="bi bi-arrow-right" style="font-size:.5rem;margin:0 .25rem"></i>
-            <span style="font-weight:600">{{ event.status_change.after }}</span>
-          </div>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-      {% endfor %}
-
-      {# ── Comments (human) ── #}
-      {% for c in comments %}
-      <div class="av-msg" data-category="human">
-        <div class="av-avatar av-avatar--human"><i class="bi bi-chat-left-text"></i></div>
-        <div class="av-body">
-          <div class="av-header">
-            <span class="av-sender">{{ c.author.get_short_name|default:"Reviewer" }}</span>
-            <span class="av-label av-label--human">Note</span>
-            <span class="av-time">{{ c.created_at|timesince }} ago</span>
-          </div>
-          <div class="av-text">{{ c.body }}</div>
-        </div>
-      </div>
-      {% endfor %}
-
-      {# ── Empty state ── #}
-      {% if not stages and not agent_runs and not decisions and not exceptions and not timeline %}
-      <div class="av-empty">
-        <i class="bi bi-robot"></i>
-        <div class="av-empty__text">No activity recorded yet. Processing will appear here as agents work through this case.</div>
-      </div>
-      {% endif %}
-
-    </div>{# /av-feed__scroll #}
-
-  </div>{# /av-feed #}
-
-
-  {# ══════════ RIGHT: CONTEXT PANEL ══════════ #}
-  <div class="av-context" id="avContext">
-
-    {# ── Invoice Context ── #}
-    <div class="av-context-card">
-      <div class="av-context-card__header collapsed" onclick="toggleContextCard(this)">
-        <i class="bi bi-file-earmark-text"></i> Invoice
-        <i class="bi bi-chevron-down"></i>
-      </div>
-      <div class="av-context-card__body collapsed">
-        <div class="av-kv"><span class="av-kv__label">Number</span><span class="av-kv__value">
-          <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="text-decoration-none">{{ invoice.invoice_number|default:"—" }}</a>
-        </span></div>
-        <div class="av-kv"><span class="av-kv__label">Vendor</span><span class="av-kv__value">{{ invoice.raw_vendor_name|default:"—" }}</span></div>
-        <div class="av-kv"><span class="av-kv__label">Amount</span><span class="av-kv__value fw-semibold">{{ invoice.currency }} {{ invoice.total_amount|floatformat:2|default:"—" }}</span></div>
-        <div class="av-kv"><span class="av-kv__label">Date</span><span class="av-kv__value">{{ invoice.invoice_date|default:"—" }}</span></div>
-        <div class="av-kv"><span class="av-kv__label">PO Ref</span><span class="av-kv__value">{{ invoice.po_number|default:"None" }}</span></div>
-        {% if invoice.extraction_confidence %}
-        <div class="av-kv"><span class="av-kv__label">Confidence</span><span class="av-kv__value">
-          <span class="ap-confidence-dot {% if invoice.extraction_confidence >= 0.8 %}high{% elif invoice.extraction_confidence >= 0.5 %}medium{% else %}low{% endif %}"></span>
-          {% widthratio invoice.extraction_confidence 1 100 %}%
-        </span></div>
-        {% endif %}
-      </div>
-    </div>
-
-    {# ── PO Context ── #}
-    {% if po %}
-    <div class="av-context-card">
-      <div class="av-context-card__header collapsed" onclick="toggleContextCard(this)">
-        <i class="bi bi-cart-check"></i> Purchase Order
-        <i class="bi bi-chevron-down"></i>
-      </div>
-      <div class="av-context-card__body collapsed">
-        <div class="av-kv"><span class="av-kv__label">PO Number</span><span class="av-kv__value">
-          <a href="{% url 'documents:po_detail' po.pk %}" class="text-decoration-none">{{ po.po_number }}</a>
-        </span></div>
-        <div class="av-kv"><span class="av-kv__label">Vendor</span><span class="av-kv__value">{% firstof po.vendor.name "—" %}</span></div>
-        <div class="av-kv"><span class="av-kv__label">Total</span><span class="av-kv__value fw-semibold">{{ po.total_amount|floatformat:2|default:"—" }}</span></div>
-        <div class="av-kv"><span class="av-kv__label">Lines</span><span class="av-kv__value">{{ po.line_items.count }}</span></div>
-        {% if po.po_date %}<div class="av-kv"><span class="av-kv__label">Date</span><span class="av-kv__value">{{ po.po_date }}</span></div>{% endif %}
-      </div>
-    </div>
-    {% endif %}
-
-    {# ── GRN Context ── #}
-    {% if grns %}
-    <div class="av-context-card">
-      <div class="av-context-card__header collapsed" onclick="toggleContextCard(this)">
-        <i class="bi bi-box-seam"></i> GRNs ({{ grns|length }})
-        <i class="bi bi-chevron-down"></i>
-      </div>
-      <div class="av-context-card__body collapsed">
-        {% for g in grns %}
-        <div class="{% if not forloop.last %}mb-2 pb-2{% endif %}" {% if not forloop.last %}style="border-bottom:1px solid var(--ap-border-light)"{% endif %}>
-          <div class="av-kv">
-            <span class="av-kv__label">GRN</span>
-            <span class="av-kv__value">
-              <a href="{% url 'documents:grn_detail' g.pk %}" class="text-decoration-none">{{ g.grn_number }}</a>
-            </span>
-          </div>
-          <div class="av-kv">
-            <span class="av-kv__label">Date</span>
-            <span class="av-kv__value">{{ g.receipt_date|default:"—" }}</span>
-          </div>
-          <div class="av-kv">
-            <span class="av-kv__label">Items</span>
-            <span class="av-kv__value">{{ g.line_items.count }}</span>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
-
-    {# ── Exceptions Summary ── #}
-    {% if exceptions or validation_issues %}
-    <div class="av-context-card">
-      <div class="av-context-card__header collapsed" onclick="toggleContextCard(this)">
-        <i class="bi bi-exclamation-triangle"></i> Issues ({{ total_issues_count }})
-        <i class="bi bi-chevron-down"></i>
-      </div>
-      <div class="av-context-card__body collapsed">
-        {% for exc in exceptions %}
-        <div class="d-flex align-items-center gap-2 py-1" {% if not forloop.last %}style="border-bottom:1px solid var(--ap-border-light)"{% endif %}>
-          {% if exc.severity == "CRITICAL" %}<span class="ap-badge ap-sev-critical" style="font-size:.55rem">C</span>
-          {% elif exc.severity == "HIGH" %}<span class="ap-badge ap-sev-high" style="font-size:.55rem">H</span>
-          {% elif exc.severity == "MEDIUM" %}<span class="ap-badge ap-sev-medium" style="font-size:.55rem">M</span>
-          {% else %}<span class="ap-badge ap-sev-low" style="font-size:.55rem">L</span>{% endif %}
-          <span style="font-size:var(--ap-font-size-xs)">{{ exc.get_exception_type_display }}</span>
-        </div>
-        {% endfor %}
-        {% for issue in validation_issues %}
-        <div class="d-flex align-items-center gap-2 py-1">
-          {% if issue.status == "FAIL" %}<span class="ap-badge ap-sev-high" style="font-size:.55rem">F</span>
-          {% else %}<span class="ap-badge ap-sev-medium" style="font-size:.55rem">W</span>{% endif %}
-          <span style="font-size:var(--ap-font-size-xs)">{{ issue.check_name }}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
-
-    {# ── Agent Runs Summary ── #}
-    {% if agent_runs %}
-    <div class="av-context-card">
-      <div class="av-context-card__header collapsed" onclick="toggleContextCard(this)">
-        <i class="bi bi-robot"></i> Agents ({{ agent_runs|length }})
-        <i class="bi bi-chevron-down"></i>
-      </div>
-      <div class="av-context-card__body collapsed">
-        {% for run in agent_runs %}
-        <div class="d-flex align-items-center gap-2 py-1" {% if not forloop.last %}style="border-bottom:1px solid var(--ap-border-light)"{% endif %}>
-          <span class="ap-dot" style="width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block;
-            {% if run.status == 'COMPLETED' %}background:var(--ap-agent-completed)
-            {% elif run.status == 'RUNNING' %}background:var(--ap-agent-running)
-            {% elif run.status == 'FAILED' %}background:var(--ap-agent-failed)
-            {% else %}background:var(--ap-agent-pending){% endif %}"></span>
-          <span style="font-size:var(--ap-font-size-xs)">{{ run.agent_definition.name|default:run.agent_type }}</span>
-          {% if run.confidence %}
-          <span class="ms-auto ap-confidence">
-            <div class="ap-confidence-bar" style="width:32px">
-              <div class="ap-confidence-fill {% if run.confidence >= 0.8 %}high{% elif run.confidence >= 0.5 %}medium{% else %}low{% endif %}"
-                   style="width:{% widthratio run.confidence 1 100 %}%"></div>
-            </div>
-          </span>
-          {% endif %}
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
-
-    {# ── Case Details ── #}
-    <div class="av-context-card">
-      <div class="av-context-card__header collapsed" onclick="toggleContextCard(this)">
-        <i class="bi bi-info-circle"></i> Case Details
-        <i class="bi bi-chevron-down"></i>
-      </div>
-      <div class="av-context-card__body collapsed">
-        <div class="av-kv"><span class="av-kv__label">Status</span><span class="av-kv__value">{{ case.get_status_display }}</span></div>
-        <div class="av-kv"><span class="av-kv__label">Path</span><span class="av-kv__value">{{ case.get_processing_path_display }}</span></div>
-        <div class="av-kv"><span class="av-kv__label">Priority</span><span class="av-kv__value">{{ case.get_priority_display }}</span></div>
-        <div class="av-kv"><span class="av-kv__label">Assigned</span><span class="av-kv__value">{{ case.assigned_to.get_short_name|default:"Unassigned" }}</span></div>
-        <div class="av-kv"><span class="av-kv__label">Created</span><span class="av-kv__value">{{ case.created_at|timesince }} ago</span></div>
-        {% if case.reconciliation_result %}
-        <div class="av-kv"><span class="av-kv__label">Match</span><span class="av-kv__value">
-          {% if case.reconciliation_result.match_status == "MATCHED" %}<span class="ap-badge ap-badge-success">Matched</span>
-          {% elif case.reconciliation_result.match_status == "PARTIAL_MATCH" %}<span class="ap-badge ap-badge-warning">Partial</span>
-          {% elif case.reconciliation_result.match_status == "UNMATCHED" %}<span class="ap-badge ap-badge-danger">Unmatched</span>
-          {% else %}<span class="ap-badge ap-badge-muted">{{ case.reconciliation_result.match_status }}</span>{% endif %}
-        </span></div>
-        {% endif %}
-      </div>
-    </div>
-
-    {# ── Quick Actions ── #}
-    {% if case.reconciliation_result %}
-    <div class="av-context-card">
-      <div class="av-context-card__header collapsed" onclick="toggleContextCard(this)">
-        <i class="bi bi-lightning"></i> Quick Links
-        <i class="bi bi-chevron-down"></i>
-      </div>
-      <div class="av-context-card__body collapsed d-flex flex-column gap-1">
-        {% if invoice %}
-        <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary w-100 text-start" style="font-size:var(--ap-font-size-xs)">
-          <i class="bi bi-shield-lock me-1"></i>Full Governance Trail
-        </a>
-        {% endif %}
-      </div>
-    </div>
-    {% endif %}
-  </div>{# /av-context #}
-
-</div>{# /agent-view #}
-
-{# ══════════ REVIEW & NOTES (full-width, below layout) ══════════ #}
-<div class="av-review-panel" id="avReviewPanel">
-  <div class="av-review-panel__header">
-    <div class="d-flex align-items-center gap-2">
-      <i class="bi bi-clipboard-check"></i>
-      <span class="av-review-panel__title">Review & Notes</span>
-      {% if review_assignment %}
-        {% if review_assignment.status == "APPROVED" %}
-          <span class="ap-badge ap-badge-success" style="font-size:.55rem">Approved</span>
-        {% elif review_assignment.status == "REJECTED" %}
-          <span class="ap-badge ap-badge-danger" style="font-size:.55rem">Rejected</span>
-        {% elif review_assignment.status == "REPROCESSED" %}
-          <span class="ap-badge ap-badge-warning" style="font-size:.55rem">Reprocessed</span>
-        {% elif review_assignment.status == "IN_REVIEW" %}
-          <span class="ap-badge ap-badge-info" style="font-size:.55rem">In Review</span>
-        {% else %}
-          <span class="ap-badge ap-badge-muted" style="font-size:.55rem">{{ review_assignment.status }}</span>
-        {% endif %}
-      {% endif %}
-    </div>
-    {% if review_assignment %}
-    <div class="av-review-panel__meta">
-      <span><i class="bi bi-person me-1"></i>{{ review_assignment.assigned_to.get_full_name|default:"Unassigned" }}</span>
-      <span><i class="bi bi-flag me-1"></i>{{ review_assignment.priority }}</span>
-    </div>
-    {% endif %}
-  </div>
-
-  <div class="av-review-panel__content">
-    {# Left: decision + comment form + action log #}
-    <div class="av-review-panel__left">
-      {# Decision banner #}
-      {% if review_decision %}
-      <div class="av-review-decision mb-2">
-        <div class="d-flex align-items-center gap-2">
-          <i class="bi bi-check-circle-fill {% if review_decision.decision == 'APPROVED' %}text-success{% elif review_decision.decision == 'REJECTED' %}text-danger{% else %}text-warning{% endif %}"></i>
-          <strong style="font-size:var(--ap-font-size-sm)">{{ review_decision.decision }}</strong>
-          <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
-            by {{ review_decision.decided_by.get_full_name|default:"System" }}
-          </span>
-        </div>
-        {% if review_decision.reason %}
-        <div class="av-review-reason mt-1">{{ review_decision.reason }}</div>
-        {% endif %}
-      </div>
-      {% endif %}
-
-      {# Comment form #}
-      {% has_permission "cases.add_comment" as can_comment_case %}
-      {% if can_comment_case %}
-      {% if show_actions or case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" or case.status == "NEW" or case.status == "IN_PROGRESS" or case.status == "FAILED" %}
-      <form method="post" action="{% url 'cases:case_add_comment' case.pk %}" class="av-review-panel__form">
-        {% csrf_token %}
-        <textarea name="body" class="form-control av-review-textarea" rows="4" placeholder="Add a note or comment…" required></textarea>
-        <button type="submit" class="btn btn-sm btn-outline-primary">
-          <i class="bi bi-send me-1"></i>Post Comment
-        </button>
-      </form>
-      {% endif %}
-      {% endif %}
-
-      {# Action history (below form) #}
-      {% if review_actions %}
-      <div class="av-review-actions mt-2">
-        <div class="av-review-actions__header"><i class="bi bi-shield-check me-1"></i>Action Log</div>
-        {% for act in review_actions %}
-        <div class="av-review-action">
-          <span class="ap-badge ap-badge-muted" style="font-size:.55rem">{{ act.action_type }}</span>
-          <span style="font-size:var(--ap-font-size-xs)">{{ act.performed_by.get_full_name|default:"System" }}</span>
-          {% if act.field_name %}
-          <span style="font-size:.6rem;color:var(--ap-text-muted)">{{ act.field_name }}: {{ act.old_value|truncatechars:20 }} &rarr; {{ act.new_value|truncatechars:20 }}</span>
-          {% endif %}
-          <span style="font-size:.55rem;color:var(--ap-text-muted);margin-left:auto">{{ act.created_at|timesince }}</span>
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-    </div>
-  </div>
-</div>
-
-{# ══════════ CHAT PANEL (full-height slide-in) ══════════ #}
-<div class="av-chat-panel" id="avChatPanel">
-  <div class="av-chat-panel__header">
-    <div class="d-flex align-items-center gap-2">
-      <i class="bi bi-stars" style="font-size:1.1rem;color:var(--ap-primary)"></i>
-      <span>Case Copilot</span>
-      <span class="av-chat__badge">AI</span>
-    </div>
-    <button class="av-chat-panel__close" onclick="toggleChatPanel()" title="Close chat">
-      <i class="bi bi-x-lg"></i>
-    </button>
-  </div>
-
-  <div class="av-chat__messages" id="avChatMessages">
-    <div class="av-chat__welcome">
-      <i class="bi bi-stars"></i>
-      <div>Ask about exceptions, line items, vendor, PO, GRN, decisions, risks, or what to verify next.</div>
     </div>
   </div>
 
-  <div class="av-prompts" id="avPrompts">
-    <button class="av-prompt-chip" data-prompt="Summarize this case"><i class="bi bi-card-text"></i> Summarize</button>
-    <button class="av-prompt-chip" data-prompt="Why was this case flagged?"><i class="bi bi-flag"></i> Why flagged?</button>
-    <button class="av-prompt-chip" data-prompt="What are the key risks?"><i class="bi bi-shield-exclamation"></i> Key risks</button>
-    <button class="av-prompt-chip" data-prompt="What should the reviewer verify?"><i class="bi bi-search"></i> What to verify</button>
-    <button class="av-prompt-chip" data-prompt="What is missing?"><i class="bi bi-question-circle"></i> What's missing</button>
-  </div>
-
-  <div class="av-input-bar">
-    <textarea id="avInput" rows="1" placeholder="Ask anything about this case..." autocomplete="off"></textarea>
-    <button class="av-input-bar__send" id="avSend" type="button" title="Send">
-      <i class="bi bi-send"></i>
-    </button>
-  </div>
-</div>
-<div class="av-chat-overlay" id="avChatOverlay" onclick="toggleChatPanel()"></div>
-
+</div>{# /cc-console #}
 {% endblock %}
 
 {% block extra_js %}
 <script>
-  window.CASE_CONTEXT = {{ copilot_context_json|safe }};
+/* ── Case actions (approve / reject / reprocess) ── */
+function caseAction(action) {
+  const console = document.querySelector('.cc-console');
+  const decideUrl = console.dataset.decideUrl;
+  const openExc = parseInt(console.dataset.openExceptions || '0');
+  const failedVal = parseInt(console.dataset.failedValidations || '0');
+  const failedStg = parseInt(console.dataset.failedStages || '0');
+
+  if (action === 'approve' && (openExc > 0 || failedVal > 0 || failedStg > 0)) {
+    let msg = 'Cannot approve: ';
+    const parts = [];
+    if (openExc > 0) parts.push(openExc + ' open exception(s)');
+    if (failedVal > 0) parts.push(failedVal + ' failed validation(s)');
+    if (failedStg > 0) parts.push(failedStg + ' failed stage(s)');
+    alert(msg + parts.join(', '));
+    return;
+  }
+
+  const labels = {approve: 'approve', reject: 'reject', reprocess: 'reprocess'};
+  if (!confirm('Are you sure you want to ' + (labels[action] || action) + ' this case?')) return;
+
+  const csrfToken = console.querySelector('[name=csrfmiddlewaretoken]').value;
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = decideUrl;
+  form.innerHTML = '<input type="hidden" name="csrfmiddlewaretoken" value="' + csrfToken + '">' +
+                   '<input type="hidden" name="decision" value="' + action.toUpperCase() + '">';
+  document.body.appendChild(form);
+  form.submit();
+}
+
+/* ── Add comment ── */
+function addComment() {
+  const ta = document.getElementById('caseComment');
+  if (!ta || !ta.value.trim()) return;
+  alert('Comment feature uses the API endpoint. Integrate with /api/v1/cases/{{ case.pk }}/comments/');
+}
 </script>
-<script src="{% static 'js/case-agent-view.js' %}"></script>
 {% endblock %}
