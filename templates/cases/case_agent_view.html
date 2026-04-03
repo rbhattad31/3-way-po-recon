@@ -503,7 +503,7 @@
                             style="font-size:.82rem;background:transparent">
                       <span class="d-flex align-items-center gap-2 w-100">
                         <span class="cc-chip-dot {% if run.status == 'COMPLETED' %}completed{% elif run.status == 'RUNNING' %}running{% elif run.status == 'FAILED' %}failed{% else %}pending{% endif %}"></span>
-                        <span class="fw-semibold">{{ run.agent_definition.name|default:run.agent_type }}</span>
+                        <a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold text-decoration-none" title="View agent run detail" onclick="event.stopPropagation()">{{ run.agent_definition.name|default:run.agent_type }} <i class="bi bi-box-arrow-up-right" style="font-size:.65rem;opacity:.5"></i></a>
                         <span class="ms-auto d-flex align-items-center gap-2">
                           {% if run.confidence %}
                           <span class="cc-conf-inline">
