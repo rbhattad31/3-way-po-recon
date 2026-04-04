@@ -76,10 +76,17 @@ ReconciliationResult (PARTIAL_MATCH | UNMATCHED | REQUIRES_REVIEW)
 genuine uncertainty. A rule-based `PolicyEngine` always exists as a fallback
 if the LLM planner fails.
 
+**System agent pattern.** Five `DeterministicSystemAgent` subclasses wrap
+platform-level deterministic capabilities (review routing, case summary, bulk
+intake, case intake, posting preparation) in the standard agent framework --
+producing `AgentRun`, `DecisionLog`, and Langfuse traces without LLM calls,
+tool-calling loops, or artificial chat messages. They override `run()` and
+implement `execute_deterministic(ctx)` instead of the ReAct loop.
+
 **Governance-first.** Every agent run, tool call, and decision is persisted
 in `AgentRun`, `AgentStep`, `DecisionLog`, and `AuditEvent` before any
 downstream action. The audit trail is identical for LLM and deterministic
-runs -- `AgentRun` records from `DeterministicResolver` use
+runs -- `AgentRun` records from deterministic agents use
 `llm_model_used="deterministic"` and zero token counts.
 
 **Fail-closed RBAC.** No agent action (plan, run, tool call, recommendation,
@@ -392,6 +399,50 @@ avoid false escalation from natural cascading.
 
 Deterministic runs use `llm_model_used="deterministic"` and zero token counts.
 
+### 3.5 DeterministicSystemAgent (Base Class)
+
+**File:** `apps/agents/services/deterministic_system_agent.py`
+
+Abstract base class for system agents that skip the ReAct loop entirely.
+Subclasses implement `execute_deterministic(ctx) -> AgentOutput` which runs
+pure deterministic logic. The overridden `run()` method:
+
+1. Creates an `AgentRun` with `llm_model_used="deterministic"`, zero token counts, and full RBAC metadata.
+2. Calls `execute_deterministic(ctx)` -- the subclass hook.
+3. Persists `DecisionLog` records from `output.decisions`.
+4. Emits Langfuse spans with `SYSTEM_AGENT_SUCCESS` and `SYSTEM_AGENT_DECISION_COUNT` scores.
+5. Logs `SYSTEM_AGENT_RUN_COMPLETED` or `SYSTEM_AGENT_RUN_FAILED` audit events.
+
+Key differences from `BaseAgent`:
+- `__init__` skips `LLMClient` creation (no API key env vars required).
+- `system_prompt`, `build_user_message`, `allowed_tools`, `interpret_response` are stub no-ops.
+- No ReAct loop, no tool calling, no message history.
+
+### 3.6 Concrete System Agents
+
+**File:** `apps/agents/services/system_agent_classes.py`
+
+Five concrete implementations:
+
+| Class | `agent_type` | Purpose | Wraps |
+|---|---|---|---|
+| `SystemReviewRoutingAgent` | `SYSTEM_REVIEW_ROUTING` | Route cases to correct review queue | `DeterministicResolver.resolve()` |
+| `SystemCaseSummaryAgent` | `SYSTEM_CASE_SUMMARY` | Produce human-readable case summary | `DeterministicResolver.resolve()` |
+| `SystemBulkExtractionIntakeAgent` | `SYSTEM_BULK_EXTRACTION_INTAKE` | Record bulk extraction job stats | `ctx.extra` data |
+| `SystemCaseIntakeAgent` | `SYSTEM_CASE_INTAKE` | Record case creation/stage init | `ctx.extra` data |
+| `SystemPostingPreparationAgent` | `SYSTEM_POSTING_PREPARATION` | Record posting pipeline outcomes | `ctx.extra` data |
+
+All are registered in `AGENT_CLASS_REGISTRY` via `_get_system_agent_classes()` in `agent_classes.py`.
+
+**Orchestrator integration:** The orchestrator maps legacy agent types to system agent types via `_SYSTEM_AGENT_REPLACEMENTS`:
+```python
+_SYSTEM_AGENT_REPLACEMENTS = {
+    AgentType.REVIEW_ROUTING: AgentType.SYSTEM_REVIEW_ROUTING,
+    AgentType.CASE_SUMMARY: AgentType.SYSTEM_CASE_SUMMARY,
+}
+```
+In `_apply_deterministic_resolution()`, REVIEW_ROUTING and CASE_SUMMARY are instantiated as their system agent replacements and executed via `agent.run(ctx)` with `prior_recommendation`/`prior_confidence` threaded through `ctx.extra`.
+
 ### 3.5 Reflection Step
 
 After each LLM agent, `_reflect()` inspects findings and may insert additional
@@ -700,6 +751,31 @@ class MyTool(BaseTool):
 3. Seed the permission (`module.action`) in `seed_rbac` if it is new.
 4. Reference the tool in Section 7 under the relevant agent's "Tools used".
 
+### 5.6 Tool Langfuse Trace Threading
+
+`BaseAgent._execute_tool()` injects `lf_parent_span=_tool_span` into the tool's
+kwargs before calling `tool.execute(**arguments)`. This allows ERP-backed tools
+(e.g. `POLookupTool`, `GRNLookupTool`) to forward the span to
+`ERPResolutionService.resolve_*()` so ERP resolution spans nest under the agent's
+tool call span in Langfuse.
+
+The span object is removed from `arguments` after execution (before audit
+persistence via `ToolCallLogger` and `AgentStep`) to avoid serialisation errors.
+
+Tools that use ERP resolution should extract the span from kwargs:
+
+```python
+def _resolve_via_erp(self, po_number, **kwargs):
+    svc = ERPResolutionService.with_default_connector()
+    result = svc.resolve_po(
+        po_number=po_number,
+        lf_parent_span=kwargs.get("lf_parent_span"),
+    )
+```
+
+See [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11.4 for the
+full caller threading table.
+
 ---
 
 ## 6. Prompting and Output Contracts
@@ -873,13 +949,20 @@ Fields that must always be sanitised: `AgentRun.summarized_reasoning`,
 | InvoiceUnderstandingAgent | `INVOICE_UNDERSTANDING` | Yes | invoice_details, po_lookup, vendor_search | -- |
 | PORetrievalAgent | `PO_RETRIEVAL` | Yes | po_lookup, vendor_search, invoice_details | -- |
 | GRNRetrievalAgent | `GRN_RETRIEVAL` | Yes | grn_lookup, po_lookup, invoice_details | -- |
-| ReviewRoutingAgent | `REVIEW_ROUTING` | No | reconciliation_summary, exception_list | DeterministicResolver |
-| CaseSummaryAgent | `CASE_SUMMARY` | No | invoice_details, po_lookup, grn_lookup | DeterministicResolver |
+| ReviewRoutingAgent | `REVIEW_ROUTING` | No | reconciliation_summary, exception_list | SystemReviewRoutingAgent |
+| CaseSummaryAgent | `CASE_SUMMARY` | No | invoice_details, po_lookup, grn_lookup | SystemCaseSummaryAgent |
 | ReconciliationAssistAgent | `RECONCILIATION_ASSIST` | Yes | invoice_details, po_lookup, grn_lookup, reconciliation_summary, exception_list | -- |
+| **SystemReviewRoutingAgent** | `SYSTEM_REVIEW_ROUTING` | No | None | -- (deterministic) |
+| **SystemCaseSummaryAgent** | `SYSTEM_CASE_SUMMARY` | No | None | -- (deterministic) |
+| **SystemBulkExtractionIntakeAgent** | `SYSTEM_BULK_EXTRACTION_INTAKE` | No | None | -- (deterministic) |
+| **SystemCaseIntakeAgent** | `SYSTEM_CASE_INTAKE` | No | None | -- (deterministic) |
+| **SystemPostingPreparationAgent** | `SYSTEM_POSTING_PREPARATION` | No | None | -- (deterministic) |
 
 `EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, and `CASE_SUMMARY` are listed in
-`DeterministicResolver.REPLACED_AGENTS`. The orchestrator always routes them
-through the rule-based path. Their `AgentRun` records carry
+`DeterministicResolver.REPLACED_AGENTS`. The orchestrator routes REVIEW_ROUTING
+and CASE_SUMMARY through `SystemReviewRoutingAgent` / `SystemCaseSummaryAgent`
+(which wrap `DeterministicResolver` internally). EXCEPTION_ANALYSIS uses
+`DeterministicResolver` directly with synthetic `AgentRun` records. All carry
 `llm_model_used="deterministic"` and zero token counts.
 
 ### 7.2 ExceptionAnalysisAgent [IMPLEMENTED]
@@ -955,16 +1038,35 @@ parseable JSON no-op immediately when `ctx.reconciliation_mode == "TWO_WAY"`.
 
 **Purpose:** Route the reviewed case to the correct team queue.
 
-**Runtime:** Handled by `DeterministicResolver`, not LLM. Agent class exists
-for Phase 5 (LLM tail) if `AGENT_REASONING_LLM_TAIL_ENABLED=True`.
+**Runtime:** Replaced by `SystemReviewRoutingAgent` which wraps
+`DeterministicResolver.resolve()` in the standard `DeterministicSystemAgent`
+framework. Produces a full `AgentRun` with `DecisionLog` records, Langfuse
+spans, and audit events -- all without LLM calls.
 
 ### 7.8 CaseSummaryAgent [IMPLEMENTED -- DETERMINISTIC]
 
 **Purpose:** Produce a human-readable case summary after all analysis agents
 have run.
 
-**Runtime:** Handled by `DeterministicResolver`, not LLM. The resolver builds
-`case_summary` and persists it on `ReconciliationResult.summary`.
+**Runtime:** Replaced by `SystemCaseSummaryAgent` which wraps
+`DeterministicResolver.resolve()`. Builds `case_summary` and persists it on
+`ReconciliationResult.summary`.
+
+### 7.9-7.13 System Agents [IMPLEMENTED -- DETERMINISTIC]
+
+Five `DeterministicSystemAgent` subclasses provide observability and
+auditability for platform-level operations without LLM overhead:
+
+- **7.9 SystemReviewRoutingAgent** (`SYSTEM_REVIEW_ROUTING`): Wraps `DeterministicResolver` for routing.
+- **7.10 SystemCaseSummaryAgent** (`SYSTEM_CASE_SUMMARY`): Wraps `DeterministicResolver` for summaries.
+- **7.11 SystemBulkExtractionIntakeAgent** (`SYSTEM_BULK_EXTRACTION_INTAKE`): Records bulk extraction job stats from `ctx.extra`.
+- **7.12 SystemCaseIntakeAgent** (`SYSTEM_CASE_INTAKE`): Records case creation and stage initialization from `ctx.extra`.
+- **7.13 SystemPostingPreparationAgent** (`SYSTEM_POSTING_PREPARATION`): Records posting pipeline outcomes from `ctx.extra`.
+
+All use `llm_model_used="deterministic"`, zero tokens, and emit
+`SYSTEM_AGENT_RUN_COMPLETED` / `SYSTEM_AGENT_RUN_FAILED` audit events.
+Seeded via `seed_agent_contracts` with `requires_tool_grounding=False`
+and `capability_tags=["deterministic"]`.
 
 ### 7.9 ReconciliationAssistAgent [IMPLEMENTED]
 
@@ -1206,6 +1308,10 @@ end_span(_tool_span, output={"success": ..., "duration_ms": ..., "error": ...},
 
 Failed tool calls appear highlighted in red in the Langfuse UI.
 
+`_execute_tool()` injects `lf_parent_span=_tool_span` into tool kwargs so
+ERP-backed tools (`POLookupTool`, `GRNLookupTool`) create ERP resolution child
+spans under the tool span. See Section 5.6 for details.
+
 #### RBAC guardrail scores
 
 `log_guardrail_decision()` emits a `score_trace` for every guardrail decision
@@ -1413,6 +1519,8 @@ Follow the checklist in Section 5.5. Key points:
 | `PolicyEngine` | `policy_engine.py` | Deterministic agent plan (no LLM) |
 | `ReasoningPlanner` | `reasoning_planner.py` | LLM-backed planner; PolicyEngine fallback |
 | `DeterministicResolver` | `deterministic_resolver.py` | Rule-based exception routing |
+| `DeterministicSystemAgent` | `deterministic_system_agent.py` | Base class for deterministic system agents (skip ReAct) |
+| System agents (5) | `system_agent_classes.py` | SystemReviewRouting, SystemCaseSummary, SystemBulkExtractionIntake, SystemCaseIntake, SystemPostingPreparation |
 | `AgentOrchestrator` | `orchestrator.py` | Sequence execution, feedback, post-policy |
 | `AgentOrchestrationRun` | `agents/models.py` | DB state machine for one pipeline invocation |
 | `AgentGuardrailsService` | `guardrails_service.py` | RBAC enforcement |
@@ -1420,8 +1528,9 @@ Follow the checklist in Section 5.5. Key points:
 | `DecisionLogService` | `decision_log_service.py` | Recommendation lifecycle |
 | `BaseTool` / `ToolRegistry` | `tools/registry/base.py` | Tool system |
 | Concrete tools (6) | `tools/registry/tools.py` | PO, GRN, vendor, invoice lookups |
-| Concrete agents (8) | `agent_classes.py` | Specialised implementations |
-| `AGENT_CLASS_REGISTRY` | `agent_classes.py` | `AgentType` -> class map |
+| Concrete LLM agents (8) | `agent_classes.py` | Specialised LLM implementations |
+| Concrete system agents (5) | `system_agent_classes.py` | Deterministic implementations |
+| `AGENT_CLASS_REGISTRY` | `agent_classes.py` | `AgentType` -> class map (13 entries: 8 LLM + 5 system) |
 | `_AgentRunOutputProxy` | `orchestrator.py` | Adapts `AgentRun` to `AgentMemory` interface |
 
 ---

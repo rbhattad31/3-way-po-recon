@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Invoice Pipeline - AP Operations{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/invoice_pipeline.css' %}?v={{ static_version }}" rel="stylesheet">
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-0">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item active">Invoice Pipeline</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# Page header #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0 fw-bold" style="color:var(--ap-text-primary)">
+      <i class="bi bi-kanban me-2"></i>Invoice Pipeline
+    </h5>
+    <p class="mb-0 mt-1" style="font-size:var(--ap-font-size-sm);color:var(--ap-text-muted)">
+      End-to-end lifecycle view -- {{ total }} invoice{{ total|pluralize }} across 5 stages
+    </p>
+  </div>
+</div>
+
+{# Stage progress bar #}
+<div class="pipeline-progress mb-4">
+  {% for stage in stages %}
+  <div class="pipeline-progress-segment{% if stage.count > 0 %} has-items{% endif %}"
+       style="flex: 1; --stage-color: {{ stage.color }};"
+       title="{{ stage.label }}: {{ stage.count }}">
+    <div class="pipeline-progress-bar" style="background: {{ stage.color }};">
+      {{ stage.count }}
+    </div>
+    <div class="pipeline-progress-label">{{ stage.label }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+{# Kanban board #}
+<div class="pipeline-board">
+  {% for stage in stages %}
+  <div class="pipeline-column">
+    <div class="pipeline-column-header" style="border-top: 3px solid {{ stage.color }};">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi {{ stage.icon }}" style="color: {{ stage.color }};"></i>
+        <span class="fw-semibold small">{{ stage.label }}</span>
+      </div>
+      <span class="badge rounded-pill" style="background: {{ stage.color }}; font-size: 0.7rem;">
+        {{ stage.count }}
+      </span>
+    </div>
+    <div class="pipeline-column-body">
+      {% for card in stage.cards %}
+      <div class="pipeline-card" style="border-left: 3px solid {{ stage.color }};">
+        {# ── Card header (all stages) ── #}
+        <div class="pipeline-card-header">
+          {% if card.ext_id %}
+          <a href="{% url 'extraction:console' card.ext_id %}" class="fw-semibold text-decoration-none small">
+            {{ card.invoice_number }}
+          </a>
+          {% else %}
+          <span class="fw-semibold small">{{ card.invoice_number }}</span>
+          {% endif %}
+          <span class="badge bg-light text-dark border" style="font-size: 0.6rem;">
+            {{ card.sub_status }}
+          </span>
+        </div>
+        <div class="pipeline-card-vendor text-truncate">
+          <i class="bi bi-building opacity-50 me-1"></i>{{ card.vendor }}
+        </div>
+        {% if card.processing_path and stage.key != "intake" %}
+        <div class="pipeline-card-path">
+          <span class="pipeline-path-badge pipeline-path-{{ card.processing_path|lower }}">
+            {% if card.processing_path == "TWO_WAY" %}<i class="bi bi-arrow-left-right me-1"></i>2-Way
+            {% elif card.processing_path == "THREE_WAY" %}<i class="bi bi-diagram-3 me-1"></i>3-Way
+            {% elif card.processing_path == "NON_PO" %}<i class="bi bi-file-earmark-x me-1"></i>Non-PO
+            {% else %}{{ card.processing_path|cut:"_"|title }}
+            {% endif %}
+          </span>
+        </div>
+        {% endif %}
+
+        {% if stage.key == "intake" %}
+        {# ── INTAKE: amount, confidence bar, upload date ── #}
+        <div class="pipeline-card-meta">
+          <span class="fw-semibold">{{ card.currency }} {{ card.amount|floatformat:0|default:"--" }}</span>
+          {% if card.date %}
+          <span class="text-muted" style="font-size: 0.7rem;">
+            <i class="bi bi-calendar3 me-1"></i>{{ card.date|date:"d M" }}
+          </span>
+          {% endif %}
+        </div>
+        {% if card.confidence is not None %}
+        <div class="pipeline-card-confidence">
+          <span class="text-muted" style="font-size: 0.65rem;">Extraction</span>
+          <div class="progress" style="height: 4px; flex: 1;">
+            <div class="progress-bar {% if card.confidence >= 0.8 %}bg-success{% elif card.confidence >= 0.5 %}bg-warning{% else %}bg-danger{% endif %}"
+                 style="width: {% widthratio card.confidence 1 100 %}%"></div>
+          </div>
+          <span class="small text-muted" style="font-size: 0.65rem;">{% widthratio card.confidence 1 100 %}%</span>
+        </div>
+        {% endif %}
+
+        {% elif stage.key == "reconciliation" %}
+        {# ── RECONCILIATION: PO, mode, amount difference ── #}
+        <div class="pipeline-card-meta">
+          <span class="fw-semibold">{{ card.currency }} {{ card.amount|floatformat:0|default:"--" }}</span>
+          {% if card.po_number %}
+          <span class="text-muted" title="PO: {{ card.po_number }}">
+            <i class="bi bi-cart-check me-1"></i>{{ card.po_number }}
+          </span>
+          {% else %}
+          <span class="text-muted" style="font-size: 0.7rem;">No PO</span>
+          {% endif %}
+        </div>
+        {% if card.recon_mode %}
+        <div class="pipeline-card-detail">
+          <span class="text-muted" style="font-size: 0.7rem;">
+            <i class="bi bi-diagram-3 me-1"></i>{{ card.recon_mode|cut:"_"|title }}
+          </span>
+          {% if card.amount_diff %}
+          <span class="{% if card.amount_diff > 0 %}text-danger{% else %}text-success{% endif %}" style="font-size: 0.7rem;" title="Amount difference">
+            {{ card.currency }} {{ card.amount_diff|floatformat:0 }}
+          </span>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if card.exception_count > 0 %}
+        <div class="pipeline-card-detail">
+          <span class="text-danger" style="font-size: 0.7rem;" title="{{ card.exception_count }} unresolved exception{{ card.exception_count|pluralize }} found during reconciliation">
+            <i class="bi bi-exclamation-triangle me-1"></i>{{ card.exception_count }} exception{{ card.exception_count|pluralize }}
+          </span>
+        </div>
+        {% endif %}
+
+        {% elif stage.key == "human_review" %}
+        {# ── REVIEW: match status, exceptions, reviewer, agents ── #}
+        {% if card.match_status %}
+        <div class="pipeline-card-meta">
+          {% if card.processing_path == 'NON_PO' and card.match_status == 'UNMATCHED' %}
+          <span class="badge bg-secondary" style="font-size: 0.65rem;" title="No purchase order -- routed for manual review">
+            <i class="bi bi-file-earmark-x me-1"></i>Non-PO
+          </span>
+          {% else %}
+          <span class="badge {% if card.match_status == 'MATCHED' %}bg-success{% elif card.match_status == 'PARTIAL_MATCH' %}bg-warning text-dark{% elif card.match_status == 'UNMATCHED' %}bg-danger{% else %}bg-secondary{% endif %}" style="font-size: 0.65rem;"
+                title="{% if card.match_status == 'MATCHED' %}Invoice fully matches PO{% if card.recon_mode == 'THREE_WAY' %} and GRN{% endif %}{% elif card.match_status == 'PARTIAL_MATCH' %}Invoice partially matches -- some line items or amounts differ{% elif card.match_status == 'UNMATCHED' %}Invoice could not be matched to a PO{% else %}Reconciliation result: {{ card.match_status }}{% endif %}">
+            {{ card.match_status|cut:"_"|title }}
+          </span>
+          {% endif %}
+          {% if card.exception_count > 0 %}
+          <span class="text-danger" style="font-size: 0.7rem;" title="{{ card.exception_count }} unresolved exception{{ card.exception_count|pluralize }} found during reconciliation">
+            <i class="bi bi-exclamation-triangle me-1"></i>{{ card.exception_count }}
+          </span>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if card.reviewer %}
+        <div class="pipeline-card-detail">
+          <span class="text-muted" style="font-size: 0.7rem;">
+            <i class="bi bi-person me-1"></i>{{ card.reviewer }}
+          </span>
+          {% if card.review_priority %}
+          <span class="text-muted" style="font-size: 0.7rem;">
+            P{{ card.review_priority }}
+          </span>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if card.case %}
+        <div class="pipeline-card-case">
+          <a href="{% url 'cases:case_agent_view' card.case.pk %}" class="text-decoration-none small"
+             style="font-size: 0.7rem; color: {{ stage.color }};">
+            <i class="bi bi-briefcase me-1"></i>{{ card.case.case_number }}
+          </a>
+        </div>
+        {% endif %}
+        {% if card.agents %}
+        <div class="pipeline-card-agents">
+          {% for ag in card.agents %}
+          <span class="pipeline-agent-badge {% if ag.status == 'COMPLETED' %}agent-completed{% elif ag.status == 'FAILED' %}agent-failed{% else %}agent-running{% endif %}"
+                title="{{ ag.title }} ({{ ag.status|lower }})">
+            <i class="bi {{ ag.icon }}"></i> {{ ag.short }}
+          </span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% elif stage.key == "posting" %}
+        {# ── POSTING: amount, PO, posting status detail ── #}
+        <div class="pipeline-card-meta">
+          <span class="fw-semibold">{{ card.currency }} {{ card.amount|floatformat:0|default:"--" }}</span>
+          {% if card.po_number %}
+          <span class="text-muted">
+            <i class="bi bi-cart-check me-1"></i>{{ card.po_number }}
+          </span>
+          {% endif %}
+        </div>
+        {% if card.match_status %}
+        <div class="pipeline-card-detail">
+          {% if card.processing_path == 'NON_PO' and card.match_status == 'UNMATCHED' %}
+          <span class="badge bg-secondary" style="font-size: 0.65rem;" title="No purchase order -- validated via non-PO workflow">
+            <i class="bi bi-file-earmark-x me-1"></i>Non-PO
+          </span>
+          {% else %}
+          <span class="badge {% if card.match_status == 'MATCHED' %}bg-success{% elif card.match_status == 'PARTIAL_MATCH' %}bg-warning text-dark{% else %}bg-secondary{% endif %}" style="font-size: 0.65rem;"
+                title="{% if card.match_status == 'MATCHED' %}Invoice fully matches PO{% elif card.match_status == 'PARTIAL_MATCH' %}Partial match -- some variances exist{% else %}{{ card.match_status }}{% endif %}">
+            {{ card.match_status|cut:"_"|title }}
+          </span>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {% elif stage.key == "completed" %}
+        {# ── COMPLETED: amount, final match status ── #}
+        <div class="pipeline-card-meta">
+          <span class="fw-semibold">{{ card.currency }} {{ card.amount|floatformat:0|default:"--" }}</span>
+        </div>
+        {% if card.match_status %}
+        <div class="pipeline-card-detail">
+          {% if card.processing_path == 'NON_PO' and card.match_status == 'UNMATCHED' %}
+          <span class="badge bg-success" style="font-size: 0.65rem;" title="Non-PO invoice -- completed without PO matching">
+            <i class="bi bi-check-circle me-1"></i>Non-PO Processed
+          </span>
+          {% else %}
+          <span class="badge bg-success" style="font-size: 0.65rem;"
+                title="Reconciliation complete -- {{ card.match_status|cut:'_'|title }}">
+            <i class="bi bi-check-circle me-1"></i>{{ card.match_status|cut:"_"|title }}
+          </span>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {% endif %}
+      </div>
+      {% empty %}
+      <div class="pipeline-empty">
+        <i class="bi {{ stage.icon }} opacity-25" style="font-size: 1.5rem;"></i>
+        <span class="text-muted" style="font-size: 0.75rem;">No invoices</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

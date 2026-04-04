@@ -25,6 +25,7 @@ class ExtractionApprovalStatus(models.TextChoices):
 class ReconciliationMode(models.TextChoices):
     TWO_WAY = "TWO_WAY", "2-Way (Invoice vs PO)"
     THREE_WAY = "THREE_WAY", "3-Way (Invoice vs PO vs GRN)"
+    NON_PO = "NON_PO", "Non-PO (No PO matching)"
 
 
 class ReconciliationModeApplicability(models.TextChoices):
@@ -82,6 +83,12 @@ class AgentType(models.TextChoices):
     EXCEPTION_ANALYSIS = "EXCEPTION_ANALYSIS", "Exception Analysis"
     REVIEW_ROUTING = "REVIEW_ROUTING", "Review Routing"
     CASE_SUMMARY = "CASE_SUMMARY", "Case Summary"
+    # Deterministic system agents
+    SYSTEM_REVIEW_ROUTING = "SYSTEM_REVIEW_ROUTING", "System Review Routing"
+    SYSTEM_CASE_SUMMARY = "SYSTEM_CASE_SUMMARY", "System Case Summary"
+    SYSTEM_BULK_EXTRACTION_INTAKE = "SYSTEM_BULK_EXTRACTION_INTAKE", "System Bulk Extraction Intake"
+    SYSTEM_CASE_INTAKE = "SYSTEM_CASE_INTAKE", "System Case Intake"
+    SYSTEM_POSTING_PREPARATION = "SYSTEM_POSTING_PREPARATION", "System Posting Preparation"
 
 
 class ToolCallStatus(models.TextChoices):
@@ -214,6 +221,9 @@ class AuditEventType(models.TextChoices):
     AUTO_CLOSE_AUTHORIZED = "AUTO_CLOSE_AUTHORIZED", "Auto-Close Authorized"
     AUTO_CLOSE_DENIED = "AUTO_CLOSE_DENIED", "Auto-Close Denied"
     SYSTEM_AGENT_USED = "SYSTEM_AGENT_USED", "System Agent Used"
+    # System agent lifecycle events
+    SYSTEM_AGENT_RUN_COMPLETED = "SYSTEM_AGENT_RUN_COMPLETED", "System Agent Run Completed"
+    SYSTEM_AGENT_RUN_FAILED = "SYSTEM_AGENT_RUN_FAILED", "System Agent Run Failed"
     # Copilot audit events
     COPILOT_SESSION_CREATED = "COPILOT_SESSION_CREATED", "Copilot Session Created"
     COPILOT_SESSION_VIEWED = "COPILOT_SESSION_VIEWED", "Copilot Session Viewed"
@@ -291,6 +301,13 @@ class AuditEventType(models.TextChoices):
     USER_LOGOUT = "USER_LOGOUT", "User Logout"
     USER_LOGIN_FAILED = "USER_LOGIN_FAILED", "User Login Failed"
     PASSWORD_CHANGED = "PASSWORD_CHANGED", "Password Changed"
+    # Eval & Learning events
+    LEARNING_ENGINE_RUN = "LEARNING_ENGINE_RUN", "Learning Engine Run"
+    LEARNING_ACTION_PROPOSED = "LEARNING_ACTION_PROPOSED", "Learning Action Proposed"
+    LEARNING_ACTION_APPROVED = "LEARNING_ACTION_APPROVED", "Learning Action Approved"
+    LEARNING_ACTION_REJECTED = "LEARNING_ACTION_REJECTED", "Learning Action Rejected"
+    LEARNING_ACTION_APPLIED = "LEARNING_ACTION_APPLIED", "Learning Action Applied"
+    LEARNING_ACTION_FAILED = "LEARNING_ACTION_FAILED", "Learning Action Failed"
 
 
 class PermissionOverrideType(models.TextChoices):

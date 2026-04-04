@@ -8,6 +8,17 @@ from celery import shared_task
 from django.utils import timezone
 
 from apps.core.enums import InvoiceStatus, ReconciliationRunStatus
+from apps.core.evaluation_constants import (
+    RECON_FINAL_SUCCESS,
+    RECON_ROUTED_TO_AGENTS,
+    RECON_ROUTED_TO_REVIEW,
+    TRACE_RECONCILIATION_PIPELINE,
+)
+from apps.core.observability_helpers import (
+    build_observability_context,
+    build_recon_eval_metadata,
+    derive_session_id,
+)
 from apps.documents.models import Invoice
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationRun
 
@@ -68,22 +79,24 @@ def run_reconciliation_task(
         from apps.core.langfuse_client import start_trace_safe
         if _lf_task_trace_id:
             _invoice_ids_preview = [i.pk for i in (invoices or [])][:10]
+            _single_invoice_id = invoices[0].pk if invoices and len(invoices) == 1 else None
             _lf_task_trace = start_trace_safe(
                 _lf_task_trace_id,
-                "reconciliation_task",
+                TRACE_RECONCILIATION_PIPELINE,
                 user_id=triggered_by.pk if triggered_by else None,
-                session_id=(
-                    f"invoice-{invoices[0].pk}" if invoices and len(invoices) == 1 else None
+                session_id=derive_session_id(invoice_id=_single_invoice_id),
+                metadata=build_observability_context(
+                    invoice_id=_single_invoice_id,
+                    actor_user_id=triggered_by.pk if triggered_by else None,
+                    trigger="manual" if triggered_by_id else "auto",
+                    source="deterministic",
+                    **{
+                        "task_id": self.request.id,
+                        "invoice_count": len(invoices) if invoices else "all",
+                        "invoice_ids_preview": _invoice_ids_preview,
+                        "config_id": config_id,
+                    },
                 ),
-                metadata={
-                    "task_id": self.request.id,
-                    "invoice_count": len(invoices) if invoices else "all",
-                    "invoice_ids_preview": _invoice_ids_preview,
-                    "config_id": config_id,
-                    "triggered_by_id": triggered_by_id,
-                    "trigger": "manual" if triggered_by_id else "auto",
-                    "source": "deterministic",
-                },
             )
     except Exception:
         pass
@@ -96,6 +109,13 @@ def run_reconciliation_task(
             lf_trace=_lf_task_trace,
             lf_trace_id=_lf_task_trace_id,
         )
+        # Persist Langfuse trace ID on the run record for cross-referencing
+        if run and _lf_task_trace_id:
+            try:
+                run.langfuse_trace_id = _lf_task_trace_id
+                run.save(update_fields=["langfuse_trace_id", "updated_at"])
+            except Exception:
+                pass
     except Exception as exc:
         logger.exception("Reconciliation task failed")
         try:
@@ -127,9 +147,37 @@ def run_reconciliation_task(
         except Exception:
             pass
 
+    # Link reconciliation results back to their APCase records.
+    # Cases are created during extraction approval (before recon runs),
+    # so we need to attach the result + update processing_path.
+    from apps.reconciliation.models import ReconciliationResult
+    if run:
+        try:
+            from apps.cases.models import APCase
+            from apps.core.enums import ProcessingPath, ReconciliationMode
+            _mode_to_path = {
+                ReconciliationMode.TWO_WAY: ProcessingPath.TWO_WAY,
+                ReconciliationMode.THREE_WAY: ProcessingPath.THREE_WAY,
+                ReconciliationMode.NON_PO: ProcessingPath.NON_PO,
+            }
+            for rr in ReconciliationResult.objects.filter(run=run).select_related("invoice"):
+                ap_case = APCase.objects.filter(
+                    invoice=rr.invoice, is_active=True, reconciliation_result__isnull=True,
+                ).first()
+                if ap_case:
+                    ap_case.reconciliation_result = rr
+                    _path = _mode_to_path.get(rr.reconciliation_mode, ProcessingPath.UNRESOLVED)
+                    ap_case.processing_path = _path
+                    ap_case.save(update_fields=["reconciliation_result", "processing_path", "updated_at"])
+                    logger.info(
+                        "Linked ReconResult %s to APCase %s (path=%s)",
+                        rr.pk, ap_case.case_number, _path,
+                    )
+        except Exception:
+            logger.exception("Failed to link reconciliation results to AP cases")
+
     # Chain agent pipeline for non-matched results
     from apps.agents.tasks import run_agent_pipeline_task
-    from apps.reconciliation.models import ReconciliationResult
 
     agent_result_ids = list(
         ReconciliationResult.objects.filter(run=run)
@@ -148,9 +196,9 @@ def run_reconciliation_task(
             _total = run.total_invoices or 1
             _routed_agents = len(agent_result_ids)
             _routed_review = run.review_count or 0
-            score_trace_safe(_lf_task_trace_id, "recon_final_success", 1.0, comment=f"run={run.pk}", span=_lf_task_trace)
-            score_trace_safe(_lf_task_trace_id, "recon_routed_to_agents", 1.0 if _routed_agents > 0 else 0.0, span=_lf_task_trace)
-            score_trace_safe(_lf_task_trace_id, "recon_routed_to_review", 1.0 if _routed_review > 0 else 0.0, span=_lf_task_trace)
+            score_trace_safe(_lf_task_trace_id, RECON_FINAL_SUCCESS, 1.0, comment=f"run={run.pk}", span=_lf_task_trace)
+            score_trace_safe(_lf_task_trace_id, RECON_ROUTED_TO_AGENTS, 1.0 if _routed_agents > 0 else 0.0, span=_lf_task_trace)
+            score_trace_safe(_lf_task_trace_id, RECON_ROUTED_TO_REVIEW, 1.0 if _routed_review > 0 else 0.0, span=_lf_task_trace)
         except Exception:
             pass
 

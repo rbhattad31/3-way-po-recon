@@ -81,7 +81,21 @@ class ReconciliationModeResolver:
         """
         if not self.config.enable_mode_resolver:
             return self._fallback_default(
-                reason="Mode resolver disabled in config — using default mode",
+                reason="Mode resolver disabled in config -- using default mode",
+            )
+
+        # 0. Non-PO early exit: no PO number on invoice and no PO found
+        if not invoice.po_number and purchase_order is None:
+            logger.info(
+                "Mode resolver: invoice %s has no PO number and no PO found "
+                "-- classifying as NON_PO",
+                invoice.pk,
+            )
+            return ModeResolutionResult(
+                mode=ReconciliationMode.NON_PO,
+                reason="Invoice has no PO number and no matching PO was found",
+                grn_required=False,
+                resolution_method="heuristic",
             )
 
         # 1. Try explicit policy rules

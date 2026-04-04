@@ -2,7 +2,7 @@
 
 ## Project Context
 
-This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with **16 Django apps** (added: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`).
+This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with **17 Django apps** (added: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`, `core_eval`).
 
 **Read [PROJECT.md](../PROJECT.md) for full architecture, models, services, and data flow.**
 
@@ -53,11 +53,12 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Cache** (`ERPCacheService`): TTL-based DB cache (`ERPReferenceCacheRecord`), controlled by `ERP_CACHE_TTL_SECONDS` env var (default 3600s).
 - **Audit** (`ERPAuditService`): logs every resolution + submission to `ERPResolutionLog` / `ERPSubmissionLog` and `AuditEvent`.
 - **`PostingMappingEngine`** now accepts `connector=` kwarg; when provided, vendor/item resolution goes through the ERP resolver chain first, then falls back to direct DB. Source metadata per field is stored in `PostingRun.erp_source_metadata_json`.
-- **`POLookupTool` / `GRNLookupTool`** now attempt ERP resolution first (`_resolve_via_erp()`); fall through to direct DB only if the resolver import fails.
+- **`POLookupTool` / `GRNLookupTool`** now attempt ERP resolution first (`_resolve_via_erp()`); fall through to direct DB only if the resolver import fails. Agent tool spans are threaded via `lf_parent_span` kwarg from `BaseAgent._execute_tool()`.
 - **Settings**: `ERP_DUPLICATE_FALLBACK_CONFIDENCE_THRESHOLD` (default 0.8), `ERP_CACHE_TTL_SECONDS` (default 3600).
 - **API**: `GET/POST /api/v1/erp/resolve/<resolution_type>/` — on-demand ERP reference resolution.
 - **Reference Data UI**: `/erp-connections/reference-data/` (`erp_integration:erp_reference_data`) — browse all 5 imported reference tables (Vendors, Items, Tax Codes, Cost Centers, Open POs) with search, pagination, KPI cards, and import-batch provenance. Sidebar: ERP Integration section (Reference Data, Import Reference Data, ERP Connections).
 - **ERP connector enums** live in `apps/erp_integration/enums.py` (not `apps/core/enums.py`): `ERPConnectorType`, `ERPConnectionStatus`, `ERPSourceType`, `ERPResolutionType`, `ERPSubmissionType`, `ERPSubmissionStatus`.
+- **Langfuse tracing** (`apps/erp_integration/services/langfuse_helpers.py`): ERP-specific helpers for fail-silent tracing. `sanitize_erp_metadata()` redacts API keys/tokens/passwords and truncates large values. `sanitize_erp_error()` maps raw errors to safe categories. `start_erp_span()` / `end_erp_span()` auto-sanitize metadata. Per-stage traced wrappers (`trace_erp_cache_lookup`, `trace_erp_live_lookup`, `trace_erp_db_fallback`, `trace_erp_submission`) create child spans with observation scores. Source provenance helpers: `build_source_chain()`, `freshness_status_label()`, `is_authoritative_source()`. All callers thread `lf_parent_span` through `ERPResolutionService._trace_resolve()` -> `BaseResolver.resolve()` -> per-stage wrappers.
 
 ### Invoice Posting Agent (`apps/posting/` + `apps/posting_core/`)
 - **Two-layer architecture**: `apps/posting/` (business/UI layer) + `apps/posting_core/` (platform/core layer), mirroring the extraction system.
@@ -76,15 +77,16 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 ### Agent System
 - **Full architecture reference:** See [AGENT_ARCHITECTURE.md](../AGENT_ARCHITECTURE.md) for the complete agentic layer documentation, including all agent implementations, the PolicyEngine decision matrix, the DeterministicResolver rule table, RBAC guardrails, the reasoning engine upgrade path, best-practice upgrade guide per agent, and open source observability tool recommendations.
 - **No special characters in agent output stored to DB** -- this rule extends beyond source code. LLM-generated text written to `AgentRun.summarized_reasoning`, `ReconciliationResult.summary`, `ReviewAssignment.reviewer_summary`, and `DecisionLog.rationale` must use ASCII only. Apply the `_sanitise_text()` helper (defined in `AGENT_ARCHITECTURE.md` Section 17.3) before any `.save()` call on agent-generated content.
-- All agents extend `BaseAgent` (in `apps/agents/services/`).
-- Agents use **ReAct loop**: LLM -> parse tool calls -> execute tools -> loop (max 6 iterations).
+- All LLM agents extend `BaseAgent` (in `apps/agents/services/`).
+- LLM agents use **ReAct loop**: LLM -> parse tool calls -> execute tools -> loop (max 6 iterations).
+- **Deterministic system agents** extend `DeterministicSystemAgent` (`apps/agents/services/deterministic_system_agent.py`) which skips the ReAct loop entirely. Subclasses implement `execute_deterministic(ctx) -> AgentOutput`. Five concrete system agents in `apps/agents/services/system_agent_classes.py`: `SystemReviewRoutingAgent` (`SYSTEM_REVIEW_ROUTING`), `SystemCaseSummaryAgent` (`SYSTEM_CASE_SUMMARY`), `SystemBulkExtractionIntakeAgent` (`SYSTEM_BULK_EXTRACTION_INTAKE`), `SystemCaseIntakeAgent` (`SYSTEM_CASE_INTAKE`), `SystemPostingPreparationAgent` (`SYSTEM_POSTING_PREPARATION`). All produce standard `AgentRun`, `DecisionLog`, Langfuse spans, and audit events without LLM calls.
 - Tool-calling uses **OpenAI-compliant format**: `tool_calls` array on assistant messages, `tool_call_id` + `name` on tool response messages.
 - Tools are registered in `apps/tools/registry/` via decorator pattern: `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`. Each tool declares `required_permission` (e.g., `"purchase_orders.view"`).
 - **`ReasoningPlanner`** is the entry point for planning: always makes a single LLM call to decide which agents to run and in what order; falls back to `PolicyEngine` (deterministic) on any LLM error. There is no feature flag -- the LLM planner is always active.
 - `PolicyEngine` handles **auto-close logic**: `should_auto_close()` and `_within_auto_close_band()` check if PARTIAL_MATCH falls within wider auto-close thresholds (qty: 5%, price: 3%, amount: 3%).
 - **`AgentOrchestrationRun`** (`apps/agents/models.py`): Top-level DB record for one `AgentOrchestrator.execute()` invocation. Status machine: PLANNED -> RUNNING -> COMPLETED | PARTIAL | FAILED. Acts as duplicate-run guard: a RUNNING record blocks re-entry for the same `ReconciliationResult`.
 - Agent pipeline is **wired to run automatically** after reconciliation for non-MATCHED results (sync via `start_reconciliation` view, async via `run_agent_pipeline_task`).
-- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations — orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` × 8), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` × 6), post-policy authorization (auto-close, escalation), and **data-scope authorization** (`authorize_data_scope()` checks business-unit and vendor-id scope from `UserRole.scope_json`; called immediately after `authorize_orchestration()`).
+- **AgentGuardrailsService** (`apps/agents/services/guardrails_service.py`): Central RBAC enforcement for all agent operations -- orchestration permission (`agents.orchestrate`), per-agent authorization (`agents.run_*` x 13, including 5 `agents.run_system_*`), per-tool authorization (tool's `required_permission`), recommendation authorization (`recommendations.*` x 6), post-policy authorization (auto-close, escalation), and **data-scope authorization** (`authorize_data_scope()` checks business-unit and vendor-id scope from `UserRole.scope_json`; called immediately after `authorize_orchestration()`).
 - **`UserRole.scope_json`** (nullable JSON on `rbac_models.py`): Per-assignment scope restrictions. Supported keys: `allowed_business_units` (list[str]), `allowed_vendor_ids` (list[int]). Null means unrestricted. ADMIN and SYSTEM_AGENT always bypass scope checks.
 - **SYSTEM_AGENT** identity: When no human user context is available (Celery async, system-triggered), `AgentGuardrailsService.resolve_actor()` returns a dedicated service account (`system-agent@internal`) with the `SYSTEM_AGENT` role (rank 100, `is_system_role=True`).
 - Every agent run, message, tool call, and decision is persisted for auditability via `AgentTraceService`.
@@ -149,19 +151,26 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Agent Guardrails | `apps/agents/services/guardrails_service.py` |
 | Observability | `apps/core/trace.py`, `apps/core/logging_utils.py`, `apps/core/metrics.py`, `apps/core/decorators.py` |
 | Utilities | `apps/core/utils.py` |
-| Seed Commands | `apps/core/management/commands/seed_config.py`, `seed_prompts.py`; `apps/cases/management/commands/seed_ap_data.py` |
-| Seed Helpers | `apps/cases/management/commands/seed_helpers/` (constants, master_data, transactional_data, case_builder, agent_review_data, observability_data, bulk_generator) |
+| Seed Commands | `apps/core/management/commands/seed_all.py` (unified), `seed_config.py`, `seed_prompts.py`; `apps/accounts/.../seed_rbac.py`; `apps/agents/.../seed_agent_contracts.py`; `apps/extraction_core/.../seed_extraction_config.py`, `seed_control_center.py`; `apps/extraction/.../seed_credits.py` |
+| Flush Command | `apps/core/management/commands/flush_test_data.py` (deletes transactional data, preserves config/users/RBAC) |
 | Admin | `apps/<app>/admin.py` |
 | Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views, `templates/vendors/` for vendor UI) |
 | ERP Connectors | `apps/erp_integration/services/connectors/` |
 | ERP Resolvers | `apps/erp_integration/services/resolution/` |
 | ERP DB Fallbacks | `apps/erp_integration/services/db_fallback/` |
 | ERP Submission | `apps/erp_integration/services/submission/` |
+| ERP Langfuse Helpers | `apps/erp_integration/services/langfuse_helpers.py` (sanitization, span/score wrappers, source provenance) |
 | ERP Connection Config | `apps/erp_integration/models.py` (`ERPConnection`, `ERPReferenceCacheRecord`, `ERPResolutionLog`, `ERPSubmissionLog`) |
 | Posting Business Logic | `apps/posting/services/` (eligibility, orchestrator, action service) |
 | Posting Core Pipeline | `apps/posting_core/services/` (mapping engine, pipeline, validation, confidence, review routing, governance trail) |
 | Posting ERP Reference Models | `apps/posting_core/models.py` (`ERPVendorReference`, `ERPItemReference`, `ERPTaxCodeReference`, `ERPCostCenterReference`, `ERPPOReference`, alias/rule models) |
 | Posting Import Pipeline | `apps/posting_core/services/import_pipeline/` (parsers, validators, type importers, orchestrator) |
+| Eval & Learning Models | `apps/core_eval/models.py` (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction) |
+| Eval & Learning Services | `apps/core_eval/services/` (eval_run_service, eval_metric_service, eval_field_outcome_service, learning_signal_service, learning_action_service, learning_engine) |
+| Eval Adapters | `apps/extraction/services/eval_adapter.py` (ExtractionEvalAdapter -- extraction <-> core_eval bridge) |
+| Learning Engine Command | `apps/core_eval/management/commands/run_learning_engine.py` |
+| Eval & Learning Views | `apps/core_eval/template_views.py` (5 FBV views: eval_run_list, eval_run_detail, learning_signal_list, learning_action_list, learning_action_detail) |
+| Eval & Learning URLs | `apps/core_eval/urls.py` (mounted at `/eval/`) |
 | Static files | `static/css/`, `static/js/` |
 | Config | `config/settings.py`, `config/urls.py`, `config/celery.py` |
 
@@ -221,6 +230,14 @@ ERPConnection (erp_integration)
 ERPReferenceCacheRecord (erp_integration) — TTL cache for ERP lookups
 ERPResolutionLog (erp_integration) — audit log per lookup attempt
 ERPSubmissionLog (erp_integration) — audit log per ERP submission
+
+EvalRun (core_eval) — one evaluation pass per entity
+  +--< EvalMetric (N) — named metrics (numeric, text, JSON)
+  +--< EvalFieldOutcome (N) — per-field predicted vs ground truth
+  +--< LearningSignal (N) — atomic observations from production
+
+LearningAction (core_eval) — proposed corrective action
+  status: PROPOSED -> APPROVED -> APPLIED | REJECTED | FAILED
 
 InvoicePosting (posting) — 1:1 Invoice; lifecycle state + review queue + payload snapshot
 InvoicePostingFieldCorrection (posting) — per-field correction audit trail
@@ -306,6 +323,16 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 4. Register in `_CONNECTOR_MAP` in `apps/erp_integration/services/connector_factory.py`.
 5. Create an `ERPConnection` record (via admin or seed) with `connector_type` set to the new value.
 
+### When adding a new eval adapter for a pipeline
+1. Create `apps/<module>/services/eval_adapter.py` following the `ExtractionEvalAdapter` pattern.
+2. Define signal type constants (e.g., `SIG_MATCH_OUTCOME = "match_outcome"`).
+3. Call `EvalRunService.create_or_update()` to upsert an `EvalRun` per pipeline execution.
+4. Call `EvalMetricService.upsert()` for each numeric metric.
+5. Call `LearningSignalService.record()` for each observable event.
+6. Wire the adapter call into the pipeline task/service inside a `try/except` block (fail-silent).
+7. Optionally add new rules to `LearningEngine` if new signal types warrant pattern detection.
+8. Add tests: adapter unit tests + end-to-end tests with the engine.
+
 ### When adding a new ERP resolver
 1. Create class in `apps/erp_integration/services/resolution/` extending `BaseResolver`.
 2. Set `resolution_type` to the appropriate `ERPResolutionType` value.
@@ -356,7 +383,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
 - `ReconciliationPolicy` model: vendor, item_category, location_code, business_unit, is_service_invoice, is_stock_invoice, priority-ordered matching
 - Mode-aware classification, exception building (applies_to_mode tagging), result persistence (mode metadata + confidence weights)
-- Agent orchestration (8 agents, policy engine with auto-close logic + mode-aware GRN suppression, tool registry, LLM client, decision log service)
+- Agent orchestration (13 agents: 8 LLM + 5 deterministic system agents, policy engine with auto-close logic + mode-aware GRN suppression, tool registry, LLM client, decision log service)
+- Deterministic system agents: `DeterministicSystemAgent` base class + 5 concrete agents (`SystemReviewRoutingAgent`, `SystemCaseSummaryAgent`, `SystemBulkExtractionIntakeAgent`, `SystemCaseIntakeAgent`, `SystemPostingPreparationAgent`) -- produce `AgentRun`, `DecisionLog`, Langfuse spans, and `SYSTEM_AGENT_RUN_COMPLETED`/`SYSTEM_AGENT_RUN_FAILED` audit events without LLM calls
 - Agent RBAC guardrails: `AgentGuardrailsService` — central RBAC enforcement (orchestration, per-agent, per-tool, recommendation, post-policy authorization); SYSTEM_AGENT identity for autonomous runs; 9 guardrail audit event types; AgentRun RBAC fields populated on every run
 - Mode-aware agents: `AgentContext.reconciliation_mode`, `_mode_context()` helper on all agent types, PolicyEngine suppresses GRN_RETRIEVAL in 2-way
 - Agent feedback loop: `AgentFeedbackService` re-reconciles when PO/GRN agent recovers missing document (atomic)
@@ -383,9 +411,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Observability infrastructure: TraceContext (distributed tracing), structured JSON logging with PII redaction, in-process MetricsService, RequestTraceMiddleware
 - Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
 - Enhanced governance API: 9 endpoints (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance)
-- Seed data: `seed_config` (6 users, 7 agent defs, 6 tool defs, recon config, 7 policies), `seed_rbac` (6 roles incl. SYSTEM_AGENT, 40 permissions, matrix, user sync), `seed_prompts` (12 prompt templates), `seed_ap_data` (30 deterministic scenarios: TWO_WAY/THREE_WAY/NON_PO + cross-cutting, with 6-stage pipeline: users → vendors → transactional → cases/recon → agent/review → observability)
-- Seed observability data (stage 6 of `seed_ap_data`): AgentStep (~280), AgentMessage (~568), ToolCall (~137), DecisionLog (~78), AgentEscalation (~2), ProcessingLog (~193), ManualReviewAction (~9); enriches AgentRun with trace_id/tokens/cost and AuditEvent with RBAC/cross-refs
-- Seed helpers architecture in `apps/cases/management/commands/seed_helpers/`: constants.py, master_data.py, transactional_data.py, case_builder.py, agent_review_data.py, observability_data.py, bulk_generator.py
+- **Unified seed**: `python manage.py seed_all [--flush] [--skip STEP]` runs 7 steps in order: seed_config -> seed_rbac -> seed_prompts -> seed_agent_contracts -> seed_extraction_config -> seed_control_center -> seed_credits
+- **Flush transactional data**: `python manage.py flush_test_data [--confirm]` deletes invoices, POs, GRNs, cases, agents, reviews, vendors, audit events, extraction results, copilot sessions, bulk jobs. Preserves users, RBAC, agent/tool definitions, recon config/policies, prompts, extraction configs, control center settings, credit accounts.
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
@@ -393,12 +420,14 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **ERP Integration Layer** (`apps/erp_integration/`): `ERPConnection` model + `ConnectorFactory`; 4 connector implementations (Custom, Dynamics, Zoho, Salesforce); 7 resolver types with DB fallback (PO fallback is two-tier: `documents.PurchaseOrder` -> `posting_core.ERPPOReference`); TTL cache; resolution + submission audit logs; `POST /api/v1/erp/resolve/<type>/`; reference data browse UI at `/erp-connections/reference-data/`; wired into `PostingMappingEngine` (connector kwarg) and `POLookupTool`/`GRNLookupTool` (ERP-first with legacy DB fallback).
 - `PostingRun.erp_source_metadata_json` field — captures ERP resolution provenance per pipeline run.
 
+- **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` wired into extraction task + approval service; `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation; 81 tests (22 unit + 13 e2e + 29 RBAC view + 17 adapter/integration). See [EVAL_LEARNING.md](../docs/EVAL_LEARNING.md).
+
 ### ⬜ Not yet implemented (next steps)
-- **Tests**: pytest + factory-boy configured but no tests written. Need unit tests for services, integration tests for API endpoints, and factory classes for all models.
+- **Tests**: Need additional unit tests for services, integration tests for API endpoints, and factory classes for all models. Existing: reconciliation (73), extraction (282+), extraction_core (50+), eval & learning (81).
 - **Extraction refinement**: Tune LLM extraction prompts, add support for multi-page invoices, handle edge-case layouts.
 - **Real ERP submission**: `PostingActionService.submit_posting()` is Phase 1 mock — replace with live ERP connector call (SAP BAPI, Oracle REST, etc.).
 - **Auto-submit**: Auto-advance touchless postings (`is_touchless=True`, confidence ≥ threshold) directly to `SUBMISSION_IN_PROGRESS` without human approval.
-- **Feedback learning**: Train `VendorAliasMapping` / `ItemAliasMapping` from accepted field corrections.
+- **Feedback learning**: Train `VendorAliasMapping` / `ItemAliasMapping` from accepted field corrections. `LearningEngine` proposes actions; auto-apply not yet implemented.
 - **Scheduled ERP reference re-import**: Celery Beat task to pull fresh master data from shared drive/ERP.
 - **LLM-assisted item mapping**: Use GPT for fuzzy item description matching in `PostingMappingEngine._resolve_item()`.
 - **Report export services**: GeneratedReport model exists but full CSV/Excel export logic not built (CSV export exists for case console only).
@@ -424,6 +453,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **Posting stuck in MAPPING_IN_PROGRESS?** Check `PostingRun` for `error_code`; inspect `PostingIssue` records with `severity=ERROR`. Also verify ERP reference tables are populated via `/posting/imports/`.
 - **ERP cache stale?** `ERPReferenceCacheRecord` entries expire per `ERP_CACHE_TTL_SECONDS` (default 3600s). Delete cache records or reduce TTL to force re-resolution.
 - **`PostingMappingEngine` not using ERP?** Confirm `PostingPipeline._get_erp_connector()` returns a non-None connector — requires at least one active default `ERPConnection` record.
+- **Need a clean slate?** `python manage.py flush_test_data --confirm` deletes all transactional data while preserving config, users, and RBAC. Then `python manage.py seed_all` to re-seed platform config.
 
 ---
 
@@ -442,7 +472,9 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/reconciliation/services/agent_feedback_service.py` | Agent PO/GRN re-reconciliation loop |
 | `apps/agents/services/orchestrator.py` | Agent pipeline orchestration |
 | `apps/agents/services/base_agent.py` | Base agent with ReAct loop |
-| `apps/agents/services/agent_classes.py` | All 8 agent implementations |
+| `apps/agents/services/agent_classes.py` | All 8 LLM agent implementations |
+| `apps/agents/services/deterministic_system_agent.py` | DeterministicSystemAgent base class (skip ReAct) |
+| `apps/agents/services/system_agent_classes.py` | 5 concrete system agents |
 | `apps/tools/registry/tools.py` | All 6 tool classes |
 | `apps/tools/registry/base.py` | BaseTool, ToolRegistry, @register_tool |
 | `apps/core/trace.py` | TraceContext for distributed tracing |
@@ -470,10 +502,14 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/erp_integration/services/resolution/base.py` | `BaseResolver` — cache → API → DB fallback pattern |
 | `apps/erp_integration/services/connector_factory.py` | `ConnectorFactory` — instantiates connectors from `ERPConnection` records |
 | `apps/erp_integration/models.py` | `ERPConnection`, `ERPReferenceCacheRecord`, `ERPResolutionLog`, `ERPSubmissionLog` |
+| `apps/erp_integration/services/langfuse_helpers.py` | ERP-specific Langfuse tracing helpers -- sanitization, span/score wrappers, source provenance utilities |
 | `apps/posting_core/services/posting_mapping_engine.py` | Core posting value resolution + ERP connector integration |
 | `apps/posting_core/services/posting_pipeline.py` | 9-stage posting pipeline orchestration (incl. duplicate check) |
 | `apps/posting/services/posting_orchestrator.py` | Orchestrates `prepare_posting` lifecycle |
 | `apps/posting/services/posting_action_service.py` | Approve / reject / submit / retry actions |
+| `apps/core_eval/models.py` | EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction |
+| `apps/core_eval/services/learning_engine.py` | Deterministic learning engine (5 rules, aggregation, safety controls) |
+| `apps/extraction/services/eval_adapter.py` | ExtractionEvalAdapter (extraction <-> core_eval bridge) |
 
 ---
 
@@ -565,6 +601,24 @@ from apps.core.langfuse_client import (
 | `review_reprocess_requested` | 1.0 or 0.0 | On _finalise() |
 | `review_had_corrections` | 1.0 or 0.0 | On _finalise() |
 | `review_fields_corrected_count` | integer as float | On record_action() for CORRECT_FIELD |
+| `erp_resolution_success` | 1.0 or 0.0 | After ERP resolution (per resolve call) |
+| `erp_resolution_latency_ok` | 1.0 if <=5s, 0.0 if >5s | After ERP resolution (per resolve call) |
+| `erp_resolution_result_present` | 1.0 or 0.0 | After ERP resolution (per resolve call) |
+| `erp_resolution_fresh` | 1.0 or 0.0 (stale check) | After ERP resolution (per resolve call) |
+| `erp_resolution_authoritative` | 1.0 if API/CACHE, 0.0 if fallback | After ERP resolution (per resolve call) |
+| `erp_resolution_used_fallback` | 1.0 or 0.0 | After ERP resolution (per resolve call) |
+| `erp_cache_hit` | 1.0 or 0.0 | After cache check in BaseResolver |
+| `erp_live_lookup_success` | 1.0 or 0.0 | After live API call in BaseResolver |
+| `erp_live_lookup_latency_ok` | 1.0 if <=5s, 0.0 if >5s | After live API call in BaseResolver |
+| `erp_live_lookup_rate_limited` | 1.0 or 0.0 | After live API call in BaseResolver |
+| `erp_live_lookup_timeout` | 1.0 or 0.0 | After live API call in BaseResolver |
+| `erp_db_fallback_used` | 1.0 (always, only emitted when fallback runs) | After DB fallback in BaseResolver |
+| `erp_db_fallback_success` | 1.0 or 0.0 | After DB fallback in BaseResolver |
+| `erp_submission_attempted` | 1.0 (always) | On ERP submission call |
+| `erp_submission_success` | 1.0 or 0.0 | After ERP submission completes |
+| `erp_submission_latency_ok` | 1.0 if <=5s, 0.0 if >5s | After ERP submission completes |
+| `erp_submission_retryable_failure` | 1.0 or 0.0 | After ERP submission failure |
+| `erp_submission_document_number_present` | 1.0 or 0.0 | After successful ERP submission |
 
 ### When adding a new Celery task that triggers a pipeline
 
@@ -673,7 +727,7 @@ except Exception:
 | ~~`apps/agents/tasks.py` -- `run_agent_pipeline_task`~~ | ~~Root trace at task level~~ **Done** -- **Enriched**: prior_match_status, reconciliation_mode, trigger=auto metadata |
 | ~~`apps/agents/services/orchestrator.py`~~ | ~~Agent pipeline trace~~ **Done** -- **Enriched**: case_id, case_number, prior_match_status, exception_count, vendor info; 5 pipeline-level scores (agent_pipeline_final_confidence, recommendation_present, escalation_triggered, auto_close_candidate, agents_executed_count) |
 | ~~`apps/agents/services/base_agent.py`~~ | ~~Per-agent and per-tool spans~~ **Done** -- **Enriched**: agent_type, reconciliation_mode, po_number metadata; 3 per-agent scores (agent_confidence, agent_recommendation_present, agent_tool_success_rate); tool spans include source_used + tool_call_success score |
-| `apps/erp_integration/services/submission/posting_submit_resolver.py` | Inherit parent trace ID from posting pipeline instead of creating isolated traces (Phase 2 -- ERP submission is mock in Phase 1) |
+| ~~`apps/erp_integration/services/submission/posting_submit_resolver.py`~~ | ~~Inherit parent trace ID from posting pipeline instead of creating isolated traces~~ **Done**: Full tracing via `langfuse_helpers.py` -- `erp_submission` span with 5 scores (attempted, success, latency_ok, retryable_failure, document_number_present); metadata sanitized via `sanitize_erp_error()`; standalone root trace when no parent |
 | ~~`apps/copilot/services/copilot_service.py` -- `answer_question()`~~ | ~~Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive~~ **Done (2026-03-31)** |
 | ~~`apps/cases/tasks.py` -- `process_case_task`, `reprocess_case_from_stage_task`~~ | ~~Root trace `"case_task"` per task invocation~~ **Done** -- **Enriched**: session_id, invoice_id, case_number, vendor metadata; lf_trace passed to CaseOrchestrator; case_processing_success + case_reprocessed scores |
 | ~~`apps/cases/orchestrators/case_orchestrator.py`~~ | ~~Per-stage spans in case pipeline~~ **Done** -- **Enriched**: per-stage Langfuse spans with stage_index, processing_path, case_status_before; stage-specific observation scores; 4 trace-level scores (case_stages_executed, case_closed, case_terminal, case_path_resolved, case_match_status, case_auto_closed, case_routed_to_review) |

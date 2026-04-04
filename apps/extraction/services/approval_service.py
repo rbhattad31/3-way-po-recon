@@ -28,6 +28,12 @@ from apps.extraction.models import (
     ExtractionResult,
 )
 from apps.core.decorators import observed_service
+from apps.core.evaluation_constants import (
+    EXTRACTION_APPROVAL_CONFIDENCE,
+    EXTRACTION_APPROVAL_DECISION,
+    EXTRACTION_AUTO_APPROVE_CONFIDENCE,
+    EXTRACTION_CORRECTIONS_COUNT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +98,8 @@ class ExtractionApprovalService:
         cls,
         invoice: Invoice,
         extraction_result: Optional[ExtractionResult] = None,
+        lf_trace_id: Optional[str] = None,
+        lf_span=None,
     ) -> Optional[ExtractionApproval]:
         """Auto-approve if confidence meets the configured threshold.
 
@@ -143,15 +151,24 @@ class ExtractionApprovalService:
             "Auto-approved extraction for invoice %s (confidence=%.2f)",
             invoice.pk, confidence,
         )
-        # ── Trigger posting pipeline ──
-        cls._enqueue_posting(invoice, user=None)
+        # ── Create AP Case and trigger case pipeline ──
+        cls._ensure_case_and_process(invoice, user=None)
+
+        # ── core_eval: persist auto-approval learning signal ──
+        try:
+            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+            ExtractionEvalAdapter.sync_for_approval(approval, user=None)
+        except Exception:
+            logger.debug("core_eval auto-approve sync failed (non-fatal)")
 
         try:
             from apps.core.langfuse_client import score_trace
+            _score_tid = lf_trace_id or f"approval-{approval.pk}"
             score_trace(
-                f"approval-{approval.pk}",
-                "extraction_auto_approve_confidence",
+                _score_tid,
+                EXTRACTION_AUTO_APPROVE_CONFIDENCE,
                 float(confidence),
+                span=lf_span,
                 comment=(
                     f"invoice={invoice.pk} "
                     f"threshold={threshold:.2f} "
@@ -174,6 +191,8 @@ class ExtractionApprovalService:
         approval: ExtractionApproval,
         user,
         corrections: Optional[dict] = None,
+        lf_trace_id: Optional[str] = None,
+        lf_span=None,
     ) -> ExtractionApproval:
         """Approve an extraction after optional field corrections.
 
@@ -311,16 +330,28 @@ class ExtractionApprovalService:
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
         cls._record_governance_trail(approval, "APPROVE", user)
 
-        # ── Trigger posting pipeline ──
-        cls._enqueue_posting(invoice, user)
+        # ── core_eval: persist approval learning signals ──
+        try:
+            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+            ExtractionEvalAdapter.sync_for_approval(
+                approval, user=user, correction_records=correction_records,
+            )
+        except Exception:
+            logger.debug("core_eval approval sync failed (non-fatal)")
+
+        # ── Create AP Case and trigger case pipeline ──
+        # The case orchestrator handles reconciliation, agents, review
+        # routing, and posting internally via its stage sequence.
+        cls._ensure_case_and_process(invoice, user)
 
         try:
             from apps.core.langfuse_client import score_trace
-            _trace_id = f"approval-{approval.pk}"
+            _score_tid = lf_trace_id or f"approval-{approval.pk}"
             score_trace(
-                _trace_id,
-                "extraction_approval_decision",
+                _score_tid,
+                EXTRACTION_APPROVAL_DECISION,
                 1.0,
+                span=lf_span,
                 comment=(
                     f"invoice={invoice.pk} "
                     f"reviewer={getattr(user, 'pk', None)} "
@@ -329,16 +360,18 @@ class ExtractionApprovalService:
                 ),
             )
             score_trace(
-                _trace_id,
-                "extraction_approval_confidence",
+                _score_tid,
+                EXTRACTION_APPROVAL_CONFIDENCE,
                 float(approval.confidence_at_review or 0.0),
+                span=lf_span,
                 comment=f"invoice={invoice.pk}",
             )
             if correction_records:
                 score_trace(
-                    _trace_id,
-                    "extraction_corrections_count",
+                    _score_tid,
+                    EXTRACTION_CORRECTIONS_COUNT,
                     float(len(correction_records)),
+                    span=lf_span,
                     comment=f"invoice={invoice.pk}",
                 )
         except Exception:
@@ -357,6 +390,8 @@ class ExtractionApprovalService:
         approval: ExtractionApproval,
         user,
         reason: str = "",
+        lf_trace_id: Optional[str] = None,
+        lf_span=None,
     ) -> ExtractionApproval:
         """Reject an extraction — invoice stays in PENDING_APPROVAL.
 
@@ -399,12 +434,21 @@ class ExtractionApprovalService:
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
         cls._record_governance_trail(approval, "REJECT", user, reason)
 
+        # ── core_eval: persist rejection learning signal ──
+        try:
+            from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+            ExtractionEvalAdapter.sync_for_approval(approval, user=user)
+        except Exception:
+            logger.debug("core_eval reject sync failed (non-fatal)")
+
         try:
             from apps.core.langfuse_client import score_trace
+            _score_tid = lf_trace_id or f"approval-{approval.pk}"
             score_trace(
-                f"approval-{approval.pk}",
-                "extraction_approval_decision",
+                _score_tid,
+                EXTRACTION_APPROVAL_DECISION,
                 0.0,
+                span=lf_span,
                 comment=(
                     f"invoice={approval.invoice.pk} "
                     f"reviewer={getattr(user, 'pk', None)} "
@@ -683,6 +727,84 @@ class ExtractionApprovalService:
             logger.exception(
                 "GovernanceTrailService.record_approval_decision failed for approval %s",
                 approval.pk,
+            )
+
+    @staticmethod
+    def _ensure_case_and_process(invoice, user=None):
+        """Create an APCase and enqueue the full case processing pipeline.
+
+        The case orchestrator handles the complete lifecycle:
+        INTAKE -> EXTRACTION -> PATH_RESOLUTION -> MATCHING -> EXCEPTION_ANALYSIS
+        -> REVIEW_ROUTING -> CASE_SUMMARY (including reconciliation, agents,
+        review routing, and posting internally).
+
+        Best-effort: failures are logged but never block the approval path.
+        """
+        try:
+            from apps.cases.services.case_creation_service import CaseCreationService
+            uploaded_by = user or (
+                invoice.document_upload.uploaded_by
+                if invoice.document_upload_id else None
+            )
+            case = CaseCreationService.create_from_upload(
+                invoice=invoice,
+                uploaded_by=uploaded_by,
+            )
+            logger.info("Ensured AP Case %s for invoice %s", case.case_number, invoice.pk)
+
+            # Enqueue the case orchestrator to process through all stages
+            from apps.cases.tasks import process_case_task
+            from apps.core.utils import dispatch_task
+            dispatch_task(process_case_task, case.pk)
+            logger.info("Enqueued case processing for case %s (invoice %s)", case.case_number, invoice.pk)
+        except Exception:
+            logger.exception(
+                "Failed to create/process AP Case for invoice %s", invoice.pk,
+            )
+
+    @staticmethod
+    def _ensure_case(invoice, user=None):
+        """Create an APCase for this invoice if one doesn't exist yet.
+
+        Every invoice must have a case for end-to-end tracking.
+        Best-effort: failures are logged but never block the approval path.
+        """
+        try:
+            from apps.cases.services.case_creation_service import CaseCreationService
+            uploaded_by = user or (
+                invoice.document_upload.uploaded_by
+                if invoice.document_upload_id else None
+            )
+            case = CaseCreationService.create_from_upload(
+                invoice=invoice,
+                uploaded_by=uploaded_by,
+            )
+            logger.info("Ensured AP Case %s for invoice %s", case.case_number, invoice.pk)
+        except Exception:
+            logger.exception(
+                "Failed to create AP Case for invoice %s", invoice.pk,
+            )
+
+    @staticmethod
+    def _enqueue_reconciliation(invoice, user=None):
+        """Enqueue reconciliation for the newly-approved invoice.
+
+        Best-effort: failures are logged but never block the approval path.
+        The reconciliation task will pick up the invoice (now READY_FOR_RECON),
+        run matching, and automatically trigger the agent pipeline for
+        non-MATCHED results.
+        """
+        try:
+            from apps.reconciliation.tasks import run_reconciliation_task
+            user_id = user.pk if user else None
+            run_reconciliation_task.delay(
+                invoice_ids=[invoice.pk],
+                triggered_by_id=user_id,
+            )
+            logger.info("Enqueued reconciliation for invoice %s", invoice.pk)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue reconciliation for invoice %s", invoice.pk,
             )
 
     @staticmethod

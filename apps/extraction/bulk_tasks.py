@@ -6,6 +6,7 @@ import logging
 from celery import shared_task
 
 from apps.core.decorators import observed_task
+from apps.core.evaluation_constants import EXTRACTION_BULK_JOB_SUCCESS_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ def run_bulk_job_task(self, job_id: int) -> dict:
         _lf_trace = start_trace(
             _trace_id,
             "bulk_extraction_job",
+            user_id=getattr(job, "started_by_id", None),
+            session_id=f"bulk-job-{job.pk}",
             metadata={
                 "task_id": self.request.id,
                 "job_pk": job.pk,
@@ -53,6 +56,40 @@ def run_bulk_job_task(self, job_id: int) -> dict:
 
     try:
         job = BulkExtractionService.run_job(job, lf_trace=_lf_trace)
+
+        # --- System agent: governance-visible intake record ---
+        try:
+            from apps.agents.services.system_agent_classes import (
+                SystemBulkExtractionIntakeAgent,
+            )
+            from apps.agents.services.base_agent import AgentContext
+
+            _intake_ctx = AgentContext(
+                reconciliation_result=None,
+                invoice_id=0,
+                extra={
+                    "job_id": job.pk,
+                    "total_items": job.total_found,
+                    "processed": job.total_success,
+                    "failed": job.total_failed,
+                    "skipped": job.total_skipped,
+                    "duplicates": job.total_credit_blocked,
+                    "job_status": job.status,
+                },
+                actor_primary_role="SYSTEM_AGENT",
+                actor_roles_snapshot=["SYSTEM_AGENT"],
+                permission_source="system",
+                access_granted=True,
+                trace_id=_trace_id or "",
+                _langfuse_trace=_lf_trace,
+            )
+            SystemBulkExtractionIntakeAgent().run(_intake_ctx)
+        except Exception:
+            logger.debug(
+                "SystemBulkExtractionIntakeAgent skipped for job %s",
+                job_id, exc_info=True,
+            )
+
     finally:
         try:
             from apps.core.langfuse_client import end_span, score_trace
@@ -61,8 +98,9 @@ def run_bulk_job_task(self, job_id: int) -> dict:
                 total = getattr(job, "total_found", 1) or 1
                 score_trace(
                     _trace_id,
-                    "bulk_job_success_rate",
+                    EXTRACTION_BULK_JOB_SUCCESS_RATE,
                     processed / total,
+                    span=_lf_trace,
                     comment=f"processed={processed} total={total}",
                 )
                 end_span(_lf_trace, output={"status": job.status, "processed": processed})

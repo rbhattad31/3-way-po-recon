@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from apps.agents.services.base_agent import AgentOutput, BaseAgent, AgentContext
 from apps.core.enums import AgentRunStatus, AgentType, RecommendationType
+from apps.core.evaluation_constants import EXTRACTION_CONFIDENCE
 from apps.core.prompt_registry import PromptRegistry
 from django.utils import timezone
 
@@ -321,10 +322,20 @@ class InvoiceExtractionAgent(BaseAgent):
             agent_definition=agent_def,
             agent_type=self.agent_type,
             reconciliation_result=ctx.reconciliation_result,
+            document_upload_id=ctx.document_upload_id,
             status=AgentRunStatus.RUNNING,
             input_payload=self._serialise_context(ctx),
             started_at=timezone.now(),
             llm_model_used=self.llm.model,
+            # RBAC metadata from context
+            actor_user_id=ctx.actor_user_id,
+            actor_primary_role=ctx.actor_primary_role,
+            actor_roles_snapshot_json=ctx.actor_roles_snapshot or None,
+            permission_checked=ctx.permission_checked,
+            permission_source=ctx.permission_source,
+            access_granted=ctx.access_granted,
+            trace_id=ctx.trace_id,
+            span_id=ctx.span_id,
         )
 
         import time as _time
@@ -454,8 +465,9 @@ class InvoiceExtractionAgent(BaseAgent):
                     if _own_trace and _lf_trace:
                         score_trace(
                             getattr(_lf_trace, "trace_id", ""),
-                            "extraction_confidence",
+                            EXTRACTION_CONFIDENCE,
                             output.confidence,
+                            span=_lf_trace,
                         )
                         end_span(_lf_trace, output={"confidence": output.confidence})
                 except Exception:
@@ -748,6 +760,25 @@ class ReconciliationAssistAgent(BaseAgent):
 # ============================================================================
 # Agent class registry
 # ============================================================================
+
+# Lazy import system agent classes to avoid circular dependency
+def _get_system_agent_classes():
+    from apps.agents.services.system_agent_classes import (
+        SystemBulkExtractionIntakeAgent,
+        SystemCaseIntakeAgent,
+        SystemCaseSummaryAgent,
+        SystemPostingPreparationAgent,
+        SystemReviewRoutingAgent,
+    )
+    return {
+        AgentType.SYSTEM_REVIEW_ROUTING: SystemReviewRoutingAgent,
+        AgentType.SYSTEM_CASE_SUMMARY: SystemCaseSummaryAgent,
+        AgentType.SYSTEM_BULK_EXTRACTION_INTAKE: SystemBulkExtractionIntakeAgent,
+        AgentType.SYSTEM_CASE_INTAKE: SystemCaseIntakeAgent,
+        AgentType.SYSTEM_POSTING_PREPARATION: SystemPostingPreparationAgent,
+    }
+
+
 AGENT_CLASS_REGISTRY: Dict[str, type] = {
     AgentType.INVOICE_EXTRACTION: InvoiceExtractionAgent,
     AgentType.EXCEPTION_ANALYSIS: ExceptionAnalysisAgent,
@@ -758,3 +789,10 @@ AGENT_CLASS_REGISTRY: Dict[str, type] = {
     AgentType.CASE_SUMMARY: CaseSummaryAgent,
     AgentType.RECONCILIATION_ASSIST: ReconciliationAssistAgent,
 }
+
+# Merge system agent classes (done at import time)
+try:
+    AGENT_CLASS_REGISTRY.update(_get_system_agent_classes())
+except Exception:  # pragma: no cover
+    # Tolerate import errors during migrations / early app loading
+    pass

@@ -64,6 +64,12 @@ PERMISSIONS = [
     {"code": "agents.run_exception_analysis", "name": "Run Exception Analysis Agent", "module": "agents", "action": "run_exception_analysis", "description": "Execute exception analysis agent"},
     {"code": "agents.run_review_routing", "name": "Run Review Routing Agent", "module": "agents", "action": "run_review_routing", "description": "Execute review routing agent"},
     {"code": "agents.run_case_summary", "name": "Run Case Summary Agent", "module": "agents", "action": "run_case_summary", "description": "Execute case summary agent"},
+    # System agents (deterministic)
+    {"code": "agents.run_system_review_routing", "name": "Run System Review Routing", "module": "agents", "action": "run_system_review_routing", "description": "Execute deterministic system review routing agent"},
+    {"code": "agents.run_system_case_summary", "name": "Run System Case Summary", "module": "agents", "action": "run_system_case_summary", "description": "Execute deterministic system case summary agent"},
+    {"code": "agents.run_system_bulk_extraction_intake", "name": "Run System Bulk Extraction Intake", "module": "agents", "action": "run_system_bulk_extraction_intake", "description": "Execute deterministic system bulk extraction intake agent"},
+    {"code": "agents.run_system_case_intake", "name": "Run System Case Intake", "module": "agents", "action": "run_system_case_intake", "description": "Execute deterministic system case intake agent"},
+    {"code": "agents.run_system_posting_preparation", "name": "Run System Posting Preparation", "module": "agents", "action": "run_system_posting_preparation", "description": "Execute deterministic system posting preparation agent"},
     # Recommendations
     {"code": "recommendations.auto_close", "name": "Accept Auto-Close", "module": "recommendations", "action": "auto_close", "description": "Accept or trigger auto-close recommendations"},
     {"code": "recommendations.route_review", "name": "Route to Review", "module": "recommendations", "action": "route_review", "description": "Accept send-to-review recommendations"},
@@ -76,6 +82,7 @@ PERMISSIONS = [
     {"code": "extraction.reprocess", "name": "Reprocess Extraction", "module": "extraction", "action": "reprocess", "description": "Re-trigger invoice extraction"},
     {"code": "extraction.approve", "name": "Approve Extraction", "module": "extraction", "action": "approve", "description": "Approve extracted invoice data before reconciliation"},
     {"code": "extraction.reject", "name": "Reject Extraction", "module": "extraction", "action": "reject", "description": "Reject extracted data and request re-extraction"},
+    {"code": "extraction.correct", "name": "Correct Extraction Values", "module": "extraction", "action": "correct", "description": "Edit and correct extracted field values"},
     # Document scoping
     {"code": "purchase_orders.view", "name": "View Purchase Orders", "module": "purchase_orders", "action": "view", "description": "View purchase order data"},
     {"code": "grns.view", "name": "View GRNs", "module": "grns", "action": "view", "description": "View goods receipt note data"},
@@ -100,6 +107,9 @@ PERMISSIONS = [
     # Bulk Extraction
     {"code": "extraction.bulk_view", "name": "View Bulk Extraction", "module": "extraction", "action": "bulk_view", "description": "View bulk extraction jobs and items"},
     {"code": "extraction.bulk_create", "name": "Create Bulk Extraction", "module": "extraction", "action": "bulk_create", "description": "Start new bulk extraction jobs"},
+    # Eval & Learning
+    {"code": "eval.view", "name": "View Eval & Learning", "module": "eval", "action": "view", "description": "View eval runs, learning signals, and learning actions"},
+    {"code": "eval.manage", "name": "Manage Learning Actions", "module": "eval", "action": "manage", "description": "Approve, reject, and apply learning actions"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -108,7 +118,7 @@ PERMISSIONS = [
 # ADMIN gets everything (handled in code: admin bypass), but we also
 # explicitly grant all permissions for visibility in the matrix UI.
 ROLE_MATRIX = {
-    "ADMIN": [p["code"] for p in PERMISSIONS],  # everything
+    "ADMIN": [p["code"] for p in PERMISSIONS],  # everything (incl. eval.view, eval.manage)
     "AP_PROCESSOR": [
         "invoices.view", "invoices.create", "invoices.edit",
         "invoices.trigger_reconciliation",
@@ -125,13 +135,16 @@ ROLE_MATRIX = {
         "invoices.view", "invoices.create",
         "reconciliation.view",
         "cases.view", "cases.edit",
-        "cases.add_comment",
+        "cases.add_comment", "cases.escalate",
         "reviews.view", "reviews.decide",
         "agents.view", "agents.use_copilot",
         "governance.view",
         "purchase_orders.view", "grns.view", "vendors.view",
         "recommendations.route_review",
         "extraction.approve", "extraction.reject",
+        "extraction.reprocess", "extraction.correct",
+        # Eval & Learning read-only
+        "eval.view",
     ],
     "FINANCE_MANAGER": [
         "invoices.view",
@@ -152,6 +165,8 @@ ROLE_MATRIX = {
         "procurement.view", "procurement.view_results",
         # Credits
         "credits.view", "credits.manage",
+        # Eval & Learning
+        "eval.view", "eval.manage",
     ],
     "AUDITOR": [
         "invoices.view",
@@ -165,6 +180,8 @@ ROLE_MATRIX = {
         "procurement.view", "procurement.view_results",
         # Bulk extraction read-only
         "extraction.bulk_view",
+        # Eval & Learning read-only
+        "eval.view",
     ],
     "SYSTEM_AGENT": [
         # Scoped agent orchestration + execution
@@ -173,6 +190,10 @@ ROLE_MATRIX = {
         "agents.run_grn_retrieval", "agents.run_reconciliation_assist",
         "agents.run_exception_analysis", "agents.run_review_routing",
         "agents.run_case_summary",
+        # Deterministic system agents
+        "agents.run_system_review_routing", "agents.run_system_case_summary",
+        "agents.run_system_bulk_extraction_intake", "agents.run_system_case_intake",
+        "agents.run_system_posting_preparation",
         # Read access for tools
         "invoices.view", "reconciliation.view",
         "purchase_orders.view", "grns.view", "vendors.view",

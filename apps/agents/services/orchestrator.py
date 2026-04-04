@@ -39,11 +39,30 @@ from apps.agents.services.policy_engine import PolicyEngine
 from apps.agents.services.reasoning_planner import ReasoningPlanner
 from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
 from apps.core.decorators import observed_service
+from apps.core.evaluation_constants import (
+    AGENT_PIPELINE_AGENTS_EXECUTED_COUNT,
+    AGENT_PIPELINE_AUTO_CLOSE_CANDIDATE,
+    AGENT_PIPELINE_ESCALATION_TRIGGERED,
+    AGENT_PIPELINE_FINAL_CONFIDENCE,
+    AGENT_PIPELINE_RECOMMENDATION_PRESENT,
+    TRACE_AGENT_PIPELINE,
+)
 from apps.core.metrics import MetricsService
 
 # Only these agents should emit formal recommendations to avoid duplicates.
 # Other agents contribute analysis/reasoning via summarized_reasoning on the run.
-_RECOMMENDING_AGENTS = {AgentType.REVIEW_ROUTING, AgentType.CASE_SUMMARY}
+_RECOMMENDING_AGENTS = {
+    AgentType.REVIEW_ROUTING,
+    AgentType.CASE_SUMMARY,
+    AgentType.SYSTEM_REVIEW_ROUTING,
+    AgentType.SYSTEM_CASE_SUMMARY,
+}
+
+# Map legacy deterministic tail agent types to their system-agent replacements.
+_SYSTEM_AGENT_REPLACEMENTS: Dict[str, str] = {
+    AgentType.REVIEW_ROUTING: AgentType.SYSTEM_REVIEW_ROUTING,
+    AgentType.CASE_SUMMARY: AgentType.SYSTEM_CASE_SUMMARY,
+}
 
 # Agents whose findings can be applied back to re-run deterministic matching.
 _FEEDBACK_AGENTS = {AgentType.PO_RETRIEVAL}
@@ -165,30 +184,36 @@ class AgentOrchestrator:
 
         try:
             from apps.core.langfuse_client import start_trace
+            from apps.core.observability_helpers import (
+                build_observability_context,
+                derive_session_id,
+            )
             _lf_trace = start_trace(
                 trace_id=trace_ctx.trace_id,
-                name="agent_pipeline",
+                name=TRACE_AGENT_PIPELINE,
                 invoice_id=result.invoice_id,
                 result_id=result.pk,
                 user_id=actor.pk if actor else None,
-                session_id=f"invoice-{result.invoice_id}" if result.invoice_id else None,
-                metadata={
-                    "invoice_id": result.invoice_id,
-                    "reconciliation_result_id": result.pk,
-                    "case_id": _case_id,
-                    "case_number": _case_number,
-                    "reconciliation_mode": _recon_mode,
-                    "prior_match_status": _prior_match_status,
-                    "exception_count": _exc_count,
-                    "po_number": (
+                session_id=derive_session_id(invoice_id=result.invoice_id),
+                metadata=build_observability_context(
+                    invoice_id=result.invoice_id,
+                    reconciliation_result_id=result.pk,
+                    case_id=_case_id,
+                    case_number=_case_number,
+                    reconciliation_mode=_recon_mode,
+                    match_status=_prior_match_status,
+                    actor_user_id=actor.pk if actor else None,
+                    po_number=(
                         result.purchase_order.po_number if result.purchase_order else ""
                     ),
-                    "vendor_name": _vendor_name,
-                    "vendor_id": getattr(result.invoice, "vendor_id", None) if result.invoice else None,
-                    "grn_available": getattr(result, "grn_available", False),
-                    "actor_user_id": actor.pk if actor else None,
-                    "source": "agentic",
-                },
+                    vendor_name=_vendor_name,
+                    source="agentic",
+                    **{
+                        "exception_count": _exc_count,
+                        "vendor_id": getattr(result.invoice, "vendor_id", None) if result.invoice else None,
+                        "grn_available": getattr(result, "grn_available", False),
+                    },
+                ),
             )
         except Exception:
             _lf_trace = None
@@ -512,28 +537,28 @@ class AgentOrchestrator:
                 if orch_result.final_confidence is not None:
                     score_trace(
                         trace_ctx.trace_id,
-                        "agent_pipeline_final_confidence",
+                        AGENT_PIPELINE_FINAL_CONFIDENCE,
                         orch_result.final_confidence,
                         comment=orch_result.final_recommendation or "",
                     )
                 score_trace(
                     trace_ctx.trace_id,
-                    "agent_pipeline_recommendation_present",
+                    AGENT_PIPELINE_RECOMMENDATION_PRESENT,
                     1.0 if _has_recommendation else 0.0,
                 )
                 score_trace(
                     trace_ctx.trace_id,
-                    "agent_pipeline_escalation_triggered",
+                    AGENT_PIPELINE_ESCALATION_TRIGGERED,
                     1.0 if _has_escalation else 0.0,
                 )
                 score_trace(
                     trace_ctx.trace_id,
-                    "agent_pipeline_auto_close_candidate",
+                    AGENT_PIPELINE_AUTO_CLOSE_CANDIDATE,
                     1.0 if _auto_close_candidate else 0.0,
                 )
                 score_trace(
                     trace_ctx.trace_id,
-                    "agent_pipeline_agents_executed_count",
+                    AGENT_PIPELINE_AGENTS_EXECUTED_COUNT,
                     float(len(orch_result.agents_executed)),
                 )
             except Exception:
@@ -683,7 +708,13 @@ class AgentOrchestrator:
         deterministic_agents: list,
         last_llm_output: Optional[AgentRun],
     ) -> None:
-        """Run the deterministic resolver for tail agents and create records."""
+        """Run the deterministic resolver for tail agents and create records.
+
+        REVIEW_ROUTING and CASE_SUMMARY are executed via their formal
+        system-agent counterparts (``SystemReviewRoutingAgent`` and
+        ``SystemCaseSummaryAgent``).  EXCEPTION_ANALYSIS retains the
+        legacy synthetic AgentRun approach.
+        """
         # Re-fetch exceptions (may have changed from feedback loop)
         fresh_exceptions = list(
             result.exceptions.values(
@@ -701,103 +732,164 @@ class AgentOrchestrator:
             prior_rec = payload.get("recommendation_type")
             prior_conf = last_llm_output.confidence or 0.0
 
-        resolution = self.resolver.resolve(
-            result, fresh_exceptions,
-            prior_recommendation=prior_rec,
-            prior_confidence=prior_conf,
-        )
-
-        now = timezone.now()
         actor = getattr(self, "_actor", None)
         actor_rbac = AgentGuardrailsService.build_rbac_snapshot(actor) if actor else {}
+
+        # Separate system-agent-eligible from legacy synthetic
+        system_agent_types = []
+        legacy_agent_types = []
         for det_agent_type in deterministic_agents:
-            det_run = AgentRun.objects.create(
-                agent_type=det_agent_type,
+            if det_agent_type in _SYSTEM_AGENT_REPLACEMENTS:
+                system_agent_types.append(det_agent_type)
+            else:
+                legacy_agent_types.append(det_agent_type)
+
+        # ---- Legacy synthetic path (EXCEPTION_ANALYSIS) -----------------
+        if legacy_agent_types:
+            resolution = self.resolver.resolve(
+                result, fresh_exceptions,
+                prior_recommendation=prior_rec,
+                prior_confidence=prior_conf,
+            )
+            now = timezone.now()
+            for det_agent_type in legacy_agent_types:
+                det_run = AgentRun.objects.create(
+                    agent_type=det_agent_type,
+                    reconciliation_result=result,
+                    status=AgentRunStatus.COMPLETED,
+                    input_payload={
+                        "exceptions": [
+                            {k: str(v) for k, v in e.items()} for e in fresh_exceptions
+                        ],
+                        "resolver": "deterministic",
+                    },
+                    output_payload={
+                        "recommendation_type": resolution.recommendation_type,
+                        "reasoning": resolution.reasoning,
+                        "evidence": resolution.evidence,
+                        "resolver": "deterministic",
+                    },
+                    summarized_reasoning=resolution.reasoning,
+                    confidence=resolution.confidence,
+                    started_at=now,
+                    completed_at=now,
+                    duration_ms=0,
+                    llm_model_used="deterministic",
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    actor_user_id=actor.pk if actor else None,
+                    actor_primary_role=actor_rbac.get("actor_primary_role", ""),
+                    actor_roles_snapshot_json=actor_rbac.get("actor_roles_snapshot", []),
+                    permission_source=actor_rbac.get("permission_source", ""),
+                    access_granted=True,
+                )
+                orch.agents_executed.append(det_agent_type)
+                orch.agent_runs.append(det_run)
+
+        # ---- System-agent path (REVIEW_ROUTING, CASE_SUMMARY) -----------
+        for det_agent_type in system_agent_types:
+            system_type = _SYSTEM_AGENT_REPLACEMENTS[det_agent_type]
+            agent_cls = AGENT_CLASS_REGISTRY.get(system_type)
+            if not agent_cls:
+                logger.warning(
+                    "System agent class not found for %s; falling back to legacy",
+                    system_type,
+                )
+                continue
+
+            # Build context for the system agent
+            _lf_trace = getattr(self, "_lf_trace", None)
+            sys_ctx = AgentContext(
                 reconciliation_result=result,
-                status=AgentRunStatus.COMPLETED,
-                input_payload={
-                    "exceptions": [
-                        {k: str(v) for k, v in e.items()} for e in fresh_exceptions
-                    ],
-                    "resolver": "deterministic",
-                },
-                output_payload={
-                    "recommendation_type": resolution.recommendation_type,
-                    "reasoning": resolution.reasoning,
-                    "evidence": resolution.evidence,
-                    "resolver": "deterministic",
-                },
-                summarized_reasoning=(
-                    resolution.case_summary
-                    if det_agent_type == AgentType.CASE_SUMMARY
-                    else resolution.reasoning
+                invoice_id=result.invoice_id,
+                po_number=(
+                    result.purchase_order.po_number
+                    if result.purchase_order else None
                 ),
-                confidence=resolution.confidence,
-                started_at=now,
-                completed_at=now,
-                duration_ms=0,
-                llm_model_used="deterministic",
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-                # RBAC fields
+                exceptions=fresh_exceptions,
+                reconciliation_mode=getattr(result, "reconciliation_mode", "") or "",
+                extra={
+                    "prior_recommendation": prior_rec,
+                    "prior_confidence": prior_conf,
+                },
                 actor_user_id=actor.pk if actor else None,
                 actor_primary_role=actor_rbac.get("actor_primary_role", ""),
-                actor_roles_snapshot_json=actor_rbac.get("actor_roles_snapshot", []),
+                actor_roles_snapshot=actor_rbac.get("actor_roles_snapshot", []),
                 permission_source=actor_rbac.get("permission_source", ""),
                 access_granted=True,
+                trace_id=getattr(self, "_trace_id", "") or "",
+                _langfuse_trace=_lf_trace,
             )
+
+            agent = agent_cls()
+            sys_run = agent.run(sys_ctx)
+
+            # Track under the original agent type name for plan consistency
             orch.agents_executed.append(det_agent_type)
-            orch.agent_runs.append(det_run)
+            orch.agent_runs.append(sys_run)
 
-            # Create recommendation for RECOMMENDING agents (same as LLM path)
-            if det_agent_type in _RECOMMENDING_AGENTS:
-                try:
-                    rec = self.decision_service.log_recommendation(
-                        agent_run=det_run,
-                        reconciliation_result=result,
-                        recommendation_type=resolution.recommendation_type,
-                        confidence=resolution.confidence,
-                        reasoning=resolution.reasoning,
-                        evidence=resolution.evidence,
-                    )
-                except IntegrityError:
-                    logger.warning(
-                        "Duplicate recommendation skipped: result=%s type=%s agent_run=%s",
-                        result.pk, resolution.recommendation_type, det_run.pk,
-                    )
-                else:
-                    rec.invoice_id = result.invoice_id
-                    rec.save(update_fields=["invoice_id"])
+            # Create recommendation for RECOMMENDING agents
+            if det_agent_type in _RECOMMENDING_AGENTS and sys_run.status == AgentRunStatus.COMPLETED:
+                out_payload = sys_run.output_payload or {}
+                rec_type = out_payload.get("recommendation_type")
+                if rec_type:
+                    try:
+                        rec = self.decision_service.log_recommendation(
+                            agent_run=sys_run,
+                            reconciliation_result=result,
+                            recommendation_type=rec_type,
+                            confidence=sys_run.confidence or 0.0,
+                            reasoning=out_payload.get("reasoning", ""),
+                            evidence=out_payload.get("evidence", {}),
+                        )
+                    except IntegrityError:
+                        logger.warning(
+                            "Duplicate recommendation skipped: result=%s type=%s agent_run=%s",
+                            result.pk, rec_type, sys_run.pk,
+                        )
+                    else:
+                        rec.invoice_id = result.invoice_id
+                        rec.save(update_fields=["invoice_id"])
 
-                    from apps.auditlog.services import AuditService
-                    from apps.core.enums import AuditEventType
-                    AuditService.log_event(
-                        entity_type="Invoice",
-                        entity_id=result.invoice_id,
-                        event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
-                        description=(
-                            f"Deterministic resolver ('{det_agent_type}') recommended "
-                            f"{resolution.recommendation_type} "
-                            f"(confidence: {resolution.confidence:.0%})"
-                        ),
-                        agent=det_agent_type,
-                        metadata={
-                            "recommendation_type": resolution.recommendation_type,
-                            "confidence": resolution.confidence,
-                            "resolver": "deterministic",
-                        },
-                    )
+                        from apps.auditlog.services import AuditService
+                        from apps.core.enums import AuditEventType
+                        AuditService.log_event(
+                            entity_type="Invoice",
+                            entity_id=result.invoice_id,
+                            event_type=AuditEventType.AGENT_RECOMMENDATION_CREATED,
+                            description=(
+                                f"System agent '{system_type}' recommended "
+                                f"{rec_type} "
+                                f"(confidence: {sys_run.confidence:.0%})"
+                            ),
+                            agent=str(system_type),
+                            metadata={
+                                "recommendation_type": rec_type,
+                                "confidence": sys_run.confidence,
+                                "resolver": "deterministic",
+                                "system_agent": str(system_type),
+                            },
+                        )
 
-        # Persist the case summary on the result
-        result.summary = resolution.case_summary
-        result.save(update_fields=["summary", "updated_at"])
+        # Persist the case summary on the result from the case summary agent
+        case_summary_run = None
+        for run in orch.agent_runs:
+            if run.agent_type in (
+                AgentType.SYSTEM_CASE_SUMMARY, AgentType.CASE_SUMMARY,
+            ):
+                case_summary_run = run
+                break
+
+        if case_summary_run and case_summary_run.summarized_reasoning:
+            result.summary = case_summary_run.summarized_reasoning
+            result.save(update_fields=["summary", "updated_at"])
 
         logger.info(
-            "Deterministic resolution applied for result %s: %s (confidence=%.2f, "
-            "agents=%s)",
-            result.pk, resolution.recommendation_type, resolution.confidence,
-            deterministic_agents,
+            "Deterministic resolution applied for result %s: "
+            "legacy=%s, system=%s",
+            result.pk, legacy_agent_types,
+            [_SYSTEM_AGENT_REPLACEMENTS.get(a, a) for a in system_agent_types],
         )
 
     # ------------------------------------------------------------------

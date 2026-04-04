@@ -229,3 +229,212 @@ def agent_governance(request):
         "agent_types": AgentType.choices,
         "agent_statuses": AgentRunStatus.choices,
     })
+
+
+# ---------------------------------------------------------------------------
+# Invoice Pipeline -- Kanban Board
+# ---------------------------------------------------------------------------
+
+@login_required
+def invoice_pipeline(request):
+    """Invoice Pipeline -- kanban board showing invoices across lifecycle stages."""
+    from apps.documents.models import Invoice
+    from apps.extraction.models import ExtractionResult
+    from apps.reconciliation.models import ReconciliationResult, ReconciliationException
+    from apps.reviews.models import ReviewAssignment
+    from apps.posting.models import InvoicePosting
+    from apps.cases.models import APCase
+    from apps.agents.models import AgentRun
+    from apps.core.enums import InvoiceStatus, AgentRunStatus
+
+    STAGES = [
+        {"key": "intake", "label": "Intake", "icon": "bi-inbox", "color": "#6c757d", "bg": "#f8f9fa"},
+        {"key": "reconciliation", "label": "Reconciliation", "icon": "bi-check2-all", "color": "#6f42c1", "bg": "#f3e8ff"},
+        {"key": "human_review", "label": "Review", "icon": "bi-person-check", "color": "#ff9800", "bg": "#fff8e1"},
+        {"key": "posting", "label": "Posting", "icon": "bi-send", "color": "#2196f3", "bg": "#e3f2fd"},
+        {"key": "completed", "label": "Completed", "icon": "bi-check-circle", "color": "#198754", "bg": "#e8f5e9"},
+    ]
+
+    invoices = Invoice.objects.select_related("vendor").order_by("-created_at")
+    invoice_ids = list(invoices.values_list("id", flat=True))
+
+    ext_map = {}
+    for er in ExtractionResult.objects.filter(invoice_id__in=invoice_ids).only("id", "invoice_id"):
+        ext_map[er.invoice_id] = er.id
+
+    case_map = {}
+    for c in APCase.objects.filter(invoice_id__in=invoice_ids).only(
+        "id", "invoice_id", "status", "case_number", "processing_path",
+    ):
+        case_map[c.invoice_id] = c
+
+    recon_map = {}
+    for rr in ReconciliationResult.objects.filter(invoice_id__in=invoice_ids).only(
+        "id", "invoice_id", "match_status", "reconciliation_mode",
+        "total_amount_difference", "total_amount_difference_pct",
+    ):
+        recon_map[rr.invoice_id] = rr
+
+    # Exception counts per reconciliation result
+    exception_count_map = {}  # invoice_id -> count
+    recon_ids = [rr.id for rr in recon_map.values()]
+    if recon_ids:
+        from django.db.models import Count
+        exc_qs = (
+            ReconciliationException.objects
+            .filter(result_id__in=recon_ids, resolved=False)
+            .values("result__invoice_id")
+            .annotate(cnt=Count("id"))
+        )
+        for row in exc_qs:
+            exception_count_map[row["result__invoice_id"]] = row["cnt"]
+
+    review_map = {}
+    for ra in (
+        ReviewAssignment.objects
+        .filter(reconciliation_result__invoice_id__in=invoice_ids)
+        .select_related("reconciliation_result", "assigned_to")
+        .only("id", "status", "priority", "reconciliation_result__invoice_id",
+              "assigned_to__email", "assigned_to__first_name")
+    ):
+        review_map[ra.reconciliation_result.invoice_id] = ra
+
+    posting_map = {}
+    for p in InvoicePosting.objects.filter(invoice_id__in=invoice_ids).only("id", "invoice_id", "status"):
+        posting_map[p.invoice_id] = p
+
+    # Build agent-type map: invoice_id -> list of distinct agent types that ran
+    AGENT_ICON_MAP = {
+        "INVOICE_EXTRACTION": {"short": "Ext", "icon": "bi-file-earmark-text", "title": "Invoice Extraction"},
+        "INVOICE_UNDERSTANDING": {"short": "Und", "icon": "bi-lightbulb", "title": "Invoice Understanding"},
+        "PO_RETRIEVAL": {"short": "PO", "icon": "bi-cart-check", "title": "PO Retrieval"},
+        "GRN_RETRIEVAL": {"short": "GRN", "icon": "bi-truck", "title": "GRN Retrieval"},
+        "RECONCILIATION_ASSIST": {"short": "Recon", "icon": "bi-check2-all", "title": "Reconciliation Assist"},
+        "EXCEPTION_ANALYSIS": {"short": "Exc", "icon": "bi-exclamation-triangle", "title": "Exception Analysis"},
+        "REVIEW_ROUTING": {"short": "Rev", "icon": "bi-signpost-split", "title": "Review Routing"},
+        "CASE_SUMMARY": {"short": "Sum", "icon": "bi-journal-text", "title": "Case Summary"},
+    }
+    agent_map = {}  # invoice_id -> [{short, icon, title, status}]
+
+    def _add_agent(inv_id, agent_type, run_status):
+        if inv_id not in agent_map:
+            agent_map[inv_id] = []
+        info = AGENT_ICON_MAP.get(agent_type, {"short": agent_type[:3], "icon": "bi-robot", "title": agent_type})
+        existing = [a for a in agent_map[inv_id] if a["title"] == info["title"]]
+        if existing:
+            existing[0]["status"] = run_status
+        else:
+            agent_map[inv_id].append({**info, "status": run_status})
+
+    # Agents linked via reconciliation_result -> invoice
+    for inv_id, agent_type, run_status in (
+        AgentRun.objects
+        .filter(reconciliation_result__invoice_id__in=invoice_ids)
+        .values_list("reconciliation_result__invoice_id", "agent_type", "status")
+        .order_by("created_at")
+    ):
+        _add_agent(inv_id, agent_type, run_status)
+
+    # Agents linked via document_upload -> invoice (extraction agents)
+    upload_inv_map = dict(
+        Invoice.objects
+        .filter(id__in=invoice_ids, document_upload_id__isnull=False)
+        .values_list("document_upload_id", "id")
+    )
+    if upload_inv_map:
+        for upload_id, agent_type, run_status in (
+            AgentRun.objects
+            .filter(document_upload_id__in=upload_inv_map.keys())
+            .values_list("document_upload_id", "agent_type", "status")
+            .order_by("created_at")
+        ):
+            inv_id = upload_inv_map.get(upload_id)
+            if inv_id:
+                _add_agent(inv_id, agent_type, run_status)
+
+    stage_buckets = {s["key"]: [] for s in STAGES}
+
+    for inv in invoices:
+        posting = posting_map.get(inv.id)
+        review = review_map.get(inv.id)
+        case = case_map.get(inv.id)
+        recon = recon_map.get(inv.id)
+        ext_id = ext_map.get(inv.id)
+
+        card = {
+            "id": inv.id,
+            "invoice_number": inv.invoice_number or "N/A",
+            "vendor": inv.raw_vendor_name or (inv.vendor.name if inv.vendor_id else "Unknown"),
+            "amount": inv.total_amount,
+            "currency": inv.currency or "INR",
+            "date": inv.invoice_date,
+            "status": inv.status,
+            "confidence": inv.extraction_confidence,
+            "po_number": inv.po_number,
+            "ext_id": ext_id,
+            "case": case,
+            "recon": recon,
+            "agents": agent_map.get(inv.id, []),
+            # Stage-specific enrichment
+            "recon_mode": getattr(recon, "reconciliation_mode", None),
+            "match_status": getattr(recon, "match_status", None),
+            "amount_diff": getattr(recon, "total_amount_difference", None),
+            "amount_diff_pct": getattr(recon, "total_amount_difference_pct", None),
+            "exception_count": exception_count_map.get(inv.id, 0),
+            "processing_path": getattr(case, "processing_path", None),
+            "review": review,
+            "reviewer": (
+                review.assigned_to.first_name or review.assigned_to.email.split("@")[0]
+                if review and review.assigned_to_id else None
+            ),
+            "review_priority": getattr(review, "priority", None),
+            "posting": posting,
+        }
+
+        if posting and posting.status == "POSTED":
+            card["sub_status"] = "Posted"
+            stage_buckets["completed"].append(card)
+        elif posting and posting.status not in ("POSTED", "REJECTED", "SKIPPED"):
+            card["sub_status"] = posting.status.replace("_", " ").title()
+            stage_buckets["posting"].append(card)
+        elif review and review.status in ("PENDING", "ASSIGNED", "IN_REVIEW"):
+            card["sub_status"] = review.status.replace("_", " ").title()
+            stage_buckets["human_review"].append(card)
+        elif case and case.status in ("READY_FOR_REVIEW", "IN_REVIEW", "REVIEW_COMPLETED"):
+            card["sub_status"] = case.status.replace("_", " ").title()
+            stage_buckets["human_review"].append(card)
+        elif case and case.status in ("NEW", "INTAKE_IN_PROGRESS", "AGENT_IN_PROGRESS"):
+            card["sub_status"] = "Agent Processing"
+            stage_buckets["human_review"].append(card)
+        elif inv.status == InvoiceStatus.RECONCILED:
+            card["sub_status"] = recon.match_status.replace("_", " ").title() if recon else "Reconciled"
+            stage_buckets["reconciliation"].append(card)
+        elif inv.status == InvoiceStatus.READY_FOR_RECON:
+            card["sub_status"] = "Awaiting Reconciliation"
+            stage_buckets["reconciliation"].append(card)
+        elif inv.status == InvoiceStatus.PENDING_APPROVAL:
+            card["sub_status"] = "Pending Approval"
+            stage_buckets["intake"].append(card)
+        elif inv.status in (InvoiceStatus.EXTRACTED, InvoiceStatus.VALIDATED, InvoiceStatus.EXTRACTION_IN_PROGRESS):
+            card["sub_status"] = inv.status.replace("_", " ").title()
+            stage_buckets["intake"].append(card)
+        elif inv.status == InvoiceStatus.UPLOADED:
+            card["sub_status"] = "Uploaded"
+            stage_buckets["intake"].append(card)
+        elif review and review.status == "APPROVED":
+            card["sub_status"] = "Review Approved"
+            stage_buckets["completed"].append(card)
+        else:
+            card["sub_status"] = inv.status.replace("_", " ").title() if inv.status else "Unknown"
+            stage_buckets["intake"].append(card)
+
+    for stage in STAGES:
+        stage["cards"] = stage_buckets[stage["key"]]
+        stage["count"] = len(stage["cards"])
+
+    total = sum(s["count"] for s in STAGES)
+
+    return render(request, "dashboard/invoice_pipeline.html", {
+        "stages": STAGES,
+        "total": total,
+    })

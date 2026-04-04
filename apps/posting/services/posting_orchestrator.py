@@ -130,6 +130,54 @@ class PostingOrchestrator:
                 )
 
             posting.save()
+
+            # --- System agent: governance-visible posting preparation record ---
+            try:
+                from apps.agents.services.system_agent_classes import (
+                    SystemPostingPreparationAgent,
+                )
+                from apps.agents.services.base_agent import AgentContext
+
+                _normalized = posting_run.normalized_posting_data_json or {}
+                _lines = _normalized.get("lines", [])
+                _header = _normalized.get("header", {})
+
+                _posting_ctx = AgentContext(
+                    reconciliation_result=None,
+                    invoice_id=invoice.pk,
+                    extra={
+                        "posting_run_id": posting_run.pk,
+                        "posting_status": str(posting.status),
+                        "confidence": posting.posting_confidence or 0.0,
+                        "is_touchless": posting.is_touchless,
+                        "review_queues": (
+                            [posting.review_queue]
+                            if posting.review_queue else []
+                        ),
+                        "vendor_mapped": bool(_header.get("vendor_id")),
+                        "item_mapping_rate": (
+                            len([ln for ln in _lines if ln.get("item_id")])
+                            / max(len(_lines), 1)
+                        ),
+                        "validation_errors": posting_run.issues.filter(
+                            severity="ERROR",
+                        ).count(),
+                        "validation_warnings": posting_run.issues.filter(
+                            severity="WARNING",
+                        ).count(),
+                    },
+                    actor_primary_role="SYSTEM_AGENT",
+                    actor_roles_snapshot=["SYSTEM_AGENT"],
+                    permission_source="system",
+                    access_granted=True,
+                )
+                SystemPostingPreparationAgent().run(_posting_ctx)
+            except Exception:
+                logger.debug(
+                    "SystemPostingPreparationAgent skipped for invoice %s",
+                    invoice_id, exc_info=True,
+                )
+
             return posting
 
         except Exception as exc:

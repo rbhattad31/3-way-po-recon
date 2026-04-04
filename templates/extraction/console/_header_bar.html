@@ -138,6 +138,15 @@
           <i class="bi bi-qr-code me-1"></i>No QR
         </span>
         {% endif %}
+
+        {# Agent decisions / recommendations -- inline badges #}
+        {% if agent_decisions %}
+        {% for dec in agent_decisions %}
+        <span class="badge bg-info-subtle text-info" title="{{ dec.agent_type }}: {{ dec.decision }}">
+          <i class="bi bi-lightbulb me-1"></i>{{ dec.recommendation_type|default:dec.decision_type }}
+        </span>
+        {% endfor %}
+        {% endif %}
       </div>
 
       {# RIGHT: Actions #}
@@ -178,9 +187,11 @@
         {% endif %}
 
         {% if permissions.can_reprocess and ext.document_upload.blob_path %}
+        {% if not approval or approval.status == 'PENDING' %}
         <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#reprocessModal">
           <i class="bi bi-arrow-repeat me-1"></i>Reprocess
         </button>
+        {% endif %}
         {% endif %}
 
         {% if permissions.can_escalate %}
@@ -193,28 +204,7 @@
           <i class="bi bi-chat-dots me-1"></i>Comment
         </button>
 
-        {# JSON download — admin/auditor only #}
-        {% has_permission "governance.view" as can_view_json %}
-        {% if can_view_json and ext.raw_response %}
-        <a href="{% url 'extraction:result_json' ext.pk %}" class="btn btn-outline-secondary btn-sm" title="Download JSON">
-          <i class="bi bi-download me-1"></i>JSON
-        </a>
-        {% endif %}
-
-        {# View PDF #}
-        <a href="{% url 'extraction:view_pdf' ext.pk %}" class="btn btn-outline-secondary btn-sm" target="_blank" title="View source document in new tab">
-          <i class="bi bi-file-earmark-pdf me-1"></i>View PDF
-        </a>
-
-        {# Invoice Detail link — admin/auditor only #}
-        {% has_permission "governance.view" as can_view_invoice_detail %}
-        {% if can_view_invoice_detail and invoice %}
-        <a href="{% url 'documents:invoice_detail' invoice.pk %}" class="btn btn-outline-primary btn-sm" title="Full invoice view">
-          <i class="bi bi-file-earmark-text me-1"></i>Invoice
-        </a>
-        {% endif %}
-
-        {# Approval link — show only when NOT pending (already handled by Approve button) #}
+        {# Approval link -- show only when NOT pending (already handled by Approve button) #}
         {% if approval and approval.status != 'PENDING' %}
         <a href="{% url 'extraction:approval_detail' approval.pk %}" class="btn btn-sm btn-outline-info" title="Extraction approval">
           <i class="bi bi-{% if approval.status == 'APPROVED' or approval.status == 'AUTO_APPROVED' %}check-circle-fill{% else %}x-circle{% endif %} me-1"></i>{{ approval.status }}

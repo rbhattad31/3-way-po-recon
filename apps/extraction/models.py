@@ -48,7 +48,11 @@ class ExtractionResult(BaseModel):
     ocr_text = models.TextField(
         blank=True,
         default="",
-        help_text="Raw OCR text sent to the LLM — preserved for debugging missed extractions",
+        help_text="Raw OCR text sent to the LLM -- preserved for debugging missed extractions",
+    )
+    langfuse_trace_id = models.CharField(
+        max_length=64, blank=True, default="", db_index=True,
+        help_text="Langfuse root trace ID for the extraction pipeline run",
     )
 
     class Meta:

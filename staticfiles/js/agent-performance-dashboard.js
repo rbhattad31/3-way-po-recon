@@ -9,6 +9,7 @@
   let _charts = {};
   let _feedInterval = null;
   let _filters = {};
+  let _cacheCounter = 0;
 
   // ── Agent type labels & colors ──
   const AGENT_LABELS = {
@@ -195,7 +196,10 @@
 
   // ── 4. Latency chart ──
   async function loadLatencyWidgets() {
-    var d = await apiFetch(BASE + "/latency/" + qs(_filters));
+    _cacheCounter++;
+    var filterStr = qs(_filters);
+    var sep = filterStr ? "&" : "?";
+    var d = await apiFetch(BASE + "/latency/" + filterStr + sep + "cb=" + _cacheCounter);
     if (!d) return;
 
     var tbody = document.getElementById("slowestRunsBody");
@@ -370,7 +374,10 @@
 
   // -- 8. Recent Runs --
   async function loadLiveFeed() {
-    var d = await apiFetch(BASE + "/live-feed/" + qs(_filters));
+    _cacheCounter++;
+    var filterStr2 = qs(_filters);
+    var sep2 = filterStr2 ? "&" : "?";
+    var d = await apiFetch(BASE + "/live-feed/" + filterStr2 + sep2 + "cb=" + _cacheCounter);
     var tbody = document.getElementById("recentRunsBody");
     if (!tbody) return;
     if (!d || !d.length) {

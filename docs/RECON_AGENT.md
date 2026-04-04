@@ -2,7 +2,7 @@
 
 **App paths:** `apps/reconciliation/` + `apps/agents/` + `apps/tools/`
 **Dependencies:** `apps/documents/`, `apps/erp_integration/`, `apps/reviews/`, `apps/auditlog/`, `apps/core/`
-**Status:** Production-ready -- deterministic engine (2-way + 3-way), LLM agent pipeline (8 agent types), ERP-backed source resolution, full RBAC enforcement, Langfuse tracing.
+**Status:** Production-ready -- deterministic engine (2-way + 3-way), LLM agent pipeline (8 LLM + 5 deterministic system agents = 13 total), ERP-backed source resolution, full RBAC enforcement, Langfuse tracing.
 
 ---
 
@@ -635,7 +635,7 @@ AgentOrchestrator()
 7. **Skip check**: If `plan.skip_agents`: create COMPLETED orchestration run, optionally auto-close, return.
 8. **Duplicate-run guard**: Query for any `RUNNING` `AgentOrchestrationRun` for this result. If found, return `OrchestrationResult(skipped=True)`.
 9. **Create `AgentOrchestrationRun`** (status=RUNNING).
-10. **Partition plan**: Split `plan.agents` into `llm_agents` (non-deterministic) and `deterministic_tail` (EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY -- may be replaced by `DeterministicResolver`).
+10. **Partition plan**: Split `plan.agents` into `llm_agents` (non-deterministic) and `deterministic_tail` (EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY -- replaced by `DeterministicResolver` / `DeterministicSystemAgent` subclasses).
 11. **Build `AgentContext`**: Attach `result`, `invoice_id`, `po_number`, `exceptions`, `reconciliation_mode`, RBAC fields.
 12. **Build `AgentMemory`**: Pre-seed facts: `grn_available`, `grn_fully_received`, `is_two_way`, `vendor_name`, `match_status`, `extraction_confidence`.
 13. **Execute LLM agents**: For each `agent_type` in `llm_agents`:
@@ -645,7 +645,7 @@ AgentOrchestrator()
     - Update `AgentMemory.record_agent_output()`.
     - Check feedback: `AgentFeedbackService.maybe_re_reconcile(agent_type, agent_run, ctx)`.
     - Emit `score_trace("agent_confidence", ...)`.
-14. **Execute deterministic tail**: Call `DeterministicResolver.resolve()` to produce `DeterministicResolution`. Create synthetic `AgentRun` records for auditability.
+14. **Execute deterministic tail**: For REVIEW_ROUTING and CASE_SUMMARY, instantiate their system agent replacements (`SystemReviewRoutingAgent`, `SystemCaseSummaryAgent`) from `_SYSTEM_AGENT_REPLACEMENTS` and call `agent.run(ctx)`. For EXCEPTION_ANALYSIS, call `DeterministicResolver.resolve()` directly with synthetic `AgentRun` records. All produce `DeterministicResolution` with full auditability.
 15. **Recommendations**: If plan includes `_RECOMMENDING_AGENTS`, call `RecommendationService.create()` with dedup guard.
 16. **Finalize**: Update `AgentOrchestrationRun` to COMPLETED (or PARTIAL if any LLM agent failed).
 
@@ -746,6 +746,11 @@ Replaces the `EXCEPTION_ANALYSIS`, `REVIEW_ROUTING`, and `CASE_SUMMARY` agents w
 ```python
 DeterministicResolver.REPLACED_AGENTS = {"EXCEPTION_ANALYSIS", "REVIEW_ROUTING", "CASE_SUMMARY"}
 ```
+
+REVIEW_ROUTING and CASE_SUMMARY are now executed as `DeterministicSystemAgent` subclasses
+(`SystemReviewRoutingAgent`, `SystemCaseSummaryAgent`) that wrap `DeterministicResolver.resolve()`
+internally while producing standard `AgentRun`, `DecisionLog`, Langfuse spans, and audit events.
+EXCEPTION_ANALYSIS still uses `DeterministicResolver` directly with synthetic `AgentRun` records.
 
 ### Resolution rules (priority order)
 
@@ -1520,9 +1525,20 @@ The reconciliation and agent pipeline emits rich Langfuse traces. All Langfuse c
 ```
 Root trace: "reconciliation_run" (trace_id = run.trace_id or str(run.pk))
   |
+  +--> child span: "po_lookup"      (per invoice, step 1 -- PO lookup with ERP provenance)
+  |     |
+  |     +--> child span: "erp_resolution"  (when ERP connector available via lf_parent_span)
+  |           +--> "erp_cache_lookup"      (BaseResolver cache check)
+  |           +--> "erp_live_lookup"       (BaseResolver live API call)
+  |           +--> "erp_db_fallback"       (BaseResolver DB fallback)
+  |
   +--> child span: "mode_resolution"  (per invoice, step 2)
-  +--> child span: "match_execution"  (per invoice, step 3)
-  +--> child span: "result_save"      (per invoice, step 6)
+  +--> child span: "grn_lookup"       (per invoice, THREE_WAY only, step 3)
+  +--> child span: "match_execution"  (per invoice, step 4)
+  +--> child span: "classification"   (per invoice, step 5)
+  +--> child span: "result_persist"   (per invoice, step 6)
+  +--> child span: "exception_build"  (per invoice, step 7)
+  +--> child span: "review_workflow_trigger" (per invoice, step 8)
   |
   +--> score: "reconciliation_match" (MATCHED=1.0 | PARTIAL=0.5 | REQUIRES_REVIEW=0.3 | UNMATCHED=0.0)
 
@@ -1531,11 +1547,29 @@ Root trace: "agent_pipeline" (trace_id = reconciliation_result.agent_trace_id)
   +--> child span per agent: "agent_{AGENT_TYPE}"
   |     |
   |     +--> child span per tool call: "tool_{tool_name}"
+  |           |
+  |           +--> child span: "erp_resolution"  (for po_lookup / grn_lookup tools)
+  |                 +--> "erp_cache_lookup" / "erp_live_lookup" / "erp_db_fallback"
   |
   +--> score: "agent_confidence" per agent run
   +--> score: "rbac_guardrail" per guardrail decision (1.0=granted | 0.0=denied)
   +--> score: "rbac_data_scope" (0.0 on deny path only)
 ```
+
+### ERP resolution span threading
+
+`POLookupService.lookup()` and `GRNLookupService.lookup()` accept `lf_parent_span=`
+and pass it to `ERPResolutionService.resolve_po/grn()`. In the reconciliation runner,
+`_lf_po` (the po_lookup span) is passed as the parent so ERP spans nest properly.
+
+For agent tools, `BaseAgent._execute_tool()` injects `lf_parent_span=_tool_span`
+into tool kwargs. `POLookupTool` and `GRNLookupTool` forward it to the ERP resolver.
+
+ERP resolution spans emit 6 observation scores (success, latency_ok, result_present,
+fresh, authoritative, used_fallback). Per-stage spans (cache, live, fallback) emit
+additional scores. All metadata is sanitised via `langfuse_helpers.sanitize_erp_metadata()`.
+
+**Full ERP tracing reference**: [LANGFUSE_INTEGRATION.md](../docs/LANGFUSE_INTEGRATION.md) Section 11.
 
 ### Score value conventions
 
@@ -1670,10 +1704,12 @@ Single entry point for recording all agent activity:
 | `services/reasoning_planner.py` | LLM-backed planner (always active); PolicyEngine fallback |
 | `services/policy_engine.py` | Deterministic 7-rule agent selector; auto-close checks |
 | `services/base_agent.py` | BaseAgent with ReAct loop; AgentContext; AgentOutput |
-| `services/agent_classes.py` | All 8 agent implementations + AGENT_CLASS_REGISTRY |
+| `services/agent_classes.py` | All 8 LLM agent implementations + 5 system agents + AGENT_CLASS_REGISTRY |
 | `services/agent_memory.py` | AgentMemory shared in-process state |
 | `services/guardrails_service.py` | RBAC checks; SYSTEM_AGENT identity; guardrail audit logging |
 | `services/deterministic_resolver.py` | Rule-based replacement for 3 LLM agents |
+| `services/deterministic_system_agent.py` | DeterministicSystemAgent base class (skip ReAct loop) |
+| `services/system_agent_classes.py` | 5 concrete system agents (review routing, case summary, bulk intake, case intake, posting prep) |
 | `services/agent_trace_service.py` | Unified governance tracing |
 | `services/recommendation_service.py` | AgentRecommendation create/accept with dedup |
 | `services/decision_log_service.py` | DecisionLog persistence |

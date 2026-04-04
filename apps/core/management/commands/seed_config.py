@@ -36,7 +36,7 @@ from apps.tools.models import ToolDefinition
 
 USERS_DATA = [
     {
-        "email": "admin@mcd-ksa.com",
+        "email": "admin@bradsol.com",
         "first_name": "System",
         "last_name": "Admin",
         "role": UserRole.ADMIN,
@@ -45,39 +45,32 @@ USERS_DATA = [
         "department": "IT",
     },
     {
-        "email": "ap.processor@mcd-ksa.com",
-        "first_name": "Fatima",
-        "last_name": "Al-Rashid",
+        "email": "approcessor@bradsol.com",
+        "first_name": "AP",
+        "last_name": "Processor",
         "role": UserRole.AP_PROCESSOR,
         "department": "Accounts Payable",
     },
     {
-        "email": "reviewer@mcd-ksa.com",
-        "first_name": "Ahmed",
-        "last_name": "Al-Harbi",
+        "email": "reviewer@bradsol.com",
+        "first_name": "Review",
+        "last_name": "Manager",
         "role": UserRole.REVIEWER,
         "department": "Procurement",
     },
     {
-        "email": "finance.mgr@mcd-ksa.com",
-        "first_name": "Khalid",
-        "last_name": "Al-Otaibi",
+        "email": "finance@bradsol.com",
+        "first_name": "Finance",
+        "last_name": "Manager",
         "role": UserRole.FINANCE_MANAGER,
         "department": "Finance",
     },
     {
-        "email": "auditor@mcd-ksa.com",
-        "first_name": "Nora",
-        "last_name": "Al-Sadiq",
+        "email": "auditor@bradsol.com",
+        "first_name": "Internal",
+        "last_name": "Auditor",
         "role": UserRole.AUDITOR,
         "department": "Internal Audit",
-    },
-    {
-        "email": "warehouse.mgr@mcd-ksa.com",
-        "first_name": "Omar",
-        "last_name": "Al-Ghamdi",
-        "role": UserRole.REVIEWER,
-        "department": "Warehouse",
     },
 ]
 
@@ -216,6 +209,57 @@ def create_agent_definitions(admin):
                     "invoice_details", "po_lookup", "grn_lookup",
                 ],
             },
+        },
+        # Deterministic system agents
+        {
+            "agent_type": AgentType.SYSTEM_REVIEW_ROUTING,
+            "name": "System Review Routing Agent",
+            "description": (
+                "Deterministic system agent that applies rule-based review "
+                "routing logic. Wraps the DeterministicResolver to produce "
+                "routing recommendations without LLM calls."
+            ),
+            "config_json": {"allowed_tools": [], "execution_mode": "deterministic"},
+        },
+        {
+            "agent_type": AgentType.SYSTEM_CASE_SUMMARY,
+            "name": "System Case Summary Agent",
+            "description": (
+                "Deterministic system agent that generates case summaries "
+                "from reconciliation data. Wraps the DeterministicResolver "
+                "summary builder without LLM calls."
+            ),
+            "config_json": {"allowed_tools": [], "execution_mode": "deterministic"},
+        },
+        {
+            "agent_type": AgentType.SYSTEM_BULK_EXTRACTION_INTAKE,
+            "name": "System Bulk Extraction Intake Agent",
+            "description": (
+                "Deterministic system agent representing bulk extraction "
+                "intake job orchestration. Records scan, register, and "
+                "dispatch outcomes for governance visibility."
+            ),
+            "config_json": {"allowed_tools": [], "execution_mode": "deterministic"},
+        },
+        {
+            "agent_type": AgentType.SYSTEM_CASE_INTAKE,
+            "name": "System Case Intake Agent",
+            "description": (
+                "Deterministic system agent representing case creation and "
+                "initialization. Records case shell creation, priority "
+                "derivation, and stage initialization."
+            ),
+            "config_json": {"allowed_tools": [], "execution_mode": "deterministic"},
+        },
+        {
+            "agent_type": AgentType.SYSTEM_POSTING_PREPARATION,
+            "name": "System Posting Preparation Agent",
+            "description": (
+                "Deterministic system agent representing posting preparation "
+                "and mapping orchestration. Records vendor/item resolution "
+                "outcomes and posting readiness."
+            ),
+            "config_json": {"allowed_tools": [], "execution_mode": "deterministic"},
         },
     ]
 

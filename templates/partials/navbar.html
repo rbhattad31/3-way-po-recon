@@ -1,21 +1,282 @@
-{# ── AP Operations Topbar ── #}
+{# ── AP Operations Topbar with Navigation ── #}
+{% load rbac_tags %}
 <nav class="ap-topbar">
-  {# Sidebar toggle (visible only in copilot) #}
-  <button class="btn btn-sm btn-light me-2 d-none" id="btnToggleMainMenu" title="Main menu">
-    <i class="bi bi-list"></i>
-  </button>
-
   {# Brand #}
   <a class="ap-topbar-brand" href="{% url 'dashboard:index' %}">
     <span class="ap-topbar-brand-icon"><i class="bi bi-layers"></i></span>
     AP Ops
   </a>
 
-  {# Global search #}
-  <div class="ap-topbar-search position-relative d-none d-md-block">
-    <i class="bi bi-search"></i>
-    <input type="text" class="form-control" placeholder="Search cases, invoices, POs…" id="globalSearch" autocomplete="off">
+  {# ── Main Navigation (dropdowns) ── #}
+  <div class="ap-topbar-nav d-none d-lg-flex">
+
+    {# Command Center (no dropdown) #}
+    <a class="ap-nav-link {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}active{% endif %}"
+       href="{% url 'dashboard:index' %}">
+      <i class="bi bi-cpu me-1"></i>Command Center
+    </a>
+
+    {# Pipeline #}
+    <a class="ap-nav-link {% if request.resolver_match.url_name == 'invoice_pipeline' %}active{% endif %}"
+       href="{% url 'dashboard:invoice_pipeline' %}">
+      <i class="bi bi-kanban me-1"></i>Pipeline
+    </a>
+
+    {# Extraction #}
+    {% has_permission "invoices.view" as can_view_extraction %}
+    {% if can_view_extraction %}
+    <a class="ap-nav-link {% if request.resolver_match.app_name == 'extraction' or request.resolver_match.app_name == 'extraction_control_center' %}active{% endif %}"
+       href="{% url 'extraction:workbench' %}">
+      <i class="bi bi-robot me-1"></i>Extraction
+    </a>
+    {% endif %}
+
+    {# Recon Agent (single link) #}
+    {% has_permission "cases.view" as can_view_cases %}
+    {% if can_view_cases %}
+    <a class="ap-nav-link {% if request.resolver_match.app_name == 'cases' %}active{% endif %}"
+       href="{% url 'cases:case_inbox' %}">
+      <i class="bi bi-briefcase me-1"></i>Recon Agent
+    </a>
+    {% endif %}
+
+    {# Posting Agent (single link) #}
+    {% has_permission "invoices.view" as can_view_invoices %}
+    {% if can_view_invoices %}
+    <a class="ap-nav-link {% if request.resolver_match.app_name == 'posting' and request.resolver_match.url_name == 'posting-workbench' %}active{% endif %}"
+       href="{% url 'posting:posting-workbench' %}">
+      <i class="bi bi-send me-1"></i>Posting
+    </a>
+    {% endif %}
+
+    {# Documents dropdown #}
+    <div class="ap-nav-dropdown">
+      <button class="ap-nav-link {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'grn_list' or request.resolver_match.app_name == 'vendors' %}active{% endif %}"
+              data-bs-toggle="dropdown" aria-expanded="false">
+        <i class="bi bi-folder me-1"></i>Documents<i class="bi bi-chevron-down ms-1" style="font-size:.6rem"></i>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-dark shadow">
+        {% has_permission "invoices.view" as can_view_invoice_list %}
+        {% if can_view_invoice_list %}
+        <li>
+          <a class="dropdown-item {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'invoice_detail' %}active{% endif %}"
+             href="{% url 'documents:invoice_list' %}">
+            <i class="bi bi-file-earmark-text me-2 opacity-75"></i>Invoices
+          </a>
+        </li>
+        {% endif %}
+        {% has_permission "purchase_orders.view" as can_view_pos %}
+        {% if can_view_pos %}
+        <li>
+          <a class="dropdown-item {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active{% endif %}"
+             href="{% url 'documents:po_list' %}">
+            <i class="bi bi-cart-check me-2 opacity-75"></i>Purchase Orders
+          </a>
+        </li>
+        {% endif %}
+        {% has_permission "grns.view" as can_view_grns %}
+        {% if can_view_grns %}
+        <li>
+          <a class="dropdown-item {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active{% endif %}"
+             href="{% url 'documents:grn_list' %}">
+            <i class="bi bi-box-seam me-2 opacity-75"></i>GRNs
+          </a>
+        </li>
+        {% endif %}
+        {% has_permission "vendors.view" as can_view_vendors %}
+        {% if can_view_vendors %}
+        <li>
+          <a class="dropdown-item {% if request.resolver_match.app_name == 'vendors' %}active{% endif %}"
+             href="{% url 'vendors:vendor_list' %}">
+            <i class="bi bi-building me-2 opacity-75"></i>Vendors
+          </a>
+        </li>
+        {% endif %}
+      </ul>
+    </div>
+
+    {# ERP dropdown #}
+    {% if can_view_invoices %}
+    <div class="ap-nav-dropdown">
+      <button class="ap-nav-link {% if request.resolver_match.app_name == 'erp_integration' or request.resolver_match.url_name == 'posting-imports' %}active{% endif %}"
+              data-bs-toggle="dropdown" aria-expanded="false">
+        <i class="bi bi-plug me-1"></i>ERP<i class="bi bi-chevron-down ms-1" style="font-size:.6rem"></i>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-dark shadow">
+        <li>
+          <a class="dropdown-item {% if request.resolver_match.url_name == 'erp_reference_data' %}active{% endif %}"
+             href="{% url 'erp_integration:erp_reference_data' %}">
+            <i class="bi bi-database me-2 opacity-75"></i>Reference Data
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item {% if request.resolver_match.url_name == 'posting-imports' %}active{% endif %}"
+             href="{% url 'posting:posting-imports' %}">
+            <i class="bi bi-cloud-upload me-2 opacity-75"></i>Import Reference Data
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item {% if request.resolver_match.app_name == 'erp_integration' and request.resolver_match.url_name != 'erp_reference_data' %}active{% endif %}"
+             href="{% url 'erp_integration:erp_connection_list' %}">
+            <i class="bi bi-plug me-2 opacity-75"></i>ERP Connections
+          </a>
+        </li>
+      </ul>
+    </div>
+    {% endif %}
+
+    {# More mega menu #}
+    <div class="ap-nav-dropdown ap-mega-dropdown">
+      <button class="ap-nav-link" data-bs-toggle="dropdown" aria-expanded="false">
+        <i class="bi bi-grid-3x3-gap me-1"></i>More<i class="bi bi-chevron-down ms-1" style="font-size:.6rem"></i>
+      </button>
+      <div class="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow ap-mega-menu">
+        <div class="ap-mega-grid">
+
+          {# Column 1: AI & Copilot #}
+          <div class="ap-mega-col">
+            <div class="ap-mega-heading"><i class="bi bi-stars me-1"></i>AI &amp; Copilot</div>
+            {% has_permission "agents.use_copilot" as can_use_copilot %}
+            {% if can_use_copilot %}
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'copilot' %}active{% endif %}"
+               href="{% url 'copilot:workspace' %}">
+              <i class="bi bi-stars me-2 opacity-75"></i>AP Copilot
+            </a>
+            {% endif %}
+            {% has_permission "agents.view" as can_view_agent_runs %}
+            {% if can_view_agent_runs %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_runs_list' %}active{% endif %}"
+               href="{% url 'agents:agent_runs_list' %}">
+              <i class="bi bi-diagram-3 me-2 opacity-75"></i>Agent Runs
+            </a>
+            {% endif %}
+            {% has_permission "procurement.view" as can_view_procurement %}
+            {% if can_view_procurement %}
+            <div class="ap-mega-heading mt-3"><i class="bi bi-cart4 me-1"></i>Procurement</div>
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'procurement' %}active{% endif %}"
+               href="{% url 'procurement:request_list' %}">
+              <i class="bi bi-cart4 me-2 opacity-75"></i>Requests
+            </a>
+            {% endif %}
+          </div>
+
+          {# Column 2: Reports #}
+          <div class="ap-mega-col">
+            <div class="ap-mega-heading"><i class="bi bi-bar-chart me-1"></i>Reports</div>
+            {% has_permission "cases.view" as can_view_case_ops %}
+            {% if can_view_case_ops %}
+            <a class="dropdown-item" href="{% url 'dashboard:agent_monitor' %}">
+              <i class="bi bi-activity me-2 opacity-75"></i>Case Operations
+            </a>
+            {% endif %}
+            {% has_permission "agents.view" as can_view_agents %}
+            {% if can_view_agents %}
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_performance' %}active{% endif %}"
+               href="{% url 'dashboard:agent_performance' %}">
+              <i class="bi bi-robot me-2 opacity-75"></i>Agent Performance
+            </a>
+            {% endif %}
+          </div>
+
+          {# Column 3: Governance #}
+          <div class="ap-mega-col">
+            <div class="ap-mega-heading"><i class="bi bi-shield-lock me-1"></i>Governance</div>
+            {% has_permission "governance.view" as can_view_governance %}
+            {% if can_view_governance %}
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'governance' %}active{% endif %}"
+               href="{% url 'governance:audit_event_list' %}">
+              <i class="bi bi-shield-lock me-2 opacity-75"></i>Audit Log
+            </a>
+            <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_governance' %}active{% endif %}"
+               href="{% url 'dashboard:agent_governance' %}">
+              <i class="bi bi-shield-check me-2 opacity-75"></i>Agent Governance
+            </a>
+            {% endif %}
+            {% has_permission "eval.view" as can_view_eval %}
+            {% if can_view_eval %}
+            <a class="dropdown-item {% if request.resolver_match.app_name == 'core_eval' %}active{% endif %}"
+               href="{% url 'core_eval:eval_run_list' %}">
+              <i class="bi bi-mortarboard me-2 opacity-75"></i>Eval &amp; Learning
+            </a>
+            {% endif %}
+          </div>
+
+        </div>
+        {# Bottom bar: Reference #}
+        <div class="ap-mega-footer">
+          <a class="dropdown-item {% if request.resolver_match.url_name == 'agent_reference' %}active{% endif %}"
+             href="{% url 'agents:agent_reference' %}">
+            <i class="bi bi-book me-2 opacity-75"></i>Platform Reference
+          </a>
+        </div>
+      </div>
+    </div>
   </div>
+
+  {# ── Mobile hamburger ── #}
+  <button class="btn btn-sm btn-light d-lg-none ms-2" type="button"
+          data-bs-toggle="offcanvas" data-bs-target="#mobileMenu">
+    <i class="bi bi-list"></i>
+  </button>
+
+  {# Admin dropdown #}
+  {% has_permission "users.manage" as can_manage_users %}
+  {% has_permission "roles.manage" as can_manage_roles %}
+  {% if can_manage_users or can_manage_roles %}
+  <div class="dropdown d-none d-md-block">
+    <button class="btn btn-sm btn-light dropdown-toggle d-flex align-items-center gap-1" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+      <i class="bi bi-gear"></i>
+      <span class="d-none d-lg-inline">Admin</span>
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+      {% if can_manage_users %}
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_detail' %}active{% endif %}"
+           href="{% url 'accounts:user_list' %}">
+          <i class="bi bi-people me-2 opacity-75"></i>Users
+        </a>
+      </li>
+      {% endif %}
+      {% if can_manage_roles %}
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'role_list' %}active{% endif %}"
+           href="{% url 'accounts:role_list' %}">
+          <i class="bi bi-shield me-2 opacity-75"></i>Roles
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'permission_list' %}active{% endif %}"
+           href="{% url 'accounts:permission_list' %}">
+          <i class="bi bi-key me-2 opacity-75"></i>Permissions
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'role_matrix' %}active{% endif %}"
+           href="{% url 'accounts:role_matrix' %}">
+          <i class="bi bi-grid-3x3 me-2 opacity-75"></i>Role Matrix
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "credits.manage" as can_manage_credits %}
+      {% if can_manage_credits %}
+      <li><hr class="dropdown-divider"></li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'credit_account_list' %}active{% endif %}"
+           href="{% url 'extraction:credit_account_list' %}">
+          <i class="bi bi-coin me-2 opacity-75"></i>Credits
+        </a>
+      </li>
+      {% endif %}
+      <li><hr class="dropdown-divider"></li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'recon_settings' %}active{% endif %}"
+           href="{% url 'reconciliation:recon_settings' %}">
+          <i class="bi bi-gear me-2 opacity-75"></i>Settings
+        </a>
+      </li>
+    </ul>
+  </div>
+  {% endif %}
 
   {# Right actions #}
   <div class="ap-topbar-actions">
@@ -49,3 +310,14 @@
     {% endif %}
   </div>
 </nav>
+
+{# ── Mobile offcanvas menu (reuses sidebar for small screens) ── #}
+<div class="offcanvas offcanvas-start" tabindex="-1" id="mobileMenu" style="width:280px;background:var(--ap-bg-sidebar);">
+  <div class="offcanvas-header border-bottom" style="border-color:rgba(255,255,255,.1) !important;">
+    <h6 class="offcanvas-title text-white mb-0"><i class="bi bi-layers me-2"></i>AP Ops</h6>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body p-0">
+    {% include "partials/sidebar.html" %}
+  </div>
+</div>

@@ -42,6 +42,7 @@ from apps.core.enums import (
     CopilotSessionStatus,
     UserRole,
 )
+from apps.core.evaluation_constants import COPILOT_SESSION_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -525,7 +526,7 @@ class APCopilotService:
                 ).count()
                 score_trace(
                     f"copilot-{session_id}",
-                    "copilot_session_length",
+                    COPILOT_SESSION_LENGTH,
                     float(msg_count),
                     comment=f"session={session_id} messages={msg_count}",
                 )

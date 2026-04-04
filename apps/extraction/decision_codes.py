@@ -30,6 +30,10 @@ LINE_SUM_MISMATCH           = "LINE_SUM_MISMATCH"
 LINE_TABLE_INCOMPLETE       = "LINE_TABLE_INCOMPLETE"
 """More than half of extracted lines are missing a line_amount."""
 
+LINE_AMOUNT_SUSPECT         = "LINE_AMOUNT_SUSPECT"
+"""Line amounts diverge from header subtotal -- possible OCR table misread
+or tax-inclusive line amounts. Repair guard kept the header value."""
+
 TAX_ALLOC_AMBIGUOUS         = "TAX_ALLOC_AMBIGUOUS"
 """Tax breakdown present but sum does not reconcile with tax_amount."""
 
@@ -108,6 +112,7 @@ ROUTING_MAP: dict[str, str] = {
     QR_MISMATCH:                    "AP_REVIEW",
     LOW_CONFIDENCE_CRITICAL_FIELD:  "AP_REVIEW",
     LINE_SUM_MISMATCH:              "AP_REVIEW",
+    LINE_AMOUNT_SUSPECT:            "AP_REVIEW",
     PROMPT_COMPOSITION_FALLBACK_USED: "AP_REVIEW",
 }
 
@@ -148,7 +153,7 @@ def derive_codes(
         return []
 
 
-def _derive(validation_result, recon_val_result, field_conf_result, prompt_source_type: str, qr_data=None) -> list[str]:
+def _derive(validation_result, recon_val_result, field_conf_result, prompt_source_type: str, qr_data=None, repair_metadata=None) -> list[str]:
     codes: list[str] = []
 
     # ── From ValidationResult ─────────────────────────────────────────────────
@@ -190,6 +195,15 @@ def _derive(validation_result, recon_val_result, field_conf_result, prompt_sourc
             missing_amount = sum(1 for lc in lines if lc.get("line_amount", 1.0) < 0.5)
             if missing_amount > len(lines) / 2:
                 codes.append(LINE_TABLE_INCOMPLETE)
+
+    # ── From repair metadata ──────────────────────────────────────────────────
+    if repair_metadata is not None:
+        warnings = repair_metadata.get("warnings", []) or []
+        for w in warnings:
+            wl = str(w).lower()
+            if "kept header" in wl or "guard" in wl:
+                codes.append(LINE_AMOUNT_SUSPECT)
+                break
 
     # ── Prompt source ─────────────────────────────────────────────────────────
     if prompt_source_type in ("monolithic_fallback", "agent_default"):

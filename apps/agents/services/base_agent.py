@@ -28,6 +28,12 @@ from apps.agents.models import (
 from apps.agents.services.agent_memory import AgentMemory
 from apps.agents.services.llm_client import LLMClient, LLMMessage, LLMResponse
 from apps.core.constants import AGENT_MAX_RETRIES, AGENT_TIMEOUT_SECONDS
+from apps.core.evaluation_constants import (
+    AGENT_CONFIDENCE,
+    AGENT_RECOMMENDATION_PRESENT,
+    AGENT_TOOL_SUCCESS_RATE,
+    TOOL_CALL_SUCCESS,
+)
 from apps.core.enums import AgentRunStatus, AgentType
 from apps.reconciliation.models import ReconciliationResult
 from apps.tools.registry.base import ToolRegistry, ToolResult
@@ -56,6 +62,7 @@ class AgentContext:
     access_granted: bool = False
     trace_id: str = ""
     span_id: str = ""
+    document_upload_id: Optional[int] = None
     # Structured in-process memory shared across all agents in the pipeline.
     memory: Optional[AgentMemory] = None
     _langfuse_trace: Any = None
@@ -113,6 +120,7 @@ class BaseAgent(ABC):
             agent_definition=agent_def,
             agent_type=self.agent_type,
             reconciliation_result=ctx.reconciliation_result,
+            document_upload_id=ctx.document_upload_id,
             status=AgentRunStatus.RUNNING,
             input_payload=self._serialise_context(ctx),
             started_at=timezone.now(),
@@ -331,7 +339,7 @@ class BaseAgent(ABC):
                             if ctx.trace_id:
                                 score_trace(
                                     ctx.trace_id,
-                                    "agent_confidence",
+                                    AGENT_CONFIDENCE,
                                     output.confidence,
                                     comment=str(self.agent_type),
                                 )
@@ -374,7 +382,7 @@ class BaseAgent(ABC):
                         except Exception:
                             _tool_span = None
 
-                    tool_result = self._execute_tool(tc.name, tc.arguments, agent_run, step_counter)
+                    tool_result = self._execute_tool(tc.name, tc.arguments, agent_run, step_counter, _tool_span)
 
                     if _tool_span is not None:
                         try:
@@ -394,7 +402,7 @@ class BaseAgent(ABC):
                                 level="ERROR" if not tool_result.success else "DEFAULT",
                             )
                             score_observation(
-                                _tool_span, "tool_call_success",
+                                _tool_span, TOOL_CALL_SUCCESS,
                                 1.0 if tool_result.success else 0.0,
                             )
                         except Exception:
@@ -498,16 +506,16 @@ class BaseAgent(ABC):
                     })
                     # Per-agent observation scores
                     score_observation(
-                        _lf_span, "agent_confidence",
+                        _lf_span, AGENT_CONFIDENCE,
                         output.confidence,
                         comment=f"{self.agent_type} confidence",
                     )
                     score_observation(
-                        _lf_span, "agent_recommendation_present",
+                        _lf_span, AGENT_RECOMMENDATION_PRESENT,
                         1.0 if output.recommendation_type else 0.0,
                     )
                     score_observation(
-                        _lf_span, "agent_tool_success_rate",
+                        _lf_span, AGENT_TOOL_SUCCESS_RATE,
                         _tool_success_rate,
                         comment=f"{total_tool_calls - failed_tool_count}/{total_tool_calls}",
                     )
@@ -515,7 +523,7 @@ class BaseAgent(ABC):
                     if ctx.trace_id:
                         score_trace(
                             ctx.trace_id,
-                            "agent_confidence",
+                            AGENT_CONFIDENCE,
                             output.confidence,
                             comment=str(self.agent_type),
                         )
@@ -560,7 +568,8 @@ class BaseAgent(ABC):
         ]
 
     def _execute_tool(
-        self, tool_name: str, arguments: Dict[str, Any], agent_run: AgentRun, step: int
+        self, tool_name: str, arguments: Dict[str, Any], agent_run: AgentRun, step: int,
+        _tool_span=None,
     ) -> ToolResult:
         tool = ToolRegistry.get(tool_name)
         if not tool:
@@ -595,7 +604,13 @@ class BaseAgent(ABC):
                     )
                     return result
 
+            # Inject Langfuse tool span so ERP-backed tools can
+            # create child spans under the agent trace.
+            if _tool_span is not None:
+                arguments["lf_parent_span"] = _tool_span
             result = tool.execute(**arguments)
+            # Remove non-serialisable span before audit persistence.
+            arguments.pop("lf_parent_span", None)
 
         # Audit log
         ToolCallLogger.log(agent_run, tool_name, arguments, result)

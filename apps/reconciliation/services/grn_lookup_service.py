@@ -59,17 +59,22 @@ class GRNLookupService:
     def __init__(self, erp_service: Optional[ERPResolutionService] = None):
         self._erp = erp_service or ERPResolutionService.with_default_connector()
 
-    def lookup(self, purchase_order: PurchaseOrder) -> GRNSummary:
+    def lookup(self, purchase_order: PurchaseOrder,
+               lf_parent_span=None) -> GRNSummary:
         """Resolve GRNs for a PO and return an aggregated GRNSummary.
 
         Args:
             purchase_order: The PO whose GRNs are being looked up.
+            lf_parent_span: Optional Langfuse span for ERP resolution tracing.
 
         Returns:
             GRNSummary with hydrated GoodsReceiptNote objects and ERP
             provenance metadata.
         """
-        result = self._erp.resolve_grn(po_number=purchase_order.po_number)
+        result = self._erp.resolve_grn(
+            po_number=purchase_order.po_number,
+            lf_parent_span=lf_parent_span,
+        )
 
         if not result.resolved:
             logger.info(

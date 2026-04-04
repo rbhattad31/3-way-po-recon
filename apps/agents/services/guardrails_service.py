@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional
 from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 
+from apps.core.evaluation_constants import RBAC_DATA_SCOPE, RBAC_GUARDRAIL
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -38,6 +40,12 @@ AGENT_PERMISSIONS: Dict[str, str] = {
     "EXCEPTION_ANALYSIS": "agents.run_exception_analysis",
     "REVIEW_ROUTING": "agents.run_review_routing",
     "CASE_SUMMARY": "agents.run_case_summary",
+    # Deterministic system agents
+    "SYSTEM_REVIEW_ROUTING": "agents.run_system_review_routing",
+    "SYSTEM_CASE_SUMMARY": "agents.run_system_case_summary",
+    "SYSTEM_BULK_EXTRACTION_INTAKE": "agents.run_system_bulk_extraction_intake",
+    "SYSTEM_CASE_INTAKE": "agents.run_system_case_intake",
+    "SYSTEM_POSTING_PREPARATION": "agents.run_system_posting_preparation",
 }
 
 TOOL_PERMISSIONS: Dict[str, str] = {
@@ -88,6 +96,11 @@ class AgentGuardrailsService:
 
         user = User.objects.filter(email=SYSTEM_AGENT_EMAIL).first()
         if user:
+            # Ensure legacy role field and RBAC assignment are correct
+            if user.role != SYSTEM_AGENT_ROLE_CODE:
+                user.role = SYSTEM_AGENT_ROLE_CODE
+                user.save(update_fields=["role", "updated_at"])
+            cls._assign_system_agent_role(user)
             return user
 
         user = User.objects.create_user(
@@ -95,6 +108,7 @@ class AgentGuardrailsService:
             password=None,
             first_name="System",
             last_name="Agent",
+            role=SYSTEM_AGENT_ROLE_CODE,
             is_active=True,
             is_staff=False,
         )
@@ -112,11 +126,16 @@ class AgentGuardrailsService:
         if not role:
             logger.warning("SYSTEM_AGENT role not found — run seed_rbac first")
             return
-        UserRole.objects.get_or_create(
+        ur, created = UserRole.objects.get_or_create(
             user=user,
             role=role,
             defaults={"is_primary": True, "is_active": True},
         )
+        if not created and not ur.is_primary:
+            ur.is_primary = True
+            ur.save(update_fields=["is_primary"])
+        # Demote any other primary role
+        UserRole.objects.filter(user=user, is_primary=True).exclude(role=role).update(is_primary=False)
 
     # ------------------------------------------------------------------
     # Actor resolution
@@ -161,7 +180,7 @@ class AgentGuardrailsService:
                         pass
                     score_trace(
                         _tid,
-                        "rbac_guardrail",
+                        RBAC_GUARDRAIL,
                         1.0,
                         comment=(
                             f"rbac_guardrail GRANTED method=authorize_agent"
@@ -194,7 +213,7 @@ class AgentGuardrailsService:
                         pass
                     score_trace(
                         _tid,
-                        "rbac_guardrail",
+                        RBAC_GUARDRAIL,
                         1.0,
                         comment=(
                             f"rbac_guardrail GRANTED method=authorize_tool"
@@ -351,7 +370,7 @@ class AgentGuardrailsService:
             if _trace_id:
                 score_trace(
                     _trace_id,
-                    "rbac_guardrail",
+                    RBAC_GUARDRAIL,
                     1.0 if granted else 0.0,
                     comment=(
                         f"action={action} "
@@ -561,7 +580,7 @@ class AgentGuardrailsService:
                 if _trace_id:
                     score_trace(
                         _trace_id,
-                        "rbac_data_scope",
+                        RBAC_DATA_SCOPE,
                         0.0,
                         comment=(
                             f"actor={getattr(actor, 'pk', None)} "

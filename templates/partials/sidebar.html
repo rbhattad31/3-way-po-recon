@@ -1,5 +1,5 @@
 {% load rbac_tags %}
-<nav id="sidebar" class="bg-light border-end position-fixed" style="top:56px;width:250px;height:calc(100vh - 56px);overflow-y:auto;z-index:1030">
+<nav id="sidebar" class="bg-dark" style="overflow-y:auto;">
   <div class="p-3">
     <ul class="nav flex-column">
       {% has_permission "agents.use_copilot" as can_use_copilot %}
@@ -162,6 +162,28 @@
       <li class="nav-item">
         <a class="nav-link {% if request.resolver_match.app_name == 'procurement' %}active fw-bold{% endif %}" href="{% url 'procurement:request_list' %}">
           <i class="bi bi-cart4 me-2"></i>Requests
+        </a>
+      </li>
+      {% endif %}
+
+      {# ── Eval & Learning ── #}
+      {% has_permission "eval.view" as can_view_eval %}
+      {% if can_view_eval %}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Eval &amp; Learning</li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'core_eval' and request.resolver_match.url_name == 'eval_run_list' or request.resolver_match.url_name == 'eval_run_detail' %}active fw-bold{% endif %}" href="{% url 'core_eval:eval_run_list' %}">
+          <i class="bi bi-clipboard-data me-2"></i>Eval Runs
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'learning_signal_list' %}active fw-bold{% endif %}" href="{% url 'core_eval:learning_signal_list' %}">
+          <i class="bi bi-broadcast me-2"></i>Learning Signals
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'learning_action_list' or request.resolver_match.url_name == 'learning_action_detail' %}active fw-bold{% endif %}" href="{% url 'core_eval:learning_action_list' %}">
+          <i class="bi bi-lightning me-2"></i>Learning Actions
         </a>
       </li>
       {% endif %}

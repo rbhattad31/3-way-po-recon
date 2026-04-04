@@ -150,23 +150,39 @@ root trace  (start_trace)
      -- eligibility_check    (stage 1)
      -- snapshot_build       (stage 2)
      -- mapping              (stage 3, emits vendor_resolved / mapping_issues)
-        -- erp_resolve_vendor   (ERPResolutionService child span, when connector present)
-        -- erp_resolve_item     (one per line item, when connector present)
+        -- erp_resolution       (ERPResolutionService._trace_resolve per resolve_* call)
+           -- erp_cache_lookup  (BaseResolver -- cache check)
+           -- erp_live_lookup   (BaseResolver -- live API call, if cache miss)
+           -- erp_db_fallback   (BaseResolver -- DB fallback, if API miss)
+        -- erp_resolve_vendor   (one per vendor resolution)
+        -- erp_resolve_item     (one per line item)
+        -- erp_resolve_tax      (one per tax code resolution)
+        -- erp_resolve_cost_center (one per cost center resolution)
+        -- erp_resolve_po       (one per PO reference resolution)
      -- validation           (stage 4, emits total_issues)
      -- confidence_scoring   (stage 5, emits posting_confidence score)
      -- review_routing       (stage 6, emits posting_requires_review score)
      -- payload_build        (stage 7)
      -- finalization         (stage 8, persist artifacts)
      -- duplicate_check      (stage 9b, emits is_duplicate / source_type)
+        -- erp_resolution       (duplicate invoice check via ERP resolution)
+           -- erp_cache_lookup
+           -- erp_live_lookup
+           -- erp_db_fallback
      -- erp_submission       (child span when lf_trace_id forwarded from PostingActionService)
 
   -- erp_submission_standalone  (isolated fallback trace when no parent trace ID is available)
+     -- erp_submission       (child span under standalone root)
   -- erp_status_check           (PostingSubmitResolver.get_posting_status() -- always isolated)
      (closed immediately with status/error output)
 
   -- reconciliation_task     (run_reconciliation_task Celery task wrapper -- root trace)
      -- reconciliation_run   (ReconciliationRunnerService.run() -- child span)
         -- po_lookup              (per invoice: PO lookup with erp_source_type, is_stale metadata)
+           -- erp_resolution       (ERPResolutionService._trace_resolve -- when ERP connector available)
+              -- erp_cache_lookup  (BaseResolver cache check)
+              -- erp_live_lookup   (BaseResolver live API call)
+              -- erp_db_fallback   (BaseResolver DB fallback)
         -- mode_resolution        (per invoice: mode resolver with policy_source, resolution_method)
         -- grn_lookup             (per invoice, THREE_WAY only: GRN lookup with grn_count, is_stale)
         -- match_execution        (per invoice: 2-way/3-way matcher with header/line/grn ratios, amount_delta)
@@ -193,7 +209,10 @@ root trace  (start_trace)
      -- EXCEPTION_ANALYSIS / INVOICE_UNDERSTANDING / ...  (per-agent spans)
         -- llm_chat          (log_generation, one per LLM round in ReAct loop)
         -- tool_po_lookup    (per tool call, with source_used and tool_call_success score)
+           -- erp_resolution    (when ERP connector available -- lf_parent_span passed from _execute_tool)
+              -- erp_cache_lookup / erp_live_lookup / erp_db_fallback
         -- tool_grn_lookup
+           -- erp_resolution    (same pattern -- lf_parent_span threaded through)
         -- tool_invoice_details
      Pipeline-level scores: agent_pipeline_final_confidence,
        agent_pipeline_recommendation_present, agent_pipeline_escalation_triggered,
@@ -624,79 +643,169 @@ Score mapping:
 | `REPROCESSED` | `0.5` |
 | `REJECTED` | `0.0` |
 
-### 11. ERP submission spans (`apps/erp_integration/services/submission/posting_submit_resolver.py`)
+### 11. ERP integration tracing (`apps/erp_integration/services/`)
 
-`submit_invoice()` now accepts an optional `lf_trace_id` kwarg. When provided,
-the submission span is attached as a child of the caller's trace (e.g. the
-posting pipeline trace). When omitted, a standalone fallback trace is created
-so the call is always visible in Langfuse regardless of context.
+The entire ERP integration layer -- resolution, submission, and duplicate check --
+is instrumented with Langfuse spans and evaluation scores via a dedicated helpers
+module: `apps/erp_integration/services/langfuse_helpers.py`.
 
-#### Linked path — child span under parent trace
+All tracing is fail-silent: Langfuse errors never affect ERP operations.
 
-When `lf_trace_id` is supplied (e.g. forwarded from `PostingActionService`):
+#### 11.1 Helpers module (`langfuse_helpers.py`)
 
-```python
-lf_client = get_client()
-_lf_span = lf_client.span(
-    trace_id=lf_trace_id,
-    name="erp_submission",
-    metadata={"submission_type": submission_type, "connector_name": ..., "posting_run_id": ...},
-)
-_lf_span.end(output={
-    "success": result.success,
-    "status": str(result.status),
-    "erp_document_number": result.erp_document_number or "",
-    "duration_ms": result.duration_ms,
-    "error_message": result.error_message or "",
-}, level="ERROR" if not result.success else "DEFAULT")
+The helpers module provides:
+
+| Function | Purpose |
+|---|---|
+| `sanitize_erp_metadata(meta)` | Recursively strips sensitive keys (API keys, tokens, passwords) and truncates values >2000 chars |
+| `sanitize_erp_error(error)` | Maps raw error messages to safe categories: `timeout`, `unauthorized`, `rate_limited`, `validation_error`, `connector_unavailable`, `empty_result`, `normalization_failed`, `submission_rejected`, `unknown_error` |
+| `start_erp_span(parent, name, metadata=)` | Opens a child span with auto-sanitised metadata |
+| `end_erp_span(span, output=, level=)` | Closes a span with sanitised output |
+| `score_erp_observation(span, name, value)` | Attaches an observation-level score (fail-silent) |
+| `score_erp_trace(trace_id, name, value)` | Attaches a trace-level score (fail-silent) |
+| `build_source_chain(...)` | Returns a compact list of sources attempted (e.g. `["cache:miss", "live_api:ok"]`) |
+| `freshness_status_label(is_stale, source_type)` | Returns `"fresh"` or `"stale"` based on source and staleness |
+| `is_authoritative_source(source_type)` | Returns `True` for `API` or `CACHE` sources |
+
+Constants:
+
+- `ERP_LATENCY_THRESHOLD_MS = 5000` -- operations faster than this score `latency_ok=1.0`
+- `SOURCE_CACHE`, `SOURCE_LIVE_API`, `SOURCE_MIRROR_DB`, `SOURCE_DB_FALLBACK`, `SOURCE_NONE`
+
+#### 11.2 Resolution tracing (`ERPResolutionService._trace_resolve`)
+
+Every `resolve_*()` call on `ERPResolutionService` accepts an optional
+`lf_parent_span` kwarg. When provided, `_trace_resolve()` wraps the resolution
+in a span hierarchy:
+
+```
+erp_resolution (parent span -- created by _trace_resolve)
+  |-- erp_cache_lookup     (BaseResolver._cache_check_traced)
+  |-- erp_live_lookup      (BaseResolver._api_lookup_traced)
+  |-- erp_db_fallback      (BaseResolver._db_fallback_traced)
 ```
 
-This makes the ERP submission appear as a child span inside the `posting_pipeline`
-trace rather than as a separate isolated trace.
+The `erp_resolution` span metadata includes:
 
-#### Standalone fallback — root trace when no parent is available
+| Field | Example |
+|---|---|
+| `operation_type` | `lookup_vendor`, `lookup_po` |
+| `entity_type` | `vendor`, `po`, `grn`, `item`, `tax_code`, `cost_center` |
+| `entity_key` | `V-001`, `PO-2024-001` |
+| `connector_name` | `dynamics_prod` |
+| `invoice_id` | `42` |
+| `posting_run_id` | `17` |
+| `reconciliation_result_id` | `88` |
 
-When `lf_trace_id` is `None` (direct calls from tests, admin actions, or callers
-that have not yet been wired up):
+The span output includes:
 
-```python
-_fallback_id = (
-    f"erp-sub-{posting_run_id}" if posting_run_id
-    else f"erp-inv-{invoice_id}" if invoice_id
-    else uuid4().hex
-)
-_lf_trace = start_trace(_fallback_id, "erp_submission_standalone", ...)
-end_span(_lf_trace, output={...}, level=...)
-```
+| Field | Type |
+|---|---|
+| `resolved` | bool |
+| `source_type` | `CACHE` / `API` / `MIRROR_DB` / `DB_FALLBACK` / `NONE` |
+| `source_chain_attempted` | `["cache:miss", "live_api:ok"]` |
+| `cache_hit` | bool |
+| `db_fallback_used` | bool |
+| `confidence` | 0.0 -- 1.0 |
+| `freshness_status` | `fresh` or `stale` |
+| `latency_ms` | int |
 
-The fallback ID chain is: `f"erp-sub-{posting_run_id}"` -> `f"erp-inv-{invoice_id}"` -> `uuid4().hex`.
+**Observation scores per resolution:**
 
-#### Trace ID forwarding from `PostingActionService.submit_posting()`
+| Score | Values | Meaning |
+|---|---|---|
+| `erp_resolution_success` | 0.0 / 1.0 | Whether the lookup resolved |
+| `erp_resolution_latency_ok` | 0.0 / 1.0 | <=5s is OK |
+| `erp_resolution_result_present` | 0.0 / 1.0 | Whether a value was returned |
+| `erp_resolution_fresh` | 0.0 / 1.0 | Whether the data is within freshness threshold |
+| `erp_resolution_authoritative` | 0.0 / 1.0 | API or CACHE source |
+| `erp_resolution_used_fallback` | 0.0 / 1.0 | DB fallback was used |
 
-Before the Phase 1 mock block, `submit_posting()` resolves the trace ID from the
-latest `PostingRun` so it is available to pass to the real ERP connector call in
-Phase 2:
+#### 11.3 Per-stage spans in `BaseResolver.resolve()`
 
-```python
-_lf_trace_id = None
-try:
-    _latest_run = PostingRun.objects.filter(
-        invoice_id=posting.invoice_id,
-    ).order_by("-created_at").first()
-    _lf_trace_id = getattr(_latest_run, "trace_id", None) or (
-        str(_latest_run.pk) if _latest_run else None
-    )
-except Exception:
-    pass
-# Phase 2: pass lf_trace_id=_lf_trace_id to the resolver
-```
+When `lf_parent_span` is passed to `BaseResolver.resolve()`, three child spans
+are created for the individual stages:
 
-**`erp_status_check`** (from `get_posting_status()`) — unchanged; still creates
-an isolated root trace using the same fallback ID chain, as status checks are
-triggered independently of the pipeline.
+**`erp_cache_lookup`** (via `trace_erp_cache_lookup`):
+- Output: `cache_hit`, `latency_ms`, `cache_key`
+- Score: `erp_cache_hit` (1.0 on hit, 0.0 on miss)
+
+**`erp_live_lookup`** (via `trace_erp_live_lookup`):
+- Output: `success`, `connector_name`, `latency_ms`, `timeout`, `rate_limited`
+- Scores: `erp_live_lookup_success`, `erp_live_lookup_latency_ok`,
+  `erp_live_lookup_rate_limited`, `erp_live_lookup_timeout`
+
+**`erp_db_fallback`** (via `trace_erp_db_fallback`):
+- Output: `success`, `fallback_source_name`, `latency_ms`
+- Scores: `erp_db_fallback_used` (always 1.0), `erp_db_fallback_success`
+
+#### 11.4 `lf_parent_span` threading pattern
+
+All callers of `ERPResolutionService.resolve_*()` pass the parent Langfuse span
+so ERP spans nest properly under the pipeline trace:
+
+| Caller | Parent span source |
+|---|---|
+| `PostingMappingEngine._try_vendor_via_resolver()` | `self._lf_mapping_span` (posting pipeline stage 3) |
+| `PostingMappingEngine._try_item_via_resolver()` | `self._lf_mapping_span` |
+| `PostingMappingEngine._try_tax_via_resolver()` | `self._lf_mapping_span` |
+| `PostingMappingEngine._try_cost_center_via_resolver()` | `self._lf_mapping_span` |
+| `PostingMappingEngine._load_po_refs()` | `self._lf_mapping_span` |
+| `PostingPipeline._check_duplicate()` | `_lf_s9` (duplicate_check stage span) |
+| `POLookupService.lookup()` | `lf_parent_span` kwarg from `runner_service._lf_po` |
+| `GRNLookupService.lookup()` | `lf_parent_span` kwarg (not yet threaded from ThreeWayMatchService) |
+| `POLookupTool._resolve_via_erp()` | `kwargs["lf_parent_span"]` (injected by `BaseAgent._execute_tool`) |
+| `GRNLookupTool._resolve_via_erp()` | `kwargs["lf_parent_span"]` (injected by `BaseAgent._execute_tool`) |
+
+For agent tools, `BaseAgent._execute_tool()` injects `lf_parent_span=_tool_span`
+into the tool kwargs before calling `tool.execute(**arguments)`. The span is
+removed from `arguments` after execution (before audit persistence) to avoid
+serialisation errors.
+
+#### 11.5 Submission tracing (`PostingSubmitResolver`)
+
+`submit_invoice()` uses `trace_erp_submission()` from the helpers module. When
+`lf_parent_span` is provided (forwarded from the posting pipeline), the
+`erp_submission` span nests under it. When no parent is available, a standalone
+root trace is created with the fallback ID chain:
+`f"erp-sub-{posting_run_id}"` -> `f"erp-inv-{invoice_id}"` -> `uuid4().hex`
+
+**Observation scores per submission:**
+
+| Score | Values | Meaning |
+|---|---|---|
+| `erp_submission_attempted` | 1.0 (always) | A submission was attempted |
+| `erp_submission_success` | 0.0 / 1.0 | Whether the submission succeeded |
+| `erp_submission_latency_ok` | 0.0 / 1.0 | <=5s is OK |
+| `erp_submission_retryable_failure` | 0.0 / 1.0 | FAILED or TIMEOUT status |
+| `erp_submission_document_number_present` | 0.0 / 1.0 | ERP returned a document number |
+
+Error messages are never logged raw -- `sanitize_erp_error()` maps them to safe
+categories before they reach Langfuse.
+
+**`erp_status_check`** (from `get_posting_status()`) creates an isolated root
+trace using the same fallback ID chain.
 
 Failed ERP calls (`result.success == False`) are marked `level="ERROR"` so they
 appear highlighted in red in the Langfuse UI.
+
+#### 11.6 Duplicate check tracing
+
+`trace_erp_duplicate_check()` wraps the duplicate invoice check with a
+`erp_duplicate_check` span. Output includes `duplicate_found`, `duplicate_match_type`,
+and `latency_ms`. Emits `erp_duplicate_found` score (1.0 if duplicate detected).
+
+#### 11.7 Metadata sanitisation rules
+
+The following keys are **always** stripped from Langfuse metadata by
+`sanitize_erp_metadata()`:
+
+`api_key`, `api_secret`, `token`, `access_token`, `refresh_token`, `bearer`,
+`password`, `secret`, `secret_key`, `authorization`, `auth_header`, `auth_token`,
+`credentials`, `client_secret`, `private_key`, `cookie`, `session_token`, `x-api-key`
+
+String values longer than 2000 characters are truncated with a `[truncated]` marker.
+Nested dicts are sanitised recursively.
 
 ### 12. Extraction approval scores (`apps/extraction/services/approval_service.py`)
 
@@ -1033,6 +1142,25 @@ and there are no auth failures to surface).
 | `rbac_data_scope` | 0.0 (deny only) | `guardrails_service.py` `authorize_data_scope()` | `TraceContext.get_current().trace_id` |
 | `bulk_job_success_rate` | 0.0 -- 1.0 | `bulk_tasks.py` `run_bulk_job_task` | `job.trace_id` or `str(job.pk)` |
 | `copilot_session_length` | 0.0+ (raw message count) | `copilot_service.py` `archive_session()` | `f"copilot-{session_id}"` |
+| `erp_resolution_success` | 0.0 or 1.0 | `resolution_service.py` `_trace_resolve()` | parent pipeline trace |
+| `erp_resolution_latency_ok` | 0.0 or 1.0 | `resolution_service.py` `_trace_resolve()` | parent pipeline trace |
+| `erp_resolution_result_present` | 0.0 or 1.0 | `resolution_service.py` `_trace_resolve()` | parent pipeline trace |
+| `erp_resolution_fresh` | 0.0 or 1.0 | `resolution_service.py` `_trace_resolve()` | parent pipeline trace |
+| `erp_resolution_authoritative` | 0.0 or 1.0 | `resolution_service.py` `_trace_resolve()` | parent pipeline trace |
+| `erp_resolution_used_fallback` | 0.0 or 1.0 | `resolution_service.py` `_trace_resolve()` | parent pipeline trace |
+| `erp_cache_hit` | 0.0 or 1.0 | `base.py` `_cache_check_traced()` via `trace_erp_cache_lookup` | parent pipeline trace |
+| `erp_live_lookup_success` | 0.0 or 1.0 | `base.py` `_api_lookup_traced()` via `trace_erp_live_lookup` | parent pipeline trace |
+| `erp_live_lookup_latency_ok` | 0.0 or 1.0 | `base.py` `_api_lookup_traced()` | parent pipeline trace |
+| `erp_live_lookup_rate_limited` | 0.0 or 1.0 | `base.py` `_api_lookup_traced()` | parent pipeline trace |
+| `erp_live_lookup_timeout` | 0.0 or 1.0 | `base.py` `_api_lookup_traced()` | parent pipeline trace |
+| `erp_db_fallback_used` | 1.0 (always) | `base.py` `_db_fallback_traced()` via `trace_erp_db_fallback` | parent pipeline trace |
+| `erp_db_fallback_success` | 0.0 or 1.0 | `base.py` `_db_fallback_traced()` | parent pipeline trace |
+| `erp_submission_attempted` | 1.0 (always) | `posting_submit_resolver.py` via `trace_erp_submission` | `f"erp-sub-{posting_run_id}"` or parent |
+| `erp_submission_success` | 0.0 or 1.0 | `posting_submit_resolver.py` | same |
+| `erp_submission_latency_ok` | 0.0 or 1.0 | `posting_submit_resolver.py` | same |
+| `erp_submission_retryable_failure` | 0.0 or 1.0 | `posting_submit_resolver.py` | same |
+| `erp_submission_document_number_present` | 0.0 or 1.0 | `posting_submit_resolver.py` | same |
+| `erp_duplicate_found` | 0.0 or 1.0 | `posting_pipeline.py` via `trace_erp_duplicate_check` | parent pipeline trace |
 
 ---
 
@@ -1221,3 +1349,107 @@ score_trace_safe(
 | `start_trace` returns None | Set `LANGFUSE_LOG_LEVEL=debug` and check for exceptions in the client init. Ensure host URL has no trailing slash. |
 | Scores appear in Langfuse but not linked to a trace | Confirm the pipeline that emits the score also calls `start_trace` before the score. The posting, reconciliation, and bulk extraction pipelines all create root traces -- scores from these pipelines are always linked. Also ensure `span=` is passed to `score_trace_safe()` (see Issue 4). |
 | Scores exist but show blank session_id / user_id | The `score_trace()` call was using the application-level trace_id string instead of the real OTel trace_id. Pass `span=` to `score_trace_safe()` so the real OTel trace_id is extracted and scores are linked to the actual trace (which carries user/session attributes). See Issue 4. |
+
+---
+
+## Standardized Score Taxonomy (`apps/core/evaluation_constants.py`)
+
+All score names are centralized in `apps/core/evaluation_constants.py`. Services
+MUST import constants from this module instead of using raw string literals.
+
+### Why centralize?
+
+1. **Single source of truth** -- no typos, no collisions, no score names drifting between files.
+2. **Evaluation-ready** -- Langfuse evaluations reference score names; stable constants prevent breakage.
+3. **IDE discoverability** -- import autocomplete and rename-refactoring work correctly.
+
+### Domain groups
+
+| Prefix | Domain | Example |
+|---|---|---|
+| `EXTRACTION_` | Extraction pipeline | `EXTRACTION_SUCCESS`, `EXTRACTION_CONFIDENCE` |
+| `RECON_` | Reconciliation engine | `RECON_FINAL_SUCCESS`, `RECON_PO_FOUND` |
+| `AGENT_` / `AGENT_PIPELINE_` | Agent system | `AGENT_CONFIDENCE`, `AGENT_PIPELINE_FINAL_CONFIDENCE` |
+| `CASE_` | AP Case pipeline | `CASE_CLOSED`, `CASE_MATCH_STATUS` |
+| `REVIEW_` | Review workflow | `REVIEW_APPROVED`, `REVIEW_DECISION` |
+| `POSTING_` | Posting pipeline | `POSTING_FINAL_CONFIDENCE`, `POSTING_FINAL_REQUIRES_REVIEW` |
+| `ERP_` | ERP integration | `ERP_RESOLUTION_SUCCESS`, `ERP_CACHE_HIT` |
+| `RBAC_` | RBAC guardrails | `RBAC_GUARDRAIL`, `RBAC_DATA_SCOPE` |
+| `COPILOT_` | Copilot | `COPILOT_SESSION_LENGTH` |
+| `TOOL_` | Agent tool calls | `TOOL_CALL_SUCCESS` |
+| `TRACE_` | Root trace names | `TRACE_EXTRACTION_PIPELINE`, `TRACE_CASE_PIPELINE` |
+| `LATENCY_THRESHOLD_` | Latency thresholds (ms) | `LATENCY_THRESHOLD_ERP_MS` (5000) |
+
+### Adding a new score
+
+1. Add the constant in the correct domain group in `evaluation_constants.py`.
+2. Add a brief inline comment describing the score semantics and value range.
+3. Import and use the constant at every call site.
+4. Update the Scores Reference table in this document.
+
+---
+
+## Cross-Flow Correlation (`apps/core/observability_helpers.py`)
+
+Shared helpers that unify session IDs, metadata builders, and sanitization across
+all pipelines (extraction, reconciliation, agent, case, posting, ERP).
+
+### `derive_session_id()`
+
+Returns a stable session ID for Langfuse session grouping:
+
+```python
+from apps.core.observability_helpers import derive_session_id
+
+# Best effort: invoice_id > upload_id > case_id > fallback
+session_id = derive_session_id(invoice_id=42)        # "invoice-42"
+session_id = derive_session_id(upload_id=7)           # "upload-7"
+session_id = derive_session_id(case_id=3)             # "case-3"
+session_id = derive_session_id()                      # "unknown"
+```
+
+### `build_observability_context()`
+
+Builds a cross-linking metadata dict for root traces:
+
+```python
+from apps.core.observability_helpers import build_observability_context
+
+meta = build_observability_context(
+    invoice_id=42,
+    case_id=3,
+    actor_user_id=1,
+    trigger="manual",
+    source="deterministic",
+)
+# {"invoice_id": 42, "case_id": 3, "actor_user_id": 1, ...}
+```
+
+### `latency_ok()` / `score_latency()`
+
+Score a timed operation against a threshold:
+
+```python
+from apps.core.observability_helpers import latency_ok, score_latency
+
+passed = latency_ok(duration_ms=3200, threshold_ms=5000)  # True
+score_latency(span, duration_ms=3200, threshold_ms=5000)   # scores 1.0
+```
+
+---
+
+## DB Model Trace ID Fields
+
+The following models carry a `langfuse_trace_id` field for cross-referencing
+Langfuse traces with DB records:
+
+| Model | Field | Persisted from |
+|---|---|---|
+| `AgentRun` | `trace_id` | Agent orchestrator |
+| `ReconciliationRun` | `langfuse_trace_id` | `run_reconciliation_task` |
+| `PostingRun` | `langfuse_trace_id` | `PostingPipeline.run()` |
+| `ExtractionResult` | `langfuse_trace_id` | `process_invoice_upload_task` |
+| `APCaseStage` | `trace_id` | Case orchestrator |
+| `CopilotSession` | `trace_id` | Copilot service |
+| `ProcessingLog` | `trace_id` | Middleware/decorators |
+| `AuditEvent` | `trace_id` | Middleware/decorators |

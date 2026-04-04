@@ -1,76 +1,297 @@
-{# extraction/console/_reasoning_panel.html — Agent reasoning tab #}
+{# extraction/console/_reasoning_panel.html -- Activity & Reasoning tab #}
 
 <div class="p-3">
+
+  {# ── Section 1: Real Agent Execution Data ── #}
+  {% if agent_reasoning_runs %}
+  <h6 class="text-muted text-uppercase small mb-3">
+    <i class="bi bi-robot me-1"></i>Agent Execution ({{ agent_reasoning_runs|length }} run{{ agent_reasoning_runs|length|pluralize }})
+  </h6>
+
+  {% for run in agent_reasoning_runs %}
+  <div class="card mb-3 border-{{ run.status_badge }}">
+    <div class="card-header py-2 d-flex align-items-center justify-content-between bg-{{ run.status_badge }}-subtle">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-cpu"></i>
+        <strong class="small">{{ run.agent_type }}</strong>
+        <span class="badge bg-{{ run.status_badge }}">{{ run.status }}</span>
+        {% if run.confidence %}
+        <span class="badge bg-dark-subtle text-dark">
+          <i class="bi bi-bullseye me-1"></i>{% widthratio run.confidence 1 100 %}% confidence
+        </span>
+        {% endif %}
+        {% if run.llm_model %}
+        <span class="badge bg-light text-dark border">{{ run.llm_model }}</span>
+        {% endif %}
+      </div>
+      <div class="d-flex align-items-center gap-2 small text-muted">
+        {% if run.duration_ms %}
+        <span><i class="bi bi-clock me-1"></i>{{ run.duration_ms }}ms</span>
+        {% endif %}
+        {% if run.handed_off_to_id %}
+        <span class="badge bg-info-subtle text-info"><i class="bi bi-arrow-right me-1"></i>Handed off</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card-body p-2">
+      {% if run.invocation_reason %}
+      <div class="small text-muted mb-2">
+        <i class="bi bi-info-circle me-1"></i><em>{{ run.invocation_reason }}</em>
+      </div>
+      {% endif %}
+
+      {# Error message #}
+      {% if run.error_message %}
+      <div class="alert alert-danger py-1 px-2 small mb-2">
+        <i class="bi bi-exclamation-triangle me-1"></i>{{ run.error_message }}
+      </div>
+      {% endif %}
+
+      {# Summarized reasoning #}
+      {% if run.summarized_reasoning %}
+      <div class="exc-decision-box p-2 rounded small mb-2">
+        <i class="bi bi-lightbulb me-1 text-warning"></i>
+        <strong>Reasoning:</strong> {{ run.summarized_reasoning }}
+      </div>
+      {% endif %}
+
+      {# Decisions #}
+      {% if run.decisions %}
+      <div class="mb-2">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2" data-bs-toggle="collapse"
+                data-bs-target="#decisions-{{ run.run_id }}">
+          <i class="bi bi-signpost-2 me-1"></i>Decisions ({{ run.decisions|length }})
+        </button>
+        <div class="collapse mt-1" id="decisions-{{ run.run_id }}">
+          {% for d in run.decisions %}
+          <div class="border-start border-3 border-primary ps-2 mb-1 small">
+            <div class="d-flex align-items-center gap-2">
+              <span class="fw-semibold">{{ d.decision_type }}</span>
+              {% if d.confidence %}
+              <span class="badge bg-dark-subtle text-dark">{% widthratio d.confidence 1 100 %}%</span>
+              {% endif %}
+              {% if d.recommendation_type %}
+              <span class="badge bg-info-subtle text-info">{{ d.recommendation_type }}</span>
+              {% endif %}
+            </div>
+            <div>{{ d.decision }}</div>
+            {% if d.rationale %}
+            <div class="text-muted"><em>{{ d.rationale }}</em></div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Tool Calls #}
+      {% if run.tool_calls %}
+      <div class="mb-2">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2" data-bs-toggle="collapse"
+                data-bs-target="#tools-{{ run.run_id }}">
+          <i class="bi bi-wrench me-1"></i>Tool Calls ({{ run.tool_calls|length }})
+        </button>
+        <div class="collapse mt-1" id="tools-{{ run.run_id }}">
+          {% for tc in run.tool_calls %}
+          <div class="border-start border-3 {% if tc.status == 'SUCCESS' %}border-success{% elif tc.status == 'FAILED' %}border-danger{% else %}border-secondary{% endif %} ps-2 mb-1 small">
+            <div class="d-flex align-items-center gap-2">
+              <code>{{ tc.tool_name }}</code>
+              <span class="badge {% if tc.status == 'SUCCESS' %}bg-success{% elif tc.status == 'FAILED' %}bg-danger{% else %}bg-secondary{% endif %}">
+                {{ tc.status }}
+              </span>
+              {% if tc.duration_ms %}
+              <small class="text-muted">{{ tc.duration_ms }}ms</small>
+              {% endif %}
+            </div>
+            {% if tc.input_display %}
+            <details class="mt-1">
+              <summary class="text-muted" style="cursor:pointer">Input</summary>
+              <pre class="exc-reasoning-detail p-1 rounded small mb-0" style="max-height:200px;overflow:auto">{{ tc.input_display }}</pre>
+            </details>
+            {% endif %}
+            {% if tc.output_display %}
+            <details class="mt-1">
+              <summary class="text-muted" style="cursor:pointer">Output</summary>
+              <pre class="exc-reasoning-detail p-1 rounded small mb-0" style="max-height:200px;overflow:auto">{{ tc.output_display }}</pre>
+            </details>
+            {% endif %}
+            {% if tc.error_message %}
+            <div class="text-danger small mt-1">
+              <i class="bi bi-x-circle me-1"></i>{{ tc.error_message }}
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# LLM Conversation (Messages) #}
+      {% if run.messages %}
+      <div class="mb-2">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2" data-bs-toggle="collapse"
+                data-bs-target="#messages-{{ run.run_id }}">
+          <i class="bi bi-chat-dots me-1"></i>LLM Conversation ({{ run.messages|length }} messages)
+        </button>
+        <div class="collapse mt-1" id="messages-{{ run.run_id }}">
+          {% for msg in run.messages %}
+          <div class="mb-1 small">
+            <span class="badge {% if msg.role == 'system' %}bg-dark{% elif msg.role == 'user' %}bg-primary{% elif msg.role == 'assistant' %}bg-success{% elif msg.role == 'tool' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+              {{ msg.role }}
+            </span>
+            {% if msg.token_count %}
+            <small class="text-muted ms-1">{{ msg.token_count }} tokens</small>
+            {% endif %}
+            <div class="mt-1">
+              <pre class="exc-reasoning-detail p-1 rounded small mb-0" style="max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word">{{ msg.content }}</pre>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Agent Steps #}
+      {% if run.steps %}
+      <div class="mb-2">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2" data-bs-toggle="collapse"
+                data-bs-target="#steps-{{ run.run_id }}">
+          <i class="bi bi-list-ol me-1"></i>Steps ({{ run.steps|length }})
+        </button>
+        <div class="collapse mt-1" id="steps-{{ run.run_id }}">
+          {% for step in run.steps %}
+          <div class="border-start border-3 {% if step.success %}border-success{% else %}border-danger{% endif %} ps-2 mb-1 small">
+            <span class="fw-semibold">#{{ step.step_number }}</span>
+            {{ step.action }}
+            {% if step.duration_ms %}
+            <small class="text-muted ms-1">{{ step.duration_ms }}ms</small>
+            {% endif %}
+            {% if not step.success %}
+            <span class="badge bg-danger ms-1">Failed</span>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+    </div>{# /card-body #}
+  </div>{# /card #}
+  {% endfor %}
+  {% endif %}
+
+  {# ── Section 2: Pipeline Overview (static) ── #}
   {% if reasoning_blocks %}
+  <h6 class="text-muted text-uppercase small mb-3 {% if agent_reasoning_runs %}mt-3 pt-3 border-top{% endif %}">
+    <i class="bi bi-diagram-3 me-1"></i>Pipeline Overview
+  </h6>
   {% for block in reasoning_blocks %}
   <div class="card exc-reasoning-card mb-2">
     <div class="card-body p-2">
       <div class="d-flex align-items-start">
-        {# Step indicator #}
         <div class="exc-reasoning-step me-3 text-center">
           <div class="exc-reasoning-step-number">{{ forloop.counter }}</div>
           {% if not forloop.last %}
           <div class="exc-reasoning-connector"></div>
           {% endif %}
         </div>
-
         <div class="flex-grow-1">
-          {# Step header #}
           <div class="d-flex align-items-center gap-2 mb-1">
             <span class="fw-semibold small">{{ block.title }}</span>
             <span class="badge bg-{{ block.badge_class|default:'secondary' }}-subtle text-{{ block.badge_class|default:'secondary' }} small">
               {{ block.category|default:"Step" }}
             </span>
-            {% if block.duration_ms %}
-            <small class="text-muted">{{ block.duration_ms }}ms</small>
-            {% endif %}
           </div>
-
-          {# Summary #}
-          <div class="small mb-1">{{ block.summary }}</div>
-
-          {# Decision details #}
-          {% if block.decision %}
-          <div class="exc-decision-box p-2 rounded small mb-1">
-            <i class="bi bi-lightbulb me-1 text-warning"></i>
-            <strong>Decision:</strong> {{ block.decision }}
-          </div>
-          {% endif %}
-
-          {# Details (collapsible) #}
-          {% if block.details %}
-          <div>
-            <button class="btn btn-link btn-sm p-0 small" data-bs-toggle="collapse" 
-                    data-bs-target="#reasoning-detail-{{ forloop.counter0 }}">
-              <i class="bi bi-chevron-down me-1"></i>Details
-            </button>
-            <div class="collapse mt-1" id="reasoning-detail-{{ forloop.counter0 }}">
-              <pre class="exc-reasoning-detail p-2 rounded small mb-0">{{ block.details }}</pre>
-            </div>
-          </div>
-          {% endif %}
-
-          {# Related fields #}
-          {% if block.related_fields %}
-          <div class="mt-1">
-            <small class="text-muted">Related:</small>
-            {% for f in block.related_fields %}
-            <button class="btn btn-link btn-sm p-0 exc-goto-field" data-field="{{ f }}" data-tab="extracted-data">
-              <span class="badge bg-light text-dark border small">{{ f }}</span>
-            </button>
-            {% endfor %}
-          </div>
-          {% endif %}
+          <div class="small">{{ block.summary }}</div>
         </div>
       </div>
     </div>
   </div>
   {% endfor %}
-  {% else %}
+  {% endif %}
+
+  {# ── Empty state ── #}
+  {% if not agent_reasoning_runs and not reasoning_blocks and not audit_events %}
   <div class="text-center py-4">
     <i class="bi bi-cpu text-muted fs-1"></i>
-    <p class="text-muted mt-2 mb-0">No agent reasoning data available</p>
-    <small class="text-muted">Reasoning is available after LLM-based extraction</small>
+    <p class="text-muted mt-2 mb-0">No activity or reasoning data available</p>
+    <small class="text-muted">Data appears after extraction processing</small>
+  </div>
+  {% endif %}
+
+  {# ── Section 3: Audit Trail ── #}
+  {% if audit_events %}
+  <h6 class="text-muted text-uppercase small mb-3 {% if agent_reasoning_runs or reasoning_blocks %}mt-3 pt-3 border-top{% endif %}">
+    <i class="bi bi-clock-history me-1"></i>Audit Trail ({{ audit_events|length }} event{{ audit_events|length|pluralize }})
+  </h6>
+  <div class="exc-audit-timeline">
+    {% for event in audit_events %}
+    <div class="exc-audit-entry d-flex mb-3">
+      <div class="exc-audit-indicator me-3 text-center">
+        <div class="exc-audit-dot exc-audit-dot-{{ event.event_type|default:'info' }}"></div>
+        {% if not forloop.last %}
+        <div class="exc-audit-line"></div>
+        {% endif %}
+      </div>
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <span class="fw-semibold small">{{ event.action }}</span>
+          <span class="badge bg-{{ event.badge_class|default:'secondary' }}-subtle text-{{ event.badge_class|default:'secondary' }} small">
+            {{ event.event_type|default:"event" }}
+          </span>
+          <small class="text-muted ms-auto">{{ event.timestamp|date:"M d, Y H:i:s" }}</small>
+        </div>
+        {% if event.actor %}
+        <div class="small text-muted mb-1">
+          <i class="bi bi-person me-1"></i>{{ event.actor }}
+          {% if event.actor_role %}
+          <span class="badge bg-light text-dark border ms-1 small">{{ event.actor_role }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if event.description %}
+        <div class="small mb-1">{{ event.description }}</div>
+        {% endif %}
+        {% if event.before or event.after %}
+        <div class="exc-change-box p-2 rounded small">
+          {% if event.before %}
+          <div class="text-danger">
+            <i class="bi bi-dash-circle me-1"></i><strong>Before:</strong> {{ event.before }}
+          </div>
+          {% endif %}
+          {% if event.after %}
+          <div class="text-success">
+            <i class="bi bi-plus-circle me-1"></i><strong>After:</strong> {{ event.after }}
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if event.metadata.field_changes %}
+        <div class="mt-1">
+          {% for change in event.metadata.field_changes %}
+          <div class="d-flex align-items-center gap-2 small mb-1">
+            <code class="text-muted">{{ change.field }}</code>
+            <span class="text-decoration-line-through text-danger">{{ change.old|default:"(empty)" }}</span>
+            <i class="bi bi-arrow-right text-muted"></i>
+            <span class="fw-semibold text-success">{{ change.new|default:"(empty)" }}</span>
+            <span class="badge bg-light text-dark border" style="font-size:.65rem">{{ change.entity }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if event.metadata %}
+        <div class="mt-1 small text-muted">
+          {% for mk, mv in event.metadata.items %}
+          {% if mk != "field_changes" %}
+          <span class="me-2">{{ mk }}: {{ mv }}</span>
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
   </div>
   {% endif %}
 </div>

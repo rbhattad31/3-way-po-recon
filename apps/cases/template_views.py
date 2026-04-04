@@ -613,6 +613,67 @@ def case_agent_view(request, pk):
             ).order_by("first_name", "last_name").values_list("id", "first_name", "last_name", "email")
         )
 
+    # ── Cost & Token data (aggregated across all agent runs for this case) ──
+    cost_token_data = None
+    cost_run_history = []
+    if agent_runs:
+        try:
+            from decimal import Decimal
+            from django.db.models import Sum
+
+            run_pks = [r.pk for r in agent_runs]
+            totals = AgentRun.objects.filter(pk__in=run_pks).aggregate(
+                prompt_tk=Sum("prompt_tokens"),
+                completion_tk=Sum("completion_tokens"),
+                total_tk=Sum("total_tokens"),
+            )
+            prompt_tk = totals["prompt_tk"] or 0
+            completion_tk = totals["completion_tk"] or 0
+            total_tk = totals["total_tk"] or 0
+
+            if total_tk > 0:
+                llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
+                total_cost = llm_cost.quantize(Decimal("0.000001"))
+                latest_run = agent_runs[-1]  # ordered by created_at ASC
+                cost_token_data = {
+                    "prompt_tokens": prompt_tk,
+                    "completion_tokens": completion_tk,
+                    "total_tokens": total_tk,
+                    "llm_cost": llm_cost.quantize(Decimal("0.000001")),
+                    "cost_estimate": total_cost,
+                    "llm_model": getattr(latest_run, "llm_model_used", None) or "gpt-4o",
+                    "run_count": len(agent_runs),
+                }
+
+                for _cr in agent_runs:
+                    _cr_prompt = _cr.prompt_tokens or 0
+                    _cr_compl = _cr.completion_tokens or 0
+                    _cr_total = _cr.total_tokens or 0
+                    _cr_llm = Decimal(str(_cr_prompt * 5 / 1_000_000 + _cr_compl * 15 / 1_000_000))
+                    cost_run_history.append({
+                        "run_id": _cr.pk,
+                        "agent_type": _cr.get_agent_type_display() if hasattr(_cr, "get_agent_type_display") else str(_cr.agent_type),
+                        "status": _cr.status,
+                        "llm_model": getattr(_cr, "llm_model_used", None) or "gpt-4o",
+                        "prompt_tokens": _cr_prompt,
+                        "completion_tokens": _cr_compl,
+                        "total_tokens": _cr_total,
+                        "llm_cost": _cr_llm.quantize(Decimal("0.000001")),
+                        "total_cost": _cr_llm.quantize(Decimal("0.000001")),
+                        "duration_ms": getattr(_cr, "duration_ms", None),
+                        "started_at": _cr.started_at if hasattr(_cr, "started_at") else _cr.created_at,
+                        "confidence": _cr.confidence,
+                    })
+        except Exception:
+            pass
+
+    # Reconciliation match status
+    recon_match_status = None
+    recon_mode = None
+    if recon_result:
+        recon_match_status = recon_result.match_status
+        recon_mode = getattr(recon_result, "reconciliation_mode", None)
+
     return render(request, "cases/case_agent_view.html", {
         "case": case,
         "invoice": invoice,
@@ -638,6 +699,10 @@ def case_agent_view(request, pk):
         "open_exceptions_count": open_exceptions_count,
         "failed_validations_count": failed_validations_count,
         "failed_stages_count": failed_stages_count,
+        "cost_token_data": cost_token_data,
+        "cost_run_history": cost_run_history,
+        "recon_match_status": recon_match_status,
+        "recon_mode": recon_mode,
         "copilot_context_json": json.dumps(copilot_context, default=str),
         "reviewers": reviewers,
     })
@@ -759,6 +824,13 @@ def case_decide(request, pk):
         case.status = new_status
         case.save(update_fields=["status", "updated_at"])
         messages.success(request, f"Case {case.case_number} marked as {case.get_status_display()}.")
+
+        # When the case is approved/closed, mark the invoice as RECONCILED
+        if new_status == CaseStatus.CLOSED and case.invoice:
+            from apps.core.enums import InvoiceStatus
+            if case.invoice.status != InvoiceStatus.RECONCILED:
+                case.invoice.status = InvoiceStatus.RECONCILED
+                case.invoice.save(update_fields=["status", "updated_at"])
 
         # Audit: case status change from decision
         from apps.auditlog.services import AuditService

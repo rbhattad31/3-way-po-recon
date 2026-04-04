@@ -117,7 +117,7 @@
   <div class="card">
     <div class="card-header py-2 px-3 d-flex align-items-center">
       <i class="bi bi-info-circle me-2 text-secondary"></i>
-      <span class="fw-semibold small">Execution Details</span>
+      <span class="fw-semibold small">Latest Run Details</span>
     </div>
     <div class="card-body p-0">
       <table class="table table-sm mb-0">
@@ -158,18 +158,6 @@
             <td>{{ cost_token_data.duration_ms|floatformat:0 }} ms</td>
           </tr>
           {% endif %}
-          {% if cost_token_data.started_at %}
-          <tr>
-            <td class="text-muted">Started</td>
-            <td>{{ cost_token_data.started_at|date:"Y-m-d H:i:s" }}</td>
-          </tr>
-          {% endif %}
-          {% if cost_token_data.completed_at %}
-          <tr>
-            <td class="text-muted">Completed</td>
-            <td>{{ cost_token_data.completed_at|date:"Y-m-d H:i:s" }}</td>
-          </tr>
-          {% endif %}
           <tr>
             <td class="text-muted">Pricing</td>
             <td class="small">
@@ -177,14 +165,73 @@
               OCR: $1.50/1,000 pages
             </td>
           </tr>
-          <tr>
-            <td class="text-muted">Agent Run ID</td>
-            <td><code>#{{ cost_token_data.agent_run_id }}</code></td>
-          </tr>
         </tbody>
       </table>
     </div>
   </div>
+
+  {# Run History #}
+  {% if cost_run_history and cost_run_history|length > 0 %}
+  <div class="card mt-3">
+    <div class="card-header py-2 px-3 d-flex align-items-center">
+      <i class="bi bi-clock-history me-2 text-primary"></i>
+      <span class="fw-semibold small">Run History ({{ cost_run_history|length }} run{{ cost_run_history|length|pluralize }})</span>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 small">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Agent</th>
+              <th>Status</th>
+              <th>Model</th>
+              <th class="text-end">Tokens</th>
+              <th class="text-end">LLM Cost</th>
+              <th class="text-end">OCR Cost</th>
+              <th class="text-end">Total</th>
+              <th class="text-end">Duration</th>
+              <th>Confidence</th>
+              <th>Started</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rh in cost_run_history %}
+            <tr>
+              <td><code>#{{ rh.run_id }}</code></td>
+              <td>{{ rh.agent_type }}</td>
+              <td>
+                {% if rh.status == "COMPLETED" %}
+                <span class="badge bg-success-subtle text-success">{{ rh.status }}</span>
+                {% elif rh.status == "FAILED" %}
+                <span class="badge bg-danger-subtle text-danger">{{ rh.status }}</span>
+                {% else %}
+                <span class="badge bg-secondary-subtle text-secondary">{{ rh.status }}</span>
+                {% endif %}
+              </td>
+              <td><code>{{ rh.llm_model }}</code></td>
+              <td class="text-end">{{ rh.total_tokens|floatformat:0 }}</td>
+              <td class="text-end">${{ rh.llm_cost }}</td>
+              <td class="text-end">${{ rh.ocr_cost }}</td>
+              <td class="text-end fw-semibold">${{ rh.total_cost }}</td>
+              <td class="text-end">{% if rh.duration_ms %}{{ rh.duration_ms }}ms{% else %}-{% endif %}</td>
+              <td>
+                {% if rh.confidence %}
+                {% widthratio rh.confidence 1 100 as rh_conf %}
+                <span class="badge {% if rh.confidence >= 0.8 %}bg-success-subtle text-success{% elif rh.confidence >= 0.5 %}bg-warning-subtle text-warning{% else %}bg-danger-subtle text-danger{% endif %}">
+                  {{ rh_conf }}%
+                </span>
+                {% else %}-{% endif %}
+              </td>
+              <td>{% if rh.started_at %}{{ rh.started_at|date:"M d H:i:s" }}{% else %}-{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   {% else %}
   <div class="text-center py-5">
