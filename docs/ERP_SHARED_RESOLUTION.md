@@ -287,3 +287,17 @@ grn_result = svc.resolve_grn(po_number="PO-12345")
    to allow AP teams to inspect the data lineage for any match decision.
 4. **`data_is_stale` filter** -- Add to reconciliation result list view and API
    filter backends so ops can quickly find results with potentially outdated data.
+
+---
+
+## Langfuse Observability
+
+All `resolve_*()` methods on `ERPResolutionService` accept an optional
+`lf_parent_span` kwarg. When provided, the resolution chain creates nested
+Langfuse child spans (`erp_resolution` -> `erp_cache_lookup` / `erp_live_lookup` /
+`erp_db_fallback`) with evaluation-ready observation scores.
+
+Helpers live in `apps/erp_integration/services/langfuse_helpers.py` -- see
+[LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11 for the full
+span hierarchy, scores reference, metadata sanitisation rules, and caller
+threading patterns.

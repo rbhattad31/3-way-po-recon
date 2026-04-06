@@ -221,7 +221,24 @@ class ExtractionConfidenceScorer:
                     # Don't add per-line penalties to avoid noise
 
         if checks_total == 0:
-            # No consistency checks possible — neutral (not penalised)
+            # No consistency checks possible -- neutral (not penalised)
             return 0.5
 
-        return checks_passed / checks_total
+        raw_score = checks_passed / checks_total
+
+        # Hard penalty: when subtotal + tax != total by a large margin
+        # the raw_score may still be high (diluted by many passing per-line
+        # checks).  Apply a cap so a hard total mismatch cannot hide.
+        if inv.subtotal is not None and inv.tax_amount is not None and inv.total_amount is not None:
+            if inv.total_amount > 0:
+                expected = inv.subtotal + inv.tax_amount
+                diff_pct = abs(float(expected - inv.total_amount)) / float(inv.total_amount)
+                if diff_pct >= 0.05:  # >= 5% mismatch
+                    cap = 0.30
+                    if raw_score > cap:
+                        breakdown.penalties.append(
+                            f"hard_total_mismatch_cap:{diff_pct:.1%}"
+                        )
+                        raw_score = cap
+
+        return raw_score

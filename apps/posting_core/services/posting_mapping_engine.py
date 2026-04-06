@@ -594,7 +594,10 @@ class PostingMappingEngine:
         try:
             from apps.erp_integration.services.resolution_service import ERPResolutionService
             svc = ERPResolutionService(self._connector)
-            result = svc.resolve_tax_code(tax_code=tax_code, rate=rate)
+            result = svc.resolve_tax_code(
+                tax_code=tax_code, rate=rate,
+                lf_parent_span=self._lf_mapping_span,
+            )
             if result.resolved and result.value:
                 line_proposal.tax_code = result.value.get("tax_code", "")
                 line_proposal.tax_source = PostingFieldSourceType.TAX_REF
@@ -611,7 +614,10 @@ class PostingMappingEngine:
         try:
             from apps.erp_integration.services.resolution_service import ERPResolutionService
             svc = ERPResolutionService(self._connector)
-            result = svc.resolve_cost_center(cost_center_code=cost_center_code)
+            result = svc.resolve_cost_center(
+                cost_center_code=cost_center_code,
+                lf_parent_span=self._lf_mapping_span,
+            )
             if result.resolved and result.value:
                 line_proposal.cost_center = result.value.get("cost_center_code", "")
                 line_proposal.cost_center_source = PostingFieldSourceType.COST_CENTER_REF
@@ -728,7 +734,10 @@ class PostingMappingEngine:
         try:
             from apps.erp_integration.services.resolution_service import ERPResolutionService
             svc = ERPResolutionService(self._connector)
-            result = svc.resolve_po(po_number=po_number)
+            result = svc.resolve_po(
+                po_number=po_number,
+                lf_parent_span=self._lf_mapping_span,
+            )
             if result.resolved and result.value:
                 lines = result.value.get("lines", [])
                 refs = []

@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Learning Signals -- Eval &amp; Learning{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'core_eval:eval_run_list' %}">Eval &amp; Learning</a></li>
+  <li class="breadcrumb-item active">Learning Signals</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+{# -- Section Tabs -- #}
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item"><a class="nav-link" href="{% url 'core_eval:eval_run_list' %}"><i class="bi bi-clipboard-data me-1"></i>Eval Runs</a></li>
+  <li class="nav-item"><a class="nav-link active" href="{% url 'core_eval:learning_signal_list' %}"><i class="bi bi-broadcast me-1"></i>Learning Signals</a></li>
+  <li class="nav-item"><a class="nav-link" href="{% url 'core_eval:learning_action_list' %}"><i class="bi bi-lightning me-1"></i>Learning Actions</a></li>
+</ul>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-broadcast me-2"></i>Learning Signals</h4>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted">{{ page_obj.paginator.count }} signal{{ page_obj.paginator.count|pluralize }}</span>
+    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#filterPanel" aria-expanded="{% if current_app_module or current_signal_type or current_field_name %}true{% else %}false{% endif %}">
+      <i class="bi bi-funnel me-1"></i>Filters{% if current_app_module or current_signal_type or current_field_name %} <span class="badge bg-primary ms-1">active</span>{% endif %}
+    </button>
+  </div>
+</div>
+
+{# -- Collapsible Filters -- #}
+<div class="collapse {% if current_app_module or current_signal_type or current_field_name %}show{% endif %}" id="filterPanel">
+  <div class="ap-card mb-3">
+    <div class="ap-card-body py-2 px-3">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-lg-3 col-md-4">
+          <label class="form-label form-label-sm mb-0">Module</label>
+          <select name="app_module" class="form-select form-select-sm">
+            <option value="">All Modules</option>
+            {% for m in app_modules %}
+            <option value="{{ m }}" {% if m == current_app_module %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-3 col-md-4">
+          <label class="form-label form-label-sm mb-0">Signal Type</label>
+          <select name="signal_type" class="form-select form-select-sm">
+            <option value="">All Types</option>
+            {% for st in signal_types %}
+            <option value="{{ st }}" {% if st == current_signal_type %}selected{% endif %}>{{ st }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-3 col-md-4">
+          <label class="form-label form-label-sm mb-0">Field Name</label>
+          <select name="field_name" class="form-select form-select-sm">
+            <option value="">All Fields</option>
+            {% for fn in field_names %}
+            <option value="{{ fn }}" {% if fn == current_field_name %}selected{% endif %}>{{ fn }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-3 col-md-4 d-flex gap-1">
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
+          <a href="{% url 'core_eval:learning_signal_list' %}" class="btn btn-sm btn-outline-secondary" title="Clear"><i class="bi bi-x-lg"></i></a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# -- Table -- #}
+<div class="ap-card">
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table w-100 mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Module</th>
+          <th>Signal Type</th>
+          <th>Entity</th>
+          <th>Field</th>
+          <th>Old / New Value</th>
+          <th>Confidence</th>
+          <th>Actor</th>
+          <th style="width:140px">Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sig in page_obj %}
+        <tr>
+          <td><span class="text-muted">#{{ sig.pk }}</span></td>
+          <td><span class="ap-badge ap-badge-info">{{ sig.app_module }}</span></td>
+          <td><span class="ap-badge ap-badge-partial">{{ sig.signal_type }}</span></td>
+          <td>
+            {% if sig.entity_type %}
+              <span class="text-muted small">{{ sig.entity_type }}</span>
+              <span class="text-muted">#{{ sig.entity_id }}</span>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sig.field_name %}
+              <code class="small">{{ sig.field_name }}</code>
+            {% elif sig.payload_json %}
+              {% for k, v in sig.payload_json.items %}
+                {% if k == "status" or k == "field" or k == "is_touchless" %}
+                  <small class="text-muted">{{ k }}:</small> <code class="small">{{ v }}</code>{% if not forloop.last %}<br>{% endif %}
+                {% endif %}
+              {% endfor %}
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sig.old_value or sig.new_value %}
+              <small class="text-danger">{{ sig.old_value|truncatechars:25 }}</small>
+              {% if sig.old_value and sig.new_value %}<i class="bi bi-arrow-right mx-1 text-muted"></i>{% endif %}
+              <small class="text-success">{{ sig.new_value|truncatechars:25 }}</small>
+            {% elif sig.payload_json %}
+              {% for k, v in sig.payload_json.items %}
+                <small><span class="text-muted">{{ k }}:</span> {{ v|truncatechars:30 }}</small>{% if not forloop.last %}<br>{% endif %}
+              {% endfor %}
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sig.confidence %}
+              <small>{% widthratio sig.confidence 1 100 %}%</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sig.actor %}
+              <small>{{ sig.actor.email }}</small>
+            {% else %}
+              <small class="text-muted">system</small>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ sig.created_at|date:"M d, H:i:s" }}</small></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9" class="text-center text-muted py-4">No learning signals found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# -- Pagination -- #}
+{% if page_obj.has_other_pages %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm justify-content-center" id="signalPagination">
+    {% if page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" data-page="{{ page_obj.previous_page_number }}">&laquo;</a></li>
+    {% endif %}
+    {% for num in page_obj.paginator.page_range %}
+      {% if page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" data-page="{{ num }}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}
+    <li class="page-item"><a class="page-link" data-page="{{ page_obj.next_page_number }}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+<script>
+document.getElementById('signalPagination').addEventListener('click', function(e) {
+  var link = e.target.closest('a[data-page]');
+  if (!link) return;
+  e.preventDefault();
+  var params = new URLSearchParams(window.location.search);
+  params.set('page', link.dataset.page);
+  window.location.search = params.toString();
+});
+</script>
+{% endif %}
+{% endblock %}

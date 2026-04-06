@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Eval Runs -- Eval &amp; Learning{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item active">Eval Runs</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+{# -- Section Tabs -- #}
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item"><a class="nav-link active" href="{% url 'core_eval:eval_run_list' %}"><i class="bi bi-clipboard-data me-1"></i>Eval Runs</a></li>
+  <li class="nav-item"><a class="nav-link" href="{% url 'core_eval:learning_signal_list' %}"><i class="bi bi-broadcast me-1"></i>Learning Signals</a></li>
+  <li class="nav-item"><a class="nav-link" href="{% url 'core_eval:learning_action_list' %}"><i class="bi bi-lightning me-1"></i>Learning Actions</a></li>
+</ul>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-clipboard-data me-2"></i>Eval Runs</h4>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted">{{ page_obj.paginator.count }} run{{ page_obj.paginator.count|pluralize }}</span>
+    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#filterPanel" aria-expanded="{% if current_app_module or current_status or current_entity_type %}true{% else %}false{% endif %}">
+      <i class="bi bi-funnel me-1"></i>Filters{% if current_app_module or current_status or current_entity_type %} <span class="badge bg-primary ms-1">active</span>{% endif %}
+    </button>
+  </div>
+</div>
+
+{# -- KPI Cards -- #}
+<div class="row g-2 mb-3">
+  <div class="col-md-4">
+    <div class="ap-card text-center py-2">
+      <div class="fw-bold fs-5">{{ total }}</div>
+      <small class="text-muted">Total Runs</small>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="ap-card text-center py-2">
+      <div class="fw-bold fs-5 text-success">{{ completed }}</div>
+      <small class="text-muted">Completed</small>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="ap-card text-center py-2">
+      <div class="fw-bold fs-5 text-danger">{{ failed }}</div>
+      <small class="text-muted">Failed</small>
+    </div>
+  </div>
+</div>
+
+{# -- Collapsible Filters -- #}
+<div class="collapse {% if current_app_module or current_status or current_entity_type %}show{% endif %}" id="filterPanel">
+  <div class="ap-card mb-3">
+    <div class="ap-card-body py-2 px-3">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-lg-3 col-md-4">
+          <label class="form-label form-label-sm mb-0">Module</label>
+          <select name="app_module" class="form-select form-select-sm">
+            <option value="">All Modules</option>
+            {% for m in app_modules %}
+            <option value="{{ m }}" {% if m == current_app_module %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-3 col-md-4">
+          <label class="form-label form-label-sm mb-0">Status</label>
+          <select name="status" class="form-select form-select-sm">
+            <option value="">All Statuses</option>
+            {% for s in statuses %}
+            <option value="{{ s }}" {% if s == current_status %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-3 col-md-4">
+          <label class="form-label form-label-sm mb-0">Entity Type</label>
+          <select name="entity_type" class="form-select form-select-sm">
+            <option value="">All Types</option>
+            {% for et in entity_types %}
+            <option value="{{ et }}" {% if et == current_entity_type %}selected{% endif %}>{{ et }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-3 col-md-4 d-flex gap-1">
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
+          <a href="{% url 'core_eval:eval_run_list' %}" class="btn btn-sm btn-outline-secondary" title="Clear"><i class="bi bi-x-lg"></i></a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# -- Table -- #}
+<div class="ap-card">
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table w-100 mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Module</th>
+          <th>Entity</th>
+          <th>Status</th>
+          <th>Duration</th>
+          <th style="width:140px">Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in page_obj %}
+        <tr>
+          <td><a href="{% url 'core_eval:eval_run_detail' run.pk %}">#{{ run.pk }}</a></td>
+          <td><span class="ap-badge ap-badge-info">{{ run.app_module }}</span></td>
+          <td>
+            <span class="text-muted small">{{ run.entity_type }}</span>
+            <span class="text-muted">#{{ run.entity_id }}</span>
+            {% if run.run_key %}<br><small class="text-muted font-monospace">{{ run.run_key|truncatechars:20 }}</small>{% endif %}
+          </td>
+          <td>
+            <span class="ap-badge
+              {% if run.status == 'COMPLETED' %}ap-badge-matched
+              {% elif run.status == 'FAILED' %}ap-badge-unmatched
+              {% elif run.status == 'RUNNING' %}ap-badge-partial
+              {% else %}ap-badge-status-new{% endif %}">{{ run.status }}</span>
+          </td>
+          <td>
+            {% if run.duration_ms is not None %}
+              <small>{{ run.duration_ms }}ms</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted py-4">No eval runs found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# -- Pagination -- #}
+{% if page_obj.has_other_pages %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm justify-content-center" id="evalPagination">
+    {% if page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" data-page="{{ page_obj.previous_page_number }}">&laquo;</a></li>
+    {% endif %}
+    {% for num in page_obj.paginator.page_range %}
+      {% if page_obj.number == num %}
+      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+      <li class="page-item"><a class="page-link" data-page="{{ num }}">{{ num }}</a></li>
+      {% endif %}
+    {% endfor %}
+    {% if page_obj.has_next %}
+    <li class="page-item"><a class="page-link" data-page="{{ page_obj.next_page_number }}">&raquo;</a></li>
+    {% endif %}
+  </ul>
+</nav>
+<script>
+document.getElementById('evalPagination').addEventListener('click', function(e) {
+  var link = e.target.closest('a[data-page]');
+  if (!link) return;
+  e.preventDefault();
+  var params = new URLSearchParams(window.location.search);
+  params.set('page', link.dataset.page);
+  window.location.search = params.toString();
+});
+</script>
+{% endif %}
+{% endblock %}

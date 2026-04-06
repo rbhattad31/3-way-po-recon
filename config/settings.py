@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.posting",
     "apps.posting_core",
     "apps.erp_integration",
+    "apps.core_eval",
 ]
 
 MIDDLEWARE = [
@@ -140,7 +141,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Cache-busting version counter — bump after static file changes
-STATIC_VERSION = "1.0.8"
+STATIC_VERSION = "1.1.2"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -311,7 +312,7 @@ LOGGING = {
             "formatter": "dev_traced" if DEBUG else "json",
         },
         "file": {
-            "class": "logging.handlers.RotatingFileHandler",
+            "class": "apps.core.logging_utils.SafeRotatingFileHandler",
             "filename": BASE_DIR / "logs" / "po_recon.log",
             "maxBytes": 10 * 1024 * 1024,
             "backupCount": 5,

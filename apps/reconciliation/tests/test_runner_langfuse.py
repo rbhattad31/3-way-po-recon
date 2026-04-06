@@ -26,6 +26,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch, call
 
 from apps.core.enums import MatchStatus, ReconciliationMode
+from apps.core.evaluation_constants import RECON_RECONCILIATION_MATCH
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -68,10 +69,17 @@ def make_mode_resolution(mode=ReconciliationMode.TWO_WAY):
 def make_routed(match_status=MatchStatus.MATCHED):
     r = MagicMock()
     r.po_result = make_po_result()
-    r.header_result = MagicMock(all_ok=True)
-    r.line_result = MagicMock(all_lines_matched=True, all_within_tolerance=True,
-                               unmatched_invoice_lines=[], unmatched_po_lines=[])
+    r.header_result = MagicMock(
+        all_ok=True, vendor_match=True, currency_match=True,
+        po_total_match=True, total_difference=0,
+    )
+    r.line_result = MagicMock(
+        all_lines_matched=True, all_within_tolerance=True,
+        unmatched_invoice_lines=[], unmatched_po_lines=[],
+        total_invoice_lines=1, line_pairs=[],
+    )
     r.grn_result = None
+    r.grn_checked = False
     return r
 
 
@@ -179,7 +187,7 @@ class TestRunnerScoreTrace:
     ])
     def test_score_trace_called_with_correct_value(self, patched_runner,
                                                     match_status, expected_score):
-        """score_trace() is called with the correct numeric score per match status."""
+        """score_trace_safe() emits the correct RECON_RECONCILIATION_MATCH score."""
         runner, config = patched_runner
         runner.classifier.classify.return_value = match_status
 
@@ -192,9 +200,16 @@ class TestRunnerScoreTrace:
              patch("apps.core.langfuse_client.get_client", return_value=None):
             runner.run(invoices=[invoice])
 
-        mock_score.assert_called_once()
-        args = mock_score.call_args
-        assert args[0][2] == expected_score  # 3rd positional arg = value
+        # Runner now emits multiple score_trace calls per invoice.
+        # Find the RECON_RECONCILIATION_MATCH call specifically.
+        match_calls = [
+            c for c in mock_score.call_args_list
+            if len(c.args) >= 2 and c.args[1] == RECON_RECONCILIATION_MATCH
+        ]
+        assert len(match_calls) == 1, (
+            f"Expected 1 {RECON_RECONCILIATION_MATCH} call, got {len(match_calls)}"
+        )
+        assert match_calls[0].args[2] == expected_score
 
     def test_score_trace_exception_does_not_break_runner(self, patched_runner):
         """If score_trace() raises, the runner completes normally."""
@@ -243,15 +258,16 @@ class TestLangfuseSpansDoNotAlterResults:
              patch("apps.core.langfuse_client.start_span", return_value=mock_span), \
              patch("apps.core.langfuse_client.end_span"), \
              patch("apps.core.langfuse_client.start_trace", return_value=mock_span), \
-             patch("apps.core.langfuse_client.score_trace"):
+             patch("apps.core.langfuse_client.score_trace"), \
+             patch("apps.core.langfuse_client.score_observation"):
             recon_run = runner.run(invoices=[invoice])
 
-        # Mode resolver was called exactly once — spans didn't intercept it
+        # Mode resolver was called exactly once -- spans didn't intercept it
         runner.mode_resolver.resolve.assert_called_once()
         assert recon_run.matched_count == 1
 
     def test_multiple_invoices_each_scored_independently(self, patched_runner):
-        """Each invoice gets its own score_trace call — one per invoice."""
+        """Each invoice gets its own RECON_RECONCILIATION_MATCH score call."""
         runner, config = patched_runner
         runner.classifier.classify.return_value = MatchStatus.MATCHED
         invoices = [make_mock_invoice(pk=i) for i in range(1, 4)]
@@ -260,7 +276,12 @@ class TestLangfuseSpansDoNotAlterResults:
              patch("apps.core.langfuse_client.get_client", return_value=None):
             runner.run(invoices=invoices)
 
-        assert mock_score.call_count == 3  # One per invoice
+        # Filter to only RECON_RECONCILIATION_MATCH calls (one per invoice)
+        match_calls = [
+            c for c in mock_score.call_args_list
+            if len(c.args) >= 2 and c.args[1] == RECON_RECONCILIATION_MATCH
+        ]
+        assert len(match_calls) == 3  # One per invoice
 
 
 # ─── Guardrails: score_trace called after guardrail decision ─────────────────

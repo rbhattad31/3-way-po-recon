@@ -159,6 +159,10 @@ class ReconciliationRun(BaseModel):
         null=True, blank=True,
         help_text="Whether GRN matching was actually performed",
     )
+    langfuse_trace_id = models.CharField(
+        max_length=64, blank=True, default="", db_index=True,
+        help_text="Langfuse root trace ID for this reconciliation run",
+    )
 
     class Meta:
         db_table = "reconciliation_run"

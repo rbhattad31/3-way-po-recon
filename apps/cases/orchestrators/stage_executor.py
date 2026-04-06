@@ -34,6 +34,30 @@ class StageExecutor:
     """
 
     @staticmethod
+    def _build_rbac_kwargs(case: APCase) -> dict:
+        """Return RBAC + trace kwargs for AgentContext created by stage executors."""
+        import uuid
+        rbac: dict = {
+            "trace_id": getattr(case, "trace_id", "") or uuid.uuid4().hex,
+        }
+        try:
+            from apps.agents.services.guardrails_service import AgentGuardrailsService
+            actor = AgentGuardrailsService.resolve_actor(None)
+            snapshot = AgentGuardrailsService.build_rbac_snapshot(actor)
+            rbac["actor_user_id"] = actor.pk
+            rbac["actor_primary_role"] = snapshot.get("actor_primary_role", "")
+            rbac["actor_roles_snapshot"] = snapshot.get("actor_roles_snapshot", [])
+            rbac["permission_source"] = snapshot.get("permission_source", "SYSTEM_AGENT")
+            rbac["permission_checked"] = "cases.process"
+            rbac["access_granted"] = True
+        except Exception:
+            rbac.setdefault("actor_primary_role", "SYSTEM_AGENT")
+            rbac.setdefault("permission_source", "SYSTEM_AGENT")
+            rbac.setdefault("permission_checked", "cases.process")
+            rbac.setdefault("access_granted", True)
+        return rbac
+
+    @staticmethod
     def execute(case: APCase, stage_name: str) -> Optional[Dict[str, Any]]:
         """Dispatch to the correct stage handler."""
         handlers = {
@@ -82,15 +106,14 @@ class StageExecutor:
     @staticmethod
     def _execute_extraction(case: APCase) -> Dict:
         """
-        Extraction stage: records quality and runs Invoice Understanding Agent
-        for low-confidence extractions.
+        Extraction stage (deterministic): records extraction quality metrics.
 
         The Invoice Extraction Agent (OCR + GPT-4o) has already run in the
-        extraction task.  Here we capture confidence and, if it is below
-        threshold, invoke the Invoice Understanding Agent to validate.
+        extraction task.  Here we simply capture the confidence score on the
+        case record.  Any agent-based validation (Invoice Understanding) is
+        deferred to the EXCEPTION_ANALYSIS stage where the AgentOrchestrator
+        decides which agents to invoke.
         """
-        from apps.core.constants import EXTRACTION_CONFIDENCE_THRESHOLD
-
         invoice = case.invoice
         confidence = float(invoice.extraction_confidence or 0)
 
@@ -103,77 +126,16 @@ class StageExecutor:
         case.extraction_confidence = confidence
         case.save(update_fields=["extraction_confidence", "updated_at"])
 
-        # Low confidence → run Invoice Understanding Agent to validate
-        if confidence < EXTRACTION_CONFIDENCE_THRESHOLD:
-            agent_output = StageExecutor._run_invoice_understanding_agent(case)
-            output["agent_analysis"] = agent_output
+        if confidence < 0.5:
+            output["low_confidence"] = True
+            logger.info(
+                "Low extraction confidence (%.2f) for case %s -- "
+                "agent validation deferred to exception analysis",
+                confidence, case.case_number,
+            )
 
         CaseStateMachine.transition(case, CaseStatus.EXTRACTION_COMPLETED, PerformedByType.SYSTEM)
         return output
-
-    @staticmethod
-    def _run_invoice_understanding_agent(case: APCase) -> Dict:
-        """Invoke the Invoice Understanding Agent to validate low-confidence extraction."""
-        try:
-            from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
-            from apps.agents.services.base_agent import AgentContext
-            from apps.core.enums import AgentRunStatus, AgentType
-            from apps.reconciliation.models import ReconciliationConfig
-
-            # Respect the enable_agents config flag
-            config = ReconciliationConfig.objects.filter(is_default=True).first()
-            if config and not config.enable_agents:
-                logger.info("Agents disabled — skipping Invoice Understanding for case %s", case.case_number)
-                return {"skipped": True, "reason": "agents_disabled"}
-
-            agent_cls = AGENT_CLASS_REGISTRY.get(AgentType.INVOICE_UNDERSTANDING)
-            if not agent_cls:
-                logger.warning("Invoice Understanding Agent class not found in registry")
-                return {"skipped": True, "reason": "agent_not_registered"}
-
-            invoice = case.invoice
-            ctx = AgentContext(
-                reconciliation_result=None,
-                invoice_id=invoice.pk,
-                po_number=invoice.po_number,
-                extra={
-                    "extraction_confidence": float(invoice.extraction_confidence or 0),
-                    "vendor_name": invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name,
-                    "total_amount": str(invoice.total_amount) if invoice.total_amount else "unknown",
-                    "case_number": case.case_number,
-                    "stage": "extraction_validation",
-                },
-            )
-
-            agent = agent_cls()
-            agent_run = agent.run(ctx)
-
-            if agent_run.status != AgentRunStatus.COMPLETED:
-                logger.warning(
-                    "Invoice Understanding Agent did not complete for case %s: status=%s",
-                    case.case_number, agent_run.status,
-                )
-                return {"completed": False, "agent_run_id": agent_run.pk}
-
-            output = agent_run.output_payload or {}
-            recommendation = output.get("recommendation_type", "")
-            confidence = output.get("confidence", 0)
-
-            logger.info(
-                "Invoice Understanding Agent for case %s: recommendation=%s confidence=%.2f",
-                case.case_number, recommendation, confidence,
-            )
-            return {
-                "completed": True,
-                "agent_run_id": agent_run.pk,
-                "recommendation": recommendation,
-                "confidence": confidence,
-                "reasoning": output.get("reasoning", ""),
-            }
-
-        except Exception:
-            logger.exception("Invoice Understanding Agent error for case %s", case.case_number)
-            return {"completed": False, "error": True}
 
     @staticmethod
     def _execute_path_resolution(case: APCase) -> Dict:
@@ -203,12 +165,16 @@ class StageExecutor:
     @staticmethod
     def _execute_po_retrieval(case: APCase) -> Dict:
         """
-        PO retrieval: deterministic lookup + PO Retrieval Agent + vendor+amount fallback.
+        PO retrieval (deterministic): lookup PO via exact, normalized, and
+        vendor+amount strategies.  No LLM calls.
+
+        If PO is not found here, a PO_NOT_FOUND exception will be created
+        during reconciliation and the AgentOrchestrator (in the
+        EXCEPTION_ANALYSIS stage) will invoke the PO Retrieval Agent.
 
         Flow:
-        1. Exact + normalized PO lookup (quick deterministic check)
-        2. PO Retrieval Agent (LLM-based fuzzy matching)
-        3. Vendor + amount discovery (deterministic fallback)
+        1. Exact + normalized PO lookup
+        2. Vendor + amount discovery (deterministic fallback)
         """
         from apps.reconciliation.services.po_lookup_service import POLookupService
 
@@ -227,12 +193,7 @@ class StageExecutor:
                 "method": po_result.lookup_method,
             }
 
-        # Step 2: Invoke PO Retrieval Agent (LLM-based fuzzy matching)
-        agent_result = StageExecutor._run_po_retrieval_agent(case)
-        if agent_result.get("po_found"):
-            return agent_result
-
-        # Step 3: Vendor + amount discovery (deterministic fallback)
+        # Step 2: Vendor + amount discovery (deterministic fallback)
         po_result = lookup_svc._discover_by_vendor_amount(invoice)
         if po_result.found:
             case.purchase_order = po_result.purchase_order
@@ -246,80 +207,14 @@ class StageExecutor:
                 "po_found": True,
                 "po_number": po_result.purchase_order.po_number,
                 "method": "vendor_amount_fallback",
-                "agent_attempted": True,
             }
 
-        return {"po_found": False, "agent_attempted": True}
-
-    @staticmethod
-    def _run_po_retrieval_agent(case: APCase) -> Dict:
-        """Invoke the PO Retrieval Agent to attempt fuzzy PO matching."""
-        try:
-            from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
-            from apps.agents.services.base_agent import AgentContext
-            from apps.core.enums import AgentRunStatus, AgentType
-            from apps.documents.models import PurchaseOrder
-
-            agent_cls = AGENT_CLASS_REGISTRY.get(AgentType.PO_RETRIEVAL)
-            if not agent_cls:
-                logger.warning("PO Retrieval Agent class not found in registry")
-                return {"po_found": False, "agent_attempted": False}
-
-            invoice = case.invoice
-            ctx = AgentContext(
-                reconciliation_result=None,
-                invoice_id=invoice.pk,
-                po_number=invoice.po_number,
-                extra={
-                    "vendor_name": invoice.vendor.name if invoice.vendor else invoice.raw_vendor_name,
-                    "total_amount": str(invoice.total_amount) if invoice.total_amount else "unknown",
-                    "case_number": case.case_number,
-                },
-            )
-
-            agent = agent_cls()
-            agent_run = agent.run(ctx)
-
-            if agent_run.status != AgentRunStatus.COMPLETED:
-                logger.warning(
-                    "PO Retrieval Agent did not complete for case %s: status=%s",
-                    case.case_number, agent_run.status,
-                )
-                return {"po_found": False, "agent_attempted": True}
-
-            # Parse agent output for a found PO number
-            output = agent_run.output_payload or {}
-            evidence = output.get("evidence", {})
-            found_po_number = (
-                evidence.get("po_number")
-                or evidence.get("found_po_number")
-                or evidence.get("matched_po_number")
-            )
-
-            if found_po_number:
-                po = PurchaseOrder.objects.filter(po_number=found_po_number).first()
-                if po:
-                    case.purchase_order = po
-                    case.save(update_fields=["purchase_order", "updated_at"])
-                    StageExecutor._enrich_invoice_lines_from_po(case.invoice, po)
-                    logger.info(
-                        "PO Retrieval Agent found PO %s for case %s",
-                        po.po_number, case.case_number,
-                    )
-                    return {
-                        "po_found": True,
-                        "po_number": po.po_number,
-                        "method": "agent",
-                        "agent_attempted": True,
-                        "agent_confidence": output.get("confidence"),
-                    }
-
-            logger.info("PO Retrieval Agent did not find a PO for case %s", case.case_number)
-            return {"po_found": False, "agent_attempted": True}
-
-        except Exception:
-            logger.exception("PO Retrieval Agent error for case %s", case.case_number)
-            return {"po_found": False, "agent_attempted": True, "agent_error": True}
+        logger.info(
+            "PO not found deterministically for case %s -- "
+            "agent retrieval deferred to exception analysis",
+            case.case_number,
+        )
+        return {"po_found": False}
 
     @staticmethod
     def _enrich_invoice_lines_from_po(invoice, purchase_order) -> None:
@@ -425,6 +320,13 @@ class StageExecutor:
         return {"grn_analysis": "pending_agent_integration"}
 
     @staticmethod
+    def _mark_invoice_reconciled(case: APCase) -> None:
+        """Mark the invoice as RECONCILED when the case reaches CLOSED status."""
+        if case.invoice and case.invoice.status != InvoiceStatus.RECONCILED:
+            case.invoice.status = InvoiceStatus.RECONCILED
+            case.invoice.save(update_fields=["status", "updated_at"])
+
+    @staticmethod
     def _execute_non_po_validation(case: APCase) -> Dict:
         """
         Non-PO validation: deterministic checks + agent reasoning.
@@ -439,11 +341,9 @@ class StageExecutor:
 
         result = NonPOValidationService.validate(case)
 
-        # Transition invoice status -- non-PO cases skip reconciliation,
-        # so we mark the invoice as RECONCILED here (validation complete).
-        if case.invoice and case.invoice.status != InvoiceStatus.RECONCILED:
-            case.invoice.status = InvoiceStatus.RECONCILED
-            case.invoice.save(update_fields=["status", "updated_at"])
+        # NOTE: Invoice stays at READY_FOR_RECON until the case is actually
+        # closed/approved.  The RECONCILED transition happens in
+        # _mark_invoice_reconciled() when the case reaches CLOSED status.
 
         # Advance to exception analysis
         CaseStateMachine.transition(
@@ -461,6 +361,11 @@ class StageExecutor:
     def _execute_exception_analysis(case: APCase) -> Dict:
         """
         Exception analysis: delegates to existing agent orchestrator.
+
+        De-duplication: if the case orchestrator already ran a PO_RETRIEVAL
+        stage (and it did not find a PO), resolve the PO_NOT_FOUND exception
+        before delegating so the agent orchestrator does not schedule a
+        redundant PO_RETRIEVAL agent run.  Same for GRN_RETRIEVAL.
         """
         if case.reconciliation_result:
             from apps.agents.services.orchestrator import AgentOrchestrator
@@ -485,6 +390,10 @@ class StageExecutor:
                 CaseStateMachine.transition(case, CaseStatus.ESCALATED, PerformedByType.AGENT)
             else:
                 CaseStateMachine.transition(case, CaseStatus.READY_FOR_REVIEW, PerformedByType.AGENT)
+
+            # When closing, mark the invoice as RECONCILED
+            if auto_closed:
+                StageExecutor._mark_invoice_reconciled(case)
 
             # When auto-closing on a clean match, mark eligible for posting
             # and enqueue the posting pipeline so the invoice appears on the

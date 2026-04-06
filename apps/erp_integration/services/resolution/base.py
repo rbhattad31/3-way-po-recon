@@ -46,15 +46,21 @@ class BaseResolver:
         invoice_id: Optional[int] = None,
         reconciliation_result_id: Optional[int] = None,
         posting_run_id: Optional[int] = None,
+        lf_parent_span=None,
         **lookup_params,
     ) -> ERPResolutionResult:
-        """Run the full resolution chain: cache → API → DB fallback."""
+        """Run the full resolution chain: cache -> API -> DB fallback.
+
+        When ``lf_parent_span`` is provided, per-stage child spans
+        (erp_cache_lookup, erp_live_lookup, erp_db_fallback) are
+        created under it for Langfuse visibility.
+        """
         start = time.monotonic()
         lookup_key = self._build_lookup_key(**lookup_params)
 
         # 1. Cache check
         if self.use_cache:
-            cached = ERPCacheService.get(self.resolution_type, **lookup_params)
+            cached = self._cache_check_traced(lf_parent_span, **lookup_params)
             if cached is not None:
                 self._log_resolution(
                     cached, lookup_key, start,
@@ -67,29 +73,26 @@ class BaseResolver:
         # 2. API lookup (if connector available and capable)
         api_result = None
         if connector is not None and self._check_capability(connector):
-            try:
-                api_result = self._api_lookup(connector, **lookup_params)
-                if api_result.resolved:
-                    api_result.source_type = ERPSourceType.API
-                    if self.use_cache:
-                        ERPCacheService.put(
-                            self.resolution_type, api_result, **lookup_params
-                        )
-                    self._log_resolution(
-                        api_result, lookup_key, start,
-                        invoice_id=invoice_id,
-                        reconciliation_result_id=reconciliation_result_id,
-                        posting_run_id=posting_run_id,
+            api_result = self._api_lookup_traced(
+                connector, lf_parent_span, **lookup_params,
+            )
+            if api_result is not None and api_result.resolved:
+                api_result.source_type = ERPSourceType.API
+                if self.use_cache:
+                    ERPCacheService.put(
+                        self.resolution_type, api_result, **lookup_params
                     )
-                    return api_result
-            except Exception:
-                logger.exception(
-                    "API lookup failed for %s key=%s", self.resolution_type, lookup_key
+                self._log_resolution(
+                    api_result, lookup_key, start,
+                    invoice_id=invoice_id,
+                    reconciliation_result_id=reconciliation_result_id,
+                    posting_run_id=posting_run_id,
                 )
+                return api_result
 
         # 3. DB fallback
-        try:
-            db_result = self._db_fallback(**lookup_params)
+        db_result = self._db_fallback_traced(lf_parent_span, **lookup_params)
+        if db_result is not None:
             db_result.fallback_used = True
             if not db_result.source_type or db_result.source_type == ERPSourceType.NONE:
                 db_result.source_type = ERPSourceType.DB_FALLBACK
@@ -100,17 +103,14 @@ class BaseResolver:
                 posting_run_id=posting_run_id,
             )
             return db_result
-        except Exception:
-            logger.exception(
-                "DB fallback failed for %s key=%s", self.resolution_type, lookup_key
-            )
-            duration = int((time.monotonic() - start) * 1000)
-            return ERPResolutionResult(
-                resolved=False,
-                source_type=ERPSourceType.NONE,
-                reason=f"Both API and DB fallback failed for {self.resolution_type}",
-                metadata={"duration_ms": duration},
-            )
+
+        duration = int((time.monotonic() - start) * 1000)
+        return ERPResolutionResult(
+            resolved=False,
+            source_type=ERPSourceType.NONE,
+            reason=f"Both API and DB fallback failed for {self.resolution_type}",
+            metadata={"duration_ms": duration},
+        )
 
     # ------------------------------------------------------------------
     # Subclass hooks
@@ -124,6 +124,82 @@ class BaseResolver:
 
     def _db_fallback(self, **params) -> ERPResolutionResult:
         raise NotImplementedError
+
+    # ------------------------------------------------------------------
+    # Per-stage traced wrappers (Langfuse child spans)
+    # ------------------------------------------------------------------
+
+    def _cache_check_traced(self, lf_parent_span, **lookup_params):
+        """Cache lookup with optional Langfuse span."""
+        cache_key = ERPCacheService.build_cache_key(self.resolution_type, **lookup_params)
+
+        def _do_cache():
+            return ERPCacheService.get(self.resolution_type, **lookup_params)
+
+        if lf_parent_span is None:
+            return _do_cache()
+        try:
+            from apps.erp_integration.services.langfuse_helpers import trace_erp_cache_lookup
+            return trace_erp_cache_lookup(
+                lf_parent_span, _do_cache,
+                cache_key=cache_key,
+                resolution_type=self.resolution_type,
+            )
+        except Exception:
+            return _do_cache()
+
+    def _api_lookup_traced(self, connector, lf_parent_span, **lookup_params):
+        """API lookup with optional Langfuse span."""
+        def _do_api():
+            return self._api_lookup(connector, **lookup_params)
+
+        if lf_parent_span is None:
+            try:
+                return _do_api()
+            except Exception:
+                logger.exception(
+                    "API lookup failed for %s", self.resolution_type,
+                )
+                return None
+        try:
+            from apps.erp_integration.services.langfuse_helpers import trace_erp_live_lookup
+            return trace_erp_live_lookup(
+                lf_parent_span, _do_api,
+                connector_name=getattr(connector, "connector_name", ""),
+                capability=self.resolution_type,
+                resolution_type=self.resolution_type,
+            )
+        except Exception:
+            logger.exception(
+                "API lookup failed for %s", self.resolution_type,
+            )
+            return None
+
+    def _db_fallback_traced(self, lf_parent_span, **lookup_params):
+        """DB fallback with optional Langfuse span."""
+        def _do_fallback():
+            return self._db_fallback(**lookup_params)
+
+        if lf_parent_span is None:
+            try:
+                return _do_fallback()
+            except Exception:
+                logger.exception(
+                    "DB fallback failed for %s", self.resolution_type,
+                )
+                return None
+        try:
+            from apps.erp_integration.services.langfuse_helpers import trace_erp_db_fallback
+            return trace_erp_db_fallback(
+                lf_parent_span, _do_fallback,
+                fallback_source_name=self.resolution_type,
+                resolution_type=self.resolution_type,
+            )
+        except Exception:
+            logger.exception(
+                "DB fallback failed for %s", self.resolution_type,
+            )
+            return None
 
     # ------------------------------------------------------------------
     # Helpers

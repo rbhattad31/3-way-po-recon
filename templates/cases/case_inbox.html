@@ -295,7 +295,7 @@
             {% else %}—{% endif %}
           </td>
           <td><span title="{{ case.vendor.name|default:'—' }}">{{ case.vendor.name|default:"—"|truncatechars:22 }}</span></td>
-          <td>{% include "cases/partials/_path_badge.html" with path=case.processing_path %}</td>
+          <td>{% include "cases/partials/_path_badge.html" with path=case.reconciliation_result.reconciliation_mode|default:case.processing_path %}</td>
           <td>
             {% if case.status == "CLOSED" %}
               <span class="ap-badge ap-badge-success">Closed</span>

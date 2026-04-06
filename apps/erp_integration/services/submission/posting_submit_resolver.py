@@ -97,52 +97,106 @@ class PostingSubmitResolver:
 
         result.duration_ms = int((time.monotonic() - start) * 1000)
 
+        # --- Langfuse tracing (fail-silent) ---
         try:
-            from apps.core.langfuse_client import get_client, start_trace, end_span
-            _output = {
-                "success": result.success,
-                "status": str(result.status),
-                "erp_document_number": result.erp_document_number or "",
-                "duration_ms": result.duration_ms,
-                "error_message": result.error_message or "",
-            }
+            from apps.erp_integration.services.langfuse_helpers import (
+                start_erp_span,
+                end_erp_span,
+                score_erp_observation,
+                sanitize_erp_error,
+                ERP_LATENCY_THRESHOLD_MS,
+            )
             _level = "ERROR" if not result.success else "DEFAULT"
+            _conn_name = result.connector_name or ""
+            _meta = {
+                "submission_type": submission_type,
+                "connector_name": _conn_name,
+                "posting_run_id": posting_run_id,
+                "invoice_id": invoice_id,
+                "submission_mode": "sync",
+            }
+            _output = {
+                "submission_attempted": True,
+                "submission_success": result.success,
+                "response_status": str(result.status),
+                "erp_document_number_present": bool(result.erp_document_number),
+                "latency_ms": result.duration_ms,
+                "retryable_failure": (
+                    not result.success
+                    and result.status in (ERPSubmissionStatus.FAILED, ERPSubmissionStatus.TIMEOUT)
+                ),
+                "connector_name": _conn_name,
+                "payload_built": True,
+            }
+            if result.error_message:
+                _output["error_type"] = sanitize_erp_error(result.error_message)
+
+            _lf_span = None
+            _lf_root = None
             if lf_trace_id:
-                # Attach as a child span of the parent posting pipeline trace.
+                # Attach as a child span under the parent posting pipeline trace.
+                from apps.core.langfuse_client import get_client
                 lf_client = get_client()
-                _lf_span = None
                 if lf_client:
                     _lf_span = lf_client.span(
                         trace_id=lf_trace_id,
                         name="erp_submission",
-                        metadata={
-                            "submission_type": submission_type,
-                            "connector_name": result.connector_name or "",
-                            "posting_run_id": posting_run_id,
-                        },
+                        metadata=_meta,
                     )
-                if _lf_span is not None:
-                    _lf_span.end(output=_output, level=_level)
             else:
                 # Standalone fallback trace (no parent pipeline trace available).
+                from apps.core.langfuse_client import start_trace_safe
                 import uuid as _uuid
                 _fallback_id = (
                     f"erp-sub-{posting_run_id}" if posting_run_id
                     else f"erp-inv-{invoice_id}" if invoice_id
                     else _uuid.uuid4().hex
                 )
-                _lf_trace = start_trace(
+                _lf_root = start_trace_safe(
                     _fallback_id,
-                    "erp_submission_standalone",
+                    "erp_submission_pipeline",
                     invoice_id=invoice_id,
-                    metadata={
-                        "submission_type": submission_type,
-                        "connector_name": result.connector_name or "",
-                        "posting_run_id": posting_run_id,
-                    },
+                    metadata=_meta,
                 )
-                if _lf_trace is not None:
-                    end_span(_lf_trace, output=_output, level=_level)
+                _lf_span = start_erp_span(_lf_root, "erp_submission", metadata=_meta)
+
+            if _lf_span is not None:
+                end_erp_span(_lf_span, output=_output, level=_level)
+
+                # Observation-level scores
+                score_erp_observation(_lf_span, "erp_submission_attempted", 1.0)
+                score_erp_observation(
+                    _lf_span, "erp_submission_success",
+                    1.0 if result.success else 0.0,
+                    comment=f"type={submission_type} status={result.status}",
+                )
+                score_erp_observation(
+                    _lf_span, "erp_submission_latency_ok",
+                    1.0 if result.duration_ms <= ERP_LATENCY_THRESHOLD_MS else 0.0,
+                    comment=f"{result.duration_ms}ms",
+                )
+                score_erp_observation(
+                    _lf_span, "erp_submission_retryable_failure",
+                    1.0 if _output["retryable_failure"] else 0.0,
+                )
+                score_erp_observation(
+                    _lf_span, "erp_document_number_present",
+                    1.0 if result.erp_document_number else 0.0,
+                )
+
+            # Close standalone root if created
+            if _lf_root is not None:
+                from apps.core.langfuse_client import end_span_safe
+                end_span_safe(
+                    _lf_root,
+                    output={
+                        "erp_final_success": result.success,
+                        "submission_type": submission_type,
+                        "latency_ms": result.duration_ms,
+                    },
+                    level=_level,
+                    is_root=True,
+                )
         except Exception:
             pass
 
@@ -184,34 +238,47 @@ class PostingSubmitResolver:
         result.duration_ms = int((time.monotonic() - start) * 1000)
 
         try:
-            from apps.core.langfuse_client import start_trace, end_span
+            from apps.erp_integration.services.langfuse_helpers import (
+                start_erp_span,
+                end_erp_span,
+                score_erp_observation,
+                sanitize_erp_error,
+            )
+            from apps.core.langfuse_client import start_trace_safe, end_span_safe
             import uuid as _uuid
             _trace_id = (
                 f"erp-{posting_run_id}" if posting_run_id
                 else f"erp-inv-{invoice_id}" if invoice_id
                 else _uuid.uuid4().hex
             )
-            _lf_trace = start_trace(
+            _meta = {
+                "operation_type": "check_submission_status",
+                "document_number": erp_document_number,
+                "connector_name": result.connector_name or "",
+                "posting_run_id": posting_run_id,
+                "invoice_id": invoice_id,
+            }
+            _lf_trace = start_trace_safe(
                 _trace_id,
                 "erp_status_check",
                 invoice_id=invoice_id,
-                metadata={
-                    "document_number": erp_document_number,
-                    "connector_name": result.connector_name or "",
-                    "posting_run_id": posting_run_id,
-                },
+                metadata=_meta,
             )
             if _lf_trace is not None:
-                end_span(
+                _level = "ERROR" if not result.success else "DEFAULT"
+                _output = {
+                    "success": result.success,
+                    "status": str(result.status),
+                    "erp_document_number_present": bool(result.erp_document_number),
+                    "duration_ms": result.duration_ms,
+                }
+                if result.error_message:
+                    _output["error_type"] = sanitize_erp_error(result.error_message)
+                end_span_safe(
                     _lf_trace,
-                    output={
-                        "success": result.success,
-                        "status": str(result.status),
-                        "erp_document_number": result.erp_document_number or "",
-                        "duration_ms": result.duration_ms,
-                        "error_message": result.error_message or "",
-                    },
-                    level="ERROR" if not result.success else "DEFAULT",
+                    output=_output,
+                    level=_level,
+                    is_root=True,
                 )
         except Exception:
             pass

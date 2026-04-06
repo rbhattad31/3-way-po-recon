@@ -22,6 +22,7 @@
 18. [Adding a New Connector](#18-adding-a-new-connector)
 19. [Adding a New Resolver](#19-adding-a-new-resolver)
 20. [Troubleshooting](#20-troubleshooting)
+21. [Langfuse Observability](#21-langfuse-observability)
 
 ---
 
@@ -1028,6 +1029,50 @@ Common for on-premises servers with self-signed certificates.
 Ensure the calling code passes `invoice_id=`, `reconciliation_result_id=`, or
 `posting_run_id=` to the `resolve_*()` method. These are optional kwargs on
 `ERPResolutionService` but are essential for compliance tracing.
+
+---
+
+## 21. Langfuse Observability
+
+Every ERP resolution and submission is instrumented with Langfuse spans and
+evaluation-ready scores via `apps/erp_integration/services/langfuse_helpers.py`.
+
+### Span hierarchy
+
+All `resolve_*()` methods on `ERPResolutionService` accept `lf_parent_span=`.
+When provided, the resolution chain creates nested child spans:
+
+```
+parent_pipeline_span (posting / reconciliation / agent)
+  -- erp_resolution   (created by _trace_resolve)
+     -- erp_cache_lookup   (BaseResolver cache check)
+     -- erp_live_lookup    (BaseResolver live API call)
+     -- erp_db_fallback    (BaseResolver DB fallback)
+```
+
+Submission and duplicate check follow the same pattern via `trace_erp_submission()`
+and `trace_erp_duplicate_check()`.
+
+### ERP-specific scores
+
+| Score | Values | Emitted by |
+|---|---|---|
+| `erp_resolution_success` | 0.0 / 1.0 | `_trace_resolve()` |
+| `erp_resolution_latency_ok` | 0.0 / 1.0 | `_trace_resolve()` |
+| `erp_resolution_fresh` | 0.0 / 1.0 | `_trace_resolve()` |
+| `erp_resolution_authoritative` | 0.0 / 1.0 | `_trace_resolve()` |
+| `erp_cache_hit` | 0.0 / 1.0 | `trace_erp_cache_lookup()` |
+| `erp_live_lookup_success` | 0.0 / 1.0 | `trace_erp_live_lookup()` |
+| `erp_db_fallback_used` | 1.0 (always) | `trace_erp_db_fallback()` |
+| `erp_submission_success` | 0.0 / 1.0 | `trace_erp_submission()` |
+
+### Metadata sanitisation
+
+`sanitize_erp_metadata()` recursively strips sensitive keys (API keys, tokens,
+passwords) and truncates string values >2000 chars. `sanitize_erp_error()` maps
+raw error messages to safe categories -- raw stack traces never reach Langfuse.
+
+**Full Langfuse integration reference**: [LANGFUSE_INTEGRATION.md](LANGFUSE_INTEGRATION.md) Section 11.
 
 ---
 

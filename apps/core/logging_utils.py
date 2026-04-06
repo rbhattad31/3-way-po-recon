@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import re
 import time
 from datetime import datetime, timezone
@@ -219,6 +220,23 @@ class BrokenPipeFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         return "Broken pipe" not in record.getMessage()
+
+
+# ============================================================================
+# Windows-safe rotating file handler
+# ============================================================================
+
+class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that silently skips rotation when the log file
+    is locked by another process (common on Windows with threaded dev server)."""
+
+    def doRollover(self):
+        try:
+            super().doRollover()
+        except PermissionError:
+            # Another thread/process holds the file open -- skip rotation
+            # this time; it will succeed on a subsequent emit().
+            pass
 
 
 # ============================================================================

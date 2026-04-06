@@ -1,4 +1,4 @@
-"""Celery tasks — agentic pipeline execution."""
+"""Celery tasks -- agentic pipeline execution."""
 from __future__ import annotations
 
 import logging
@@ -7,6 +7,8 @@ from celery import shared_task
 from django.db import transaction
 
 from apps.core.enums import AgentRunStatus
+from apps.core.evaluation_constants import TRACE_AGENT_PIPELINE
+from apps.core.observability_helpers import build_observability_context, derive_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +52,20 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: 
             _lf_wrapper = start_trace(
                 _celery_task_id.replace("-", ""),
 
-                "agent_pipeline_task",
+                TRACE_AGENT_PIPELINE + "_task",
                 invoice_id=result.invoice_id,
                 user_id=actor_user_id,
-                session_id=f"invoice-{result.invoice_id}" if result.invoice_id else None,
-                metadata={
-                    "task_id": _celery_task_id,
-                    "reconciliation_result_id": reconciliation_result_id,
-                    "actor_user_id": actor_user_id,
-                    "prior_match_status": str(getattr(result, "match_status", "")),
-                    "reconciliation_mode": getattr(result, "reconciliation_mode", ""),
-                    "trigger": "auto",
-                    "source": "agentic",
-                },
+                session_id=derive_session_id(invoice_id=result.invoice_id),
+                metadata=build_observability_context(
+                    invoice_id=result.invoice_id,
+                    reconciliation_result_id=reconciliation_result_id,
+                    actor_user_id=actor_user_id,
+                    match_status=str(getattr(result, "match_status", "")),
+                    reconciliation_mode=getattr(result, "reconciliation_mode", ""),
+                    trigger="auto",
+                    source="agentic",
+                    **{"task_id": _celery_task_id},
+                ),
             )
         else:
             _lf_wrapper = None

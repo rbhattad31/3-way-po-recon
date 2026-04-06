@@ -312,7 +312,8 @@ class MasterDataEnrichmentService:
         2. Alias match (exact normalized)
         3. Fuzzy name match
         """
-        from apps.vendors.models import Vendor, VendorAlias
+        from apps.vendors.models import Vendor
+        from apps.posting_core.models import VendorAliasMapping
 
         if not supplier_name and not supplier_tax_id:
             return MasterDataMatch(match_type="NOT_FOUND")
@@ -345,10 +346,11 @@ class MasterDataEnrichmentService:
 
         # ── Tier 2: Alias match ──
         alias = (
-            VendorAlias.objects.select_related("vendor")
+            VendorAliasMapping.objects.select_related("vendor")
             .filter(
                 normalized_alias=normalized_input,
                 vendor__is_active=True,
+                is_active=True,
             )
             .first()
         )
@@ -358,7 +360,7 @@ class MasterDataEnrichmentService:
                 entity_id=alias.vendor.pk,
                 entity_code=alias.vendor.code,
                 entity_name=alias.vendor.name,
-                matched_value=alias.alias_name,
+                matched_value=alias.alias_text,
                 similarity=1.0,
                 confidence=0.95,
             )
@@ -424,7 +426,8 @@ class MasterDataEnrichmentService:
         Falls back to fuzzy matching on PO buyer_name fields.
         """
         from apps.documents.models import PurchaseOrder
-        from apps.vendors.models import Vendor, VendorAlias
+        from apps.vendors.models import Vendor
+        from apps.posting_core.models import VendorAliasMapping
 
         if not buyer_name:
             return MasterDataMatch(match_type="NOT_FOUND")
@@ -433,10 +436,11 @@ class MasterDataEnrichmentService:
 
         # Check vendor master first (buyer might be a known vendor)
         alias = (
-            VendorAlias.objects.select_related("vendor")
+            VendorAliasMapping.objects.select_related("vendor")
             .filter(
                 normalized_alias=normalized,
                 vendor__is_active=True,
+                is_active=True,
             )
             .first()
         )
@@ -446,7 +450,7 @@ class MasterDataEnrichmentService:
                 entity_id=alias.vendor.pk,
                 entity_code=alias.vendor.code,
                 entity_name=alias.vendor.name,
-                matched_value=alias.alias_name,
+                matched_value=alias.alias_text,
                 similarity=1.0,
                 confidence=0.90,
             )

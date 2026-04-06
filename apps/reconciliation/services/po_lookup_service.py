@@ -66,12 +66,14 @@ class POLookupService:
     def __init__(self, erp_service: Optional[ERPResolutionService] = None):
         self._erp = erp_service or ERPResolutionService.with_default_connector()
 
-    def lookup(self, invoice: Invoice, skip_vendor_amount: bool = False) -> POLookupResult:
+    def lookup(self, invoice: Invoice, skip_vendor_amount: bool = False,
+               lf_parent_span=None) -> POLookupResult:
         """Resolve PO for a single invoice.
 
         Args:
             invoice: The invoice whose ``po_number`` (or vendor+amount) is
                      used to find the matching PurchaseOrder.
+            lf_parent_span: Optional Langfuse span for ERP resolution tracing.
 
         Returns:
             POLookupResult with the hydrated PurchaseOrder and provenance info.
@@ -87,6 +89,7 @@ class POLookupService:
                 po_number=po_number,
                 vendor_code=vendor_code,
                 invoice_id=invoice.pk,
+                lf_parent_span=lf_parent_span,
             )
 
             if result.resolved:

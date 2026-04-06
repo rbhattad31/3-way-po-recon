@@ -151,6 +151,13 @@ def extraction_workbench(request):
         for ea in ExtractionApproval.objects.filter(invoice_id__in=invoice_ids):
             approval_map[ea.invoice_id] = ea
 
+    # Pre-load case data for invoices that have cases
+    case_map = {}
+    if invoice_ids:
+        from apps.cases.models import APCase
+        for c in APCase.objects.filter(invoice_id__in=invoice_ids, is_active=True).select_related("reconciliation_result"):
+            case_map[c.invoice_id] = c
+
     # Pre-load execution context (governed pipeline or legacy fallback)
     from apps.extraction.services.execution_context import get_execution_context
     for r in page_obj:
@@ -164,7 +171,7 @@ def extraction_workbench(request):
     # ── Approval tab data ──
     from apps.extraction.services.approval_service import ExtractionApprovalService
 
-    approval_status_filter = request.GET.get("approval_status", "ALL")
+    approval_status_filter = request.GET.get("approval_status", "PENDING")
     approval_qs = (
         ExtractionApproval.objects
         .select_related(
@@ -243,6 +250,7 @@ def extraction_workbench(request):
         "stats": stats,
         "stats_cached_at": stats_cached_at,
         "approval_map": approval_map,
+        "case_map": case_map,
         "approvals": approval_page,
         "approval_page_obj": approval_page,
         "approval_status_filter": approval_status_filter,
@@ -448,7 +456,11 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
     try:
         # 1. Extract (OCR + LLM)
         adapter = InvoiceExtractionAdapter()
-        extraction_resp = adapter.extract(file_path)
+        extraction_resp = adapter.extract(
+            file_path,
+            actor_user_id=upload.uploaded_by_id,
+            document_upload_id=upload.pk,
+        )
 
         if not extraction_resp.success:
             upload.processing_state = FileProcessingState.FAILED
@@ -1217,29 +1229,12 @@ def extraction_approve(request, pk):
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
-    # If this came from the full pipeline, trigger case creation now
-    invoice = approval.invoice
-    if invoice.status == InvoiceStatus.READY_FOR_RECON:
-        try:
-            from apps.cases.services.case_creation_service import CaseCreationService
-            from apps.cases.tasks import process_case_task
-            from apps.core.utils import dispatch_task
-
-            case = CaseCreationService.create_from_upload(
-                invoice=invoice,
-                uploaded_by=invoice.document_upload.uploaded_by if invoice.document_upload else None,
-            )
-            dispatch_task(process_case_task, case_id=case.pk)
-            logger.info("Created AP Case %s after extraction approval for invoice %s", case.case_number, invoice.invoice_number)
-        except Exception as exc:
-            logger.exception("AP Case creation failed after approval for invoice %s: %s", invoice.pk, exc)
-
     _invalidate_extraction_caches(request.user)
 
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return JsonResponse({"ok": True, "status": "APPROVED"})
 
-    messages.success(request, f"Extraction approved for Invoice {invoice.invoice_number}.")
+    messages.success(request, f"Extraction approved for Invoice {approval.invoice.invoice_number}.")
     return redirect("extraction:approval_queue")
 
 
@@ -1452,12 +1447,6 @@ def extraction_console(request, pk):
                 "entity_name": vendor.name if hasattr(vendor, "name") else str(vendor),
                 "entity_code": getattr(vendor, "vendor_code", ""),
             }
-        elif invoice.raw_vendor_name:
-            vendor_match = {
-                "match_type": "RAW",
-                "entity_name": invoice.raw_vendor_name,
-                "entity_code": "",
-            }
         po_lookup = {"found": False}
         if po_num:
             from apps.documents.models import PurchaseOrder
@@ -1613,68 +1602,162 @@ def extraction_console(request, pk):
                 "bbox": None,
             })
 
-    # ── Reasoning blocks from pipeline metadata ──
-    # Synthesize reasoning from the extraction pipeline steps
+    # ── Agent reasoning from real AgentRun / AgentStep / AgentMessage data ──
+    agent_reasoning_runs = []
+    try:
+        from apps.agents.models import AgentRun, AgentStep, AgentMessage, DecisionLog
+        from apps.tools.models import ToolCall
+        from apps.core.enums import AgentType as _AT
+        import json as _json
+
+        _extraction_types = [_AT.INVOICE_EXTRACTION, _AT.INVOICE_UNDERSTANDING]
+        _agent_runs_qs = AgentRun.objects.none()
+        if ext.document_upload_id:
+            _agent_runs_qs = AgentRun.objects.filter(
+                document_upload_id=ext.document_upload_id,
+                agent_type__in=_extraction_types,
+            ).order_by("created_at")
+            # Scope to the current extraction cycle: only show runs from the
+            # latest INVOICE_EXTRACTION run onward.  When an invoice is
+            # reprocessed, earlier runs belong to a prior cycle and their
+            # decisions are stale.
+            if ext.agent_run_id and _agent_runs_qs.exists():
+                _latest_extraction_run = _agent_runs_qs.filter(
+                    pk=ext.agent_run_id,
+                ).first()
+                if _latest_extraction_run:
+                    _agent_runs_qs = _agent_runs_qs.filter(
+                        created_at__gte=_latest_extraction_run.created_at,
+                    )
+        if not _agent_runs_qs.exists() and ext.agent_run_id:
+            _agent_runs_qs = AgentRun.objects.filter(pk=ext.agent_run_id)
+
+        _status_badge = {
+            "COMPLETED": "success", "FAILED": "danger", "RUNNING": "info",
+            "PENDING": "secondary", "SKIPPED": "warning",
+        }
+
+        for _ar in _agent_runs_qs:
+            # Collect steps
+            _steps = list(AgentStep.objects.filter(agent_run=_ar).order_by("step_number").values(
+                "step_number", "action", "input_data", "output_data", "success", "duration_ms",
+            ))
+            # Collect messages (LLM conversation)
+            _messages = list(AgentMessage.objects.filter(agent_run=_ar).order_by("message_index").values(
+                "role", "content", "token_count", "message_index",
+            ))
+            # Collect tool calls
+            _tool_calls = list(ToolCall.objects.filter(agent_run=_ar).order_by("created_at").values(
+                "tool_name", "status", "input_payload", "output_payload",
+                "error_message", "duration_ms",
+            ))
+            # Collect decisions
+            _decisions = list(DecisionLog.objects.filter(agent_run=_ar).order_by("created_at").values(
+                "decision_type", "decision", "rationale", "confidence",
+                "recommendation_type", "rule_name",
+            ))
+
+            # Truncate long tool output for display
+            for _tc in _tool_calls:
+                if _tc.get("output_payload"):
+                    _out_str = _json.dumps(_tc["output_payload"], default=str)
+                    if len(_out_str) > 2000:
+                        _out_str = _out_str[:2000] + "... (truncated)"
+                    _tc["output_display"] = _out_str
+                else:
+                    _tc["output_display"] = ""
+                if _tc.get("input_payload"):
+                    _tc["input_display"] = _json.dumps(_tc["input_payload"], default=str)
+                else:
+                    _tc["input_display"] = ""
+
+            agent_reasoning_runs.append({
+                "run_id": _ar.pk,
+                "agent_type": _ar.get_agent_type_display(),
+                "agent_type_raw": _ar.agent_type,
+                "status": _ar.status,
+                "status_badge": _status_badge.get(_ar.status, "secondary"),
+                "confidence": _ar.confidence,
+                "summarized_reasoning": _ar.summarized_reasoning or "",
+                "output_payload": _ar.output_payload or {},
+                "llm_model": _ar.llm_model_used or "",
+                "duration_ms": _ar.duration_ms,
+                "started_at": _ar.started_at,
+                "completed_at": _ar.completed_at,
+                "error_message": _ar.error_message or "",
+                "invocation_reason": _ar.invocation_reason or "",
+                "prompt_version": _ar.prompt_version or "",
+                "steps": _steps,
+                "messages": _messages,
+                "tool_calls": _tool_calls,
+                "decisions": _decisions,
+                "handed_off_to_id": _ar.handed_off_to_id,
+            })
+    except Exception:
+        logger.debug("Could not load agent reasoning for extraction %s", ext.pk)
+
+    # Extract top-level agent decisions for header display
+    agent_decisions = []
+    # INVOICE_EXTRACTION is a pure data extractor -- its output_payload
+    # recommendation_type comes from an AgentDefinition fallback and is not
+    # a meaningful routing decision.  INVOICE_UNDERSTANDING IS a routing
+    # agent and its decisions should be shown.
+    _SKIP_OUTPUT_PAYLOAD_TYPES = {"INVOICE_EXTRACTION"}
+    for _run_data in agent_reasoning_runs:
+        _skip_payload = _run_data.get("agent_type_raw", "") in _SKIP_OUTPUT_PAYLOAD_TYPES
+        # First: pull from DecisionLog records (always shown regardless of agent type)
+        for _dec in _run_data.get("decisions", []):
+            agent_decisions.append({
+                "agent_type": _run_data["agent_type"],
+                "decision_type": _dec.get("decision_type", ""),
+                "decision": _dec.get("decision", ""),
+                "recommendation_type": _dec.get("recommendation_type", ""),
+                "confidence": _dec.get("confidence"),
+                "rationale": _dec.get("rationale", ""),
+                "evidence": {},
+                "summarized_reasoning": _run_data.get("summarized_reasoning", ""),
+            })
+        # Fallback: if no DecisionLog entries, extract from output_payload
+        if not _skip_payload and not _run_data.get("decisions") and _run_data.get("output_payload"):
+            _op = _run_data["output_payload"]
+            _rec_type = _op.get("recommendation_type", "")
+            _reasoning = _op.get("reasoning", "") or _run_data.get("summarized_reasoning", "")
+            if _rec_type or _reasoning:
+                agent_decisions.append({
+                    "agent_type": _run_data["agent_type"],
+                    "decision_type": "RECOMMENDATION",
+                    "decision": _reasoning,
+                    "recommendation_type": _rec_type,
+                    "confidence": _op.get("confidence") or _run_data.get("confidence"),
+                    "rationale": _reasoning,
+                    "evidence": _op.get("evidence", {}),
+                    "summarized_reasoning": _run_data.get("summarized_reasoning", ""),
+                })
+
+    # Build legacy reasoning_blocks as pipeline overview (always shown)
     reasoning_blocks.append({
         "title": "Document Upload",
         "category": "Ingestion",
         "badge_class": "info",
         "summary": f"Document uploaded: {ext.document_upload.original_filename if ext.document_upload else 'Unknown'}",
-        "decision": None,
-        "details": None,
-        "duration_ms": None,
-        "related_fields": [],
     })
     reasoning_blocks.append({
         "title": "OCR & Text Extraction",
         "category": "OCR",
         "badge_class": "info",
         "summary": "Azure Document Intelligence processed the document and extracted raw text.",
-        "decision": None,
-        "details": None,
-        "duration_ms": None,
-        "related_fields": [],
     })
     reasoning_blocks.append({
         "title": "LLM Field Extraction",
         "category": "Extraction",
         "badge_class": "primary",
         "summary": f"GPT-4o extracted {len(evidence_entries)} fields with {ext.confidence:.0%} overall confidence.",
-        "decision": f"Extracted invoice {invoice.invoice_number}" if invoice else "Extraction completed",
-        "details": None,
-        "duration_ms": None,
-        "related_fields": list(extracted_data.keys()) if isinstance(extracted_data, dict) else [],
-    })
-    if invoice and invoice.raw_vendor_name:
-        reasoning_blocks.append({
-            "title": "Vendor Identification",
-            "category": "Enrichment",
-            "badge_class": "success",
-            "summary": f"Identified vendor: {invoice.raw_vendor_name}",
-            "decision": f"Matched vendor from extracted data",
-            "details": None,
-            "duration_ms": None,
-            "related_fields": ["vendor_name"],
-        })
-    reasoning_blocks.append({
-        "title": "Normalization",
-        "category": "Processing",
-        "badge_class": "secondary",
-        "summary": "Field values normalized (dates, amounts, PO number formatting).",
-        "decision": None,
-        "details": None,
-        "duration_ms": None,
-        "related_fields": ["invoice_date", "total_amount", "po_number"],
     })
     reasoning_blocks.append({
         "title": "Validation",
         "category": "QA",
         "badge_class": "warning" if (errors or warnings) else "success",
         "summary": f"Validation complete: {error_count} errors, {warning_count} warnings, {len(passed_checks)} passed.",
-        "decision": "Requires review" if errors else "Passed validation",
-        "details": None,
-        "duration_ms": None,
-        "related_fields": [],
     })
 
     # ── Audit events from AuditEvent model ──
@@ -1826,6 +1909,17 @@ def extraction_console(request, pk):
     extraction_ctx["requires_review"] = exec_ctx.requires_review
     extraction_ctx["extraction_source"] = exec_ctx.source
 
+    # Populate jurisdiction from ExtractionRun if not already set from raw_response
+    if not extraction_ctx.get("resolved_jurisdiction") and extraction_run:
+        j = getattr(extraction_run, "jurisdiction", None)
+        if j:
+            extraction_ctx["resolved_jurisdiction"] = {
+                "country_code": j.country_code,
+                "regime_code": j.tax_regime,
+            }
+            extraction_ctx["jurisdiction_source"] = extraction_run.jurisdiction_source
+            extraction_ctx["jurisdiction_confidence"] = extraction_run.jurisdiction_confidence
+
     # ── Also include ExtractionFieldCorrection records (from Edit Values / Approval) ──
     if approval:
         from apps.extraction.models import ExtractionFieldCorrection
@@ -1907,22 +2001,25 @@ def extraction_console(request, pk):
     # Build evidence map keyed by field_key for inline display
     evidence_map = {e["field_key"]: e for e in evidence_entries}
 
-    # ── Cost & Token Usage from AgentRun (totalled across all runs for this upload) ──
+    # ── Cost & Token Usage from AgentRun (totalled across ALL extraction runs) ──
     cost_token_data = None
+    cost_run_history = []
     try:
         from apps.agents.models import AgentRun
         from apps.core.enums import AgentType as _AT
         from django.db.models import Sum
 
-        # Collect ALL extraction runs for this upload via the new document_upload FK
+        _cost_agent_types = [_AT.INVOICE_EXTRACTION, _AT.INVOICE_UNDERSTANDING]
+
+        # Collect ALL extraction-related runs for this upload
         all_runs_qs = AgentRun.objects.none()
         if ext.document_upload_id:
             all_runs_qs = AgentRun.objects.filter(
                 document_upload_id=ext.document_upload_id,
-                agent_type=_AT.INVOICE_EXTRACTION,
+                agent_type__in=_cost_agent_types,
             ).order_by("-created_at")
 
-        # Fallback: if FK not yet populated (old runs before migration), use stored agent_run_id only
+        # Fallback: if FK not yet populated (old runs before migration)
         if not all_runs_qs.exists() and ext.agent_run_id:
             all_runs_qs = AgentRun.objects.filter(pk=ext.agent_run_id)
 
@@ -1936,38 +2033,58 @@ def extraction_console(request, pk):
             completion_tk = totals["completion_tk"] or 0
             total_tk = totals["total_tk"] or 0
 
-            if total_tk:
-                # Latest run for metadata (model name, duration, run id, status)
-                latest_run = all_runs_qs.first()
-                run_count = all_runs_qs.count()
+            latest_run = all_runs_qs.first()
+            run_count = all_runs_qs.count()
 
-                # GPT-4o pricing: $5/1M input, $15/1M output
-                llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
-                # Azure Document Intelligence (Read model): $1.50 per 1,000 pages
-                # OCR is per-run; use ExtractionResult page count (latest / best available)
-                ocr_pages = ext.ocr_page_count or 0
-                # For total OCR cost, multiply by number of runs (each reprocess re-runs OCR)
-                ocr_cost = Decimal(str(ocr_pages * run_count * 1.5 / 1_000)) if ocr_pages else Decimal("0")
-                total_cost = (llm_cost + ocr_cost).quantize(Decimal("0.000001"))
-                cost_token_data = {
-                    "prompt_tokens": prompt_tk,
-                    "completion_tokens": completion_tk,
-                    "total_tokens": total_tk,
-                    "llm_cost": llm_cost.quantize(Decimal("0.000001")),
-                    "ocr_cost": ocr_cost.quantize(Decimal("0.000001")),
-                    "cost_estimate": total_cost,
-                    "ocr_page_count": ocr_pages,
-                    "ocr_duration_ms": ext.ocr_duration_ms or 0,
-                    "ocr_char_count": ext.ocr_char_count or 0,
-                    "llm_model": latest_run.llm_model_used or "gpt-4o",
-                    "duration_ms": latest_run.duration_ms,
-                    "agent_run_id": latest_run.pk,
-                    "agent_type": latest_run.get_agent_type_display(),
-                    "status": latest_run.status,
-                    "started_at": latest_run.started_at,
-                    "completed_at": latest_run.completed_at,
-                    "run_count": run_count,
-                }
+            # GPT-4o pricing: $5/1M input, $15/1M output
+            llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
+            # Azure Document Intelligence (Read model): $1.50 per 1,000 pages
+            ocr_pages = ext.ocr_page_count or 0
+            ocr_cost = Decimal(str(ocr_pages * run_count * 1.5 / 1_000)) if ocr_pages else Decimal("0")
+            total_cost = (llm_cost + ocr_cost).quantize(Decimal("0.000001"))
+            cost_token_data = {
+                "prompt_tokens": prompt_tk,
+                "completion_tokens": completion_tk,
+                "total_tokens": total_tk,
+                "llm_cost": llm_cost.quantize(Decimal("0.000001")),
+                "ocr_cost": ocr_cost.quantize(Decimal("0.000001")),
+                "cost_estimate": total_cost,
+                "ocr_page_count": ocr_pages,
+                "ocr_duration_ms": ext.ocr_duration_ms or 0,
+                "ocr_char_count": ext.ocr_char_count or 0,
+                "llm_model": latest_run.llm_model_used or "gpt-4o",
+                "duration_ms": latest_run.duration_ms,
+                "agent_run_id": latest_run.pk,
+                "agent_type": latest_run.get_agent_type_display(),
+                "status": latest_run.status,
+                "started_at": latest_run.started_at,
+                "completed_at": latest_run.completed_at,
+                "run_count": run_count,
+            }
+
+            # Build per-run history
+            for _cr in all_runs_qs:
+                _cr_prompt = _cr.prompt_tokens or 0
+                _cr_compl = _cr.completion_tokens or 0
+                _cr_total = _cr.total_tokens or 0
+                _cr_llm = Decimal(str(_cr_prompt * 5 / 1_000_000 + _cr_compl * 15 / 1_000_000))
+                _cr_ocr = Decimal(str(ocr_pages * 1.5 / 1_000)) if ocr_pages else Decimal("0")
+                cost_run_history.append({
+                    "run_id": _cr.pk,
+                    "agent_type": _cr.get_agent_type_display(),
+                    "status": _cr.status,
+                    "llm_model": _cr.llm_model_used or "gpt-4o",
+                    "prompt_tokens": _cr_prompt,
+                    "completion_tokens": _cr_compl,
+                    "total_tokens": _cr_total,
+                    "llm_cost": _cr_llm.quantize(Decimal("0.000001")),
+                    "ocr_cost": _cr_ocr.quantize(Decimal("0.000001")),
+                    "total_cost": (_cr_llm + _cr_ocr).quantize(Decimal("0.000001")),
+                    "duration_ms": _cr.duration_ms,
+                    "started_at": _cr.started_at,
+                    "completed_at": _cr.completed_at,
+                    "confidence": _cr.confidence,
+                })
     except Exception:
         logger.debug("Could not load cost/token data for extraction %s", ext.pk)
 
@@ -1988,6 +2105,8 @@ def extraction_console(request, pk):
         "evidence_entries": evidence_entries,
         "evidence_map": evidence_map,
         "reasoning_blocks": reasoning_blocks,
+        "agent_reasoning_runs": agent_reasoning_runs,
+        "agent_decisions": agent_decisions,
         "audit_events": audit_events,
         "validation_issues": errors + warnings,
         "errors": errors,
@@ -2010,6 +2129,7 @@ def extraction_console(request, pk):
         "correction_count": correction_count,
         "raw_json_pretty": raw_json_pretty,
         "cost_token_data": cost_token_data,
+        "cost_run_history": cost_run_history,
         "qr_data": qr_data,
         "qr_decision_codes": qr_decision_codes,
         "qr_date_match": qr_date_match,

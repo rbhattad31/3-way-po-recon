@@ -97,6 +97,10 @@ class PostingRun(BaseModel):
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    langfuse_trace_id = models.CharField(
+        max_length=64, blank=True, default="", db_index=True,
+        help_text="Langfuse root trace ID for this posting run",
+    )
 
     class Meta:
         db_table = "posting_core_posting_run"
