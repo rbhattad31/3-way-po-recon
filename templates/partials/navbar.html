@@ -6,16 +6,10 @@
   </button>
 
   {# Brand #}
-  <a class="ap-topbar-brand" href="{% url 'dashboard:index' %}">
-    <span class="ap-topbar-brand-icon"><i class="bi bi-layers"></i></span>
-    AP Ops
+  <a class="ap-topbar-brand" href="{% url 'procurement:home' %}">
+    <span class="ap-topbar-brand-icon" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);"><i class="bi bi-wind"></i></span>
+    LMG Procurement
   </a>
-
-  {# Global search #}
-  <div class="ap-topbar-search position-relative d-none d-md-block">
-    <i class="bi bi-search"></i>
-    <input type="text" class="form-control" placeholder="Search cases, invoices, POs…" id="globalSearch" autocomplete="off">
-  </div>
 
   {# Right actions #}
   <div class="ap-topbar-actions">

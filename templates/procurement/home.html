@@ -1,0 +1,876 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}HVAC Procurement Intelligence — Landmark Group{% endblock %}
+
+{% block breadcrumb %}
+  <li class="breadcrumb-item active">HVAC Procurement</li>
+{% endblock %}
+
+{% block extra_css %}
+<!-- SweetAlert2 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+/* =========================================================
+   HVAC PROCUREMENT HOME — VIBRANT AI THEME (no black)
+   ========================================================= */
+
+.hvac-home {
+  font-family: 'Inter', system-ui, sans-serif;
+  position: relative;
+}
+
+/* ── Animated background ── */
+.hvac-hero-bg {
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 30%, #e0f2fe 65%, #f0fdf4 100%);
+  position: relative;
+  overflow: hidden;
+}
+.hvac-hero-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle, rgba(99,102,241,.15) 1px, transparent 1px),
+    radial-gradient(circle, rgba(14,165,233,.08) 1px, transparent 1px);
+  background-size: 36px 36px, 72px 72px;
+  background-position: 0 0, 18px 18px;
+  animation: bgDrift 28s linear infinite;
+  pointer-events: none;
+}
+@keyframes bgDrift {
+  0%   { background-position: 0 0, 18px 18px; }
+  100% { background-position: 72px 72px, 90px 90px; }
+}
+
+/* ── Hero section ── */
+.hero-section {
+  padding: 3.5rem 0 2.5rem;
+  position: relative;
+  z-index: 1;
+}
+
+.hero-platform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  background: linear-gradient(90deg, rgba(99,102,241,.12), rgba(14,165,233,.10));
+  border: 1.5px solid rgba(99,102,241,.28);
+  border-radius: 999px;
+  padding: .28rem .85rem;
+  font-size: .72rem;
+  font-weight: 700;
+  color: #4f46e5;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  margin-bottom: 1.25rem;
+}
+.hero-platform-chip .dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #6366f1;
+  box-shadow: 0 0 0 0 rgba(99,102,241,.8);
+  animation: chipPulse 1.8s infinite;
+}
+@keyframes chipPulse {
+  0%   { box-shadow: 0 0 0 0   rgba(99,102,241,.8); }
+  70%  { box-shadow: 0 0 0 8px rgba(99,102,241,0);  }
+  100% { box-shadow: 0 0 0 0   rgba(99,102,241,0);  }
+}
+
+.hero-title {
+  font-size: clamp(1.8rem, 4vw, 3.4rem);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -.025em;
+  color: #1e3a8a;
+}
+.hero-title .accent-violet { color: #7c3aed; }
+.hero-title .accent-sky    { color: #0ea5e9; }
+
+.hero-subtitle {
+  font-size: 1.02rem;
+  color: #475569;
+  line-height: 1.65;
+  max-width: 580px;
+}
+
+/* ── Hero illustration/icon cluster ── */
+.hero-icon-stack {
+  position: relative;
+  width: 260px;
+  height: 200px;
+  margin: auto;
+}
+.hic-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px dashed rgba(99,102,241,.22);
+  animation: ringRotate 20s linear infinite;
+}
+.hic-ring-1 { width:180px;height:180px;top:10px;left:40px; }
+.hic-ring-2 { width:120px;height:120px;top:40px;left:70px;animation-direction:reverse;animation-duration:14s; }
+@keyframes ringRotate { to { transform: rotate(360deg); } }
+.hic-center {
+  position: absolute;
+  top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:72px;height:72px;
+  border-radius:20px;
+  background:linear-gradient(135deg,#4f46e5,#7c3aed,#0ea5e9);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 8px 32px rgba(99,102,241,.35);
+  animation:iconFloat 3s ease-in-out infinite;
+  font-size:2rem;color:#fff;
+}
+@keyframes iconFloat {
+  0%,100%{transform:translate(-50%,-50%) translateY(0);}
+  50%    {transform:translate(-50%,-50%) translateY(-8px);}
+}
+.hic-orbit {
+  position:absolute;
+  width:38px;height:38px;
+  border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.05rem;color:#fff;
+  box-shadow:0 4px 14px rgba(0,0,0,.12);
+}
+.hic-orbit-1{top:5px;left:55px;background:linear-gradient(135deg,#0ea5e9,#0284c7);}
+.hic-orbit-2{top:130px;left:20px;background:linear-gradient(135deg,#059669,#047857);}
+.hic-orbit-3{top:130px;right:10px;background:linear-gradient(135deg,#f59e0b,#d97706);}
+.hic-orbit-4{top:5px;right:30px;background:linear-gradient(135deg,#ec4899,#db2777);}
+
+/* ── Stats strip ── */
+.stats-strip {
+  background: rgba(255,255,255,.85);
+  backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(99,102,241,.18);
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(99,102,241,.10);
+  overflow: hidden;
+}
+.stat-item {
+  padding: 1.4rem 1rem;
+  border-right: 1px solid rgba(99,102,241,.12);
+  text-align: center;
+  transition: background .2s;
+}
+.stat-item:last-child { border-right: none; }
+.stat-item:hover { background: rgba(238,242,255,.6); }
+.stat-value {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: .25rem;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.stat-value.sky   { background: linear-gradient(135deg,#0ea5e9,#0284c7); -webkit-background-clip:text;background-clip:text; }
+.stat-value.teal  { background: linear-gradient(135deg,#0d9488,#0891b2); -webkit-background-clip:text;background-clip:text; }
+.stat-value.green { background: linear-gradient(135deg,#059669,#0d9488); -webkit-background-clip:text;background-clip:text; }
+.stat-label {
+  font-size: .72rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+/* ── Feature cards ── */
+.feature-card {
+  background: rgba(255,255,255,.88);
+  backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(99,102,241,.18);
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(99,102,241,.09);
+  transition: transform .25s, box-shadow .25s, border-color .25s;
+  height: 100%;
+}
+.feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 36px rgba(99,102,241,.18);
+  border-color: rgba(99,102,241,.35);
+}
+.feature-icon {
+  width: 52px; height: 52px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  flex-shrink: 0;
+}
+.fi-indigo  { background: linear-gradient(135deg,rgba(99,102,241,.15),rgba(99,102,241,.05)); color:#4f46e5; border:1px solid rgba(99,102,241,.25); }
+.fi-sky     { background: linear-gradient(135deg,rgba(14,165,233,.15),rgba(14,165,233,.05)); color:#0ea5e9; border:1px solid rgba(14,165,233,.25); }
+.fi-violet  { background: linear-gradient(135deg,rgba(124,58,237,.15),rgba(124,58,237,.05)); color:#7c3aed; border:1px solid rgba(124,58,237,.25); }
+.fi-teal    { background: linear-gradient(135deg,rgba(13,148,136,.15),rgba(13,148,136,.05)); color:#0d9488; border:1px solid rgba(13,148,136,.25); }
+.fi-rose    { background: linear-gradient(135deg,rgba(225,29,72,.12),rgba(225,29,72,.05));  color:#e11d48; border:1px solid rgba(225,29,72,.20); }
+.fi-amber   { background: linear-gradient(135deg,rgba(245,158,11,.15),rgba(245,158,11,.05));color:#d97706; border:1px solid rgba(245,158,11,.25); }
+
+.feature-list li {
+  font-size: .85rem;
+  color: #475569;
+  padding: .15rem 0;
+}
+.feature-list li i { color: #6366f1; font-size: .8rem; }
+
+/* ── Workflow steps ── */
+.workflow-card {
+  background: rgba(255,255,255,.80);
+  border: 1.5px solid rgba(99,102,241,.15);
+  border-radius: 14px;
+  padding: 1.5rem 1.25rem;
+  height: 100%;
+  position: relative;
+  transition: transform .2s, box-shadow .2s;
+}
+.workflow-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 28px rgba(99,102,241,.14);
+}
+.workflow-num {
+  width: 38px; height: 38px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: .85rem;
+  color: #fff;
+  margin-bottom: .9rem;
+}
+.wn-1 { background: linear-gradient(135deg,#4f46e5,#7c3aed); }
+.wn-2 { background: linear-gradient(135deg,#0ea5e9,#0284c7); }
+.wn-3 { background: linear-gradient(135deg,#7c3aed,#ec4899); }
+.wn-4 { background: linear-gradient(135deg,#059669,#0d9488); }
+.wn-5 { background: linear-gradient(135deg,#f59e0b,#d97706); }
+.wn-6 { background: linear-gradient(135deg,#0d9488,#0891b2); }
+
+.workflow-connector {
+  position: absolute;
+  top: 28px; right: -18px;
+  color: rgba(99,102,241,.35);
+  font-size: 1.1rem;
+  z-index: 2;
+  display: none;
+}
+@media(min-width:992px) { .workflow-connector { display: block; } }
+
+/* ── Vendor logos ── */
+.vendor-strip {
+  background: rgba(255,255,255,.7);
+  border: 1.5px solid rgba(99,102,241,.15);
+  border-radius: 14px;
+  padding: 1.5rem 2rem;
+}
+.vendor-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  background: rgba(238,242,255,.6);
+  border: 1px solid rgba(99,102,241,.20);
+  border-radius: 10px;
+  padding: .45rem .9rem;
+  font-size: .82rem;
+  font-weight: 600;
+  color: #3730a3;
+  transition: background .2s, box-shadow .2s;
+}
+.vendor-badge:hover {
+  background: rgba(238,242,255,.98);
+  box-shadow: 0 3px 12px rgba(99,102,241,.15);
+}
+
+/* ── CTA section ── */
+.cta-section {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #0ea5e9 100%);
+  border-radius: 20px;
+  padding: 3rem 2rem;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(79,70,229,.28);
+}
+.cta-section::after {
+  content: '';
+  position: absolute;
+  top: -30%; right: -5%;
+  width: 300px; height: 300px;
+  background: radial-gradient(circle, rgba(255,255,255,.10) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.cta-section::before {
+  content: '';
+  position: absolute;
+  bottom: -40%; left: 5%;
+  width: 220px; height: 220px;
+  background: radial-gradient(circle, rgba(14,165,233,.18) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* ── Action buttons ── */
+.btn-ai-primary {
+  background: linear-gradient(135deg,#4f46e5,#7c3aed,#0ea5e9);
+  color: #fff; border: none;
+  border-radius: 10px; padding: .65rem 1.8rem;
+  font-weight: 600; font-size: .93rem;
+  box-shadow: 0 4px 18px rgba(99,102,241,.35);
+  transition: transform .2s, box-shadow .2s;
+}
+.btn-ai-primary:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 8px 28px rgba(99,102,241,.42);
+  color: #fff;
+}
+.btn-ai-outline {
+  border: 1.5px solid rgba(99,102,241,.40);
+  color: #4f46e5; background: rgba(238,242,255,.6);
+  border-radius: 10px; padding: .65rem 1.6rem;
+  font-weight: 600; font-size: .93rem;
+  transition: all .2s;
+}
+.btn-ai-outline:hover {
+  background: rgba(238,242,255,.98);
+  box-shadow: 0 4px 16px rgba(99,102,241,.18);
+  color: #3730a3;
+}
+.btn-cta-white {
+  background: rgba(255,255,255,.92); color: #4f46e5;
+  border: none; border-radius: 10px;
+  padding: .7rem 2rem; font-weight: 700; font-size: .95rem;
+  box-shadow: 0 4px 18px rgba(0,0,0,.10);
+  transition: all .2s;
+}
+.btn-cta-white:hover {
+  background: #fff;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0,0,0,.15);
+  color: #4f46e5;
+}
+.btn-cta-ghost {
+  border: 1.5px solid rgba(255,255,255,.55);
+  color: #fff; background: rgba(255,255,255,.12);
+  border-radius: 10px; padding: .7rem 1.8rem;
+  font-weight: 600; transition: all .2s;
+}
+.btn-cta-ghost:hover {
+  background: rgba(255,255,255,.22);
+  color: #fff;
+}
+
+/* ── Section headings ── */
+.section-eyebrow {
+  font-size: .72rem;
+  font-weight: 700;
+  color: #6366f1;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: .5rem;
+}
+.section-title {
+  font-size: clamp(1.3rem, 2.5vw, 1.8rem);
+  font-weight: 800;
+  color: #1e3a8a;
+  letter-spacing: -.02em;
+}
+.section-sub {
+  color: #475569;
+  font-size: .93rem;
+  line-height: 1.65;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #f0f4ff; }
+::-webkit-scrollbar-thumb { background: linear-gradient(#6366f1,#0ea5e9); border-radius:3px; }
+
+@media(max-width:767px) {
+  .stat-item { border-right:none; border-bottom:1px solid rgba(99,102,241,.12); }
+  .stat-item:last-child { border-bottom:none; }
+  .hero-section { padding: 2rem 0 1.5rem; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hvac-home">
+<div class="hvac-hero-bg">
+<div class="container py-0">
+
+  <!-- ══════════════════════════════════════════════
+       HERO
+  ══════════════════════════════════════════════ -->
+  <section class="hero-section">
+    <div class="row align-items-center g-4">
+      <div class="col-lg-7">
+        <div class="hero-platform-chip">
+          <span class="dot"></span>
+          Landmark Group &mdash; GCC HVAC Intelligence Platform
+        </div>
+        <h1 class="hero-title mb-3">
+          AI-Powered<br>
+          <span class="accent-violet">HVAC Procurement</span><br>
+          <span class="accent-sky">Intelligence</span>
+        </h1>
+        <p class="hero-subtitle mb-4">
+          Submit your store parameters and let the AI engine instantly recommend
+          the optimal HVAC system, benchmark live quotations against GCC market rates,
+          and generate a governance-ready procurement report.
+        </p>
+        <div class="d-flex flex-wrap gap-3">
+          <a href="{% url 'procurement:hvac_create' %}" class="btn btn-ai-primary px-4">
+            <i class="bi bi-plus-circle me-2"></i>New HVAC Request
+          </a>
+          <a href="{% url 'procurement:request_list' %}" class="btn btn-ai-outline px-4">
+            <i class="bi bi-list-ul me-2"></i>View All Requests
+          </a>
+        </div>
+        <!-- Trust badges -->
+        <div class="d-flex flex-wrap gap-2 mt-4">
+          <span style="font-size:.75rem;color:#64748b;font-weight:500;">
+            <i class="bi bi-shield-check me-1" style="color:#059669;"></i>ASHRAE 90.1 Compliant
+          </span>
+          <span style="font-size:.75rem;color:#64748b;font-weight:500;">
+            &bull; <i class="bi bi-thermometer me-1" style="color:#e11d48;"></i>Ambient 48&deg;C Rated
+          </span>
+          <span style="font-size:.75rem;color:#64748b;font-weight:500;">
+            &bull; <i class="bi bi-currency-exchange me-1" style="color:#d97706;"></i>Live AED Benchmarks
+          </span>
+          <span style="font-size:.75rem;color:#64748b;font-weight:500;">
+            &bull; <i class="bi bi-cpu me-1" style="color:#6366f1;"></i>Azure OpenAI GPT-4o
+          </span>
+        </div>
+      </div>
+      <div class="col-lg-5 d-flex justify-content-center">
+        <!-- Animated icon cluster -->
+        <div class="hero-icon-stack">
+          <div class="hic-ring hic-ring-1"></div>
+          <div class="hic-ring hic-ring-2"></div>
+          <div class="hic-center"><i class="bi bi-wind"></i></div>
+          <div class="hic-orbit hic-orbit-1"><i class="bi bi-cpu"></i></div>
+          <div class="hic-orbit hic-orbit-2"><i class="bi bi-graph-up"></i></div>
+          <div class="hic-orbit hic-orbit-3"><i class="bi bi-receipt"></i></div>
+          <div class="hic-orbit hic-orbit-4"><i class="bi bi-robot"></i></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       STATS STRIP
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="stats-strip">
+      <div class="row g-0">
+        <div class="col-6 col-md-3 stat-item">
+          <div class="stat-value">6</div>
+          <div class="stat-label"><i class="bi bi-robot me-1"></i>HVAC AI Agents</div>
+        </div>
+        <div class="col-6 col-md-3 stat-item">
+          <div class="stat-value sky">25+</div>
+          <div class="stat-label"><i class="bi bi-sliders me-1"></i>Store Parameters</div>
+        </div>
+        <div class="col-6 col-md-3 stat-item">
+          <div class="stat-value teal">9</div>
+          <div class="stat-label"><i class="bi bi-diagram-3 me-1"></i>Rule Conditions</div>
+        </div>
+        <div class="col-6 col-md-3 stat-item">
+          <div class="stat-value green">100%</div>
+          <div class="stat-label"><i class="bi bi-geo-alt me-1"></i>GCC Calibrated</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /container -->
+</div><!-- /hvac-hero-bg -->
+
+<div class="container">
+
+  <!-- ══════════════════════════════════════════════
+       SUPPORTED BRANDS / VENDORS
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="vendor-strip">
+      <div class="d-flex flex-wrap align-items-center gap-3">
+        <span class="section-eyebrow mb-0 me-2" style="letter-spacing:.04em;">Supported Brands</span>
+        {% if brands_list %}
+          {% for brand in brands_list %}
+          <span class="vendor-badge">
+            <i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>{{ brand }}
+          </span>
+          {% endfor %}
+        {% else %}
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Daikin</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Carrier</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>York</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Trane</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Mitsubishi</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>LG</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Gree</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Samsung</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Hitachi</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Voltas</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>ACPRO</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Petra</span>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       PLATFORM FEATURES
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="text-center mb-4">
+      <p class="section-eyebrow">What This Platform Does</p>
+      <h2 class="section-title">End-to-End HVAC Procurement Intelligence</h2>
+      <p class="section-sub mx-auto mt-2" style="max-width:560px;">
+        From request intake to recommendation to governance — every step is AI-assisted,
+        rule-validated, and fully auditable.
+      </p>
+    </div>
+    <div class="row g-4">
+      <!-- Feature 1 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-indigo"><i class="bi bi-buildings"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">Site Parameter Intake</h6>
+              <p class="mb-0 small" style="color:#475569;">25+ parameters capture your exact facility requirements.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Conditioned area, zones, floors</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Ambient temp, humidity, dust levels</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Chilled water, existing infra</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Auto cooling-load estimate (TR)</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 2 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-violet"><i class="bi bi-robot"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">6-Agent AI Pipeline</h6>
+              <p class="mb-0 small" style="color:#475569;">Specialised agents cover every procurement decision layer.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>HVAC Recommendation Agent</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Quotation Benchmark Agent</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Energy Efficiency Agent</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Specification Validation Agent</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 3 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-sky"><i class="bi bi-graph-up-arrow"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">GCC Market Benchmarking</h6>
+              <p class="mb-0 small" style="color:#475569;">Live AED benchmarks calibrated for GCC climate and market rates.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>AED/TR price benchmarking</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Overpricing &amp; anomaly detection</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>UAE, KSA, Oman, Qatar, Kuwait</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>2025 market data calibration</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 4 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-teal"><i class="bi bi-diagram-3"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">Rule Engine (9 Conditions)</h6>
+              <p class="mb-0 small" style="color:#475569;">Deterministic rules layered under the LLM for consistent outcomes.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>GCC extreme heat override</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>VRF vs chilled water routing</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Outdoor unit constraint logic</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>ASHRAE &amp; DEWA compliance</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 5 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-amber"><i class="bi bi-file-earmark-text"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">Quotation Extraction</h6>
+              <p class="mb-0 small" style="color:#475569;">Upload any vendor PDF — AI maps it to the schema automatically.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Azure Document Intelligence OCR</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>GPT-4o field extraction</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Pre-fill review &amp; correction</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Confidence scoring per field</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 6 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-rose"><i class="bi bi-shield-check"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">Governance &amp; Audit Trail</h6>
+              <p class="mb-0 small" style="color:#475569;">Every decision is logged, traceable, and exportable.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Full agent reasoning trace</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>RBAC-controlled access</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>JSON &amp; PDF export</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Langfuse observability</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       HOW IT WORKS
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="text-center mb-4">
+      <p class="section-eyebrow">How It Works</p>
+      <h2 class="section-title">6 Intelligent Stages</h2>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-1">1</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Intake</h6>
+          <p class="small mb-0" style="color:#64748b;">Submit store details and upload quotation PDF.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-2">2</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Extract</h6>
+          <p class="small mb-0" style="color:#64748b;">OCR + GPT-4o maps the PDF into structured schema.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-3">3</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Validate</h6>
+          <p class="small mb-0" style="color:#64748b;">Rule engine enforces 9 GCC-specific conditions.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-4">4</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Recommend</h6>
+          <p class="small mb-0" style="color:#64748b;">AI selects optimal HVAC type with confidence score.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-5">5</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Benchmark</h6>
+          <p class="small mb-0" style="color:#64748b;">Price vs GCC market rates &mdash; flags overpricing.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2">
+        <div class="workflow-card">
+          <div class="workflow-num wn-6">6</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Report</h6>
+          <p class="small mb-0" style="color:#64748b;">Governance-ready PDF &amp; JSON output with full trace.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       GCC COVERAGE MAP (text-based)
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="feature-card p-4">
+      <div class="row align-items-center g-4">
+        <div class="col-lg-5">
+          <p class="section-eyebrow">Coverage</p>
+          <h2 class="section-title mb-2">GCC Region Calibrated</h2>
+          <p class="section-sub">
+            Every recommendation accounts for extreme GCC climate conditions, local regulatory
+            codes (DEWA, Kahramaa, SEC), and 2025 AED market pricing from all six states.
+          </p>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            {% for country in gcc_countries %}
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));">
+              <i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>{{ country }}
+            </span>
+            {% empty %}
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>UAE</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Saudi Arabia</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Oman</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Qatar</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Kuwait</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Bahrain</span>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="col-lg-7">
+          <div class="row g-3">
+            <div class="col-6">
+              <div class="p-3 rounded-3" style="background:linear-gradient(135deg,rgba(239,68,68,.06),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.15);">
+                <div class="fw-bold mb-1" style="color:#dc2626;font-size:.9rem;"><i class="bi bi-thermometer-high me-1"></i>Extreme Heat</div>
+                <div class="small" style="color:#64748b;">Up to 48&deg;C ambient temp. Systems must deliver full capacity with high EER ratings.</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="p-3 rounded-3" style="background:linear-gradient(135deg,rgba(14,165,233,.06),rgba(14,165,233,.02));border:1px solid rgba(14,165,233,.15);">
+                <div class="fw-bold mb-1" style="color:#0284c7;font-size:.9rem;"><i class="bi bi-droplet me-1"></i>High Humidity</div>
+                <div class="small" style="color:#64748b;">Coastal sites need enhanced dehumidification and corrosion-resistant coatings.</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="p-3 rounded-3" style="background:linear-gradient(135deg,rgba(245,158,11,.07),rgba(245,158,11,.02));border:1px solid rgba(245,158,11,.15);">
+                <div class="fw-bold mb-1" style="color:#d97706;font-size:.9rem;"><i class="bi bi-cloud-haze2 me-1"></i>Sand &amp; Dust</div>
+                <div class="small" style="color:#64748b;">Outdoor units need dust filters and washable coil protection for desert climates.</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="p-3 rounded-3" style="background:linear-gradient(135deg,rgba(124,58,237,.07),rgba(124,58,237,.02));border:1px solid rgba(124,58,237,.15);">
+                <div class="fw-bold mb-1" style="color:#7c3aed;font-size:.9rem;"><i class="bi bi-lightning me-1"></i>Power Tariffs</div>
+                <div class="small" style="color:#64748b;">EER-optimised selection for UAE, KSA, and Qatar power tariff structures.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       RECENT REQUESTS (if any)
+  ══════════════════════════════════════════════ -->
+  {% if recent_requests %}
+  <section class="mb-5">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <p class="section-eyebrow mb-0">Activity</p>
+        <h2 class="section-title" style="font-size:1.25rem;">Recent HVAC Requests</h2>
+      </div>
+      <a href="{% url 'procurement:request_list' %}" class="btn btn-ai-outline btn-sm px-3">
+        View All <i class="bi bi-arrow-right ms-1"></i>
+      </a>
+    </div>
+    <div class="row g-3">
+      {% for req in recent_requests %}
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-3">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <span class="badge rounded-pill"
+              style="background:{% if req.status == 'APPROVED' %}linear-gradient(90deg,#059669,#047857){% elif req.status == 'PENDING' %}linear-gradient(90deg,#d97706,#b45309){% else %}linear-gradient(90deg,#4f46e5,#7c3aed){% endif %};font-size:.68rem;">
+              {{ req.get_status_display }}
+            </span>
+            <span class="small" style="color:#94a3b8;font-size:.72rem;">{{ req.created_at|date:"d M Y" }}</span>
+          </div>
+          <div class="fw-600 mb-1" style="color:#1e3a8a;font-size:.88rem;font-weight:600;">{{ req.title|truncatechars:55 }}</div>
+          <div class="small" style="color:#64748b;">
+            <i class="bi bi-geo-alt me-1"></i>{{ req.geography_city|default:"—" }}, {{ req.geography_country|default:"—" }}
+            {% if req.priority %}
+            &nbsp;&bull;&nbsp;<span style="color:{% if req.priority == 'HIGH' %}#e11d48{% elif req.priority == 'CRITICAL' %}#dc2626{% else %}#6366f1{% endif %};">
+              {{ req.get_priority_display }}
+            </span>
+            {% endif %}
+          </div>
+          <a href="{% url 'procurement:request_workspace' req.pk %}"
+             class="btn btn-sm w-100 mt-2"
+             style="background:rgba(238,242,255,.8);color:#4f46e5;border:1px solid rgba(99,102,241,.20);border-radius:8px;font-size:.8rem;font-weight:600;">
+            Open Workspace <i class="bi bi-arrow-right ms-1"></i>
+          </a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ══════════════════════════════════════════════
+       CTA
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="cta-section text-center position-relative" style="z-index:1;">
+      <div class="position-relative" style="z-index:2;">
+        <div class="mb-3">
+          <span style="background:rgba(255,255,255,.18);border-radius:999px;padding:.3rem .9rem;font-size:.72rem;font-weight:700;color:#fff;letter-spacing:.05em;text-transform:uppercase;border:1px solid rgba(255,255,255,.35);">
+            <i class="bi bi-stars me-1"></i>Ready to Analyse Your Site
+          </span>
+        </div>
+        <h2 class="fw-800 text-white mb-2" style="font-size:clamp(1.4rem,3vw,2.2rem);font-weight:800;">
+          Submit Your HVAC Requirements Today
+        </h2>
+        <p class="text-white mb-4" style="opacity:.85;max-width:520px;margin:auto;font-size:.95rem;">
+          Get an AI-generated system recommendation with full GCC market benchmarking
+          in under 2 minutes.
+        </p>
+        <div class="d-flex flex-wrap gap-3 justify-content-center">
+          <a href="{% url 'procurement:hvac_create' %}" class="btn btn-cta-white">
+            <i class="bi bi-plus-circle me-2"></i>Create New Request
+          </a>
+          <a href="{% url 'procurement:request_list' %}" class="btn btn-cta-ghost">
+            <i class="bi bi-list-ul me-2"></i>View All Requests
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /container -->
+</div><!-- /hvac-home -->
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+// Show welcome toast on first visit (session-based)
+document.addEventListener('DOMContentLoaded', function() {
+  if (!sessionStorage.getItem('hvac_home_welcomed')) {
+    sessionStorage.setItem('hvac_home_welcomed', '1');
+    setTimeout(function() {
+      const Toast = Swal.mixin({
+        toast: true,
+        position: 'bottom-end',
+        showConfirmButton: false,
+        timer: 4500,
+        timerProgressBar: true,
+        background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)',
+        color: '#1e3a8a',
+      });
+      Toast.fire({
+        icon: 'success',
+        iconColor: '#6366f1',
+        title: '<strong style="color:#1e3a8a;">HVAC Intelligence Platform</strong>',
+        html: '<span style="font-size:.82rem;color:#475569;">GCC-calibrated recommendations ready. Submit your first request.</span>'
+      });
+    }, 800);
+  }
+});
+</script>
+{% endblock %}
