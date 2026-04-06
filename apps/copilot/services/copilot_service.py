@@ -369,6 +369,28 @@ class APCopilotService:
             session.title = f"Investigation: {linked_case_obj.case_number}"
             session.save(update_fields=["title"])
 
+        # Langfuse root trace for session lifecycle
+        try:
+            from apps.core.langfuse_client import start_trace_safe, end_span_safe
+            _lf_session_trace = start_trace_safe(
+                f"copilot-{session.pk}",
+                "copilot_session_start",
+                user_id=user.pk if user else None,
+                session_id=f"copilot-{session.pk}",
+                metadata={
+                    "session_id": str(session.pk),
+                    "case_id": case_id,
+                    "role": primary_role,
+                },
+            )
+            end_span_safe(_lf_session_trace, output={
+                "session_id": str(session.pk),
+                "case_id": case_id,
+                "title": session.title or "",
+            }, is_root=True)
+        except Exception:
+            pass
+
         APCopilotService._audit(
             AuditEventType.COPILOT_SESSION_CREATED,
             "CopilotSession", str(session.id),
@@ -433,7 +455,7 @@ class APCopilotService:
         session.save(update_fields=["linked_case", "linked_invoice", "title", "updated_at"])
 
         APCopilotService._audit(
-            AuditEventType.COPILOT_SESSION_RESUMED,
+            AuditEventType.COPILOT_CASE_LINKED,
             "CopilotSession", str(session.id),
             f"Linked case {case.case_number} to copilot session",
             user=user, case_id=case_id,
@@ -459,10 +481,11 @@ class APCopilotService:
         session.save(update_fields=["linked_case", "linked_invoice", "updated_at"])
 
         APCopilotService._audit(
-            AuditEventType.COPILOT_SESSION_RESUMED,
+            AuditEventType.COPILOT_CASE_UNLINKED,
             "CopilotSession", str(session.id),
             f"Unlinked case {old_case_id} from copilot session",
             user=user, session_id=str(session.id),
+            old_case_id=old_case_id,
         )
         return {"unlinked": True}
 
@@ -520,16 +543,26 @@ class APCopilotService:
                 user=user, session_id=session_id,
             )
             try:
-                from apps.core.langfuse_client import score_trace
+                from apps.core.langfuse_client import score_trace, start_trace_safe, end_span_safe
                 msg_count = CopilotMessage.objects.filter(
                     session__pk=session_id, session__user=user,
                 ).count()
+                _lf_trace_id = f"copilot-{session_id}"
+                _lf_archive_trace = start_trace_safe(
+                    _lf_trace_id,
+                    "copilot_archive",
+                    user_id=user.pk if user else None,
+                    session_id=f"copilot-{session_id}",
+                    metadata={"session_id": str(session_id), "message_count": msg_count},
+                )
                 score_trace(
-                    f"copilot-{session_id}",
+                    _lf_trace_id,
                     COPILOT_SESSION_LENGTH,
                     float(msg_count),
                     comment=f"session={session_id} messages={msg_count}",
+                    span=_lf_archive_trace,
                 )
+                end_span_safe(_lf_archive_trace, output={"archived": True, "messages": msg_count}, is_root=True)
             except Exception:
                 pass
         return updated > 0
@@ -541,6 +574,14 @@ class APCopilotService:
             return None
         session.is_pinned = not session.is_pinned
         session.save(update_fields=["is_pinned"])
+
+        APCopilotService._audit(
+            AuditEventType.COPILOT_SESSION_PINNED,
+            "CopilotSession", session_id,
+            f"Copilot session {'pinned' if session.is_pinned else 'unpinned'}",
+            user=user, session_id=session_id,
+            is_pinned=session.is_pinned,
+        )
         return session.is_pinned
 
     # ------------------------------------------------------------------
@@ -671,6 +712,14 @@ class APCopilotService:
                 "status": inv.get_status_display() if hasattr(inv, "get_status_display") else inv.status,
                 "extraction_confidence": inv.extraction_confidence,
             }
+            # Include extraction result ID for console link
+            try:
+                from apps.extraction.models import ExtractionResult
+                ext_result = ExtractionResult.objects.filter(invoice=inv).values_list("pk", flat=True).first()
+                if ext_result:
+                    ctx["invoice"]["extraction_result_id"] = ext_result
+            except Exception:
+                pass
 
         if case.vendor:
             v = case.vendor
@@ -848,6 +897,13 @@ class APCopilotService:
                 },
             })
 
+        APCopilotService._audit(
+            AuditEventType.COPILOT_CASE_EVIDENCE_LOADED,
+            "APCase", case_id,
+            f"Case evidence loaded for case {case_id}",
+            user=user, case_id=case_id,
+            evidence_count=len(evidence),
+        )
         return {"case_id": case_id, "evidence": evidence}
 
     @staticmethod
@@ -945,6 +1001,7 @@ class APCopilotService:
             _lf_span = start_trace(
                 _session_trace_id,
                 "copilot_answer",
+                user_id=user.pk if user else None,
                 session_id=f"copilot-{session.pk}",
                 metadata={
                     "session_id": str(session.pk),
@@ -986,6 +1043,14 @@ class APCopilotService:
         recommendation_data: Optional[Dict[str, Any]] = None
 
         if case_id:
+            _lf_ctx_span = None
+            try:
+                from apps.core.langfuse_client import start_span
+                if _lf_span:
+                    _lf_ctx_span = start_span(_lf_span, "case_context_assembly", metadata={"case_id": case_id})
+            except Exception:
+                pass
+
             context_data = APCopilotService.build_case_context(case_id, user)
             ev = APCopilotService.build_case_evidence(case_id, user)
             evidence_data = ev.get("evidence", [])
@@ -1020,9 +1085,27 @@ class APCopilotService:
             follow_ups = APCopilotService.build_follow_up_prompts(
                 user, context_data, topic=topic,
             )
+
+            try:
+                from apps.core.langfuse_client import end_span as _end_span
+                if _lf_ctx_span:
+                    _end_span(_lf_ctx_span, output={
+                        "topic": topic, "evidence_count": len(evidence_data),
+                        "agents": consulted_agents,
+                    })
+            except Exception:
+                pass
         else:
             # System-wide / general query (no case linked)
             # Classify the question and route to the appropriate handler
+            _lf_topic_span = None
+            try:
+                from apps.core.langfuse_client import start_span
+                if _lf_span:
+                    _lf_topic_span = start_span(_lf_span, "system_topic_handler", metadata={"message_preview": message[:100]})
+            except Exception:
+                pass
+
             topic = APCopilotService._classify_question(message)
             topic_result = APCopilotService._handle_system_topic(
                 topic, message, user, primary_role,
@@ -1031,11 +1114,32 @@ class APCopilotService:
             evidence_data = topic_result["evidence"]
             follow_ups = topic_result["follow_ups"]
 
+            try:
+                from apps.core.langfuse_client import end_span as _end_span
+                if _lf_topic_span:
+                    _end_span(_lf_topic_span, output={"topic": topic, "evidence_count": len(evidence_data)})
+            except Exception:
+                pass
+
         _topic = topic
         try:
-            from apps.core.langfuse_client import end_span
+            from apps.core.langfuse_client import end_span, score_trace
             if _lf_span:
-                end_span(_lf_span, output={"topic": _topic, "case_id": session.linked_case_id})
+                end_span(_lf_span, output={
+                    "topic": _topic,
+                    "case_id": session.linked_case_id,
+                    "has_case": bool(case_id),
+                    "evidence_count": len(evidence_data),
+                    "consulted_agents": consulted_agents,
+                    "has_recommendation": recommendation_data is not None,
+                })
+                score_trace(
+                    _session_trace_id,
+                    "copilot_evidence_count",
+                    float(len(evidence_data)),
+                    span=_lf_span,
+                    comment=f"topic={_topic}",
+                )
         except Exception:
             pass
         return {

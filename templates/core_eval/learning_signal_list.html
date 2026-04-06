@@ -83,12 +83,13 @@
           <th>Confidence</th>
           <th>Actor</th>
           <th style="width:140px">Created</th>
+          <th style="width:50px"></th>
         </tr>
       </thead>
       <tbody>
         {% for sig in page_obj %}
         <tr>
-          <td><span class="text-muted">#{{ sig.pk }}</span></td>
+          <td><a href="{% url 'core_eval:learning_signal_detail' sig.pk %}" class="text-muted">#{{ sig.pk }}</a></td>
           <td><span class="ap-badge ap-badge-info">{{ sig.app_module }}</span></td>
           <td><span class="ap-badge ap-badge-partial">{{ sig.signal_type }}</span></td>
           <td>
@@ -140,9 +141,10 @@
             {% endif %}
           </td>
           <td><small class="text-muted">{{ sig.created_at|date:"M d, H:i:s" }}</small></td>
+          <td><a href="{% url 'core_eval:learning_signal_detail' sig.pk %}" class="btn btn-sm btn-outline-primary py-0 px-1" title="View details"><i class="bi bi-eye"></i></a></td>
         </tr>
         {% empty %}
-        <tr><td colspan="9" class="text-center text-muted py-4">No learning signals found.</td></tr>
+        <tr><td colspan="10" class="text-center text-muted py-4">No learning signals found.</td></tr>
         {% endfor %}
       </tbody>
     </table>

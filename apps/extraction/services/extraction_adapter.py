@@ -95,7 +95,11 @@ class InvoiceExtractionAdapter:
 
             logger.info("OCR completed: %d characters, %d pages from %s", ocr_char_count, ocr_page_count, file_path)
 
-            # Step 1c: QR code decode — Indian e-invoice IRN / GSTIN data (fail-silent)
+            # Update progress for copilot polling
+            if document_upload_id:
+                self._update_progress(document_upload_id, "Scanning the document layout...")
+
+            # Step 1c: QR code decode -- Indian e-invoice IRN / GSTIN data (fail-silent)
             qr_data = self._decode_qr(file_path, ocr_text, qr_texts)
             if qr_data:
                 logger.info(
@@ -113,6 +117,8 @@ class InvoiceExtractionAdapter:
             composition = self._compose_prompt(category_result)
 
             # Step 2c: LLM structured extraction via Invoice Extraction Agent
+            if document_upload_id:
+                self._update_progress(document_upload_id, "Pulling out invoice details with AI...")
             raw_json, agent_run_id = self._agent_extract(
                 ocr_text,
                 actor_user_id=actor_user_id,
@@ -123,6 +129,9 @@ class InvoiceExtractionAdapter:
                 trace_id=trace_id,
             )
             logger.info("Agent extraction completed (agent_run_id=%s)", agent_run_id)
+
+            if document_upload_id:
+                self._update_progress(document_upload_id, "Verifying the extracted data...")
 
             # Step 2d: Deterministic response repair (new)
             repair_result = self._repair_response(raw_json, ocr_text, category_result)
@@ -189,6 +198,15 @@ class InvoiceExtractionAdapter:
     # ------------------------------------------------------------------
     # Runtime settings helper
     # ------------------------------------------------------------------
+    @staticmethod
+    def _update_progress(upload_id: int, message: str):
+        """Update DocumentUpload.processing_message for copilot polling."""
+        try:
+            from apps.documents.models import DocumentUpload
+            DocumentUpload.objects.filter(pk=upload_id).update(processing_message=message)
+        except Exception:
+            pass
+
     @staticmethod
     def _is_ocr_enabled() -> bool:
         """Check ExtractionRuntimeSettings.ocr_enabled flag.
@@ -484,6 +502,7 @@ class InvoiceExtractionAdapter:
             _lf_trace = start_trace(
                 _trace_id,
                 "llm_extract_fallback",
+                session_id=f"extraction-fallback-{_trace_id[:12]}",
                 metadata={"ocr_char_count": len(ocr_text)},
             )
             _lf_span = start_span(_lf_trace, "LLM_EXTRACT_FALLBACK") if _lf_trace else None

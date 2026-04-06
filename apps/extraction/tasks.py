@@ -100,6 +100,15 @@ def _lf_update(span, **kwargs):
         pass
 
 
+def _update_progress(upload_id: int, message: str):
+    """Update DocumentUpload.processing_message for progressive UI feedback."""
+    try:
+        from apps.documents.models import DocumentUpload
+        DocumentUpload.objects.filter(pk=upload_id).update(processing_message=message)
+    except Exception:
+        pass
+
+
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("extraction.process_invoice_upload", audit_event="EXTRACTION_STARTED", entity_type="DocumentUpload")
 def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "document_upload", credit_ref_id: str = "") -> dict:
@@ -149,12 +158,18 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             "blob_path": upload.blob_path or "",
         },
     )
+    try:
+        from apps.core.langfuse_client import set_current_span
+        set_current_span(_lf_root)
+    except Exception:
+        pass
 
     upload.processing_state = FileProcessingState.PROCESSING
     upload.save(update_fields=["processing_state", "updated_at"])
 
     try:
         # 1. Extract (OCR + LLM)
+        _update_progress(upload_id, "Reading your document...")
         _s_ocr = _lf_span(_lf_root, "ocr_extraction", metadata={"upload_id": upload_id})
         adapter = InvoiceExtractionAdapter()
         # Download from Azure Blob Storage
@@ -204,6 +219,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             return {"status": "error", "message": extraction_resp.error_message}
 
         # 1a. Document type classification -- reject non-invoices early
+        _update_progress(upload_id, "Identifying document type...")
         _s_doctype = _lf_span(_lf_root, "document_type_classification", metadata={"upload_id": upload_id})
         doc_type_result = _classify_document(extraction_resp.ocr_text)
         _doc_type_str = doc_type_result.document_type if doc_type_result else "UNKNOWN"
@@ -235,11 +251,13 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             return {"status": "rejected", "message": reject_msg, "document_type": doc_type_result.document_type}
 
         # 1b. Run governed extraction pipeline (enrichment)
+        _update_progress(upload_id, "Enriching extraction results...")
         _s_governed = _lf_span(_lf_root, "governed_pipeline", metadata={"upload_id": upload_id})
         _run_governed_pipeline(upload, extraction_resp)
         _lf_end(_s_governed, output={"status": "completed"})
 
         # 2. Parse
+        _update_progress(upload_id, "Organizing extracted fields...")
         _s_parse = _lf_span(_lf_root, "parsing", metadata={"upload_id": upload_id})
         parser = ExtractionParserService()
         parsed = parser.parse(extraction_resp.raw_json)
@@ -250,6 +268,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         })
 
         # 3. Normalise
+        _update_progress(upload_id, "Standardizing amounts and dates...")
         _s_norm = _lf_span(_lf_root, "normalization", metadata={"upload_id": upload_id})
         normalizer = NormalizationService()
         normalized = normalizer.normalize(parsed)
@@ -262,6 +281,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
         })
 
         # 3a. Field-level confidence scoring
+        _update_progress(upload_id, "Evaluating extraction quality...")
         _s_field_conf = _lf_span(_lf_root, "field_confidence", metadata={"upload_id": upload_id})
         field_conf_result = None
         try:
@@ -299,6 +319,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                           comment=f"field={field_conf_result.weakest_critical_field}")
 
         # 4. Validate
+        _update_progress(upload_id, "Validating required fields...")
         _s_validate = _lf_span(_lf_root, "validation", metadata={"upload_id": upload_id})
         validator = ValidationService()
         validation_result = validator.validate(normalized)
@@ -381,6 +402,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
 
         # 5. Duplicate check -- exclude the existing invoice for this upload so a
         # reprocess does not flag the invoice as a duplicate of itself.
+        _update_progress(upload_id, "Checking for duplicates...")
         _s_dup = _lf_span(_lf_root, "duplicate_detection", metadata={"upload_id": upload_id})
         from apps.documents.models import Invoice as _InvoiceModel
         _existing_inv = (
@@ -401,6 +423,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                       comment=dup_result.reason or "unique")
 
         # 6. Persist
+        _update_progress(upload_id, "Saving the invoice record...")
         _s_persist = _lf_span(_lf_root, "persistence", metadata={"upload_id": upload_id})
         persistence = InvoicePersistenceService()
         invoice = persistence.save(
@@ -480,6 +503,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                       comment=f"succeeded={_recovery_succeeded}")
 
         # If valid and not duplicate, gate through extraction approval
+        _update_progress(upload_id, "Running approval checks...")
         _s_approval = _lf_span(_lf_root, "approval_gate", metadata={
             "upload_id": upload_id, "invoice_id": invoice.pk,
         })
@@ -610,27 +634,32 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             metadata=_audit_meta,
         )
 
-        # --- Auto-create AP Case only if invoice is READY_FOR_RECON (auto-approved) ---
+        # --- Create AP Case immediately after extraction ---
+        # The case pipeline will pause at the EXTRACTION_APPROVAL gate
+        # if the invoice still needs human approval.
         case_id = None
-        if invoice.status == InvoiceStatus.READY_FOR_RECON:
-            try:
-                from apps.cases.services.case_creation_service import CaseCreationService
-                case = CaseCreationService.create_from_upload(
-                    invoice=invoice,
-                    uploaded_by=upload.uploaded_by,
-                )
-                case_id = case.pk
-                logger.info("Created AP Case %s for invoice %s", case.case_number, invoice.invoice_number)
+        try:
+            from apps.cases.services.case_creation_service import CaseCreationService
+            case = CaseCreationService.create_from_upload(
+                invoice=invoice,
+                uploaded_by=upload.uploaded_by,
+            )
+            case_id = case.pk
+            logger.info("Created AP Case %s for invoice %s", case.case_number, invoice.invoice_number)
 
-                # Trigger case orchestration
-                from apps.cases.tasks import process_case_task
-                from apps.core.utils import dispatch_task
-                dispatch_task(process_case_task, case_id=case.pk)
-            except Exception as case_exc:
-                logger.exception(
-                    "AP Case creation/processing failed for invoice %s: %s",
-                    invoice.pk, case_exc,
-                )
+            # Trigger case orchestration -- pipeline runs through
+            # INTAKE -> EXTRACTION -> EXTRACTION_APPROVAL. If the invoice
+            # is auto-approved (READY_FOR_RECON), the pipeline continues
+            # through PATH_RESOLUTION and beyond. If pending human
+            # approval, the pipeline pauses at PENDING_EXTRACTION_APPROVAL.
+            from apps.cases.tasks import process_case_task
+            from apps.core.utils import dispatch_task
+            dispatch_task(process_case_task, case_id=case.pk)
+        except Exception as case_exc:
+            logger.exception(
+                "AP Case creation/processing failed for invoice %s: %s",
+                invoice.pk, case_exc,
+            )
 
         logger.info(
             "Extraction pipeline completed for upload %s -> invoice %s (status=%s)",

@@ -71,6 +71,11 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: 
             _lf_wrapper = None
     except Exception:
         _lf_wrapper = None
+    try:
+        from apps.core.langfuse_client import set_current_span
+        set_current_span(_lf_wrapper)
+    except Exception:
+        pass
 
     try:
         outcome = orchestrator.execute(result, request_user=request_user)

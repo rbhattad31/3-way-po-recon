@@ -69,7 +69,7 @@
         {% if can_view_pos %}
         <li>
           <a class="dropdown-item {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active{% endif %}"
-             href="{% url 'documents:po_list' %}">
+             href="{% url 'po_documents:po_list' %}">
             <i class="bi bi-cart-check me-2 opacity-75"></i>Purchase Orders
           </a>
         </li>
@@ -78,7 +78,7 @@
         {% if can_view_grns %}
         <li>
           <a class="dropdown-item {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active{% endif %}"
-             href="{% url 'documents:grn_list' %}">
+             href="{% url 'grn_documents:grn_list' %}">
             <i class="bi bi-box-seam me-2 opacity-75"></i>GRNs
           </a>
         </li>

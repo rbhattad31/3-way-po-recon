@@ -1,13 +1,17 @@
 """Template views for the AP Copilot workspace."""
 from django.contrib.auth.decorators import login_required
+from django.http import HttpResponseForbidden
 from django.shortcuts import render
 
 from apps.copilot.services.copilot_service import APCopilotService
+from apps.core.permissions import _has_permission_code
 
 
 @login_required
 def copilot_workspace(request):
     """Main copilot workspace — /copilot/"""
+    if not _has_permission_code(request.user, "agents.use_copilot"):
+        return HttpResponseForbidden("Permission denied")
     sessions = APCopilotService.list_sessions(request.user)[:20]
     suggestions = APCopilotService.get_suggestions(request.user)
     return render(request, "copilot/ap_copilot_workspace.html", {
@@ -21,6 +25,10 @@ def copilot_workspace(request):
 @login_required
 def copilot_case(request, case_id):
     """Case-linked copilot workspace — /copilot/case/<case_id>/"""
+    if not _has_permission_code(request.user, "agents.use_copilot"):
+        return HttpResponseForbidden("Permission denied")
+    if not _has_permission_code(request.user, "cases.view"):
+        return HttpResponseForbidden("Permission denied")
     session = APCopilotService.start_session(request.user, case_id=case_id)
     sessions = APCopilotService.list_sessions(request.user)[:20]
     suggestions = APCopilotService.get_suggestions(request.user)
@@ -40,6 +48,8 @@ def copilot_case(request, case_id):
 @login_required
 def copilot_session(request, session_id):
     """Resume a specific session — /copilot/session/<session_id>/"""
+    if not _has_permission_code(request.user, "agents.use_copilot"):
+        return HttpResponseForbidden("Permission denied")
     session = APCopilotService.get_session_detail(request.user, str(session_id))
     sessions = APCopilotService.list_sessions(request.user)[:20]
     suggestions = APCopilotService.get_suggestions(request.user)

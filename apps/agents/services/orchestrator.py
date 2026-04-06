@@ -218,6 +218,14 @@ class AgentOrchestrator:
         except Exception:
             _lf_trace = None
 
+        # Store the Langfuse span on the thread so downstream services
+        # (e.g. guardrails) can attach scores without threading the span.
+        try:
+            from apps.core.langfuse_client import set_current_span
+            set_current_span(_lf_trace)
+        except Exception:
+            pass
+
         # 1. Build the plan
         plan = self.policy.plan(result)
         orch_result.plan_source = plan.plan_source
@@ -326,6 +334,7 @@ class AgentOrchestrator:
                 "grn_fully_received": result.grn_fully_received,
                 "reconciliation_mode": recon_mode,
                 "is_two_way": recon_mode == "TWO_WAY",
+                "is_non_po": recon_mode == "NON_PO",
             },
             # RBAC context
             actor_user_id=actor.pk,
@@ -348,6 +357,7 @@ class AgentOrchestrator:
         ctx.memory.facts["grn_available"] = bool(getattr(result, "grn_available", False))
         ctx.memory.facts["grn_fully_received"] = bool(getattr(result, "grn_fully_received", False))
         ctx.memory.facts["is_two_way"] = (ctx.reconciliation_mode == "TWO_WAY")
+        ctx.memory.facts["is_non_po"] = (ctx.reconciliation_mode == "NON_PO")
         ctx.memory.facts["vendor_name"] = getattr(result, "vendor_name", "") or ""
         ctx.memory.facts["match_status"] = str(getattr(result, "match_status", "") or "")
         ctx._langfuse_trace = _lf_trace
@@ -540,26 +550,31 @@ class AgentOrchestrator:
                         AGENT_PIPELINE_FINAL_CONFIDENCE,
                         orch_result.final_confidence,
                         comment=orch_result.final_recommendation or "",
+                        span=_lf_trace,
                     )
                 score_trace(
                     trace_ctx.trace_id,
                     AGENT_PIPELINE_RECOMMENDATION_PRESENT,
                     1.0 if _has_recommendation else 0.0,
+                    span=_lf_trace,
                 )
                 score_trace(
                     trace_ctx.trace_id,
                     AGENT_PIPELINE_ESCALATION_TRIGGERED,
                     1.0 if _has_escalation else 0.0,
+                    span=_lf_trace,
                 )
                 score_trace(
                     trace_ctx.trace_id,
                     AGENT_PIPELINE_AUTO_CLOSE_CANDIDATE,
                     1.0 if _auto_close_candidate else 0.0,
+                    span=_lf_trace,
                 )
                 score_trace(
                     trace_ctx.trace_id,
                     AGENT_PIPELINE_AGENTS_EXECUTED_COUNT,
                     float(len(orch_result.agents_executed)),
+                    span=_lf_trace,
                 )
             except Exception:
                 pass

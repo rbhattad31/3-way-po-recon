@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ vendor.name }} – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'vendors:vendor_list' %}" class="text-decoration-none">Vendors</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'vendors:vendor_detail' vendor.pk %}" class="text-decoration-none">{{ vendor.code }}</a></li>
+    <li class="breadcrumb-item active">Edit</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-3">
+  <i class="bi bi-pencil-square fs-5 text-primary"></i>
+  <h4 class="mb-0 fw-semibold">Edit Vendor</h4>
+  <span class="ap-badge ap-badge-info ms-1">{{ vendor.code }}</span>
+</div>
+
+<div class="ap-card">
+  <div class="ap-card-header">
+    <i class="bi bi-info-circle me-2"></i>Vendor Details
+  </div>
+  <div class="ap-card-body">
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      {% if form.errors %}
+      <div class="alert alert-danger py-2 mb-3">
+        <ul class="mb-0 small">
+          {% for field, errors in form.errors.items %}
+            {% for error in errors %}<li><strong>{{ field }}:</strong> {{ error }}</li>{% endfor %}
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label fw-medium">Vendor Code <span class="text-danger">*</span></label>
+          {{ form.code }}
+          {% if form.code.errors %}<div class="text-danger small mt-1">{{ form.code.errors.0 }}</div>{% endif %}
+        </div>
+        <div class="col-md-8">
+          <label class="form-label fw-medium">Vendor Name <span class="text-danger">*</span></label>
+          {{ form.name }}
+          {% if form.name.errors %}<div class="text-danger small mt-1">{{ form.name.errors.0 }}</div>{% endif %}
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-4">
+          <label class="form-label fw-medium">Tax ID / GSTIN</label>
+          {{ form.tax_id }}
+          {% if form.tax_id.errors %}<div class="text-danger small mt-1">{{ form.tax_id.errors.0 }}</div>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-medium">Country</label>
+          {{ form.country }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-medium">Currency</label>
+          {{ form.currency }}
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-4">
+          <label class="form-label fw-medium">Payment Terms</label>
+          {{ form.payment_terms }}
+        </div>
+        <div class="col-md-8">
+          <label class="form-label fw-medium">Contact Email</label>
+          {{ form.contact_email }}
+          {% if form.contact_email.errors %}<div class="text-danger small mt-1">{{ form.contact_email.errors.0 }}</div>{% endif %}
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-12">
+          <label class="form-label fw-medium">Address</label>
+          {{ form.address }}
+        </div>
+      </div>
+
+      <div class="mt-4 d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-check-lg me-1"></i>Save Changes
+        </button>
+        <a href="{% url 'vendors:vendor_detail' vendor.pk %}" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-x me-1"></i>Cancel
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

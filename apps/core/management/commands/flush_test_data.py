@@ -3,11 +3,12 @@ Flush all transactional / test data while preserving configuration.
 
 Deletes: invoices, POs, GRNs, documents, cases, reconciliation, agents,
          reviews, tools, audit events, extraction results, vendors, bulk jobs,
-         eval runs, learning signals, learning actions.
+         eval runs, learning signals, learning actions, credit transactions.
+         Resets credit account balances to 100.
 
 Preserves: users, roles, permissions, RBAC, agent definitions, tool definitions,
            reconciliation config/policies, prompt templates, extraction configs,
-           control center settings, credit accounts, credit transaction ledger.
+           control center settings, credit accounts (reset to seed defaults).
 Also deletes all Langfuse traces and scores (if Langfuse is configured).
 
 Usage:
@@ -132,7 +133,19 @@ class Command(BaseCommand):
         except ImportError:
             pass
 
-        # Credit transactions: ledger is preserved (intentionally skipped)
+        # Credit accounts: delete transactions, reset balances to seed default
+        try:
+            from apps.extraction.credit_models import CreditTransaction, UserCreditAccount
+            count = CreditTransaction.objects.all().delete()[0]
+            self.stdout.write(f"  CreditTransaction: {count}")
+            updated = UserCreditAccount.objects.all().update(
+                balance_credits=100,
+                reserved_credits=0,
+                monthly_used=0,
+            )
+            self.stdout.write(f"  UserCreditAccount reset: {updated}")
+        except ImportError:
+            pass
 
         # Bulk extraction
         try:

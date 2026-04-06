@@ -672,7 +672,7 @@ The extraction runs as a Celery task (`process_invoice_upload_task`). Orchestrat
 - **Auto-approval**: When `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence ≥ `EXTRACTION_AUTO_APPROVE_THRESHOLD`, auto-approve → READY_FOR_RECON
 - **Human approval**: Otherwise set invoice to PENDING_APPROVAL, create ExtractionApproval record with original values snapshot
 - Human reviews extracted data, optionally corrects fields → each correction tracked as ExtractionFieldCorrection
-- On approve: invoice transitions to READY_FOR_RECON, AP Case auto-created
+- On approve: invoice transitions to READY_FOR_RECON, existing AP Case resumes from EXTRACTION_APPROVAL gate
 - On reject: invoice marked INVALID for re-extraction
 - Analytics: touchless rate, most-corrected fields, approval breakdown via `get_approval_analytics()`
 
@@ -1097,19 +1097,22 @@ The case management system (`apps/cases/`) provides a structured AP case lifecyc
 ### 10.2 Case Creation
 
 `CaseCreationService`:
-- Creates APCase from invoice upload
+- Creates APCase **immediately after extraction** (not after approval)
 - Generates case number: `AP-YYMMDD-NNNN`
 - Infers invoice type (PO_BACKED or UNKNOWN based on po_number)
 - Assesses priority: HIGH (≥$50K), MEDIUM (≥$10K), LOW
 - Creates initial INTAKE stage
+- Case pipeline runs through INTAKE → EXTRACTION → EXTRACTION_APPROVAL, then **pauses** at `PENDING_EXTRACTION_APPROVAL` if human approval is needed
+- On extraction approval, `ExtractionApprovalService` resumes the existing case from PATH_RESOLUTION onward
+- For auto-approved invoices, the pipeline continues without pausing
 
 ### 10.3 Processing Paths
 
 | Path | When | Stages |
 |---|---|---|
-| **TWO_WAY** | Service invoices, policy-matched | INTAKE → EXTRACTION → PATH_RESOLUTION → PO_RETRIEVAL → TWO_WAY_MATCHING → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY |
+| **TWO_WAY** | Service invoices, policy-matched | INTAKE → EXTRACTION → EXTRACTION_APPROVAL → PATH_RESOLUTION → PO_RETRIEVAL → TWO_WAY_MATCHING → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY |
 | **THREE_WAY** | Stock/goods invoices | Same as TWO_WAY + GRN_ANALYSIS (conditional) |
-| **NON_PO** | No PO reference | INTAKE → EXTRACTION → PATH_RESOLUTION → NON_PO_VALIDATION → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY |
+| **NON_PO** | No PO reference | INTAKE → EXTRACTION → EXTRACTION_APPROVAL → PATH_RESOLUTION → NON_PO_VALIDATION → EXCEPTION_ANALYSIS → REVIEW_ROUTING → CASE_SUMMARY |
 
 ### 10.4 State Machine
 
@@ -1127,6 +1130,7 @@ The case management system (`apps/cases/`) provides a structured AP case lifecyc
 |---|---|
 | INTAKE | Validate upload, classify document |
 | EXTRACTION | Monitor completion, validate quality; invoke Invoice Understanding Agent if confidence < 75% |
+| EXTRACTION_APPROVAL | Gate: if invoice PENDING_APPROVAL, pause case at PENDING_EXTRACTION_APPROVAL; if READY_FOR_RECON, continue |
 | PATH_RESOLUTION | CaseRoutingService → determine path |
 | PO_RETRIEVAL | Deterministic lookup + agent fallback |
 | TWO_WAY_MATCHING | ReconciliationRunnerService |
@@ -2376,8 +2380,8 @@ celery -A config worker -l info
 - Enterprise RBAC: Role, Permission, RolePermission, UserRole (with scope_json), UserPermissionOverride; RBAC engine, middleware, template tags, DRF classes, CBV mixins, admin console (8 screens), API, seed (6 roles incl. SYSTEM_AGENT, 40 permissions)
 - Prompt registry with 18 defaults; pushed to Langfuse via `push_prompts_to_langfuse`
 - Seed data (4 commands): config, rbac, prompts, ap_data (30+ scenarios, 6-stage pipeline)
-- **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` bridges extraction/approval into eval layer; `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation. See [EVAL_LEARNING.md](EVAL_LEARNING.md).
-- **Tests**: Reconciliation engine: 73. Extraction (base + Phase 2): 232+. Extraction core: 50+. Eval & Learning: 81 (22 unit + 13 e2e + 29 RBAC view + 17 adapter/integration). Total: 436+ passing.
+- **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` bridges extraction/approval into eval layer (predicted = LLM value, ground truth = empty until human approval confirms/corrects); `ReconciliationEvalAdapter` bridges reconciliation engine + review workflow into eval layer (predicted = match result, ground truth = review decision); `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation. See [EVAL_LEARNING.md](EVAL_LEARNING.md).
+- **Tests**: Reconciliation engine: 73. Extraction (base + Phase 2): 232+. Extraction core: 50+. Eval & Learning: 120 (22 unit + 13 e2e + 29 RBAC view + 35 extraction adapter/integration + 21 recon adapter). Total: 475+ passing.
 - Azure Blob Storage integration; Windows synchronous dev mode; Admin panel registration
 
 ### Not Yet Implemented
@@ -2616,7 +2620,7 @@ Accessed from the **ERP Integration** sidebar section (separate from Posting Age
 A domain-agnostic quality-tracking and controlled-learning layer that sits alongside production pipelines without modifying them.
 
 - **`apps/core_eval/`** -- 5 models (`EvalRun`, `EvalMetric`, `EvalFieldOutcome`, `LearningSignal`, `LearningAction`), 6 service classes, deterministic `LearningEngine`
-- **Adapters** bridge production pipelines into the eval layer. Currently implemented: `ExtractionEvalAdapter` (wired into extraction task + approval service)
+- **Adapters** bridge production pipelines into the eval layer. Currently implemented: `ExtractionEvalAdapter` (wired into extraction task + approval service; predicted = LLM-extracted values from `raw_response`, ground truth = empty until human approval confirms or corrects) and `ReconciliationEvalAdapter` (wired into reconciliation runner + review service; predicted = match result/routing decisions, ground truth = populated from review outcome).
 - **LearningEngine** scans accumulated signals, detects patterns via 5 threshold rules, and proposes `LearningAction` records for human review
 - Actions are **never auto-applied** -- all proposals require explicit human approval
 - All adapter methods are **fail-silent** -- errors never propagate to calling pipelines
@@ -2626,7 +2630,7 @@ A domain-agnostic quality-tracking and controlled-learning layer that sits along
 ```
 EvalRun (core_eval) -- one eval pass per entity
   +--< EvalMetric (N) -- named metrics (numeric, text, JSON)
-  +--< EvalFieldOutcome (N) -- per-field predicted vs ground truth
+  +--< EvalFieldOutcome (N) -- per-field predicted (LLM) vs ground truth (empty until approval)
   +--< LearningSignal (N) -- atomic observations from production
 
 LearningAction (core_eval) -- proposed corrective action
@@ -2654,6 +2658,6 @@ python manage.py run_learning_engine [--module extraction] [--days 14] [--dry-ru
 | Pipeline | Adapter | Status |
 |---|---|---|
 | Extraction (task + approval) | `ExtractionEvalAdapter` | Implemented |
-| Reconciliation | -- | Not yet implemented |
+| Reconciliation (runner + review) | `ReconciliationEvalAdapter` | Implemented |
 | Posting | -- | Not yet implemented |
 | Agent orchestrator | -- | Not yet implemented |

@@ -51,6 +51,7 @@ from apps.core.evaluation_constants import (
     RECON_GRN_LOOKUP_SUCCESS,
     RECON_GRN_MATCH_RATIO,
     RECON_HEADER_MATCH_RATIO,
+    RECON_INVOICE_ERROR,
     RECON_LINE_MATCH_RATIO,
     RECON_PO_FOUND,
     RECON_PO_LOOKUP_AUTHORITATIVE,
@@ -140,6 +141,8 @@ class ReconciliationRunnerService:
                 _lf_run_trace = start_trace_safe(
                     _trace_id,
                     "reconciliation_run",
+                    user_id=getattr(triggered_by, "pk", None) if triggered_by else None,
+                    session_id=f"recon-run-{recon_run.pk}",
                     metadata={
                         "run_pk": recon_run.pk,
                         "total_invoices": len(invoices),
@@ -182,9 +185,19 @@ class ReconciliationRunnerService:
                     review += 1
                 else:
                     errors += 1
-            except Exception:
+            except Exception as exc:
                 logger.exception("Error reconciling invoice %s", invoice.pk)
                 errors += 1
+                # Emit error score so failures are visible in Langfuse
+                try:
+                    from apps.core.langfuse_client import score_trace_safe
+                    score_trace_safe(
+                        _trace_id, RECON_INVOICE_ERROR, 1.0,
+                        comment=f"invoice={invoice.pk} error={str(exc)[:120]}",
+                        span=_lf_run_trace,
+                    )
+                except Exception:
+                    pass
 
         # Finalise run
         recon_run.status = ReconciliationRunStatus.COMPLETED
@@ -584,6 +597,18 @@ class ReconciliationRunnerService:
             "source": "deterministic",
         }
         update_trace_safe(lf_trace, metadata=_eval_meta, is_root=True)
+
+        # ---------------------------------------------------------------
+        # core_eval: persist predicted eval run + metrics (best-effort)
+        # ---------------------------------------------------------------
+        try:
+            from apps.reconciliation.services.eval_adapter import ReconciliationEvalAdapter
+            ReconciliationEvalAdapter.sync_for_result(
+                result,
+                trace_id=_tid,
+            )
+        except Exception:
+            logger.debug("ReconciliationEvalAdapter.sync_for_result skipped (non-fatal)")
 
         return match_status
 

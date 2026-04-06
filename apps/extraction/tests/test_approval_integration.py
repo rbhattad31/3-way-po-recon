@@ -325,7 +325,8 @@ class TestApprovalServiceIntegration:
         assert APCase.objects.filter(invoice=invoice, is_active=True).count() == 1
 
     def test_touchless_approval_no_corrections(self, db):
-        """Approval without corrections should be marked touchless."""
+        """Approval without corrections (inline or pre-saved) should be marked touchless."""
+        from apps.extraction.models import ExtractionFieldCorrection
         from apps.extraction.services.approval_service import ExtractionApprovalService
 
         user = _admin_user(db)
@@ -333,6 +334,9 @@ class TestApprovalServiceIntegration:
         invoice = _make_invoice(upload)
         er = _make_extraction_result(upload, invoice)
         approval = _make_approval(invoice, er)
+
+        # Verify no pre-existing corrections
+        assert ExtractionFieldCorrection.objects.filter(approval=approval).count() == 0
 
         ExtractionApprovalService.approve(approval, user, corrections=None)
 
@@ -537,3 +541,258 @@ class TestApprovalEvalIntegration:
         assert signals.count() == 1
         sig = signals.first()
         assert sig.payload_json["is_touchless"] is True
+
+
+# ===========================================================================
+# Pre-existing corrections tests (Save-then-Approve workflow)
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestPreExistingCorrections:
+    """Verify that corrections saved BEFORE clicking Approve are picked up.
+
+    Real-world flow:
+    1. User edits fields on the extraction detail page and clicks "Save"
+       -> save_extracted_data view creates ExtractionFieldCorrection records
+    2. User clicks "Approve"
+       -> extraction_approve view calls approve(corrections=None)
+
+    Previously, approve() only counted corrections passed inline via the
+    ``corrections`` dict, so pre-saved corrections were silently ignored,
+    leading to is_touchless=True and zero learning signals.
+    """
+
+    def test_presaved_corrections_mark_approval_not_touchless(self, db):
+        """approve(corrections=None) with pre-existing ExtractionFieldCorrection
+        records should set is_touchless=False and fields_corrected_count > 0."""
+        from apps.extraction.models import ExtractionFieldCorrection
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        # Simulate save_extracted_data creating corrections before approve
+        ExtractionFieldCorrection.objects.create(
+            approval=approval,
+            entity_type="header",
+            field_name="total_amount",
+            original_value="1000.00",
+            corrected_value="1050.00",
+            corrected_by=user,
+        )
+        ExtractionFieldCorrection.objects.create(
+            approval=approval,
+            entity_type="header",
+            field_name="currency",
+            original_value="USD",
+            corrected_value="EUR",
+            corrected_by=user,
+        )
+
+        # Approve without inline corrections (the real-world click)
+        ExtractionApprovalService.approve(approval, user, corrections=None)
+
+        approval.refresh_from_db()
+        assert approval.is_touchless is False
+        assert approval.fields_corrected_count == 2
+
+    def test_presaved_corrections_create_field_signals(self, db):
+        """Pre-existing corrections should produce field_correction learning signals."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.models import ExtractionFieldCorrection
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        ExtractionFieldCorrection.objects.create(
+            approval=approval,
+            entity_type="header",
+            field_name="invoice_number",
+            original_value="INV-001",
+            corrected_value="INV-001-FIXED",
+            corrected_by=user,
+        )
+
+        ExtractionApprovalService.approve(approval, user, corrections=None)
+
+        field_signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="field_correction",
+            entity_id=str(invoice.pk),
+        )
+        assert field_signals.count() == 1
+        sig = field_signals.first()
+        assert sig.field_name == "invoice_number"
+
+    def test_presaved_corrections_create_review_override_signal(self, db):
+        """Pre-existing corrections should produce a review_override signal."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.models import ExtractionFieldCorrection
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        ExtractionFieldCorrection.objects.create(
+            approval=approval,
+            entity_type="header",
+            field_name="total_amount",
+            original_value="500",
+            corrected_value="550",
+            corrected_by=user,
+        )
+
+        ExtractionApprovalService.approve(approval, user, corrections=None)
+
+        override_signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="review_override",
+            entity_id=str(invoice.pk),
+        )
+        assert override_signals.count() == 1
+        sig = override_signals.first()
+        assert sig.payload_json["fields_corrected"] >= 1
+        assert "total_amount" in sig.payload_json["corrected_field_names"]
+
+    def test_mixed_presaved_and_inline_corrections_merged(self, db):
+        """When both pre-saved AND inline corrections exist, both should count."""
+        from apps.core_eval.models import LearningSignal
+        from apps.extraction.models import ExtractionFieldCorrection
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        # Pre-saved correction (from Save click)
+        ExtractionFieldCorrection.objects.create(
+            approval=approval,
+            entity_type="header",
+            field_name="currency",
+            original_value="USD",
+            corrected_value="GBP",
+            corrected_by=user,
+        )
+
+        # Inline correction (from Approve click with edits)
+        inline_corrections = {"header": {"total_amount": "2000"}}
+        ExtractionApprovalService.approve(
+            approval, user, corrections=inline_corrections,
+        )
+
+        approval.refresh_from_db()
+        assert approval.is_touchless is False
+        assert approval.fields_corrected_count == 2  # 1 pre-saved + 1 inline
+
+        field_signals = LearningSignal.objects.filter(
+            app_module="extraction",
+            signal_type="field_correction",
+            entity_id=str(invoice.pk),
+        )
+        assert field_signals.count() == 2
+        corrected_fields = set(field_signals.values_list("field_name", flat=True))
+        assert "currency" in corrected_fields
+        assert "total_amount" in corrected_fields
+
+    def test_presaved_corrections_audit_event_includes_details(self, db):
+        """Audit event for EXTRACTION_FIELD_CORRECTED should list pre-saved corrections."""
+        from apps.auditlog.models import AuditEvent
+        from apps.extraction.models import ExtractionFieldCorrection
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+        approval = _make_approval(invoice, er)
+
+        ExtractionFieldCorrection.objects.create(
+            approval=approval,
+            entity_type="header",
+            field_name="vendor_name",
+            original_value="Acme Inc",
+            corrected_value="Acme Corp",
+            corrected_by=user,
+        )
+
+        ExtractionApprovalService.approve(approval, user, corrections=None)
+
+        from apps.core.enums import AuditEventType
+
+        corrected_events = AuditEvent.objects.filter(
+            event_type=AuditEventType.EXTRACTION_FIELD_CORRECTED,
+            invoice_id=invoice.pk,
+        )
+        assert corrected_events.count() == 1
+        evt = corrected_events.first()
+        corrections_list = evt.metadata_json.get("corrections", [])
+        assert len(corrections_list) == 1
+        assert corrections_list[0]["field"] == "vendor_name"
+        assert corrections_list[0]["from"] == "Acme Inc"
+        assert corrections_list[0]["to"] == "Acme Corp"
+
+    def test_presaved_corrections_update_eval_metrics(self, db):
+        """Pre-saved corrections should update extraction_corrections_count metric."""
+        from apps.core_eval.models import EvalMetric, EvalRun
+        from apps.extraction.models import ExtractionFieldCorrection
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+        from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+
+        user = _admin_user(db)
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload)
+        er = _make_extraction_result(upload, invoice)
+
+        # Pre-create the EvalRun (as the extraction task would)
+        ExtractionEvalAdapter.sync_for_extraction_result(
+            er, invoice,
+            validation_result=type("V", (), {"is_valid": True, "errors": []})(),
+            dup_result=type("D", (), {"is_duplicate": False, "reason": "unique"})(),
+            trace_id="test-presaved-metrics",
+        )
+
+        approval = _make_approval(invoice, er)
+
+        ExtractionFieldCorrection.objects.create(
+            approval=approval,
+            entity_type="header",
+            field_name="invoice_date",
+            original_value="2026-01-01",
+            corrected_value="2026-01-15",
+            corrected_by=user,
+        )
+        ExtractionFieldCorrection.objects.create(
+            approval=approval,
+            entity_type="header",
+            field_name="total_amount",
+            original_value="100",
+            corrected_value="200",
+            corrected_by=user,
+        )
+
+        ExtractionApprovalService.approve(approval, user, corrections=None)
+
+        run = EvalRun.objects.get(
+            app_module="extraction",
+            entity_type="ExtractionResult",
+            entity_id=str(er.pk),
+        )
+        corr_metric = EvalMetric.objects.filter(
+            eval_run=run,
+            metric_name="extraction_corrections_count",
+        ).first()
+        assert corr_metric is not None
+        assert corr_metric.metric_value == 2.0

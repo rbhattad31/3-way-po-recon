@@ -167,7 +167,7 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 | Posting Import Pipeline | `apps/posting_core/services/import_pipeline/` (parsers, validators, type importers, orchestrator) |
 | Eval & Learning Models | `apps/core_eval/models.py` (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction) |
 | Eval & Learning Services | `apps/core_eval/services/` (eval_run_service, eval_metric_service, eval_field_outcome_service, learning_signal_service, learning_action_service, learning_engine) |
-| Eval Adapters | `apps/extraction/services/eval_adapter.py` (ExtractionEvalAdapter -- extraction <-> core_eval bridge) |
+| Eval Adapters | `apps/extraction/services/eval_adapter.py` (ExtractionEvalAdapter -- extraction <-> core_eval bridge), `apps/reconciliation/services/eval_adapter.py` (ReconciliationEvalAdapter -- reconciliation <-> core_eval bridge) |
 | Learning Engine Command | `apps/core_eval/management/commands/run_learning_engine.py` |
 | Eval & Learning Views | `apps/core_eval/template_views.py` (5 FBV views: eval_run_list, eval_run_detail, learning_signal_list, learning_action_list, learning_action_detail) |
 | Eval & Learning URLs | `apps/core_eval/urls.py` (mounted at `/eval/`) |
@@ -233,7 +233,7 @@ ERPSubmissionLog (erp_integration) — audit log per ERP submission
 
 EvalRun (core_eval) — one evaluation pass per entity
   +--< EvalMetric (N) — named metrics (numeric, text, JSON)
-  +--< EvalFieldOutcome (N) — per-field predicted vs ground truth
+  +--< EvalFieldOutcome (N) -- per-field predicted (LLM) vs ground truth (empty until approval)
   +--< LearningSignal (N) — atomic observations from production
 
 LearningAction (core_eval) — proposed corrective action
@@ -256,15 +256,25 @@ VendorAliasMapping / ItemAliasMapping / PostingRule (posting_core)
 
 ### Invoice Status Flow
 ```
-UPLOADED → EXTRACTION_IN_PROGRESS → EXTRACTED → VALIDATED → PENDING_APPROVAL → READY_FOR_RECON → RECONCILED
-                                  ↘ INVALID                ↗ (auto-approve)                    ↘ FAILED
-                                                           ↘ INVALID (rejected)
+UPLOADED -> EXTRACTION_IN_PROGRESS -> EXTRACTED -> VALIDATED -> PENDING_APPROVAL -> READY_FOR_RECON -> RECONCILED
+                                   \-> INVALID                 /-> (auto-approve)                    \-> FAILED
+                                                               \-> INVALID (rejected)
 ```
+- **AP Case created immediately** after extraction persistence (not after approval). Case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if invoice needs human approval.
 - **PENDING_APPROVAL**: Human-in-the-loop gate. All valid extractions require human approval before reconciliation.
-- Auto-approval: When `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence ≥ `EXTRACTION_AUTO_APPROVE_THRESHOLD`, the system auto-approves and skips human review.
+- Auto-approval: When `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence >= `EXTRACTION_AUTO_APPROVE_THRESHOLD`, the system auto-approves and skips human review. Case pipeline continues without pausing.
+- On manual approval: `ExtractionApprovalService` resumes the existing case from PATH_RESOLUTION onward (does not create a new case).
 - Models: `ExtractionApproval` (one-to-one with Invoice), `ExtractionFieldCorrection` (tracks every field correction for analytics).
 - Service: `ExtractionApprovalService` in `apps/extraction/services/approval_service.py`.
 - Analytics: `get_approval_analytics()` returns touchless rate, most-corrected fields, approval breakdown.
+
+### Case Status Flow
+```
+NEW -> INTAKE_IN_PROGRESS -> EXTRACTION_IN_PROGRESS -> EXTRACTION_COMPLETED
+  -> PENDING_EXTRACTION_APPROVAL (pauses if invoice needs human approval)
+  -> PATH_RESOLUTION_IN_PROGRESS -> {TWO_WAY | THREE_WAY | NON_PO}_IN_PROGRESS
+  -> EXCEPTION_ANALYSIS_IN_PROGRESS -> READY_FOR_REVIEW -> IN_REVIEW -> CLOSED | REJECTED | ESCALATED
+```
 
 ### Reconciliation Match Status
 ```
@@ -328,10 +338,11 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 2. Define signal type constants (e.g., `SIG_MATCH_OUTCOME = "match_outcome"`).
 3. Call `EvalRunService.create_or_update()` to upsert an `EvalRun` per pipeline execution.
 4. Call `EvalMetricService.upsert()` for each numeric metric.
-5. Call `LearningSignalService.record()` for each observable event.
-6. Wire the adapter call into the pipeline task/service inside a `try/except` block (fail-silent).
-7. Optionally add new rules to `LearningEngine` if new signal types warrant pattern detection.
-8. Add tests: adapter unit tests + end-to-end tests with the engine.
+5. For `EvalFieldOutcome`: `predicted_value` = final pipeline output (LLM/model value), `ground_truth_value` = empty at pipeline time (populated only on human approval/correction). Store pipeline-internal details (deterministic values, source provenance) in `detail_json`.
+6. Call `LearningSignalService.record()` for each observable event.
+7. Wire the adapter call into the pipeline task/service inside a `try/except` block (fail-silent).
+8. Optionally add new rules to `LearningEngine` if new signal types warrant pattern detection.
+9. Add tests: adapter unit tests + end-to-end tests with the engine.
 
 ### When adding a new ERP resolver
 1. Create class in `apps/erp_integration/services/resolution/` extending `BaseResolver`.
@@ -377,7 +388,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **RBAC API**: `/api/v1/accounts/` — UserViewSet (CRUD + roles/overrides), RoleViewSet (CRUD + clone), PermissionViewSet, RolePermissionMatrixView
 - **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 6 roles (incl. SYSTEM_AGENT), 40 permissions, full matrix, legacy user sync
 - Extraction pipeline (two-agent architecture: InvoiceExtractionAgent always + InvoiceUnderstandingAgent for low confidence; 8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o)
-- Extraction approval gate: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI; configurable auto-approval (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`)
+- Extraction approval gate: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI; configurable auto-approval (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`). AP Case created immediately after extraction; case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if human approval needed; approval resumes existing case.
 - Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
 - `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
 - `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
@@ -412,7 +423,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
 - Enhanced governance API: 9 endpoints (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance)
 - **Unified seed**: `python manage.py seed_all [--flush] [--skip STEP]` runs 7 steps in order: seed_config -> seed_rbac -> seed_prompts -> seed_agent_contracts -> seed_extraction_config -> seed_control_center -> seed_credits
-- **Flush transactional data**: `python manage.py flush_test_data [--confirm]` deletes invoices, POs, GRNs, cases, agents, reviews, vendors, audit events, extraction results, copilot sessions, bulk jobs. Preserves users, RBAC, agent/tool definitions, recon config/policies, prompts, extraction configs, control center settings, credit accounts.
+- **Flush transactional data**: `python manage.py flush_test_data [--confirm]` deletes invoices, POs, GRNs, cases, agents, reviews, vendors, audit events, extraction results, copilot sessions, bulk jobs, credit transactions. Resets credit account balances to 100. Preserves users, RBAC, agent/tool definitions, recon config/policies, prompts, extraction configs, control center settings, credit accounts (reset to seed defaults).
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
@@ -420,10 +431,10 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **ERP Integration Layer** (`apps/erp_integration/`): `ERPConnection` model + `ConnectorFactory`; 4 connector implementations (Custom, Dynamics, Zoho, Salesforce); 7 resolver types with DB fallback (PO fallback is two-tier: `documents.PurchaseOrder` -> `posting_core.ERPPOReference`); TTL cache; resolution + submission audit logs; `POST /api/v1/erp/resolve/<type>/`; reference data browse UI at `/erp-connections/reference-data/`; wired into `PostingMappingEngine` (connector kwarg) and `POLookupTool`/`GRNLookupTool` (ERP-first with legacy DB fallback).
 - `PostingRun.erp_source_metadata_json` field — captures ERP resolution provenance per pipeline run.
 
-- **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` wired into extraction task + approval service; `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation; 81 tests (22 unit + 13 e2e + 29 RBAC view + 17 adapter/integration). See [EVAL_LEARNING.md](../docs/EVAL_LEARNING.md).
+- **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` wired into extraction task + approval service (predicted = LLM value, ground truth = empty until human approval confirms/corrects); `ReconciliationEvalAdapter` wired into reconciliation runner + review service (predicted = match result, ground truth = review decision); `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation; 120 tests (22 unit + 13 e2e + 29 RBAC view + 35 extraction adapter/integration + 21 recon adapter). See [EVAL_LEARNING.md](../docs/EVAL_LEARNING.md).
 
 ### ⬜ Not yet implemented (next steps)
-- **Tests**: Need additional unit tests for services, integration tests for API endpoints, and factory classes for all models. Existing: reconciliation (73), extraction (282+), extraction_core (50+), eval & learning (81).
+- **Tests**: Need additional unit tests for services, integration tests for API endpoints, and factory classes for all models. Existing: reconciliation (73), extraction (282+), extraction_core (50+), eval & learning (120).
 - **Extraction refinement**: Tune LLM extraction prompts, add support for multi-page invoices, handle edge-case layouts.
 - **Real ERP submission**: `PostingActionService.submit_posting()` is Phase 1 mock — replace with live ERP connector call (SAP BAPI, Oracle REST, etc.).
 - **Auto-submit**: Auto-advance touchless postings (`is_touchless=True`, confidence ≥ threshold) directly to `SUBMISSION_IN_PROGRESS` without human approval.
@@ -509,7 +520,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/posting/services/posting_action_service.py` | Approve / reject / submit / retry actions |
 | `apps/core_eval/models.py` | EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction |
 | `apps/core_eval/services/learning_engine.py` | Deterministic learning engine (5 rules, aggregation, safety controls) |
-| `apps/extraction/services/eval_adapter.py` | ExtractionEvalAdapter (extraction <-> core_eval bridge) |
+| `apps/extraction/services/eval_adapter.py` | ExtractionEvalAdapter (extraction <-> core_eval bridge; predicted=LLM, ground_truth=empty until approval) |
+| `apps/reconciliation/services/eval_adapter.py` | ReconciliationEvalAdapter (reconciliation <-> core_eval bridge; predicted=match result, ground_truth=review decision) |
 
 ---
 

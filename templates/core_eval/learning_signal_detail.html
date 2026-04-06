@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Learning Signal #{{ signal.pk }} -- Eval &amp; Learning{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'core_eval:learning_signal_list' %}">Learning Signals</a></li>
+  <li class="breadcrumb-item active">Signal #{{ signal.pk }}</li>
+</ol></nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-broadcast me-2"></i>Learning Signal #{{ signal.pk }}</h4>
+  <span class="ap-badge
+    {% if signal.signal_type == 'field_correction' %}ap-badge-unmatched
+    {% elif signal.signal_type == 'approval_outcome' or signal.signal_type == 'auto_approve_outcome' %}ap-badge-matched
+    {% elif signal.signal_type == 'review_override' %}ap-badge-partial
+    {% else %}ap-badge-status-new{% endif %} fs-6">{{ signal.signal_type }}</span>
+</div>
+
+{# -- Signal Summary -- #}
+<div class="ap-card mb-4">
+  <div class="ap-card-header"><i class="bi bi-info-circle me-1"></i>Signal Details</div>
+  <div class="ap-card-body">
+    <div class="row">
+      <div class="col-md-6">
+        <table class="table table-sm table-borderless mb-0">
+          <tr><th class="text-muted" style="width:150px">Signal Type</th>
+            <td>
+              <span class="ap-badge
+                {% if signal.signal_type == 'field_correction' %}ap-badge-unmatched
+                {% elif signal.signal_type == 'approval_outcome' or signal.signal_type == 'auto_approve_outcome' %}ap-badge-matched
+                {% elif signal.signal_type == 'review_override' %}ap-badge-partial
+                {% else %}ap-badge-status-new{% endif %}">{{ signal.signal_type }}</span>
+            </td>
+          </tr>
+          <tr><th class="text-muted">Module</th><td>{{ signal.app_module }}</td></tr>
+          <tr><th class="text-muted">Entity Type</th><td>{{ signal.entity_type|default:"--" }}</td></tr>
+          <tr><th class="text-muted">Entity ID</th><td>{{ signal.entity_id|default:"--" }}</td></tr>
+          {% if signal.aggregation_key %}<tr><th class="text-muted">Aggregation Key</th><td><code class="small">{{ signal.aggregation_key }}</code></td></tr>{% endif %}
+        </table>
+      </div>
+      <div class="col-md-6">
+        <table class="table table-sm table-borderless mb-0">
+          <tr><th class="text-muted" style="width:150px">Confidence</th>
+            <td>
+              {% if signal.confidence is not None %}
+                {% widthratio signal.confidence 1 100 as conf_pct %}
+                <div class="d-flex align-items-center gap-2">
+                  <div class="progress flex-grow-1" style="height:6px;max-width:120px">
+                    <div class="progress-bar {% if conf_pct >= 80 %}bg-success{% elif conf_pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
+                      style="width:{{ conf_pct }}%"></div>
+                  </div>
+                  <small>{{ conf_pct }}%</small>
+                </div>
+              {% else %}
+                <small class="text-muted">--</small>
+              {% endif %}
+            </td>
+          </tr>
+          <tr><th class="text-muted">Actor</th>
+            <td>{% if signal.actor %}{{ signal.actor.email }}{% else %}<span class="text-muted">system</span>{% endif %}</td>
+          </tr>
+          <tr><th class="text-muted">Created</th><td>{{ signal.created_at|date:"M d, Y H:i:s" }}</td></tr>
+          <tr><th class="text-muted">Updated</th><td>{{ signal.updated_at|date:"M d, Y H:i:s" }}</td></tr>
+          {% if signal.eval_run %}
+          <tr><th class="text-muted">Eval Run</th>
+            <td><a href="{% url 'core_eval:eval_run_detail' signal.eval_run.pk %}">#{{ signal.eval_run.pk }}</a></td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# -- Field Correction Details -- #}
+{% if signal.field_name or signal.old_value or signal.new_value %}
+<div class="ap-card mb-4">
+  <div class="ap-card-header"><i class="bi bi-pencil-square me-1"></i>Field Correction</div>
+  <div class="ap-card-body">
+    <table class="table table-sm table-borderless mb-0">
+      {% if signal.field_name %}
+      <tr><th class="text-muted" style="width:150px">Field</th><td><code>{{ signal.field_name }}</code></td></tr>
+      {% endif %}
+      {% if signal.old_value %}
+      <tr><th class="text-muted">Old Value</th><td class="text-danger">{{ signal.old_value }}</td></tr>
+      {% endif %}
+      {% if signal.new_value %}
+      <tr><th class="text-muted">New Value</th><td class="text-success">{{ signal.new_value }}</td></tr>
+      {% endif %}
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# -- Payload -- #}
+{% if signal.payload_json %}
+<div class="ap-card mb-4">
+  <div class="ap-card-header"><i class="bi bi-code-square me-1"></i>Payload</div>
+  <div class="ap-card-body">
+    <table class="table table-sm mb-0">
+      <thead><tr><th style="width:200px">Key</th><th>Value</th></tr></thead>
+      <tbody>
+        {% for key, value in payload_items %}
+        <tr>
+          <td><code class="small">{{ key }}</code></td>
+          <td>
+            {% if value == True %}
+              <span class="badge bg-success bg-opacity-75 fw-normal">true</span>
+            {% elif value == False %}
+              <span class="badge bg-secondary bg-opacity-75 fw-normal">false</span>
+            {% elif value is None %}
+              <small class="text-muted">null</small>
+            {% else %}
+              {{ value }}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if payload_pretty %}
+<div class="ap-card mb-4">
+  <div class="ap-card-header"><i class="bi bi-braces me-1"></i>Raw JSON</div>
+  <div class="ap-card-body p-2">
+    <pre class="mb-0 small" style="max-height:300px;overflow:auto">{{ payload_pretty }}</pre>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -29,9 +29,19 @@ Production Pipelines          Eval / Learning Layer
  Approval Service                    |
    |                                 v
    |-- ExtractionEvalAdapter --> LearningSignal (additional)
+   |
+   v
+ Reconciliation Runner               |
+   |                                 v
+   |-- ReconEvalAdapter -------> EvalRun + Metrics + Signals
+   |
+   v
+ Review Service                      |
+   |                                 v
+   |-- ReconEvalAdapter -------> FieldOutcomes + Signals
    |                                 |
    v                                 v
- [Future: Recon / Posting       LearningEngine (deterministic)
+ [Future: Posting / Agent       LearningEngine (deterministic)
    adapters]                         |
                                      v
                                 LearningAction (PROPOSED)
@@ -101,10 +111,16 @@ Per-field predicted-vs-ground-truth outcome for an `EvalRun`.
 | `eval_run` | FK(EvalRun) | |
 | `field_name` | CharField(200) | e.g. `"invoice_number"`, `"total_amount"` |
 | `status` | CharField(20) | `CORRECT` / `INCORRECT` / `MISSING` / `EXTRA` / `SKIPPED` |
-| `predicted_value` | TextField | What the pipeline extracted |
-| `ground_truth_value` | TextField | What the human corrected it to |
-| `confidence` | FloatField | Per-field confidence 0.0--1.0 |
-| `detail_json` | JSONField | Extra detail (source, category) |
+| `predicted_value` | TextField | Final LLM-extracted value (pipeline output persisted to Invoice) |
+| `ground_truth_value` | TextField | Empty at extraction; populated on human approval (corrected value or confirmed prediction) |
+| `confidence` | FloatField | Per-field confidence 0.0--1.0 (LLM confidence when source is LLM) |
+| `detail_json` | JSONField | Source provenance: `source` (llm/deterministic), `deterministic_value`, `deterministic_confidence`, `category` |
+
+**Lifecycle**:
+
+1. **At extraction time**: `predicted_value` = LLM value from `raw_response` (deterministic fallback only when LLM has no value). `ground_truth_value` = empty. `status` = CORRECT (has predicted) or MISSING (no predicted).
+2. **On human correction**: `ground_truth_value` = corrected value, `status` = INCORRECT (via `_update_field_outcomes_from_corrections`).
+3. **On approval confirmation**: Non-corrected fields get `ground_truth_value` = `predicted_value`, `status` = CORRECT (via `_confirm_ground_truth_on_approval`).
 
 ### 3.4 LearningSignal
 
@@ -243,7 +259,7 @@ Wired into two places:
 1. **`apps/extraction/tasks.py`** (after extraction persistence) calls `sync_for_extraction_result()` which creates:
    - `EvalRun` (one per extraction, upserted by `run_key`)
    - `EvalMetric` records (extraction_success, extraction_confidence, is_valid, is_duplicate, weakest_critical_field_score, decision_code_count, etc.)
-   - `EvalFieldOutcome` records (per-field confidence from raw_response or governed ExtractionFieldValue)
+   - `EvalFieldOutcome` records: predicted = LLM value from `raw_response` (deterministic fallback only when LLM has no value); ground truth = empty (populated later during approval)
    - `LearningSignal` records for validation failures and prompt review candidates
 
 2. **`apps/extraction/services/approval_service.py`** (after approve / reject / auto-approve) calls `sync_for_approval()` which creates:
@@ -251,12 +267,34 @@ Wired into two places:
    - `LearningSignal` for each `field_correction` (from `ExtractionFieldCorrection` records)
    - `LearningSignal` for `review_override` (non-touchless approval with corrections)
    - `EvalMetric` updates on the parent extraction `EvalRun` (corrections_count, approval_decision, approval_confidence)
+   - Ground truth confirmation: for non-corrected fields, `ground_truth_value` = `predicted_value` and `status` = CORRECT (via `_confirm_ground_truth_on_approval`)
+   - For corrected fields, `ground_truth_value` = corrected value and `status` = INCORRECT (via `_update_field_outcomes_from_corrections`)
 
-### 5.2 Future Adapters (Not Yet Implemented)
+### 5.2 ReconciliationEvalAdapter (Implemented)
+
+**File**: `apps/reconciliation/services/eval_adapter.py`
+
+Bridges the reconciliation engine and review workflow into the eval layer. Wired at three lifecycle points:
+
+1. **`ReconciliationRunnerService._reconcile_single()`** (after result persistence) -- calls `sync_for_result()`:
+   - Creates/updates `EvalRun` (entity_type `reconciliation`, entity_id = result PK)
+   - Stores predicted metrics: match_status, requires_review, auto_close_eligible, po_found, grn_found
+   - Stores runtime metrics: exception_count, line_count, confidence, duration_ms, reconciliation_mode
+   - Emits `LearningSignal` for match_outcome, mode_resolution, exception_pattern, auto_close_decision
+   - Creates `EvalFieldOutcome` records for match_status, review_routing, auto_close, po_found, grn_found (predicted only; ground truth populated on review)
+
+2. **`ReviewService.create_assignment()`** (after assignment creation) -- calls `sync_for_review_assignment()`:
+   - Emits `review_created` learning signal with reviewer, priority, queue metadata
+
+3. **`ReviewService._finalise()`** (after review decision) -- calls `sync_for_review_outcome()`:
+   - Stores actual metrics: actual_match_status, review_decision, corrections_count
+   - Emits learning signals: review_outcome, match_override (when reviewer changed match status), correction (per field)
+   - Updates `EvalFieldOutcome` ground truth values from review decision
+
+### 5.3 Future Adapters (Not Yet Implemented)
 
 | Adapter | Pipeline | Signals to Capture |
 |---|---|---|
-| `ReconciliationEvalAdapter` | Reconciliation engine | Match outcomes, exception patterns, mode accuracy, tolerance effectiveness |
 | `PostingEvalAdapter` | Posting pipeline | Mapping accuracy, review queue frequency, confidence calibration |
 | `AgentEvalAdapter` | Agent orchestrator | Recommendation acceptance rate, tool call success rate, confidence calibration |
 
@@ -302,22 +340,26 @@ LearningEngine run complete:
 |---|---|---|
 | `apps/core_eval/tests/test_learning_engine.py` | 22 | Unit tests for LearningEngine: aggregation, all 5 rules, safety controls, management command |
 | `apps/extraction/tests/test_eval_adapter.py` | 10 | Unit tests for ExtractionEvalAdapter: sync_for_extraction_result (EvalRun, metrics, field outcomes, idempotency, fail-silent) |
-| `apps/extraction/tests/test_approval_integration.py` | 7 (eval class) | Integration tests for approval -> LearningSignal creation (approve, reject, auto-approve, field corrections, review overrides) |
+| `apps/extraction/tests/test_approval_integration.py` | 25 | Integration tests for approval -> LearningSignal creation (approve, reject, auto-approve, field corrections, review overrides) |
 | `apps/core_eval/tests/test_end_to_end.py` | 13 | End-to-end: ExtractionEvalAdapter creates signals -> LearningEngine detects patterns -> LearningActions proposed |
 | `apps/core_eval/tests/test_views.py` | 29 | RBAC view tests: anonymous redirect, permission denied, authorized access, filters, 404 handling |
+| `apps/reconciliation/tests/test_recon_eval_adapter.py` | 21 | ReconciliationEvalAdapter: sync_for_result, sync_for_review_outcome, idempotency, fail-safety, review assignment |
 | `apps/core/tests/test_evaluation_constants.py` | -- | Evaluation constant validation |
 
 ### Running Tests
 
 ```bash
-# All eval/learning tests
-python -m pytest apps/core_eval/ apps/extraction/tests/test_eval_adapter.py apps/extraction/tests/test_approval_integration.py -v
+# All eval/learning tests (120 total)
+python -m pytest apps/core_eval/ apps/extraction/tests/test_eval_adapter.py apps/extraction/tests/test_approval_integration.py apps/reconciliation/tests/test_recon_eval_adapter.py -v
 
 # Just the engine
 python -m pytest apps/core_eval/tests/test_learning_engine.py -v
 
 # Just end-to-end
 python -m pytest apps/core_eval/tests/test_end_to_end.py -v
+
+# Just reconciliation eval adapter
+python -m pytest apps/reconciliation/tests/test_recon_eval_adapter.py -v
 ```
 
 ---
@@ -328,12 +370,17 @@ Complete flow for one invoice extraction with a field correction:
 
 ```
 1. Upload + OCR + LLM extraction
-   -> ExtractionResult saved
+   -> ExtractionResult saved (raw_response contains LLM-extracted values)
+   -> Governed pipeline runs deterministic extraction (ExtractionFieldValue records)
 
 2. tasks.py calls ExtractionEvalAdapter.sync_for_extraction_result()
    -> EvalRun created (app_module="extraction", entity_type="ExtractionResult")
    -> EvalMetric records: extraction_confidence=0.88, is_valid=1.0, ...
-   -> EvalFieldOutcome records: invoice_number (CORRECT, 0.95), total_amount (CORRECT, 0.80)
+   -> EvalFieldOutcome records:
+        invoice_number: predicted="INV-001" (from LLM), ground_truth="" (empty), status=CORRECT, conf=0.95
+        total_amount:   predicted="1,000.00" (from LLM), ground_truth="" (empty), status=CORRECT, conf=0.80
+        buyer_name:     predicted="Acme Corp" (from LLM), ground_truth="" (empty), status=CORRECT, conf=1.0
+      detail_json per field: {source: "llm", deterministic_value: "...", deterministic_confidence: 0.0}
 
 3. Human reviews extraction, corrects total_amount: "1,000.00" -> "1000.00"
    -> ExtractionApproval.status = APPROVED
@@ -344,7 +391,10 @@ Complete flow for one invoice extraction with a field correction:
    -> LearningSignal (signal_type="field_correction", field_name="total_amount",
                        old_value="1,000.00", new_value="1000.00")
    -> LearningSignal (signal_type="review_override", fields_corrected=1)
-   -> EvalFieldOutcome for total_amount updated: status=INCORRECT
+   -> EvalFieldOutcome for total_amount updated: status=INCORRECT, ground_truth="1000.00"
+   -> Ground truth confirmation for non-corrected fields:
+        invoice_number: ground_truth="INV-001" (= predicted), status=CORRECT
+        buyer_name:     ground_truth="Acme Corp" (= predicted), status=CORRECT
    -> EvalMetric: extraction_corrections_count=1
 
 5. After N similar corrections accumulate, operator runs:
@@ -423,7 +473,9 @@ To integrate a new pipeline (e.g. reconciliation) with the eval layer:
 | `templates/core_eval/learning_action_detail.html` | Learning action detail with JSON payloads |
 | `apps/extraction/services/eval_adapter.py` | ExtractionEvalAdapter (extraction <-> core_eval bridge) |
 | `apps/extraction/tests/test_eval_adapter.py` | 10 adapter unit tests |
-| `apps/extraction/tests/test_approval_integration.py` | 7 eval integration tests (in TestApprovalEvalIntegration class) |
+| `apps/extraction/tests/test_approval_integration.py` | 25 eval integration tests |
+| `apps/reconciliation/services/eval_adapter.py` | ReconciliationEvalAdapter (reconciliation <-> core_eval bridge) |
+| `apps/reconciliation/tests/test_recon_eval_adapter.py` | 21 adapter tests (sync_for_result, review outcome, idempotency, fail-safety) |
 
 ---
 

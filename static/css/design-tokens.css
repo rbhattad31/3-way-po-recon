@@ -613,6 +613,8 @@ body {
 .ap-table {
   font-size: var(--ap-font-size-sm);
   margin: 0;
+  width: 100%;
+  border-collapse: collapse;
 }
 .ap-table thead th {
   font-size: var(--ap-font-size-xs);
