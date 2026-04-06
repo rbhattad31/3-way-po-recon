@@ -1,0 +1,66 @@
+{# HVAC recommendation output block (expects `payload` variable) #}
+<div class="card border-primary bg-light mt-3">
+  <div class="card-body py-3">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <h6 class="mb-0"><i class="bi bi-fan me-2"></i>HVAC Product Selection</h6>
+      {% if payload.human_validation_required %}
+      <span class="badge bg-warning text-dark">Human Validation Required</span>
+      {% else %}
+      <span class="badge bg-success">Deterministic Recommendation</span>
+      {% endif %}
+    </div>
+
+    <div class="row g-2 mb-2" style="font-size:var(--ap-font-size-sm)">
+      <div class="col-md-4"><span class="text-muted">System Type:</span> <strong><span class="badge bg-primary">{{ payload.recommended_system_type|default:"N/A" }}</span></strong></div>
+      <div class="col-md-4"><span class="text-muted">Capacity Band:</span> <strong>{{ payload.capacity_band|default:"N/A" }}</strong></div>
+      <div class="col-md-4"><span class="text-muted">Compliance Alignment:</span> <strong>{{ payload.compliance_alignment|default:payload.compliance_status|default:"PARTIAL" }}</strong></div>
+    </div>
+
+    {% if payload.decision_drivers %}
+    <div class="mb-2">
+      <div class="text-muted small fw-semibold">Decision Drivers</div>
+      <ul class="mb-1" style="font-size:var(--ap-font-size-sm)">
+        {% for d in payload.decision_drivers %}
+        <li>{{ d }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if payload.constraints or payload.assumptions %}
+    <div class="mb-2">
+      <div class="text-muted small fw-semibold">Constraints & Assumptions</div>
+      <ul class="mb-1" style="font-size:var(--ap-font-size-sm)">
+        {% for c in payload.constraints %}
+        <li>{{ c }}</li>
+        {% endfor %}
+        {% for a in payload.assumptions %}
+        <li>{{ a }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if payload.alternate_option %}
+    <div class="mb-1" style="font-size:var(--ap-font-size-sm)">
+      <span class="text-muted">Alternate Option:</span>
+      <strong>{{ payload.alternate_option.system_type|default:"N/A" }}</strong>
+      {% if payload.alternate_option.reason %}
+      <span class="text-muted">— {{ payload.alternate_option.reason }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="small text-muted">
+      Indicative only. Final design required.
+    </div>
+
+    {% if export_request_pk %}
+    <div class="mt-2">
+      <a class="btn btn-outline-secondary btn-sm" href="/api/v1/procurement/requests/{{ export_request_pk }}/export/hvac-recommendation/" target="_blank" rel="noopener noreferrer">
+        <i class="bi bi-download me-1"></i>Export HVAC Recommendation JSON
+      </a>
+    </div>
+    {% endif %}
+  </div>
+</div>

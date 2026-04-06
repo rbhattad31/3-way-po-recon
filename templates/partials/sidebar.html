@@ -1,254 +1,118 @@
 {% load rbac_tags %}
-<nav id="sidebar" class="bg-dark" style="overflow-y:auto;">
-  <div class="p-3">
-    <ul class="nav flex-column">
-      {% has_permission "agents.use_copilot" as can_use_copilot %}
-      {% if can_use_copilot %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'copilot' %}active fw-bold{% endif %}" href="{% url 'copilot:workspace' %}">
-          <i class="bi bi-stars me-2"></i>AP Copilot
-        </a>
-      </li>
-      {% endif %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}active fw-bold{% endif %}" href="{% url 'dashboard:index' %}">
-          <i class="bi bi-cpu me-2"></i>Command Center
-        </a>
-      </li>
+<nav id="sidebar" class="border-end position-fixed"
+     style="top:56px;width:252px;height:calc(100vh - 56px);overflow-y:auto;z-index:1030;
+            background:linear-gradient(180deg,#f8f7ff 0%,#f0f9ff 100%);">
 
-      {# ── Extraction Agent ── #}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Extraction Agent</li>
-      {% has_permission "invoices.view" as can_view_extraction %}
-      {% if can_view_extraction %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'extraction' and request.resolver_match.url_name == 'workbench' %}active fw-bold{% endif %}" href="{% url 'extraction:workbench' %}">
-          <i class="bi bi-robot me-2"></i>Invoice Extraction
-        </a>
-      </li>
-      {% endif %}
-      {% has_permission "extraction.bulk_view" as can_bulk %}
-      {% if can_bulk %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'bulk_job_list' or request.resolver_match.url_name == 'bulk_job_detail' %}active fw-bold{% endif %}" href="{% url 'extraction:bulk_job_list' %}">
-          <i class="bi bi-collection me-2"></i>Bulk Extraction
-        </a>
-      </li>
-      {% endif %}
-      {% has_permission "extraction.view" as can_view_packs %}
-      {% if can_view_packs %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'extraction_control_center' %}active fw-bold{% endif %}" href="{% url 'extraction_control_center:overview' %}">
-          <i class="bi bi-sliders2 me-2"></i>Control Center
-        </a>
-      </li>
-      {% endif %}
+  {# ── Brand strip ── #}
+  <div class="px-3 pt-3 pb-2 mb-1 d-flex align-items-center gap-2"
+       style="border-bottom:1.5px solid rgba(99,102,241,.15);">
+    <div class="d-flex align-items-center justify-content-center rounded-2"
+         style="width:32px;height:32px;background:linear-gradient(135deg,#4f46e5,#7c3aed);flex-shrink:0;">
+      <i class="bi bi-wind text-white" style="font-size:.85rem;"></i>
+    </div>
+    <div>
+      <div class="fw-700" style="font-size:.82rem;color:#1e3a8a;font-weight:700;line-height:1.2;">LMG Procurement</div>
+      <div style="font-size:.65rem;color:#6366f1;font-weight:600;letter-spacing:.04em;text-transform:uppercase;">HVAC Intelligence</div>
+    </div>
+  </div>
 
-      {# ── Reconciliation Agent ── #}
-      {% has_permission "cases.view" as can_view_cases %}
-      {% if can_view_cases %}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Reconciliation Agent</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'cases' %}active fw-bold{% endif %}" href="{% url 'cases:case_inbox' %}">
-          <i class="bi bi-briefcase me-2"></i>Recon Agent
-        </a>
-      </li>
-      {% endif %}
+  <div class="px-2 py-2">
+    <ul class="nav flex-column gap-1">
 
-      {# ── Posting Agent ── #}
-      {% has_permission "invoices.view" as can_view_invoices %}
-      {% if can_view_invoices %}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Posting Agent</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'posting' and request.resolver_match.url_name == 'posting-workbench' %}active fw-bold{% endif %}" href="{% url 'posting:posting-workbench' %}">
-          <i class="bi bi-send me-2"></i>Posting Agent
-        </a>
-      </li>
-      {% endif %}
-
-      {# ── ERP Integration ── #}
-      {% if can_view_invoices %}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">ERP Integration</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'erp_reference_data' %}active fw-bold{% endif %}" href="{% url 'erp_integration:erp_reference_data' %}">
-          <i class="bi bi-database me-2"></i>Reference Data
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'posting-imports' %}active fw-bold{% endif %}" href="{% url 'posting:posting-imports' %}">
-          <i class="bi bi-cloud-upload me-2"></i>Import Reference Data
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'erp_integration' and request.resolver_match.url_name != 'erp_reference_data' %}active fw-bold{% endif %}" href="{% url 'erp_integration:erp_connection_list' %}">
-          <i class="bi bi-plug me-2"></i>ERP Connections
-        </a>
-      </li>
-      {% endif %}
-
-      {# ── Documents ── #}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documents</li>
-      {% has_permission "invoices.view" as can_view_invoice_list %}
-      {% if can_view_invoice_list %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'invoice_detail' or request.resolver_match.url_name == 'upload_invoice' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
-          <i class="bi bi-file-earmark-text me-2"></i>Invoices
-        </a>
-      </li>
-      {% endif %}
-      {% has_permission "purchase_orders.view" as can_view_pos %}
-      {% if can_view_pos %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active fw-bold{% endif %}" href="{% url 'documents:po_list' %}">
-          <i class="bi bi-cart-check me-2"></i>Purchase Orders
-        </a>
-      </li>
-      {% endif %}
-      {% has_permission "grns.view" as can_view_grns %}
-      {% if can_view_grns %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active fw-bold{% endif %}" href="{% url 'documents:grn_list' %}">
-          <i class="bi bi-box-seam me-2"></i>GRNs
-        </a>
-      </li>
-      {% endif %}
-      {% has_permission "vendors.view" as can_view_vendors %}
-      {% if can_view_vendors %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'vendors' %}active fw-bold{% endif %}" href="{% url 'vendors:vendor_list' %}">
-          <i class="bi bi-building me-2"></i>Vendors
-        </a>
-      </li>
-      {% endif %}
-
-      {# ── Operations ── #}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Reports</li>
-      {% has_permission "cases.view" as can_view_case_ops %}
-      {% if can_view_case_ops %}
-      <li class="nav-item">
-        <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
-          <i class="bi bi-activity me-2"></i>Case Operations
-        </a>
-      </li>
-      {% endif %}
-      {% has_permission "agents.view" as can_view_agents %}
-      {% if can_view_agents %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'agent_performance' %}active fw-bold{% endif %}" href="{% url 'dashboard:agent_performance' %}">
-          <i class="bi bi-robot me-2"></i>Agent Performance
-        </a>
-      </li>
-      {% endif %}
-
-      {# ── Documentation ── #}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documentation</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'agent_reference' %}active fw-bold{% endif %}" href="{% url 'agents:agent_reference' %}">
-          <i class="bi bi-book me-2"></i>Platform Reference
-        </a>
-      </li>
-
-      {# ── Procurement Agent ── #}
+      {# ── Procurement — LMG ── #}
       {% has_permission "procurement.view" as can_view_procurement %}
       {% if can_view_procurement %}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Procurement Agent</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'procurement' %}active fw-bold{% endif %}" href="{% url 'procurement:request_list' %}">
-          <i class="bi bi-cart4 me-2"></i>Requests
+      <li class="nav-item px-1 mb-1">
+        <div class="d-flex align-items-center gap-1 px-2 py-1" style="font-size:.62rem;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:.09em;">
+          <i class="bi bi-building-fill-gear" style="font-size:.68rem;"></i>
+          Procurement — LMG
+        </div>
+      </li>
+
+      <li class="nav-item px-1">
+        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
+           {% if request.resolver_match.url_name == 'home' %}active fw-bold{% endif %}"
+           href="{% url 'procurement:home' %}"
+           style="font-size:.85rem;{% if request.resolver_match.url_name == 'home' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
+          <i class="bi bi-house-door{% if request.resolver_match.url_name == 'home' %}-fill{% endif %}"
+             style="color:{% if request.resolver_match.url_name == 'home' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
+          Home
+        </a>
+      </li>
+
+      <li class="nav-item px-1">
+        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
+           {% if request.resolver_match.url_name == 'procurement_dashboard' %}active fw-bold{% endif %}"
+           href="{% url 'procurement:procurement_dashboard' %}"
+           style="font-size:.85rem;{% if request.resolver_match.url_name == 'procurement_dashboard' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
+          <i class="bi bi-speedometer2"
+             style="color:{% if request.resolver_match.url_name == 'procurement_dashboard' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
+          Proc Dashboard
+        </a>
+      </li>
+
+      <li class="nav-item px-1">
+        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
+           {% if request.resolver_match.url_name == 'request_list' %}active fw-bold{% endif %}"
+           href="{% url 'procurement:request_list' %}"
+           style="font-size:.85rem;{% if request.resolver_match.url_name == 'request_list' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
+          <i class="bi bi-list-ul"
+             style="color:{% if request.resolver_match.url_name == 'request_list' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
+          All Requests
+          {% if pending_procurement_count %}
+          <span class="badge rounded-pill ms-auto" style="background:#6366f1;font-size:.6rem;">{{ pending_procurement_count }}</span>
+          {% endif %}
+        </a>
+      </li>
+
+      <li class="nav-item px-1 mb-2">
+        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
+           {% if request.resolver_match.url_name == 'hvac_create' %}active fw-bold{% endif %}"
+           href="{% url 'procurement:hvac_create' %}"
+           style="font-size:.85rem;{% if request.resolver_match.url_name == 'hvac_create' %}background:linear-gradient(90deg,rgba(14,165,233,.12),rgba(14,165,233,.05));color:#0284c7;{% else %}color:#374151;{% endif %}">
+          <i class="bi bi-plus-circle"
+             style="color:{% if request.resolver_match.url_name == 'hvac_create' %}#0284c7{% else %}#9ca3af{% endif %};"></i>
+          New HVAC Request
         </a>
       </li>
       {% endif %}
 
-      {# ── Eval & Learning ── #}
-      {% has_permission "eval.view" as can_view_eval %}
-      {% if can_view_eval %}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Eval &amp; Learning</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'core_eval' and request.resolver_match.url_name == 'eval_run_list' or request.resolver_match.url_name == 'eval_run_detail' %}active fw-bold{% endif %}" href="{% url 'core_eval:eval_run_list' %}">
-          <i class="bi bi-clipboard-data me-2"></i>Eval Runs
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'learning_signal_list' %}active fw-bold{% endif %}" href="{% url 'core_eval:learning_signal_list' %}">
-          <i class="bi bi-broadcast me-2"></i>Learning Signals
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'learning_action_list' or request.resolver_match.url_name == 'learning_action_detail' %}active fw-bold{% endif %}" href="{% url 'core_eval:learning_action_list' %}">
-          <i class="bi bi-lightning me-2"></i>Learning Actions
-        </a>
-      </li>
-      {% endif %}
+      {# ── divider ── #}
+      <li><div class="mx-2 my-1" style="height:1px;background:rgba(99,102,241,.12);"></div></li>
 
-      {# ── Governance ── #}
-      {% has_permission "governance.view" as can_view_governance %}
-      {% if can_view_governance %}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Governance</li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.app_name == 'governance' %}active fw-bold{% endif %}" href="{% url 'governance:audit_event_list' %}">
-          <i class="bi bi-shield-lock me-2"></i>Audit Log
+      {# ── Command Center ── #}
+      <li class="nav-item px-1">
+        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
+           {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}active fw-bold{% endif %}"
+           href="{% url 'dashboard:index' %}"
+           style="font-size:.85rem;{% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
+          <i class="bi bi-cpu"
+             style="color:{% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
+          Command Center
         </a>
       </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'agent_governance' %}active fw-bold{% endif %}" href="{% url 'dashboard:agent_governance' %}">
-          <i class="bi bi-shield-check me-2"></i>Agent Governance
-        </a>
-      </li>
-      {% endif %}
 
-      {# ── Admin Console (RBAC) ── #}
-      {% has_permission "users.manage" as can_manage_users %}
-      {% has_permission "roles.manage" as can_manage_roles %}
-      {% if can_manage_users or can_manage_roles %}
-      <li class="hr my-2 border-bottom"></li>
-      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Admin Console</li>
-      {% if can_manage_users %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_detail' %}active fw-bold{% endif %}" href="{% url 'accounts:user_list' %}">
-          <i class="bi bi-people me-2"></i>Users
+      {# ── divider ── #}
+      <li><div class="mx-2 my-1" style="height:1px;background:rgba(99,102,241,.12);"></div></li>
+
+      {# ── Documentation ── #}
+      <li class="nav-item px-1">
+        <div class="d-flex align-items-center gap-1 px-2 py-1" style="font-size:.62rem;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:.09em;">
+          <i class="bi bi-book" style="font-size:.68rem;"></i>
+          Documentation
+        </div>
+      </li>
+      <li class="nav-item px-1">
+        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
+           {% if request.resolver_match.url_name == 'agent_reference' %}active fw-bold{% endif %}"
+           href="{% url 'agents:agent_reference' %}"
+           style="font-size:.85rem;{% if request.resolver_match.url_name == 'agent_reference' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
+          <i class="bi bi-journal-code"
+             style="color:{% if request.resolver_match.url_name == 'agent_reference' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
+          Platform Reference
         </a>
       </li>
-      {% endif %}
-      {% if can_manage_roles %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'role_list' or request.resolver_match.url_name == 'role_detail' %}active fw-bold{% endif %}" href="{% url 'accounts:role_list' %}">
-          <i class="bi bi-shield me-2"></i>Roles
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'permission_list' %}active fw-bold{% endif %}" href="{% url 'accounts:permission_list' %}">
-          <i class="bi bi-key me-2"></i>Permissions
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'role_matrix' %}active fw-bold{% endif %}" href="{% url 'accounts:role_matrix' %}">
-          <i class="bi bi-grid-3x3 me-2"></i>Role Matrix
-        </a>
-      </li>
-      {% endif %}
-      {% has_permission "credits.manage" as can_manage_credits %}
-      {% if can_manage_credits %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'credit_account_list' or request.resolver_match.url_name == 'credit_account_detail' %}active fw-bold{% endif %}" href="{% url 'extraction:credit_account_list' %}">
-          <i class="bi bi-coin me-2"></i>Credits
-        </a>
-      </li>
-      {% endif %}
-      <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'recon_settings' %}active fw-bold{% endif %}" href="{% url 'reconciliation:recon_settings' %}">
-          <i class="bi bi-gear me-2"></i>Settings
-        </a>
-      </li>
-      {% endif %}
+
     </ul>
   </div>
 </nav>

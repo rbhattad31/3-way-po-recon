@@ -13,11 +13,67 @@
 {% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-  <h4 class="mb-0"><i class="bi bi-cart4 me-2"></i>Procurement Requests</h4>
-  <a href="{% url 'procurement:request_create' %}" class="btn btn-primary btn-sm">
-    <i class="bi bi-plus-lg me-1"></i>New Request
-  </a>
+
+{# ── Landmark Group Hero Banner ── #}
+<div class="rounded-3 p-4 mb-4 d-flex align-items-center gap-4"
+     style="background:linear-gradient(135deg,#003366 0%,#0055a5 55%,#0077cc 100%);">
+  <div class="d-flex align-items-center justify-content-center rounded-circle"
+       style="width:60px;height:60px;background:rgba(255,255,255,.15);flex-shrink:0;">
+    <i class="bi bi-hexagon-fill fs-3 text-warning"></i>
+  </div>
+  <div class="flex-grow-1">
+    <div class="fw-bold text-white fs-5 mb-1">Landmark Group — Procurement Intelligence</div>
+    <div class="text-white-50 small">
+      AI-powered 3-way PO reconciliation &bull; HVAC &bull; IT &bull; Facilities &bull; Capex
+      &bull; UAE &bull; KSA &bull; Oman &bull; Qatar &bull; Kuwait &bull; Bahrain
+    </div>
+  </div>
+  <div class="d-flex gap-2 align-items-center flex-shrink-0">
+    <a href="{% url 'procurement:hvac_create' %}" class="btn btn-warning btn-sm fw-semibold">
+      <i class="bi bi-wind me-1"></i>New HVAC Request
+    </a>
+    
+  </div>
+</div>
+
+{# ── HVAC Quick Stats Row ── #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="text-primary fw-bold fs-4">
+        {{ page_obj.paginator.count }}
+      </div>
+      <div class="text-muted small">Total Requests</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="text-success fw-bold fs-4">
+        HVAC
+      </div>
+      <div class="text-muted small">Active Domain</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="text-warning fw-bold fs-4">AED</div>
+      <div class="text-muted small">Base Currency</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="text-info fw-bold fs-4">6</div>
+      <div class="text-muted small">GCC Countries</div>
+    </div>
+  </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0"><i class="bi bi-cart4 me-2 text-primary"></i>Procurement Requests</h5>
+  <div class="d-flex gap-2">
+    
+   
+  </div>
 </div>
 
 {# Filters #}
@@ -76,6 +132,7 @@
           <th>Attrs</th>
           <th>Quotes</th>
           <th>Runs</th>
+          <th>Recommendation</th>
           <th>Created</th>
         </tr>
       </thead>
@@ -114,10 +171,22 @@
           <td>{{ req.attribute_count }}</td>
           <td>{{ req.quotation_count }}</td>
           <td>{{ req.run_count }}</td>
+          <td>
+            {% if req.latest_recommended_option %}
+              <span class="badge bg-success text-wrap" style="max-width:200px;font-size:0.7rem;white-space:normal">
+                {{ req.latest_recommended_option|truncatechars:60 }}
+              </span>
+              {% if req.latest_confidence_score %}
+                <br><small class="text-muted">{% widthratio req.latest_confidence_score 1 100 %}% conf</small>
+              {% endif %}
+            {% else %}
+              <span class="text-muted" style="font-size:0.75rem">--</span>
+            {% endif %}
+          </td>
           <td>{{ req.created_at|date:"M d, Y" }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="9" class="text-center text-muted py-4">No procurement requests found.</td></tr>
+        <tr><td colspan="10" class="text-center text-muted py-4">No procurement requests found.</td></tr>
         {% endfor %}
       </tbody>
     </table>

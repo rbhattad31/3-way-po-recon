@@ -500,3 +500,197 @@ class AnalysisRunValidationView(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(ValidationResultSerializer(result).data)
+
+
+# =============================================================================
+# RoomWise Pre-Procurement Recommender ViewSets
+# =============================================================================
+
+
+class RoomViewSet(viewsets.ModelViewSet):
+    """Manage rooms/facilities for HVAC recommendations."""
+
+    permission_classes = [permissions.IsAuthenticated, HasPermissionCode]
+    required_permission = "roomwise.manage_rooms"
+    queryset = None
+    serializer_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["building_name", "floor_number", "usage_type", "is_active"]
+    search_fields = ["room_code", "building_name", "location_description"]
+    ordering_fields = ["building_name", "room_code", "created_at"]
+    ordering = ["building_name", "room_code"]
+    pagination_class = None
+
+    def get_queryset(self):
+        from apps.procurement.models import Room
+
+        return Room.objects.filter(is_active=True)
+
+    def get_serializer_class(self):
+        from apps.procurement.serializers import RoomSerializer
+
+        return RoomSerializer
+
+
+class ProductViewSet(viewsets.ReadOnlyModelViewSet):
+    """Browse HVAC products catalog."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = None
+    serializer_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["system_type", "manufacturer", "is_active"]
+    search_fields = ["sku", "product_name", "manufacturer"]
+    ordering_fields = ["capacity_kw", "unit_price", "created_at"]
+    ordering = ["manufacturer", "capacity_kw"]
+    pagination_class = None
+
+    def get_queryset(self):
+        from apps.procurement.models import Product
+
+        return Product.objects.filter(is_active=True)
+
+    def get_serializer_class(self):
+        from apps.procurement.serializers import ProductSerializer
+
+        return ProductSerializer
+
+
+class VendorViewSet(viewsets.ReadOnlyModelViewSet):
+    """Browse approved HVAC vendors."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = None
+    serializer_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["country", "city", "preferred_vendor", "is_active"]
+    search_fields = ["vendor_name", "contact_email"]
+    ordering_fields = ["reliability_score", "on_time_delivery_pct", "created_at"]
+    ordering = ["-reliability_score", "vendor_name"]
+    pagination_class = None
+
+    def get_queryset(self):
+        from apps.procurement.models import Vendor
+
+        return Vendor.objects.filter(is_active=True)
+
+    def get_serializer_class(self):
+        from apps.procurement.serializers import VendorSerializer
+
+        return VendorSerializer
+
+
+class VendorProductViewSet(viewsets.ReadOnlyModelViewSet):
+    """Browse vendor product offerings with pricing."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = None
+    serializer_class = None
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ["product_id", "vendor_id", "is_preferred"]
+    ordering_fields = ["unit_price", "lead_time_days", "created_at"]
+    ordering = ["unit_price"]
+    pagination_class = None
+
+    def get_queryset(self):
+        from apps.procurement.models import VendorProduct
+
+        return VendorProduct.objects.filter(is_active=True).select_related("vendor", "product")
+
+    def get_serializer_class(self):
+        from apps.procurement.serializers import VendorProductDetailSerializer
+
+        return VendorProductDetailSerializer
+
+
+class PurchaseHistoryViewSet(viewsets.ReadOnlyModelViewSet):
+    """View historical purchase orders and outcomes."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = None
+    serializer_class = None
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["room_id", "vendor_id", "po_status"]
+    search_fields = ["po_number", "room__room_code"]
+    ordering_fields = ["po_date", "promised_delivery_date", "created_at"]
+    ordering = ["-po_date"]
+    pagination_class = None
+
+    def get_queryset(self):
+        from apps.procurement.models import PurchaseHistory
+
+        return (
+            PurchaseHistory.objects
+            .select_related("room", "product", "vendor")
+            .all()
+        )
+
+    def get_serializer_class(self):
+        from apps.procurement.serializers import PurchaseHistorySerializer
+
+        return PurchaseHistorySerializer
+
+
+class RecommendationViewSet(viewsets.ViewSet):
+    """Core recommendation engine endpoint."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def list(self, request):
+        """List recent recommendations."""
+        from apps.procurement.models import RecommendationLog
+        from apps.procurement.serializers import RecommendationLogSerializer
+
+        limit = request.query_params.get("limit", 20)
+        logs = RecommendationLog.objects.all().order_by("-created_at")[:int(limit)]
+        serializer = RecommendationLogSerializer(logs, many=True)
+        return Response(serializer.data)
+
+    def create(self, request):
+        """Generate a new recommendation."""
+        from apps.procurement.services.roomwise_recommender import RoomWiseRecommenderService
+        from apps.procurement.serializers import RunRecommendationSerializer
+
+        serializer = RunRecommendationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        service = RoomWiseRecommenderService()
+        result = service.run_recommendation(
+            room_id=serializer.validated_data.get("room_id") or None,
+            requirement_text=serializer.validated_data.get("requirement_text", ""),
+            user_id=str(request.user.id),
+            budget_max=serializer.validated_data.get("budget_max"),
+            preferred_lead_time_days=serializer.validated_data.get("preferred_lead_time_days"),
+            exclude_vendors=serializer.validated_data.get("exclude_vendors"),
+            preferred_system_types=serializer.validated_data.get("preferred_system_types"),
+        )
+
+        return Response(result, status=status.HTTP_201_CREATED)
+
+    def retrieve(self, request, pk=None):
+        """Get a specific recommendation by ID."""
+        from apps.procurement.models import RecommendationLog
+        from apps.procurement.serializers import RecommendationLogSerializer
+        from django.shortcuts import get_object_or_404
+
+        rec_log = get_object_or_404(RecommendationLog, recommendation_id=pk)
+        serializer = RecommendationLogSerializer(rec_log)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def accept(self, request, pk=None):
+        """Mark a recommendation as accepted."""
+        from apps.procurement.models import RecommendationLog
+        from django.shortcuts import get_object_or_404
+
+        rec_log = get_object_or_404(RecommendationLog, recommendation_id=pk)
+        rec_log.is_accepted = True
+        rec_log.user_feedback = request.data.get("feedback", "")
+        rec_log.save()
+
+        from apps.procurement.serializers import RecommendationLogSerializer
+
+        return Response(
+            RecommendationLogSerializer(rec_log).data,
+            status=status.HTTP_200_OK,
+        )

@@ -1,7 +1,8 @@
 """Template context processors."""
 from django.conf import settings
 
-from apps.core.enums import ReviewStatus
+from apps.core.enums import ProcurementRequestStatus, ReviewStatus
+from apps.procurement.models import ProcurementRequest
 from apps.reviews.models import ReviewAssignment
 
 
@@ -15,8 +16,18 @@ def pending_reviews(request):
         count = ReviewAssignment.objects.filter(
             status__in=[ReviewStatus.PENDING, ReviewStatus.ASSIGNED, ReviewStatus.IN_REVIEW]
         ).count()
-        return {"pending_review_count": count}
-    return {"pending_review_count": 0}
+        procurement_count = ProcurementRequest.objects.filter(
+            status__in=[
+                ProcurementRequestStatus.DRAFT,
+                ProcurementRequestStatus.READY,
+                ProcurementRequestStatus.REVIEW_REQUIRED,
+            ]
+        ).count()
+        return {
+            "pending_review_count": count,
+            "pending_procurement_count": procurement_count,
+        }
+    return {"pending_review_count": 0, "pending_procurement_count": 0}
 
 
 def rbac_context(request):
