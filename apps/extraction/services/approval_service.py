@@ -244,11 +244,19 @@ class ExtractionApprovalService:
                 approval, invoice, corrections, user,
             )
 
+        # Also pick up any pre-existing corrections saved before the
+        # approval click (user edits fields then clicks Save, then Approve).
+        pre_existing = list(
+            ExtractionFieldCorrection.objects.filter(approval=approval)
+            .exclude(pk__in=[c.pk for c in correction_records])
+        )
+        all_correction_records = list(correction_records) + pre_existing
+
         approval.status = ExtractionApprovalStatus.APPROVED
         approval.reviewed_by = user
         approval.reviewed_at = timezone.now()
-        approval.fields_corrected_count = len(correction_records)
-        approval.is_touchless = len(correction_records) == 0
+        approval.fields_corrected_count = len(all_correction_records)
+        approval.is_touchless = len(all_correction_records) == 0
         approval.save(update_fields=[
             "status", "reviewed_by", "reviewed_at",
             "fields_corrected_count", "is_touchless", "updated_at",
@@ -296,12 +304,12 @@ class ExtractionApprovalService:
 
         event_type = AuditEventType.EXTRACTION_APPROVED
         desc = f"Extraction approved by {user} for Invoice {invoice.invoice_number}"
-        if correction_records:
-            desc += f" ({len(correction_records)} field(s) corrected)"
+        if all_correction_records:
+            desc += f" ({len(all_correction_records)} field(s) corrected)"
             cls._log_audit(
                 invoice,
                 AuditEventType.EXTRACTION_FIELD_CORRECTED,
-                f"{len(correction_records)} field(s) corrected during approval",
+                f"{len(all_correction_records)} field(s) corrected during approval",
                 user=user,
                 metadata={
                     "corrections": [
@@ -311,20 +319,20 @@ class ExtractionApprovalService:
                             "from": c.original_value,
                             "to": c.corrected_value,
                         }
-                        for c in correction_records
+                        for c in all_correction_records
                     ],
                 },
             )
 
         cls._log_audit(invoice, event_type, desc, user=user, metadata={
             "approval_id": approval.pk,
-            "fields_corrected": len(correction_records),
+            "fields_corrected": len(all_correction_records),
             "is_touchless": approval.is_touchless,
         })
 
         logger.info(
             "Extraction approved for invoice %s by %s (corrections=%d, touchless=%s)",
-            invoice.pk, user, len(correction_records), approval.is_touchless,
+            invoice.pk, user, len(all_correction_records), approval.is_touchless,
         )
 
         # ── Governance trail: mirror decision to ExtractionApprovalRecord ──
@@ -334,7 +342,7 @@ class ExtractionApprovalService:
         try:
             from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
             ExtractionEvalAdapter.sync_for_approval(
-                approval, user=user, correction_records=correction_records,
+                approval, user=user, correction_records=all_correction_records,
             )
         except Exception:
             logger.debug("core_eval approval sync failed (non-fatal)")
@@ -355,7 +363,7 @@ class ExtractionApprovalService:
                 comment=(
                     f"invoice={invoice.pk} "
                     f"reviewer={getattr(user, 'pk', None)} "
-                    f"corrections={len(correction_records)} "
+                    f"corrections={len(all_correction_records)} "
                     f"touchless={approval.is_touchless}"
                 ),
             )
@@ -366,11 +374,11 @@ class ExtractionApprovalService:
                 span=lf_span,
                 comment=f"invoice={invoice.pk}",
             )
-            if correction_records:
+            if all_correction_records:
                 score_trace(
                     _score_tid,
                     EXTRACTION_CORRECTIONS_COUNT,
-                    float(len(correction_records)),
+                    float(len(all_correction_records)),
                     span=lf_span,
                     comment=f"invoice={invoice.pk}",
                 )
@@ -731,35 +739,62 @@ class ExtractionApprovalService:
 
     @staticmethod
     def _ensure_case_and_process(invoice, user=None):
-        """Create an APCase and enqueue the full case processing pipeline.
+        """Resume or create an APCase and continue the case processing pipeline.
 
-        The case orchestrator handles the complete lifecycle:
-        INTAKE -> EXTRACTION -> PATH_RESOLUTION -> MATCHING -> EXCEPTION_ANALYSIS
-        -> REVIEW_ROUTING -> CASE_SUMMARY (including reconciliation, agents,
-        review routing, and posting internally).
+        Since cases are now created immediately after extraction, this method
+        primarily resumes an existing case that is paused at the extraction
+        approval gate (PENDING_EXTRACTION_APPROVAL).  If no case exists (e.g.
+        for invoices extracted before this change), it falls back to creating
+        one and running from scratch.
 
         Best-effort: failures are logged but never block the approval path.
         """
         try:
+            from apps.cases.models import APCase
             from apps.cases.services.case_creation_service import CaseCreationService
-            uploaded_by = user or (
-                invoice.document_upload.uploaded_by
-                if invoice.document_upload_id else None
-            )
-            case = CaseCreationService.create_from_upload(
-                invoice=invoice,
-                uploaded_by=uploaded_by,
-            )
-            logger.info("Ensured AP Case %s for invoice %s", case.case_number, invoice.pk)
-
-            # Enqueue the case orchestrator to process through all stages
             from apps.cases.tasks import process_case_task
+            from apps.core.enums import CaseStatus
             from apps.core.utils import dispatch_task
-            dispatch_task(process_case_task, case.pk)
-            logger.info("Enqueued case processing for case %s (invoice %s)", case.case_number, invoice.pk)
+
+            # Look for an existing case (created during extraction task)
+            case = APCase.objects.filter(invoice=invoice, is_active=True).first()
+
+            if case and case.status == CaseStatus.PENDING_EXTRACTION_APPROVAL:
+                # Resume the paused pipeline from path resolution
+                from apps.cases.orchestrators.case_orchestrator import CaseOrchestrator
+                from apps.cases.state_machine.case_state_machine import CaseStateMachine
+                from apps.core.enums import PerformedByType
+
+                CaseStateMachine.transition(
+                    case, CaseStatus.EXTRACTION_COMPLETED, PerformedByType.SYSTEM
+                )
+                logger.info(
+                    "Resuming case %s from extraction approval gate (invoice %s approved)",
+                    case.case_number, invoice.pk,
+                )
+                dispatch_task(process_case_task, case.pk)
+            elif case:
+                # Case exists but in a different status -- just trigger processing
+                logger.info(
+                    "Case %s exists (status=%s), triggering processing for invoice %s",
+                    case.case_number, case.status, invoice.pk,
+                )
+                dispatch_task(process_case_task, case.pk)
+            else:
+                # No case yet -- create one (backward compatibility)
+                uploaded_by = user or (
+                    invoice.document_upload.uploaded_by
+                    if invoice.document_upload_id else None
+                )
+                case = CaseCreationService.create_from_upload(
+                    invoice=invoice,
+                    uploaded_by=uploaded_by,
+                )
+                logger.info("Created AP Case %s for invoice %s", case.case_number, invoice.pk)
+                dispatch_task(process_case_task, case.pk)
         except Exception:
             logger.exception(
-                "Failed to create/process AP Case for invoice %s", invoice.pk,
+                "Failed to resume/create AP Case for invoice %s", invoice.pk,
             )
 
     @staticmethod

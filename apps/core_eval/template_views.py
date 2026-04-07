@@ -78,12 +78,32 @@ def eval_run_detail(request, pk):
     run = get_object_or_404(EvalRun, pk=pk)
     metrics = run.metrics.order_by("metric_name")
     field_outcomes = run.field_outcomes.order_by("field_name")
-    signals = run.learning_signals.order_by("-created_at")
+    signals = run.learning_signals.select_related("actor").order_by("-created_at")
 
     def _fmt_json(d):
         if d:
             return json.dumps(d, indent=2, default=str)
         return ""
+
+    # KPI: field outcome status counts
+    correct_count = sum(1 for fo in field_outcomes if fo.status == "CORRECT")
+    incorrect_count = sum(1 for fo in field_outcomes if fo.status == "INCORRECT")
+    missing_count = sum(1 for fo in field_outcomes if fo.status == "MISSING")
+
+    # KPI: extraction confidence from metrics
+    run_confidence = None
+    for m in metrics:
+        if m.metric_name == "extraction_confidence" and m.metric_value is not None:
+            run_confidence = m.metric_value
+            break
+
+    # Pre-format JSON values on metrics for template rendering
+    for m in metrics:
+        m.json_value_pretty = _fmt_json(m.json_value) if m.json_value else ""
+
+    # Pre-format payload_json on signals for template rendering
+    for sig in signals:
+        sig.payload_pretty = _fmt_json(sig.payload_json) if sig.payload_json else ""
 
     return render(request, "core_eval/eval_run_detail.html", {
         "run": run,
@@ -94,6 +114,10 @@ def eval_run_detail(request, pk):
         "result_pretty": _fmt_json(run.result_json),
         "config_pretty": _fmt_json(run.config_json),
         "error_pretty": _fmt_json(run.error_json),
+        "correct_count": correct_count,
+        "incorrect_count": incorrect_count,
+        "missing_count": missing_count,
+        "run_confidence": run_confidence,
     })
 
 
@@ -147,6 +171,26 @@ def learning_signal_list(request):
         "current_app_module": app_module,
         "current_signal_type": signal_type,
         "current_field_name": field_name,
+    })
+
+
+@login_required
+@permission_required_code(_VIEW_PERM)
+def learning_signal_detail(request, pk):
+    """Detail view for a single LearningSignal."""
+    signal = get_object_or_404(
+        LearningSignal.objects.select_related("actor", "eval_run"),
+        pk=pk,
+    )
+    payload_items = []
+    payload_pretty = ""
+    if signal.payload_json and isinstance(signal.payload_json, dict):
+        payload_items = list(signal.payload_json.items())
+        payload_pretty = json.dumps(signal.payload_json, indent=2, default=str)
+    return render(request, "core_eval/learning_signal_detail.html", {
+        "signal": signal,
+        "payload_items": payload_items,
+        "payload_pretty": payload_pretty,
     })
 
 

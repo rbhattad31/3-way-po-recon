@@ -434,6 +434,14 @@ def _try_blob_upload(doc_upload: DocumentUpload, uploaded_file) -> None:
         logger.warning("Blob upload skipped (non-fatal): %s", exc)
 
 
+def _update_progress(upload_id: int, message: str):
+    """Update DocumentUpload.processing_message for progressive UI feedback."""
+    try:
+        DocumentUpload.objects.filter(pk=upload_id).update(processing_message=message)
+    except Exception:
+        pass
+
+
 def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
     """Run the extraction pipeline on a local file — returns result dict.
 
@@ -455,6 +463,7 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
 
     try:
         # 1. Extract (OCR + LLM)
+        _update_progress(upload.pk, "Reading your document...")
         adapter = InvoiceExtractionAdapter()
         extraction_resp = adapter.extract(
             file_path,
@@ -479,16 +488,20 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
             return {"success": False, "error": extraction_resp.error_message}
 
         # 2. Parse
+        _update_progress(upload.pk, "Organizing extracted fields...")
         parsed = ExtractionParserService().parse(extraction_resp.raw_json)
 
         # 3. Normalize
+        _update_progress(upload.pk, "Standardizing amounts and dates...")
         normalized = NormalizationService().normalize(parsed)
 
         # 4. Validate
+        _update_progress(upload.pk, "Validating required fields...")
         validation_result = ValidationService().validate(normalized)
 
         # 5. Duplicate check — exclude the existing invoice for this upload so a
         # reprocess does not flag the invoice as a duplicate of itself.
+        _update_progress(upload.pk, "Checking for duplicates...")
         _existing_inv_id = (
             Invoice.objects
             .filter(document_upload=upload)
@@ -499,6 +512,7 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
         dup_result = DuplicateDetectionService().check(normalized, exclude_invoice_id=_existing_inv_id)
 
         # 6. Persist (Invoice + LineItems + ExtractionResult)
+        _update_progress(upload.pk, "Saving the invoice record...")
         invoice = InvoicePersistenceService().save(
             normalized=normalized,
             upload=upload,
@@ -513,6 +527,7 @@ def _run_extraction_pipeline(upload: DocumentUpload, file_path: str) -> dict:
         upload.save(update_fields=["processing_state", "updated_at"])
 
         # 8. Gate through extraction approval
+        _update_progress(upload.pk, "Running approval checks...")
         from apps.extraction.services.approval_service import ExtractionApprovalService
 
         if validation_result.is_valid and not dup_result.is_duplicate:

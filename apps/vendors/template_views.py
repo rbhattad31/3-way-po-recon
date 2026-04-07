@@ -1,12 +1,14 @@
 """Vendor template views (server-side rendered)."""
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Q
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.core.enums import UserRole
 from apps.core.permissions import permission_required_code
 from apps.documents.models import Invoice
+from apps.vendors.forms import VendorForm
 from apps.vendors.models import Vendor
 
 
@@ -116,3 +118,32 @@ def vendor_detail(request, pk):
         "invoices": invoices,
         "grns": grns,
     })
+
+
+@login_required
+@permission_required_code("vendors.create")
+def vendor_create(request):
+    if request.method == "POST":
+        form = VendorForm(request.POST)
+        if form.is_valid():
+            vendor = form.save()
+            messages.success(request, f"Vendor '{vendor.name}' created successfully.")
+            return redirect("vendors:vendor_detail", pk=vendor.pk)
+    else:
+        form = VendorForm()
+    return render(request, "vendors/vendor_create.html", {"form": form})
+
+
+@login_required
+@permission_required_code("vendors.edit")
+def vendor_edit(request, pk):
+    vendor = get_object_or_404(Vendor, pk=pk)
+    if request.method == "POST":
+        form = VendorForm(request.POST, instance=vendor)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Vendor '{vendor.name}' updated successfully.")
+            return redirect("vendors:vendor_detail", pk=vendor.pk)
+    else:
+        form = VendorForm(instance=vendor)
+    return render(request, "vendors/vendor_edit.html", {"form": form, "vendor": vendor})

@@ -75,6 +75,38 @@ RECON_CLASSIFIED_REQUIRES_REVIEW = "recon_classified_requires_review"  # 1.0 / 0
 RECON_CLASSIFIED_AUTO_CLOSE = "recon_classified_auto_close_candidate"  # 1.0 / 0.0 -- observation
 RECON_BLOCKING_EXCEPTION_COUNT = "recon_blocking_exception_count"   # int as float -- observation
 RECON_WARNING_EXCEPTION_COUNT = "recon_warning_exception_count"     # int as float -- observation
+RECON_INVOICE_ERROR = "recon_invoice_error"                         # 1.0 / 0.0 -- per-invoice pipeline error
+
+# --- Reconciliation Eval: predicted-vs-actual business outcome metrics ---
+RECON_PREDICTED_MATCH_STATUS = "recon_predicted_match_status"       # label: MATCHED/PARTIAL_MATCH/UNMATCHED/REQUIRES_REVIEW
+RECON_ACTUAL_MATCH_STATUS = "recon_actual_match_status"             # label: MATCHED/UNMATCHED (post-review)
+RECON_MATCH_STATUS_CORRECT = "recon_match_status_correct"           # 1.0 / 0.0 -- predicted == actual
+RECON_PREDICTED_REQUIRES_REVIEW = "recon_predicted_requires_review" # 1.0 / 0.0
+RECON_ACTUAL_REVIEW_CREATED = "recon_actual_review_created"         # 1.0 / 0.0
+RECON_REVIEW_ROUTE_CORRECT = "recon_review_route_correct"           # 1.0 / 0.0
+RECON_PREDICTED_AUTO_CLOSE = "recon_predicted_auto_close"           # 1.0 / 0.0
+RECON_ACTUAL_AUTO_CLOSE = "recon_actual_auto_close"                 # 1.0 / 0.0
+RECON_AUTO_CLOSE_CORRECT = "recon_auto_close_correct"               # 1.0 / 0.0
+RECON_PREDICTED_PO_FOUND = "recon_predicted_po_found"               # 1.0 / 0.0
+RECON_ACTUAL_PO_FOUND = "recon_actual_po_found"                     # 1.0 / 0.0
+RECON_PO_FOUND_CORRECT = "recon_po_found_correct"                   # 1.0 / 0.0
+RECON_PREDICTED_GRN_FOUND = "recon_predicted_grn_found"             # 1.0 / 0.0
+RECON_ACTUAL_GRN_FOUND = "recon_actual_grn_found"                   # 1.0 / 0.0
+RECON_GRN_FOUND_CORRECT = "recon_grn_found_correct"                 # 1.0 / 0.0
+RECON_REPROCESSED = "recon_reprocessed"                             # 1.0 / 0.0
+RECON_REVIEW_OUTCOME = "recon_review_outcome"                       # label: APPROVED/REJECTED/REPROCESSED
+RECON_CORRECTED_BY_REVIEWER = "recon_corrected_by_reviewer"         # 1.0 / 0.0
+RECON_ACTUAL_FINAL_ROUTE = "recon_actual_final_route"               # label: auto_close/review/agent/unresolved
+
+# --- Reconciliation Eval: learning signal types ---
+RECON_SIG_WRONG_MATCH_STATUS = "wrong_match_status_prediction"
+RECON_SIG_WRONG_AUTO_CLOSE = "wrong_auto_close_prediction"
+RECON_SIG_WRONG_REVIEW_ROUTE = "wrong_review_route_prediction"
+RECON_SIG_MISSING_PO = "missing_po_prediction_issue"
+RECON_SIG_MISSING_GRN = "missing_grn_prediction_issue"
+RECON_SIG_REVIEW_OVERRIDE = "review_override"
+RECON_SIG_REPROCESS = "reprocess_signal"
+RECON_SIG_TOLERANCE_REVIEW = "tolerance_or_rule_review_candidate"
 
 # =====================================================================
 # AGENTS

@@ -82,6 +82,7 @@ class ReviewWorkflowService:
                 _lf_trace_id,
                 "review_assignment",
                 invoice_id=result.invoice_id,
+                user_id=getattr(assigned_to, "pk", None),
                 session_id=f"invoice-{result.invoice_id}",
                 metadata={
                     "assignment_pk": assignment.pk,
@@ -115,6 +116,13 @@ class ReviewWorkflowService:
                 comment=f"assignment={assignment.pk}",
                 span=_lf_trace,
             )
+        except Exception:
+            pass
+
+        # core_eval: sync review assignment context (best-effort)
+        try:
+            from apps.reconciliation.services.eval_adapter import ReconciliationEvalAdapter
+            ReconciliationEvalAdapter.sync_for_review_assignment(assignment)
         except Exception:
             pass
 
@@ -484,6 +492,13 @@ class ReviewWorkflowService:
                 "corrections_count": _corrections_count,
                 "comment_count": _comment_count,
             })
+        except Exception:
+            pass
+
+        # core_eval: sync review outcome (best-effort)
+        try:
+            from apps.reconciliation.services.eval_adapter import ReconciliationEvalAdapter
+            ReconciliationEvalAdapter.sync_for_review_outcome(assignment)
         except Exception:
             pass
 

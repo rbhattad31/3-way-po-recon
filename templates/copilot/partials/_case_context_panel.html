@@ -1,5 +1,6 @@
-{# Right panel — case context summary #}
+{# Right panel -- case context summary #}
 {% load static %}
+{% load rbac_tags %}
 
 <div class="copilot-context-inner">
   <div class="copilot-context-header">
@@ -137,6 +138,56 @@
     </div>
   </div>
   {% endif %}
+
+  {# ── Case Actions ── #}
+  <div class="copilot-ctx-card">
+    <div class="copilot-ctx-card-title"><i class="bi bi-hand-index-thumb me-1"></i>Actions</div>
+    <div class="d-grid gap-2">
+
+      {% has_permission "reviews.decide" as can_decide %}
+      {% has_permission "cases.edit" as can_edit_case %}
+
+      {% if ctx.case.status_code == "READY_FOR_REVIEW" or ctx.case.status_code == "IN_REVIEW" or ctx.case.status_code == "REVIEW_COMPLETED" or ctx.case.status_code == "READY_FOR_APPROVAL" or ctx.case.status_code == "APPROVAL_IN_PROGRESS" %}
+        {% if can_decide %}
+        <button class="btn btn-success btn-sm" onclick="copilotCaseAction('approve')" title="Approve case">
+          <i class="bi bi-check-circle me-1"></i>Approve
+        </button>
+        <button class="btn btn-danger btn-sm" onclick="copilotCaseAction('reject')" title="Reject case">
+          <i class="bi bi-x-circle me-1"></i>Reject
+        </button>
+        {% endif %}
+        {% if can_edit_case %}
+        <button class="btn btn-outline-warning btn-sm" onclick="copilotCaseAction('reprocess')" title="Reprocess from intake">
+          <i class="bi bi-arrow-clockwise me-1"></i>Reprocess
+        </button>
+        <button class="btn btn-outline-danger btn-sm" onclick="copilotCaseAction('escalate')" title="Escalate case">
+          <i class="bi bi-exclamation-triangle me-1"></i>Escalate
+        </button>
+        {% endif %}
+      {% elif ctx.case.status_code == "FAILED" or ctx.case.status_code == "ESCALATED" or ctx.case.status_code == "REJECTED" %}
+        {% if can_edit_case %}
+        <button class="btn btn-outline-warning btn-sm" onclick="copilotCaseAction('reprocess')" title="Reprocess from intake">
+          <i class="bi bi-arrow-clockwise me-1"></i>Reprocess
+        </button>
+        {% endif %}
+      {% elif ctx.case.status_code == "CLOSED" %}
+        <span class="text-muted small text-center"><i class="bi bi-check-circle-fill text-success me-1"></i>Case closed</span>
+      {% else %}
+        <span class="text-muted small text-center"><i class="bi bi-hourglass-split me-1"></i>Processing...</span>
+      {% endif %}
+
+      {# Links #}
+      <hr class="my-1">
+      <a href="{% url 'cases:case_agent_view' ctx.case.id %}" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-display me-1"></i>Open Case Console
+      </a>
+      {% if ctx.invoice.id %}
+      <a href="{% url 'documents:invoice_detail' ctx.invoice.id %}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-file-earmark-text me-1"></i>Invoice Detail
+      </a>
+      {% endif %}
+    </div>
+  </div>
 
   {% else %}
   <div class="copilot-context-empty">

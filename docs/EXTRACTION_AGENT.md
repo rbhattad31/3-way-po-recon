@@ -247,7 +247,12 @@ User uploads PDF/Image
   └─────────────────────────────────────────┘
          │
          ▼
-  AP Case created → Reconciliation pipeline
+  AP Case created immediately after extraction
+  (pipeline pauses at EXTRACTION_APPROVAL if
+   human approval needed; resumes on approve)
+         │
+         ▼
+  Reconciliation pipeline
 ```
 
 ### Service Architecture
@@ -1400,12 +1405,17 @@ AUTO_APPROVED  PENDING_APPROVAL
 READY_FOR_RECON  Approval Queue UI
   │         │
   ▼    ┌────┴─────────┐
-AP Case APPROVE  REJECT  REPROCESS
-created  │       │       │
-         ▼       ▼       ▼
+AP Case   APPROVE  REJECT  REPROCESS
+(already    │       │       │
+ exists)    ▼       ▼       ▼
    READY_FOR_RECON  INVALID  New ExtractionRun created
-   (case created)   (re-extract)  ExtractionApproval reset to PENDING
+   (case resumes)   (re-extract)  ExtractionApproval reset to PENDING
                                   ExtractionApprovalRecord history retained
+
+   Note: AP Case is created immediately after extraction (before approval).
+   The case pipeline pauses at EXTRACTION_APPROVAL stage if the invoice
+   needs human approval.  On approve, the existing case resumes from
+   PATH_RESOLUTION onward.  On reject, the case remains paused.
 
    ─────── Both records written on every decision ───────
    ExtractionApproval (business)  ←  ExtractionApprovalService

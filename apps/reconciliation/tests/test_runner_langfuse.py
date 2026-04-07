@@ -27,6 +27,7 @@ from unittest.mock import MagicMock, patch, call
 
 from apps.core.enums import MatchStatus, ReconciliationMode
 from apps.core.evaluation_constants import RECON_RECONCILIATION_MATCH
+from apps.core.evaluation_constants import RECON_INVOICE_ERROR, RECON_ROUTED_TO_REVIEW
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -282,6 +283,64 @@ class TestLangfuseSpansDoNotAlterResults:
             if len(c.args) >= 2 and c.args[1] == RECON_RECONCILIATION_MATCH
         ]
         assert len(match_calls) == 3  # One per invoice
+
+
+# ─── Duplicate score prevention ──────────────────────────────────────────────
+
+@pytest.mark.django_db
+class TestNoDuplicateScores:
+    def test_routed_to_review_emitted_once_per_invoice(self, patched_runner):
+        """RECON_ROUTED_TO_REVIEW is emitted only from runner_service (per-invoice),
+        not duplicated at the task level."""
+        runner, config = patched_runner
+        runner.classifier.classify.return_value = MatchStatus.REQUIRES_REVIEW
+        invoice = make_mock_invoice(pk=30)
+
+        with patch("apps.core.langfuse_client.score_trace") as mock_score, \
+             patch("apps.core.langfuse_client.get_client", return_value=None):
+            runner.run(invoices=[invoice])
+
+        review_calls = [
+            c for c in mock_score.call_args_list
+            if len(c.args) >= 2 and c.args[1] == RECON_ROUTED_TO_REVIEW
+        ]
+        assert len(review_calls) == 1  # Only from runner, not duplicated
+
+
+# ─── Error visibility ────────────────────────────────────────────────────────
+
+@pytest.mark.django_db
+class TestErrorScoring:
+    def test_invoice_error_score_emitted_on_failure(self, patched_runner):
+        """When _reconcile_single raises, RECON_INVOICE_ERROR is scored."""
+        runner, config = patched_runner
+        runner.po_lookup.lookup.side_effect = RuntimeError("PO service down")
+        invoice = make_mock_invoice(pk=40)
+
+        with patch("apps.core.langfuse_client.score_trace") as mock_score, \
+             patch("apps.core.langfuse_client.get_client", return_value=None):
+            recon_run = runner.run(invoices=[invoice])
+
+        assert recon_run.error_count == 1
+        error_calls = [
+            c for c in mock_score.call_args_list
+            if len(c.args) >= 2 and c.args[1] == RECON_INVOICE_ERROR
+        ]
+        assert len(error_calls) == 1
+        assert error_calls[0].args[2] == 1.0  # value
+
+    def test_error_scoring_itself_never_breaks_runner(self, patched_runner):
+        """Even if score_trace_safe raises during error scoring, the run completes."""
+        runner, config = patched_runner
+        runner.po_lookup.lookup.side_effect = RuntimeError("PO service down")
+        invoice = make_mock_invoice(pk=41)
+
+        with patch("apps.core.langfuse_client.score_trace",
+                   side_effect=RuntimeError("Langfuse also down")), \
+             patch("apps.core.langfuse_client.get_client", return_value=None):
+            recon_run = runner.run(invoices=[invoice])
+
+        assert recon_run.error_count == 1  # still counted
 
 
 # ─── Guardrails: score_trace called after guardrail decision ─────────────────

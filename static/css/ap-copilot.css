@@ -628,6 +628,195 @@ body:has(.copilot-workspace) main.ap-main {
   margin-top: 6px;
 }
 
+/* ── Upload Button & File Preview ── */
+.copilot-upload-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 1.1rem;
+}
+.copilot-upload-btn:hover {
+  background-color: var(--ap-primary-muted, #93c5fd);
+  border-color: var(--ap-primary-muted, #93c5fd);
+  color: #fff;
+}
+.copilot-file-preview {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--ap-bg, #f8fafc);
+  border: 1px solid var(--ap-bg-muted, #e2e8f0);
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+
+/* ── Pipeline Progress Steps (legacy compat) ── */
+.copilot-progress-followups {
+  margin-top: 8px;
+}
+
+/* ── Thinking Block (ChatGPT-style) ── */
+.copilot-thinking-block {
+  border-left: 3px solid var(--ap-primary, #2563eb);
+  border-radius: 0 8px 8px 0;
+  background: var(--ap-bg, #f8fafc);
+  margin: 4px 0 8px;
+  overflow: hidden;
+  transition: border-color 0.4s ease;
+}
+.copilot-thinking-block.done {
+  border-left-color: var(--ap-text-muted, #94a3b8);
+}
+
+.copilot-thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ap-text, #0f172a);
+  transition: background 0.15s;
+}
+.copilot-thinking-header:hover {
+  background: rgba(0,0,0,0.03);
+}
+
+.copilot-thinking-icon {
+  color: var(--ap-primary, #2563eb);
+  font-size: 0.88rem;
+  animation: copilotSparklePulse 2s ease-in-out infinite;
+}
+.copilot-thinking-block.done .copilot-thinking-icon {
+  animation: none;
+  color: var(--ap-text-muted, #94a3b8);
+}
+@keyframes copilotSparklePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+.copilot-thinking-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copilot-thinking-timer {
+  font-size: 0.72rem;
+  color: var(--ap-text-muted, #94a3b8);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.copilot-thinking-toggle {
+  color: var(--ap-text-muted, #94a3b8);
+  transition: transform 0.25s ease;
+  font-size: 0.72rem;
+}
+.copilot-thinking-block.collapsed .copilot-thinking-toggle {
+  transform: rotate(-90deg);
+}
+
+/* Thinking log — collapsible */
+.copilot-thinking-log {
+  padding: 0 14px 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 500px;
+  overflow-y: auto;
+  transition: max-height 0.35s ease, padding 0.25s ease, opacity 0.25s ease;
+}
+.copilot-thinking-block.collapsed .copilot-thinking-log {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+/* Individual thinking step */
+.copilot-thinking-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  animation: copilotThinkSlideIn 0.35s ease-out;
+}
+@keyframes copilotThinkSlideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.copilot-thinking-step.step-done {
+  color: var(--ap-text-muted, #94a3b8);
+}
+.copilot-thinking-step.step-done .copilot-td {
+  color: #22c55e;
+}
+.copilot-thinking-step.step-current {
+  color: var(--ap-text, #0f172a);
+  font-weight: 500;
+}
+.copilot-thinking-step.step-current .copilot-td {
+  color: var(--ap-primary, #2563eb);
+}
+.copilot-thinking-step.step-failed {
+  color: var(--bs-danger, #dc3545);
+}
+
+.copilot-td {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 0.72rem;
+  padding-top: 2px;
+}
+
+/* Pulsing dot for active step */
+.copilot-pulse-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ap-primary, #2563eb);
+  animation: copilotDotPulse 1.5s ease-in-out infinite;
+  margin-top: 5px;
+}
+@keyframes copilotDotPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.6); }
+}
+
+/* Shimmer effect on current step text */
+.copilot-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--ap-text, #0f172a) 0%,
+    var(--ap-primary, #2563eb) 45%,
+    var(--ap-text, #0f172a) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: copilotShimmer 2.5s ease-in-out infinite;
+}
+@keyframes copilotShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ── Right Context Panel ── */
 .copilot-context {
   width: 320px;

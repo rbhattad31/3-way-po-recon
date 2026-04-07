@@ -111,16 +111,54 @@
           {% csrf_token %}
           {% has_permission "reviews.decide" as can_decide %}
           {% has_permission "cases.edit" as can_edit_case %}
-          {% if show_actions or case.status == "FAILED" %}
-            {% if show_actions and can_decide %}
-            <button class="btn btn-success btn-sm" onclick="caseAction('approve')" title="Approve"><i class="bi bi-check-circle me-1"></i>Approve</button>
-            <button class="btn btn-danger btn-sm" onclick="caseAction('reject')" title="Reject"><i class="bi bi-x-circle me-1"></i>Reject</button>
-            {% endif %}
-            {% if can_edit_case %}
-            <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+
+          {# Primary decision buttons -- shown when case is in a reviewable state #}
+          {% if show_actions and can_decide %}
+          <button class="btn btn-success btn-sm" onclick="caseAction('approve')" title="Approve case">
+            <i class="bi bi-check-circle me-1"></i>Approve
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="caseAction('reject')" title="Reject case">
+            <i class="bi bi-x-circle me-1"></i>Reject
+          </button>
+          {% endif %}
+
+          {# Reprocess -- available for reviewable states, failed, and escalated #}
+          {% if can_edit_case %}
+            {% if show_actions or case.status == "FAILED" or case.status == "ESCALATED" or case.status == "REJECTED" %}
+            <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess from intake">
+              <i class="bi bi-arrow-clockwise me-1"></i>Reprocess
+            </button>
             {% endif %}
           {% endif %}
 
+          {# More actions dropdown #}
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="More actions">
+              <i class="bi bi-three-dots-vertical"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end" style="font-size:.82rem">
+              {% if can_edit_case and case.status != "CLOSED" and case.status != "REJECTED" %}
+              <li><a class="dropdown-item" href="#" onclick="caseAction('escalate');return false;"><i class="bi bi-exclamation-triangle me-2 text-warning"></i>Escalate</a></li>
+              {% endif %}
+              {% if invoice %}
+              {% has_permission "invoices.view" as can_view_invoice %}
+              {% if can_view_invoice and invoice.document_upload %}
+              <li><a class="dropdown-item" href="{% url 'documents:document_download' invoice.document_upload.pk %}" target="_blank"><i class="bi bi-file-earmark-pdf me-2 text-info"></i>View PDF</a></li>
+              {% endif %}
+              <li><a class="dropdown-item" href="{% url 'governance:invoice_governance' invoice.pk %}"><i class="bi bi-shield-lock me-2 text-secondary"></i>Governance</a></li>
+              {% endif %}
+              <li><a class="dropdown-item" href="{% url 'copilot:case' case.pk %}"><i class="bi bi-chat-dots me-2 text-primary"></i>Copilot</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item" href="{% url 'documents:invoice_detail' invoice.pk %}"><i class="bi bi-file-earmark-text me-2"></i>Invoice Detail</a></li>
+              {% if po %}
+              <li><a class="dropdown-item" href="{% url 'po_documents:po_detail' po.pk %}"><i class="bi bi-cart-check me-2"></i>PO Detail</a></li>
+              {% endif %}
+            </ul>
+          </div>
+
+          <span class="cc-sep"></span>
+
+          {# Assignee dropdown #}
           {% has_permission "cases.assign" as can_assign_case %}
           {% if can_assign_case %}
           <form method="post" action="{% url 'cases:case_assign' case.pk %}" class="d-inline-flex align-items-center" style="gap:4px">
@@ -135,16 +173,6 @@
           {% elif case.assigned_to %}
           <span class="badge bg-light text-dark border" style="font-size:.68rem"><i class="bi bi-person-check me-1"></i>{{ case.assigned_to.get_full_name }}</span>
           {% endif %}
-
-          {% if invoice %}
-          {% has_permission "invoices.view" as can_view_invoice %}
-          {% if can_view_invoice and invoice.document_upload %}
-          <a href="{% url 'documents:document_download' invoice.document_upload.pk %}" class="btn btn-sm btn-outline-info" title="View PDF" target="_blank"><i class="bi bi-file-earmark-pdf"></i></a>
-          {% endif %}
-          <a href="{% url 'governance:invoice_governance' invoice.pk %}" class="btn btn-sm btn-outline-secondary" title="Governance"><i class="bi bi-shield-lock"></i></a>
-          {% endif %}
-          <a href="{% url 'copilot:case' case.pk %}" class="btn btn-sm btn-outline-primary" title="Copilot"><i class="bi bi-chat-dots"></i></a>
-          <a href="{% url 'cases:case_console' case.pk %}" class="btn btn-sm btn-outline-secondary" title="Back to Case"><i class="bi bi-arrow-left"></i></a>
         </div>
 
       </div>
@@ -939,21 +967,46 @@
                   <div class="cc-section mb-3">
                     <div class="cc-section-header"><i class="bi bi-hand-index-thumb"></i> Actions</div>
                     <div class="cc-section-body">
-                      {% if case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" %}
+                      {% has_permission "reviews.decide" as can_decide_review %}
+                      {% has_permission "cases.edit" as can_edit_review %}
+                      {% if case.status == "READY_FOR_REVIEW" or case.status == "IN_REVIEW" or case.status == "REVIEW_COMPLETED" or case.status == "READY_FOR_APPROVAL" or case.status == "APPROVAL_IN_PROGRESS" %}
                       <div class="d-grid gap-2">
+                        {% if can_decide_review %}
                         <button class="btn btn-success btn-sm" onclick="caseAction('approve')"><i class="bi bi-check-circle me-1"></i>Approve</button>
                         <button class="btn btn-danger btn-sm" onclick="caseAction('reject')"><i class="bi bi-x-circle me-1"></i>Reject</button>
+                        {% endif %}
+                        {% if can_edit_review %}
                         <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+                        <button class="btn btn-outline-danger btn-sm" onclick="caseAction('escalate')"><i class="bi bi-exclamation-triangle me-1"></i>Escalate</button>
+                        {% endif %}
                       </div>
                       {% elif case.status == "CLOSED" %}
                       <div class="text-center py-3">
                         <i class="bi bi-check-circle-fill text-success" style="font-size:1.5rem"></i>
                         <div class="mt-1 text-muted" style="font-size:.82rem">Case closed</div>
                       </div>
+                      {% elif case.status == "ESCALATED" %}
+                      <div class="text-center py-3">
+                        <i class="bi bi-exclamation-triangle-fill text-warning" style="font-size:1.5rem"></i>
+                        <div class="mt-1 text-muted" style="font-size:.82rem">Case escalated</div>
+                        {% if can_edit_review %}
+                        <button class="btn btn-outline-warning btn-sm mt-2" onclick="caseAction('reprocess')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+                        {% endif %}
+                      </div>
+                      {% elif case.status == "REJECTED" %}
+                      <div class="text-center py-3">
+                        <i class="bi bi-x-circle-fill text-danger" style="font-size:1.5rem"></i>
+                        <div class="mt-1 text-muted" style="font-size:.82rem">Case rejected</div>
+                        {% if can_edit_review %}
+                        <button class="btn btn-outline-warning btn-sm mt-2" onclick="caseAction('reprocess')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+                        {% endif %}
+                      </div>
                       {% elif case.status == "FAILED" %}
-                      <button class="btn btn-warning btn-sm w-100" onclick="caseAction('reprocess')">
-                        <i class="bi bi-arrow-clockwise me-1"></i>Retry Processing
-                      </button>
+                      <div class="d-grid gap-2">
+                        <button class="btn btn-warning btn-sm" onclick="caseAction('reprocess')">
+                          <i class="bi bi-arrow-clockwise me-1"></i>Retry Processing
+                        </button>
+                      </div>
                       {% else %}
                       <div class="text-center py-3">
                         <div class="spinner-border spinner-border-sm text-primary"></div>
@@ -965,15 +1018,21 @@
 
                   {# Add note #}
                   {% if case.status != "CLOSED" %}
+                  {% has_permission "cases.add_comment" as can_comment %}
+                  {% if can_comment %}
                   <div class="cc-section">
                     <div class="cc-section-header"><i class="bi bi-plus-circle"></i> Add Note</div>
                     <div class="cc-section-body">
-                      <textarea class="form-control form-control-sm" rows="3" id="caseComment" placeholder="Add a reviewer note..."></textarea>
-                      <button class="btn btn-sm btn-outline-secondary mt-2 w-100" onclick="addComment()" type="button">
-                        <i class="bi bi-plus-circle me-1"></i>Add Comment
-                      </button>
+                      <form method="post" action="{% url 'cases:case_add_comment' case.pk %}" id="commentForm">
+                        {% csrf_token %}
+                        <textarea class="form-control form-control-sm" rows="3" id="caseComment" name="body" placeholder="Add a reviewer note..." required></textarea>
+                        <button class="btn btn-sm btn-outline-secondary mt-2 w-100" type="submit">
+                          <i class="bi bi-plus-circle me-1"></i>Add Comment
+                        </button>
+                      </form>
                     </div>
                   </div>
+                  {% endif %}
                   {% endif %}
                 </div>
               </div>
@@ -1087,17 +1146,20 @@
 
 {% block extra_js %}
 <script>
-/* ── Case actions (approve / reject / reprocess) ── */
+/* ── Case actions (approve / reject / reprocess / escalate) ── */
 function caseAction(action) {
-  const console = document.querySelector('.cc-console');
-  const decideUrl = console.dataset.decideUrl;
-  const openExc = parseInt(console.dataset.openExceptions || '0');
-  const failedVal = parseInt(console.dataset.failedValidations || '0');
-  const failedStg = parseInt(console.dataset.failedStages || '0');
+  var ccEl = document.querySelector('.cc-console');
+  var decideUrl = ccEl.dataset.decideUrl;
+  var reprocessUrl = ccEl.dataset.reprocessUrl;
+  var openExc = parseInt(ccEl.dataset.openExceptions || '0');
+  var failedVal = parseInt(ccEl.dataset.failedValidations || '0');
+  var failedStg = parseInt(ccEl.dataset.failedStages || '0');
+  var csrfToken = ccEl.querySelector('[name=csrfmiddlewaretoken]').value;
 
+  /* Block approval if open issues */
   if (action === 'approve' && (openExc > 0 || failedVal > 0 || failedStg > 0)) {
-    let msg = 'Cannot approve: ';
-    const parts = [];
+    var msg = 'Cannot approve: ';
+    var parts = [];
     if (openExc > 0) parts.push(openExc + ' open exception(s)');
     if (failedVal > 0) parts.push(failedVal + ' failed validation(s)');
     if (failedStg > 0) parts.push(failedStg + ' failed stage(s)');
@@ -1105,24 +1167,44 @@ function caseAction(action) {
     return;
   }
 
-  const labels = {approve: 'approve', reject: 'reject', reprocess: 'reprocess'};
+  /* Escalate -- confirm with optional reason */
+  if (action === 'escalate') {
+    var reason = prompt('Escalation reason (optional):');
+    if (reason === null) return;  /* cancelled */
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = decideUrl;
+    form.innerHTML = '<input type="hidden" name="csrfmiddlewaretoken" value="' + csrfToken + '">' +
+                     '<input type="hidden" name="decision" value="ESCALATED">' +
+                     '<input type="hidden" name="reason" value="' + (reason || '').replace(/"/g, '&quot;') + '">';
+    document.body.appendChild(form);
+    form.submit();
+    return;
+  }
+
+  var labels = {
+    approve: 'approve',
+    reject: 'reject',
+    reprocess: 'reprocess from intake'
+  };
   if (!confirm('Are you sure you want to ' + (labels[action] || action) + ' this case?')) return;
 
-  const csrfToken = console.querySelector('[name=csrfmiddlewaretoken]').value;
-  const form = document.createElement('form');
+  /* Reject -- ask for reason */
+  var reason = '';
+  if (action === 'reject') {
+    reason = prompt('Rejection reason:') || '';
+  }
+
+  var decisionMap = {approve: 'APPROVED', reject: 'REJECTED', reprocess: 'REPROCESSED'};
+  var decision = decisionMap[action] || action.toUpperCase();
+  var form = document.createElement('form');
   form.method = 'POST';
   form.action = decideUrl;
   form.innerHTML = '<input type="hidden" name="csrfmiddlewaretoken" value="' + csrfToken + '">' +
-                   '<input type="hidden" name="decision" value="' + action.toUpperCase() + '">';
+                   '<input type="hidden" name="decision" value="' + decision + '">' +
+                   '<input type="hidden" name="reason" value="' + reason.replace(/"/g, '&quot;') + '">';
   document.body.appendChild(form);
   form.submit();
-}
-
-/* ── Add comment ── */
-function addComment() {
-  const ta = document.getElementById('caseComment');
-  if (!ta || !ta.value.trim()) return;
-  alert('Comment feature uses the API endpoint. Integrate with /api/v1/cases/{{ case.pk }}/comments/');
 }
 </script>
 {% endblock %}

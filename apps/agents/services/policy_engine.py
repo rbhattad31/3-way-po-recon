@@ -60,13 +60,14 @@ class PolicyEngine:
         extraction_conf = result.extraction_confidence or 0.0
         recon_mode = getattr(result, "reconciliation_mode", "") or ""
         is_two_way = recon_mode == ReconciliationMode.TWO_WAY
+        is_non_po = recon_mode == ReconciliationMode.NON_PO
 
         # Gather exception types
         exc_types = set(
             result.exceptions.values_list("exception_type", flat=True)
         )
 
-        # Rule 1: Full match, high confidence → skip agents
+        # Rule 1: Full match, high confidence -> skip agents
         if status == MatchStatus.MATCHED and confidence >= REVIEW_AUTO_CLOSE_THRESHOLD:
             return AgentPlan(
                 skip_agents=True,
@@ -74,28 +75,60 @@ class PolicyEngine:
                 reconciliation_mode=recon_mode,
             )
 
-        # Rule 1b: PARTIAL_MATCH within auto-close tolerance band → auto-close, skip agents
+        # Rule 1b: PARTIAL_MATCH within auto-close tolerance band -> auto-close, skip agents
         #   Exception: GRN_NOT_FOUND in 3-way mode blocks auto-close (goods not confirmed received)
         grn_blocks_close = (
             not is_two_way
+            and not is_non_po
             and ExceptionType.GRN_NOT_FOUND in exc_types
         )
         if (
             status == MatchStatus.PARTIAL_MATCH
             and not grn_blocks_close
+            and not is_non_po
             and self._within_auto_close_band(result)
         ):
             return AgentPlan(
                 skip_agents=True,
                 auto_close=True,
                 reason=(
-                    f"PARTIAL_MATCH but all line discrepancies within auto-close tolerance band — "
+                    f"PARTIAL_MATCH but all line discrepancies within auto-close tolerance band -- "
                     f"auto-closing without AI agents"
                 ),
                 reconciliation_mode=recon_mode,
             )
 
         agents: List[str] = []
+
+        # ------------------------------------------------------------------
+        # NON_PO mode: no PO/GRN retrieval or reconciliation assist.
+        # Focus on exception analysis, vendor verification, and routing.
+        # ------------------------------------------------------------------
+        if is_non_po:
+            # Low extraction confidence -> understand the invoice better
+            if extraction_conf < AGENT_CONFIDENCE_THRESHOLD:
+                agents.append(AgentType.INVOICE_UNDERSTANDING)
+
+            # Always analyse exceptions for NON_PO (validation failures
+            # are persisted as exceptions by the case pipeline).
+            if exc_types:
+                agents.append(AgentType.EXCEPTION_ANALYSIS)
+
+            # Route and summarise
+            agents.append(AgentType.REVIEW_ROUTING)
+            agents.append(AgentType.CASE_SUMMARY)
+
+            reason = (
+                f"Mode=non-po, status={status}, confidence={confidence:.2f}, "
+                f"extraction_conf={extraction_conf:.2f}, "
+                f"exceptions={sorted(exc_types)}"
+            )
+            logger.info("Policy plan (NON_PO) for result %s: %s (%s)", result.pk, agents, reason)
+            return AgentPlan(agents=agents, reason=reason, reconciliation_mode=recon_mode)
+
+        # ------------------------------------------------------------------
+        # PO-backed modes (TWO_WAY / THREE_WAY)
+        # ------------------------------------------------------------------
 
         # Rule 2: PO not found
         if ExceptionType.PO_NOT_FOUND in exc_types:

@@ -63,6 +63,7 @@ class StageExecutor:
         handlers = {
             CaseStageType.INTAKE: StageExecutor._execute_intake,
             CaseStageType.EXTRACTION: StageExecutor._execute_extraction,
+            CaseStageType.EXTRACTION_APPROVAL: StageExecutor._execute_extraction_approval,
             CaseStageType.PATH_RESOLUTION: StageExecutor._execute_path_resolution,
             CaseStageType.PO_RETRIEVAL: StageExecutor._execute_po_retrieval,
             CaseStageType.TWO_WAY_MATCHING: StageExecutor._execute_two_way_matching,
@@ -136,6 +137,64 @@ class StageExecutor:
 
         CaseStateMachine.transition(case, CaseStatus.EXTRACTION_COMPLETED, PerformedByType.SYSTEM)
         return output
+
+    @staticmethod
+    def _execute_extraction_approval(case: APCase) -> Dict:
+        """
+        Extraction approval gate: check whether extraction has been approved.
+
+        If the invoice is already READY_FOR_RECON (auto-approved or manually
+        approved), continue the pipeline.  If the invoice is still
+        PENDING_APPROVAL, pause the case at PENDING_EXTRACTION_APPROVAL --
+        the approval service will resume the case when the user approves.
+        """
+        from apps.core.enums import InvoiceStatus
+
+        invoice = case.invoice
+        invoice.refresh_from_db(fields=["status"])
+
+        if invoice.status == InvoiceStatus.READY_FOR_RECON:
+            # Already approved -- continue to path resolution
+            logger.info(
+                "Case %s: extraction already approved (invoice status=%s), continuing",
+                case.case_number, invoice.status,
+            )
+            return {
+                "approved": True,
+                "approval_type": "pre_approved",
+                "invoice_status": invoice.status,
+            }
+
+        if invoice.status in (
+            InvoiceStatus.PENDING_APPROVAL,
+            InvoiceStatus.EXTRACTED,
+            InvoiceStatus.VALIDATED,
+        ):
+            # Not yet approved -- pause the pipeline
+            CaseStateMachine.transition(
+                case, CaseStatus.PENDING_EXTRACTION_APPROVAL, PerformedByType.SYSTEM
+            )
+            logger.info(
+                "Case %s: extraction pending approval (invoice status=%s), pausing pipeline",
+                case.case_number, invoice.status,
+            )
+            return {
+                "approved": False,
+                "paused": True,
+                "invoice_status": invoice.status,
+            }
+
+        # Invalid/duplicate invoices -- still pause, approval or rejection
+        # will be handled by the approval service.
+        CaseStateMachine.transition(
+            case, CaseStatus.PENDING_EXTRACTION_APPROVAL, PerformedByType.SYSTEM
+        )
+        return {
+            "approved": False,
+            "paused": True,
+            "invoice_status": invoice.status,
+            "note": "Invoice in unexpected status, pausing for review",
+        }
 
     @staticmethod
     def _execute_path_resolution(case: APCase) -> Dict:
@@ -327,11 +386,143 @@ class StageExecutor:
             case.invoice.save(update_fields=["status", "updated_at"])
 
     @staticmethod
+    def _create_non_po_recon_result(case: APCase, validation_result) -> "ReconciliationResult":
+        """Create a ReconciliationResult for a NON_PO case from validation checks.
+
+        This bridges NON_PO validation into the agent pipeline so that
+        exception analysis, vendor verification, and review routing agents
+        can process non-PO invoices just like PO-backed ones.
+        """
+        from apps.reconciliation.models import (
+            ReconciliationException,
+            ReconciliationResult,
+            ReconciliationRun,
+        )
+        from apps.core.enums import (
+            ExceptionSeverity,
+            ExceptionType,
+            ReconciliationMode,
+            ReconciliationRunStatus,
+        )
+        from django.utils import timezone
+
+        invoice = case.invoice
+
+        # Create a lightweight run record
+        run = ReconciliationRun.objects.create(
+            status=ReconciliationRunStatus.COMPLETED,
+            total_invoices=1,
+            triggered_by=case.created_by,
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+            reconciliation_mode=ReconciliationMode.NON_PO,
+        )
+
+        # Determine match status from validation outcome
+        status_map = {
+            "PASS": MatchStatus.MATCHED,
+            "NEEDS_REVIEW": MatchStatus.REQUIRES_REVIEW,
+            "FAIL": MatchStatus.REQUIRES_REVIEW,
+        }
+        match_status = status_map.get(
+            validation_result.overall_status, MatchStatus.REQUIRES_REVIEW
+        )
+
+        vendor_match = None
+        vendor_check = validation_result.checks.get("vendor")
+        if vendor_check:
+            vendor_match = vendor_check.status == "PASS"
+
+        recon_result = ReconciliationResult.objects.create(
+            run=run,
+            invoice=invoice,
+            purchase_order=None,
+            match_status=match_status,
+            requires_review=match_status != MatchStatus.MATCHED,
+            vendor_match=vendor_match,
+            extraction_confidence=float(invoice.extraction_confidence or 0),
+            deterministic_confidence=max(0.0, 1.0 - validation_result.risk_score),
+            reconciliation_mode=ReconciliationMode.NON_PO,
+            is_two_way_result=False,
+            is_three_way_result=False,
+            summary=(
+                f"Non-PO validation: {validation_result.overall_status}. "
+                f"{len(validation_result.issues)} issue(s) found."
+            ),
+            mode_resolution_reason="Non-PO invoice -- no PO reference",
+        )
+
+        # Map failed validation checks to ReconciliationException records
+        # so the agent pipeline can reason over them.
+        _CHECK_TO_EXCEPTION = {
+            "vendor": (ExceptionType.VENDOR_MISMATCH, ExceptionSeverity.HIGH),
+            "duplicate": (ExceptionType.DUPLICATE_INVOICE, ExceptionSeverity.HIGH),
+            "mandatory_fields": (ExceptionType.MISSING_MANDATORY_FIELDS, ExceptionSeverity.HIGH),
+            "tax": (ExceptionType.TAX_MISMATCH, ExceptionSeverity.MEDIUM),
+        }
+
+        for check_name, check_result in validation_result.checks.items():
+            if check_result.status not in ("FAIL", "WARNING"):
+                continue
+
+            exc_info = _CHECK_TO_EXCEPTION.get(check_name)
+            if exc_info:
+                exc_type, severity = exc_info
+            else:
+                exc_type = ExceptionType.AMOUNT_MISMATCH
+                severity = (
+                    ExceptionSeverity.HIGH
+                    if check_result.status == "FAIL"
+                    else ExceptionSeverity.LOW
+                )
+
+            ReconciliationException.objects.create(
+                result=recon_result,
+                exception_type=exc_type,
+                severity=severity,
+                message=check_result.message,
+                details={
+                    "source": "non_po_validation",
+                    "check_name": check_name,
+                    "check_status": check_result.status,
+                    **(check_result.details or {}),
+                },
+            )
+
+        # Update run counters
+        if match_status == MatchStatus.MATCHED:
+            run.matched_count = 1
+        else:
+            run.review_count = 1
+        run.save(update_fields=["matched_count", "review_count", "updated_at"])
+
+        exc_count = recon_result.exceptions.count()
+        logger.info(
+            "Created NON_PO ReconciliationResult pk=%s for case %s "
+            "(status=%s, exceptions=%d)",
+            recon_result.pk, case.case_number, match_status, exc_count,
+        )
+
+        return recon_result
+
+    @staticmethod
     def _execute_non_po_validation(case: APCase) -> Dict:
         """
         Non-PO validation: deterministic checks + agent reasoning.
         """
-        # Ensure we're in the correct status (handles rerouted UNRESOLVED cases)
+        # Clear stale VALIDATION_RESULT artifacts from prior runs so the UI
+        # does not display outdated validation checks after reprocessing.
+        case.artifacts.filter(artifact_type="VALIDATION_RESULT").delete()
+
+        # Ensure we're in the correct status (handles rerouted UNRESOLVED cases).
+        # Skip if the case is already past this stage (e.g. on re-entry after
+        # the pipeline previously completed path stages).
+        _PAST_NON_PO = {
+            "EXCEPTION_ANALYSIS_IN_PROGRESS", "READY_FOR_REVIEW", "IN_REVIEW",
+            "REVIEW_COMPLETED", "CLOSED", "REJECTED", "ESCALATED", "FAILED",
+        }
+        if str(case.status) in _PAST_NON_PO:
+            return {"skipped": True, "reason": f"case already at {case.status}"}
         if case.status != CaseStatus.NON_PO_VALIDATION_IN_PROGRESS:
             CaseStateMachine.transition(
                 case, CaseStatus.NON_PO_VALIDATION_IN_PROGRESS, PerformedByType.DETERMINISTIC
@@ -340,6 +531,13 @@ class StageExecutor:
         from apps.cases.services.non_po_validation_service import NonPOValidationService
 
         result = NonPOValidationService.validate(case)
+
+        # Create a ReconciliationResult so the agent pipeline can run for
+        # NON_PO cases too (exception analysis, vendor verification, etc.)
+        recon_result = StageExecutor._create_non_po_recon_result(case, result)
+        if recon_result:
+            case.reconciliation_result = recon_result
+            case.save(update_fields=["reconciliation_result", "updated_at"])
 
         # NOTE: Invoice stays at READY_FOR_RECON until the case is actually
         # closed/approved.  The RECONCILED transition happens in
@@ -355,6 +553,7 @@ class StageExecutor:
             "approval_ready": result.approval_ready,
             "issues_count": len(result.issues),
             "risk_score": result.risk_score,
+            "recon_result_id": recon_result.pk if recon_result else None,
         }
 
     @staticmethod

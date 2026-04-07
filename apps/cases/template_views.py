@@ -720,8 +720,8 @@ def case_decide(request, pk):
 
     decision = request.POST.get("decision", "").upper()
 
-    # Permission gate: reprocess needs cases.edit, approve/reject needs reviews.decide
-    if decision == "REPROCESSED":
+    # Permission gate: reprocess/escalate needs cases.edit, approve/reject needs reviews.decide
+    if decision in ("REPROCESSED", "ESCALATED"):
         if not _has_permission_code(request.user, "cases.edit"):
             from django.core.exceptions import PermissionDenied
             raise PermissionDenied
@@ -817,6 +817,7 @@ def case_decide(request, pk):
     status_map = {
         "APPROVED": CaseStatus.CLOSED,
         "REJECTED": CaseStatus.REJECTED,
+        "ESCALATED": CaseStatus.ESCALATED,
     }
     new_status = status_map.get(decision)
     if new_status:
@@ -838,6 +839,7 @@ def case_decide(request, pk):
         event_map = {
             CaseStatus.CLOSED: AuditEventType.CASE_CLOSED,
             CaseStatus.REJECTED: AuditEventType.CASE_REJECTED,
+            CaseStatus.ESCALATED: AuditEventType.CASE_ESCALATED,
         }
         AuditService.log_event(
             entity_type="APCase",

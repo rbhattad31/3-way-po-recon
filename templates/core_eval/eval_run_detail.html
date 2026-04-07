@@ -19,8 +19,52 @@
     {% else %}ap-badge-status-new{% endif %} fs-6">{{ run.status }}</span>
 </div>
 
+{# -- KPI Cards -- #}
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div class="text-muted small mb-1"><i class="bi bi-check2-square me-1"></i>Field Outcomes</div>
+        <h3 class="mb-0 fw-bold">{{ field_outcomes|length }}</h3>
+        {% if correct_count is not None %}
+        <small class="text-success">{{ correct_count }} correct</small>
+        {% if incorrect_count %}<small class="text-danger ms-2">{{ incorrect_count }} incorrect</small>{% endif %}
+        {% if missing_count %}<small class="text-warning ms-2">{{ missing_count }} missing</small>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div class="text-muted small mb-1"><i class="bi bi-graph-up me-1"></i>Metrics</div>
+        <h3 class="mb-0 fw-bold">{{ metrics|length }}</h3>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div class="text-muted small mb-1"><i class="bi bi-broadcast me-1"></i>Signals</div>
+        <h3 class="mb-0 fw-bold">{{ signals|length }}</h3>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="ap-card h-100">
+      <div class="ap-card-body text-center py-3">
+        <div class="text-muted small mb-1"><i class="bi bi-speedometer me-1"></i>Confidence</div>
+        <h3 class="mb-0 fw-bold">
+          {% if run_confidence is not None %}{% widthratio run_confidence 1 100 %}%{% else %}--{% endif %}
+        </h3>
+      </div>
+    </div>
+  </div>
+</div>
+
 {# -- Run Summary -- #}
-<div class="ap-card mb-3">
+<div class="ap-card mb-4">
+  <div class="ap-card-header"><i class="bi bi-info-circle me-1"></i>Run Details</div>
   <div class="ap-card-body">
     <div class="row">
       <div class="col-md-6">
@@ -50,38 +94,130 @@
 
 {# -- Input Snapshot / Config / Result JSON -- #}
 {% if input_snapshot_pretty or config_pretty or result_pretty or error_pretty %}
-<div class="row mb-3">
+<div class="row g-3 mb-4">
   {% if input_snapshot_pretty %}
   <div class="col-md-{% if result_pretty or error_pretty %}6{% else %}12{% endif %}">
-    <h6 class="text-muted mb-1"><i class="bi bi-box-arrow-in-right me-1"></i>Input Snapshot</h6>
-    <div class="ap-card"><div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ input_snapshot_pretty }}</pre></div></div>
+    <div class="ap-card h-100">
+      <div class="ap-card-header"><i class="bi bi-box-arrow-in-right me-1"></i>Input Snapshot</div>
+      <div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ input_snapshot_pretty }}</pre></div>
+    </div>
   </div>
   {% endif %}
   {% if result_pretty %}
   <div class="col-md-6">
-    <h6 class="text-muted mb-1"><i class="bi bi-box-arrow-right me-1"></i>Result</h6>
-    <div class="ap-card"><div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ result_pretty }}</pre></div></div>
+    <div class="ap-card h-100">
+      <div class="ap-card-header"><i class="bi bi-box-arrow-right me-1"></i>Result</div>
+      <div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ result_pretty }}</pre></div>
+    </div>
   </div>
   {% endif %}
   {% if error_pretty %}
   <div class="col-md-6">
-    <h6 class="text-muted mb-1"><i class="bi bi-exclamation-triangle me-1 text-danger"></i>Error</h6>
-    <div class="ap-card border-danger"><div class="ap-card-body p-2"><pre class="mb-0 small text-danger" style="max-height:220px;overflow:auto">{{ error_pretty }}</pre></div></div>
+    <div class="ap-card h-100 border-danger">
+      <div class="ap-card-header text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Error</div>
+      <div class="ap-card-body p-2"><pre class="mb-0 small text-danger" style="max-height:220px;overflow:auto">{{ error_pretty }}</pre></div>
+    </div>
   </div>
   {% endif %}
   {% if config_pretty %}
   <div class="col-md-6">
-    <h6 class="text-muted mb-1"><i class="bi bi-gear me-1"></i>Config</h6>
-    <div class="ap-card"><div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ config_pretty }}</pre></div></div>
+    <div class="ap-card h-100">
+      <div class="ap-card-header"><i class="bi bi-gear me-1"></i>Config</div>
+      <div class="ap-card-body p-2"><pre class="mb-0 small" style="max-height:220px;overflow:auto">{{ config_pretty }}</pre></div>
+    </div>
   </div>
   {% endif %}
 </div>
 {% endif %}
 
+{# -- Field Outcomes -- #}
+<div class="ap-card mb-4">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-check2-square me-1"></i>Field Outcomes</span>
+    <span class="badge bg-secondary">{{ field_outcomes|length }}</span>
+  </div>
+  {% if field_outcomes %}
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table w-100 mb-0">
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Status</th>
+          <th>Predicted</th>
+          <th>Ground Truth</th>
+          <th>Confidence</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fo in field_outcomes %}
+        <tr>
+          <td><code>{{ fo.field_name }}</code></td>
+          <td>
+            <span class="ap-badge
+              {% if fo.status == 'CORRECT' %}ap-badge-matched
+              {% elif fo.status == 'INCORRECT' %}ap-badge-unmatched
+              {% elif fo.status == 'MISSING' %}ap-badge-partial
+              {% else %}ap-badge-status-new{% endif %}">{{ fo.status }}</span>
+          </td>
+          <td>
+            {% if fo.predicted_value %}
+              <span title="{{ fo.predicted_value }}">{{ fo.predicted_value|truncatechars:50 }}</span>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if fo.ground_truth_value %}
+              <span title="{{ fo.ground_truth_value }}"
+                {% if fo.status == 'INCORRECT' %}class="text-danger fw-semibold"{% endif %}>
+                {{ fo.ground_truth_value|truncatechars:50 }}
+              </span>
+            {% else %}
+              <small class="text-muted fst-italic">awaiting approval</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if fo.confidence is not None %}
+              {% widthratio fo.confidence 1 100 as conf_pct %}
+              <div class="d-flex align-items-center gap-2">
+                <div class="progress flex-grow-1" style="height:6px;min-width:50px">
+                  <div class="progress-bar
+                    {% if conf_pct >= 80 %}bg-success{% elif conf_pct >= 50 %}bg-warning{% else %}bg-danger{% endif %}"
+                    style="width:{{ conf_pct }}%"></div>
+                </div>
+                <small class="text-nowrap" style="width:36px">{{ conf_pct }}%</small>
+              </div>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if fo.detail_json.source %}
+              <span class="badge {% if fo.detail_json.source == 'llm' %}bg-primary{% elif fo.detail_json.source == 'deterministic' %}bg-secondary{% else %}bg-info{% endif %} bg-opacity-75 fw-normal">
+                {{ fo.detail_json.source }}
+              </span>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="ap-card-body text-center text-muted py-3">No field outcomes recorded.</div>
+  {% endif %}
+</div>
+
 {# -- Metrics -- #}
-<h5 class="mt-4 mb-2"><i class="bi bi-graph-up me-2"></i>Metrics <span class="badge bg-secondary">{{ metrics|length }}</span></h5>
-{% if metrics %}
-<div class="ap-card mb-3">
+<div class="ap-card mb-4">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-graph-up me-1"></i>Metrics</span>
+    <span class="badge bg-secondary">{{ metrics|length }}</span>
+  </div>
+  {% if metrics %}
   <div class="ap-card-body p-0 table-responsive">
     <table class="ap-table w-100 mb-0">
       <thead>
@@ -98,11 +234,15 @@
           <td><code>{{ m.metric_name }}</code></td>
           <td>
             {% if m.metric_value is not None %}
-              {{ m.metric_value }}
+              {% if m.unit == "ratio" %}
+                {% widthratio m.metric_value 1 100 %}%
+              {% else %}
+                {{ m.metric_value }}
+              {% endif %}
             {% elif m.string_value %}
               {{ m.string_value|truncatechars:60 }}
             {% elif m.json_value is not None %}
-              <small class="text-muted">[JSON]</small>
+              <details><summary class="text-muted small">[JSON] click to expand</summary><pre class="small mb-0 mt-1" style="max-height:120px;overflow:auto">{{ m.json_value_pretty|default:"--" }}</pre></details>
             {% else %}
               <small class="text-muted">--</small>
             {% endif %}
@@ -114,94 +254,102 @@
       </tbody>
     </table>
   </div>
+  {% else %}
+  <div class="ap-card-body text-center text-muted py-3">No metrics recorded.</div>
+  {% endif %}
 </div>
-{% else %}
-<div class="ap-card mb-3"><div class="ap-card-body text-center text-muted py-3">No metrics recorded.</div></div>
-{% endif %}
-
-{# -- Field Outcomes -- #}
-<h5 class="mt-4 mb-2"><i class="bi bi-check2-square me-2"></i>Field Outcomes <span class="badge bg-secondary">{{ field_outcomes|length }}</span></h5>
-{% if field_outcomes %}
-<div class="ap-card mb-3">
-  <div class="ap-card-body p-0 table-responsive">
-    <table class="ap-table w-100 mb-0">
-      <thead>
-        <tr>
-          <th>Field</th>
-          <th>Status</th>
-          <th>Predicted</th>
-          <th>Ground Truth</th>
-          <th>Confidence</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for fo in field_outcomes %}
-        <tr>
-          <td><code>{{ fo.field_name }}</code></td>
-          <td>
-            <span class="ap-badge
-              {% if fo.status == 'CORRECT' %}ap-badge-matched
-              {% elif fo.status == 'INCORRECT' %}ap-badge-unmatched
-              {% elif fo.status == 'MISSING' %}ap-badge-partial
-              {% else %}ap-badge-status-new{% endif %}">{{ fo.status }}</span>
-          </td>
-          <td><small>{{ fo.predicted_value|truncatechars:40|default:"--" }}</small></td>
-          <td><small>{{ fo.ground_truth_value|truncatechars:40|default:"--" }}</small></td>
-          <td>
-            {% if fo.confidence is not None %}
-              <small>{% widthratio fo.confidence 1 100 %}%</small>
-            {% else %}
-              <small class="text-muted">--</small>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% else %}
-<div class="ap-card mb-3"><div class="ap-card-body text-center text-muted py-3">No field outcomes recorded.</div></div>
-{% endif %}
 
 {# -- Linked Signals -- #}
-<h5 class="mt-4 mb-2"><i class="bi bi-broadcast me-2"></i>Linked Signals <span class="badge bg-secondary">{{ signals|length }}</span></h5>
-{% if signals %}
-<div class="ap-card mb-3">
+<div class="ap-card mb-4">
+  <div class="ap-card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-broadcast me-1"></i>Linked Signals</span>
+    <span class="badge bg-secondary">{{ signals|length }}</span>
+  </div>
+  {% if signals %}
   <div class="ap-card-body p-0 table-responsive">
     <table class="ap-table w-100 mb-0">
       <thead>
         <tr>
-          <th>ID</th>
+          <th style="width:50px">ID</th>
           <th>Signal Type</th>
+          <th>Entity</th>
           <th>Field</th>
-          <th>Old / New</th>
-          <th style="width:140px">Created</th>
+          <th>Old Value</th>
+          <th>New Value</th>
+          <th>Confidence</th>
+          <th>Actor</th>
+          <th>Payload</th>
+          <th style="width:130px">Created</th>
+          <th style="width:50px"></th>
         </tr>
       </thead>
       <tbody>
         {% for sig in signals %}
         <tr>
-          <td><span class="text-muted">#{{ sig.pk }}</span></td>
-          <td><span class="ap-badge ap-badge-partial">{{ sig.signal_type }}</span></td>
+          <td><a href="{% url 'core_eval:learning_signal_detail' sig.pk %}" class="text-muted">#{{ sig.pk }}</a></td>
+          <td>
+            <span class="ap-badge
+              {% if sig.signal_type == 'field_correction' %}ap-badge-unmatched
+              {% elif sig.signal_type == 'approval_outcome' or sig.signal_type == 'auto_approve_outcome' %}ap-badge-matched
+              {% elif sig.signal_type == 'review_override' %}ap-badge-partial
+              {% else %}ap-badge-status-new{% endif %}">{{ sig.signal_type }}</span>
+          </td>
+          <td>
+            {% if sig.entity_type or sig.entity_id %}
+              <small>{{ sig.entity_type }}{% if sig.entity_id %}:{{ sig.entity_id }}{% endif %}</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
           <td>{% if sig.field_name %}<code class="small">{{ sig.field_name }}</code>{% else %}<small class="text-muted">--</small>{% endif %}</td>
           <td>
-            {% if sig.old_value or sig.new_value %}
-              <small class="text-danger">{{ sig.old_value|truncatechars:20 }}</small>
-              {% if sig.old_value and sig.new_value %}<i class="bi bi-arrow-right mx-1 text-muted"></i>{% endif %}
-              <small class="text-success">{{ sig.new_value|truncatechars:20 }}</small>
+            {% if sig.old_value %}
+              <small class="text-danger" title="{{ sig.old_value }}">{{ sig.old_value|truncatechars:30 }}</small>
+            {% elif sig.payload_json.status %}
+              <small class="text-muted" title="from payload">{{ sig.payload_json.status }}</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sig.new_value %}
+              <small class="text-success" title="{{ sig.new_value }}">{{ sig.new_value|truncatechars:30 }}</small>
+            {% elif sig.payload_json.is_touchless is not None %}
+              <small class="text-muted" title="touchless">{% if sig.payload_json.is_touchless %}touchless{% else %}manual{% endif %}</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sig.confidence %}
+              <small>{% widthratio sig.confidence 1 100 %}%</small>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sig.actor %}
+              <small>{{ sig.actor.email|truncatechars:20 }}</small>
+            {% else %}
+              <small class="text-muted">system</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if sig.payload_json %}
+              <details><summary class="text-muted small">view</summary><pre class="small mb-0 mt-1" style="max-height:100px;overflow:auto;white-space:pre-wrap">{{ sig.payload_pretty }}</pre></details>
             {% else %}
               <small class="text-muted">--</small>
             {% endif %}
           </td>
           <td><small class="text-muted">{{ sig.created_at|date:"M d, H:i:s" }}</small></td>
+          <td><a href="{% url 'core_eval:learning_signal_detail' sig.pk %}" class="btn btn-sm btn-outline-primary py-0 px-1" title="View details"><i class="bi bi-eye"></i></a></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+  {% else %}
+  <div class="ap-card-body text-center text-muted py-3">No linked learning signals.</div>
+  {% endif %}
 </div>
-{% else %}
-<div class="ap-card mb-3"><div class="ap-card-body text-center text-muted py-3">No linked learning signals.</div></div>
-{% endif %}
 {% endblock %}

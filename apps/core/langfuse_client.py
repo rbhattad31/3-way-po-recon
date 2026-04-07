@@ -18,6 +18,23 @@ _client = None
 _client_initialised = False
 
 
+# ---------------------------------------------------------------------------
+# Thread-local storage for the current Langfuse root span.
+# Pipelines call set_current_span() after start_trace() so that downstream
+# code (e.g. guardrails, services) can attach scores without threading
+# the span object through every function signature.
+# ---------------------------------------------------------------------------
+
+def get_current_span() -> Any:
+    """Return the thread-local Langfuse span, or None."""
+    return getattr(threading.current_thread(), "_langfuse_current_span", None)
+
+
+def set_current_span(span: Any) -> None:
+    """Store the current Langfuse span on the thread for downstream use."""
+    threading.current_thread()._langfuse_current_span = span
+
+
 def get_client():
     """Return the Langfuse client singleton, or None if not configured."""
     global _client, _client_initialised
@@ -254,6 +271,38 @@ def _extract_otel_trace_id(span: Any) -> Optional[str]:
     return None
 
 
+def _extract_session_id(span: Any) -> Optional[str]:
+    """Extract session.id from a Langfuse span's OTel attributes.
+
+    In Langfuse SDK v4, session_id is stored as an OTel attribute
+    (``session.id``) on the root span.  Child spans do NOT inherit it,
+    so we fall back to the thread-local root span stored via
+    ``set_current_span()``.
+    """
+    if not span:
+        # No span provided; try thread-local root span
+        root = get_current_span()
+        if root:
+            return _extract_session_id(root)
+        return None
+    try:
+        otel_span = getattr(span, "_otel_span", None)
+        if otel_span is not None:
+            attrs = getattr(otel_span, "attributes", None)
+            if attrs:
+                sid = attrs.get("session.id")
+                if sid:
+                    return sid
+    except Exception:
+        pass
+    # If this span doesn't have session.id, try the thread-local root span
+    # (only if the passed span is NOT the root span, to prevent recursion).
+    root = get_current_span()
+    if root is not None and root is not span:
+        return _extract_session_id(root)
+    return None
+
+
 def score_trace(
     trace_id: str,
     name: str,
@@ -272,12 +321,23 @@ def score_trace(
         return
     try:
         real_tid = _extract_otel_trace_id(span) if span else None
-        lf.create_score(
+        # Extract observation_id from span so the score is linked to both
+        # the trace and the specific observation in the Langfuse UI.
+        obs_id = getattr(span, "id", None) if span else None
+        # Extract session_id from span's OTel attributes so the score
+        # appears under the correct session in the Langfuse UI.
+        sess_id = _extract_session_id(span) if span else None
+        kwargs: Dict[str, Any] = dict(
             trace_id=real_tid or trace_id,
             name=name,
             value=value,
             comment=comment or None,
         )
+        if obs_id:
+            kwargs["observation_id"] = obs_id
+        if sess_id:
+            kwargs["session_id"] = sess_id
+        lf.create_score(**kwargs)
     except Exception as exc:
         logger.debug("Langfuse score_trace failed: %s", exc)
 
@@ -302,19 +362,26 @@ def score_observation(
     try:
         obs_id = getattr(observation, "id", None)
         trace_id = None
-        # Try to read trace_id from the observation's OTel span context
+        sess_id = None
+        # Try to read trace_id and session_id from the observation's OTel span
         otel_span = getattr(observation, "_otel_span", None)
         if otel_span is not None:
             sc = getattr(otel_span, "get_span_context", lambda: None)()
             if sc is not None:
                 trace_id = format(getattr(sc, "trace_id", 0), "032x")
-        lf.create_score(
+            attrs = getattr(otel_span, "attributes", None)
+            if attrs:
+                sess_id = attrs.get("session.id")
+        kwargs: Dict[str, Any] = dict(
             trace_id=trace_id or "",
             observation_id=obs_id,
             name=name,
             value=value,
             comment=comment or None,
         )
+        if sess_id:
+            kwargs["session_id"] = sess_id
+        lf.create_score(**kwargs)
     except Exception as exc:
         logger.debug("Langfuse score_observation failed: %s", exc)
 

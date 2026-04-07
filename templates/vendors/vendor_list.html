@@ -45,6 +45,10 @@
     <h4 class="mb-0 fw-semibold">Vendors</h4>
     <small style="color:var(--ap-text-muted)">Master vendor directory</small>
   </div>
+  <div class="d-flex align-items-center gap-2">
+  <a href="{% url 'vendors:vendor_create' %}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg me-1"></i>Add Vendor
+  </a>
   <form class="d-inline-flex gap-2" method="get">
     <select name="country" class="form-select form-select-sm" style="min-width:120px" onchange="this.form.submit()">
       <option value="">All Countries</option>
@@ -66,12 +70,13 @@
       </a>
     {% endif %}
   </form>
+  </div>
 </div>
 
 {# ── Vendor Table ── #}
 <div class="ap-card">
   <div class="ap-card-body p-0">
-    <table class="ap-table">
+    <table class="ap-table w-100">
       <thead>
         <tr>
           <th>Code</th><th>Name</th><th>Country</th>
