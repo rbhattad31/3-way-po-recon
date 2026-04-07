@@ -1,0 +1,1507 @@
+{% extends "procurement/proc_base.html" %}
+{% load static %}
+
+{% block title %}Procurement Configurations - LMG Procurement{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/procurement/configurations.css' %}">
+{% endblock %}
+
+{% block content %}
+
+<div class="cfg-hero mb-4">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-3" style="position:relative;z-index:1;">
+    <div class="d-flex align-items-center gap-3">
+      <div class="cfg-hero-icon">
+        <i class="bi bi-sliders2-vertical"></i>
+      </div>
+      <div>
+        <h4 class="cfg-hero-title">Procurement Configurations</h4>
+        <div class="cfg-hero-sub">Full admin control over seed data, catalogs, rules, vendors &amp; facility rooms</div>
+        <div class="d-flex flex-wrap gap-2 mt-2 position-relative" style="z-index:1;">
+          <span class="cfg-hero-badge"><i class="bi bi-database me-1"></i>Live DB Sync</span>
+          <span class="cfg-hero-badge"><i class="bi bi-shield-check me-1"></i>RBAC Secured</span>
+          <span class="cfg-hero-badge"><i class="bi bi-lightning-charge me-1"></i>AJAX Powered</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div class="cfg-kpi-row">
+  <div class="cfg-kpi-card {% if active_tab == 'sources' %}active{% endif %}" data-tab="sources">
+    <span class="cfg-kpi-card-icon">&#127760;</span>
+    <div class="cfg-kpi-card-label">Ext. Sources</div>
+    <div class="cfg-kpi-card-value">{{ stats.sources_total }}</div>
+    <div class="cfg-kpi-card-active">Active: <span>{{ stats.sources_active }}</span></div>
+  </div>
+  <div class="cfg-kpi-card {% if active_tab == 'rulesets' %}active{% endif %}" data-tab="rulesets">
+    <span class="cfg-kpi-card-icon"><i class="bi bi-card-checklist" style="font-size:1.25rem;color:#6366f1;"></i></span>
+    <div class="cfg-kpi-card-label">Rule Sets</div>
+    <div class="cfg-kpi-card-value">{{ stats.rulesets_total }}</div>
+    <div class="cfg-kpi-card-active">Active: <span>{{ stats.rulesets_active }}</span></div>
+  </div>
+  <div class="cfg-kpi-card {% if active_tab == 'products' %}active{% endif %}" data-tab="products">
+    <span class="cfg-kpi-card-icon"><i class="bi bi-box-seam" style="font-size:1.25rem;color:#0891b2;"></i></span>
+    <div class="cfg-kpi-card-label">Products</div>
+    <div class="cfg-kpi-card-value">{{ stats.products_total }}</div>
+    <div class="cfg-kpi-card-active">Active: <span>{{ stats.products_active }}</span></div>
+  </div>
+  <div class="cfg-kpi-card {% if active_tab == 'vendors' %}active{% endif %}" data-tab="vendors">
+    <span class="cfg-kpi-card-icon"><i class="bi bi-building" style="font-size:1.25rem;color:#d97706;"></i></span>
+    <div class="cfg-kpi-card-label">Vendors</div>
+    <div class="cfg-kpi-card-value">{{ stats.vendors_total }}</div>
+    <div class="cfg-kpi-card-active">Active: <span>{{ stats.vendors_active }}</span></div>
+  </div>
+  <div class="cfg-kpi-card {% if active_tab == 'rooms' %}active{% endif %}" data-tab="rooms">
+    <span class="cfg-kpi-card-icon"><i class="bi bi-door-open" style="font-size:1.25rem;color:#16a34a;"></i></span>
+    <div class="cfg-kpi-card-label">Rooms</div>
+    <div class="cfg-kpi-card-value">{{ stats.rooms_total }}</div>
+    <div class="cfg-kpi-card-active">Active: <span>{{ stats.rooms_active }}</span></div>
+  </div>
+  <div class="cfg-kpi-card {% if active_tab == 'hvacrules' %}active{% endif %}" data-tab="hvacrules">
+    <span class="cfg-kpi-card-icon"><i class="bi bi-diagram-3" style="font-size:1.25rem;color:#7c3aed;"></i></span>
+    <div class="cfg-kpi-card-label">HVAC Rules</div>
+    <div class="cfg-kpi-card-value">{{ stats.hvacrules_total }}</div>
+    <div class="cfg-kpi-card-active">Active: <span>{{ stats.hvacrules_active }}</span></div>
+  </div>
+</div>
+
+
+<nav class="cfg-tab-nav">
+  <button class="cfg-tab-btn {% if active_tab == 'sources' %}active{% endif %}" data-tab="sources">
+    <i class="bi bi-globe2"></i> External Sources
+  </button>
+  <button class="cfg-tab-btn {% if active_tab == 'rulesets' %}active{% endif %}" data-tab="rulesets">
+    <i class="bi bi-card-checklist"></i> Validation Rules
+  </button>
+  <button class="cfg-tab-btn {% if active_tab == 'products' %}active{% endif %}" data-tab="products">
+    <i class="bi bi-box-seam"></i> Products
+  </button>
+  <button class="cfg-tab-btn {% if active_tab == 'vendors' %}active{% endif %}" data-tab="vendors">
+    <i class="bi bi-building"></i> Vendors
+  </button>
+  <button class="cfg-tab-btn {% if active_tab == 'rooms' %}active{% endif %}" data-tab="rooms">
+    <i class="bi bi-door-open"></i> Rooms
+  </button>
+  <button class="cfg-tab-btn {% if active_tab == 'hvacrules' %}active{% endif %}" data-tab="hvacrules">
+    <i class="bi bi-diagram-3"></i> HVAC Rules
+  </button>
+</nav>
+
+<div class="cfg-tab-pane {% if active_tab == 'sources' %}active{% endif %}" id="pane-sources">
+  <div class="cfg-toolbar">
+    <div class="cfg-search-box">
+      <i class="bi bi-search"></i>
+      <input type="text" id="src-search" placeholder="Search source name, domain, type..." autocomplete="off">
+    </div>
+    <span class="cfg-badge-count" id="src-count">--</span>
+    <button class="btn-cfg-add" onclick="openAddModal('sources')">
+      <i class="bi bi-plus-circle-fill"></i> Add Source
+    </button>
+  </div>
+  <div class="cfg-table-wrap">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th>Source Name</th>
+          <th>Domain</th>
+          <th>Type</th>
+          <th>Priority</th>
+          <th>Trust</th>
+          <th>Discovery</th>
+          <th>Compliance</th>
+          <th>Mode</th>
+          <th>Status</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="src-tbody">
+        <tr><td colspan="10" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="cfg-tab-pane {% if active_tab == 'rulesets' %}active{% endif %}" id="pane-rulesets">
+  <div class="cfg-toolbar">
+    <div class="cfg-search-box">
+      <i class="bi bi-search"></i>
+      <input type="text" id="rs-search" placeholder="Search rule sets..." autocomplete="off">
+    </div>
+    <span class="cfg-badge-count" id="rs-count">--</span>
+    <button class="btn-cfg-add" onclick="openAddModal('rulesets')">
+      <i class="bi bi-plus-circle-fill"></i> Add Rule Set
+    </button>
+  </div>
+  <div class="cfg-table-wrap">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>Name</th>
+          <th>Domain</th>
+          <th>Schema</th>
+          <th>Type</th>
+          <th>Priority</th>
+          <th>Status</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="rs-tbody">
+        <tr><td colspan="8" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="cfg-tab-pane {% if active_tab == 'products' %}active{% endif %}" id="pane-products">
+  <div class="cfg-toolbar">
+    <div class="cfg-search-box">
+      <i class="bi bi-search"></i>
+      <input type="text" id="prod-search" placeholder="Search products..." autocomplete="off">
+    </div>
+    <span class="cfg-badge-count" id="prod-count">--</span>
+    <button class="btn-cfg-add" onclick="openAddModal('products')">
+      <i class="bi bi-plus-circle-fill"></i> Add Product
+    </button>
+  </div>
+  <div class="cfg-table-wrap">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th>SKU</th>
+          <th>Manufacturer</th>
+          <th>Product Name</th>
+          <th>System Type</th>
+          <th>Capacity (kW)</th>
+          <th>Refrigerant</th>
+          <th>Warranty</th>
+          <th>Status</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="prod-tbody">
+        <tr><td colspan="9" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="cfg-tab-pane {% if active_tab == 'vendors' %}active{% endif %}" id="pane-vendors">
+  <div class="cfg-toolbar">
+    <div class="cfg-search-box">
+      <i class="bi bi-search"></i>
+      <input type="text" id="vend-search" placeholder="Search vendors..." autocomplete="off">
+    </div>
+    <span class="cfg-badge-count" id="vend-count">--</span>
+    <button class="btn-cfg-add" onclick="openAddModal('vendors')">
+      <i class="bi bi-plus-circle-fill"></i> Add Vendor
+    </button>
+  </div>
+  <div class="cfg-table-wrap">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th>Vendor Name</th>
+          <th>Country</th>
+          <th>City</th>
+          <th>Reliability</th>
+          <th>Lead Time</th>
+          <th>On-Time %</th>
+          <th>Preferred</th>
+          <th>Status</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="vend-tbody">
+        <tr><td colspan="9" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="cfg-tab-pane {% if active_tab == 'rooms' %}active{% endif %}" id="pane-rooms">
+  <div class="cfg-toolbar">
+    <div class="cfg-search-box">
+      <i class="bi bi-search"></i>
+      <input type="text" id="room-search" placeholder="Search rooms..." autocomplete="off">
+    </div>
+    <span class="cfg-badge-count" id="room-count">--</span>
+    <button class="btn-cfg-add" onclick="openAddModal('rooms')">
+      <i class="bi bi-plus-circle-fill"></i> Add Room
+    </button>
+  </div>
+  <div class="cfg-table-wrap">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>Building</th>
+          <th>Floor</th>
+          <th>Usage</th>
+          <th>Area (m2)</th>
+          <th>Cooling (kW)</th>
+          <th>Contact</th>
+          <th>Status</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="room-tbody">
+        <tr><td colspan="9" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="cfg-tab-pane {% if active_tab == 'hvacrules' %}active{% endif %}" id="pane-hvacrules">
+  <div class="cfg-toolbar">
+    <div class="cfg-search-box">
+      <i class="bi bi-search"></i>
+      <input type="text" id="hvac-search" placeholder="Search rule code, name, system..." autocomplete="off">
+    </div>
+    <span class="cfg-badge-count" id="hvac-count">--</span>
+    <button class="btn-cfg-add" onclick="openAddModal('hvacrules')">
+      <i class="bi bi-plus-circle-fill"></i> Add Rule
+    </button>
+  </div>
+  <div class="cfg-table-wrap">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th>Rule ID</th>
+          <th>Store Type</th>
+          <th>Area (sq ft)</th>
+          <th>Ambient Temp</th>
+          <th>Budget</th>
+          <th>Energy Priority</th>
+          <th>Recommended System</th>
+          <th>Priority</th>
+          <th>Status</th>
+          <th style="text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="hvac-tbody">
+        <tr><td colspan="10" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal fade" id="modalSource" tabindex="-1" aria-labelledby="modalSourceLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;padding:.9rem 1.25rem;">
+        <h5 class="modal-title fw-semibold" id="modalSourceLabel" style="font-size:.95rem;">
+          <i class="bi bi-globe modal-title-icon text-primary"></i>
+          <span id="modalSourceTitle">Add External Source</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:1.1rem 1.25rem;">
+        <input type="hidden" id="srcId" value="">
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Source Name <span class="text-danger">*</span></label>
+            <input id="srcName" class="form-control-cfg" type="text" placeholder="e.g. Daikin MEA Official">
+          </div>
+          <div>
+            <label class="form-label-cfg">Domain <span class="text-danger">*</span></label>
+            <input id="srcDomain" class="form-control-cfg" type="text" placeholder="e.g. daikinmea.com">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Source Type</label>
+            <select id="srcType" class="form-control-cfg">
+              {% for val, lbl in source_type_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label-cfg">Fetch Mode</label>
+            <select id="srcFetchMode" class="form-control-cfg">
+              {% for val, lbl in fetch_mode_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Priority <small class="text-muted">(lower = higher priority)</small></label>
+            <input id="srcPriority" class="form-control-cfg" type="number" min="1" max="100" value="10">
+          </div>
+          <div>
+            <label class="form-label-cfg">Trust Score <small class="text-muted">(0.0 - 1.0)</small></label>
+            <input id="srcTrustScore" class="form-control-cfg" type="number" min="0" max="1" step="0.05" value="0.8">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Country Scope <small class="text-muted">(comma-separated, e.g. UAE,KSA)</small></label>
+          <input id="srcCountryScope" class="form-control-cfg" type="text" placeholder="UAE, KSA, QAT">
+        </div>
+        <div class="mb-3 d-flex gap-4">
+          <label class="form-check-cfg">
+            <input type="checkbox" id="srcDiscovery" checked>
+            Allow for Discovery
+          </label>
+          <label class="form-check-cfg">
+            <input type="checkbox" id="srcCompliance">
+            Allow for Compliance
+          </label>
+          <label class="form-check-cfg">
+            <input type="checkbox" id="srcActive" checked>
+            Active
+          </label>
+        </div>
+        <div>
+          <label class="form-label-cfg">Notes</label>
+          <textarea id="srcNotes" class="form-control-cfg" placeholder="Optional notes..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;padding:.75rem 1.25rem;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;">Cancel</button>
+        <button type="button" class="btn btn-sm" id="srcSaveBtn"
+                style="background:#1665D8;color:#fff;font-size:.82rem;font-weight:500;"
+                onclick="saveSource()">
+          <i class="bi bi-check-lg me-1"></i> <span id="srcSaveBtnLabel">Save Source</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="modalRuleset" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;padding:.9rem 1.25rem;">
+        <h5 class="modal-title fw-semibold" style="font-size:.95rem;">
+          <i class="bi bi-card-checklist modal-title-icon text-primary"></i>
+          <span id="modalRulesetTitle">Add Validation Rule Set</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:1.1rem 1.25rem;">
+        <input type="hidden" id="rsId" value="">
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Rule Set Code <span class="text-danger">*</span></label>
+            <input id="rsCode" class="form-control-cfg" type="text" placeholder="e.g. HVAC_DOC_CHECK_V1">
+          </div>
+          <div>
+            <label class="form-label-cfg">Rule Set Name <span class="text-danger">*</span></label>
+            <input id="rsName" class="form-control-cfg" type="text" placeholder="e.g. HVAC Document Checklist">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Domain Code</label>
+            <input id="rsDomain" class="form-control-cfg" type="text" placeholder="e.g. HVAC (blank = all)">
+          </div>
+          <div>
+            <label class="form-label-cfg">Schema Code</label>
+            <input id="rsSchema" class="form-control-cfg" type="text" placeholder="e.g. HVAC_GCC_V1">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Validation Type</label>
+            <select id="rsType" class="form-control-cfg">
+              {% for val, lbl in validation_type_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label-cfg">Priority <small class="text-muted">(lower = runs first)</small></label>
+            <input id="rsPriority" class="form-control-cfg" type="number" min="1" value="100">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Description</label>
+          <textarea id="rsDescription" class="form-control-cfg" placeholder="What does this rule set check?"></textarea>
+        </div>
+        <div class="mb-2">
+          <label class="form-check-cfg">
+            <input type="checkbox" id="rsActive" checked>
+            Active
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;padding:.75rem 1.25rem;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;">Cancel</button>
+        <button type="button" class="btn btn-sm"
+                style="background:#1665D8;color:#fff;font-size:.82rem;font-weight:500;"
+                onclick="saveRuleset()">
+          <i class="bi bi-check-lg me-1"></i> Save Rule Set
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="modalProduct" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;padding:.9rem 1.25rem;">
+        <h5 class="modal-title fw-semibold" style="font-size:.95rem;">
+          <i class="bi bi-box-seam modal-title-icon text-primary"></i>
+          <span id="modalProductTitle">Add Product</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:1.1rem 1.25rem;">
+        <input type="hidden" id="prodId" value="">
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">SKU <span class="text-danger">*</span></label>
+            <input id="prodSku" class="form-control-cfg" type="text" placeholder="e.g. DAI-VRF-8KW-001">
+          </div>
+          <div>
+            <label class="form-label-cfg">Manufacturer <span class="text-danger">*</span></label>
+            <input id="prodManufacturer" class="form-control-cfg" type="text" placeholder="e.g. Daikin">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Product Name <span class="text-danger">*</span></label>
+          <input id="prodName" class="form-control-cfg" type="text" placeholder="e.g. VRV-IV+ Heat Pump 8kW">
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">System Type</label>
+            <select id="prodSystemType" class="form-control-cfg">
+              {% for val, lbl in system_type_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label-cfg">Refrigerant Type</label>
+            <input id="prodRefrigerant" class="form-control-cfg" type="text" placeholder="e.g. R-32">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Capacity (kW) <span class="text-danger">*</span></label>
+            <input id="prodCapacity" class="form-control-cfg" type="number" step="0.1" min="0" placeholder="8.0">
+          </div>
+          <div>
+            <label class="form-label-cfg">Power Input (kW) <span class="text-danger">*</span></label>
+            <input id="prodPowerInput" class="form-control-cfg" type="number" step="0.1" min="0" placeholder="2.4">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Sound Level Full Load (dB)</label>
+            <input id="prodSoundFull" class="form-control-cfg" type="number" placeholder="48">
+          </div>
+          <div>
+            <label class="form-label-cfg">Sound Level Part Load (dB)</label>
+            <input id="prodSoundPart" class="form-control-cfg" type="number" placeholder="38 (optional)">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">COP Rating <small class="text-muted">(optional)</small></label>
+            <input id="prodCop" class="form-control-cfg" type="number" step="0.01" placeholder="4.2">
+          </div>
+          <div>
+            <label class="form-label-cfg">SEER Rating <small class="text-muted">(optional)</small></label>
+            <input id="prodSeer" class="form-control-cfg" type="number" step="0.01" placeholder="6.1">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Warranty (months)</label>
+            <input id="prodWarranty" class="form-control-cfg" type="number" value="24">
+          </div>
+          <div>
+            <label class="form-label-cfg">Weight (kg) <small class="text-muted">(optional)</small></label>
+            <input id="prodWeight" class="form-control-cfg" type="number" placeholder="">
+          </div>
+        </div>
+        <div class="d-flex gap-4 mb-2">
+          <label class="form-check-cfg">
+            <input type="checkbox" id="prodInstallSupport">
+            Requires Installation Support
+          </label>
+          <label class="form-check-cfg">
+            <input type="checkbox" id="prodActive" checked>
+            Active
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;padding:.75rem 1.25rem;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;">Cancel</button>
+        <button type="button" class="btn btn-sm"
+                style="background:#1665D8;color:#fff;font-size:.82rem;font-weight:500;"
+                onclick="saveProduct()">
+          <i class="bi bi-check-lg me-1"></i> Save Product
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="modalVendor" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;padding:.9rem 1.25rem;">
+        <h5 class="modal-title fw-semibold" style="font-size:.95rem;">
+          <i class="bi bi-building modal-title-icon text-primary"></i>
+          <span id="modalVendorTitle">Add Vendor</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:1.1rem 1.25rem;">
+        <input type="hidden" id="vendId" value="">
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Vendor Name <span class="text-danger">*</span></label>
+            <input id="vendName" class="form-control-cfg" type="text" placeholder="e.g. Dubai HVAC Supplies LLC">
+          </div>
+          <div>
+            <label class="form-label-cfg">Country <span class="text-danger">*</span></label>
+            <input id="vendCountry" class="form-control-cfg" type="text" placeholder="e.g. UAE">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">City <span class="text-danger">*</span></label>
+            <input id="vendCity" class="form-control-cfg" type="text" placeholder="e.g. Dubai">
+          </div>
+          <div>
+            <label class="form-label-cfg">Contact Email</label>
+            <input id="vendEmail" class="form-control-cfg" type="email" placeholder="contact@vendor.com">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Contact Phone</label>
+            <input id="vendPhone" class="form-control-cfg" type="text" placeholder="+971 4 xxx xxxx">
+          </div>
+          <div>
+            <label class="form-label-cfg">Payment Terms</label>
+            <input id="vendPaymentTerms" class="form-control-cfg" type="text" placeholder="e.g. Net 30">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Reliability Score <small class="text-muted">(0.0 - 5.0)</small></label>
+            <input id="vendReliability" class="form-control-cfg" type="number" step="0.1" min="0" max="5" value="3.5">
+          </div>
+          <div>
+            <label class="form-label-cfg">Avg Lead Time (days)</label>
+            <input id="vendLeadTime" class="form-control-cfg" type="number" min="1" value="7">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">On-Time Delivery %</label>
+            <input id="vendOnTime" class="form-control-cfg" type="number" step="0.1" min="0" max="100" value="95">
+          </div>
+          <div>
+            <div class="d-flex flex-column gap-2 pt-3">
+              <label class="form-check-cfg">
+                <input type="checkbox" id="vendPreferred">
+                Preferred Vendor
+              </label>
+              <label class="form-check-cfg">
+                <input type="checkbox" id="vendBulkDiscount">
+                Bulk Discount Available
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Address</label>
+          <textarea id="vendAddress" class="form-control-cfg" placeholder="Full address..."></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Notes</label>
+          <textarea id="vendNotes" class="form-control-cfg" placeholder="Additional notes..."></textarea>
+        </div>
+        <div class="d-flex gap-4">
+          <label class="form-check-cfg">
+            <input type="checkbox" id="vendRushOrder">
+            Rush Order Capable
+          </label>
+          <label class="form-check-cfg">
+            <input type="checkbox" id="vendActive" checked>
+            Active
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;padding:.75rem 1.25rem;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;">Cancel</button>
+        <button type="button" class="btn btn-sm"
+                style="background:#1665D8;color:#fff;font-size:.82rem;font-weight:500;"
+                onclick="saveVendor()">
+          <i class="bi bi-check-lg me-1"></i> Save Vendor
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="modalRoom" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;padding:.9rem 1.25rem;">
+        <h5 class="modal-title fw-semibold" style="font-size:.95rem;">
+          <i class="bi bi-door-open modal-title-icon text-primary"></i>
+          <span id="modalRoomTitle">Add Room</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:1.1rem 1.25rem;">
+        <input type="hidden" id="roomId" value="">
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Room Code <span class="text-danger">*</span></label>
+            <input id="roomCode" class="form-control-cfg" type="text" placeholder="e.g. OFF-101">
+          </div>
+          <div>
+            <label class="form-label-cfg">Building Name <span class="text-danger">*</span></label>
+            <input id="roomBuilding" class="form-control-cfg" type="text" placeholder="e.g. Tower A">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Floor Number <small class="text-muted">(0=ground, -1=basement)</small></label>
+            <input id="roomFloor" class="form-control-cfg" type="number" value="0">
+          </div>
+          <div>
+            <label class="form-label-cfg">Usage Type</label>
+            <select id="roomUsage" class="form-control-cfg">
+              {% for val, lbl in room_usage_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Area (m2) <span class="text-danger">*</span></label>
+            <input id="roomArea" class="form-control-cfg" type="number" step="0.1" min="1" placeholder="120.5">
+          </div>
+          <div>
+            <label class="form-label-cfg">Ceiling Height (m) <span class="text-danger">*</span></label>
+            <input id="roomCeiling" class="form-control-cfg" type="number" step="0.1" min="1" value="3.0">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Design Temp (C)</label>
+            <input id="roomDesignTemp" class="form-control-cfg" type="number" step="0.5" value="22.0">
+          </div>
+          <div>
+            <label class="form-label-cfg">Temp Tolerance (+/- C)</label>
+            <input id="roomTempTol" class="form-control-cfg" type="number" step="0.5" value="1.0">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Cooling Load (kW)</label>
+            <input id="roomCoolingLoad" class="form-control-cfg" type="number" step="0.1" value="5.0">
+          </div>
+          <div>
+            <label class="form-label-cfg">Humidity Target % <small class="text-muted">(optional)</small></label>
+            <input id="roomHumidity" class="form-control-cfg" type="number" min="0" max="100" placeholder="">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Noise Limit (dB) <small class="text-muted">(optional)</small></label>
+            <input id="roomNoise" class="form-control-cfg" type="number" placeholder="">
+          </div>
+          <div>
+            <label class="form-label-cfg">Contact Name</label>
+            <input id="roomContactName" class="form-control-cfg" type="text" placeholder="">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Contact Email</label>
+          <input id="roomContactEmail" class="form-control-cfg" type="email" placeholder="">
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Location Description</label>
+          <textarea id="roomLocationDesc" class="form-control-cfg" placeholder="Physical/spatial constraints, access notes..."></textarea>
+        </div>
+        <div>
+          <label class="form-check-cfg">
+            <input type="checkbox" id="roomActive" checked>
+            Active
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;padding:.75rem 1.25rem;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;">Cancel</button>
+        <button type="button" class="btn btn-sm"
+                style="background:#1665D8;color:#fff;font-size:.82rem;font-weight:500;"
+                onclick="saveRoom()">
+          <i class="bi bi-check-lg me-1"></i> Save Room
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="modalHvacRule" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;padding:.9rem 1.25rem;">
+        <h5 class="modal-title fw-semibold" style="font-size:.95rem;">
+          <i class="bi bi-diagram-3 modal-title-icon" style="color:#7c3aed;"></i>
+          <span id="modalHvacRuleTitle">Add HVAC Rule</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:1.1rem 1.25rem;">
+        <input type="hidden" id="hrId" value="">
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Rule ID <span class="text-danger">*</span></label>
+            <input id="hrCode" class="form-control-cfg" type="text" placeholder="e.g. R1" maxlength="10">
+          </div>
+          <div>
+            <label class="form-label-cfg">Rule Name <span class="text-danger">*</span></label>
+            <input id="hrName" class="form-control-cfg" type="text" placeholder="e.g. Mall -- any size">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Store Type <small class="text-muted">(blank = Any)</small></label>
+            <select id="hrStoreType" class="form-control-cfg">
+              {% for val, lbl in hvac_store_type_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label-cfg">Priority <small class="text-muted">(lower wins)</small></label>
+            <input id="hrPriority" class="form-control-cfg" type="number" min="1" value="100">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Area Min (sq ft) <small class="text-muted">(optional)</small></label>
+            <input id="hrAreaMin" class="form-control-cfg" type="number" step="1" min="0" placeholder="e.g. 2000">
+          </div>
+          <div>
+            <label class="form-label-cfg">Area Max (sq ft) <small class="text-muted">(optional)</small></label>
+            <input id="hrAreaMax" class="form-control-cfg" type="number" step="1" min="0" placeholder="e.g. 5000">
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Ambient Temp Min (C) <small class="text-muted">(optional)</small></label>
+            <input id="hrAmbientTemp" class="form-control-cfg" type="number" step="0.5" placeholder="e.g. 45">
+          </div>
+          <div>
+            <label class="form-label-cfg">Budget Level <small class="text-muted">(blank = Any)</small></label>
+            <select id="hrBudget" class="form-control-cfg">
+              {% for val, lbl in hvac_budget_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
+            <label class="form-label-cfg">Energy Priority <small class="text-muted">(blank = Any)</small></label>
+            <select id="hrEnergyPriority" class="form-control-cfg">
+              {% for val, lbl in hvac_energy_priority_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label-cfg">Recommended System <span class="text-danger">*</span></label>
+            <select id="hrSystem" class="form-control-cfg">
+              <option value="">-- Select --</option>
+              {% for val, lbl in system_type_choices %}
+                <option value="{{ val }}">{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Alternate System <small class="text-muted">(optional)</small></label>
+          <select id="hrAltSystem" class="form-control-cfg">
+            <option value="">None</option>
+            {% for val, lbl in system_type_choices %}
+              <option value="{{ val }}">{{ lbl }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Rationale</label>
+          <textarea id="hrRationale" class="form-control-cfg" rows="2" placeholder="Brief explanation of why this rule applies..."></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Notes</label>
+          <textarea id="hrNotes" class="form-control-cfg" rows="2" placeholder="Internal notes..."></textarea>
+        </div>
+        <div>
+          <label class="form-check-cfg">
+            <input type="checkbox" id="hrActive" checked>
+            Active
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;padding:.75rem 1.25rem;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;">Cancel</button>
+        <button type="button" class="btn btn-sm"
+                style="background:#7c3aed;color:#fff;font-size:.82rem;font-weight:500;"
+                onclick="saveHvacRule()">
+          <i class="bi bi-check-lg me-1"></i> Save Rule
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="modalDelete" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content" style="border-radius:12px;">
+      <div class="modal-body cfg-delete-confirm-body">
+        <i class="bi bi-trash3-fill cfg-delete-icon"></i>
+        <p id="deleteConfirmText">Are you sure you want to delete this item?<br>This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer justify-content-center border-0 pt-0 pb-4 gap-2">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;min-width:80px;">Cancel</button>
+        <button type="button" id="deleteConfirmBtn" class="btn btn-sm btn-danger" style="font-size:.82rem;min-width:100px;">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Toast container #}
+<div class="cfg-toast-wrap" id="toastWrap"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+const CSRF = '{{ csrf_token }}';
+
+// ── Utility helpers ──────────────────────────────────────────────────────────
+
+function toast(msg, type) {
+  var icon = type === 'success' ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill';
+  var color = type === 'success' ? '#16a34a' : '#e11d48';
+  var $t = $('<div class="cfg-toast ' + type + '">' +
+    '<i class="bi ' + icon + '" style="color:' + color + ';font-size:.95rem;flex-shrink:0;"></i>' +
+    '<span>' + msg + '</span></div>');
+  $('#toastWrap').append($t);
+  setTimeout(function() { $t.fadeOut(300, function() { $t.remove(); }); }, 3500);
+}
+
+function badgeActive(active) {
+  return active
+    ? '<span class="badge-active"><i class="bi bi-circle-fill" style="font-size:.45rem;"></i>Active</span>'
+    : '<span class="badge-inactive"><i class="bi bi-circle" style="font-size:.45rem;"></i>Inactive</span>';
+}
+
+function boolIcon(val) {
+  return val
+    ? '<i class="bi bi-check-circle-fill text-success" title="Yes"></i>'
+    : '<i class="bi bi-dash text-muted" title="No"></i>';
+}
+
+function scoreBar(val, max) {
+  var pct = Math.round((val / max) * 100);
+  return '<div class="score-bar-wrap">' +
+    '<div class="score-bar" style="width:' + pct + 'px;max-width:60px;min-width:4px;"></div>' +
+    '<span class="score-val">' + val + '</span></div>';
+}
+
+function ajax(url, data, successFn) {
+  $.ajax({
+    url: url, type: 'POST',
+    data: JSON.stringify(data),
+    contentType: 'application/json',
+    headers: { 'X-CSRFToken': CSRF },
+    success: function(resp) {
+      if (resp.success) {
+        toast(resp.message, 'success');
+        if (successFn) successFn(resp);
+      } else {
+        toast(resp.message || 'Operation failed.', 'error');
+      }
+    },
+    error: function(xhr) {
+      var msg = 'Request failed.';
+      try { msg = JSON.parse(xhr.responseText).message || msg; } catch(e) {}
+      toast(msg, 'error');
+    }
+  });
+}
+
+// ── Active tab management ────────────────────────────────────────────────────
+var activeTab = '{{ active_tab }}';
+var loadedTabs = {};
+
+function switchTab(tab) {
+  activeTab = tab;
+  $('.cfg-tab-btn').removeClass('active');
+  $('.cfg-tab-btn[data-tab="' + tab + '"]').addClass('active');
+  $('.cfg-tab-pane').removeClass('active');
+  $('#pane-' + tab).addClass('active');
+  $('.cfg-kpi-card').removeClass('active');
+  $('.cfg-kpi-card[data-tab="' + tab + '"]').addClass('active');
+  if (!loadedTabs[tab]) { loadTab(tab); }
+}
+
+function loadTab(tab) {
+  loadedTabs[tab] = true;
+  var q = $('#' + tab.slice(0,4) + '-search').val() || '';
+  var urlMap = {
+    sources: '{% url "procurement:api_config_sources" %}',
+    rulesets: '{% url "procurement:api_config_rulesets" %}',
+    products: '{% url "procurement:api_config_products" %}',
+    vendors: '{% url "procurement:api_config_vendors" %}',
+    rooms: '{% url "procurement:api_config_rooms" %}',
+    hvacrules: '{% url "procurement:api_config_hvacrules" %}'
+  };
+  $.get(urlMap[tab] + '?q=' + encodeURIComponent(q), function(data) {
+    renderTab(tab, data.items);
+  });
+}
+
+function reloadTab(tab) {
+  loadedTabs[tab] = false;
+  loadTab(tab);
+}
+
+// ── Tab renderers ────────────────────────────────────────────────────────────
+
+function renderTab(tab, items) {
+  var prefix = {sources:'src', rulesets:'rs', products:'prod', vendors:'vend', rooms:'room', hvacrules:'hvac'}[tab];
+  $('#' + prefix + '-count').text(items.length + ' record' + (items.length !== 1 ? 's' : ''));
+  if (items.length === 0) {
+    var span = {sources:10, rulesets:8, products:9, vendors:9, rooms:9, hvacrules:10}[tab];
+    $('#' + prefix + '-tbody').html(
+      '<tr><td colspan="' + span + '" class="cfg-empty">' +
+      '<i class="bi bi-inbox"></i><p>No records found. Click "Add" to create the first one.</p></td></tr>'
+    );
+    return;
+  }
+  var html = '';
+  if (tab === 'sources') {
+    $.each(items, function(i, s) {
+      html += '<tr data-id="' + s.id + '">';
+      html += '<td><strong>' + escHtml(s.source_name) + '</strong></td>';
+      html += '<td><code style="font-size:.74rem;background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;">' + escHtml(s.domain) + '</code></td>';
+      html += '<td><span style="font-size:.72rem;background:#eff6ff;color:#1665D8;padding:.12rem .4rem;border-radius:4px;font-weight:500;">' + escHtml(s.source_type_display) + '</span></td>';
+      html += '<td>' + s.priority + '</td>';
+      html += '<td>' + scoreBar(s.trust_score, 1) + '</td>';
+      html += '<td>' + boolIcon(s.allowed_for_discovery) + '</td>';
+      html += '<td>' + boolIcon(s.allowed_for_compliance) + '</td>';
+      html += '<td><span style="font-size:.72rem;">' + escHtml(s.fetch_mode) + '</span></td>';
+      html += '<td>' + badgeActive(s.is_active) + '</td>';
+      html += '<td class="cfg-col-actions">';
+      html += '<button class="btn-cfg-edit me-1" onclick="editSource(' + s.id + ')"><i class="bi bi-pencil"></i></button>';
+      html += '<button class="btn-cfg-toggle' + (s.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'sources\',' + s.id + ')" title="' + (s.is_active ? 'Deactivate' : 'Activate') + '"><i class="bi bi-' + (s.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
+      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'sources\',' + s.id + ',\'' + escJs(s.source_name) + '\')"><i class="bi bi-trash3"></i></button>';
+      html += '</td></tr>';
+    });
+  } else if (tab === 'rulesets') {
+    $.each(items, function(i, r) {
+      html += '<tr data-id="' + r.id + '">';
+      html += '<td><code style="font-size:.74rem;background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;">' + escHtml(r.rule_set_code) + '</code></td>';
+      html += '<td>' + escHtml(r.rule_set_name) + '</td>';
+      html += '<td><span style="font-size:.75rem;color:#374151;">' + (r.domain_code || '<em style="color:#9ca3af;">any</em>') + '</span></td>';
+      html += '<td><span style="font-size:.75rem;color:#374151;">' + (r.schema_code || '<em style="color:#9ca3af;">any</em>') + '</span></td>';
+      html += '<td><span style="font-size:.72rem;background:#fef3c7;color:#92400e;padding:.12rem .4rem;border-radius:4px;">' + escHtml(r.validation_type_display) + '</span></td>';
+      html += '<td>' + r.priority + '</td>';
+      html += '<td>' + badgeActive(r.is_active) + '</td>';
+      html += '<td class="cfg-col-actions">';
+      html += '<button class="btn-cfg-edit me-1" onclick="editRuleset(' + r.id + ')"><i class="bi bi-pencil"></i></button>';
+      html += '<button class="btn-cfg-toggle' + (r.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'rulesets\',' + r.id + ')"><i class="bi bi-' + (r.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
+      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'rulesets\',' + r.id + ',\'' + escJs(r.rule_set_code) + '\')"><i class="bi bi-trash3"></i></button>';
+      html += '</td></tr>';
+    });
+  } else if (tab === 'products') {
+    $.each(items, function(i, p) {
+      html += '<tr data-id="' + p.id + '">';
+      html += '<td><code style="font-size:.74rem;background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;">' + escHtml(p.sku) + '</code></td>';
+      html += '<td><strong>' + escHtml(p.manufacturer) + '</strong></td>';
+      html += '<td>' + escHtml(p.product_name) + '</td>';
+      html += '<td><span style="font-size:.72rem;background:#eff6ff;color:#1665D8;padding:.12rem .4rem;border-radius:4px;">' + escHtml(p.system_type_display) + '</span></td>';
+      html += '<td>' + p.capacity_kw + ' kW</td>';
+      html += '<td><span style="font-size:.76rem;">' + (p.refrigerant_type || '-') + '</span></td>';
+      html += '<td>' + p.warranty_months + ' mo</td>';
+      html += '<td>' + badgeActive(p.is_active) + '</td>';
+      html += '<td class="cfg-col-actions">';
+      html += '<button class="btn-cfg-edit me-1" onclick="editProduct(' + p.id + ')"><i class="bi bi-pencil"></i></button>';
+      html += '<button class="btn-cfg-toggle' + (p.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'products\',' + p.id + ')"><i class="bi bi-' + (p.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
+      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'products\',' + p.id + ',\'' + escJs(p.sku) + '\')"><i class="bi bi-trash3"></i></button>';
+      html += '</td></tr>';
+    });
+  } else if (tab === 'vendors') {
+    $.each(items, function(i, v) {
+      html += '<tr data-id="' + v.id + '">';
+      html += '<td><strong>' + escHtml(v.vendor_name) + '</strong>' +
+        (v.preferred_vendor ? ' <span class="badge-preferred ms-1">Preferred</span>' : '') + '</td>';
+      html += '<td>' + escHtml(v.country) + '</td>';
+      html += '<td>' + escHtml(v.city) + '</td>';
+      html += '<td>' + scoreBar(v.reliability_score, 5) + '</td>';
+      html += '<td>' + v.average_lead_time_days + ' days</td>';
+      html += '<td>' + v.on_time_delivery_pct + '%</td>';
+      html += '<td>' + boolIcon(v.preferred_vendor) + '</td>';
+      html += '<td>' + badgeActive(v.is_active) + '</td>';
+      html += '<td class="cfg-col-actions">';
+      html += '<button class="btn-cfg-edit me-1" onclick="editVendor(' + v.id + ')"><i class="bi bi-pencil"></i></button>';
+      html += '<button class="btn-cfg-toggle' + (v.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'vendors\',' + v.id + ')"><i class="bi bi-' + (v.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
+      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'vendors\',' + v.id + ',\'' + escJs(v.vendor_name) + '\')"><i class="bi bi-trash3"></i></button>';
+      html += '</td></tr>';
+    });
+  } else if (tab === 'rooms') {
+    $.each(items, function(i, r) {
+      html += '<tr data-id="' + r.id + '">';
+      html += '<td><code style="font-size:.74rem;background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;">' + escHtml(r.room_code) + '</code></td>';
+      html += '<td>' + escHtml(r.building_name) + '</td>';
+      html += '<td>' + r.floor_number + '</td>';
+      html += '<td><span style="font-size:.72rem;background:#f0fdf4;color:#16a34a;padding:.12rem .4rem;border-radius:4px;">' + escHtml(r.usage_type_display) + '</span></td>';
+      html += '<td>' + r.area_sqm + ' m2</td>';
+      html += '<td>' + r.design_cooling_load_kw + ' kW</td>';
+      html += '<td style="font-size:.76rem;">' + (r.contact_name ? escHtml(r.contact_name) : '-') + '</td>';
+      html += '<td>' + badgeActive(r.is_active) + '</td>';
+      html += '<td class="cfg-col-actions">';
+      html += '<button class="btn-cfg-edit me-1" onclick="editRoom(' + r.id + ')"><i class="bi bi-pencil"></i></button>';
+      html += '<button class="btn-cfg-toggle' + (r.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'rooms\',' + r.id + ')"><i class="bi bi-' + (r.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
+      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'rooms\',' + r.id + ',\'' + escJs(r.room_code) + '\')"><i class="bi bi-trash3"></i></button>';
+      html += '</td></tr>';
+    });
+  } else if (tab === 'hvacrules') {
+    $.each(items, function(i, r) {
+      html += '<tr data-id="' + r.id + '">';
+      html += '<td><code style="font-size:.74rem;background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;">' + escHtml(r.rule_code) + '</code></td>';
+      html += '<td><span style="font-size:.72rem;">' + escHtml(r.store_type_display) + '</span></td>';
+      html += '<td><span style="font-size:.72rem;">' + escHtml(r.area_display) + '</span></td>';
+      html += '<td><span style="font-size:.72rem;">' + escHtml(r.temp_display) + '</span></td>';
+      html += '<td><span style="font-size:.72rem;">' + escHtml(r.budget_display) + '</span></td>';
+      html += '<td><span style="font-size:.72rem;">' + escHtml(r.energy_priority_display) + '</span></td>';
+      html += '<td><span style="font-size:.72rem;background:#ede9fe;color:#6d28d9;padding:.12rem .45rem;border-radius:4px;font-weight:600;">' + escHtml(r.recommended_system_display) + '</span></td>';
+      html += '<td style="font-size:.78rem;">' + r.priority + '</td>';
+      html += '<td>' + badgeActive(r.is_active) + '</td>';
+      html += '<td class="cfg-col-actions">';
+      html += '<button class="btn-cfg-edit me-1" onclick="editHvacRule(' + r.id + ')"><i class="bi bi-pencil"></i></button>';
+      html += '<button class="btn-cfg-toggle' + (r.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'hvacrules\',' + r.id + ')" title="' + (r.is_active ? 'Deactivate' : 'Activate') + '"><i class="bi bi-' + (r.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
+      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'hvacrules\',' + r.id + ',\'' + escJs(r.rule_code) + '\')"><i class="bi bi-trash3"></i></button>';
+      html += '</td></tr>';
+    });
+  }
+  $('#' + prefix + '-tbody').html(html);
+}
+
+// ── Escape helpers ───────────────────────────────────────────────────────────
+function escHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escJs(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+}
+
+// ── Open add modal ───────────────────────────────────────────────────────────
+function openAddModal(tab) {
+  var modalMap = {sources:'modalSource',rulesets:'modalRuleset',products:'modalProduct',vendors:'modalVendor',rooms:'modalRoom',hvacrules:'modalHvacRule'};
+  var titleMap = {sources:'Add External Source',rulesets:'Add Validation Rule Set',products:'Add Product',vendors:'Add Vendor',rooms:'Add Room',hvacrules:'Add HVAC Rule'};
+  var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById(modalMap[tab]));
+
+  // Reset form
+  if (tab === 'sources') {
+    $('#srcId').val(''); $('#srcName').val(''); $('#srcDomain').val('');
+    $('#srcType').val('OEM_OFFICIAL'); $('#srcFetchMode').val('PAGE');
+    $('#srcPriority').val('10'); $('#srcTrustScore').val('0.8');
+    $('#srcCountryScope').val(''); $('#srcNotes').val('');
+    $('#srcDiscovery').prop('checked', true); $('#srcCompliance').prop('checked', false);
+    $('#srcActive').prop('checked', true);
+    $('#modalSourceTitle').text(titleMap[tab]);
+  } else if (tab === 'rulesets') {
+    $('#rsId').val(''); $('#rsCode').val(''); $('#rsName').val('');
+    $('#rsDomain').val(''); $('#rsSchema').val('');
+    $('#rsType').val('ATTRIBUTE_COMPLETENESS'); $('#rsPriority').val('100');
+    $('#rsDescription').val(''); $('#rsActive').prop('checked', true);
+    $('#modalRulesetTitle').text(titleMap[tab]);
+  } else if (tab === 'products') {
+    $('#prodId').val(''); $('#prodSku').val(''); $('#prodManufacturer').val('');
+    $('#prodName').val(''); $('#prodSystemType').val('SPLIT_AC');
+    $('#prodRefrigerant').val(''); $('#prodCapacity').val('');
+    $('#prodPowerInput').val(''); $('#prodSoundFull').val('');
+    $('#prodSoundPart').val(''); $('#prodCop').val('');
+    $('#prodSeer').val(''); $('#prodWarranty').val('24');
+    $('#prodWeight').val(''); $('#prodInstallSupport').prop('checked', false);
+    $('#prodActive').prop('checked', true);
+    $('#modalProductTitle').text(titleMap[tab]);
+  } else if (tab === 'vendors') {
+    $('#vendId').val(''); $('#vendName').val(''); $('#vendCountry').val('');
+    $('#vendCity').val(''); $('#vendEmail').val(''); $('#vendPhone').val('');
+    $('#vendPaymentTerms').val(''); $('#vendReliability').val('3.5');
+    $('#vendLeadTime').val('7'); $('#vendOnTime').val('95');
+    $('#vendPreferred').prop('checked', false);
+    $('#vendBulkDiscount').prop('checked', false);
+    $('#vendRushOrder').prop('checked', false);
+    $('#vendAddress').val(''); $('#vendNotes').val('');
+    $('#vendActive').prop('checked', true);
+    $('#modalVendorTitle').text(titleMap[tab]);
+  } else if (tab === 'rooms') {
+    $('#roomId').val(''); $('#roomCode').val(''); $('#roomBuilding').val('');
+    $('#roomFloor').val('0'); $('#roomUsage').val('OFFICE');
+    $('#roomArea').val(''); $('#roomCeiling').val('3.0');
+    $('#roomDesignTemp').val('22.0'); $('#roomTempTol').val('1.0');
+    $('#roomCoolingLoad').val('5.0'); $('#roomHumidity').val('');
+    $('#roomNoise').val(''); $('#roomContactName').val('');
+    $('#roomContactEmail').val(''); $('#roomLocationDesc').val('');
+    $('#roomActive').prop('checked', true);
+    $('#modalRoomTitle').text(titleMap[tab]);
+  } else if (tab === 'hvacrules') {
+    $('#hrId').val(''); $('#hrCode').val(''); $('#hrName').val('');
+    $('#hrStoreType').val(''); $('#hrAreaMin').val(''); $('#hrAreaMax').val('');
+    $('#hrAmbientTemp').val(''); $('#hrBudget').val(''); $('#hrEnergyPriority').val('');
+    $('#hrSystem').val(''); $('#hrAltSystem').val('');
+    $('#hrRationale').val(''); $('#hrPriority').val('100');
+    $('#hrNotes').val(''); $('#hrActive').prop('checked', true);
+    $('#modalHvacRuleTitle').text(titleMap[tab]);
+  }
+  modal.show();
+}
+
+// ── Edit handlers (load data then open modal) ────────────────────────────────
+var urlDetailMap = {
+  sources: '{% url "procurement:api_config_source_detail" pk=0 %}'.replace('/0/', '/'),
+  rulesets: '{% url "procurement:api_config_ruleset_detail" pk=0 %}'.replace('/0/', '/'),
+  products: '{% url "procurement:api_config_product_detail" pk=0 %}'.replace('/0/', '/'),
+  vendors: '{% url "procurement:api_config_vendor_detail" pk=0 %}'.replace('/0/', '/'),
+  rooms: '{% url "procurement:api_config_room_detail" pk=0 %}'.replace('/0/', '/'),
+  hvacrules: '{% url "procurement:api_config_hvacrule_detail" pk=0 %}'.replace('/0/', '/')
+};
+
+function editSource(id) {
+  $.get(urlDetailMap.sources + id + '/', function(d) {
+    $('#srcId').val(d.id);
+    $('#srcName').val(d.source_name); $('#srcDomain').val(d.domain);
+    $('#srcType').val(d.source_type); $('#srcFetchMode').val(d.fetch_mode);
+    $('#srcPriority').val(d.priority); $('#srcTrustScore').val(d.trust_score);
+    $('#srcCountryScope').val(d.country_scope); $('#srcNotes').val(d.notes);
+    $('#srcDiscovery').prop('checked', d.allowed_for_discovery);
+    $('#srcCompliance').prop('checked', d.allowed_for_compliance);
+    $('#srcActive').prop('checked', d.is_active);
+    $('#modalSourceTitle').text('Edit: ' + d.source_name);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalSource')).show();
+  });
+}
+
+function editRuleset(id) {
+  $.get(urlDetailMap.rulesets + id + '/', function(d) {
+    $('#rsId').val(d.id);
+    $('#rsCode').val(d.rule_set_code); $('#rsName').val(d.rule_set_name);
+    $('#rsDomain').val(d.domain_code); $('#rsSchema').val(d.schema_code);
+    $('#rsType').val(d.validation_type); $('#rsPriority').val(d.priority);
+    $('#rsDescription').val(d.description);
+    $('#rsActive').prop('checked', d.is_active);
+    $('#modalRulesetTitle').text('Edit: ' + d.rule_set_code);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRuleset')).show();
+  });
+}
+
+function editProduct(id) {
+  $.get(urlDetailMap.products + id + '/', function(d) {
+    $('#prodId').val(d.id);
+    $('#prodSku').val(d.sku); $('#prodManufacturer').val(d.manufacturer);
+    $('#prodName').val(d.product_name); $('#prodSystemType').val(d.system_type);
+    $('#prodRefrigerant').val(d.refrigerant_type);
+    $('#prodCapacity').val(d.capacity_kw); $('#prodPowerInput').val(d.power_input_kw);
+    $('#prodSoundFull').val(d.sound_level_db_full_load);
+    $('#prodSoundPart').val(d.sound_level_db_part_load || '');
+    $('#prodCop').val(d.cop_rating || ''); $('#prodSeer').val(d.seer_rating || '');
+    $('#prodWarranty').val(d.warranty_months); $('#prodWeight').val(d.weight_kg || '');
+    $('#prodInstallSupport').prop('checked', d.installation_support_required);
+    $('#prodActive').prop('checked', d.is_active);
+    $('#modalProductTitle').text('Edit: ' + d.sku);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalProduct')).show();
+  });
+}
+
+function editVendor(id) {
+  $.get(urlDetailMap.vendors + id + '/', function(d) {
+    $('#vendId').val(d.id);
+    $('#vendName').val(d.vendor_name); $('#vendCountry').val(d.country);
+    $('#vendCity').val(d.city); $('#vendEmail').val(d.contact_email);
+    $('#vendPhone').val(d.contact_phone); $('#vendPaymentTerms').val(d.payment_terms);
+    $('#vendReliability').val(d.reliability_score);
+    $('#vendLeadTime').val(d.average_lead_time_days);
+    $('#vendOnTime').val(d.on_time_delivery_pct);
+    $('#vendPreferred').prop('checked', d.preferred_vendor);
+    $('#vendBulkDiscount').prop('checked', d.bulk_discount_available);
+    $('#vendRushOrder').prop('checked', d.rush_order_capable);
+    $('#vendAddress').val(d.address); $('#vendNotes').val(d.notes);
+    $('#vendActive').prop('checked', d.is_active);
+    $('#modalVendorTitle').text('Edit: ' + d.vendor_name);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalVendor')).show();
+  });
+}
+
+function editRoom(id) {
+  $.get(urlDetailMap.rooms + id + '/', function(d) {
+    $('#roomId').val(d.id);
+    $('#roomCode').val(d.room_code); $('#roomBuilding').val(d.building_name);
+    $('#roomFloor').val(d.floor_number); $('#roomUsage').val(d.usage_type);
+    $('#roomArea').val(d.area_sqm); $('#roomCeiling').val(d.ceiling_height_m);
+    $('#roomDesignTemp').val(d.design_temp_c); $('#roomTempTol').val(d.temp_tolerance_c);
+    $('#roomCoolingLoad').val(d.design_cooling_load_kw);
+    $('#roomHumidity').val(d.design_humidity_pct || '');
+    $('#roomNoise').val(d.noise_limit_db || '');
+    $('#roomContactName').val(d.contact_name); $('#roomContactEmail').val(d.contact_email);
+    $('#roomLocationDesc').val(d.location_description);
+    $('#roomActive').prop('checked', d.is_active);
+    $('#modalRoomTitle').text('Edit: ' + d.room_code);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRoom')).show();
+  });
+}
+
+function editHvacRule(id) {
+  $.get(urlDetailMap.hvacrules + id + '/', function(d) {
+    $('#hrId').val(d.id);
+    $('#hrCode').val(d.rule_code); $('#hrName').val(d.rule_name);
+    $('#hrStoreType').val(d.store_type_filter);
+    $('#hrAreaMin').val(d.area_sq_ft_min !== null ? d.area_sq_ft_min : '');
+    $('#hrAreaMax').val(d.area_sq_ft_max !== null ? d.area_sq_ft_max : '');
+    $('#hrAmbientTemp').val(d.ambient_temp_min_c !== null ? d.ambient_temp_min_c : '');
+    $('#hrBudget').val(d.budget_level_filter); $('#hrEnergyPriority').val(d.energy_priority_filter);
+    $('#hrSystem').val(d.recommended_system); $('#hrAltSystem').val(d.alternate_system);
+    $('#hrRationale').val(d.rationale); $('#hrPriority').val(d.priority);
+    $('#hrNotes').val(d.notes); $('#hrActive').prop('checked', d.is_active);
+    $('#modalHvacRuleTitle').text('Edit: ' + d.rule_code);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHvacRule')).show();
+  });
+}
+
+// ── Save handlers ────────────────────────────────────────────────────────────
+function saveSource() {
+  var id = $('#srcId').val();
+  var payload = {
+    source_name: $('#srcName').val(), domain: $('#srcDomain').val(),
+    source_type: $('#srcType').val(), fetch_mode: $('#srcFetchMode').val(),
+    priority: parseInt($('#srcPriority').val()) || 10,
+    trust_score: parseFloat($('#srcTrustScore').val()) || 0.8,
+    country_scope: $('#srcCountryScope').val(),
+    allowed_for_discovery: $('#srcDiscovery').is(':checked'),
+    allowed_for_compliance: $('#srcCompliance').is(':checked'),
+    notes: $('#srcNotes').val(),
+    is_active: $('#srcActive').is(':checked')
+  };
+  if (!payload.source_name || !payload.domain) { toast('Source name and domain are required.', 'error'); return; }
+  var url = id ? urlDetailMap.sources + id + '/' : '{% url "procurement:api_config_sources" %}';
+  if (id) payload._action = 'update';
+  ajax(url, payload, function() {
+    bootstrap.Modal.getInstance(document.getElementById('modalSource')).hide();
+    reloadTab('sources');
+  });
+}
+
+function saveRuleset() {
+  var id = $('#rsId').val();
+  var payload = {
+    rule_set_code: $('#rsCode').val(), rule_set_name: $('#rsName').val(),
+    domain_code: $('#rsDomain').val(), schema_code: $('#rsSchema').val(),
+    validation_type: $('#rsType').val(),
+    priority: parseInt($('#rsPriority').val()) || 100,
+    description: $('#rsDescription').val(),
+    is_active: $('#rsActive').is(':checked')
+  };
+  if (!payload.rule_set_code || !payload.rule_set_name) { toast('Code and name are required.', 'error'); return; }
+  var url = id ? urlDetailMap.rulesets + id + '/' : '{% url "procurement:api_config_rulesets" %}';
+  if (id) payload._action = 'update';
+  ajax(url, payload, function() {
+    bootstrap.Modal.getInstance(document.getElementById('modalRuleset')).hide();
+    reloadTab('rulesets');
+  });
+}
+
+function saveProduct() {
+  var id = $('#prodId').val();
+  var payload = {
+    sku: $('#prodSku').val(), manufacturer: $('#prodManufacturer').val(),
+    product_name: $('#prodName').val(), system_type: $('#prodSystemType').val(),
+    refrigerant_type: $('#prodRefrigerant').val(),
+    capacity_kw: parseFloat($('#prodCapacity').val()) || 0,
+    power_input_kw: parseFloat($('#prodPowerInput').val()) || 0,
+    sound_level_db_full_load: parseInt($('#prodSoundFull').val()) || 50,
+    sound_level_db_part_load: $('#prodSoundPart').val() || null,
+    cop_rating: $('#prodCop').val() || null, seer_rating: $('#prodSeer').val() || null,
+    warranty_months: parseInt($('#prodWarranty').val()) || 12,
+    weight_kg: $('#prodWeight').val() || null,
+    installation_support_required: $('#prodInstallSupport').is(':checked'),
+    is_active: $('#prodActive').is(':checked')
+  };
+  if (!payload.sku || !payload.manufacturer || !payload.product_name) {
+    toast('SKU, manufacturer and product name are required.', 'error'); return;
+  }
+  var url = id ? urlDetailMap.products + id + '/' : '{% url "procurement:api_config_products" %}';
+  if (id) payload._action = 'update';
+  ajax(url, payload, function() {
+    bootstrap.Modal.getInstance(document.getElementById('modalProduct')).hide();
+    reloadTab('products');
+  });
+}
+
+function saveVendor() {
+  var id = $('#vendId').val();
+  var payload = {
+    vendor_name: $('#vendName').val(), country: $('#vendCountry').val(),
+    city: $('#vendCity').val(), contact_email: $('#vendEmail').val(),
+    contact_phone: $('#vendPhone').val(), payment_terms: $('#vendPaymentTerms').val(),
+    reliability_score: parseFloat($('#vendReliability').val()) || 3.5,
+    average_lead_time_days: parseInt($('#vendLeadTime').val()) || 7,
+    on_time_delivery_pct: parseFloat($('#vendOnTime').val()) || 95,
+    preferred_vendor: $('#vendPreferred').is(':checked'),
+    bulk_discount_available: $('#vendBulkDiscount').is(':checked'),
+    rush_order_capable: $('#vendRushOrder').is(':checked'),
+    address: $('#vendAddress').val(), notes: $('#vendNotes').val(),
+    is_active: $('#vendActive').is(':checked')
+  };
+  if (!payload.vendor_name || !payload.country || !payload.city) {
+    toast('Vendor name, country and city are required.', 'error'); return;
+  }
+  var url = id ? urlDetailMap.vendors + id + '/' : '{% url "procurement:api_config_vendors" %}';
+  if (id) payload._action = 'update';
+  ajax(url, payload, function() {
+    bootstrap.Modal.getInstance(document.getElementById('modalVendor')).hide();
+    reloadTab('vendors');
+  });
+}
+
+function saveRoom() {
+  var id = $('#roomId').val();
+  var payload = {
+    room_code: $('#roomCode').val(), building_name: $('#roomBuilding').val(),
+    floor_number: parseInt($('#roomFloor').val()) || 0,
+    usage_type: $('#roomUsage').val(),
+    area_sqm: parseFloat($('#roomArea').val()) || 50,
+    ceiling_height_m: parseFloat($('#roomCeiling').val()) || 3.0,
+    design_temp_c: parseFloat($('#roomDesignTemp').val()) || 22,
+    temp_tolerance_c: parseFloat($('#roomTempTol').val()) || 1,
+    design_cooling_load_kw: parseFloat($('#roomCoolingLoad').val()) || 5,
+    design_humidity_pct: $('#roomHumidity').val() || null,
+    noise_limit_db: $('#roomNoise').val() || null,
+    contact_name: $('#roomContactName').val(),
+    contact_email: $('#roomContactEmail').val(),
+    location_description: $('#roomLocationDesc').val(),
+    is_active: $('#roomActive').is(':checked')
+  };
+  if (!payload.room_code || !payload.building_name) {
+    toast('Room code and building name are required.', 'error'); return;
+  }
+  var url = id ? urlDetailMap.rooms + id + '/' : '{% url "procurement:api_config_rooms" %}';
+  if (id) payload._action = 'update';
+  ajax(url, payload, function() {
+    bootstrap.Modal.getInstance(document.getElementById('modalRoom')).hide();
+    reloadTab('rooms');
+  });
+}
+
+function saveHvacRule() {
+  var id = $('#hrId').val();
+  var payload = {
+    rule_code: $('#hrCode').val().trim(),
+    rule_name: $('#hrName').val().trim(),
+    store_type_filter: $('#hrStoreType').val(),
+    area_sq_ft_min: $('#hrAreaMin').val() || null,
+    area_sq_ft_max: $('#hrAreaMax').val() || null,
+    ambient_temp_min_c: $('#hrAmbientTemp').val() || null,
+    budget_level_filter: $('#hrBudget').val(),
+    energy_priority_filter: $('#hrEnergyPriority').val(),
+    recommended_system: $('#hrSystem').val(),
+    alternate_system: $('#hrAltSystem').val(),
+    rationale: $('#hrRationale').val(),
+    priority: parseInt($('#hrPriority').val()) || 100,
+    notes: $('#hrNotes').val(),
+    is_active: $('#hrActive').is(':checked')
+  };
+  if (!payload.rule_code || !payload.recommended_system) {
+    toast('Rule ID and Recommended System are required.', 'error'); return;
+  }
+  var url = id ? urlDetailMap.hvacrules + id + '/' : '{% url "procurement:api_config_hvacrules" %}';
+  if (id) payload._action = 'update';
+  ajax(url, payload, function() {
+    bootstrap.Modal.getInstance(document.getElementById('modalHvacRule')).hide();
+    reloadTab('hvacrules');
+  });
+}
+
+// ── Toggle active ────────────────────────────────────────────────────────────
+function toggleItem(tab, id) {
+  ajax(urlDetailMap[tab] + id + '/', { _action: 'toggle' }, function() {
+    reloadTab(tab);
+  });
+}
+
+// ── Delete flow ──────────────────────────────────────────────────────────────
+var _deleteTab = null; var _deleteId = null;
+
+function confirmDelete(tab, id, name) {
+  _deleteTab = tab; _deleteId = id;
+  $('#deleteConfirmText').html(
+    'Delete <strong>' + escHtml(name) + '</strong>?<br><span style="font-size:.78rem;color:#9ca3af;">This action cannot be undone.</span>'
+  );
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalDelete')).show();
+}
+
+$('#deleteConfirmBtn').on('click', function() {
+  if (!_deleteTab || !_deleteId) return;
+  ajax(urlDetailMap[_deleteTab] + _deleteId + '/', { _action: 'delete' }, function() {
+    bootstrap.Modal.getInstance(document.getElementById('modalDelete')).hide();
+    reloadTab(_deleteTab);
+  });
+});
+
+// ── Search with debounce ─────────────────────────────────────────────────────
+function searchDebounce(tab) {
+  loadedTabs[tab] = false;
+  loadTab(tab);
+}
+
+var searchTimers = {};
+function setupSearch(inputId, tab) {
+  $('#' + inputId).on('input', function() {
+    clearTimeout(searchTimers[tab]);
+    searchTimers[tab] = setTimeout(function() { searchDebounce(tab); }, 350);
+  });
+}
+setupSearch('src-search', 'sources');
+setupSearch('rs-search', 'rulesets');
+setupSearch('prod-search', 'products');
+setupSearch('vend-search', 'vendors');
+setupSearch('room-search', 'rooms');
+setupSearch('hvac-search', 'hvacrules');
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+$(document).ready(function() {
+  // Tab button clicks
+  $('.cfg-tab-btn, .cfg-kpi-card').on('click', function() {
+    switchTab($(this).data('tab'));
+  });
+
+  // Load initial active tab
+  loadTab(activeTab);
+
+  // Keyboard shortcut: Enter to save in modals
+  $('#modalSource').on('keydown', function(e) { if (e.key==='Enter' && !$(e.target).is('textarea')) saveSource(); });
+  $('#modalRuleset').on('keydown', function(e) { if (e.key==='Enter' && !$(e.target).is('textarea')) saveRuleset(); });
+  $('#modalProduct').on('keydown', function(e) { if (e.key==='Enter' && !$(e.target).is('textarea')) saveProduct(); });
+  $('#modalVendor').on('keydown', function(e) { if (e.key==='Enter' && !$(e.target).is('textarea')) saveVendor(); });
+  $('#modalRoom').on('keydown', function(e) { if (e.key==='Enter' && !$(e.target).is('textarea')) saveRoom(); });
+  $('#modalHvacRule').on('keydown', function(e) { if (e.key==='Enter' && !$(e.target).is('textarea')) saveHvacRule(); });
+});
+</script>
+{% endblock %}
