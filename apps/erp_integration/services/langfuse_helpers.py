@@ -484,6 +484,7 @@ def trace_erp_submission(
                 _trace_id,
                 "erp_submission_pipeline",
                 invoice_id=invoice_id,
+                session_id=f"erp-sub-{invoice_id}" if invoice_id else None,
                 metadata=meta,
             )
             _lf_span = start_erp_span(_lf_root, "erp_submission", metadata=meta)

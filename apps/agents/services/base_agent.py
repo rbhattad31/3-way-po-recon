@@ -342,6 +342,7 @@ class BaseAgent(ABC):
                                     AGENT_CONFIDENCE,
                                     output.confidence,
                                     comment=str(self.agent_type),
+                                    span=_lf_span,
                                 )
                         except Exception:
                             pass
@@ -526,6 +527,7 @@ class BaseAgent(ABC):
                             AGENT_CONFIDENCE,
                             output.confidence,
                             comment=str(self.agent_type),
+                            span=_lf_span,
                         )
                 except Exception:
                     pass

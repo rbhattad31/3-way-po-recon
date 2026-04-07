@@ -156,6 +156,7 @@ class PostingSubmitResolver:
                     _fallback_id,
                     "erp_submission_pipeline",
                     invoice_id=invoice_id,
+                    session_id=f"erp-sub-{invoice_id}" if invoice_id else None,
                     metadata=_meta,
                 )
                 _lf_span = start_erp_span(_lf_root, "erp_submission", metadata=_meta)
@@ -262,6 +263,7 @@ class PostingSubmitResolver:
                 _trace_id,
                 "erp_status_check",
                 invoice_id=invoice_id,
+                session_id=f"erp-status-{invoice_id}" if invoice_id else None,
                 metadata=_meta,
             )
             if _lf_trace is not None:

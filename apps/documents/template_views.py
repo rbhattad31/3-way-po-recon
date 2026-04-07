@@ -14,6 +14,7 @@ from apps.core.enums import DocumentType, InvoiceStatus, UserRole
 from apps.core.decorators import observed_action
 from apps.core.permissions import permission_required_code
 from apps.core.utils import normalize_category, parse_percentage, resolve_line_tax_percentage, resolve_tax_percentage
+from apps.documents.forms import GoodsReceiptNoteForm, PurchaseOrderForm
 from apps.documents.models import DocumentUpload, GoodsReceiptNote, Invoice, PurchaseOrder
 
 
@@ -421,6 +422,35 @@ def po_list(request):
 
 
 @login_required
+@permission_required_code("purchase_orders.create")
+def po_create(request):
+    if request.method == "POST":
+        form = PurchaseOrderForm(request.POST)
+        if form.is_valid():
+            po = form.save()
+            messages.success(request, f"Purchase Order '{po.po_number}' created successfully.")
+            return redirect("po_documents:po_detail", pk=po.pk)
+    else:
+        form = PurchaseOrderForm()
+    return render(request, "documents/po_create.html", {"form": form})
+
+
+@login_required
+@permission_required_code("purchase_orders.edit")
+def po_edit(request, pk):
+    po = get_object_or_404(PurchaseOrder, pk=pk)
+    if request.method == "POST":
+        form = PurchaseOrderForm(request.POST, instance=po)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Purchase Order '{po.po_number}' updated successfully.")
+            return redirect("po_documents:po_detail", pk=po.pk)
+    else:
+        form = PurchaseOrderForm(instance=po)
+    return render(request, "documents/po_edit.html", {"form": form, "po": po})
+
+
+@login_required
 @permission_required_code("purchase_orders.view")
 def po_detail(request, pk):
     po = get_object_or_404(
@@ -482,6 +512,35 @@ def grn_list(request):
         "status_choices": status_choices,
         "vendor_choices": vendor_choices,
     })
+
+
+@login_required
+@permission_required_code("grns.create")
+def grn_create(request):
+    if request.method == "POST":
+        form = GoodsReceiptNoteForm(request.POST)
+        if form.is_valid():
+            grn = form.save()
+            messages.success(request, f"GRN '{grn.grn_number}' created successfully.")
+            return redirect("grn_documents:grn_detail", pk=grn.pk)
+    else:
+        form = GoodsReceiptNoteForm()
+    return render(request, "documents/grn_create.html", {"form": form})
+
+
+@login_required
+@permission_required_code("grns.edit")
+def grn_edit(request, pk):
+    grn = get_object_or_404(GoodsReceiptNote, pk=pk)
+    if request.method == "POST":
+        form = GoodsReceiptNoteForm(request.POST, instance=grn)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"GRN '{grn.grn_number}' updated successfully.")
+            return redirect("grn_documents:grn_detail", pk=grn.pk)
+    else:
+        form = GoodsReceiptNoteForm(instance=grn)
+    return render(request, "documents/grn_edit.html", {"form": form, "grn": grn})
 
 
 @login_required

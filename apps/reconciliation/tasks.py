@@ -11,7 +11,6 @@ from apps.core.enums import InvoiceStatus, ReconciliationRunStatus
 from apps.core.evaluation_constants import (
     RECON_FINAL_SUCCESS,
     RECON_ROUTED_TO_AGENTS,
-    RECON_ROUTED_TO_REVIEW,
     TRACE_RECONCILIATION_PIPELINE,
 )
 from apps.core.observability_helpers import (
@@ -98,6 +97,11 @@ def run_reconciliation_task(
                     },
                 ),
             )
+    except Exception:
+        pass
+    try:
+        from apps.core.langfuse_client import set_current_span
+        set_current_span(_lf_task_trace)
     except Exception:
         pass
 
@@ -198,7 +202,7 @@ def run_reconciliation_task(
             _routed_review = run.review_count or 0
             score_trace_safe(_lf_task_trace_id, RECON_FINAL_SUCCESS, 1.0, comment=f"run={run.pk}", span=_lf_task_trace)
             score_trace_safe(_lf_task_trace_id, RECON_ROUTED_TO_AGENTS, 1.0 if _routed_agents > 0 else 0.0, span=_lf_task_trace)
-            score_trace_safe(_lf_task_trace_id, RECON_ROUTED_TO_REVIEW, 1.0 if _routed_review > 0 else 0.0, span=_lf_task_trace)
+            # RECON_ROUTED_TO_REVIEW is emitted per-invoice in runner_service (canonical point)
         except Exception:
             pass
 

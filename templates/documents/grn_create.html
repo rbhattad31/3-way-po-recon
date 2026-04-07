@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Add GRN – AP Operations{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'grn_documents:grn_list' %}" class="text-decoration-none">Goods Receipt Notes</a></li>
+    <li class="breadcrumb-item active">Add GRN</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-3">
+  <i class="bi bi-truck fs-5 text-info"></i>
+  <h4 class="mb-0 fw-semibold">Add Goods Receipt Note</h4>
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  {% if form.errors %}
+  <div class="alert alert-danger py-2 mb-3">
+    <ul class="mb-0 small">
+      {% for field, errors in form.errors.items %}
+        {% for error in errors %}<li><strong>{{ field }}:</strong> {{ error }}</li>{% endfor %}
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {# ── GRN Header ── #}
+  <div class="ap-card mb-3">
+    <div class="ap-card-header">
+      <i class="bi bi-box-seam me-2"></i>Receipt Details
+    </div>
+    <div class="ap-card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label fw-medium">GRN Number <span class="text-danger">*</span></label>
+          {{ form.grn_number }}
+          {% if form.grn_number.errors %}<div class="text-danger small mt-1">{{ form.grn_number.errors.0 }}</div>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-medium">Receipt Date</label>
+          {{ form.receipt_date }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-medium">Status</label>
+          {{ form.status }}
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-6">
+          <label class="form-label fw-medium">Purchase Order <span class="text-danger">*</span></label>
+          {{ form.purchase_order }}
+          {% if form.purchase_order.errors %}<div class="text-danger small mt-1">{{ form.purchase_order.errors.0 }}</div>{% endif %}
+          <small class="text-muted">GRN must be linked to an existing PO</small>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label fw-medium">Vendor</label>
+          {{ form.vendor }}
+          <small class="text-muted">Auto-resolved from PO if left blank</small>
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-6">
+          <label class="form-label fw-medium">Warehouse</label>
+          {{ form.warehouse }}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label fw-medium">Receiver Name</label>
+          {{ form.receiver_name }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary btn-sm">
+      <i class="bi bi-check-lg me-1"></i>Save GRN
+    </button>
+    <a href="{% url 'grn_documents:grn_list' %}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-x me-1"></i>Cancel
+    </a>
+  </div>
+</form>
+{% endblock %}

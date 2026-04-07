@@ -47,6 +47,7 @@ PATH_STAGES = {
     ProcessingPath.TWO_WAY: [
         CaseStageType.INTAKE,
         CaseStageType.EXTRACTION,
+        CaseStageType.EXTRACTION_APPROVAL,
         CaseStageType.PATH_RESOLUTION,
         CaseStageType.PO_RETRIEVAL,
         CaseStageType.TWO_WAY_MATCHING,
@@ -57,6 +58,7 @@ PATH_STAGES = {
     ProcessingPath.THREE_WAY: [
         CaseStageType.INTAKE,
         CaseStageType.EXTRACTION,
+        CaseStageType.EXTRACTION_APPROVAL,
         CaseStageType.PATH_RESOLUTION,
         CaseStageType.PO_RETRIEVAL,
         CaseStageType.THREE_WAY_MATCHING,
@@ -68,6 +70,7 @@ PATH_STAGES = {
     ProcessingPath.NON_PO: [
         CaseStageType.INTAKE,
         CaseStageType.EXTRACTION,
+        CaseStageType.EXTRACTION_APPROVAL,
         CaseStageType.PATH_RESOLUTION,
         CaseStageType.NON_PO_VALIDATION,
         CaseStageType.EXCEPTION_ANALYSIS,
@@ -80,6 +83,7 @@ PATH_STAGES = {
 STAGE_TO_STATUS = {
     CaseStageType.INTAKE: CaseStatus.INTAKE_IN_PROGRESS,
     CaseStageType.EXTRACTION: CaseStatus.EXTRACTION_IN_PROGRESS,
+    CaseStageType.EXTRACTION_APPROVAL: CaseStatus.EXTRACTION_COMPLETED,
     CaseStageType.PATH_RESOLUTION: CaseStatus.PATH_RESOLUTION_IN_PROGRESS,
     CaseStageType.PO_RETRIEVAL: CaseStatus.PATH_RESOLUTION_IN_PROGRESS,
     CaseStageType.TWO_WAY_MATCHING: CaseStatus.TWO_WAY_IN_PROGRESS,
@@ -130,7 +134,21 @@ class CaseOrchestrator:
             if self.case.status == CaseStatus.EXTRACTION_IN_PROGRESS:
                 self._execute_stage(CaseStageType.EXTRACTION)
 
-            # Stage 3: Path resolution (if extraction completed)
+            # Stage 2b: Extraction approval gate
+            # If extraction needs human approval, pause the pipeline here.
+            if self.case.status == CaseStatus.EXTRACTION_COMPLETED:
+                self._execute_stage(CaseStageType.EXTRACTION_APPROVAL)
+
+            # If waiting for human extraction approval, stop the pipeline.
+            # The approval_service will resume processing once approved.
+            if self.case.status == CaseStatus.PENDING_EXTRACTION_APPROVAL:
+                logger.info(
+                    "Case %s paused at extraction approval gate (invoice status=%s)",
+                    self.case.case_number, self.case.invoice.status,
+                )
+                return self.case
+
+            # Stage 3: Path resolution (if extraction completed/approved)
             if self.case.status == CaseStatus.EXTRACTION_COMPLETED:
                 self._execute_stage(CaseStageType.PATH_RESOLUTION)
 
@@ -187,6 +205,7 @@ class CaseOrchestrator:
     STAGE_RESET_STATUS = {
         CaseStageType.INTAKE: CaseStatus.NEW,
         CaseStageType.EXTRACTION: CaseStatus.EXTRACTION_IN_PROGRESS,
+        CaseStageType.EXTRACTION_APPROVAL: CaseStatus.EXTRACTION_COMPLETED,
         CaseStageType.PATH_RESOLUTION: CaseStatus.EXTRACTION_COMPLETED,
         CaseStageType.PO_RETRIEVAL: CaseStatus.PATH_RESOLUTION_IN_PROGRESS,
         CaseStageType.TWO_WAY_MATCHING: CaseStatus.TWO_WAY_IN_PROGRESS,
@@ -224,6 +243,28 @@ class CaseOrchestrator:
 
     def _execute_path_stages(self):
         """Execute the path-specific stages based on resolved processing path."""
+        # If the case is already past path-specific processing (e.g. at
+        # READY_FOR_REVIEW, CLOSED, etc.), skip re-running path stages.
+        _POST_PATH_STATUSES = {
+            CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS,
+            CaseStatus.READY_FOR_REVIEW,
+            CaseStatus.IN_REVIEW,
+            CaseStatus.REVIEW_COMPLETED,
+            CaseStatus.READY_FOR_APPROVAL,
+            CaseStatus.APPROVAL_IN_PROGRESS,
+            CaseStatus.READY_FOR_GL_CODING,
+            CaseStatus.READY_FOR_POSTING,
+            CaseStatus.CLOSED,
+            CaseStatus.REJECTED,
+            CaseStatus.ESCALATED,
+        }
+        if self.case.status in _POST_PATH_STATUSES:
+            logger.info(
+                "Case %s already past path stages (status=%s), skipping path execution",
+                self.case.case_number, self.case.status,
+            )
+            return
+
         path = self.case.processing_path
 
         # On reprocess: if a PO was linked after original classification

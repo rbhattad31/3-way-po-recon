@@ -24,4 +24,8 @@ urlpatterns = [
     # Suggestions & search
     path("suggestions/", views.suggestions, name="suggestions"),
     path("cases/search/", views.case_search, name="case_search"),
+
+    # Upload
+    path("upload/", views.invoice_upload, name="invoice_upload"),
+    path("upload/<int:upload_id>/status/", views.upload_status, name="upload_status"),
 ]

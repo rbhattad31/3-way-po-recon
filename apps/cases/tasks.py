@@ -69,6 +69,11 @@ def process_case_task(self, case_id: int):
         )
     except Exception:
         pass
+    try:
+        from apps.core.langfuse_client import set_current_span
+        set_current_span(_lf_trace)
+    except Exception:
+        pass
 
     try:
         case = APCase.objects.get(id=case_id)
@@ -183,6 +188,11 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
             ),
             metadata=_case_meta,
         )
+    except Exception:
+        pass
+    try:
+        from apps.core.langfuse_client import set_current_span
+        set_current_span(_lf_trace)
     except Exception:
         pass
 

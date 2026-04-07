@@ -167,7 +167,7 @@ class AgentGuardrailsService:
         granted = user.has_permission(perm)
         if granted:
             try:
-                from apps.core.langfuse_client import score_trace
+                from apps.core.langfuse_client import score_trace, get_current_span
                 from apps.core.trace import TraceContext
                 _ctx = TraceContext.get_current()
                 _tid = getattr(_ctx, "trace_id", "") or ""
@@ -186,6 +186,7 @@ class AgentGuardrailsService:
                             f"rbac_guardrail GRANTED method=authorize_agent"
                             f" agent_type={agent_type} user_role={_role}"
                         ),
+                        span=get_current_span(),
                     )
             except Exception:
                 pass
@@ -200,7 +201,7 @@ class AgentGuardrailsService:
         granted = user.has_permission(perm)
         if granted:
             try:
-                from apps.core.langfuse_client import score_trace
+                from apps.core.langfuse_client import score_trace, get_current_span
                 from apps.core.trace import TraceContext
                 _ctx = TraceContext.get_current()
                 _tid = getattr(_ctx, "trace_id", "") or ""
@@ -219,6 +220,7 @@ class AgentGuardrailsService:
                             f"rbac_guardrail GRANTED method=authorize_tool"
                             f" tool={tool_name} user_role={_role}"
                         ),
+                        span=get_current_span(),
                     )
             except Exception:
                 pass
@@ -365,7 +367,7 @@ class AgentGuardrailsService:
         )
 
         try:
-            from apps.core.langfuse_client import score_trace
+            from apps.core.langfuse_client import score_trace, get_current_span
             _trace_id = getattr(trace_ctx, "trace_id", "") or ""
             if _trace_id:
                 score_trace(
@@ -378,6 +380,7 @@ class AgentGuardrailsService:
                         f"role={snapshot.get('actor_primary_role', '')} "
                         f"granted={granted}"
                     ),
+                    span=get_current_span(),
                 )
         except Exception:
             pass
@@ -573,7 +576,7 @@ class AgentGuardrailsService:
             )
 
             try:
-                from apps.core.langfuse_client import score_trace
+                from apps.core.langfuse_client import score_trace, get_current_span
                 from apps.core.trace import TraceContext
                 _ctx = TraceContext.get_current()
                 _trace_id = getattr(_ctx, "trace_id", "") or ""
@@ -586,6 +589,7 @@ class AgentGuardrailsService:
                             f"actor={getattr(actor, 'pk', None)} "
                             f"result={getattr(result, 'pk', None)}"
                         ),
+                        span=get_current_span(),
                     )
             except Exception:
                 pass

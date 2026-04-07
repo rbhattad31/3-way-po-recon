@@ -141,7 +141,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Cache-busting version counter — bump after static file changes
-STATIC_VERSION = "1.1.2"
+STATIC_VERSION = "1.1.3"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -272,8 +272,8 @@ EXTRACTION_CONFIDENCE_THRESHOLD = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHO
 # Extraction approval — human-in-the-loop gate
 # Set to 1.1 (above max confidence) to require human approval for ALL extractions.
 # Lower to e.g. 0.95 once confidence in the system grows, to auto-approve high-confidence results.
-EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "1.1"))
-EXTRACTION_AUTO_APPROVE_ENABLED = os.getenv("EXTRACTION_AUTO_APPROVE_ENABLED", "false").lower() == "true"
+EXTRACTION_AUTO_APPROVE_THRESHOLD = float(os.getenv("EXTRACTION_AUTO_APPROVE_THRESHOLD", "0.85"))
+EXTRACTION_AUTO_APPROVE_ENABLED = os.getenv("EXTRACTION_AUTO_APPROVE_ENABLED", "true").lower() == "true"
 
 LOKI_ENABLED = os.getenv("LOKI_ENABLED", "false").lower() == "true"
 LOKI_URL = os.getenv("LOKI_URL", "http://localhost:3100/loki/api/v1/push")

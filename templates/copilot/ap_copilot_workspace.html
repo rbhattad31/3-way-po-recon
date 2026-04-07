@@ -4,7 +4,7 @@
 {% block title %}AP Copilot{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/ap-copilot.css' %}?v=20260315l" rel="stylesheet">
+<link href="{% static 'css/ap-copilot.css' %}?v=20260406e" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -119,10 +119,13 @@
     <div class="copilot-input-bar" id="chatInputBar">
       <form id="chatForm" autocomplete="off">
         <div class="copilot-input-wrapper">
+          <button type="button" class="btn btn-sm btn-outline-secondary copilot-upload-btn" id="btnUpload" title="Upload invoice">
+            <i class="bi bi-paperclip"></i>
+          </button>
           <textarea
             id="chatInput"
             class="form-control"
-            placeholder="Ask about a case, mismatch, recommendation…"
+            placeholder="Ask about a case, mismatch, recommendation… or upload an invoice"
             rows="1"
             maxlength="4000"
           ></textarea>
@@ -130,8 +133,21 @@
             <i class="bi bi-send-fill"></i>
           </button>
         </div>
+        {# Hidden file input for uploads #}
+        <input type="file" id="fileInput" class="d-none" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif">
+        {# File preview bar (hidden by default) #}
+        <div class="copilot-file-preview d-none" id="filePreview">
+          <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-file-earmark-pdf text-danger"></i>
+            <span class="small fw-medium" id="filePreviewName"></span>
+            <span class="text-muted small" id="filePreviewSize"></span>
+            <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-auto" id="btnRemoveFile" title="Remove file">
+              <i class="bi bi-x-lg"></i>
+            </button>
+          </div>
+        </div>
         <div class="copilot-input-footer">
-          <span class="text-muted small">Read-only guidance · Copilot does not modify data</span>
+          <span class="text-muted small">Upload an invoice to run the full extraction + reconciliation pipeline</span>
         </div>
       </form>
     </div>
@@ -189,6 +205,7 @@
     "chat": "{% url 'copilot_api:chat' %}",
     "suggestions": "{% url 'copilot_api:suggestions' %}",
     "caseSearch": "{% url 'copilot_api:case_search' %}",
+    "upload": "{% url 'copilot_api:invoice_upload' %}",
     "workspaceBase": "{% url 'copilot:workspace' %}",
     "caseBase": "/copilot/case/",
     "sessionBase": "/copilot/session/"
@@ -201,5 +218,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/ap-copilot.js' %}?v=20260315l"></script>
+<script src="{% static 'js/ap-copilot.js' %}?v=20260406l"></script>
 {% endblock %}

@@ -19,7 +19,105 @@
   <div class="px-2 py-2">
     <ul class="nav flex-column gap-1">
 
-      {# ── Procurement — LMG ── #}
+      {# ── Posting Agent ── #}
+      {% has_permission "invoices.view" as can_view_invoices %}
+      {% if can_view_invoices %}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Posting Agent</li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'posting' and request.resolver_match.url_name == 'posting-workbench' %}active fw-bold{% endif %}" href="{% url 'posting:posting-workbench' %}">
+          <i class="bi bi-send me-2"></i>Posting Agent
+        </a>
+      </li>
+      {% endif %}
+
+      {# ── ERP Integration ── #}
+      {% if can_view_invoices %}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">ERP Integration</li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'erp_reference_data' %}active fw-bold{% endif %}" href="{% url 'erp_integration:erp_reference_data' %}">
+          <i class="bi bi-database me-2"></i>Reference Data
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'posting-imports' %}active fw-bold{% endif %}" href="{% url 'posting:posting-imports' %}">
+          <i class="bi bi-cloud-upload me-2"></i>Import Reference Data
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'erp_integration' and request.resolver_match.url_name != 'erp_reference_data' %}active fw-bold{% endif %}" href="{% url 'erp_integration:erp_connection_list' %}">
+          <i class="bi bi-plug me-2"></i>ERP Connections
+        </a>
+      </li>
+      {% endif %}
+
+      {# ── Documents ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documents</li>
+      {% has_permission "invoices.view" as can_view_invoice_list %}
+      {% if can_view_invoice_list %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'invoice_list' or request.resolver_match.url_name == 'invoice_detail' or request.resolver_match.url_name == 'upload_invoice' %}active fw-bold{% endif %}" href="{% url 'documents:invoice_list' %}">
+          <i class="bi bi-file-earmark-text me-2"></i>Invoices
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "purchase_orders.view" as can_view_pos %}
+      {% if can_view_pos %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active fw-bold{% endif %}" href="{% url 'po_documents:po_list' %}">
+          <i class="bi bi-cart-check me-2"></i>Purchase Orders
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "grns.view" as can_view_grns %}
+      {% if can_view_grns %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active fw-bold{% endif %}" href="{% url 'grn_documents:grn_list' %}">
+          <i class="bi bi-box-seam me-2"></i>GRNs
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "vendors.view" as can_view_vendors %}
+      {% if can_view_vendors %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.app_name == 'vendors' %}active fw-bold{% endif %}" href="{% url 'vendors:vendor_list' %}">
+          <i class="bi bi-building me-2"></i>Vendors
+        </a>
+      </li>
+      {% endif %}
+
+      {# ── Operations ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Reports</li>
+      {% has_permission "cases.view" as can_view_case_ops %}
+      {% if can_view_case_ops %}
+      <li class="nav-item">
+        <a class="nav-link" href="{% url 'dashboard:agent_monitor' %}">
+          <i class="bi bi-activity me-2"></i>Case Operations
+        </a>
+      </li>
+      {% endif %}
+      {% has_permission "agents.view" as can_view_agents %}
+      {% if can_view_agents %}
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'agent_performance' %}active fw-bold{% endif %}" href="{% url 'dashboard:agent_performance' %}">
+          <i class="bi bi-robot me-2"></i>Agent Performance
+        </a>
+      </li>
+      {% endif %}
+
+      {# ── Documentation ── #}
+      <li class="hr my-2 border-bottom"></li>
+      <li class="nav-item text-uppercase small text-muted px-3 py-1" style="font-size:.65rem;letter-spacing:.08em">Documentation</li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'agent_reference' %}active fw-bold{% endif %}" href="{% url 'agents:agent_reference' %}">
+          <i class="bi bi-book me-2"></i>Platform Reference
+        </a>
+      </li>
+
+      {# ── Procurement Agent ── #}
       {% has_permission "procurement.view" as can_view_procurement %}
       {% if can_view_procurement %}
       <li class="nav-item px-1 mb-1">

@@ -353,6 +353,20 @@ class ExtractionEvalAdapter:
                 eval_run, correction_records,
             )
 
+        # -- Confirm ground truth for non-corrected fields --
+        # When a human approves, non-corrected fields are implicitly
+        # confirmed correct.  Set ground_truth = predicted_value so the
+        # eval dashboard shows meaningful ground truth after approval.
+        if eval_run and status in ("APPROVED", "AUTO_APPROVED"):
+            corrected_field_names = set()
+            if correction_records:
+                corrected_field_names = {
+                    getattr(c, "field_name", "") for c in correction_records
+                }
+            cls._confirm_ground_truth_on_approval(
+                eval_run, corrected_field_names,
+            )
+
         # -- Review override signal --
         if (
             status == "APPROVED"
@@ -384,25 +398,35 @@ class ExtractionEvalAdapter:
     # ------------------------------------------------------------------
     @classmethod
     def _sync_field_outcomes_for_result(cls, eval_run, ext_result, ctx, invoice=None):
-        """Populate EvalFieldOutcome from ExtractionFieldValue (governed) or
-        raw_response._field_confidence (legacy).
+        """Populate EvalFieldOutcome from extraction data.
+
+        Predicted value = final LLM-extracted value from raw_response
+        (what the full pipeline actually produced and persisted to the
+        Invoice model).  The governed deterministic value is stored in
+        detail_json for diagnostic comparison.
+
+        Ground truth is left EMPTY at extraction time.  It is only
+        populated later when a human corrects a field during approval
+        (via _update_field_outcomes_from_corrections) or confirms the
+        extraction (via _confirm_ground_truth_on_approval).
         """
         from apps.core_eval.services.eval_field_outcome_service import (
             EvalFieldOutcomeService,
         )
         from apps.core_eval.models import EvalFieldOutcome
 
-        # Build ground-truth map from the persisted Invoice record
-        invoice_truth = cls._build_invoice_truth_map(invoice)
+        # LLM extraction values = the actual predicted output
+        legacy_values = cls._build_legacy_value_map(ext_result)
 
         outcomes = []
 
         if ctx and ctx.source == "governed" and ctx.extraction_run_id:
             outcomes = cls._field_outcomes_from_governed(
-                ctx.extraction_run_id, invoice_truth,
+                ctx.extraction_run_id,
+                legacy_values=legacy_values,
             )
         else:
-            outcomes = cls._field_outcomes_from_legacy(ext_result, invoice_truth)
+            outcomes = cls._field_outcomes_from_legacy(ext_result)
 
         if not outcomes:
             return
@@ -452,12 +476,26 @@ class ExtractionEvalAdapter:
         }
 
     @classmethod
-    def _field_outcomes_from_governed(cls, extraction_run_id: int, invoice_truth: dict) -> list[dict]:
-        """Build field outcome dicts from ExtractionFieldValue records."""
+    def _field_outcomes_from_governed(
+        cls,
+        extraction_run_id: int,
+        *,
+        legacy_values: dict | None = None,
+    ) -> list[dict]:
+        """Build field outcome dicts from governed + LLM extraction data.
+
+        Predicted = LLM-extracted value (from ``legacy_values``).  When LLM
+        did not extract a field, falls back to the deterministic value.
+        Ground truth is left empty -- populated later during human approval.
+        The deterministic value is preserved in ``detail_json`` for diagnostics.
+        """
         try:
             from apps.extraction_core.models import ExtractionFieldValue
         except ImportError:
             return []
+
+        if legacy_values is None:
+            legacy_values = {}
 
         field_values = ExtractionFieldValue.objects.filter(
             extraction_run_id=extraction_run_id,
@@ -468,41 +506,111 @@ class ExtractionEvalAdapter:
 
         outcomes = []
         for fv in field_values:
-            predicted = fv["value"] or ""
-            corrected = fv["corrected_value"] or ""
-            truth = invoice_truth.get(fv["field_code"], "")
+            deterministic_value = fv["value"] or ""
+
+            # Predicted = LLM value first, deterministic fallback
+            llm_confidence = None
+            if fv["field_code"] in legacy_values:
+                lv = legacy_values[fv["field_code"]]
+                predicted = lv["value"]
+                llm_confidence = lv["confidence"]
+                source = "llm"
+            elif deterministic_value:
+                predicted = deterministic_value
+                source = "deterministic"
+            else:
+                predicted = ""
+                source = "deterministic"
+
+            # Ground truth is empty at extraction time.
+            # Populated by _update_field_outcomes_from_corrections (corrected)
+            # or _confirm_ground_truth_on_approval (confirmed).
+            ground_truth = ""
 
             if fv["is_corrected"]:
+                corrected = fv["corrected_value"] or ""
                 status = "INCORRECT"
-                ground_truth = corrected or truth
+                ground_truth = corrected
             elif not predicted:
                 status = "MISSING"
-                ground_truth = truth
-            elif truth and predicted.strip().lower() != truth.strip().lower():
-                # Predicted value doesn't match the Invoice field
-                status = "INCORRECT"
-                ground_truth = truth
-            elif truth:
-                status = "CORRECT"
-                ground_truth = truth
             else:
-                # Have predicted but no Invoice truth to compare
                 status = "CORRECT"
-                ground_truth = ""
+
+            # Use LLM confidence when predicted came from LLM,
+            # otherwise use deterministic confidence.
+            effective_confidence = fv["confidence"]
+            if source == "llm" and llm_confidence is not None:
+                effective_confidence = llm_confidence
 
             outcomes.append({
                 "field_name": fv["field_code"],
                 "status": status,
                 "predicted_value": predicted,
                 "ground_truth_value": ground_truth,
-                "confidence": fv["confidence"],
-                "detail_json": {"category": fv["category"], "source": "governed"},
+                "confidence": effective_confidence,
+                "detail_json": {
+                    "category": fv["category"],
+                    "source": source,
+                    "deterministic_value": deterministic_value,
+                    "deterministic_confidence": fv["confidence"],
+                },
             })
         return outcomes
 
     @classmethod
-    def _field_outcomes_from_legacy(cls, ext_result, invoice_truth: dict) -> list[dict]:
-        """Build field outcome dicts from raw_response._field_confidence."""
+    def _build_legacy_value_map(cls, ext_result) -> dict:
+        """Build {field_code: {value, confidence}} from raw_response.
+
+        Maps the flat top-level keys in raw_response (produced by the
+        legacy LLM extraction agent) to the governed field_code namespace.
+        Returns ``{field_code: {"value": str, "confidence": float}}``.
+        """
+        raw = getattr(ext_result, "raw_response", None) or {}
+        if not isinstance(raw, dict):
+            return {}
+
+        def _str(v):
+            if v is None:
+                return ""
+            return str(v).strip()
+
+        # LLM per-field confidence from _field_confidence.header
+        fc = raw.get("_field_confidence") or {}
+        header_conf = fc.get("header") or {} if isinstance(fc, dict) else {}
+
+        # Map raw_response keys -> governed field_codes
+        mapping = {
+            "invoice_number": "invoice_number",
+            "invoice_date": "invoice_date",
+            "due_date": "due_date",
+            "po_number": "po_number",
+            "currency": "currency",
+            "total_amount": "total_amount",
+            "subtotal": "total_taxable_amount",
+            "tax_amount": "total_tax_amount",
+            "vendor_name": "supplier_name",
+            "vendor_tax_id": "supplier_gstin",
+            "buyer_name": "buyer_name",
+        }
+
+        result = {}
+        for raw_key, field_code in mapping.items():
+            val = _str(raw.get(raw_key))
+            if val:
+                conf = header_conf.get(raw_key)
+                result[field_code] = {
+                    "value": val,
+                    "confidence": float(conf) if conf is not None else None,
+                }
+        return result
+
+    @classmethod
+    def _field_outcomes_from_legacy(cls, ext_result) -> list[dict]:
+        """Build field outcome dicts from raw_response.
+
+        Predicted = LLM-extracted value from raw_response top-level keys.
+        Ground truth is left empty -- populated during human approval.
+        """
         raw = getattr(ext_result, "raw_response", None) or {}
         if not isinstance(raw, dict):
             return []
@@ -510,6 +618,9 @@ class ExtractionEvalAdapter:
         field_conf = raw.get("_field_confidence") or {}
         if not isinstance(field_conf, dict):
             return []
+
+        # Build predicted values from raw_response
+        legacy_values = cls._build_legacy_value_map(ext_result)
 
         outcomes = []
         for field_name, conf_value in field_conf.items():
@@ -521,10 +632,16 @@ class ExtractionEvalAdapter:
                 if conf is not None:
                     conf = float(conf)
 
+            lv = legacy_values.get(field_name)
+            predicted = lv["value"] if lv else ""
+            if lv and lv["confidence"] is not None:
+                conf = lv["confidence"]
+            status = "CORRECT" if predicted else "MISSING"
+
             outcomes.append({
                 "field_name": field_name,
-                "status": "CORRECT",  # no ground truth yet at extraction time
-                "predicted_value": "",
+                "status": status,
+                "predicted_value": predicted,
                 "ground_truth_value": "",
                 "confidence": conf,
                 "detail_json": {"source": "legacy"},
@@ -565,6 +682,34 @@ class ExtractionEvalAdapter:
                         "entity_type": getattr(corr, "entity_type", ""),
                     },
                 )
+
+    # ------------------------------------------------------------------
+    # Confirm ground truth on approval
+    # ------------------------------------------------------------------
+    @classmethod
+    def _confirm_ground_truth_on_approval(cls, eval_run, corrected_field_names):
+        """Set ground_truth = predicted for non-corrected fields after approval.
+
+        When a human approves an extraction (with or without corrections),
+        non-corrected fields are implicitly confirmed correct.  This sets
+        their ground_truth_value so the eval dashboard shows meaningful
+        data post-approval.
+        """
+        if not eval_run:
+            return
+        from apps.core_eval.models import EvalFieldOutcome
+
+        outcomes = EvalFieldOutcome.objects.filter(eval_run=eval_run)
+        for outcome in outcomes:
+            if outcome.field_name in corrected_field_names:
+                continue  # already handled by _update_field_outcomes_from_corrections
+            if not outcome.predicted_value:
+                continue  # nothing to confirm
+            if outcome.ground_truth_value:
+                continue  # already has ground truth
+            outcome.ground_truth_value = outcome.predicted_value
+            outcome.status = "CORRECT"
+            outcome.save(update_fields=["ground_truth_value", "status", "updated_at"])
 
     # ------------------------------------------------------------------
     # Learning signals: validation failures

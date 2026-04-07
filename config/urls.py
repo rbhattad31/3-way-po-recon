@@ -41,6 +41,8 @@ urlpatterns = [
     path("cases/", include("apps.cases.urls")),
     path("dashboard/", include("apps.dashboard.urls")),
     path("invoices/", include("apps.documents.urls")),
+    path("purchase-orders/", include(("apps.documents.po_urls", "documents"), namespace="po_documents")),
+    path("grns/", include(("apps.documents.grn_urls", "documents"), namespace="grn_documents")),
     path("extraction/", include("apps.extraction.urls")),
     path("extraction/control-center/", include("apps.extraction_core.urls")),
     path("reconciliation/", include("apps.reconciliation.urls")),

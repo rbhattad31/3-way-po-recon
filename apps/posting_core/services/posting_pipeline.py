@@ -110,6 +110,11 @@ class PostingPipeline:
             )
         except Exception:
             pass
+        try:
+            from apps.core.langfuse_client import set_current_span
+            set_current_span(_lf_trace)
+        except Exception:
+            pass
 
         def _open_stage_span(name: str, extra_meta: dict = None):
             """Open a child span for a pipeline stage. Fail-silent."""
@@ -217,9 +222,8 @@ class PostingPipeline:
 
             try:
                 from apps.core.langfuse_client import score_trace
-                _trace_id = str(posting_run.pk)
                 score_trace(
-                    _trace_id,
+                    str(posting_run.pk),
                     POSTING_FINAL_CONFIDENCE,
                     float(confidence),
                     comment=(
@@ -227,6 +231,7 @@ class PostingPipeline:
                         f"requires_review='pending' "
                         f"issues={len(all_issues)}"
                     ),
+                    span=_lf_trace,
                 )
             except Exception:
                 pass
@@ -247,6 +252,7 @@ class PostingPipeline:
                     POSTING_FINAL_REQUIRES_REVIEW,
                     1.0 if requires_review else 0.0,
                     comment=f"queue={primary_queue} reasons={len(review_reasons)}",
+                    span=_lf_trace,
                 )
             except Exception:
                 pass
