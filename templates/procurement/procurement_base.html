@@ -1,0 +1,593 @@
+{% load static %}
+{% load rbac_tags %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ page_title|default:"HVAC Procurement" }} — Landmark Group{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  {% block extra_css %}{% endblock %}
+  <style>
+  /* =====================================================
+     PROCUREMENT — SIDEBAR-ONLY LAYOUT
+  ===================================================== */
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --proc-sidebar-w: 268px;
+    --proc-sidebar-bg: #0f0c2e;
+    --proc-sidebar-border: rgba(255,255,255,.07);
+    --proc-accent: #6366f1;
+    --proc-accent-2: #7c3aed;
+    --proc-accent-sky: #0ea5e9;
+    --proc-text-muted: rgba(255,255,255,.48);
+    --proc-topbar-h: 54px;
+    --proc-font: 'Inter', system-ui, sans-serif;
+  }
+  html, body {
+    height: 100%;
+    margin: 0;
+    font-family: var(--proc-font);
+    background: #f1f5fb;
+  }
+
+  /* Layout */
+  .proc-layout {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* -------------------------------------------------------
+     SIDEBAR
+  ------------------------------------------------------- */
+  .proc-sidebar {
+    width: var(--proc-sidebar-w);
+    background: var(--proc-sidebar-bg);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99,102,241,.3) transparent;
+    transition: width .28s cubic-bezier(.4,0,.2,1);
+    position: relative;
+    z-index: 100;
+  }
+  .proc-sidebar::-webkit-scrollbar { width: 4px; }
+  .proc-sidebar::-webkit-scrollbar-thumb {
+    background: rgba(99,102,241,.35);
+    border-radius: 4px;
+  }
+
+  /* Brand */
+  .proc-brand {
+    padding: 1.35rem 1.2rem 1.05rem;
+    border-bottom: 1px solid var(--proc-sidebar-border);
+    display: flex;
+    align-items: center;
+    gap: .72rem;
+    text-decoration: none;
+    flex-shrink: 0;
+  }
+  .proc-brand-icon {
+    width: 40px; height: 40px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #6366f1, #7c3aed, #0ea5e9);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem; color: #fff;
+    box-shadow: 0 4px 16px rgba(99,102,241,.4);
+    flex-shrink: 0;
+  }
+  .proc-brand-name {
+    font-size: .92rem;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.2;
+    letter-spacing: -.01em;
+  }
+  .proc-brand-sub {
+    font-size: .66rem;
+    font-weight: 500;
+    color: var(--proc-text-muted);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  /* User card */
+  .proc-user-card {
+    margin: .8rem 1rem;
+    padding: .65rem .88rem;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    flex-shrink: 0;
+  }
+  .proc-user-avatar {
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .78rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .proc-user-name {
+    font-size: .77rem;
+    font-weight: 600;
+    color: rgba(255,255,255,.88);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+  .proc-user-role {
+    font-size: .64rem;
+    font-weight: 500;
+    color: var(--proc-text-muted);
+    letter-spacing: .03em;
+  }
+
+  /* Section label */
+  .proc-nav-section {
+    padding: .55rem .72rem .2rem;
+    flex-shrink: 0;
+  }
+  .proc-nav-section-label {
+    font-size: .6rem;
+    font-weight: 700;
+    color: rgba(255,255,255,.28);
+    letter-spacing: .10em;
+    text-transform: uppercase;
+    padding: .45rem .5rem .25rem;
+  }
+
+  /* Nav item */
+  .proc-nav-item {
+    display: flex;
+    align-items: center;
+    gap: .62rem;
+    padding: .56rem .72rem;
+    border-radius: 10px;
+    text-decoration: none;
+    color: rgba(255,255,255,.60);
+    font-size: .81rem;
+    font-weight: 500;
+    transition: background .18s, color .18s, transform .12s;
+    position: relative;
+    margin-bottom: .06rem;
+    cursor: pointer;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+  }
+  .proc-nav-item i {
+    font-size: .98rem;
+    flex-shrink: 0;
+    opacity: .72;
+    transition: opacity .18s;
+  }
+  .proc-nav-item:hover {
+    background: rgba(255,255,255,.07);
+    color: rgba(255,255,255,.92);
+    transform: translateX(2px);
+    text-decoration: none;
+  }
+  .proc-nav-item:hover i { opacity: 1; }
+  .proc-nav-item.active {
+    background: linear-gradient(90deg, rgba(99,102,241,.28), rgba(99,102,241,.10));
+    color: #fff;
+    font-weight: 600;
+  }
+  .proc-nav-item.active i { opacity: 1; }
+  .proc-nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 20%; bottom: 20%;
+    width: 3px;
+    background: linear-gradient(180deg, #6366f1, #0ea5e9);
+    border-radius: 0 3px 3px 0;
+  }
+  .proc-nav-item.highlight {
+    background: linear-gradient(90deg, rgba(99,102,241,.22), rgba(14,165,233,.12));
+    color: rgba(255,255,255,.85);
+    border: 1px solid rgba(99,102,241,.26);
+  }
+  .proc-nav-item.highlight:hover {
+    background: linear-gradient(90deg, rgba(99,102,241,.35), rgba(14,165,233,.22));
+    color: #fff;
+  }
+
+  /* Nav badge */
+  .proc-nav-badge {
+    margin-left: auto;
+    background: linear-gradient(135deg, #6366f1, #7c3aed);
+    color: #fff;
+    font-size: .58rem;
+    font-weight: 700;
+    padding: .1rem .4rem;
+    border-radius: 999px;
+    min-width: 18px;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .proc-nav-badge.amber { background: linear-gradient(135deg, #f59e0b, #d97706); }
+  .proc-nav-badge.sky   { background: linear-gradient(135deg, #0ea5e9, #0284c7); }
+  .proc-nav-badge.green { background: linear-gradient(135deg, #059669, #047857); }
+  .proc-nav-badge.rose  { background: linear-gradient(135deg, #e11d48, #be123c); }
+
+  /* Divider */
+  .proc-nav-divider {
+    height: 1px;
+    background: var(--proc-sidebar-border);
+    margin: .45rem 1rem;
+  }
+
+  /* Sidebar KPIs */
+  .proc-sidebar-kpi {
+    margin: .4rem .72rem .55rem;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 12px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .proc-sidebar-kpi-title {
+    font-size: .6rem;
+    font-weight: 700;
+    color: rgba(255,255,255,.26);
+    letter-spacing: .10em;
+    text-transform: uppercase;
+    padding: .55rem .88rem .18rem;
+  }
+  .proc-kpi-row {
+    display: flex;
+    align-items: center;
+    gap: .52rem;
+    padding: .46rem .88rem;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    transition: background .14s;
+  }
+  .proc-kpi-row:last-child { border-bottom: none; }
+  .proc-kpi-row:hover { background: rgba(255,255,255,.04); }
+  .proc-kpi-icon {
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .7rem;
+    flex-shrink: 0;
+  }
+  .proc-kpi-icon.indigo { background: rgba(99,102,241,.20); color: #a5b4fc; }
+  .proc-kpi-icon.sky    { background: rgba(14,165,233,.18); color: #7dd3fc; }
+  .proc-kpi-icon.amber  { background: rgba(245,158,11,.18); color: #fcd34d; }
+  .proc-kpi-icon.green  { background: rgba(5,150,105,.18);  color: #6ee7b7; }
+  .proc-kpi-icon.violet { background: rgba(124,58,237,.20); color: #c4b5fd; }
+  .proc-kpi-icon.rose   { background: rgba(225,29,72,.18);  color: #fda4af; }
+  .proc-kpi-val {
+    font-size: .86rem;
+    font-weight: 700;
+    color: rgba(255,255,255,.86);
+    margin-left: auto;
+    min-width: 20px;
+    text-align: right;
+  }
+  .proc-kpi-label {
+    font-size: .7rem;
+    font-weight: 500;
+    color: rgba(255,255,255,.48);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Sidebar footer */
+  .proc-sidebar-footer {
+    margin-top: auto;
+    padding: .55rem .72rem .82rem;
+    border-top: 1px solid var(--proc-sidebar-border);
+    flex-shrink: 0;
+  }
+
+  /* -------------------------------------------------------
+     MAIN AREA
+  ------------------------------------------------------- */
+  .proc-main-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  /* Topbar */
+  .proc-topbar {
+    height: var(--proc-topbar-h);
+    background: rgba(255,255,255,.96);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(99,102,241,.10);
+    display: flex;
+    align-items: center;
+    padding: 0 1.5rem;
+    gap: 1rem;
+    flex-shrink: 0;
+    z-index: 50;
+  }
+  .proc-sidebar-toggle {
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 1.15rem;
+    cursor: pointer;
+    padding: .28rem .42rem;
+    border-radius: 8px;
+    transition: background .15s, color .15s;
+    line-height: 1;
+  }
+  .proc-sidebar-toggle:hover { background: #eef2ff; color: #4f46e5; }
+  .proc-topbar-title {
+    font-size: .86rem;
+    font-weight: 600;
+    color: #374151;
+    flex: 1;
+  }
+  .proc-topbar-actions { display: flex; align-items: center; gap: .5rem; }
+  .proc-topbar-btn {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: #fff;
+    border: none;
+    border-radius: 9px;
+    padding: .36rem .95rem;
+    font-size: .77rem;
+    font-weight: 600;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: .32rem;
+    transition: box-shadow .2s, transform .15s;
+    box-shadow: 0 2px 8px rgba(99,102,241,.28);
+  }
+  .proc-topbar-btn:hover {
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(99,102,241,.38);
+    text-decoration: none;
+  }
+
+  /* Content */
+  .proc-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 1.6rem 2rem;
+    scroll-behavior: smooth;
+  }
+  .proc-content::-webkit-scrollbar { width: 6px; }
+  .proc-content::-webkit-scrollbar-track { background: #f1f5fb; }
+  .proc-content::-webkit-scrollbar-thumb {
+    background: linear-gradient(#6366f1, #0ea5e9);
+    border-radius: 3px;
+  }
+
+  /* Messages */
+  .proc-messages {
+    padding: .7rem 2rem 0;
+    flex-shrink: 0;
+  }
+
+  /* Collapsed state */
+  .proc-layout.sidebar-collapsed .proc-sidebar {
+    width: 0;
+    overflow: hidden;
+  }
+
+  /* Mobile */
+  .proc-sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.52);
+    z-index: 99;
+  }
+  @media (max-width: 991px) {
+    .proc-sidebar {
+      position: fixed;
+      left: 0; top: 0; bottom: 0;
+      transform: translateX(-100%);
+      z-index: 200;
+      box-shadow: 4px 0 32px rgba(0,0,0,.25);
+      transition: transform .28s cubic-bezier(.4,0,.2,1);
+    }
+    .proc-layout.sidebar-open .proc-sidebar {
+      transform: translateX(0);
+    }
+    .proc-layout.sidebar-open .proc-sidebar-overlay {
+      display: block;
+    }
+    .proc-content { padding: 1.2rem 1rem; }
+    .proc-topbar  { padding: 0 1rem; }
+    .proc-messages { padding: .6rem 1rem 0; }
+  }
+  </style>
+</head>
+<body>
+<div class="proc-layout" id="procLayout">
+
+  <aside class="proc-sidebar" id="procSidebar">
+
+    {# Brand #}
+    <a class="proc-brand" href="{{ sidebar_brand.home_url|default:'/' }}">
+      <div class="proc-brand-icon">
+        <i class="bi {{ sidebar_brand.icon|default:'bi-wind' }}"></i>
+      </div>
+      <div>
+        <div class="proc-brand-name">{{ sidebar_brand.name|default:"LMG Procurement" }}</div>
+        <div class="proc-brand-sub">{{ sidebar_brand.subtitle|default:"HVAC Intelligence" }}</div>
+      </div>
+    </a>
+
+    {# User card #}
+    <div class="proc-user-card">
+      <div class="proc-user-avatar">
+        {% with full=request.user.get_full_name %}
+          {% if full %}{{ full|slice:":1"|upper }}{% else %}{{ request.user.email|slice:":1"|upper }}{% endif %}
+        {% endwith %}
+      </div>
+      <div style="min-width:0;">
+        <div class="proc-user-name">
+          {% with full=request.user.get_full_name %}
+            {% if full %}{{ full }}{% else %}{{ request.user.email }}{% endif %}
+          {% endwith %}
+        </div>
+        <div class="proc-user-role">{{ sidebar_user_role|default:"Procurement User" }}</div>
+      </div>
+    </div>
+
+    {# Navigation groups — fully driven by view context #}
+    {% for group in sidebar_nav_groups %}
+      {% if group.divider_before %}<div class="proc-nav-divider"></div>{% endif %}
+      <div class="proc-nav-section">
+        {% if group.label %}
+          <div class="proc-nav-section-label">{{ group.label }}</div>
+        {% endif %}
+        {% for item in group.items %}
+          <a href="{{ item.url }}"
+             class="proc-nav-item{% if item.active %} active{% endif %}{% if item.highlight %} highlight{% endif %}">
+            <i class="bi {{ item.icon }}"></i>
+            <span>{{ item.label }}</span>
+            {% if item.badge %}
+              <span class="proc-nav-badge {% if item.badge_color %}{{ item.badge_color }}{% endif %}">
+                {{ item.badge }}
+              </span>
+            {% endif %}
+          </a>
+        {% endfor %}
+      </div>
+    {% endfor %}
+
+    {# Quick Stats KPIs #}
+    {% if sidebar_kpis %}
+      <div class="proc-nav-divider"></div>
+      <div class="proc-sidebar-kpi">
+        <div class="proc-sidebar-kpi-title">Quick Stats</div>
+        {% for kpi in sidebar_kpis %}
+          <div class="proc-kpi-row">
+            <div class="proc-kpi-icon {{ kpi.color|default:'indigo' }}">
+              <i class="bi {{ kpi.icon }}"></i>
+            </div>
+            <span class="proc-kpi-label">{{ kpi.label }}</span>
+            <span class="proc-kpi-val">{{ kpi.value }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# Footer links #}
+    {% if sidebar_footer_links %}
+      <div class="proc-sidebar-footer">
+        {% for link in sidebar_footer_links %}
+          <a href="{{ link.url }}" class="proc-nav-item">
+            <i class="bi {{ link.icon }}"></i>
+            <span>{{ link.label }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div style="margin-top:auto; padding-bottom:.5rem;"></div>
+    {% endif %}
+
+  </aside>
+
+  {# Mobile overlay #}
+  <div class="proc-sidebar-overlay" id="sidebarOverlay"></div>
+
+  <div class="proc-main-wrap">
+
+    {# Topbar #}
+    <header class="proc-topbar">
+      <button class="proc-sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
+        <i class="bi bi-layout-sidebar"></i>
+      </button>
+      <div class="proc-topbar-title">
+        {% block topbar_title %}{{ page_title|default:"HVAC Procurement" }}{% endblock %}
+      </div>
+      <div class="proc-topbar-actions">
+        {% for action in topbar_actions %}
+          <a href="{{ action.url }}" class="proc-topbar-btn">
+            <i class="bi {{ action.icon }}"></i>{{ action.label }}
+          </a>
+        {% endfor %}
+      </div>
+    </header>
+
+    {# Flash messages #}
+    {% if messages %}
+      <div class="proc-messages">
+        {% for msg in messages %}
+          <div class="alert alert-{{ msg.tags|default:'info' }} alert-dismissible fade show py-2 px-3 mb-2"
+               role="alert" style="font-size:.82rem;border-radius:10px;">
+            {{ msg }}
+            <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# Page content #}
+    <main class="proc-content">
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>{# /proc-main-wrap #}
+</div>{# /proc-layout #}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  var layout  = document.getElementById('procLayout');
+  var toggle  = document.getElementById('sidebarToggle');
+  var overlay = document.getElementById('sidebarOverlay');
+  var KEY     = 'proc_sidebar_collapsed';
+
+  if (window.innerWidth >= 992) {
+    if (localStorage.getItem(KEY) === '1') {
+      layout.classList.add('sidebar-collapsed');
+    }
+  }
+
+  toggle.addEventListener('click', function () {
+    if (window.innerWidth < 992) {
+      layout.classList.toggle('sidebar-open');
+    } else {
+      var collapsed = layout.classList.toggle('sidebar-collapsed');
+      localStorage.setItem(KEY, collapsed ? '1' : '0');
+    }
+  });
+
+  overlay.addEventListener('click', function () {
+    layout.classList.remove('sidebar-open');
+  });
+
+  document.querySelectorAll('.proc-nav-item').forEach(function (el) {
+    el.addEventListener('click', function () {
+      if (window.innerWidth < 992) {
+        layout.classList.remove('sidebar-open');
+      }
+    });
+  });
+}());
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>
