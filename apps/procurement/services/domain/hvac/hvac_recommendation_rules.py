@@ -1,14 +1,71 @@
 """Deterministic HVAC recommendation rules engine."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 
 class HVACRecommendationRules:
-    """Rule-based HVAC product selection recommendation."""
+    """Rule-based HVAC product selection recommendation.
+
+    Evaluation order:
+    1. DB-driven HVACRecommendationRule records (ordered by priority ASC, rule_code ASC).
+    2. Hardcoded heuristic fallback (original logic).
+    """
 
     @staticmethod
     def evaluate(attrs: Dict[str, Any]) -> Dict[str, Any]:
+        # ── 1. DB-driven rules (first match wins) ─────────────────────────────
+        try:
+            from apps.procurement.models import HVACRecommendationRule
+            db_rules = list(
+                HVACRecommendationRule.objects
+                .filter(is_active=True)
+                .order_by("priority", "rule_code")
+            )
+            for rule in db_rules:
+                if rule.matches(attrs):
+                    capacity_band = HVACRecommendationRules._capacity_band(attrs)
+                    alt = None
+                    if rule.alternate_system:
+                        alt = {
+                            "system_type": rule.alternate_system,
+                            "reason": f"Alternate per rule {rule.rule_code}.",
+                        }
+                    notes_list = [rule.notes] if rule.notes else []
+                    return {
+                        "recommended_option": f"{rule.recommended_system} ({capacity_band})",
+                        "recommended_system_type": rule.recommended_system,
+                        "capacity_band": capacity_band,
+                        "decision_drivers": [f"[{rule.rule_code}] {rule.rule_name}"],
+                        "constraints": [],
+                        "assumptions": [],
+                        "notes": notes_list,
+                        "archetype": "db_rule_match",
+                        "alternate_option": alt,
+                        "reasoning_summary": (
+                            rule.rationale
+                            or f"Matched DB rule {rule.rule_code}: {rule.rule_name}."
+                        ),
+                        "reasoning_details": {
+                            "rule_engine": "HVAC_RULES_DB",
+                            "rule_code": rule.rule_code,
+                            "rule_name": rule.rule_name,
+                            "priority": rule.priority,
+                            "capacity_note": "Indicative only. Final design required.",
+                        },
+                        "confidence": 0.90,
+                        "confidence_score": 0.90,
+                        "confident": True,
+                        "requires_ai_reasoning": False,
+                        "human_validation_required": False,
+                        "constraints_and_assumptions": [],
+                    }
+        except Exception as exc:
+            logger.debug("DB rule lookup skipped: %s", exc)
+        # ── 2. Hardcoded heuristic fallback ───────────────────────────────────
         archetype = HVACRecommendationRules._detect_archetype(attrs)
         drivers: List[str] = []
         constraints: List[str] = []

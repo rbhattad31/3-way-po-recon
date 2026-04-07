@@ -1,6 +1,6 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% load static %}
-{% block title %}Case Console — {{ invoice.invoice_number }} — PO Reconciliation{% endblock %}
+{% block title %}Case Console â€” {{ invoice.invoice_number }} â€” PO Reconciliation{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css">
@@ -18,9 +18,6 @@
 
 {% block content %}
 
-{# ================================================================== #}
-{#  SECTION NAVIGATION BAR (quick-jump)                               #}
-{# ================================================================== #}
 <nav id="caseNav" class="case-section-nav mb-3">
   <div class="d-flex flex-wrap gap-1">
     <a href="#sec-summary" class="btn btn-sm btn-outline-secondary active"><i class="bi bi-grid me-1"></i>Summary</a>
@@ -34,9 +31,6 @@
   </div>
 </nav>
 
-{# ================================================================== #}
-{#  SECTION 1 — STICKY HEADER SUMMARY                                #}
-{# ================================================================== #}
 <div id="sec-summary" class="cc-sticky-header sticky-top mb-3">
   <div class="card shadow-sm border-0">
     <div class="card-body py-2">
@@ -46,17 +40,17 @@
           <div class="d-flex flex-wrap align-items-center gap-3">
             <div>
               <small class="text-muted d-block">Invoice</small>
-              <strong class="fs-6">{{ invoice.invoice_number|default:"—" }}</strong>
+              <strong class="fs-6">{{ invoice.invoice_number|default:"â€”" }}</strong>
             </div>
             <div class="vr d-none d-md-block"></div>
             <div>
               <small class="text-muted d-block">Vendor</small>
-              <span>{% if invoice.vendor %}{{ invoice.vendor.name }}{% else %}{{ invoice.raw_vendor_name|default:"—" }}{% endif %}</span>
+              <span>{% if invoice.vendor %}{{ invoice.vendor.name }}{% else %}{{ invoice.raw_vendor_name|default:"â€”" }}{% endif %}</span>
             </div>
             <div class="vr d-none d-md-block"></div>
             <div>
               <small class="text-muted d-block">PO</small>
-              <span>{{ po.po_number|default:"—" }}</span>
+              <span>{{ po.po_number|default:"â€”" }}</span>
             </div>
             <div class="vr d-none d-md-block"></div>
             <div>
@@ -78,7 +72,7 @@
               <small class="text-muted d-block">Confidence</small>
               {% if result.deterministic_confidence %}
               <span class="fw-semibold">{% widthratio result.deterministic_confidence 1 100 %}%</span>
-              {% else %}—{% endif %}
+              {% else %}â€”{% endif %}
             </div>
             <div class="vr d-none d-md-block"></div>
             <div>
@@ -116,9 +110,6 @@
 </div>
 {% endif %}
 
-{# ================================================================== #}
-{#  SECTION 2 — AI CASE SUMMARY BANNER                               #}
-{# ================================================================== #}
 {% if case_summary_text or exceptions %}
 <div id="sec-ai-summary" class="mb-3">
   <div class="card border-start border-4 {% if result.match_status == 'MATCHED' %}border-success{% elif result.match_status == 'PARTIAL_MATCH' %}border-warning{% else %}border-danger{% endif %} cc-ai-banner">
@@ -153,9 +144,6 @@
 </div>
 {% endif %}
 
-{# ================================================================== #}
-{#  SECTION 3 — DOCUMENT SNAPSHOT (Invoice / PO / GRN)               #}
-{# ================================================================== #}
 <div id="sec-documents" class="mb-3">
   <h5 class="cc-section-title"><i class="bi bi-file-earmark-text me-2"></i>Document Snapshot</h5>
   <div class="row g-3">
@@ -168,11 +156,11 @@
         </div>
         <div class="card-body">
           <table class="table table-sm table-borderless mb-0 cc-doc-table">
-            <tr><td class="text-muted">Number</td><td class="fw-semibold">{{ invoice.invoice_number|default:"—" }}</td></tr>
-            <tr><td class="text-muted">Vendor</td><td>{% if invoice.vendor %}{{ invoice.vendor.name }}{% else %}{{ invoice.raw_vendor_name|default:"—" }}{% endif %}</td></tr>
+            <tr><td class="text-muted">Number</td><td class="fw-semibold">{{ invoice.invoice_number|default:"â€”" }}</td></tr>
+            <tr><td class="text-muted">Vendor</td><td>{% if invoice.vendor %}{{ invoice.vendor.name }}{% else %}{{ invoice.raw_vendor_name|default:"â€”" }}{% endif %}</td></tr>
             <tr><td class="text-muted">Amount</td><td class="fw-semibold">{{ invoice.currency }} {{ invoice.total_amount|default:"0.00" }}</td></tr>
             <tr><td class="text-muted">Tax</td><td>{{ invoice.currency }} {{ invoice.tax_amount|default:"0.00" }}</td></tr>
-            <tr><td class="text-muted">Date</td><td>{{ invoice.invoice_date|date:"M d, Y"|default:"—" }}</td></tr>
+            <tr><td class="text-muted">Date</td><td>{{ invoice.invoice_date|date:"M d, Y"|default:"â€”" }}</td></tr>
             <tr><td class="text-muted">Lines</td><td>{{ invoice.line_items.count }}</td></tr>
             <tr><td class="text-muted">Confidence</td><td>
               {% if invoice.extraction_confidence %}
@@ -182,7 +170,7 @@
                 </div>
                 <small>{% widthratio invoice.extraction_confidence 1 100 %}%</small>
               </div>
-              {% else %}—{% endif %}
+              {% else %}â€”{% endif %}
             </td></tr>
           </table>
         </div>
@@ -205,12 +193,12 @@
           {% if po %}
           <table class="table table-sm table-borderless mb-0 cc-doc-table">
             <tr><td class="text-muted">PO Number</td><td class="fw-semibold">{{ po.po_number }}</td></tr>
-            <tr><td class="text-muted">Vendor</td><td>{% if po.vendor %}{{ po.vendor.name }}{% else %}—{% endif %}</td></tr>
+            <tr><td class="text-muted">Vendor</td><td>{% if po.vendor %}{{ po.vendor.name }}{% else %}â€”{% endif %}</td></tr>
             <tr><td class="text-muted">Amount</td><td class="fw-semibold">{{ po.currency }} {{ po.total_amount|default:"0.00" }}</td></tr>
             <tr><td class="text-muted">Tax</td><td>{{ po.currency }} {{ po.tax_amount|default:"0.00" }}</td></tr>
-            <tr><td class="text-muted">Date</td><td>{{ po.po_date|date:"M d, Y"|default:"—" }}</td></tr>
+            <tr><td class="text-muted">Date</td><td>{{ po.po_date|date:"M d, Y"|default:"â€”" }}</td></tr>
             <tr><td class="text-muted">Lines</td><td>{{ po.line_items.count }}</td></tr>
-            <tr><td class="text-muted">Buyer</td><td>{{ po.buyer_name|default:"—" }}</td></tr>
+            <tr><td class="text-muted">Buyer</td><td>{{ po.buyer_name|default:"â€”" }}</td></tr>
           </table>
           {% else %}
           <div class="text-center text-muted py-4">
@@ -229,7 +217,7 @@
       </div>
     </div>
 
-    {# GRN Card — only shown in 3-way mode #}
+    {# GRN Card â€” only shown in 3-way mode #}
     {% if not is_two_way %}
     <div class="col-lg-4">
       <div class="card h-100 cc-doc-card">
@@ -243,10 +231,10 @@
           <div class="{% if not forloop.last %}border-bottom pb-2 mb-2{% endif %}">
             <table class="table table-sm table-borderless mb-0 cc-doc-table">
               <tr><td class="text-muted">GRN #</td><td class="fw-semibold">{{ grn.grn_number }}</td></tr>
-              <tr><td class="text-muted">Date</td><td>{{ grn.receipt_date|date:"M d, Y"|default:"—" }}</td></tr>
+              <tr><td class="text-muted">Date</td><td>{{ grn.receipt_date|date:"M d, Y"|default:"â€”" }}</td></tr>
               <tr><td class="text-muted">Status</td><td><span class="badge bg-info-subtle text-info">{{ grn.status }}</span></td></tr>
               <tr><td class="text-muted">Lines</td><td>{{ grn.line_items.count }}</td></tr>
-              <tr><td class="text-muted">Warehouse</td><td>{{ grn.warehouse|default:"—" }}</td></tr>
+              <tr><td class="text-muted">Warehouse</td><td>{{ grn.warehouse|default:"â€”" }}</td></tr>
             </table>
           </div>
           {% endfor %}
@@ -286,15 +274,12 @@
   </div>
 </div>
 
-{# ================================================================== #}
-{#  SECTION 4 — RECONCILIATION COMPARISON                            #}
-{# ================================================================== #}
 <div id="sec-reconciliation" class="mb-3">
   <div class="card">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
       <div>
         <i class="bi bi-table me-2 text-primary"></i><strong>Reconciliation Comparison</strong>
-        <small class="text-muted ms-2">{{ line_results|length }} line{{ line_results|length|pluralize }} · {{ mismatch_line_count }} mismatch{{ mismatch_line_count|pluralize:"es" }}</small>
+        <small class="text-muted ms-2">{{ line_results|length }} line{{ line_results|length|pluralize }} Â· {{ mismatch_line_count }} mismatch{{ mismatch_line_count|pluralize:"es" }}</small>
       </div>
       <div class="d-flex align-items-center gap-2">
         <div class="form-check form-switch mb-0">
@@ -362,15 +347,15 @@
             <tr class="{% if ln.match_status != 'MATCHED' %}cc-row-mismatch{% endif %}" data-match-status="{{ ln.match_status }}">
               <td>{{ forloop.counter }}</td>
               <td class="text-truncate" style="max-width:180px" title="{% if ln.invoice_line %}{{ ln.invoice_line.description }}{% elif ln.po_line %}{{ ln.po_line.description }}{% endif %}">
-                {% if ln.invoice_line %}{{ ln.invoice_line.description|truncatechars:50 }}{% elif ln.po_line %}{{ ln.po_line.description|truncatechars:50 }}{% else %}—{% endif %}
+                {% if ln.invoice_line %}{{ ln.invoice_line.description|truncatechars:50 }}{% elif ln.po_line %}{{ ln.po_line.description|truncatechars:50 }}{% else %}â€”{% endif %}
               </td>
-              <td>{{ ln.qty_invoice|default:"—" }}</td>
-              <td {% if ln.qty_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.qty_po|default:"—" }}</td>
-              {% if not is_two_way %}<td>{{ ln.qty_received|default:"—" }}</td>{% endif %}
-              <td>{{ ln.price_invoice|default:"—" }}</td>
-              <td {% if ln.price_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.price_po|default:"—" }}</td>
-              <td>{{ ln.amount_invoice|default:"—" }}</td>
-              <td {% if ln.amount_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.amount_po|default:"—" }}</td>
+              <td>{{ ln.qty_invoice|default:"â€”" }}</td>
+              <td {% if ln.qty_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.qty_po|default:"â€”" }}</td>
+              {% if not is_two_way %}<td>{{ ln.qty_received|default:"â€”" }}</td>{% endif %}
+              <td>{{ ln.price_invoice|default:"â€”" }}</td>
+              <td {% if ln.price_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.price_po|default:"â€”" }}</td>
+              <td>{{ ln.amount_invoice|default:"â€”" }}</td>
+              <td {% if ln.amount_within_tolerance == False %}class="cc-cell-mismatch"{% endif %}>{{ ln.amount_po|default:"â€”" }}</td>
               <td class="{% if ln.amount_difference and ln.amount_difference != 0 %}fw-semibold text-danger{% endif %}">
                 {{ ln.amount_difference|default:"0.00" }}
               </td>
@@ -386,9 +371,6 @@
   </div>
 </div>
 
-{# ================================================================== #}
-{#  SECTION 5+6 — EXCEPTIONS & AGENT DECISION FLOW (2-column)        #}
-{# ================================================================== #}
 <div class="row g-3 mb-3">
 <div class="col-lg-6">
 <div id="sec-exceptions" class="h-100">
@@ -593,9 +575,6 @@
 </div>{# /col-lg-6 agents #}
 </div>{# /row #}
 
-{# ================================================================== #}
-{#  SECTION 7 — AGENT RECOMMENDATION                                 #}
-{# ================================================================== #}
 {% if primary_recommendation %}
 <div id="sec-recommendation" class="mb-3">
   <div class="card border-start border-4 border-info cc-recommendation-card">
@@ -655,10 +634,10 @@
                 </div>
                 <strong>{% widthratio primary_recommendation.confidence 1 100 %}%</strong>
               </div>
-              {% else %}—{% endif %}
+              {% else %}â€”{% endif %}
 
               <small class="text-muted d-block">Source Agent</small>
-              <span class="mb-3 d-block">{{ primary_recommendation.agent_run.agent_type|default:"—" }}</span>
+              <span class="mb-3 d-block">{{ primary_recommendation.agent_run.agent_type|default:"â€”" }}</span>
 
               {% if primary_recommendation.accepted is None %}
               <div class="d-grid gap-2 mt-3">
@@ -683,9 +662,9 @@
             {% if not forloop.first %}
             <tr>
               <td><span class="badge bg-info">{{ rec.get_recommendation_type_display }}</span></td>
-              <td><small>{{ rec.agent_run.agent_type|default:"—" }}</small></td>
-              <td>{% if rec.confidence %}{% widthratio rec.confidence 1 100 %}%{% else %}—{% endif %}</td>
-              <td>{{ rec.recommended_action|default:"—" }}</td>
+              <td><small>{{ rec.agent_run.agent_type|default:"â€”" }}</small></td>
+              <td>{% if rec.confidence %}{% widthratio rec.confidence 1 100 %}%{% else %}â€”{% endif %}</td>
+              <td>{{ rec.recommended_action|default:"â€”" }}</td>
               <td>
                 {% if rec.accepted is None %}<span class="badge bg-warning text-dark">Pending</span>
                 {% elif rec.accepted %}<span class="badge bg-success">Accepted</span>
@@ -715,9 +694,6 @@
 </div>
 {% endif %}
 
-{# ================================================================== #}
-{#  SECTION 8 — CASE TIMELINE                                        #}
-{# ================================================================== #}
 <div id="sec-timeline" class="mb-3">
   <div class="card">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
@@ -783,9 +759,6 @@
   </div>
 </div>
 
-{# ================================================================== #}
-{#  SECTION 9 — REVIEW PANEL                                         #}
-{# ================================================================== #}
 <div id="sec-review" class="mb-3">
   <div class="card">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
@@ -807,9 +780,9 @@
               <table class="table table-sm table-borderless mb-0">
                 <tr><td class="text-muted">Assigned To</td><td class="fw-semibold">{% if review_assignment.assigned_to %}{{ review_assignment.assigned_to.get_full_name|default:review_assignment.assigned_to.email }}{% else %}<span class="text-muted">Unassigned</span>{% endif %}</td></tr>
                 <tr><td class="text-muted">Priority</td><td>
-                  {% if review_assignment.priority <= 3 %}<span class="badge bg-danger">P{{ review_assignment.priority }} — High</span>
-                  {% elif review_assignment.priority <= 6 %}<span class="badge bg-warning text-dark">P{{ review_assignment.priority }} — Medium</span>
-                  {% else %}<span class="badge bg-secondary">P{{ review_assignment.priority }} — Low</span>{% endif %}
+                  {% if review_assignment.priority <= 3 %}<span class="badge bg-danger">P{{ review_assignment.priority }} â€” High</span>
+                  {% elif review_assignment.priority <= 6 %}<span class="badge bg-warning text-dark">P{{ review_assignment.priority }} â€” Medium</span>
+                  {% else %}<span class="badge bg-secondary">P{{ review_assignment.priority }} â€” Low</span>{% endif %}
                 </td></tr>
                 <tr><td class="text-muted">Status</td><td><span class="badge status-badge status-{{ review_assignment.status }}">{{ review_assignment.get_status_display }}</span></td></tr>
                 <tr><td class="text-muted">Created</td><td>{{ review_assignment.created_at|date:"M d, Y H:i" }}</td></tr>
@@ -823,7 +796,7 @@
                 <span class="badge status-badge status-{{ review_decision.decision }} fs-6">{{ review_decision.get_decision_display }}</span>
               </div>
               {% if review_decision.reason %}<p class="small mt-1 mb-0">{{ review_decision.reason }}</p>{% endif %}
-              <small class="text-muted">by {{ review_decision.decided_by.get_full_name|default:review_decision.decided_by.email|default:"—" }} on {{ review_decision.decided_at|date:"M d, Y H:i" }}</small>
+              <small class="text-muted">by {{ review_decision.decided_by.get_full_name|default:review_decision.decided_by.email|default:"â€”" }} on {{ review_decision.decided_at|date:"M d, Y H:i" }}</small>
               {% endif %}
             </div>
           </div>
@@ -845,7 +818,7 @@
                 <strong class="small">{{ action.get_action_type_display }}</strong>
                 {% if action.field_name %}<span class="badge bg-light text-dark border ms-1">{{ action.field_name }}</span>{% endif %}
                 {% if action.reason %}<br><small class="text-muted">{{ action.reason|truncatechars:100 }}</small>{% endif %}
-                <br><small class="text-muted">{{ action.performed_by.get_full_name|default:action.performed_by.email|default:"—" }} · {{ action.created_at|date:"M d H:i" }}</small>
+                <br><small class="text-muted">{{ action.performed_by.get_full_name|default:action.performed_by.email|default:"â€”" }} Â· {{ action.created_at|date:"M d H:i" }}</small>
               </div>
             </div>
             {% endfor %}
@@ -908,9 +881,6 @@
   </div>
 </div>
 
-{# ================================================================== #}
-{#  OFFCANVAS — PO Details                                           #}
-{# ================================================================== #}
 {% if po %}
 <div class="offcanvas offcanvas-end" tabindex="-1" id="poOffcanvas" style="width:500px">
   <div class="offcanvas-header">
@@ -920,14 +890,14 @@
   <div class="offcanvas-body">
     <table class="table table-sm">
       <tr><th>PO Number</th><td>{{ po.po_number }}</td></tr>
-      <tr><th>Vendor</th><td>{% if po.vendor %}{{ po.vendor.name }}{% else %}—{% endif %}</td></tr>
-      <tr><th>Date</th><td>{{ po.po_date|date:"M d, Y"|default:"—" }}</td></tr>
+      <tr><th>Vendor</th><td>{% if po.vendor %}{{ po.vendor.name }}{% else %}â€”{% endif %}</td></tr>
+      <tr><th>Date</th><td>{{ po.po_date|date:"M d, Y"|default:"â€”" }}</td></tr>
       <tr><th>Currency</th><td>{{ po.currency }}</td></tr>
       <tr><th>Total</th><td>{{ po.currency }} {{ po.total_amount|default:"0.00" }}</td></tr>
       <tr><th>Tax</th><td>{{ po.currency }} {{ po.tax_amount|default:"0.00" }}</td></tr>
       <tr><th>Status</th><td><span class="badge bg-success">{{ po.status }}</span></td></tr>
-      <tr><th>Buyer</th><td>{{ po.buyer_name|default:"—" }}</td></tr>
-      <tr><th>Department</th><td>{{ po.department|default:"—" }}</td></tr>
+      <tr><th>Buyer</th><td>{{ po.buyer_name|default:"â€”" }}</td></tr>
+      <tr><th>Department</th><td>{{ po.department|default:"â€”" }}</td></tr>
     </table>
     <h6 class="mt-3">Line Items</h6>
     <div class="table-responsive">
@@ -952,9 +922,6 @@
 </div>
 {% endif %}
 
-{# ================================================================== #}
-{#  OFFCANVAS — GRN Details                                          #}
-{# ================================================================== #}
 {% if grns %}
 <div class="offcanvas offcanvas-end" tabindex="-1" id="grnOffcanvas" style="width:500px">
   <div class="offcanvas-header">
@@ -966,10 +933,10 @@
     <div class="{% if not forloop.last %}border-bottom pb-3 mb-3{% endif %}">
       <h6>GRN {{ grn.grn_number }}</h6>
       <table class="table table-sm">
-        <tr><th>Date</th><td>{{ grn.receipt_date|date:"M d, Y"|default:"—" }}</td></tr>
+        <tr><th>Date</th><td>{{ grn.receipt_date|date:"M d, Y"|default:"â€”" }}</td></tr>
         <tr><th>Status</th><td><span class="badge bg-info">{{ grn.status }}</span></td></tr>
-        <tr><th>Warehouse</th><td>{{ grn.warehouse|default:"—" }}</td></tr>
-        <tr><th>Receiver</th><td>{{ grn.receiver_name|default:"—" }}</td></tr>
+        <tr><th>Warehouse</th><td>{{ grn.warehouse|default:"â€”" }}</td></tr>
+        <tr><th>Receiver</th><td>{{ grn.receiver_name|default:"â€”" }}</td></tr>
       </table>
       <h6 class="small">Line Items</h6>
       <div class="table-responsive">
@@ -981,7 +948,7 @@
               <td>{{ line.line_number }}</td>
               <td>{{ line.description|truncatechars:40 }}</td>
               <td>{{ line.quantity_received }}</td>
-              <td>{{ line.quantity_accepted|default:"—" }}</td>
+              <td>{{ line.quantity_accepted|default:"â€”" }}</td>
             </tr>
             {% empty %}
             <tr><td colspan="4" class="text-muted text-center">No line items</td></tr>

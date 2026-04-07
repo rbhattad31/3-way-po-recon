@@ -1,114 +1,115 @@
-{% load rbac_tags %}
+﻿{% load rbac_tags %}
 <nav id="sidebar" class="border-end position-fixed"
      style="top:56px;width:252px;height:calc(100vh - 56px);overflow-y:auto;z-index:1030;
-            background:linear-gradient(180deg,#f8f7ff 0%,#f0f9ff 100%);">
+            background:linear-gradient(180deg,#0f0c29 0%,#1a1040 45%,#13111f 100%);">
 
-  {# ── Brand strip ── #}
+  {# -- Brand strip -- #}
   <div class="px-3 pt-3 pb-2 mb-1 d-flex align-items-center gap-2"
-       style="border-bottom:1.5px solid rgba(99,102,241,.15);">
+       style="border-bottom:1.5px solid rgba(139,92,246,.25);">
     <div class="d-flex align-items-center justify-content-center rounded-2"
-         style="width:32px;height:32px;background:linear-gradient(135deg,#4f46e5,#7c3aed);flex-shrink:0;">
-      <i class="bi bi-wind text-white" style="font-size:.85rem;"></i>
+         style="width:34px;height:34px;background:linear-gradient(135deg,#7c3aed,#4f46e5);flex-shrink:0;box-shadow:0 0 12px rgba(124,58,237,.45);">
+      <i class="bi bi-wind text-white" style="font-size:.9rem;"></i>
     </div>
     <div>
-      <div class="fw-700" style="font-size:.82rem;color:#1e3a8a;font-weight:700;line-height:1.2;">LMG Procurement</div>
-      <div style="font-size:.65rem;color:#6366f1;font-weight:600;letter-spacing:.04em;text-transform:uppercase;">HVAC Intelligence</div>
+      <div style="font-size:.82rem;color:#e2d9f3;font-weight:700;line-height:1.2;">LMG Procurement</div>
+      <div style="font-size:.6rem;color:#a78bfa;font-weight:600;letter-spacing:.07em;text-transform:uppercase;">HVAC Intelligence</div>
     </div>
   </div>
 
   <div class="px-2 py-2">
     <ul class="nav flex-column gap-1">
 
-      {# ── Procurement — LMG ── #}
+      {# -- HVAC Requests (top section) -- #}
       {% has_permission "procurement.view" as can_view_procurement %}
       {% if can_view_procurement %}
-      <li class="nav-item px-1 mb-1">
-        <div class="d-flex align-items-center gap-1 px-2 py-1" style="font-size:.62rem;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:.09em;">
-          <i class="bi bi-building-fill-gear" style="font-size:.68rem;"></i>
-          Procurement — LMG
+
+      <li class="nav-item px-1 mt-2">
+        <div class="d-flex align-items-center gap-2 px-2 py-1"
+             style="font-size:.6rem;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.1em;">
+          <i class="bi bi-snowflake" style="font-size:.65rem;color:#06b6d4;"></i>
+          HVAC Requests
         </div>
       </li>
 
       <li class="nav-item px-1">
         <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
-           {% if request.resolver_match.url_name == 'home' %}active fw-bold{% endif %}"
-           href="{% url 'procurement:home' %}"
-           style="font-size:.85rem;{% if request.resolver_match.url_name == 'home' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
-          <i class="bi bi-house-door{% if request.resolver_match.url_name == 'home' %}-fill{% endif %}"
-             style="color:{% if request.resolver_match.url_name == 'home' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
-          Home
-        </a>
-      </li>
-
-      <li class="nav-item px-1">
-        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
-           {% if request.resolver_match.url_name == 'procurement_dashboard' %}active fw-bold{% endif %}"
-           href="{% url 'procurement:procurement_dashboard' %}"
-           style="font-size:.85rem;{% if request.resolver_match.url_name == 'procurement_dashboard' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
-          <i class="bi bi-speedometer2"
-             style="color:{% if request.resolver_match.url_name == 'procurement_dashboard' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
-          Proc Dashboard
-        </a>
-      </li>
-
-      <li class="nav-item px-1">
-        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
-           {% if request.resolver_match.url_name == 'request_list' %}active fw-bold{% endif %}"
+           {% if request.resolver_match.url_name == 'request_list' %}active-ai{% endif %}"
            href="{% url 'procurement:request_list' %}"
-           style="font-size:.85rem;{% if request.resolver_match.url_name == 'request_list' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
-          <i class="bi bi-list-ul"
-             style="color:{% if request.resolver_match.url_name == 'request_list' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
+           style="font-size:.84rem;
+                  {% if request.resolver_match.url_name == 'request_list' %}
+                    background:linear-gradient(90deg,rgba(139,92,246,.25),rgba(6,182,212,.1));
+                    color:#c4b5fd;border-left:2px solid #8b5cf6;
+                  {% else %}color:#9ca3af;{% endif %}">
+          <i class="bi bi-grid-3x3-gap"
+             style="color:{% if request.resolver_match.url_name == 'request_list' %}#8b5cf6{% else %}#4b5563{% endif %};"></i>
           All Requests
           {% if pending_procurement_count %}
-          <span class="badge rounded-pill ms-auto" style="background:#6366f1;font-size:.6rem;">{{ pending_procurement_count }}</span>
+          <span class="badge rounded-pill ms-auto"
+                style="background:linear-gradient(135deg,#7c3aed,#06b6d4);font-size:.58rem;box-shadow:0 0 6px rgba(139,92,246,.4);">
+            {{ pending_procurement_count }}
+          </span>
           {% endif %}
         </a>
       </li>
 
-      <li class="nav-item px-1 mb-2">
+      <li class="nav-item px-1 mb-1">
         <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
-           {% if request.resolver_match.url_name == 'hvac_create' %}active fw-bold{% endif %}"
+           {% if request.resolver_match.url_name == 'hvac_create' %}active-ai{% endif %}"
            href="{% url 'procurement:hvac_create' %}"
-           style="font-size:.85rem;{% if request.resolver_match.url_name == 'hvac_create' %}background:linear-gradient(90deg,rgba(14,165,233,.12),rgba(14,165,233,.05));color:#0284c7;{% else %}color:#374151;{% endif %}">
-          <i class="bi bi-plus-circle"
-             style="color:{% if request.resolver_match.url_name == 'hvac_create' %}#0284c7{% else %}#9ca3af{% endif %};"></i>
-          New HVAC Request
+           style="font-size:.84rem;
+                  {% if request.resolver_match.url_name == 'hvac_create' %}
+                    background:linear-gradient(90deg,rgba(6,182,212,.2),rgba(139,92,246,.1));
+                    color:#67e8f9;border-left:2px solid #06b6d4;
+                  {% else %}color:#9ca3af;{% endif %}">
+          <i class="bi bi-plus-circle-dotted"
+             style="color:{% if request.resolver_match.url_name == 'hvac_create' %}#06b6d4{% else %}#4b5563{% endif %};"></i>
+          New Request
+        </a>
+      </li>
+
+      {% endif %}
+
+      {# -- divider -- #}
+      <li class="px-3 py-1">
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(139,92,246,.3),transparent);"></div>
+      </li>
+
+      {# -- Command Center (AP ops users only) -- #}
+      {% has_permission "invoices.view" as can_view_cmd %}
+      {% if can_view_cmd %}
+      <li class="nav-item px-1 mt-1">
+        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
+           {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}active-ai{% endif %}"
+           href="{% url 'dashboard:index' %}"
+           style="font-size:.84rem;
+                  {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}
+                    background:linear-gradient(90deg,rgba(99,102,241,.25),rgba(139,92,246,.1));
+                    color:#c4b5fd;border-left:2px solid #6366f1;
+                  {% else %}color:#9ca3af;{% endif %}">
+          <i class="bi bi-cpu"
+             style="color:{% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}#6366f1{% else %}#4b5563{% endif %};"></i>
+          Command Center
         </a>
       </li>
       {% endif %}
 
-      {# ── divider ── #}
-      <li><div class="mx-2 my-1" style="height:1px;background:rgba(99,102,241,.12);"></div></li>
-
-      {# ── Command Center ── #}
-      <li class="nav-item px-1">
-        <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
-           {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}active fw-bold{% endif %}"
-           href="{% url 'dashboard:index' %}"
-           style="font-size:.85rem;{% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
-          <i class="bi bi-cpu"
-             style="color:{% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
-          Command Center
-        </a>
+      {# -- divider -- #}
+      <li class="px-3 py-1 mt-auto">
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(139,92,246,.3),transparent);"></div>
       </li>
 
-      {# ── divider ── #}
-      <li><div class="mx-2 my-1" style="height:1px;background:rgba(99,102,241,.12);"></div></li>
-
-      {# ── Documentation ── #}
-      <li class="nav-item px-1">
-        <div class="d-flex align-items-center gap-1 px-2 py-1" style="font-size:.62rem;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:.09em;">
-          <i class="bi bi-book" style="font-size:.68rem;"></i>
-          Documentation
-        </div>
-      </li>
-      <li class="nav-item px-1">
+      {# -- Platform Reference (bottom) -- #}
+      <li class="nav-item px-1 mt-1">
         <a class="nav-link rounded-2 d-flex align-items-center gap-2 px-3 py-2
-           {% if request.resolver_match.url_name == 'agent_reference' %}active fw-bold{% endif %}"
+           {% if request.resolver_match.url_name == 'agent_reference' %}active-ai{% endif %}"
            href="{% url 'agents:agent_reference' %}"
-           style="font-size:.85rem;{% if request.resolver_match.url_name == 'agent_reference' %}background:linear-gradient(90deg,rgba(99,102,241,.12),rgba(99,102,241,.05));color:#4f46e5;{% else %}color:#374151;{% endif %}">
+           style="font-size:.84rem;
+                  {% if request.resolver_match.url_name == 'agent_reference' %}
+                    background:linear-gradient(90deg,rgba(99,102,241,.2),rgba(6,182,212,.1));
+                    color:#c4b5fd;border-left:2px solid #6366f1;
+                  {% else %}color:#9ca3af;{% endif %}">
           <i class="bi bi-journal-code"
-             style="color:{% if request.resolver_match.url_name == 'agent_reference' %}#4f46e5{% else %}#9ca3af{% endif %};"></i>
+             style="color:{% if request.resolver_match.url_name == 'agent_reference' %}#6366f1{% else %}#4b5563{% endif %};"></i>
           Platform Reference
         </a>
       </li>

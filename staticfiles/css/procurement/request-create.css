@@ -1,0 +1,171 @@
+/*
+ * request-create.css -- LMG Procurement New HVAC Request Form
+ * Linked by templates/procurement/request_create_hvac.html
+ * Keeps the animated violet/indigo AI theme (intentionally different from
+ * the list/config pages -- this is user-facing AI entry point).
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ---- Animated gradient background ---- */
+body, .ap-main {
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 30%, #e0f2fe 60%, #f0fdf4 100%) !important;
+  background-attachment: fixed !important;
+  min-height: 100vh;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle, rgba(99,102,241,.18) 1px, transparent 1px),
+    radial-gradient(circle, rgba(14,165,233,.10) 1px, transparent 1px);
+  background-size: 34px 34px, 68px 68px;
+  background-position: 0 0, 17px 17px;
+  animation: dotDrift 24s linear infinite;
+}
+@keyframes dotDrift {
+  0%   { background-position: 0 0, 17px 17px; }
+  100% { background-position: 68px 68px, 85px 85px; }
+}
+
+/* ---- Layout wrapper ---- */
+.proc-theme {
+  position: relative;
+  z-index: 1;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* ---- Glass morphism cards ---- */
+.hvac-card {
+  background: rgba(255,255,255,.88);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1.5px solid rgba(99,102,241,.18) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 4px 24px rgba(99,102,241,.10), 0 1px 4px rgba(14,165,233,.08);
+  transition: box-shadow .25s, transform .25s;
+}
+.hvac-card:hover {
+  box-shadow: 0 8px 36px rgba(99,102,241,.18), 0 2px 8px rgba(14,165,233,.12);
+  transform: translateY(-2px);
+}
+.hvac-card .card-header {
+  background: linear-gradient(90deg, #eef2ff, #f0f9ff) !important;
+  border-bottom: 1.5px solid rgba(99,102,241,.14) !important;
+  border-radius: 13px 13px 0 0 !important;
+  padding: .75rem 1.1rem;
+}
+.hvac-card .card-header h6 {
+  color: #3730a3; font-weight: 650; letter-spacing: .01em;
+}
+
+/* ---- Form labels & controls ---- */
+.proc-theme .form-label,
+.proc-theme .form-label.fw-medium {
+  color: #1e3a8a !important; font-weight: 550; font-size: .84rem;
+}
+.proc-theme .form-text { color: #6366f1 !important; font-size: .78rem; }
+.proc-theme .form-control,
+.proc-theme .form-select {
+  background: rgba(255,255,255,.95);
+  color: #1e3a8a;
+  border: 1.5px solid rgba(99,102,241,.28);
+  border-radius: 8px; font-size: .88rem;
+  transition: border-color .2s, box-shadow .2s;
+}
+.proc-theme .form-control::placeholder { color: #94a3b8; }
+.proc-theme .form-control:focus,
+.proc-theme .form-select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,.18);
+  background: #fff;
+}
+.proc-theme .text-danger { color: #e11d48 !important; }
+.proc-theme .text-muted   { color: #475569 !important; }
+.proc-theme .input-group .btn { border: 1.5px solid rgba(99,102,241,.30); }
+
+/* ---- Submit button (gradient with shimmer) ---- */
+.btn-ai-submit {
+  background: linear-gradient(135deg, #6d28d9 0%, #4f46e5 50%, #0ea5e9 100%);
+  color: #fff; border: none;
+  border-radius: 10px; padding: .6rem 2.2rem;
+  font-weight: 600; font-size: .93rem;
+  box-shadow: 0 4px 18px rgba(99,102,241,.35);
+  position: relative; overflow: hidden;
+  transition: transform .2s, box-shadow .2s;
+}
+.btn-ai-submit:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 8px 28px rgba(99,102,241,.42);
+  color: #fff;
+}
+.btn-ai-submit::after {
+  content: '';
+  position: absolute; inset: -2px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #6d28d9, #0ea5e9, #6d28d9);
+  background-size: 200%;
+  animation: btnShimmer 3s linear infinite;
+  opacity: 0; transition: opacity .2s;
+}
+.btn-ai-submit:hover::after { opacity: .18; }
+@keyframes btnShimmer {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* ---- Cancel button ---- */
+.btn-ai-cancel {
+  border: 1.5px solid rgba(99,102,241,.35);
+  color: #4f46e5; border-radius: 10px;
+  padding: .6rem 1.5rem; font-weight: 500;
+  background: rgba(238,242,255,.6);
+  transition: background .2s, box-shadow .2s;
+}
+.btn-ai-cancel:hover {
+  background: rgba(238,242,255,.95);
+  box-shadow: 0 3px 12px rgba(99,102,241,.15);
+  color: #3730a3;
+}
+
+/* ---- Section badge chip ---- */
+.ai-section-badge {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: linear-gradient(90deg, rgba(99,102,241,.14), rgba(14,165,233,.10));
+  border: 1px solid rgba(99,102,241,.22);
+  border-radius: 20px; padding: .18rem .65rem;
+  font-size: .72rem; font-weight: 600; color: #4f46e5;
+  letter-spacing: .03em; text-transform: uppercase;
+}
+
+/* ---- Context hints ---- */
+#cooling-load-hint {
+  background: linear-gradient(90deg, rgba(14,165,233,.08), rgba(99,102,241,.06));
+  border-left: 3px solid #6366f1;
+  padding: .25rem .5rem;
+  border-radius: 0 5px 5px 0;
+  font-size: .78rem; color: #4338ca !important; margin-top: .25rem;
+}
+#store-type-hint {
+  font-size: .78rem; color: #7c3aed !important;
+  margin-top: .2rem; font-style: italic;
+}
+
+/* ---- AI floating icon ---- */
+@keyframes floatPulse {
+  0%, 100% { transform: translateY(0) scale(1);        opacity: 1; }
+  50%       { transform: translateY(-4px) scale(1.05); opacity: .85; }
+}
+.ai-float-icon {
+  animation: floatPulse 3s ease-in-out infinite;
+  filter: drop-shadow(0 2px 8px rgba(99,102,241,.45));
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #f0f4ff; }
+::-webkit-scrollbar-thumb { background: linear-gradient(#6366f1, #0ea5e9); border-radius: 3px; }

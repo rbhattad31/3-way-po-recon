@@ -944,6 +944,16 @@ class HVACSystemType(models.TextChoices):
     CASSETTE = "CASSETTE", "Cassette Split"
 
 
+class ExternalSourceClass(models.TextChoices):
+    OEM_OFFICIAL = "OEM_OFFICIAL", "OEM Official"
+    OEM_REGIONAL = "OEM_REGIONAL", "OEM Regional"
+    AUTHORIZED_DISTRIBUTOR = "AUTHORIZED_DISTRIBUTOR", "Authorized Distributor"
+    TECHNICAL_DATASHEET = "TECHNICAL_DATASHEET", "Technical Datasheet"
+    STANDARD_REGULATORY = "STANDARD_REGULATORY", "Standard / Regulatory"
+    LANDLORD_GUIDE = "LANDLORD_GUIDE", "Landlord Guide"
+    INTERNAL_HISTORICAL = "INTERNAL_HISTORICAL", "Internal Historical"
+
+
 class POStatus(models.TextChoices):
     DRAFT = "DRAFT", "Draft"
     ISSUED = "ISSUED", "Issued"

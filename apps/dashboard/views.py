@@ -23,7 +23,7 @@ from apps.dashboard.services import DashboardService
 
 @login_required
 def command_center(request):
-    """Agentic AP Command Center — AI Operations dashboard."""
+    """Agentic LMG  Command Center — AI Operations dashboard."""
     user_role = getattr(request.user, "role", "")
     return render(request, "dashboard/agentic_command_center.html", {
         "user_role": user_role,

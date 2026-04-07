@@ -12,9 +12,7 @@
 {% endblock %}
 
 {% block content %}
-{# ====================================================================== #}
-{# HEADER — invoice identity + status + actions                           #}
-{# ====================================================================== #}
+
 <div class="d-flex justify-content-between align-items-start mb-3">
   <div>
     <h5 class="mb-1 fw-bold">
@@ -63,9 +61,6 @@
   </div>
 </div>
 
-{# ====================================================================== #}
-{# KPI STRIP                                                              #}
-{# ====================================================================== #}
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="card border-0 shadow-sm h-100">
@@ -106,9 +101,7 @@
   </div>
 </div>
 
-{# ====================================================================== #}
-{# TAB NAVIGATION                                                         #}
-{# ====================================================================== #}
+
 <ul class="nav nav-tabs mb-3" id="postingTabs" role="tablist">
   <li class="nav-item" role="presentation">
     <button class="nav-link active" id="tab-overview-btn" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">
@@ -142,9 +135,7 @@
 
 <div class="tab-content" id="postingTabContent">
 
-{# ====================================================================== #}
-{# TAB 1 — OVERVIEW                                                       #}
-{# ====================================================================== #}
+
 <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
 
   {# Latest run summary row #}
@@ -333,9 +324,6 @@
 
 </div>{# /tab-overview #}
 
-{# ====================================================================== #}
-{# TAB 2 — ERP MAPPING                                                    #}
-{# ====================================================================== #}
 <div class="tab-pane fade" id="tab-erp" role="tabpanel">
 
   {% if erp_ref_fields %}
@@ -426,9 +414,7 @@
 
 </div>{# /tab-erp #}
 
-{# ====================================================================== #}
-{# TAB 3 — LINE ITEMS                                                     #}
-{# ====================================================================== #}
+
 <div class="tab-pane fade" id="tab-lines" role="tabpanel">
 
   {% if line_items %}
@@ -503,9 +489,7 @@
 
 </div>{# /tab-lines #}
 
-{# ====================================================================== #}
-{# TAB 4 — PAYLOAD & DATA                                                 #}
-{# ====================================================================== #}
+
 <div class="tab-pane fade" id="tab-payload" role="tabpanel">
 
   <div class="row g-4">
@@ -550,9 +534,7 @@
 
 </div>{# /tab-payload #}
 
-{# ====================================================================== #}
-{# TAB 5 — HISTORY                                                        #}
-{# ====================================================================== #}
+
 <div class="tab-pane fade" id="tab-history" role="tabpanel">
 
   {# Run history #}
@@ -625,9 +607,7 @@
 
 </div>{# /tab-content #}
 
-{# ====================================================================== #}
-{# REJECT MODAL                                                           #}
-{# ====================================================================== #}
+
 <div class="modal fade" id="rejectModal" tabindex="-1">
   <div class="modal-dialog">
     <form method="post" action="{% url 'posting:posting-reject' posting.pk %}">

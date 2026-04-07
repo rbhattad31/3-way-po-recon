@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% load static %}
 {% load rbac_tags %}
 {% block title %}{{ case.case_number }} -- Case Console{% endblock %}
@@ -25,9 +25,6 @@
      data-failed-validations="{{ failed_validations_count|default:'0' }}"
      data-failed-stages="{{ failed_stages_count|default:'0' }}">
 
-  {# ================================================================== #}
-  {# HEADER BAR                                                         #}
-  {# ================================================================== #}
   <div class="card cc-header-bar mb-3">
     <div class="card-body py-2 px-3">
       <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -179,9 +176,7 @@
     </div>
   </div>
 
-  {# ================================================================== #}
   {# TABBED WORKSPACE                                                   #}
-  {# ================================================================== #}
   <div class="row g-3">
     <div class="col-12">
       <div class="card cc-intel-panel">
@@ -265,9 +260,7 @@
         <div class="card-body p-0">
           <div class="tab-content" id="caseTabContent">
 
-            {# ============================================================ #}
             {# TAB 1: OVERVIEW                                              #}
-            {# ============================================================ #}
             <div class="tab-pane fade show active p-3" id="panel-overview" role="tabpanel">
 
               {# Recommended Action banner #}
@@ -430,9 +423,7 @@
               </div>
             </div>
 
-            {# ============================================================ #}
             {# TAB 2: EXCEPTIONS                                            #}
-            {# ============================================================ #}
             <div class="tab-pane fade p-3" id="panel-exceptions" role="tabpanel">
 
               {# Reconciliation exceptions #}
@@ -516,9 +507,7 @@
               {% endif %}
             </div>
 
-            {# ============================================================ #}
             {# TAB 3: AGENT PIPELINE                                        #}
-            {# ============================================================ #}
             <div class="tab-pane fade p-3" id="panel-agents" role="tabpanel">
 
               {% if agent_runs %}
@@ -632,9 +621,7 @@
 
             </div>
 
-            {# ============================================================ #}
             {# TAB 4: PIPELINE STAGES + AUDIT TRAIL                          #}
-            {# ============================================================ #}
             <div class="tab-pane fade p-3" id="panel-pipeline" role="tabpanel">
 
               {% if stages %}
@@ -661,7 +648,7 @@
               </div>
               {% endif %}
 
-              {# ── Audit Trail (inline, extraction-console style) ── #}
+              {# â”€â”€ Audit Trail (inline, extraction-console style) â”€â”€ #}
               <div class="cc-section mt-3">
                 <div class="cc-section-header">
                   <i class="bi bi-clock-history me-1"></i> Audit Trail
@@ -743,9 +730,7 @@
               </div>
             </div>
 
-            {# ============================================================ #}
             {# TAB 5: DOCUMENTS                                             #}
-            {# ============================================================ #}
             <div class="tab-pane fade p-3" id="panel-documents" role="tabpanel">
               <div class="row g-3">
 
@@ -881,9 +866,7 @@
               {% endif %}
             </div>
 
-            {# ============================================================ #}
             {# TAB 6: REVIEW & NOTES                                        #}
-            {# ============================================================ #}
             <div class="tab-pane fade p-3" id="panel-review" role="tabpanel">
 
               <div class="row g-3">
@@ -1039,9 +1022,7 @@
 
             </div>
 
-            {# ============================================================ #}
             {# TAB 7: COST & TOKENS                                        #}
-            {# ============================================================ #}
             {% if can_view_cost %}
             <div class="tab-pane fade p-3" id="panel-cost" role="tabpanel">
 
