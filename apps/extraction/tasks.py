@@ -111,7 +111,7 @@ def _update_progress(upload_id: int, message: str):
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("extraction.process_invoice_upload", audit_event="EXTRACTION_STARTED", entity_type="DocumentUpload")
-def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "document_upload", credit_ref_id: str = "") -> dict:
+def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "document_upload", credit_ref_id: str = "", case_id: int = None, case_number: str = None) -> dict:
     """End-to-end extraction pipeline for a single DocumentUpload.
 
     Steps executed sequentially:
@@ -135,7 +135,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
 
     # ── Langfuse root trace ──────────────────────────────────────────────
     _trace_id = uuid.uuid4().hex
-    _session_id = f"extraction-upload-{upload_id}"
+    _session_id = f"case-{case_number}" if case_number else f"extraction-upload-{upload_id}"
     _lf_root = None
     _celery_task_id = getattr(getattr(self, "request", None), "id", None)
 
@@ -156,6 +156,8 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             "filename": upload.original_filename or "",
             "celery_task_id": _celery_task_id,
             "blob_path": upload.blob_path or "",
+            "case_id": case_id,
+            "case_number": case_number or "",
         },
     )
     try:
@@ -634,18 +636,25 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             metadata=_audit_meta,
         )
 
-        # --- Create AP Case immediately after extraction ---
-        # The case pipeline will pause at the EXTRACTION_APPROVAL gate
-        # if the invoice still needs human approval.
-        case_id = None
+        # --- Link invoice to pre-created AP Case & trigger orchestration ---
+        # Case was created in the upload view (before extraction).
+        # Now link the newly-persisted invoice to it.
         try:
             from apps.cases.services.case_creation_service import CaseCreationService
-            case = CaseCreationService.create_from_upload(
-                invoice=invoice,
-                uploaded_by=upload.uploaded_by,
-            )
-            case_id = case.pk
-            logger.info("Created AP Case %s for invoice %s", case.case_number, invoice.invoice_number)
+            if case_id:
+                from apps.cases.models import APCase
+                case = APCase.objects.get(pk=case_id)
+                CaseCreationService.link_invoice_to_case(case, invoice)
+                logger.info("Linked invoice %s to pre-created case %s", invoice.pk, case.case_number)
+            else:
+                # Fallback: no case_id passed (backward compat / sync path)
+                case = CaseCreationService.create_from_upload(
+                    invoice=invoice,
+                    uploaded_by=upload.uploaded_by,
+                )
+                case_id = case.pk
+                case_number = case.case_number  # noqa: F841 -- used in return dict
+                logger.info("Created AP Case %s for invoice %s (fallback)", case.case_number, invoice.invoice_number)
 
             # Trigger case orchestration -- pipeline runs through
             # INTAKE -> EXTRACTION -> EXTRACTION_APPROVAL. If the invoice
@@ -657,7 +666,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             dispatch_task(process_case_task, case_id=case.pk)
         except Exception as case_exc:
             logger.exception(
-                "AP Case creation/processing failed for invoice %s: %s",
+                "AP Case link/processing failed for invoice %s: %s",
                 invoice.pk, case_exc,
             )
 
@@ -675,6 +684,8 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             "invoice_number": invoice.invoice_number or "",
             "invoice_status": invoice.status,
             "langfuse_trace_id": _trace_id,
+            "case_id": case_id,
+            "case_number": case_number or "",
         })
         _lf_end(_lf_root, is_root=True, output={
             "status": "ok",
@@ -684,6 +695,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             "is_duplicate": dup_result.is_duplicate,
             "is_valid": validation_result.is_valid,
             "case_id": case_id,
+            "case_number": case_number or "",
         })
 
         return {
@@ -694,6 +706,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             "is_duplicate": dup_result.is_duplicate,
             "is_valid": validation_result.is_valid,
             "case_id": case_id,
+            "case_number": case_number or "",
         }
 
     except Exception as exc:

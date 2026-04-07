@@ -62,6 +62,7 @@ def process_case_task(self, case_id: int):
             invoice_id=_case_meta.get("invoice_id"),
             user_id=None,
             session_id=derive_session_id(
+                case_number=_case_meta.get("case_number"),
                 invoice_id=_case_meta.get("invoice_id"),
                 case_id=case_id,
             ),
@@ -183,6 +184,7 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
             TRACE_CASE_PIPELINE,
             invoice_id=_case_meta.get("invoice_id"),
             session_id=derive_session_id(
+                case_number=_case_meta.get("case_number"),
                 invoice_id=_case_meta.get("invoice_id"),
                 case_id=case_id,
             ),

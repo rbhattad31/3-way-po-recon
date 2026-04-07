@@ -348,13 +348,13 @@ class StageExecutor:
             case.reconciliation_result = result
             case.save(update_fields=["reconciliation_result", "updated_at"])
 
-            # Always advance to exception analysis — the full pipeline
-            # (exception analysis -> review routing -> case summary) runs
-            # for all results, including MATCHED. Auto-close decisions are
-            # made by the exception analysis stage, not here.
-            CaseStateMachine.transition(
-                case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
-            )
+        # Always advance to exception analysis — the full pipeline
+        # (exception analysis -> review routing -> case summary) runs
+        # for all results, including MATCHED and ERROR.  Auto-close decisions
+        # are made by the exception analysis stage, not here.
+        CaseStateMachine.transition(
+            case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
+        )
 
         return {
             "run_id": run.id,

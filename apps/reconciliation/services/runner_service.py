@@ -138,11 +138,28 @@ class ReconciliationRunnerService:
                 )
                 _lf_run_trace_is_mine = True
             else:
+                # Derive session_id from the case linked to the first invoice
+                # so the trace groups under the same "case-AP-..." session.
+                from apps.core.observability_helpers import derive_session_id
+                _single_invoice_id = invoices[0].pk if len(invoices) == 1 else None
+                _run_case_number = None
+                if _single_invoice_id:
+                    try:
+                        from apps.cases.models import APCase
+                        _run_case_number = APCase.objects.filter(
+                            invoice_id=_single_invoice_id, is_active=True,
+                        ).values_list("case_number", flat=True).first()
+                    except Exception:
+                        pass
+                _run_session_id = derive_session_id(
+                    case_number=_run_case_number,
+                    invoice_id=_single_invoice_id,
+                )
                 _lf_run_trace = start_trace_safe(
                     _trace_id,
                     "reconciliation_run",
                     user_id=getattr(triggered_by, "pk", None) if triggered_by else None,
-                    session_id=f"recon-run-{recon_run.pk}",
+                    session_id=_run_session_id,
                     metadata={
                         "run_pk": recon_run.pk,
                         "total_invoices": len(invoices),
@@ -374,11 +391,11 @@ class ReconciliationRunnerService:
         _line_ratio = 0.0
         _tolerance_passed = True
         if _lines:
-            _matched_count = len([p for p in (_lines.line_pairs or []) if p.matched])
-            _total_count = max(_lines.total_invoice_lines or 1, 1)
+            _matched_count = len([p for p in (_lines.pairs or []) if p.matched])
+            _total_count = max(len(_lines.pairs) + len(_lines.unmatched_invoice_lines), 1)
             _line_ratio = _matched_count / _total_count
             _tolerance_passed = all(
-                getattr(p, "within_tolerance", True) for p in (_lines.line_pairs or []) if p.matched
+                getattr(p, "within_tolerance", True) for p in (_lines.pairs or []) if p.matched
             )
         _grn_ratio = 0.0
         if _grn and hasattr(_grn, "fully_received"):

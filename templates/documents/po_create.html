@@ -5,7 +5,7 @@
 <nav aria-label="breadcrumb">
   <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
     <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
-    <li class="breadcrumb-item"><a href="{% url 'po_documents:po_list' %}" class="text-decoration-none">Purchase Orders</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'po_list' %}" class="text-decoration-none">Purchase Orders</a></li>
     <li class="breadcrumb-item active">Add PO</li>
   </ol>
 </nav>
@@ -51,7 +51,6 @@
           {{ form.status }}
         </div>
       </div>
-
       <div class="row g-3 mt-1">
         <div class="col-md-6">
           <label class="form-label fw-medium">Vendor</label>
@@ -66,10 +65,69 @@
     </div>
   </div>
 
+  {# ── Line Items ── #}
+  <div class="ap-card mb-3">
+    <div class="ap-card-header d-flex align-items-center">
+      <i class="bi bi-list-ul me-2"></i>Line Items
+      <button type="button" class="btn btn-sm btn-outline-success ms-auto py-0 px-2" id="add-line-btn">
+        <i class="bi bi-plus-lg me-1"></i>Add Line
+      </button>
+    </div>
+    <div class="ap-card-body p-0">
+      {{ formset.management_form }}
+      {% if formset.non_form_errors %}
+      <div class="alert alert-danger mx-3 mt-2 py-1 small mb-0">{{ formset.non_form_errors }}</div>
+      {% endif %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0 w-100" id="po-lines-table">
+          <thead class="table-light border-bottom">
+            <tr>
+              <th class="ps-3" style="width:60px">#</th>
+              <th style="width:115px">Item Code</th>
+              <th>Description</th>
+              <th style="width:90px" class="text-end pe-2">Qty</th>
+              <th style="width:110px" class="text-end pe-2">Unit Price</th>
+              <th style="width:60px" class="text-center">UOM</th>
+              <th style="width:100px" class="text-end pe-2">Tax</th>
+              <th style="width:110px" class="text-end pe-2">Amount</th>
+              <th style="width:44px"></th>
+            </tr>
+          </thead>
+          <tbody id="po-lines-body">
+            {% for lf in formset %}
+            <tr class="po-line-row" data-has-instance="{{ lf.instance.pk|default:'' }}">
+              {% for hf in lf.hidden_fields %}{{ hf }}{% endfor %}
+              {% if lf.errors %}<td colspan="9"><div class="text-danger small px-3 py-1">{% for field, errs in lf.errors.items %}{% for e in errs %}{{ field }}: {{ e }} {% endfor %}{% endfor %}</div></td>{% endif %}
+              <td class="ps-3">{{ lf.line_number }}</td>
+              <td>{{ lf.item_code }}</td>
+              <td>{{ lf.description }}</td>
+              <td>{{ lf.quantity }}</td>
+              <td>{{ lf.unit_price }}</td>
+              <td>{{ lf.unit_of_measure }}</td>
+              <td>{{ lf.tax_amount }}</td>
+              <td>{{ lf.line_amount }}</td>
+              <td class="text-center pe-2">
+                <button type="button" class="btn btn-link text-danger p-0 line-delete-btn" title="Remove line">
+                  <i class="bi bi-trash3"></i>
+                </button>
+                <span class="d-none">{{ lf.DELETE }}</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if not formset.initial_forms and not formset.extra_forms|length %}
+      <p class="text-muted small text-center py-3 mb-0" id="no-lines-msg">No line items yet — click <strong>Add Line</strong> above.</p>
+      {% endif %}
+    </div>
+  </div>
+
   {# ── Amounts ── #}
   <div class="ap-card mb-3">
     <div class="ap-card-header">
       <i class="bi bi-currency-dollar me-2"></i>Amounts
+      <span class="text-muted small ms-2 fw-normal">Auto-filled from line items — click a field to override manually.</span>
     </div>
     <div class="ap-card-body">
       <div class="row g-3">
@@ -115,9 +173,151 @@
     <button type="submit" class="btn btn-primary btn-sm">
       <i class="bi bi-check-lg me-1"></i>Save Purchase Order
     </button>
-    <a href="{% url 'po_documents:po_list' %}" class="btn btn-outline-secondary btn-sm">
+    <a href="{% url 'po_list' %}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-x me-1"></i>Cancel
     </a>
   </div>
 </form>
+
+{# ── Empty row template used by JS to clone new rows ── #}
+<template id="po-line-empty">
+  {% with lf=formset.empty_form %}
+  <tr class="po-line-row" data-has-instance="">
+    {% for hf in lf.hidden_fields %}{{ hf }}{% endfor %}
+    <td class="ps-3">{{ lf.line_number }}</td>
+    <td>{{ lf.item_code }}</td>
+    <td>{{ lf.description }}</td>
+    <td>{{ lf.quantity }}</td>
+    <td>{{ lf.unit_price }}</td>
+    <td>{{ lf.unit_of_measure }}</td>
+    <td>{{ lf.tax_amount }}</td>
+    <td>{{ lf.line_amount }}</td>
+    <td class="text-center pe-2">
+      <button type="button" class="btn btn-link text-danger p-0 line-delete-btn" title="Remove line">
+        <i class="bi bi-trash3"></i>
+      </button>
+      <span class="d-none">{{ lf.DELETE }}</span>
+    </td>
+  </tr>
+  {% endwith %}
+</template>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+  const tbody  = document.getElementById('po-lines-body');
+  const mgmt   = document.querySelector('[name="lines-TOTAL_FORMS"]');
+  const tmpl   = document.getElementById('po-line-empty');
+
+  // ── Add Row ──────────────────────────────────────────────────────────────
+  document.getElementById('add-line-btn').addEventListener('click', () => {
+    const noMsg = document.getElementById('no-lines-msg');
+    if (noMsg) noMsg.remove();
+
+    const idx   = parseInt(mgmt.value, 10);
+    const clone = tmpl.content.cloneNode(true);
+
+    clone.querySelectorAll('[id]').forEach(el => {
+      el.id = el.id.replace(/__prefix__/g, idx);
+    });
+    clone.querySelectorAll('[name]').forEach(el => {
+      el.name = el.name.replace(/__prefix__/g, idx);
+    });
+
+    // Auto-set line number
+    const lineNumIn = clone.querySelector('[name$="-line_number"]');
+    if (lineNumIn) lineNumIn.value = nextLineNumber();
+
+    tbody.appendChild(clone);
+    mgmt.value = idx + 1;
+    bindDeleteBtns();
+  });
+
+  // ── Delete / Restore Row ──────────────────────────────────────────────────
+  function bindDeleteBtns() {
+    tbody.querySelectorAll('.line-delete-btn').forEach(btn => {
+      const fresh = btn.cloneNode(true);
+      btn.replaceWith(fresh);
+    });
+    tbody.querySelectorAll('.line-delete-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row    = btn.closest('tr');
+        const delChk = row.querySelector('[name$="-DELETE"]');
+        const hasPk  = row.dataset.hasInstance;
+
+        if (hasPk) {
+          const marking = !delChk.checked;
+          delChk.checked = marking;
+          row.classList.toggle('table-danger', marking);
+          row.classList.toggle('opacity-50',   marking);
+          btn.innerHTML = marking
+            ? '<i class="bi bi-arrow-counterclockwise"></i>'
+            : '<i class="bi bi-trash3"></i>';
+          btn.title = marking ? 'Undo delete' : 'Remove line';
+        } else {
+          row.remove();
+          reindex();
+        }
+        updateTotals();
+      });
+    });
+  }
+
+  // ── Reindex after DOM removal ─────────────────────────────────────────────
+  function reindex() {
+    tbody.querySelectorAll('.po-line-row').forEach((row, idx) => {
+      row.querySelectorAll('[name]').forEach(el => {
+        el.name = el.name.replace(/lines-\d+-/g, `lines-${idx}-`);
+      });
+      row.querySelectorAll('[id]').forEach(el => {
+        el.id = el.id.replace(/id_lines-\d+-/g, `id_lines-${idx}-`);
+      });
+    });
+    mgmt.value = tbody.querySelectorAll('.po-line-row').length;
+  }
+
+  // ── Auto-calc line_amount = qty × unit_price ──────────────────────────────
+  tbody.addEventListener('input', e => {
+    if (e.target.matches('.line-qty, .line-price')) {
+      const row   = e.target.closest('tr');
+      const qty   = parseFloat(row.querySelector('.line-qty')?.value)   || 0;
+      const price = parseFloat(row.querySelector('.line-price')?.value) || 0;
+      const amtEl = row.querySelector('.line-amount');
+      if (amtEl) amtEl.value = (qty * price).toFixed(2);
+    }
+    updateTotals();
+  });
+
+  // ── Sync header totals from lines ─────────────────────────────────────────
+  function updateTotals() {
+    let sub = 0, tax = 0;
+    tbody.querySelectorAll('.po-line-row').forEach(row => {
+      if (row.querySelector('[name$="-DELETE"]')?.checked) return;
+      sub += parseFloat(row.querySelector('.line-amount')?.value) || 0;
+      tax += parseFloat(row.querySelector('[name$="-tax_amount"]')?.value) || 0;
+    });
+    const totalEl = document.querySelector('[name="total_amount"]');
+    const taxEl   = document.querySelector('[name="tax_amount"]');
+    if (totalEl && !totalEl.dataset.manual) totalEl.value = (sub + tax).toFixed(2);
+    if (taxEl   && !taxEl.dataset.manual)   taxEl.value   = tax.toFixed(2);
+  }
+
+  // Allow manual override by focusing the header amount fields
+  ['total_amount', 'tax_amount'].forEach(n => {
+    document.querySelector(`[name="${n}"]`)
+      ?.addEventListener('focus', function () { this.dataset.manual = '1'; });
+  });
+
+  // ── Helper ────────────────────────────────────────────────────────────────
+  function nextLineNumber() {
+    const nums = [...tbody.querySelectorAll('[name$="-line_number"]')]
+      .map(el => parseInt(el.value, 10) || 0).filter(v => v > 0);
+    return nums.length ? Math.max(...nums) + 1 : 1;
+  }
+
+  bindDeleteBtns();
+})();
+</script>
 {% endblock %}

@@ -1,7 +1,8 @@
 """Django forms for PurchaseOrder and GoodsReceiptNote management screens."""
 from django import forms
+from django.forms import inlineformset_factory
 
-from apps.documents.models import GoodsReceiptNote, PurchaseOrder
+from apps.documents.models import GoodsReceiptNote, PurchaseOrder, PurchaseOrderLineItem
 from apps.vendors.models import Vendor
 
 PO_STATUS_CHOICES = [
@@ -61,6 +62,55 @@ class PurchaseOrderForm(forms.ModelForm):
             "tax_amount": "Tax Amount",
             "buyer_name": "Buyer Name",
         }
+
+
+class PurchaseOrderLineItemForm(forms.ModelForm):
+    """Single PO line item row — used inside the inline formset."""
+
+    class Meta:
+        model = PurchaseOrderLineItem
+        fields = [
+            "line_number", "item_code", "description",
+            "quantity", "unit_price", "unit_of_measure",
+            "tax_amount", "line_amount",
+        ]
+        widgets = {
+            "line_number": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm text-center", "min": "1", "style": "width:56px",
+            }),
+            "item_code": forms.TextInput(attrs={
+                "class": "form-control form-control-sm", "placeholder": "SKU / Code",
+            }),
+            "description": forms.TextInput(attrs={
+                "class": "form-control form-control-sm", "placeholder": "Item description",
+            }),
+            "quantity": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-qty text-end", "step": "0.0001", "min": "0", "placeholder": "0",
+            }),
+            "unit_price": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-price text-end", "step": "0.0001", "min": "0", "placeholder": "0.00",
+            }),
+            "unit_of_measure": forms.TextInput(attrs={
+                "class": "form-control form-control-sm text-center", "placeholder": "EA", "style": "width:56px",
+            }),
+            "tax_amount": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "line_amount": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-amount text-end", "step": "0.01", "placeholder": "0.00",
+            }),
+        }
+
+
+# Inline formset: one PO → many PurchaseOrderLineItem rows
+POLineItemFormSet = inlineformset_factory(
+    PurchaseOrder,
+    PurchaseOrderLineItem,
+    form=PurchaseOrderLineItemForm,
+    extra=1,
+    can_delete=True,
+    min_num=0,
+)
 
 
 class GoodsReceiptNoteForm(forms.ModelForm):

@@ -260,7 +260,7 @@ UPLOADED -> EXTRACTION_IN_PROGRESS -> EXTRACTED -> VALIDATED -> PENDING_APPROVAL
                                    \-> INVALID                 /-> (auto-approve)                    \-> FAILED
                                                                \-> INVALID (rejected)
 ```
-- **AP Case created immediately** after extraction persistence (not after approval). Case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if invoice needs human approval.
+- **AP Case created immediately after upload** (before extraction begins), giving a stable `case_number` for Langfuse session_id tracing across all downstream pipelines. Invoice is linked to the case after extraction persistence via `CaseCreationService.link_invoice_to_case()`. Case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if invoice needs human approval.
 - **PENDING_APPROVAL**: Human-in-the-loop gate. All valid extractions require human approval before reconciliation.
 - Auto-approval: When `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence >= `EXTRACTION_AUTO_APPROVE_THRESHOLD`, the system auto-approves and skips human review. Case pipeline continues without pausing.
 - On manual approval: `ExtractionApprovalService` resumes the existing case from PATH_RESOLUTION onward (does not create a new case).
@@ -388,7 +388,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **RBAC API**: `/api/v1/accounts/` — UserViewSet (CRUD + roles/overrides), RoleViewSet (CRUD + clone), PermissionViewSet, RolePermissionMatrixView
 - **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 6 roles (incl. SYSTEM_AGENT), 40 permissions, full matrix, legacy user sync
 - Extraction pipeline (two-agent architecture: InvoiceExtractionAgent always + InvoiceUnderstandingAgent for low confidence; 8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o)
-- Extraction approval gate: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI; configurable auto-approval (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`). AP Case created immediately after extraction; case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if human approval needed; approval resumes existing case.
+- Extraction approval gate: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI; configurable auto-approval (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`). AP Case created at upload time (before extraction); invoice linked to case after extraction persistence; case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if human approval needed; approval resumes existing case.
 - Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
 - `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
 - `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
@@ -547,7 +547,7 @@ from apps.core.langfuse_client import (
 
 | Context | Trace ID pattern |
 |---|---|
-| Extraction pipeline (task) | `uuid4().hex` (generated per task run; session_id=`"extraction-upload-{upload_id}"`) |
+| Extraction pipeline (task) | `uuid4().hex` (generated per task run; session_id=`"case-{case_number}"` when case exists, fallback `"extraction-upload-{upload_id}"`) |
 | Agent pipeline / extraction | `trace_ctx.trace_id` (from `TraceContext`) |
 | Reconciliation run | `run.trace_id` if set, else `str(run.pk)` |
 | Posting run | `posting_run.trace_id` if set, else `str(posting_run.pk)` |

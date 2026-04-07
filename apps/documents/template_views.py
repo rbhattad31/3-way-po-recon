@@ -14,7 +14,7 @@ from apps.core.enums import DocumentType, InvoiceStatus, UserRole
 from apps.core.decorators import observed_action
 from apps.core.permissions import permission_required_code
 from apps.core.utils import normalize_category, parse_percentage, resolve_line_tax_percentage, resolve_tax_percentage
-from apps.documents.forms import GoodsReceiptNoteForm, PurchaseOrderForm
+from apps.documents.forms import GoodsReceiptNoteForm, POLineItemFormSet, PurchaseOrderForm
 from apps.documents.models import DocumentUpload, GoodsReceiptNote, Invoice, PurchaseOrder
 
 
@@ -426,13 +426,17 @@ def po_list(request):
 def po_create(request):
     if request.method == "POST":
         form = PurchaseOrderForm(request.POST)
-        if form.is_valid():
+        formset = POLineItemFormSet(request.POST)
+        if form.is_valid() and formset.is_valid():
             po = form.save()
+            formset.instance = po
+            formset.save()
             messages.success(request, f"Purchase Order '{po.po_number}' created successfully.")
-            return redirect("po_documents:po_detail", pk=po.pk)
+            return redirect("po_detail", pk=po.pk)
     else:
         form = PurchaseOrderForm()
-    return render(request, "documents/po_create.html", {"form": form})
+        formset = POLineItemFormSet()
+    return render(request, "documents/po_create.html", {"form": form, "formset": formset})
 
 
 @login_required
@@ -441,13 +445,16 @@ def po_edit(request, pk):
     po = get_object_or_404(PurchaseOrder, pk=pk)
     if request.method == "POST":
         form = PurchaseOrderForm(request.POST, instance=po)
-        if form.is_valid():
+        formset = POLineItemFormSet(request.POST, instance=po)
+        if form.is_valid() and formset.is_valid():
             form.save()
+            formset.save()
             messages.success(request, f"Purchase Order '{po.po_number}' updated successfully.")
-            return redirect("po_documents:po_detail", pk=po.pk)
+            return redirect("po_detail", pk=po.pk)
     else:
         form = PurchaseOrderForm(instance=po)
-    return render(request, "documents/po_edit.html", {"form": form, "po": po})
+        formset = POLineItemFormSet(instance=po)
+    return render(request, "documents/po_edit.html", {"form": form, "po": po, "formset": formset})
 
 
 @login_required
@@ -522,7 +529,7 @@ def grn_create(request):
         if form.is_valid():
             grn = form.save()
             messages.success(request, f"GRN '{grn.grn_number}' created successfully.")
-            return redirect("grn_documents:grn_detail", pk=grn.pk)
+            return redirect("grn_detail", pk=grn.pk)
     else:
         form = GoodsReceiptNoteForm()
     return render(request, "documents/grn_create.html", {"form": form})
@@ -537,7 +544,7 @@ def grn_edit(request, pk):
         if form.is_valid():
             form.save()
             messages.success(request, f"GRN '{grn.grn_number}' updated successfully.")
-            return redirect("grn_documents:grn_detail", pk=grn.pk)
+            return redirect("grn_detail", pk=grn.pk)
     else:
         form = GoodsReceiptNoteForm(instance=grn)
     return render(request, "documents/grn_edit.html", {"form": form, "grn": grn})

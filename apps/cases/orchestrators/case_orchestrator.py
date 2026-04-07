@@ -111,6 +111,7 @@ class CaseOrchestrator:
         self._lf_trace = None
         self._lf_trace_id = None
         self._stage_index = 0
+        self._skip_before_stage = None  # set by run_from() to skip earlier stages
 
     @observed_service("cases.orchestrator.run", audit_event="CASE_PROCESSING_STARTED", entity_type="APCase")
     def run(self, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
@@ -137,14 +138,16 @@ class CaseOrchestrator:
             # Stage 2b: Extraction approval gate
             # If extraction needs human approval, pause the pipeline here.
             if self.case.status == CaseStatus.EXTRACTION_COMPLETED:
-                self._execute_stage(CaseStageType.EXTRACTION_APPROVAL)
+                if not self._should_skip_stage(CaseStageType.EXTRACTION_APPROVAL):
+                    self._execute_stage(CaseStageType.EXTRACTION_APPROVAL)
 
             # If waiting for human extraction approval, stop the pipeline.
             # The approval_service will resume processing once approved.
             if self.case.status == CaseStatus.PENDING_EXTRACTION_APPROVAL:
                 logger.info(
                     "Case %s paused at extraction approval gate (invoice status=%s)",
-                    self.case.case_number, self.case.invoice.status,
+                    self.case.case_number,
+                    self.case.invoice.status if self.case.invoice else "no_invoice",
                 )
                 return self.case
 
@@ -223,6 +226,9 @@ class CaseOrchestrator:
         self._lf_trace_id = lf_trace_id
         self._stage_index = 0
         logger.info("Reprocessing case %s from stage %s", self.case.case_number, stage)
+
+        # Tell run() to skip stages before the target stage
+        self._skip_before_stage = stage
 
         # Mark subsequent stages as skipped
         self.case.stages.filter(
@@ -360,6 +366,25 @@ class CaseOrchestrator:
             self._execute_stage(CaseStageType.REVIEW_ROUTING)
         # Always run case summary so stale data is refreshed, even on auto-close
         self._execute_stage(CaseStageType.CASE_SUMMARY)
+
+    # Ordered list of stages for skip comparison
+    _STAGE_ORDER = [
+        CaseStageType.INTAKE,
+        CaseStageType.EXTRACTION,
+        CaseStageType.EXTRACTION_APPROVAL,
+        CaseStageType.PATH_RESOLUTION,
+    ]
+
+    def _should_skip_stage(self, stage_name: str) -> bool:
+        """Return True if this stage should be skipped during a run_from() reprocess."""
+        if not self._skip_before_stage:
+            return False
+        try:
+            target_idx = self._STAGE_ORDER.index(self._skip_before_stage)
+            current_idx = self._STAGE_ORDER.index(stage_name)
+            return current_idx < target_idx
+        except ValueError:
+            return False
 
     def _execute_stage(self, stage_name: str):
         """Execute a single stage via the StageExecutor, wrapped in a Langfuse span."""

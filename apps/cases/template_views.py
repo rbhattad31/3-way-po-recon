@@ -789,7 +789,7 @@ def case_decide(request, pk):
         from apps.cases.tasks import reprocess_case_from_stage_task
         from apps.core.utils import dispatch_task
         try:
-            dispatch_task(reprocess_case_from_stage_task, case_id=case.pk, stage="INTAKE")
+            dispatch_task(reprocess_case_from_stage_task, case_id=case.pk, stage="PATH_RESOLUTION")
             messages.success(request, f"Case {case.case_number} submitted for reprocessing.")
         except Exception as exc:
             messages.error(request, f"Reprocessing failed: {exc}")

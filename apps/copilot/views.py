@@ -221,7 +221,7 @@ def case_search(request):
 # ── Invoice Upload ──────────────────────────────────────────────
 
 
-def _copilot_pipeline_worker(upload_id, user_pk, has_blob):
+def _copilot_pipeline_worker(upload_id, user_pk, has_blob, case_id=None, case_number=None):
     """Run the full extraction + case pipeline in a background thread."""
     from django.db import connection
     from apps.core.enums import FileProcessingState
@@ -230,10 +230,15 @@ def _copilot_pipeline_worker(upload_id, user_pk, has_blob):
         if has_blob:
             from apps.extraction.tasks import process_invoice_upload_task
             process_invoice_upload_task.apply(
-                kwargs={"upload_id": upload_id}, throw=True,
+                kwargs={
+                    "upload_id": upload_id,
+                    "case_id": case_id,
+                    "case_number": case_number,
+                },
+                throw=True,
             )
         else:
-            _copilot_local_pipeline(upload_id, user_pk)
+            _copilot_local_pipeline(upload_id, user_pk, case_id=case_id, case_number=case_number)
     except Exception:
         logger.exception("Copilot pipeline worker failed for upload %s", upload_id)
         from apps.documents.models import DocumentUpload
@@ -248,7 +253,7 @@ def _copilot_pipeline_worker(upload_id, user_pk, has_blob):
         connection.close()
 
 
-def _copilot_local_pipeline(upload_id, user_pk):
+def _copilot_local_pipeline(upload_id, user_pk, case_id=None, case_number=None):
     """Non-blob fallback: extraction + approval + case creation with local file."""
     from django.contrib.auth import get_user_model
     from apps.core.enums import FileProcessingState
@@ -287,18 +292,26 @@ def _copilot_local_pipeline(upload_id, user_pk):
     if not invoice:
         return
 
-    # Create AP case + dispatch processing
+    # Link invoice to pre-created case + dispatch processing
     try:
         from apps.cases.services.case_creation_service import CaseCreationService
         from apps.cases.tasks import process_case_task
         from apps.core.utils import dispatch_task
 
-        DocumentUpload.objects.filter(pk=upload_id).update(
-            processing_message="Creating an AP case for this invoice..."
-        )
-        case = CaseCreationService.create_from_upload(
-            invoice=invoice, uploaded_by=user,
-        )
+        # If a case was pre-created at upload time, link invoice to it;
+        # otherwise fall back to create_from_upload (backward compat).
+        case = None
+        if case_id:
+            from apps.cases.models import APCase
+            case = APCase.objects.filter(pk=case_id, is_active=True).first()
+            if case:
+                CaseCreationService.link_invoice_to_case(case, invoice)
+
+        if not case:
+            case = CaseCreationService.create_from_upload(
+                invoice=invoice, uploaded_by=user,
+            )
+
         DocumentUpload.objects.filter(pk=upload_id).update(
             processing_message="Matching against purchase orders and receipts..."
         )
@@ -394,10 +407,26 @@ def invoice_upload(request):
         uploaded_file.seek(0)
         doc_upload.file.save(uploaded_file.name, uploaded_file, save=True)
 
+    # ── Create AP Case immediately after upload (before extraction) ──
+    # This ensures case_id is available as Langfuse session_id for all traces.
+    case_id = None
+    case_number = None
+    try:
+        from apps.cases.services.case_creation_service import CaseCreationService
+        case = CaseCreationService.create_from_document_upload(
+            upload=doc_upload,
+            uploaded_by=request.user,
+        )
+        case_id = case.pk
+        case_number = case.case_number
+    except Exception as case_exc:
+        logger.warning("Pre-extraction case creation failed (non-fatal): %s", case_exc)
+
     # Start pipeline in a background thread -- returns immediately
     thread = threading.Thread(
         target=_copilot_pipeline_worker,
         args=(doc_upload.pk, request.user.pk, has_blob),
+        kwargs={"case_id": case_id, "case_number": case_number},
         daemon=True,
     )
     thread.start()
@@ -456,6 +485,18 @@ def upload_status(request, upload_id):
             "error": upload.processing_message or "Extraction failed", **data,
         })
 
+    # Check for AP Case (pre-created via document_upload before extraction)
+    from apps.cases.models import APCase
+
+    case = APCase.objects.filter(document_upload=upload, is_active=True).first()
+
+    if case:
+        steps.append({
+            "label": f"AP case {case.case_number} created",
+            "done": True,
+        })
+        data.update({"case_id": case.pk, "case_number": case.case_number})
+
     # Check for Invoice
     invoice = (
         Invoice.objects.filter(document_upload=upload)
@@ -481,10 +522,12 @@ def upload_status(request, upload_id):
         "invoice_status": invoice.status,
     })
 
-    # Check for AP Case
-    from apps.cases.models import APCase
+    # Fall back to invoice-linked case if no upload-linked case found
+    if not case:
+        case = APCase.objects.filter(invoice=invoice, is_active=True).first()
+        if case:
+            data.update({"case_id": case.pk, "case_number": case.case_number})
 
-    case = APCase.objects.filter(invoice=invoice, is_active=True).first()
     if not case:
         steps.append({"label": "Opening an AP case...", "done": False})
         return Response({"steps": steps, "completed": False, **data})
@@ -520,11 +563,14 @@ def upload_status(request, upload_id):
     label, is_done = _STAGE_LABELS.get(
         case.status, (str(case.status).replace("_", " ").title(), False),
     )
-    steps.append({
-        "label": label,
-        "done": is_done,
-        "failed": case.status == CaseStatus.FAILED,
-    })
+    # Skip the NEW status step -- the pre-created case step already says
+    # "AP case {number} created", so adding "Created AP case" is redundant.
+    if case.status != CaseStatus.NEW:
+        steps.append({
+            "label": label,
+            "done": is_done,
+            "failed": case.status == CaseStatus.FAILED,
+        })
     data["case_status"] = case.status
 
     # Reconciliation result
@@ -545,6 +591,78 @@ def upload_status(request, upload_id):
                 "done": True,
             })
             data["match_status"] = recon.match_status
+
+    completed = is_done
+    return Response({"steps": steps, "completed": completed, **data})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def case_reprocess_status(request, case_id):
+    """GET /api/v1/copilot/case/<id>/reprocess-status/ -- progressive reprocessing status."""
+    from apps.cases.models import APCase
+    from apps.core.enums import CaseStatus
+
+    if not _has_permission_code(request.user, "cases.view"):
+        return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+    case = APCase.objects.filter(pk=case_id, is_active=True).first()
+    if not case:
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    steps = [{"label": "Reprocessing started", "done": True}]
+    completed = False
+    data = {"case_id": case.pk, "case_number": case.case_number, "case_status": case.status}
+
+    _REPROCESS_LABELS = {
+        CaseStatus.NEW: ("Preparing case...", False),
+        CaseStatus.INTAKE_IN_PROGRESS: ("Setting up the case...", False),
+        CaseStatus.EXTRACTION_IN_PROGRESS: ("Recording extraction results...", False),
+        CaseStatus.EXTRACTION_COMPLETED: ("Extraction recorded", False),
+        CaseStatus.PENDING_EXTRACTION_APPROVAL: ("Waiting for extraction approval", True),
+        CaseStatus.PATH_RESOLUTION_IN_PROGRESS: ("Deciding on the reconciliation approach...", False),
+        CaseStatus.TWO_WAY_IN_PROGRESS: ("Comparing invoice against the purchase order...", False),
+        CaseStatus.THREE_WAY_IN_PROGRESS: ("Comparing invoice, PO, and goods receipt...", False),
+        CaseStatus.NON_PO_VALIDATION_IN_PROGRESS: ("Validating non-PO invoice...", False),
+        CaseStatus.GRN_ANALYSIS_IN_PROGRESS: ("Analyzing goods receipt data...", False),
+        CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS: ("AI agents are analyzing exceptions...", False),
+        CaseStatus.READY_FOR_REVIEW: ("Ready for review", True),
+        CaseStatus.IN_REVIEW: ("In review", True),
+        CaseStatus.CLOSED: ("Case closed", True),
+        CaseStatus.REJECTED: ("Case rejected", True),
+        CaseStatus.ESCALATED: ("Case escalated", True),
+        CaseStatus.FAILED: ("Case processing failed", True),
+    }
+
+    label, is_done = _REPROCESS_LABELS.get(
+        case.status, (str(case.status).replace("_", " ").title(), False),
+    )
+    steps.append({
+        "label": label,
+        "done": is_done,
+        "failed": case.status == CaseStatus.FAILED,
+    })
+
+    # Reconciliation result for terminal statuses
+    if is_done and case.status not in (
+        CaseStatus.PENDING_EXTRACTION_APPROVAL, CaseStatus.FAILED,
+    ):
+        from apps.reconciliation.models import ReconciliationResult
+        invoice = case.invoice
+        if invoice:
+            recon = (
+                ReconciliationResult.objects
+                .filter(invoice=invoice)
+                .order_by("-created_at")
+                .first()
+            )
+            if recon:
+                match_display = str(recon.match_status).replace("_", " ").title()
+                steps.append({
+                    "label": f"Match result: {match_display}",
+                    "done": True,
+                })
+                data["match_status"] = recon.match_status
 
     completed = is_done
     return Response({"steps": steps, "completed": completed, **data})

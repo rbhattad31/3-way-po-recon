@@ -267,11 +267,15 @@ marked with `level="ERROR"` so they appear highlighted in the Langfuse UI.
 
 Every root trace carries:
 
-- **`user.id`** (`user_id` arg to `start_trace`) — the Django `User.pk` as a string.
+- **`user.id`** (`user_id` arg to `start_trace`) -- the Django `User.pk` as a string.
   Populates the **Users** tab in Langfuse so you can see all traces for a given user.
-- **`session.id`** (`session_id` arg to `start_trace`) — always `"invoice-{invoice_id}"`.
-  Populates the **Sessions** tab and groups all LLM calls for the same invoice
-  (across agent pipeline runs and standalone extraction) into one session.
+- **`session.id`** (`session_id` arg to `start_trace`) -- `"case-{case_number}"` for all
+  invoice-centric flows. The AP Case is created at upload time (before extraction), so
+  `case_number` is available from the very first pipeline stage onward. All downstream
+  traces (extraction, reconciliation, case processing, agents) share the same session_id,
+  enabling unified trace linking in the Langfuse Sessions view.
+  Derived via `derive_session_id()` which respects priority:
+  `case_number` > `invoice_id` > `upload_id` > `case_id`.
 
 These are set as OpenTelemetry span attributes (`user.id`, `session.id`) on the
 root `LangfuseSpan._otel_span` immediately after `start_observation()` returns.
@@ -1402,12 +1406,16 @@ Returns a stable session ID for Langfuse session grouping:
 ```python
 from apps.core.observability_helpers import derive_session_id
 
-# Best effort: invoice_id > upload_id > case_id > fallback
-session_id = derive_session_id(invoice_id=42)        # "invoice-42"
-session_id = derive_session_id(upload_id=7)           # "upload-7"
-session_id = derive_session_id(case_id=3)             # "case-3"
-session_id = derive_session_id()                      # "unknown"
+# Best effort: case_number > invoice_id > upload_id > case_id > fallback
+session_id = derive_session_id(case_number="AP-260407-0001")  # "case-AP-260407-0001"
+session_id = derive_session_id(invoice_id=42)                 # "invoice-42"
+session_id = derive_session_id(document_upload_id=7)          # "upload-7"
+session_id = derive_session_id(case_id=3)                     # "case-3"
+session_id = derive_session_id()                              # None
 ```
+
+`case_number` is the preferred anchor because AP Cases are created at upload
+time (before extraction), so every pipeline stage can use the same session_id.
 
 ### `build_observability_context()`
 

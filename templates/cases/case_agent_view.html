@@ -122,10 +122,10 @@
           </button>
           {% endif %}
 
-          {# Reprocess -- available for reviewable states, failed, and escalated #}
+          {# Reprocess -- available for reviewable states, terminal states, and stuck states #}
           {% if can_edit_case %}
-            {% if show_actions or case.status == "FAILED" or case.status == "ESCALATED" or case.status == "REJECTED" %}
-            <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess from intake">
+            {% if show_actions or case.status == "FAILED" or case.status == "ESCALATED" or case.status == "REJECTED" or case.status == "CLOSED" or case.status == "PENDING_EXTRACTION_APPROVAL" %}
+            <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess case">
               <i class="bi bi-arrow-clockwise me-1"></i>Reprocess
             </button>
             {% endif %}
@@ -151,7 +151,7 @@
               <li><hr class="dropdown-divider"></li>
               <li><a class="dropdown-item" href="{% url 'documents:invoice_detail' invoice.pk %}"><i class="bi bi-file-earmark-text me-2"></i>Invoice Detail</a></li>
               {% if po %}
-              <li><a class="dropdown-item" href="{% url 'po_documents:po_detail' po.pk %}"><i class="bi bi-cart-check me-2"></i>PO Detail</a></li>
+              <li><a class="dropdown-item" href="{% url 'po_detail' po.pk %}"><i class="bi bi-cart-check me-2"></i>PO Detail</a></li>
               {% endif %}
             </ul>
           </div>
@@ -984,6 +984,9 @@
                       <div class="text-center py-3">
                         <i class="bi bi-check-circle-fill text-success" style="font-size:1.5rem"></i>
                         <div class="mt-1 text-muted" style="font-size:.82rem">Case closed</div>
+                        {% if can_edit_case %}
+                        <button class="btn btn-outline-warning btn-sm mt-2" onclick="caseAction('reprocess')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+                        {% endif %}
                       </div>
                       {% elif case.status == "ESCALATED" %}
                       <div class="text-center py-3">

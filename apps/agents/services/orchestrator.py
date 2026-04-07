@@ -194,7 +194,10 @@ class AgentOrchestrator:
                 invoice_id=result.invoice_id,
                 result_id=result.pk,
                 user_id=actor.pk if actor else None,
-                session_id=derive_session_id(invoice_id=result.invoice_id),
+                session_id=derive_session_id(
+                    case_number=_case_number,
+                    invoice_id=result.invoice_id,
+                ),
                 metadata=build_observability_context(
                     invoice_id=result.invoice_id,
                     reconciliation_result_id=result.pk,

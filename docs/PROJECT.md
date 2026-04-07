@@ -364,7 +364,7 @@ PENDING -> RUNNING -> COMPLETED | FAILED | SKIPPED
 
 | Model | Key Fields | Notes |
 |---|---|---|
-| **APCase** | case_number (AP-YYMMDD-NNNN), status, processing_path, priority, risk_score, extraction_confidence, requires_human_review, assigned_to, source_channel | FK: invoice, vendor, purchase_order, reconciliation_result, review_assignment |
+| **APCase** | case_number (AP-YYMMDD-NNNN), status, processing_path, priority, risk_score, extraction_confidence, requires_human_review, assigned_to, source_channel | FK: document_upload (set at upload), invoice (nullable, linked after extraction), vendor, purchase_order, reconciliation_result, review_assignment |
 | **APCaseStage** | stage_name, status, performed_by_type, performed_by_agent, retry_count, input/output_payload, started/completed_at | FK: case |
 | **APCaseArtifact** | artifact_type, linked_object_type/id, payload (JSON), version | FK: case, stage |
 | **APCaseDecision** | decision_type, decision_source, confidence, rationale, evidence (JSON) | FK: case, stage |
@@ -1097,14 +1097,18 @@ The case management system (`apps/cases/`) provides a structured AP case lifecyc
 ### 10.2 Case Creation
 
 `CaseCreationService`:
-- Creates APCase **immediately after extraction** (not after approval)
+- Creates APCase **immediately after upload** (before extraction begins) via `create_from_document_upload()`
+- At upload time, `invoice` is null; `document_upload` FK is set
 - Generates case number: `AP-YYMMDD-NNNN`
+- After extraction persists the Invoice, `link_invoice_to_case()` attaches it and updates vendor, priority, invoice_type, extraction_confidence
+- Backward-compatible `create_from_upload(invoice)` checks for pre-created upload-based cases first, links the invoice, and returns the existing case
 - Infers invoice type (PO_BACKED or UNKNOWN based on po_number)
 - Assesses priority: HIGH (≥$50K), MEDIUM (≥$10K), LOW
 - Creates initial INTAKE stage
 - Case pipeline runs through INTAKE → EXTRACTION → EXTRACTION_APPROVAL, then **pauses** at `PENDING_EXTRACTION_APPROVAL` if human approval is needed
 - On extraction approval, `ExtractionApprovalService` resumes the existing case from PATH_RESOLUTION onward
 - For auto-approved invoices, the pipeline continues without pausing
+- The `case_number` is used as Langfuse session_id (`case-{case_number}`) across all pipelines for unified trace linking
 
 ### 10.3 Processing Paths
 

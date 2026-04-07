@@ -28,4 +28,7 @@ urlpatterns = [
     # Upload
     path("upload/", views.invoice_upload, name="invoice_upload"),
     path("upload/<int:upload_id>/status/", views.upload_status, name="upload_status"),
+
+    # Case reprocess status
+    path("case/<int:case_id>/reprocess-status/", views.case_reprocess_status, name="case_reprocess_status"),
 ]

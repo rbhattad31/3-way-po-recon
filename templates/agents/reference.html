@@ -281,7 +281,7 @@ flowchart LR
     C -->|"Partial match, unmatched\nor requires review"| D
     D --> E --> F
 
-    IEA(["Extraction Agent\nAlways: structures all invoice fields"])
+    IEA(["Extraction Agent\nAlways: structures all invoice fields\nPhase 2: evidence capture + QR decode (IN)"])
     IUA(["Verification Agent\nConditional: low-confidence results"])
     A --- IEA
     A --- IUA
@@ -297,6 +297,9 @@ flowchart LR
     D --- RA
     D --- EA
 
+    DR(["DeterministicResolver\nCost-saving bypass\nResolves trivial cases without LLM\nActive for auto-closed outcomes"])
+    D -.-> DR
+
     RR(["Review Routing Agent\nAssigns case to the right team"])
     CS(["Case Summary Agent\nWrites the AP reviewer summary"])
     E --- RR
@@ -308,6 +311,12 @@ flowchart LR
     click D call switchTab("tab-agents")
     click E call switchTab("tab-agents")
     click F call switchTab("tab-erp")
+
+    subgraph OBS [" Observability (Langfuse)"]
+        direction TB
+        O1["Traces span all 5 flows\nextraction · reconciliation · agent · case · posting"]
+        O2["Trace IDs persisted on DB records\nExtractionResult · ReconciliationRun · PostingRun\n145 standardised score constants (evaluation_constants.py)"]
+    end
 
     subgraph LEGEND [" Legend"]
         direction TB
@@ -321,10 +330,12 @@ flowchart LR
     classDef mix fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a,font-weight:bold
     classDef ai  fill:#d1fae5,stroke:#059669,color:#065f46,font-weight:bold
     classDef agent fill:#f0fdf4,stroke:#10b981,color:#064e3b,font-size:12px
+    classDef obs fill:#fdf4ff,stroke:#a855f7,color:#581c87,font-size:11px
     class A,B mix
     class C,F det
     class D,E ai
-    class IEA,IUA,POR,GRNR,RA,EA,RR,CS agent
+    class IEA,IUA,POR,GRNR,RA,EA,RR,CS,DR agent
+    class O1,O2 obs
     class L1 det
     class L2 mix
     class L3 ai
@@ -349,40 +360,48 @@ flowchart LR
             <div class="mermaid">
 flowchart TD
     UP(["Invoice Uploaded\nPDF or image file"]) --> OCR["Document OCR\nText and layout extracted from the invoice\nUp to 60,000 characters processed"]
-    OCR --> IEA["Primary Extraction Agent\nAI reads all invoice fields and line items\nOutputs structured data in one pass"]
-    IEA --> PARSE["Parse and Normalise\nFields cleaned and standardised\nLine items and totals reconciled"]
+    OCR --> GOV["Jurisdiction Resolution\nextraction_core governed pipeline\n4-tier: declared → entity → runtime → auto-detect\nSchema-driven, country-specific rules applied"]
+    GOV --> IEA["Primary Extraction Agent\nAI reads all invoice fields and line items\nOutputs structured data in one pass\nEvidence capture: page refs, bounding boxes, OCR snippets"]
+    OCR --> QR["QR Code Decoder\nIndian e-invoices: NIC JWT + plain-JSON\nAzure DI barcodes add-on; OCR IRN fallback\nRuns in parallel with IEA for IN jurisdiction"]
+    QR -.->|"QR fields merged\ninto extracted data"| IEA
+    IEA --> PHASE2["Phase 2 Hardening\nDecision codes assigned per field\nRecovery lane invoked on parse failure\nPrompt-source audit trail stored"]
+    PHASE2 --> PARSE["Parse and Normalise\nFields cleaned and standardised\nLine items and totals reconciled"]
     PARSE --> VAL{"All required\nfields valid?"}
     VAL -->|No| INV(["Invoice Rejected\nReturned with validation errors"])
     VAL -->|Yes| CGATE{"Confidence\nscore high enough?"}
     CGATE -->|"Low confidence"| IUA["Secondary Verification Agent\nAI cross-checks the extracted data\nQueries vendor records and invoice details"]
     CGATE -->|"High confidence"| APPR
     IUA --> APPR["Approval Gate\nHuman reviews extraction results\nor system auto-approves if confidence meets threshold"]
-    APPR -->|Approved| READY(["Ready for Reconciliation\nInvoice queued for matching"])
+    APPR -->|Approved| READY(["Ready for Reconciliation\nInvoice queued for matching\nlangfuse_trace_id persisted on ExtractionResult"])
     APPR -->|Rejected| REJ(["Returned to Submitter"])
 
     subgraph LEGEND [" Legend"]
         direction TB
         LE1["Pipeline step"]
-        LE2["Conditional AI agent"]
+        LE2["Conditional AI agent or QR decode"]
         LE3["Decision or gate"]
         LE4["Rejection outcome"]
         LE5["Start or end"]
+        LE6["Governed / Phase 2 hardening step"]
     end
     classDef agent fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
     classDef react fill:#d1fae5,stroke:#10b981,color:#064e3b
     classDef gate fill:#fef3c7,stroke:#f59e0b,color:#78350f
     classDef bad fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
     classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef governed fill:#fdf4ff,stroke:#a855f7,color:#581c87
     class OCR,IEA,PARSE agent
-    class IUA react
+    class IUA,QR react
     class VAL,CGATE,APPR gate
     class UP,READY neutral
     class INV,REJ bad
+    class GOV,PHASE2 governed
     class LE1 agent
     class LE2 react
     class LE3 gate
     class LE4 bad
     class LE5 neutral
+    class LE6 governed
             </div>{# /mermaid #}
             </div>{# /diagram-zoom-wrap #}
             <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-2">
@@ -657,8 +676,9 @@ flowchart TD
 flowchart TD
     RECON["Reconciliation Completed\nInvoice compared against Purchase Order and Goods Receipt\nExceptions and discrepancies identified"]
     RECON --> MODE["Matching Mode Selected\nPolicy rules checked first\nFalls back to document type if no policy applies"]
-    MODE --> PLAN{"AI Planning\nDecides which agents to run\nand in what order"}
-    PLAN -->|"Perfect match"| TOUCH(["Auto-Closed\nNo further review needed"])
+    MODE --> DR["DeterministicResolver\nCost-saving bypass: resolves trivial outcomes\nwithout invoking the LLM planner\nHandles MATCHED and AUTO-CLOSED cases"]
+    DR -->|"Result is trivially resolved"| TOUCH(["Auto-Closed\nNo further review needed"])
+    DR -->|"Exceptions remain"| PLAN{"ReasoningPlanner\nDecides which agents to run\nand in what order\n(PolicyEngine fallback on LLM error)"}
     PLAN -->|"Purchase Order not found"| POR["PO Retrieval Agent\nSearches for the missing purchase order\nQueries ERP and vendor records"]
     PLAN -->|"Goods Receipt not found"| GRNR["GRN Retrieval Agent\nLocates the goods receipt note\nOnly runs for 3-way matching"]
     PLAN -->|"Quantities or prices differ"| RA["Reconciliation Assistant\nAnalyses each discrepancy in detail\nSuggests the most likely resolution"]
@@ -670,27 +690,36 @@ flowchart TD
     EA --> RR
     RR["Review Routing Agent\nDecides who should review this case\nSets the priority and work queue"]
     RR --> CS["Case Summary Agent\nWrites a plain-English summary\nfor the AP reviewer to act on"]
-    CS --> REVIEW(["Sent to AP Review Queue\nor automatically closed"])
+    CS --> EVAL["Eval and Learning\ncore_eval: EvalRun, field outcomes\nlearning signals persisted\nagent_pipeline trace → Langfuse"]
+    EVAL --> REVIEW(["Sent to AP Review Queue\nor automatically closed"])
 
     subgraph LEGEND [" Legend"]
         direction TB
         LAD1["Deterministic routing"]
-        LAD2["AI planner"]
+        LAD2["ReasoningPlanner (AI)"]
         LAD3["AI agent step"]
         LAD4["Start or end"]
+        LAD5["DeterministicResolver (cost-saving bypass)"]
+        LAD6["Eval / observability"]
     end
     classDef engine fill:#fef3c7,stroke:#f59e0b,color:#78350f
     classDef react fill:#d1fae5,stroke:#10b981,color:#064e3b
     classDef planner fill:#ede9fe,stroke:#8b5cf6,color:#4c1d95
     classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef resolver fill:#fff7ed,stroke:#f97316,color:#7c2d12
+    classDef obs fill:#f0f9ff,stroke:#0ea5e9,color:#0c4a6e
     class RECON,MODE engine
     class POR,GRNR,RA,EA,RR,CS react
     class PLAN planner
     class TOUCH,REVIEW neutral
+    class DR resolver
+    class EVAL obs
     class LAD1 engine
     class LAD2 planner
     class LAD3 react
     class LAD4 neutral
+    class LAD5 resolver
+    class LAD6 obs
             </div>{# /mermaid #}
             </div>{# /diagram-zoom-wrap #}
             <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-2">

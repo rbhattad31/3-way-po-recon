@@ -4,7 +4,7 @@
 {% block breadcrumb %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb">
   <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
-  <li class="breadcrumb-item"><a href="{% url 'grn_documents:grn_list' %}">Goods Receipt Notes</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'grn_list' %}">Goods Receipt Notes</a></li>
   <li class="breadcrumb-item active">{{ grn.grn_number }}</li>
 </ol></nav>
 {% endblock %}
@@ -21,7 +21,7 @@
     {% else %}
       <span class="ap-badge ap-badge-info">{{ grn.status }}</span>
     {% endif %}
-    <a href="{% url 'grn_documents:grn_edit' grn.pk %}" class="btn btn-outline-primary btn-sm">
+    <a href="{% url 'grn_edit' grn.pk %}" class="btn btn-outline-primary btn-sm">
       <i class="bi bi-pencil me-1"></i>Edit
     </a>
   </div>
@@ -34,7 +34,7 @@
   <div class="ap-card-body">
     <div class="row g-3">
       <div class="col-md-3"><small class="text-muted d-block">Purchase Order</small>
-        <a href="{% url 'po_documents:po_detail' grn.purchase_order.pk %}" class="fw-semibold">{{ grn.purchase_order.po_number }}</a>
+        <a href="{% url 'po_detail' grn.purchase_order.pk %}" class="fw-semibold">{{ grn.purchase_order.po_number }}</a>
       </div>
       <div class="col-md-3"><small class="text-muted d-block">Vendor</small>{{ grn.vendor.name|default:"—" }}</div>
       <div class="col-md-3"><small class="text-muted d-block">Receipt Date</small>{{ grn.receipt_date|date:"d M Y"|default:"—" }}</div>
@@ -88,7 +88,7 @@
   <div class="ap-card-body">
     <div class="row g-3">
       <div class="col-md-3"><small class="text-muted d-block">PO Number</small>
-        <a href="{% url 'po_documents:po_detail' po.pk %}" class="fw-semibold">{{ po.po_number }}</a>
+        <a href="{% url 'po_detail' po.pk %}" class="fw-semibold">{{ po.po_number }}</a>
       </div>
       <div class="col-md-3"><small class="text-muted d-block">Vendor</small>{{ po.vendor.name|default:"—" }}</div>
       <div class="col-md-3"><small class="text-muted d-block">Status</small>

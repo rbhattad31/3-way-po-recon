@@ -1146,7 +1146,7 @@
       var reason = prompt('Escalation reason (optional):');
       if (reason === null) return;
     } else if (action === 'reprocess') {
-      if (!confirm('Reprocess this case from intake?')) return;
+      if (!confirm('Reprocess this case?')) return;
     }
 
     var decisionMap = {approve: 'APPROVED', reject: 'REJECTED', reprocess: 'REPROCESSED', escalate: 'ESCALATED'};
@@ -1157,10 +1157,31 @@
     if (typeof reason === 'string') formData.append('reason', reason);
 
     var decideUrl = '/cases/' + currentCaseId + '/decide/';
+
+    if (action === 'reprocess') {
+      // Show thinking progress block and poll for status
+      var progressEl = createProgressMessage();
+      var titleEl = progressEl.querySelector('.copilot-thinking-title');
+      if (titleEl) titleEl.textContent = 'Reprocessing case...';
+      updateThinkingLog(progressEl, [{ label: 'Reprocessing started', done: true }], false);
+
+      fetch(decideUrl, { method: 'POST', body: formData, credentials: 'same-origin', redirect: 'manual' })
+        .then(function () {
+          pollReprocessStatus(currentCaseId, progressEl);
+        })
+        .catch(function (err) {
+          updateThinkingLog(progressEl, [
+            { label: 'Reprocessing started', done: true },
+            { label: 'Reprocess failed: ' + err.message, done: true, failed: true }
+          ], true);
+          finalizeThinking(progressEl, [{ label: 'Failed', done: true, failed: true }]);
+        });
+      return;
+    }
+
     fetch(decideUrl, { method: 'POST', body: formData, credentials: 'same-origin' })
       .then(function (resp) {
         if (resp.redirected) {
-          // Successful -- reload to reflect new status
           window.location.reload();
           return;
         }
@@ -1171,6 +1192,65 @@
         alert('Action failed: ' + err.message);
       });
   };
+
+  async function pollReprocessStatus(caseId, thinkingEl) {
+    var statusUrl = '/api/v1/copilot/case/' + caseId + '/reprocess-status/';
+    var seenLabels = new Set(['Reprocessing started']);
+    var accumulated = [{ label: 'Reprocessing started', done: true }];
+
+    for (var i = 0; i < 300; i++) {
+      await sleep(800);
+      try {
+        var res = await apiFetch(statusUrl);
+        if (!res || !res.steps) continue;
+
+        var newLabels = new Set(res.steps.map(function(s) { return s.label; }));
+
+        // Mark disappeared active steps as done
+        for (var j = 0; j < accumulated.length; j++) {
+          var st = accumulated[j];
+          if (!st.done && !st.failed && !newLabels.has(st.label)) {
+            st.done = true;
+          }
+        }
+
+        // Add or update steps from response
+        for (var j = 0; j < res.steps.length; j++) {
+          var step = res.steps[j];
+          if (seenLabels.has(step.label)) {
+            var existing = accumulated.find(function(s) { return s.label === step.label; });
+            if (existing) {
+              existing.done = step.done;
+              existing.failed = step.failed;
+            }
+          } else {
+            seenLabels.add(step.label);
+            accumulated.push({ label: step.label, done: step.done, failed: !!step.failed });
+          }
+        }
+
+        updateThinkingLog(thinkingEl, accumulated, res.completed);
+
+        if (res.completed) {
+          accumulated.forEach(function(s) { if (!s.failed) s.done = true; });
+          updateThinkingLog(thinkingEl, accumulated, true);
+          finalizeThinking(thinkingEl, accumulated);
+
+          // Refresh case context panel
+          loadCaseContext(caseId);
+
+          // Show follow-up prompts
+          renderUploadFollowUps(thinkingEl, res);
+          return;
+        }
+      } catch (err) {
+        console.warn('Reprocess status poll failed:', err);
+      }
+    }
+
+    accumulated.push({ label: 'Processing is taking longer than expected. Refresh to check status.', done: true });
+    updateThinkingLog(thinkingEl, accumulated, false);
+  }
 
   // ── Boot ──
   if (document.readyState === 'loading') {

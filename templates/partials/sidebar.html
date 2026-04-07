@@ -103,7 +103,7 @@
       {% has_permission "purchase_orders.view" as can_view_pos %}
       {% if can_view_pos %}
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active fw-bold{% endif %}" href="{% url 'po_documents:po_list' %}">
+        <a class="nav-link {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active fw-bold{% endif %}" href="{% url 'po_list' %}">
           <i class="bi bi-cart-check me-2"></i>Purchase Orders
         </a>
       </li>
@@ -111,7 +111,7 @@
       {% has_permission "grns.view" as can_view_grns %}
       {% if can_view_grns %}
       <li class="nav-item">
-        <a class="nav-link {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active fw-bold{% endif %}" href="{% url 'grn_documents:grn_list' %}">
+        <a class="nav-link {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active fw-bold{% endif %}" href="{% url 'grn_list' %}">
           <i class="bi bi-box-seam me-2"></i>GRNs
         </a>
       </li>

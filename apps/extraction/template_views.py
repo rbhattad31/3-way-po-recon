@@ -336,12 +336,32 @@ def extraction_upload(request):
     # Try blob upload first — required for async Celery path
     _try_blob_upload(doc_upload, uploaded_file)
 
+    # ── Create AP Case immediately after upload (before extraction) ──
+    # This ensures case_id is available as Langfuse session_id for all traces.
+    case_id = None
+    case_number = None
+    try:
+        from apps.cases.services.case_creation_service import CaseCreationService
+        case = CaseCreationService.create_from_document_upload(
+            upload=doc_upload,
+            uploaded_by=request.user,
+        )
+        case_id = case.pk
+        case_number = case.case_number
+    except Exception as case_exc:
+        logger.warning("Pre-extraction case creation failed (non-fatal): %s", case_exc)
+
     # If blob upload succeeded, dispatch via Celery task (async on server)
     # Credit consume/refund happens inside the Celery task
     if doc_upload.blob_path:
         from apps.extraction.tasks import process_invoice_upload_task
         from apps.core.utils import dispatch_task
-        dispatch_task(process_invoice_upload_task, upload_id=doc_upload.pk)
+        dispatch_task(
+            process_invoice_upload_task,
+            upload_id=doc_upload.pk,
+            case_id=case_id,
+            case_number=case_number,
+        )
         _invalidate_extraction_caches(request.user)
         messages.success(
             request,

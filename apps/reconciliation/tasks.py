@@ -79,11 +79,26 @@ def run_reconciliation_task(
         if _lf_task_trace_id:
             _invoice_ids_preview = [i.pk for i in (invoices or [])][:10]
             _single_invoice_id = invoices[0].pk if invoices and len(invoices) == 1 else None
+
+            # Resolve case_number for session_id linkage
+            _recon_case_number = None
+            if _single_invoice_id:
+                try:
+                    from apps.cases.models import APCase
+                    _recon_case_number = APCase.objects.filter(
+                        invoice_id=_single_invoice_id, is_active=True,
+                    ).values_list("case_number", flat=True).first()
+                except Exception:
+                    pass
+
             _lf_task_trace = start_trace_safe(
                 _lf_task_trace_id,
                 TRACE_RECONCILIATION_PIPELINE,
                 user_id=triggered_by.pk if triggered_by else None,
-                session_id=derive_session_id(invoice_id=_single_invoice_id),
+                session_id=derive_session_id(
+                    case_number=_recon_case_number,
+                    invoice_id=_single_invoice_id,
+                ),
                 metadata=build_observability_context(
                     invoice_id=_single_invoice_id,
                     actor_user_id=triggered_by.pk if triggered_by else None,

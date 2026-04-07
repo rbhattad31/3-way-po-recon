@@ -47,6 +47,18 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: 
     try:
         from apps.core.langfuse_client import start_trace, end_span
         _celery_task_id = self.request.id
+
+        # Resolve case_number for session_id linkage
+        _case_number = None
+        try:
+            from apps.cases.models import APCase
+            _agent_case = APCase.objects.filter(
+                invoice_id=result.invoice_id, is_active=True,
+            ).values_list("case_number", flat=True).first()
+            _case_number = _agent_case
+        except Exception:
+            pass
+
         if _celery_task_id:
             # Strip UUID hyphens to get a valid 32-char hex Langfuse trace ID.
             _lf_wrapper = start_trace(
@@ -55,7 +67,10 @@ def run_agent_pipeline_task(self, reconciliation_result_id: int, actor_user_id: 
                 TRACE_AGENT_PIPELINE + "_task",
                 invoice_id=result.invoice_id,
                 user_id=actor_user_id,
-                session_id=derive_session_id(invoice_id=result.invoice_id),
+                session_id=derive_session_id(
+                    case_number=_case_number,
+                    invoice_id=result.invoice_id,
+                ),
                 metadata=build_observability_context(
                     invoice_id=result.invoice_id,
                     reconciliation_result_id=reconciliation_result_id,

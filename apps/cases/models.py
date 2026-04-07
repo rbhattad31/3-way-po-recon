@@ -47,10 +47,19 @@ class APCase(BaseModel, SoftDeleteMixin):
     )
 
     # --- Linked documents ---
+    document_upload = models.ForeignKey(
+        "documents.DocumentUpload",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ap_cases",
+        help_text="Link to the original upload; set at case creation (before extraction).",
+    )
     invoice = models.OneToOneField(
         "documents.Invoice",
+        null=True, blank=True,
         on_delete=models.PROTECT,
         related_name="ap_case",
+        help_text="Linked after extraction persistence; null for pre-extraction cases.",
     )
     vendor = models.ForeignKey(
         "vendors.Vendor",

@@ -9,6 +9,10 @@ import sys
 
 
 def pytest_configure(config):
+    # Disable Langfuse during tests -- client reads env vars directly.
+    os.environ.pop("LANGFUSE_PUBLIC_KEY", None)
+    os.environ.pop("LANGFUSE_SECRET_KEY", None)
+    os.environ.pop("LANGFUSE_HOST", None)
     """Switch to SQLite in-memory for test runs.
 
     This hook fires before Django is set up, so we can safely override DATABASES

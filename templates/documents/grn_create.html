@@ -5,7 +5,7 @@
 <nav aria-label="breadcrumb">
   <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
     <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
-    <li class="breadcrumb-item"><a href="{% url 'grn_documents:grn_list' %}" class="text-decoration-none">Goods Receipt Notes</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'grn_list' %}" class="text-decoration-none">Goods Receipt Notes</a></li>
     <li class="breadcrumb-item active">Add GRN</li>
   </ol>
 </nav>
@@ -83,7 +83,7 @@
     <button type="submit" class="btn btn-primary btn-sm">
       <i class="bi bi-check-lg me-1"></i>Save GRN
     </button>
-    <a href="{% url 'grn_documents:grn_list' %}" class="btn btn-outline-secondary btn-sm">
+    <a href="{% url 'grn_list' %}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-x me-1"></i>Cancel
     </a>
   </div>

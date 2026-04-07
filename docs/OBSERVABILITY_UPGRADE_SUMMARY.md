@@ -103,10 +103,11 @@ All pipelines now use `derive_session_id()` from `observability_helpers.py`:
 
 | Priority | Pattern | Source |
 |---|---|---|
-| 1 | `invoice-{invoice_id}` | Invoice-centric flows |
-| 2 | `upload-{upload_id}` | Pre-invoice extraction |
-| 3 | `case-{case_id}` | Case-only flows |
-| 4 | `unknown` | No context available |
+| 1 | `case-{case_number}` | Case-anchored flows (AP Case created at upload time) |
+| 2 | `invoice-{invoice_id}` | Invoice-centric flows (fallback when no case_number) |
+| 3 | `upload-{upload_id}` | Pre-invoice extraction (rare fallback) |
+| 4 | `case-{case_id}` | Case-only flows (numeric fallback) |
+| 5 | `None` | No context available |
 
 ### Metadata Builder
 

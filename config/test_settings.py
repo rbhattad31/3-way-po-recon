@@ -25,4 +25,10 @@ DATABASES = {
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
+# Disable Langfuse -- the client reads env vars directly via os.getenv(),
+# so we must unset them to prevent API calls during tests.
+os.environ.pop("LANGFUSE_PUBLIC_KEY", None)
+os.environ.pop("LANGFUSE_SECRET_KEY", None)
+os.environ.pop("LANGFUSE_HOST", None)
+
 print("\n*** TEST SETTINGS: SQLite in-memory DB ***\n")
