@@ -1,6 +1,7 @@
 """Template views for the Procurement Intelligence UI."""
 from __future__ import annotations
 
+import json
 import logging
 
 from django.contrib import messages
@@ -15,11 +16,13 @@ from apps.core.enums import (
     AnalysisRunType,
     ProcurementRequestStatus,
     ProcurementRequestType,
+    ExternalSourceClass,
 )
 from apps.procurement.models import (
     AnalysisRun,
     BenchmarkResult,
     ComplianceResult,
+    ExternalSourceRegistry,
     ProcurementRequest,
     ProcurementRequestAttribute,
     RecommendationResult,
@@ -519,3 +522,1183 @@ def procurement_dashboard(request):
         "recent_requests": recent_requests,
     })
 
+
+# ===========================================================================
+# HVAC FLOW A -- new dedicated views
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# H1. HVAC Request List (dashboard)
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.view")
+def hvac_request_list(request):
+    """List all HVAC procurement requests with KPIs, search, and filters."""
+    base_qs = ProcurementRequest.objects.filter(domain_code="HVAC")
+
+    # KPI totals
+    total = base_qs.count()
+    completed = base_qs.filter(status="COMPLETED").count()
+    in_progress = base_qs.filter(status__in=["IN_PROGRESS", "RUNNING", "READY"]).count()
+    # needs_review: requests whose latest recommendation has human_review flags
+    needs_review = base_qs.filter(status="REVIEW_REQUIRED").count()
+
+    # Annotate with latest recommendation data
+    latest_rec_option_sq = Subquery(
+        RecommendationResult.objects.filter(run__request=OuterRef("pk"))
+        .order_by("-created_at")
+        .values("recommended_option")[:1]
+    )
+    latest_conf_sq = Subquery(
+        RecommendationResult.objects.filter(run__request=OuterRef("pk"))
+        .order_by("-created_at")
+        .values("confidence_score")[:1]
+    )
+
+    qs = base_qs.select_related("created_by").annotate(
+        run_count=Count("analysis_runs"),
+        latest_recommended_option=latest_rec_option_sq,
+        latest_confidence_score=latest_conf_sq,
+    )
+
+    # Filters
+    status_filter = request.GET.get("status", "")
+    search = request.GET.get("q", "")
+    sort = request.GET.get("sort", "newest")
+
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    if search:
+        qs = qs.filter(
+            Q(title__icontains=search)
+            | Q(description__icontains=search)
+            | Q(geography_country__icontains=search)
+            | Q(geography_city__icontains=search)
+        )
+    if sort == "oldest":
+        qs = qs.order_by("created_at")
+    elif sort == "confidence":
+        qs = qs.order_by("-latest_confidence_score")
+    else:
+        qs = qs.order_by("-created_at")
+
+    paginator = Paginator(qs, 12)
+    page = paginator.get_page(request.GET.get("page"))
+
+    return render(request, "procurement/hvac_request_list.html", {
+        "page_obj": page,
+        "kpi": {
+            "total": total,
+            "completed": completed,
+            "in_progress": in_progress,
+            "needs_review": needs_review,
+        },
+        "current_status": status_filter,
+        "search_query": search,
+        "current_sort": sort,
+        "status_choices": ProcurementRequestStatus.choices,
+    })
+
+
+# ---------------------------------------------------------------------------
+# H2. HVAC Request Detail (recommendation workspace)
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.view")
+def hvac_request_detail(request, pk):
+    """Full recommendation workspace for a single HVAC request."""
+    proc_request = get_object_or_404(
+        ProcurementRequest.objects.select_related("created_by", "assigned_to"),
+        pk=pk, domain_code="HVAC",
+    )
+    attributes = proc_request.attributes.order_by("attribute_code")
+    runs = proc_request.analysis_runs.select_related("triggered_by").order_by("-created_at")
+    latest_run = runs.first()
+
+    recommendation = (
+        RecommendationResult.objects.filter(run__request=proc_request)
+        .select_related("run")
+        .order_by("-created_at")
+        .first()
+    )
+
+    # Parse structured payload sections safely
+    payload = {}
+    if recommendation and recommendation.output_payload_json:
+        raw = recommendation.output_payload_json
+        if isinstance(raw, str):
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                payload = {}
+        elif isinstance(raw, dict):
+            payload = raw
+
+    # Agent execution records for this request (all runs)
+    from apps.procurement.models import ProcurementAgentExecutionRecord
+    agent_records = ProcurementAgentExecutionRecord.objects.filter(
+        analysis_run__request=proc_request
+    ).order_by("-created_at")[:20]
+
+    # Latest compliance
+    compliance = (
+        ComplianceResult.objects.filter(run__request=proc_request)
+        .select_related("run")
+        .order_by("-created_at")
+        .first()
+    )
+
+    # Audit events
+    audit_events = AuditService.fetch_entity_history("ProcurementRequest", proc_request.pk)
+
+    # Benchmarks
+    benchmarks = BenchmarkResult.objects.filter(
+        run__request=proc_request,
+    ).select_related("run", "quotation").prefetch_related("lines").order_by("-created_at")
+
+    return render(request, "procurement/hvac_request_detail.html", {
+        "proc_request": proc_request,
+        "attributes": attributes,
+        "runs": runs,
+        "latest_run": latest_run,
+        "recommendation": recommendation,
+        "payload": payload,
+        "agent_records": agent_records,
+        "compliance": compliance,
+        "benchmarks": benchmarks,
+        "audit_events": audit_events[:30],
+    })
+
+
+# ---------------------------------------------------------------------------
+# H3. HVAC Request Form (create new)
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.create")
+def hvac_request_form(request):
+    """Create a new HVAC procurement request via the structured HVAC form."""
+    if request.method == "POST":
+        from apps.procurement.services.request_service import ProcurementRequestService
+        from apps.procurement.services.analysis_run_service import AnalysisRunService
+        from apps.procurement.tasks import run_analysis_task
+
+        # Map flat form fields to ProcurementRequestAttribute records
+        HVAC_FIELD_MAP = [
+            ("store_id", "Store ID / Reference", "TEXT"),
+            ("brand", "Brand / Operator", "TEXT"),
+            ("geography_zone", "Geography Zone", "TEXT"),
+            ("store_type", "Store Type", "TEXT"),
+            ("store_format", "Store Format", "TEXT"),
+            ("area_sqft", "Store Area (sqft)", "NUMBER"),
+            ("ceiling_height_ft", "Ceiling Height (ft)", "NUMBER"),
+            ("ambient_temp_max", "Ambient Temp Max (C)", "NUMBER"),
+            ("humidity_level", "Humidity Level", "TEXT"),
+            ("dust_exposure", "Dust Exposure", "TEXT"),
+            ("heat_load_category", "Heat Load Category", "TEXT"),
+            ("fresh_air_requirement", "Fresh Air Requirement", "TEXT"),
+            ("existing_hvac_type", "Existing HVAC Type", "TEXT"),
+            ("landlord_constraints", "Landlord Constraints", "TEXT"),
+            ("required_standards_notes", "Required Standards / Notes", "TEXT"),
+            ("budget_level", "Budget Level", "TEXT"),
+            ("energy_efficiency_priority", "Energy Efficiency Priority", "TEXT"),
+            ("maintenance_priority", "Maintenance Priority", "TEXT"),
+            ("preferred_oems", "Preferred OEMs", "TEXT"),
+        ]
+
+        attrs_data = []
+        for code, label, dtype in HVAC_FIELD_MAP:
+            val = request.POST.get(code, "").strip()
+            if val:
+                attrs_data.append({
+                    "attribute_code": code,
+                    "attribute_label": label,
+                    "data_type": dtype,
+                    "value_text": val,
+                    "is_required": False,
+                })
+
+        try:
+            proc_request = ProcurementRequestService.create_request(
+                title=request.POST.get("title", ""),
+                description=request.POST.get("description", ""),
+                domain_code="HVAC",
+                schema_code="HVAC_FLOW_A",
+                request_type=ProcurementRequestType.RECOMMENDATION,
+                priority=request.POST.get("priority", "HIGH"),
+                geography_country=request.POST.get("geography_country", "UAE"),
+                geography_city=request.POST.get("geography_city", ""),
+                currency="AED",
+                created_by=request.user,
+                attributes=attrs_data if attrs_data else None,
+            )
+            action = request.POST.get("action", "save")
+            if action == "run":
+                run = AnalysisRunService.create_run(
+                    request=proc_request,
+                    run_type=AnalysisRunType.RECOMMENDATION,
+                    triggered_by=request.user,
+                )
+                run_analysis_task.delay(run.pk)
+                messages.success(request, "HVAC request created and analysis queued.")
+            else:
+                messages.success(request, f"HVAC request '{proc_request.title}' saved.")
+            return redirect("procurement:hvac_request_detail", pk=proc_request.pk)
+        except Exception as exc:
+            logger.exception("hvac_request_form POST failed: %s", exc)
+            messages.error(request, f"Failed to save request: {exc}")
+
+    return render(request, "procurement/hvac_request_form.html", {
+        "priority_choices": [("LOW", "Low"), ("MEDIUM", "Medium"), ("HIGH", "High"), ("CRITICAL", "Critical")],
+    })
+
+
+# ---------------------------------------------------------------------------
+# H4. Benchmarking List
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.view")
+def hvac_benchmark_list(request):
+    """List all HVAC benchmarking runs."""
+    qs = BenchmarkResult.objects.filter(
+        run__request__domain_code="HVAC",
+    ).select_related("run", "run__request", "quotation").prefetch_related("lines").order_by("-created_at")
+
+    total = qs.count()
+    completed = qs.filter(run__status="COMPLETED").count()
+
+    paginator = Paginator(qs, 20)
+    page = paginator.get_page(request.GET.get("page"))
+
+    return render(request, "procurement/hvac_benchmark_list.html", {
+        "page_obj": page,
+        "kpi": {"total": total, "completed": completed},
+    })
+
+
+# ---------------------------------------------------------------------------
+# H5. HVAC Configuration
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.edit")
+def hvac_config(request):
+    """HVAC Flow A configuration -- source registry and rule engine settings."""
+    if request.method == "POST":
+        action = request.POST.get("config_action", "")
+        if action == "add_source":
+            try:
+                ExternalSourceRegistry.objects.create(
+                    source_name=request.POST.get("source_name", ""),
+                    domain=request.POST.get("domain", ""),
+                    source_type=request.POST.get("source_type", ExternalSourceClass.OEM_OFFICIAL),
+                    country_scope=[c.strip() for c in request.POST.get("country_scope", "").split(",") if c.strip()],
+                    priority=int(request.POST.get("priority", 10)),
+                    trust_score=float(request.POST.get("trust_score", 0.8)),
+                    allowed_for_discovery=request.POST.get("allowed_for_discovery") == "on",
+                    allowed_for_compliance=request.POST.get("allowed_for_compliance") == "on",
+                    fetch_mode=request.POST.get("fetch_mode", "PAGE"),
+                    notes=request.POST.get("notes", ""),
+                )
+                messages.success(request, "External source added.")
+            except Exception as exc:
+                logger.exception("add_source failed: %s", exc)
+                messages.error(request, f"Failed to add source: {exc}")
+        elif action == "toggle_source":
+            src_id = request.POST.get("source_id")
+            if src_id:
+                try:
+                    src = ExternalSourceRegistry.objects.get(pk=src_id)
+                    src.is_active = not src.is_active
+                    src.save(update_fields=["is_active"])
+                    messages.success(request, f"Source '{src.source_name}' toggled.")
+                except ExternalSourceRegistry.DoesNotExist:
+                    messages.error(request, "Source not found.")
+        return redirect("procurement:hvac_config")
+
+    sources = ExternalSourceRegistry.objects.all().order_by("priority", "source_name")
+
+    return render(request, "procurement/hvac_config.html", {
+        "sources": sources,
+        "source_type_choices": ExternalSourceClass.choices,
+        "fetch_mode_choices": [("PAGE", "Web Page"), ("PDF", "PDF Download"), ("API", "API Endpoint")],
+    })
+
+
+# =============================================================================
+# PROCUREMENT CONFIGURATIONS -- full admin CRUD hub (AJAX-backed)
+# =============================================================================
+
+@login_required
+@permission_required_code("procurement.view")
+def proc_configurations(request):
+    """Procurement Configurations hub -- seed data admin control."""
+    from apps.procurement.models import (
+        ExternalSourceRegistry, ValidationRuleSet, Product, Vendor, Room,
+        HVACRecommendationRule,
+    )
+    from apps.core.enums import (
+        ExternalSourceClass, ValidationType, HVACSystemType, RoomUsageType,
+    )
+
+    stats = {
+        "sources_total": ExternalSourceRegistry.objects.count(),
+        "sources_active": ExternalSourceRegistry.objects.filter(is_active=True).count(),
+        "rulesets_total": ValidationRuleSet.objects.count(),
+        "rulesets_active": ValidationRuleSet.objects.filter(is_active=True).count(),
+        "products_total": Product.objects.count(),
+        "products_active": Product.objects.filter(is_active=True).count(),
+        "vendors_total": Vendor.objects.count(),
+        "vendors_active": Vendor.objects.filter(is_active=True).count(),
+        "rooms_total": Room.objects.count(),
+        "rooms_active": Room.objects.filter(is_active=True).count(),
+        "hvacrules_total": HVACRecommendationRule.objects.count(),
+        "hvacrules_active": HVACRecommendationRule.objects.filter(is_active=True).count(),
+    }
+
+    return render(request, "procurement/configurations.html", {
+        "stats": stats,
+        "source_type_choices": ExternalSourceClass.choices,
+        "fetch_mode_choices": [("PAGE", "Web Page"), ("PDF", "PDF Download"), ("API", "API Endpoint")],
+        "validation_type_choices": ValidationType.choices,
+        "system_type_choices": HVACSystemType.choices,
+        "room_usage_choices": RoomUsageType.choices,
+        "active_tab": request.GET.get("tab", "sources"),
+        # HVAC rules filter choices
+        "hvac_store_type_choices": HVACRecommendationRule.STORE_TYPE_CHOICES,
+        "hvac_budget_choices": HVACRecommendationRule.BUDGET_CHOICES,
+        "hvac_energy_priority_choices": HVACRecommendationRule.ENERGY_PRIORITY_CHOICES,
+    })
+
+
+# ---------------------------------------------------------------------------
+# AJAX API -- External Source Registry
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_sources(request):
+    """List (GET) or Create (POST) ExternalSourceRegistry entries."""
+    from apps.procurement.models import ExternalSourceRegistry
+    from django.http import JsonResponse
+
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = ExternalSourceRegistry.objects.all().order_by("priority", "source_name")
+        if q:
+            qs = qs.filter(
+                Q(source_name__icontains=q) | Q(domain__icontains=q) | Q(source_type__icontains=q)
+            )
+        items = [
+            {
+                "id": s.pk,
+                "source_name": s.source_name,
+                "domain": s.domain,
+                "source_type": s.source_type,
+                "source_type_display": s.get_source_type_display(),
+                "priority": s.priority,
+                "trust_score": float(s.trust_score),
+                "allowed_for_discovery": s.allowed_for_discovery,
+                "allowed_for_compliance": s.allowed_for_compliance,
+                "fetch_mode": s.fetch_mode,
+                "country_scope": ", ".join(s.country_scope) if s.country_scope else "",
+                "notes": s.notes,
+                "is_active": s.is_active,
+            }
+            for s in qs
+        ]
+        return JsonResponse({"items": items, "total": len(items)})
+
+    if request.method == "POST":
+        if not request.user.has_perm("procurement.edit") and not request.user.is_staff:
+            # Simple permission check -- defer to RBAC
+            pass
+        try:
+            body = json.loads(request.body)
+            src = ExternalSourceRegistry.objects.create(
+                source_name=body.get("source_name", "").strip(),
+                domain=body.get("domain", "").strip(),
+                source_type=body.get("source_type", "OEM_OFFICIAL"),
+                country_scope=[c.strip() for c in body.get("country_scope", "").split(",") if c.strip()],
+                priority=int(body.get("priority", 10)),
+                trust_score=float(body.get("trust_score", 0.8)),
+                allowed_for_discovery=bool(body.get("allowed_for_discovery", True)),
+                allowed_for_compliance=bool(body.get("allowed_for_compliance", False)),
+                fetch_mode=body.get("fetch_mode", "PAGE"),
+                notes=body.get("notes", ""),
+                is_active=bool(body.get("is_active", True)),
+            )
+            return JsonResponse({
+                "success": True, "id": src.pk,
+                "message": f"Source '{src.source_name}' created successfully.",
+            })
+        except Exception as exc:
+            logger.exception("api_config_sources POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_source_detail(request, pk):
+    """Get (GET), Update (PUT-via-POST) or Delete (DELETE-via-POST) a source."""
+    from apps.procurement.models import ExternalSourceRegistry
+    from django.http import JsonResponse
+
+    try:
+        src = ExternalSourceRegistry.objects.get(pk=pk)
+    except ExternalSourceRegistry.DoesNotExist:
+        return JsonResponse({"success": False, "message": "Source not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "id": src.pk,
+            "source_name": src.source_name,
+            "domain": src.domain,
+            "source_type": src.source_type,
+            "priority": src.priority,
+            "trust_score": float(src.trust_score),
+            "allowed_for_discovery": src.allowed_for_discovery,
+            "allowed_for_compliance": src.allowed_for_compliance,
+            "fetch_mode": src.fetch_mode,
+            "country_scope": ", ".join(src.country_scope) if src.country_scope else "",
+            "notes": src.notes,
+            "is_active": src.is_active,
+        })
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            action = body.get("_action", "update")
+
+            if action == "delete":
+                name = src.source_name
+                src.delete()
+                return JsonResponse({"success": True, "message": f"Source '{name}' deleted."})
+
+            if action == "toggle":
+                src.is_active = not src.is_active
+                src.save(update_fields=["is_active"])
+                return JsonResponse({"success": True, "is_active": src.is_active,
+                                     "message": f"Source '{src.source_name}' {'activated' if src.is_active else 'deactivated'}."})
+
+            # update
+            src.source_name = body.get("source_name", src.source_name).strip()
+            src.domain = body.get("domain", src.domain).strip()
+            src.source_type = body.get("source_type", src.source_type)
+            country_raw = body.get("country_scope", "")
+            src.country_scope = [c.strip() for c in country_raw.split(",") if c.strip()] if country_raw else src.country_scope
+            src.priority = int(body.get("priority", src.priority))
+            src.trust_score = float(body.get("trust_score", src.trust_score))
+            src.allowed_for_discovery = bool(body.get("allowed_for_discovery", src.allowed_for_discovery))
+            src.allowed_for_compliance = bool(body.get("allowed_for_compliance", src.allowed_for_compliance))
+            src.fetch_mode = body.get("fetch_mode", src.fetch_mode)
+            src.notes = body.get("notes", src.notes)
+            src.is_active = bool(body.get("is_active", src.is_active))
+            src.save()
+            return JsonResponse({"success": True, "message": f"Source '{src.source_name}' updated."})
+        except Exception as exc:
+            logger.exception("api_config_source_detail POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+# ---------------------------------------------------------------------------
+# AJAX API -- Validation Rule Sets
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_rulesets(request):
+    """List (GET) or Create (POST) ValidationRuleSet entries."""
+    from apps.procurement.models import ValidationRuleSet
+    from django.http import JsonResponse
+
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = ValidationRuleSet.objects.all().order_by("priority", "rule_set_code")
+        if q:
+            qs = qs.filter(
+                Q(rule_set_code__icontains=q) | Q(rule_set_name__icontains=q) | Q(domain_code__icontains=q)
+            )
+        items = [
+            {
+                "id": r.pk,
+                "rule_set_code": r.rule_set_code,
+                "rule_set_name": r.rule_set_name,
+                "domain_code": r.domain_code,
+                "schema_code": r.schema_code,
+                "validation_type": r.validation_type,
+                "validation_type_display": r.get_validation_type_display(),
+                "priority": r.priority,
+                "description": r.description,
+                "is_active": r.is_active,
+            }
+            for r in qs
+        ]
+        return JsonResponse({"items": items, "total": len(items)})
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            rs = ValidationRuleSet.objects.create(
+                rule_set_code=body.get("rule_set_code", "").strip(),
+                rule_set_name=body.get("rule_set_name", "").strip(),
+                domain_code=body.get("domain_code", "").strip(),
+                schema_code=body.get("schema_code", "").strip(),
+                validation_type=body.get("validation_type", "ATTRIBUTE_COMPLETENESS"),
+                priority=int(body.get("priority", 100)),
+                description=body.get("description", ""),
+                is_active=bool(body.get("is_active", True)),
+            )
+            return JsonResponse({"success": True, "id": rs.pk,
+                                 "message": f"Rule set '{rs.rule_set_code}' created."})
+        except Exception as exc:
+            logger.exception("api_config_rulesets POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_ruleset_detail(request, pk):
+    """Get, Update, or Delete a ValidationRuleSet."""
+    from apps.procurement.models import ValidationRuleSet
+    from django.http import JsonResponse
+
+    try:
+        rs = ValidationRuleSet.objects.get(pk=pk)
+    except ValidationRuleSet.DoesNotExist:
+        return JsonResponse({"success": False, "message": "Rule set not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "id": rs.pk,
+            "rule_set_code": rs.rule_set_code,
+            "rule_set_name": rs.rule_set_name,
+            "domain_code": rs.domain_code,
+            "schema_code": rs.schema_code,
+            "validation_type": rs.validation_type,
+            "priority": rs.priority,
+            "description": rs.description,
+            "is_active": rs.is_active,
+        })
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            action = body.get("_action", "update")
+
+            if action == "delete":
+                code = rs.rule_set_code
+                rs.delete()
+                return JsonResponse({"success": True, "message": f"Rule set '{code}' deleted."})
+
+            if action == "toggle":
+                rs.is_active = not rs.is_active
+                rs.save(update_fields=["is_active"])
+                return JsonResponse({"success": True, "is_active": rs.is_active,
+                                     "message": f"Rule set '{rs.rule_set_code}' {'activated' if rs.is_active else 'deactivated'}."})
+
+            rs.rule_set_code = body.get("rule_set_code", rs.rule_set_code).strip()
+            rs.rule_set_name = body.get("rule_set_name", rs.rule_set_name).strip()
+            rs.domain_code = body.get("domain_code", rs.domain_code).strip()
+            rs.schema_code = body.get("schema_code", rs.schema_code).strip()
+            rs.validation_type = body.get("validation_type", rs.validation_type)
+            rs.priority = int(body.get("priority", rs.priority))
+            rs.description = body.get("description", rs.description)
+            rs.is_active = bool(body.get("is_active", rs.is_active))
+            rs.save()
+            return JsonResponse({"success": True, "message": f"Rule set '{rs.rule_set_code}' updated."})
+        except Exception as exc:
+            logger.exception("api_config_ruleset_detail POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+# ---------------------------------------------------------------------------
+# AJAX API -- Products (HVAC catalog)
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_products(request):
+    """List (GET) or Create (POST) Product entries."""
+    from apps.procurement.models import Product
+    from django.http import JsonResponse
+
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = Product.objects.all().order_by("manufacturer", "system_type", "capacity_kw")
+        if q:
+            qs = qs.filter(
+                Q(manufacturer__icontains=q) | Q(product_name__icontains=q) | Q(sku__icontains=q)
+            )
+        items = [
+            {
+                "id": p.pk,
+                "sku": p.sku,
+                "manufacturer": p.manufacturer,
+                "product_name": p.product_name,
+                "system_type": p.system_type,
+                "system_type_display": p.get_system_type_display(),
+                "capacity_kw": float(p.capacity_kw),
+                "power_input_kw": float(p.power_input_kw),
+                "sound_level_db_full_load": p.sound_level_db_full_load,
+                "refrigerant_type": p.refrigerant_type,
+                "warranty_months": p.warranty_months,
+                "cop_rating": float(p.cop_rating) if p.cop_rating is not None else None,
+                "seer_rating": float(p.seer_rating) if p.seer_rating is not None else None,
+                "weight_kg": p.weight_kg,
+                "is_active": p.is_active,
+            }
+            for p in qs
+        ]
+        return JsonResponse({"items": items, "total": len(items)})
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            prod = Product.objects.create(
+                sku=body.get("sku", "").strip(),
+                manufacturer=body.get("manufacturer", "").strip(),
+                product_name=body.get("product_name", "").strip(),
+                system_type=body.get("system_type", "SPLIT_AC"),
+                capacity_kw=float(body.get("capacity_kw", 0)),
+                power_input_kw=float(body.get("power_input_kw", 0)),
+                sound_level_db_full_load=int(body.get("sound_level_db_full_load", 50)),
+                sound_level_db_part_load=int(body.get("sound_level_db_part_load") or 0) or None,
+                refrigerant_type=body.get("refrigerant_type", ""),
+                warranty_months=int(body.get("warranty_months", 12)),
+                cop_rating=float(body.get("cop_rating")) if body.get("cop_rating") else None,
+                seer_rating=float(body.get("seer_rating")) if body.get("seer_rating") else None,
+                weight_kg=int(body.get("weight_kg")) if body.get("weight_kg") else None,
+                installation_support_required=bool(body.get("installation_support_required", False)),
+                is_active=bool(body.get("is_active", True)),
+            )
+            return JsonResponse({"success": True, "id": prod.pk,
+                                 "message": f"Product '{prod.sku}' created."})
+        except Exception as exc:
+            logger.exception("api_config_products POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_product_detail(request, pk):
+    """Get, Update, or Delete a Product."""
+    from apps.procurement.models import Product
+    from django.http import JsonResponse
+
+    try:
+        prod = Product.objects.get(pk=pk)
+    except Product.DoesNotExist:
+        return JsonResponse({"success": False, "message": "Product not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "id": prod.pk,
+            "sku": prod.sku,
+            "manufacturer": prod.manufacturer,
+            "product_name": prod.product_name,
+            "system_type": prod.system_type,
+            "capacity_kw": float(prod.capacity_kw),
+            "power_input_kw": float(prod.power_input_kw),
+            "sound_level_db_full_load": prod.sound_level_db_full_load,
+            "sound_level_db_part_load": prod.sound_level_db_part_load,
+            "refrigerant_type": prod.refrigerant_type,
+            "warranty_months": prod.warranty_months,
+            "cop_rating": float(prod.cop_rating) if prod.cop_rating is not None else "",
+            "seer_rating": float(prod.seer_rating) if prod.seer_rating is not None else "",
+            "weight_kg": prod.weight_kg or "",
+            "installation_support_required": prod.installation_support_required,
+            "is_active": prod.is_active,
+        })
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            action = body.get("_action", "update")
+
+            if action == "delete":
+                name = prod.sku
+                prod.delete()
+                return JsonResponse({"success": True, "message": f"Product '{name}' deleted."})
+
+            if action == "toggle":
+                prod.is_active = not prod.is_active
+                prod.save(update_fields=["is_active"])
+                return JsonResponse({"success": True, "is_active": prod.is_active,
+                                     "message": f"Product '{prod.sku}' {'activated' if prod.is_active else 'deactivated'}."})
+
+            prod.sku = body.get("sku", prod.sku).strip()
+            prod.manufacturer = body.get("manufacturer", prod.manufacturer).strip()
+            prod.product_name = body.get("product_name", prod.product_name).strip()
+            prod.system_type = body.get("system_type", prod.system_type)
+            prod.capacity_kw = float(body.get("capacity_kw", prod.capacity_kw))
+            prod.power_input_kw = float(body.get("power_input_kw", prod.power_input_kw))
+            prod.sound_level_db_full_load = int(body.get("sound_level_db_full_load", prod.sound_level_db_full_load))
+            snd_part = body.get("sound_level_db_part_load")
+            prod.sound_level_db_part_load = int(snd_part) if snd_part else None
+            prod.refrigerant_type = body.get("refrigerant_type", prod.refrigerant_type)
+            prod.warranty_months = int(body.get("warranty_months", prod.warranty_months))
+            cop = body.get("cop_rating")
+            prod.cop_rating = float(cop) if cop else None
+            seer = body.get("seer_rating")
+            prod.seer_rating = float(seer) if seer else None
+            wt = body.get("weight_kg")
+            prod.weight_kg = int(wt) if wt else None
+            prod.installation_support_required = bool(body.get("installation_support_required", prod.installation_support_required))
+            prod.is_active = bool(body.get("is_active", prod.is_active))
+            prod.save()
+            return JsonResponse({"success": True, "message": f"Product '{prod.sku}' updated."})
+        except Exception as exc:
+            logger.exception("api_config_product_detail POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+# ---------------------------------------------------------------------------
+# AJAX API -- Vendors (HVAC vendor master)
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_vendors(request):
+    """List (GET) or Create (POST) Vendor entries."""
+    from apps.procurement.models import Vendor
+    from django.http import JsonResponse
+
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = Vendor.objects.all().order_by("vendor_name")
+        if q:
+            qs = qs.filter(
+                Q(vendor_name__icontains=q) | Q(country__icontains=q) | Q(city__icontains=q)
+            )
+        items = [
+            {
+                "id": v.pk,
+                "vendor_name": v.vendor_name,
+                "country": v.country,
+                "city": v.city,
+                "contact_email": v.contact_email,
+                "contact_phone": v.contact_phone,
+                "preferred_vendor": v.preferred_vendor,
+                "reliability_score": float(v.reliability_score),
+                "average_lead_time_days": v.average_lead_time_days,
+                "payment_terms": v.payment_terms,
+                "bulk_discount_available": v.bulk_discount_available,
+                "rush_order_capable": v.rush_order_capable,
+                "on_time_delivery_pct": float(v.on_time_delivery_pct),
+                "total_purchases": v.total_purchases,
+                "notes": v.notes,
+                "is_active": v.is_active,
+            }
+            for v in qs
+        ]
+        return JsonResponse({"items": items, "total": len(items)})
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            vend = Vendor.objects.create(
+                vendor_name=body.get("vendor_name", "").strip(),
+                country=body.get("country", "").strip(),
+                city=body.get("city", "").strip(),
+                address=body.get("address", ""),
+                contact_email=body.get("contact_email", ""),
+                contact_phone=body.get("contact_phone", ""),
+                preferred_vendor=bool(body.get("preferred_vendor", False)),
+                reliability_score=float(body.get("reliability_score", 3.5)),
+                average_lead_time_days=int(body.get("average_lead_time_days", 7)),
+                payment_terms=body.get("payment_terms", ""),
+                bulk_discount_available=bool(body.get("bulk_discount_available", False)),
+                rush_order_capable=bool(body.get("rush_order_capable", False)),
+                on_time_delivery_pct=float(body.get("on_time_delivery_pct", 95.0)),
+                notes=body.get("notes", ""),
+                is_active=bool(body.get("is_active", True)),
+            )
+            return JsonResponse({"success": True, "id": vend.pk,
+                                 "message": f"Vendor '{vend.vendor_name}' created."})
+        except Exception as exc:
+            logger.exception("api_config_vendors POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_vendor_detail(request, pk):
+    """Get, Update, or Delete a Vendor."""
+    from apps.procurement.models import Vendor
+    from django.http import JsonResponse
+
+    try:
+        vend = Vendor.objects.get(pk=pk)
+    except Vendor.DoesNotExist:
+        return JsonResponse({"success": False, "message": "Vendor not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "id": vend.pk,
+            "vendor_name": vend.vendor_name,
+            "country": vend.country,
+            "city": vend.city,
+            "address": vend.address,
+            "contact_email": vend.contact_email,
+            "contact_phone": vend.contact_phone,
+            "preferred_vendor": vend.preferred_vendor,
+            "reliability_score": float(vend.reliability_score),
+            "average_lead_time_days": vend.average_lead_time_days,
+            "payment_terms": vend.payment_terms,
+            "bulk_discount_available": vend.bulk_discount_available,
+            "rush_order_capable": vend.rush_order_capable,
+            "on_time_delivery_pct": float(vend.on_time_delivery_pct),
+            "notes": vend.notes,
+            "is_active": vend.is_active,
+        })
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            action = body.get("_action", "update")
+
+            if action == "delete":
+                name = vend.vendor_name
+                vend.delete()
+                return JsonResponse({"success": True, "message": f"Vendor '{name}' deleted."})
+
+            if action == "toggle":
+                vend.is_active = not vend.is_active
+                vend.save(update_fields=["is_active"])
+                return JsonResponse({"success": True, "is_active": vend.is_active,
+                                     "message": f"Vendor '{vend.vendor_name}' {'activated' if vend.is_active else 'deactivated'}."})
+
+            vend.vendor_name = body.get("vendor_name", vend.vendor_name).strip()
+            vend.country = body.get("country", vend.country).strip()
+            vend.city = body.get("city", vend.city).strip()
+            vend.address = body.get("address", vend.address)
+            vend.contact_email = body.get("contact_email", vend.contact_email)
+            vend.contact_phone = body.get("contact_phone", vend.contact_phone)
+            vend.preferred_vendor = bool(body.get("preferred_vendor", vend.preferred_vendor))
+            vend.reliability_score = float(body.get("reliability_score", vend.reliability_score))
+            vend.average_lead_time_days = int(body.get("average_lead_time_days", vend.average_lead_time_days))
+            vend.payment_terms = body.get("payment_terms", vend.payment_terms)
+            vend.bulk_discount_available = bool(body.get("bulk_discount_available", vend.bulk_discount_available))
+            vend.rush_order_capable = bool(body.get("rush_order_capable", vend.rush_order_capable))
+            vend.on_time_delivery_pct = float(body.get("on_time_delivery_pct", float(vend.on_time_delivery_pct)))
+            vend.notes = body.get("notes", vend.notes)
+            vend.is_active = bool(body.get("is_active", vend.is_active))
+            vend.save()
+            return JsonResponse({"success": True, "message": f"Vendor '{vend.vendor_name}' updated."})
+        except Exception as exc:
+            logger.exception("api_config_vendor_detail POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+# ---------------------------------------------------------------------------
+# AJAX API -- Rooms (facility rooms)
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_rooms(request):
+    """List (GET) or Create (POST) Room entries."""
+    from apps.procurement.models import Room
+    from django.http import JsonResponse
+
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = Room.objects.all().order_by("building_name", "floor_number", "room_code")
+        if q:
+            qs = qs.filter(
+                Q(room_code__icontains=q) | Q(building_name__icontains=q) | Q(usage_type__icontains=q)
+            )
+        items = [
+            {
+                "id": rm.pk,
+                "room_code": rm.room_code,
+                "building_name": rm.building_name,
+                "floor_number": rm.floor_number,
+                "area_sqm": float(rm.area_sqm),
+                "ceiling_height_m": float(rm.ceiling_height_m),
+                "usage_type": rm.usage_type,
+                "usage_type_display": rm.get_usage_type_display(),
+                "design_temp_c": float(rm.design_temp_c),
+                "temp_tolerance_c": float(rm.temp_tolerance_c),
+                "design_cooling_load_kw": float(rm.design_cooling_load_kw),
+                "design_humidity_pct": rm.design_humidity_pct,
+                "noise_limit_db": rm.noise_limit_db,
+                "contact_name": rm.contact_name,
+                "contact_email": rm.contact_email,
+                "is_active": rm.is_active,
+            }
+            for rm in qs
+        ]
+        return JsonResponse({"items": items, "total": len(items)})
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            rm = Room.objects.create(
+                room_code=body.get("room_code", "").strip(),
+                building_name=body.get("building_name", "").strip(),
+                floor_number=int(body.get("floor_number", 0)),
+                area_sqm=float(body.get("area_sqm", 50)),
+                ceiling_height_m=float(body.get("ceiling_height_m", 3.0)),
+                usage_type=body.get("usage_type", "OFFICE"),
+                design_temp_c=float(body.get("design_temp_c", 22.0)),
+                temp_tolerance_c=float(body.get("temp_tolerance_c", 1.0)),
+                design_cooling_load_kw=float(body.get("design_cooling_load_kw", 5.0)),
+                design_humidity_pct=int(body.get("design_humidity_pct")) if body.get("design_humidity_pct") else None,
+                noise_limit_db=int(body.get("noise_limit_db")) if body.get("noise_limit_db") else None,
+                location_description=body.get("location_description", ""),
+                contact_name=body.get("contact_name", ""),
+                contact_email=body.get("contact_email", ""),
+                is_active=bool(body.get("is_active", True)),
+            )
+            return JsonResponse({"success": True, "id": rm.pk,
+                                 "message": f"Room '{rm.room_code}' created."})
+        except Exception as exc:
+            logger.exception("api_config_rooms POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_room_detail(request, pk):
+    """Get, Update, or Delete a Room."""
+    from apps.procurement.models import Room
+    from django.http import JsonResponse
+
+    try:
+        rm = Room.objects.get(pk=pk)
+    except Room.DoesNotExist:
+        return JsonResponse({"success": False, "message": "Room not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "id": rm.pk,
+            "room_code": rm.room_code,
+            "building_name": rm.building_name,
+            "floor_number": rm.floor_number,
+            "area_sqm": float(rm.area_sqm),
+            "ceiling_height_m": float(rm.ceiling_height_m),
+            "usage_type": rm.usage_type,
+            "design_temp_c": float(rm.design_temp_c),
+            "temp_tolerance_c": float(rm.temp_tolerance_c),
+            "design_cooling_load_kw": float(rm.design_cooling_load_kw),
+            "design_humidity_pct": rm.design_humidity_pct or "",
+            "noise_limit_db": rm.noise_limit_db or "",
+            "location_description": rm.location_description,
+            "contact_name": rm.contact_name,
+            "contact_email": rm.contact_email,
+            "is_active": rm.is_active,
+        })
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            action = body.get("_action", "update")
+
+            if action == "delete":
+                code = rm.room_code
+                rm.delete()
+                return JsonResponse({"success": True, "message": f"Room '{code}' deleted."})
+
+            if action == "toggle":
+                rm.is_active = not rm.is_active
+                rm.save(update_fields=["is_active"])
+                return JsonResponse({"success": True, "is_active": rm.is_active,
+                                     "message": f"Room '{rm.room_code}' {'activated' if rm.is_active else 'deactivated'}."})
+
+            rm.room_code = body.get("room_code", rm.room_code).strip()
+            rm.building_name = body.get("building_name", rm.building_name).strip()
+            rm.floor_number = int(body.get("floor_number", rm.floor_number))
+            rm.area_sqm = float(body.get("area_sqm", float(rm.area_sqm)))
+            rm.ceiling_height_m = float(body.get("ceiling_height_m", float(rm.ceiling_height_m)))
+            rm.usage_type = body.get("usage_type", rm.usage_type)
+            rm.design_temp_c = float(body.get("design_temp_c", float(rm.design_temp_c)))
+            rm.temp_tolerance_c = float(body.get("temp_tolerance_c", float(rm.temp_tolerance_c)))
+            rm.design_cooling_load_kw = float(body.get("design_cooling_load_kw", float(rm.design_cooling_load_kw)))
+            hum = body.get("design_humidity_pct")
+            rm.design_humidity_pct = int(hum) if hum else None
+            nse = body.get("noise_limit_db")
+            rm.noise_limit_db = int(nse) if nse else None
+            rm.location_description = body.get("location_description", rm.location_description)
+            rm.contact_name = body.get("contact_name", rm.contact_name)
+            rm.contact_email = body.get("contact_email", rm.contact_email)
+            rm.is_active = bool(body.get("is_active", rm.is_active))
+            rm.save()
+            return JsonResponse({"success": True, "message": f"Room '{rm.room_code}' updated."})
+        except Exception as exc:
+            logger.exception("api_config_room_detail POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+# ---------------------------------------------------------------------------
+# AJAX API -- HVAC Recommendation Rules
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_hvacrules(request):
+    """List (GET) or Create (POST) HVACRecommendationRule entries."""
+    from apps.procurement.models import HVACRecommendationRule
+    from django.http import JsonResponse
+
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = HVACRecommendationRule.objects.all().order_by("priority", "rule_code")
+        if q:
+            qs = qs.filter(
+                Q(rule_code__icontains=q) | Q(rule_name__icontains=q)
+                | Q(recommended_system__icontains=q) | Q(rationale__icontains=q)
+            )
+
+        def _fmt(r):
+            area_parts = []
+            if r.area_sq_ft_min is not None:
+                area_parts.append(f">= {r.area_sq_ft_min:,.0f}")
+            if r.area_sq_ft_max is not None:
+                area_parts.append(f"< {r.area_sq_ft_max:,.0f}")
+            area_display = " & ".join(area_parts) if area_parts else "Any"
+            temp_display = f">= {r.ambient_temp_min_c} C" if r.ambient_temp_min_c is not None else "Any"
+            return {
+                "id": r.pk,
+                "rule_code": r.rule_code,
+                "rule_name": r.rule_name,
+                "store_type_filter": r.store_type_filter,
+                "store_type_display": r.get_store_type_filter_display() if r.store_type_filter else "Any",
+                "area_sq_ft_min": r.area_sq_ft_min,
+                "area_sq_ft_max": r.area_sq_ft_max,
+                "area_display": area_display,
+                "ambient_temp_min_c": r.ambient_temp_min_c,
+                "temp_display": temp_display,
+                "budget_level_filter": r.budget_level_filter,
+                "budget_display": r.get_budget_level_filter_display() if r.budget_level_filter else "Any",
+                "energy_priority_filter": r.energy_priority_filter,
+                "energy_priority_display": r.get_energy_priority_filter_display() if r.energy_priority_filter else "Any",
+                "recommended_system": r.recommended_system,
+                "recommended_system_display": r.get_recommended_system_display(),
+                "alternate_system": r.alternate_system,
+                "rationale": r.rationale,
+                "priority": r.priority,
+                "is_active": r.is_active,
+                "notes": r.notes,
+            }
+
+        items = [_fmt(r) for r in qs]
+        return JsonResponse({"items": items, "total": len(items)})
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            rule = HVACRecommendationRule.objects.create(
+                rule_code=body.get("rule_code", "").strip(),
+                rule_name=body.get("rule_name", "").strip(),
+                store_type_filter=body.get("store_type_filter", ""),
+                area_sq_ft_min=float(body["area_sq_ft_min"]) if body.get("area_sq_ft_min") not in (None, "") else None,
+                area_sq_ft_max=float(body["area_sq_ft_max"]) if body.get("area_sq_ft_max") not in (None, "") else None,
+                ambient_temp_min_c=float(body["ambient_temp_min_c"]) if body.get("ambient_temp_min_c") not in (None, "") else None,
+                budget_level_filter=body.get("budget_level_filter", ""),
+                energy_priority_filter=body.get("energy_priority_filter", ""),
+                recommended_system=body.get("recommended_system", ""),
+                alternate_system=body.get("alternate_system", ""),
+                rationale=body.get("rationale", ""),
+                priority=int(body.get("priority", 100)),
+                is_active=bool(body.get("is_active", True)),
+                notes=body.get("notes", ""),
+            )
+            return JsonResponse({
+                "success": True, "id": rule.pk,
+                "message": f"Rule '{rule.rule_code}' created successfully.",
+            })
+        except Exception as exc:
+            logger.exception("api_config_hvacrules POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_hvacrule_detail(request, pk):
+    """Get, Update, Toggle or Delete a single HVACRecommendationRule."""
+    from apps.procurement.models import HVACRecommendationRule
+    from django.http import JsonResponse
+
+    try:
+        rule = HVACRecommendationRule.objects.get(pk=pk)
+    except HVACRecommendationRule.DoesNotExist:
+        return JsonResponse({"success": False, "message": "Rule not found."}, status=404)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "id": rule.pk,
+            "rule_code": rule.rule_code,
+            "rule_name": rule.rule_name,
+            "store_type_filter": rule.store_type_filter,
+            "area_sq_ft_min": rule.area_sq_ft_min,
+            "area_sq_ft_max": rule.area_sq_ft_max,
+            "ambient_temp_min_c": rule.ambient_temp_min_c,
+            "budget_level_filter": rule.budget_level_filter,
+            "energy_priority_filter": rule.energy_priority_filter,
+            "recommended_system": rule.recommended_system,
+            "alternate_system": rule.alternate_system,
+            "rationale": rule.rationale,
+            "priority": rule.priority,
+            "is_active": rule.is_active,
+            "notes": rule.notes,
+        })
+
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body)
+            action = body.get("_action", "update")
+
+            if action == "delete":
+                code = rule.rule_code
+                rule.delete()
+                return JsonResponse({"success": True, "message": f"Rule '{code}' deleted."})
+
+            if action == "toggle":
+                rule.is_active = not rule.is_active
+                rule.save(update_fields=["is_active"])
+                return JsonResponse({"success": True, "is_active": rule.is_active,
+                                     "message": f"Rule '{rule.rule_code}' {'activated' if rule.is_active else 'deactivated'}."})
+
+            rule.rule_code = body.get("rule_code", rule.rule_code).strip()
+            rule.rule_name = body.get("rule_name", rule.rule_name).strip()
+            rule.store_type_filter = body.get("store_type_filter", rule.store_type_filter)
+            rule.area_sq_ft_min = float(body["area_sq_ft_min"]) if body.get("area_sq_ft_min") not in (None, "") else None
+            rule.area_sq_ft_max = float(body["area_sq_ft_max"]) if body.get("area_sq_ft_max") not in (None, "") else None
+            rule.ambient_temp_min_c = float(body["ambient_temp_min_c"]) if body.get("ambient_temp_min_c") not in (None, "") else None
+            rule.budget_level_filter = body.get("budget_level_filter", rule.budget_level_filter)
+            rule.energy_priority_filter = body.get("energy_priority_filter", rule.energy_priority_filter)
+            rule.recommended_system = body.get("recommended_system", rule.recommended_system)
+            rule.alternate_system = body.get("alternate_system", rule.alternate_system)
+            rule.rationale = body.get("rationale", rule.rationale)
+            rule.priority = int(body.get("priority", rule.priority))
+            rule.is_active = bool(body.get("is_active", rule.is_active))
+            rule.notes = body.get("notes", rule.notes)
+            rule.save()
+            return JsonResponse({"success": True, "message": f"Rule '{rule.rule_code}' updated."})
+        except Exception as exc:
+            logger.exception("api_config_hvacrule_detail POST failed: %s", exc)
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)

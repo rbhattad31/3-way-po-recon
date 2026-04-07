@@ -1,5 +1,5 @@
 /* =================================================================
-   Agentic AP Command Center — JavaScript
+   Agentic LMG  Command Center — JavaScript
    Real-time dashboard with HTMX + Chart.js integration
    ================================================================= */
 

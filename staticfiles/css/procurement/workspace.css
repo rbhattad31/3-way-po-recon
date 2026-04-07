@@ -1,0 +1,195 @@
+/*
+ * workspace.css -- LMG Procurement Request Workspace
+ * Linked by templates/procurement/request_workspace.html
+ * Updated to unified blue theme (consistent with configurations & request-list).
+ */
+
+/* ---- Page background ---- */
+body { background: #f0f4fa; }
+
+/* ---- Workspace header (gradient banner, blue theme) ---- */
+.ws-header {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1665D8 50%, #0ea5e9 100%);
+  border-radius: 16px;
+  padding: 1.5rem 1.75rem;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(22,101,216,.25);
+}
+.ws-header::before {
+  content: "";
+  position: absolute; top: -50px; right: -50px;
+  width: 220px; height: 220px;
+  background: radial-gradient(circle, rgba(255,255,255,.12) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.ws-header::after {
+  content: '';
+  position: absolute; bottom: -60px; left: 20%;
+  width: 260px; height: 260px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.04);
+  pointer-events: none;
+}
+
+/* ---- Workspace icon (HVAC snowflake) ---- */
+.ws-icon {
+  width: 52px; height: 52px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.18);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.28);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.4rem; color: #fff;
+  flex-shrink: 0;
+}
+
+/* ---- Tab navigation (ai-tabs and ws-tabs both supported) ---- */
+.ai-tabs .nav-link,
+.ws-tabs .nav-link {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  font-size: .83rem;
+  font-weight: 600;
+  border-radius: 9px !important;
+  margin-right: .4rem;
+  padding: .5rem 1.1rem;
+  transition: all .15s;
+}
+.ai-tabs .nav-link:hover,
+.ws-tabs .nav-link:hover {
+  border-color: #1665D8;
+  color: #1665D8;
+  background: #f0f6ff;
+}
+.ai-tabs .nav-link.active,
+.ws-tabs .nav-link.active {
+  background: #1665D8 !important;
+  border-color: #1665D8 !important;
+  color: #fff !important;
+  box-shadow: 0 3px 10px rgba(22,101,216,.3);
+}
+.tab-pane { padding-top: 1.25rem; }
+
+/* ---- Content cards (ai-card and ws-card both supported) ---- */
+.ai-card,
+.ws-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
+  transition: box-shadow .15s;
+}
+.ai-card:hover,
+.ws-card:hover { box-shadow: 0 6px 20px rgba(22,101,216,.1); }
+.ai-card-header,
+.ws-card-title {
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: #1665D8;
+  font-weight: 700;
+  margin-bottom: .75rem;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* ---- Recommendation card ---- */
+.rec-main {
+  background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+  border: 1px solid #bbf7d0;
+  border-radius: .75rem;
+  padding: 1rem 1.25rem;
+}
+
+/* ---- Benchmark card ---- */
+.bench-card {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: .9rem 1.1rem;
+  margin-bottom: .6rem;
+}
+
+/* ---- Attribute tag ---- */
+.attr-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: .25rem .65rem;
+  font-size: .72rem;
+  color: #1665D8;
+  margin: .15rem;
+  font-weight: 500;
+}
+
+/* ---- Run row ---- */
+.run-row {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: .6rem .9rem;
+  margin-bottom: .4rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: .78rem;
+  color: #334155;
+}
+.run-row:hover { border-color: #1665D8; background: #f0f6ff; }
+
+/* ---- Quotation card ---- */
+.quote-card {
+  background: #f0fdff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: .75rem 1rem;
+  margin-bottom: .5rem;
+}
+
+/* ---- Section label ---- */
+.sec-label {
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: #94a3b8;
+  font-weight: 700;
+  margin-bottom: .5rem;
+  padding-bottom: .3rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+/* ---- Confidence bar ---- */
+.conf-bar-wrap { background: #f1f5f9; border-radius: 4px; height: 6px; overflow: hidden; }
+.conf-bar { height: 6px; border-radius: 4px; background: linear-gradient(90deg, #1665D8, #06b6d4); }
+
+/* ---- Priority dot ---- */
+.priority-dot { font-size: .65rem; font-weight: 700; }
+
+/* ---- Options table ---- */
+.opts-table th { font-size: .72rem; color: #6b7280; padding: .4rem .6rem; border-bottom: 1px solid #f1f5f9; font-weight: 600; }
+.opts-table td { font-size: .75rem; color: #334155; padding: .4rem .6rem; border-bottom: 1px solid #f8fafc; }
+
+/* ---- Header text colour overrides (white on blue gradient) ---- */
+.ws-header h5,
+.ws-header .text-dark { color: #fff !important; }
+.ws-header .text-muted { color: rgba(255,255,255,.75) !important; }
+.ws-header .breadcrumb-item a { color: rgba(255,255,255,.85); }
+.ws-header .badge.bg-info { color: #fff !important; }
+
+/* ---- Responsive ---- */
+@media (max-width: 767px) {
+  .ws-header { padding: 1rem 1.1rem; }
+  .ai-tabs .nav-link,
+  .ws-tabs .nav-link { padding: .4rem .75rem; font-size: .78rem; }
+}

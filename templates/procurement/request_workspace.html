@@ -1,61 +1,81 @@
-{% extends "base.html" %}
+﻿{% extends "procurement/proc_base.html" %}
 {% load static %}
 
-{% block title %}{{ proc_request.title }} — Workspace{% endblock %}
+{% block title %}{{ proc_request.title }} -- HVAC Intelligence{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/procurement/workspace.css' %}">
+{% endblock %}
 
 {% block breadcrumb %}
-<nav aria-label="breadcrumb" class="mb-3">
-  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
-    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Home</a></li>
-    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}">Procurement</a></li>
-    <li class="breadcrumb-item active">{{ proc_request.title|truncatechars:40 }}</li>
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb mb-0" style="font-size:.78rem">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}" class="text-decoration-none">HVAC Requests</a></li>
+    <li class="breadcrumb-item active">{{ proc_request.title|truncatechars:45 }}</li>
   </ol>
 </nav>
 {% endblock %}
 
 {% block content %}
 
-{# ── Landmark Group Header Banner (shown for HVAC domain) ── #}
-{% if proc_request.domain_code == "HVAC" %}
-<div class="rounded-3 mb-4 p-3 d-flex align-items-center gap-3"
-     style="background:linear-gradient(135deg,#003366 0%,#0055a5 60%,#0077cc 100%);">
-  <div class="d-flex align-items-center justify-content-center rounded-circle"
-       style="width:48px;height:48px;background:rgba(255,255,255,.15);flex-shrink:0;">
-    <i class="bi bi-hexagon-fill fs-5 text-warning"></i>
-  </div>
-  <div>
-    <div class="fw-bold text-white">Landmark Group — HVAC Procurement Workspace</div>
-    <div class="text-white-50 small">
-      GCC Climate Intelligence &bull; AED Market Benchmarks &bull; End-to-End Procurement
+{# -- Request Header -- #}
+<div class="ws-header mb-4">
+  <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+    <div class="d-flex align-items-center gap-3">
+      <div class="ws-icon">
+        <i class="bi bi-snow2"></i>
+      </div>
+      <div>
+        <h5 class="mb-1 fw-bold text-dark">{{ proc_request.title }}</h5>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          {% if proc_request.status == "DRAFT" %}
+            <span class="badge bg-secondary">Draft</span>
+          {% elif proc_request.status == "READY" %}
+            <span class="badge bg-info text-dark">Ready</span>
+          {% elif proc_request.status == "PROCESSING" %}
+            <span class="badge bg-primary">Processing</span>
+          {% elif proc_request.status == "COMPLETED" %}
+            <span class="badge bg-success">Completed</span>
+          {% elif proc_request.status == "REVIEW_REQUIRED" %}
+            <span class="badge bg-warning text-dark">Review Required</span>
+          {% elif proc_request.status == "FAILED" %}
+            <span class="badge bg-danger">Failed</span>
+          {% endif %}
+          {% if proc_request.priority == "CRITICAL" %}
+            <span class="priority-dot text-danger"><i class="bi bi-circle-fill me-1"></i>CRITICAL</span>
+          {% elif proc_request.priority == "HIGH" %}
+            <span class="priority-dot text-warning"><i class="bi bi-circle-fill me-1"></i>HIGH</span>
+          {% elif proc_request.priority == "MEDIUM" %}
+            <span class="priority-dot text-info"><i class="bi bi-circle-fill me-1"></i>MEDIUM</span>
+          {% else %}
+            <span class="priority-dot text-muted"><i class="bi bi-circle-fill me-1"></i>LOW</span>
+          {% endif %}
+          {% if proc_request.geography_country %}
+          <span class="text-muted small"><i class="bi bi-geo-alt me-1"></i>{{ proc_request.geography_country }}</span>
+          {% endif %}
+          <span class="text-muted small"><i class="bi bi-calendar3 me-1"></i>{{ proc_request.created_at|date:"d M Y" }}</span>
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="ms-auto d-none d-md-flex align-items-center gap-2">
-    <span class="badge bg-light text-primary fw-semibold">{{ proc_request.geography_country|default:"GCC" }}</span>
-    <span class="badge bg-warning text-dark fw-semibold">{{ proc_request.currency|default:"AED" }}</span>
-    <span class="badge bg-success bg-opacity-75 text-white">HVAC Domain</span>
-  </div>
-</div>
-{% endif %}
-
-{# ── Request Summary ── #}
-<div class="card mb-4">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <h5 class="mb-0"><i class="bi bi-cart4 me-2"></i>{{ proc_request.title }}</h5>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 flex-wrap">
       {% if proc_request.status == "DRAFT" %}
       <form method="post" action="{% url 'procurement:mark_ready' pk=proc_request.pk %}">
         {% csrf_token %}
-        <button type="submit" class="btn btn-outline-success btn-sm"><i class="bi bi-check-circle me-1"></i>Mark Ready</button>
+        <button type="submit" class="btn btn-sm btn-outline-success fw-semibold">
+          <i class="bi bi-check-circle me-1"></i>Mark Ready
+        </button>
       </form>
       {% endif %}
       {% if proc_request.status == "READY" or proc_request.status == "COMPLETED" or proc_request.status == "REVIEW_REQUIRED" %}
       <div class="d-flex gap-1" id="run-analysis-wrapper">
-        <select id="run-type-select" class="form-select form-select-sm" style="width:auto">
+        <select id="run-type-select" class="form-select form-select-sm" style="width:auto;font-size:.78rem;">
           <option value="RECOMMENDATION">Recommendation</option>
           <option value="BENCHMARK">Benchmark</option>
           <option value="VALIDATION">Validation</option>
         </select>
-        <button type="button" id="btn-run-analysis" class="btn btn-primary btn-sm"
+        <button type="button" id="btn-run-analysis"
+                class="btn btn-sm btn-primary fw-semibold"
                 data-request-pk="{{ proc_request.pk }}"
                 data-trigger-url="{% url 'procurement:trigger_analysis' pk=proc_request.pk %}"
                 data-csrf="{{ csrf_token }}">
@@ -65,662 +85,282 @@
       {% endif %}
     </div>
   </div>
-  <div class="card-body">
-    <div class="row">
-      <div class="col-md-8">
-        <p class="text-muted mb-2">{{ proc_request.description|default:"No description" }}</p>
-      </div>
-      <div class="col-md-4">
-        <table class="table table-sm table-borderless mb-0" style="font-size:var(--ap-font-size-sm)">
-          <tr><td class="text-muted">Status</td><td>
-            {% if proc_request.status == "DRAFT" %}<span class="badge bg-secondary">Draft</span>
-            {% elif proc_request.status == "READY" %}<span class="badge bg-info text-dark">Ready</span>
-            {% elif proc_request.status == "PROCESSING" %}<span class="badge bg-primary">Processing</span>
-            {% elif proc_request.status == "COMPLETED" %}<span class="badge bg-success">Completed</span>
-            {% elif proc_request.status == "REVIEW_REQUIRED" %}<span class="badge bg-warning text-dark">Review Required</span>
-            {% elif proc_request.status == "FAILED" %}<span class="badge bg-danger">Failed</span>
-            {% endif %}
-          </td></tr>
-          <tr><td class="text-muted">Type</td><td>{{ proc_request.get_request_type_display }}</td></tr>
-          <tr><td class="text-muted">Domain</td><td><span class="badge bg-secondary">{{ proc_request.domain_code }}</span></td></tr>
-          <tr><td class="text-muted">Priority</td><td>{{ proc_request.priority }}</td></tr>
-          <tr><td class="text-muted">Geography</td><td>{{ proc_request.geography_city }}{% if proc_request.geography_city and proc_request.geography_country %}, {% endif %}{{ proc_request.geography_country }}</td></tr>
-          <tr><td class="text-muted">Currency</td><td>{{ proc_request.currency }}</td></tr>
-          <tr><td class="text-muted">Created</td><td>{{ proc_request.created_at|date:"M d, Y H:i" }}</td></tr>
-          {% if proc_request.created_by %}<tr><td class="text-muted">By</td><td>{{ proc_request.created_by.email }}</td></tr>{% endif %}
-          {% if proc_request.prefill_status and proc_request.prefill_status != "NOT_STARTED" %}
-          <tr><td class="text-muted">Prefill</td><td>
-            {% if proc_request.prefill_status == "COMPLETED" or proc_request.prefill_status == "REVIEW_PENDING" %}<span class="badge bg-success"><i class="bi bi-magic me-1"></i>{{ proc_request.prefill_status }}</span>
-            {% elif proc_request.prefill_status == "IN_PROGRESS" %}<span class="badge bg-primary"><i class="bi bi-hourglass-split me-1"></i>In Progress</span>
-            {% elif proc_request.prefill_status == "FAILED" %}<span class="badge bg-danger">Failed</span>
-            {% endif %}
-            {% if proc_request.prefill_confidence %}<small class="text-muted ms-1">{{ proc_request.prefill_confidence|floatformat:0 }}%</small>{% endif %}
-          </td></tr>
-          {% if proc_request.source_document_type %}<tr><td class="text-muted">Source Doc</td><td>{{ proc_request.source_document_type }}</td></tr>{% endif %}
-          {% endif %}
-          {% if proc_request.trace_id %}<tr><td class="text-muted">Trace</td><td><code style="font-size:0.7rem">{{ proc_request.trace_id|truncatechars:16 }}</code></td></tr>{% endif %}
-        </table>
-      </div>
-    </div>
-  </div>
+  {% if proc_request.description %}
+  <div class="mt-3 pt-3 border-top text-muted small">{{ proc_request.description }}</div>
+  {% endif %}
 </div>
 
-<div class="row">
-  {# ── Left Column ── #}
-  <div class="col-lg-8">
+{# -- Tabs -- #}
+<ul class="nav ws-tabs mb-0" id="requestTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="internal-tab" data-bs-toggle="tab" data-bs-target="#internal" type="button" role="tab">
+      <i class="bi bi-robot me-1 text-primary"></i>Internal Product Recommendations
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="external-tab" data-bs-toggle="tab" data-bs-target="#external" type="button" role="tab">
+      <i class="bi bi-globe me-1 text-info"></i>External Suggestions
+    </button>
+  </li>
+</ul>
 
-    {# ── Workspace Tab Navigation ── #}
-    <ul class="nav nav-tabs border-bottom-0 mb-0" id="workspaceTabs" role="tablist">
-      <li class="nav-item" role="presentation">
-        <button class="nav-link active fw-semibold" id="tab-details-btn"
-                data-bs-toggle="tab" data-bs-target="#tab-details" type="button" role="tab">
-          <i class="bi bi-list-ul me-1"></i>Details
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link fw-semibold" id="tab-analysis-btn"
-                data-bs-toggle="tab" data-bs-target="#tab-analysis" type="button" role="tab">
-          <i class="bi bi-bar-chart me-1"></i>Analysis
-          {% if benchmarks or recommendation or compliance %}
-          <span class="badge bg-primary rounded-pill ms-1" style="font-size:.65rem;">
-            {% if recommendation %}1{% endif %}{% if benchmarks %}{{ benchmarks|length }}{% endif %}
-          </span>
-          {% endif %}
-        </button>
-      </li>
-    </ul>
+<div class="tab-content" id="requestTabsContent">
 
-    {# ── Tab Content ── #}
-    <div class="tab-content border border-top-0 rounded-bottom bg-white p-0 mb-4">
+  <div class="tab-pane fade show active pt-3" id="internal" role="tabpanel">
 
-      {# ---- Tab 1: Details (Attributes + Validation) ---- #}
-      <div class="tab-pane fade show active p-3" id="tab-details" role="tabpanel">
-
-    {# Attributes #}
-    <div class="card mb-4">
-      <div class="card-header"><h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Attributes</h6></div>
-      <div class="card-body p-0">
-        {% if attributes %}
-        <table class="table table-sm table-hover mb-0" style="font-size:var(--ap-font-size-sm)">
-          <thead class="table-light"><tr><th>Code</th><th>Label</th><th>Type</th><th>Value</th></tr></thead>
-          <tbody>
-          {% for attr in attributes %}
-          <tr>
-            <td><code>{{ attr.attribute_code }}</code></td>
-            <td>{{ attr.attribute_label }}</td>
-            <td><span class="badge bg-light text-dark">{{ attr.data_type }}</span></td>
-            <td>{% if attr.value_number is not None %}{{ attr.value_number }}{% elif attr.value_json %}{{ attr.value_json }}{% else %}{{ attr.value_text|truncatechars:60 }}{% endif %}</td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <p class="text-muted text-center py-3 mb-0">No attributes defined.</p>
+    {% if recommendation %}
+    <div class="ws-card">
+      <div class="ws-card-title"><i class="bi bi-stars text-warning"></i>AI Recommendation</div>
+      <div class="rec-main mb-3">
+        <div class="text-muted small text-uppercase mb-1" style="letter-spacing:.05em">Recommended Option</div>
+        <div class="fw-semibold text-success mb-2" style="font-size:.95rem;">{{ recommendation.recommended_option|default:"--" }}</div>
+        {% if recommendation.confidence_score %}
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="text-muted small">Confidence</span>
+          <div class="conf-bar-wrap flex-grow-1">
+            <div class="conf-bar" style="width:{% widthratio recommendation.confidence_score 1 100 %}%;"></div>
+          </div>
+          <span class="small fw-bold text-success">{% widthratio recommendation.confidence_score 1 100 %}%</span>
+        </div>
+        {% endif %}
+        {% if recommendation.rationale %}
+        <div class="mt-2 pt-2 border-top">
+          <div class="text-muted small text-uppercase mb-1" style="letter-spacing:.06em;">Rationale</div>
+          <p class="small mb-0 text-secondary">{{ recommendation.rationale }}</p>
+        </div>
         {% endif %}
       </div>
-    </div>
-
-    {# Validation Summary #}
-    {% include "procurement/partials/validation_summary.html" %}
-
-      </div>{# end tab-details #}
-
-      {# ---- Tab 2: Analysis (Recommendation + Benchmark + Compliance) ---- #}
-      <div class="tab-pane fade p-3" id="tab-analysis" role="tabpanel">
-
-    {# Recommendation Result #}
-    {% if recommendation %}
-    <div class="card mb-4 border-info">
-      <div class="card-header bg-info bg-opacity-10"><h6 class="mb-0"><i class="bi bi-lightbulb me-2"></i>Recommendation</h6></div>
-      <div class="card-body">
-        <h6>{{ recommendation.recommended_option }}</h6>
-        <p class="text-muted">{{ recommendation.reasoning_summary }}</p>
-        <div class="d-flex gap-3">
-          <span class="badge bg-primary">Confidence: {% widthratio recommendation.confidence_score 1 100 %}%</span>
-          <span class="badge {% if recommendation.compliance_status == 'PASS' %}bg-success{% elif recommendation.compliance_status == 'FAIL' %}bg-danger{% else %}bg-secondary{% endif %}">
-            Compliance: {{ recommendation.compliance_status }}
-          </span>
-        </div>
-      </div>
-    </div>
-    {% endif %}
-
-    {# Benchmark Results #}
-    {% if benchmarks %}
-    <div class="card mb-4 border-warning">
-      <div class="card-header bg-warning bg-opacity-10"><h6 class="mb-0"><i class="bi bi-bar-chart me-2"></i>Benchmark Results</h6></div>
-      <div class="card-body p-0">
-        {% for bm in benchmarks %}
-        <div class="p-3 {% if not forloop.last %}border-bottom{% endif %}">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <strong>{{ bm.quotation.vendor_name }}</strong>
-            <span class="badge {% if bm.risk_level == 'LOW' %}bg-success{% elif bm.risk_level == 'MEDIUM' %}bg-warning text-dark{% elif bm.risk_level == 'HIGH' %}bg-danger{% else %}bg-dark{% endif %}">
-              {{ bm.risk_level }} Risk
-            </span>
-          </div>
-          <div class="row text-center" style="font-size:var(--ap-font-size-sm)">
-            <div class="col-4">
-              <div class="text-muted">Quoted</div>
-              <div class="fw-bold">{{ bm.total_quoted_amount|floatformat:2 }}</div>
-            </div>
-            <div class="col-4">
-              <div class="text-muted">Benchmark</div>
-              <div class="fw-bold">{{ bm.total_benchmark_amount|floatformat:2 }}</div>
-            </div>
-            <div class="col-4">
-              <div class="text-muted">Variance</div>
-              <div class="fw-bold {% if bm.variance_pct > 15 %}text-danger{% elif bm.variance_pct > 5 %}text-warning{% else %}text-success{% endif %}">{{ bm.variance_pct|floatformat:1 }}%</div>
-            </div>
-          </div>
-          {% if bm.lines.all %}
-          <table class="table table-sm mt-3 mb-0" style="font-size:0.75rem">
-            <thead class="table-light"><tr><th>#</th><th>Item</th><th>Quoted</th><th>Avg</th><th>Var%</th><th>Status</th></tr></thead>
-            <tbody>
-            {% for line in bm.lines.all %}
+      {% if recommendation.options_detail_json %}
+      <div class="sec-label">Evaluated Options</div>
+      <div class="table-responsive">
+        <table class="table table-sm opts-table mb-0">
+          <thead><tr><th>Option</th><th>Score</th><th>Notes</th></tr></thead>
+          <tbody>
+            {% for opt in recommendation.options_detail_json %}
             <tr>
-              <td>{{ line.quotation_line.line_number }}</td>
-              <td>{{ line.quotation_line.description|truncatechars:40 }}</td>
-              <td>{{ line.quoted_value|floatformat:2 }}</td>
-              <td>{% if line.benchmark_avg is not None %}{{ line.benchmark_avg|floatformat:2 }}{% else %}—{% endif %}</td>
-              <td>{% if line.variance_pct is not None %}{{ line.variance_pct|floatformat:1 }}%{% else %}—{% endif %}</td>
-              <td>
-                {% if line.variance_status == "WITHIN_RANGE" %}<span class="badge bg-success">OK</span>
-                {% elif line.variance_status == "ABOVE_BENCHMARK" %}<span class="badge bg-warning text-dark">Above</span>
-                {% elif line.variance_status == "SIGNIFICANTLY_ABOVE" %}<span class="badge bg-danger">High</span>
-                {% elif line.variance_status == "BELOW_BENCHMARK" %}<span class="badge bg-info text-dark">Below</span>
-                {% endif %}
-              </td>
+              <td class="fw-semibold">{{ opt.option|default:opt }}</td>
+              <td>{{ opt.score|default:"--" }}</td>
+              <td class="text-muted">{{ opt.notes|default:"" }}</td>
             </tr>
             {% endfor %}
-            </tbody>
-          </table>
-          {% endif %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="ws-card text-center py-4">
+      <i class="bi bi-robot fs-2 mb-2 d-block text-muted"></i>
+      <div class="text-muted small">No AI recommendation generated yet.</div>
+      <div class="text-muted" style="font-size:.75rem;margin-top:.3rem;">Run a Recommendation analysis to get AI-powered product suggestions.</div>
+    </div>
+    {% endif %}
+
+    {% if attributes %}
+    <div class="ws-card">
+      <div class="ws-card-title"><i class="bi bi-sliders"></i>Request Attributes</div>
+      <div class="d-flex flex-wrap">
+        {% for attr in attributes %}
+        <div class="attr-tag">
+          <span class="text-primary fw-semibold">{{ attr.attribute_label }}</span>
+          <span class="text-dark">{{ attr.value_text|default:attr.value_number|default:"--" }}</span>
         </div>
         {% endfor %}
       </div>
     </div>
     {% endif %}
 
-    {# Compliance Insights #}
-    {% if compliance %}
-    <div class="card mb-4">
-      <div class="card-header"><h6 class="mb-0"><i class="bi bi-shield-check me-2"></i>Compliance</h6></div>
-      <div class="card-body">
-        <span class="badge {% if compliance.compliance_status == 'PASS' %}bg-success{% elif compliance.compliance_status == 'FAIL' %}bg-danger{% else %}bg-warning text-dark{% endif %} mb-2">
-          {{ compliance.compliance_status }}
-        </span>
-        {% if compliance.violations_json %}
-        <h6 class="mt-2">Violations</h6>
-        <ul class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
-          {% for v in compliance.violations_json %}
-          <li class="list-group-item py-1"><i class="bi bi-exclamation-triangle text-danger me-1"></i>{{ v.detail }}</li>
+    {% if runs %}
+    <div class="ws-card">
+      <div class="ws-card-title"><i class="bi bi-activity"></i>Analysis Runs</div>
+      {% for run in runs %}
+      <div class="run-row">
+        <div class="d-flex align-items-center gap-2">
+          <i class="bi bi-play-circle text-primary"></i>
+          <span class="fw-semibold text-dark">{{ run.run_type }}</span>
+          <span class="text-muted small">{{ run.created_at|date:"d M Y H:i" }}</span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          {% if run.status == "COMPLETED" %}
+            <span class="badge bg-success">Completed</span>
+          {% elif run.status == "RUNNING" %}
+            <span class="badge bg-primary">Running</span>
+          {% elif run.status == "FAILED" %}
+            <span class="badge bg-danger">Failed</span>
+          {% else %}
+            <span class="badge bg-secondary">{{ run.status }}</span>
+          {% endif %}
+          <a href="{% url 'procurement:run_detail' pk=run.pk %}" class="text-primary small text-decoration-none">
+            View <i class="bi bi-chevron-right"></i>
+          </a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+  </div>
+
+
+  <div class="tab-pane fade pt-3" id="external" role="tabpanel">
+
+    {% if benchmarks %}
+    <div class="ws-card">
+      <div class="ws-card-title"><i class="bi bi-bar-chart-line text-warning"></i>Market Benchmark Results</div>
+      {% for bench in benchmarks %}
+      <div class="bench-card">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <div>
+            <div class="fw-semibold text-dark small">
+              {% if bench.quotation %}{{ bench.quotation.supplier_name|default:"Unknown Supplier" }}{% else %}Benchmark Analysis{% endif %}
+            </div>
+            {% if bench.market_price_aed %}
+            <div class="text-muted small mt-1">
+              <i class="bi bi-currency-dollar me-1 text-warning"></i>
+              Market Price: <strong class="text-warning">AED {{ bench.market_price_aed|floatformat:2 }}</strong>
+            </div>
+            {% endif %}
+          </div>
+          <div>
+            {% if bench.risk_level == "LOW" %}
+              <span class="badge bg-success">Low Risk</span>
+            {% elif bench.risk_level == "MEDIUM" %}
+              <span class="badge bg-warning text-dark">Med Risk</span>
+            {% elif bench.risk_level == "HIGH" %}
+              <span class="badge bg-danger">High Risk</span>
+            {% endif %}
+          </div>
+        </div>
+        {% if bench.variance_status %}
+        <div class="small text-muted">
+          Variance:
+          <span class="fw-semibold {% if bench.variance_status == 'WITHIN_TOLERANCE' %}text-success{% elif bench.variance_status == 'ABOVE_TOLERANCE' %}text-danger{% else %}text-warning{% endif %}">
+            {{ bench.variance_status|cut:"_" }}
+          </span>
+        </div>
+        {% endif %}
+        {% if bench.lines.all %}
+        <div class="mt-2">
+          <div class="sec-label">Line Items</div>
+          {% for line in bench.lines.all %}
+          <div class="small text-muted py-1 border-bottom">
+            <span class="text-dark fw-semibold">{{ line.description|default:"Item" }}</span>
+            {% if line.unit_price %} &mdash; <span class="text-warning fw-semibold">{{ line.currency|default:"AED" }} {{ line.unit_price|floatformat:2 }}</span>{% endif %}
+          </div>
           {% endfor %}
-        </ul>
+        </div>
         {% endif %}
       </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="ws-card text-center py-4">
+      <i class="bi bi-bar-chart-line fs-2 mb-2 d-block text-muted"></i>
+      <div class="text-muted small">No benchmark data yet.</div>
+      <div class="text-muted" style="font-size:.75rem;margin-top:.3rem;">Run a Benchmark analysis to compare against GCC market prices.</div>
     </div>
     {% endif %}
 
-    {% if not recommendation and not benchmarks and not compliance %}
-    <div class="text-center text-muted py-5">
-      <i class="bi bi-bar-chart display-6 mb-3 d-block opacity-50"></i>
-      <div class="fw-semibold">No analysis runs yet.</div>
-      <div class="small mt-1">Use the <strong>Run Analysis</strong> button above to trigger a Benchmark, Recommendation, or Validation run.</div>
-    </div>
-    {% endif %}
-
-      </div>{# end tab-analysis #}
-
-    </div>{# end tab-content #}
-
-  </div>{# end col-lg-8 #}
-
-  {# ── Right Column ── #}
-  <div class="col-lg-4">
-
-    {# Quotations #}
-    <div class="card mb-4">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <h6 class="mb-0"><i class="bi bi-file-earmark-text me-2"></i>Quotations</h6>
-        <button class="btn btn-outline-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#quotation-form">
-          <i class="bi bi-plus"></i>
-        </button>
-      </div>
-      <div class="collapse" id="quotation-form">
-        <div class="card-body border-bottom">
-          {# Manual entry #}
-          <form method="post" action="{% url 'procurement:upload_quotation' pk=proc_request.pk %}">
-            {% csrf_token %}
-            <div class="mb-2">
-              <input type="text" name="vendor_name" class="form-control form-control-sm" placeholder="Vendor name" required>
-            </div>
-            <div class="row g-2 mb-2">
-              <div class="col-6"><input type="text" name="quotation_number" class="form-control form-control-sm" placeholder="Quote #"></div>
-              <div class="col-6"><input type="number" step="0.01" name="total_amount" class="form-control form-control-sm" placeholder="Amount"></div>
-            </div>
-            <button type="submit" class="btn btn-primary btn-sm w-100">Add Quotation</button>
-          </form>
-          <hr class="my-2">
-          {# PDF Upload prefill #}
-          <form id="quotation-prefill-form" enctype="multipart/form-data">
-            {% csrf_token %}
-            <input type="hidden" name="request_id" value="{{ proc_request.pk }}">
-            <div class="mb-2">
-              <input type="file" name="file" class="form-control form-control-sm" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif" required>
-            </div>
-            <div class="mb-2">
-              <input type="text" name="vendor_name" class="form-control form-control-sm" placeholder="Vendor name (optional)">
-            </div>
-            <button type="submit" class="btn btn-outline-primary btn-sm w-100" id="btn-quotation-extract">
-              <i class="bi bi-file-earmark-pdf me-1"></i>Upload PDF &amp; Extract
-            </button>
-            <div id="quotation-extract-progress" class="mt-2" style="display:none;">
-              <div class="d-flex align-items-center gap-1"><div class="spinner-border spinner-border-sm text-primary"></div><small>Extracting…</small></div>
-            </div>
-            <div id="quotation-extract-error" class="text-danger small mt-1" style="display:none;"></div>
-          </form>
-        </div>
-      </div>
-      <div class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
-        {% for q in quotations %}
-        <div class="list-group-item">
-          <div class="d-flex justify-content-between">
-            <strong>{{ q.vendor_name }}</strong>
-            <span class="badge {% if q.extraction_status == 'COMPLETED' %}bg-success{% elif q.extraction_status == 'FAILED' %}bg-danger{% else %}bg-secondary{% endif %}">{{ q.extraction_status }}</span>
+    {% if quotations %}
+    <div class="ws-card">
+      <div class="ws-card-title"><i class="bi bi-file-earmark-text text-info"></i>Uploaded Supplier Quotations</div>
+      {% for q in quotations %}
+      <div class="quote-card d-flex justify-content-between align-items-center">
+        <div>
+          <div class="fw-semibold text-info small">{{ q.supplier_name|default:"Supplier Quotation" }}</div>
+          <div class="text-muted small mt-1">
+            {% if q.currency %}{{ q.currency }}{% endif %}
+            {% if q.total_amount %}<strong class="text-success"> {{ q.total_amount|floatformat:2 }}</strong>{% endif %}
+            &bull; {{ q.uploaded_at|date:"d M Y" }}
           </div>
-          {% if q.total_amount %}<small class="text-muted">{{ q.currency }} {{ q.total_amount|floatformat:2 }}</small>{% endif %}
-          {% if q.quotation_number %}<small class="text-muted d-block">#{{ q.quotation_number }}</small>{% endif %}
-          {% if q.prefill_status and q.prefill_status != "NOT_STARTED" %}
-          <small class="d-block mt-1">
-            {% if q.prefill_status == "REVIEW_PENDING" %}<a href="{% url 'procurement:quotation_prefill_review' pk=q.pk %}" class="badge bg-warning text-dark"><i class="bi bi-magic me-1"></i>Review Prefill</a>
-            {% elif q.prefill_status == "IN_PROGRESS" %}<span class="badge bg-primary"><i class="bi bi-hourglass-split me-1"></i>Extracting…</span>
-            {% elif q.prefill_status == "COMPLETED" %}<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Prefilled</span>
-            {% elif q.prefill_status == "FAILED" %}<span class="badge bg-danger">Prefill Failed</span>
-            {% endif %}
-          </small>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          {% if q.prefill_status == "COMPLETED" %}
+            <span class="badge bg-success">Processed</span>
+          {% elif q.prefill_status == "PENDING" %}
+            <span class="badge bg-warning text-dark">Pending</span>
+          {% endif %}
+          {% if q.pk %}
+          <a href="{% url 'procurement:quotation_prefill_review' pk=q.pk %}" class="small text-primary text-decoration-none">
+            Review <i class="bi bi-chevron-right"></i>
+          </a>
           {% endif %}
         </div>
-        {% empty %}
-        <div class="list-group-item text-muted text-center py-3">No quotations yet.</div>
-        {% endfor %}
       </div>
+      {% endfor %}
     </div>
-
-    {# Analysis Runs #}
-    <div class="card mb-4">
-      <div class="card-header"><h6 class="mb-0"><i class="bi bi-arrow-repeat me-2"></i>Analysis Runs</h6></div>
-      <div class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
-        {% for run in runs %}
-        <a href="{% url 'procurement:run_detail' pk=run.pk %}" class="list-group-item list-group-item-action">
-          <div class="d-flex justify-content-between">
-            <span>
-              {% if run.run_type == "RECOMMENDATION" %}<i class="bi bi-lightbulb text-info me-1"></i>
-              {% elif run.run_type == "VALIDATION" %}<i class="bi bi-check2-square text-primary me-1"></i>
-              {% else %}<i class="bi bi-bar-chart text-warning me-1"></i>{% endif %}
-              {{ run.run_type }}
-            </span>
-            <span class="badge {% if run.status == 'COMPLETED' %}bg-success{% elif run.status == 'FAILED' %}bg-danger{% elif run.status == 'RUNNING' %}bg-primary{% else %}bg-secondary{% endif %}">{{ run.status }}</span>
-          </div>
-          <small class="text-muted">{{ run.created_at|date:"M d, H:i" }}{% if run.confidence_score %} · {{ run.confidence_score|floatformat:0 }}% conf{% endif %}</small>
-        </a>
-        {% empty %}
-        <div class="list-group-item text-muted text-center py-3">No runs yet.</div>
-        {% endfor %}
-      </div>
+    {% else %}
+    <div class="ws-card text-center py-4">
+      <i class="bi bi-file-earmark-plus fs-2 mb-2 d-block text-muted"></i>
+      <div class="text-muted small">No quotations uploaded.</div>
+      <div class="text-muted" style="font-size:.75rem;margin-top:.3rem;">Upload supplier quotations to enable AI-powered analysis and benchmarking.</div>
     </div>
+    {% endif %}
 
-    {# Activity Timeline #}
-    <div class="card mb-4">
-      <div class="card-header"><h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Activity</h6></div>
-      <div class="list-group list-group-flush" style="font-size:0.75rem">
-        {% for event in audit_events %}
-        <div class="list-group-item py-2">
-          <div class="d-flex justify-content-between">
-            <span class="fw-medium">{{ event.event_type }}</span>
-            <small class="text-muted">{{ event.created_at|date:"M d, H:i" }}</small>
-          </div>
-          <small class="text-muted">{{ event.description|truncatechars:80 }}</small>
+    {% if compliance %}
+    <div class="ws-card">
+      <div class="ws-card-title"><i class="bi bi-shield-check text-success"></i>Compliance Check</div>
+      <div class="d-flex align-items-center gap-4 flex-wrap">
+        <div>
+          <div class="text-muted small mb-1">Overall Status</div>
+          {% if compliance.overall_status == "COMPLIANT" %}
+            <span class="badge bg-success fs-6">COMPLIANT</span>
+          {% elif compliance.overall_status == "NON_COMPLIANT" %}
+            <span class="badge bg-danger fs-6">NON-COMPLIANT</span>
+          {% else %}
+            <span class="badge bg-warning text-dark fs-6">{{ compliance.overall_status }}</span>
+          {% endif %}
         </div>
-        {% empty %}
-        <div class="list-group-item text-muted text-center py-3">No activity yet.</div>
-        {% endfor %}
+        {% if compliance.score %}
+        <div>
+          <div class="text-muted small mb-1">Score</div>
+          <div class="conf-bar-wrap" style="width:140px;">
+            <div class="conf-bar" style="width:{% widthratio compliance.score 1 100 %}%;background:linear-gradient(90deg,#15803d,#22c55e);"></div>
+          </div>
+          <div class="small text-success mt-1 fw-semibold">{% widthratio compliance.score 1 100 %}%</div>
+        </div>
+        {% endif %}
       </div>
+      {% if compliance.notes %}
+      <div class="mt-3 pt-3 border-top text-muted small">{{ compliance.notes }}</div>
+      {% endif %}
     </div>
+    {% endif %}
 
   </div>
 </div>
 
-{# ========================================================= #}
-{# THOUGHT PROCESS LOADER OVERLAY (inside content block)   #}
-{# ========================================================= #}
-<div id="tpl-overlay" aria-live="polite" aria-atomic="true" style="
-  display:none;
-  position:fixed;inset:0;
-  background:rgba(0,5,20,.72);
-  backdrop-filter:blur(6px);
-  -webkit-backdrop-filter:blur(6px);
-  z-index:9999;
-  align-items:center;
-  justify-content:center;
-">
-  <div style="
-    background:linear-gradient(160deg,#0a1628 0%,#0d2244 55%,#0a1a38 100%);
-    border:1px solid rgba(0,120,255,.25);
-    border-radius:20px;
-    box-shadow:0 0 60px rgba(0,100,255,.18),0 24px 64px rgba(0,0,0,.6);
-    padding:2.4rem 2.8rem;
-    max-width:520px;
-    width:92vw;
-    position:relative;
-    overflow:hidden;
-  " id="tpl-card">
-    <!-- shimmer sweep -->
-    <div style="
-      position:absolute;inset:0;
-      background:linear-gradient(105deg,transparent 35%,rgba(100,160,255,.05) 50%,transparent 65%);
-      animation:tplShimmer 3.2s linear infinite;
-      pointer-events:none;
-    "></div>
-
-    <!-- header -->
-    <div class="d-flex align-items-center gap-3 mb-3">
-      <div id="tpl-icon-ring" style="
-        width:52px;height:52px;border-radius:50%;
-        background:rgba(0,110,255,.15);
-        border:2px solid rgba(0,130,255,.35);
-        display:flex;align-items:center;justify-content:center;
-        flex-shrink:0;
-        animation:tplPulseRing 2s ease-in-out infinite;
-      ">
-        <i id="tpl-icon" class="bi bi-cpu-fill fs-4 text-primary"></i>
-      </div>
-      <div>
-        <div id="tpl-title" class="fw-bold text-white" style="font-size:1.05rem;"></div>
-        <div class="text-white-50" style="font-size:.8rem;">Landmark Group Procurement Intelligence</div>
-      </div>
-    </div>
-
-    <!-- current status line -->
-    <div class="mb-3 px-3 py-2 rounded-2" style="background:rgba(0,100,255,.1);border:1px solid rgba(0,120,255,.2);">
-      <div class="d-flex align-items-center gap-2">
-        <div class="spinner-grow spinner-grow-sm text-primary flex-shrink-0" style="animation-duration:1s;"></div>
-        <span id="tpl-current-msg" class="text-white" style="font-size:.88rem;font-weight:500;"></span>
-      </div>
-    </div>
-
-    <!-- step list -->
-    <div id="tpl-steps" style="display:flex;flex-direction:column;gap:.45rem;max-height:280px;overflow:hidden;"></div>
-
-    <!-- footer -->
-    <div class="mt-3 d-flex align-items-center justify-content-between">
-      <div style="width:100%;">
-        <div id="tpl-progress-bar-wrap" class="progress" style="height:4px;border-radius:4px;background:rgba(255,255,255,.08);">
-          <div id="tpl-progress-bar" class="progress-bar bg-primary"
-               role="progressbar" style="width:0%;transition:width .6s ease;"></div>
-        </div>
-      </div>
-    </div>
-    <div class="text-center mt-2" style="font-size:.72rem;color:rgba(255,255,255,.3);">
-      Processing in progress &mdash; please wait
-    </div>
-  </div>
-</div>
-{% endblock %}
-
-{% block extra_css %}
-<style>
-@keyframes tplShimmer {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(200%); }
-}
-@keyframes tplPulseRing {
-  0%,100% { box-shadow:0 0 0 0 rgba(0,120,255,.4); }
-  50%      { box-shadow:0 0 0 10px rgba(0,120,255,.0); }
-}
-@keyframes tplFadeIn {
-  from { opacity:0; transform:translateY(6px); }
-  to   { opacity:1; transform:translateY(0); }
-}
-</style>
-{% endblock %}
-
-{% block extra_js %}
+{# -- Run Analysis JS -- #}
 <script>
-// ============================================================
-// THOUGHT PROCESS LOADER — Run Analysis interception
-// ============================================================
-(function () {
-  var STEPS = {
-    RECOMMENDATION: [
-      { icon: 'bi-file-earmark-text',  msg: 'Reading procurement request details and specifications...' },
-      { icon: 'bi-list-check',         msg: 'Extracting HVAC attribute specifications from request...' },
-      { icon: 'bi-search',             msg: 'Checking required fields — store type, area, zones, temperature, chilled water...' },
-      { icon: 'bi-diagram-3',          msg: 'Querying deterministic rules engine against GCC HVAC rule matrix...' },
-      { icon: 'bi-database-check',     msg: 'Scanning internal product catalogue for matching configurations...' },
-      { icon: 'bi-globe2',             msg: 'No confident match — fetching live market data from GCC HVAC sources...' },
-      { icon: 'bi-cloud-arrow-down',   msg: 'Retrieving current pricing from online market intelligence feeds...' },
-      { icon: 'bi-thermometer-sun',    msg: 'Analysing GCC climate conditions and energy efficiency standards...' },
-      { icon: 'bi-robot',              msg: 'Consulting AI recommendation engine with full context...' },
-      { icon: 'bi-bar-chart-line',     msg: 'Comparing vendor options, system types, and regional pricing...' },
-      { icon: 'bi-shield-check',       msg: 'Generating compliance report against Dewa / SASO standards...' },
-      { icon: 'bi-patch-check-fill',   msg: 'Finalising recommendation with confidence scoring...' },
-    ],
-    BENCHMARK: [
-      { icon: 'bi-file-earmark-text',  msg: 'Loading supplier quotation data and line items...' },
-      { icon: 'bi-list-ol',            msg: 'Parsing line items, unit prices, and quantities...' },
-      { icon: 'bi-database-check',     msg: 'Searching primary data source — internal procurement history...' },
-      { icon: 'bi-database-x',         msg: 'Limited data in primary source — expanding to web market search...' },
-      { icon: 'bi-globe2',             msg: 'Fetching GCC benchmark pricing via web intelligence...' },
-      { icon: 'bi-cloud-arrow-down',   msg: 'Aggregating market data and computing benchmark averages...' },
-      { icon: 'bi-calculator',         msg: 'Calculating variance percentages per line item...' },
-      { icon: 'bi-exclamation-triangle', msg: 'Assessing risk levels — HIGH / MEDIUM / LOW variance lines...' },
-      { icon: 'bi-bar-chart-line',     msg: 'Comparing quoted values against regional market benchmarks...' },
-      { icon: 'bi-patch-check-fill',   msg: 'Compiling full benchmark analysis report...' },
-    ],
-    VALIDATION: [
-      { icon: 'bi-file-earmark-text',  msg: 'Loading request attributes and validation rule set...' },
-      { icon: 'bi-check2-square',      msg: 'Running mandatory field checks...' },
-      { icon: 'bi-rulers',             msg: 'Validating value ranges and GCC compliance constraints...' },
-      { icon: 'bi-shield-check',       msg: 'Cross-checking against domain-specific validation rules...' },
-      { icon: 'bi-patch-check-fill',   msg: 'Finalising validation report...' },
-    ],
-  };
-
-  var ICONS_BY_TYPE = {
-    RECOMMENDATION: 'bi-lightbulb-fill',
-    BENCHMARK:      'bi-bar-chart-fill',
-    VALIDATION:     'bi-check2-circle',
-  };
-
-  var TITLES_BY_TYPE = {
-    RECOMMENDATION: 'Running Recommendation Analysis',
-    BENCHMARK:      'Running Benchmark Analysis',
-    VALIDATION:     'Running Validation Analysis',
-  };
-
-  function showLoader(runType) {
-    var overlay   = document.getElementById('tpl-overlay');
-    var stepsEl   = document.getElementById('tpl-steps');
-    var titleEl   = document.getElementById('tpl-title');
-    var iconEl    = document.getElementById('tpl-icon');
-    var currentEl = document.getElementById('tpl-current-msg');
-    var barEl     = document.getElementById('tpl-progress-bar');
-
-    var steps = STEPS[runType] || STEPS['RECOMMENDATION'];
-    var title = TITLES_BY_TYPE[runType] || 'Running Analysis';
-    var iconCls = ICONS_BY_TYPE[runType] || 'bi-cpu-fill';
-
-    titleEl.textContent = title;
-    iconEl.className = 'bi ' + iconCls + ' fs-4 text-primary';
-    stepsEl.innerHTML = '';
-    barEl.style.width = '0%';
-
-    // Pre-render all step rows (hidden)
-    steps.forEach(function (step, i) {
-      var row = document.createElement('div');
-      row.id  = 'tpl-step-' + i;
-      row.style.cssText = (
-        'display:flex;align-items:center;gap:.55rem;padding:.3rem .5rem;' +
-        'border-radius:8px;opacity:.22;transition:opacity .4s,background .4s;'
-      );
-      row.innerHTML = (
-        '<i class="bi ' + step.icon + ' flex-shrink-0" style="font-size:.9rem;color:#4d9fff;width:16px;text-align:center;"></i>' +
-        '<span style="font-size:.8rem;color:rgba(255,255,255,.75);">' + step.msg + '</span>' +
-        '<i class="bi bi-check-circle-fill ms-auto flex-shrink-0" id="tpl-tick-' + i + '" style="font-size:.8rem;color:#28c76f;display:none;"></i>'
-      );
-      stepsEl.appendChild(row);
-    });
-
-    overlay.style.display = 'flex';
-
-    // Animate steps
-    var STEP_MS    = 1350;
-    var activeIdx  = 0;
-    currentEl.textContent = steps[0].msg;
-    _activateStep(0, steps);
-
-    var interval = setInterval(function () {
-      // tick previous step
-      var prevTick = document.getElementById('tpl-tick-' + activeIdx);
-      if (prevTick) prevTick.style.display = 'inline';
-      var prevRow = document.getElementById('tpl-step-' + activeIdx);
-      if (prevRow) { prevRow.style.opacity = '.45'; prevRow.style.background = 'none'; }
-
-      activeIdx++;
-      if (activeIdx >= steps.length) { activeIdx = steps.length - 1; return; }
-
-      _activateStep(activeIdx, steps);
-      currentEl.textContent = steps[activeIdx].msg;
-      // progress bar
-      var pct = Math.round(((activeIdx + 1) / steps.length) * 92);
-      barEl.style.width = pct + '%';
-    }, STEP_MS);
-
-    return interval;
-  }
-
-  function _activateStep(idx, steps) {
-    var row = document.getElementById('tpl-step-' + idx);
-    if (!row) return;
-    row.style.opacity = '1';
-    row.style.background = 'rgba(0,100,255,.12)';
-    row.style.animation  = 'tplFadeIn .3s ease';
-    // scroll into view if needed
-    row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
-
-  function hideLoader(interval) {
-    clearInterval(interval);
-    var barEl   = document.getElementById('tpl-progress-bar');
-    var overlay = document.getElementById('tpl-overlay');
-    var curEl   = document.getElementById('tpl-current-msg');
-    barEl.style.width = '100%';
-    curEl.textContent  = 'Analysis complete — loading results...';
-    setTimeout(function () { overlay.style.display = 'none'; }, 600);
-  }
-
-  // Wire up the Run Analysis button
-  var btn = document.getElementById('btn-run-analysis');
-  if (btn) {
-    btn.addEventListener('click', function () {
-      var runType = document.getElementById('run-type-select').value;
-      var triggerUrl = btn.getAttribute('data-trigger-url');
-      var csrf = btn.getAttribute('data-csrf');
-
-      var loopInterval = showLoader(runType);
-
-      // Disable button
-      btn.disabled = true;
-      var sel = document.getElementById('run-type-select');
-      if (sel) sel.disabled = true;
-
-      // POST to trigger_analysis via fetch
-      var formData = new FormData();
-      formData.append('run_type', runType);
-      formData.append('csrfmiddlewaretoken', csrf);
-
-      fetch(triggerUrl, {
-        method: 'POST',
-        body: formData,
-        credentials: 'same-origin',
-        redirect: 'follow',
-      })
-      .then(function (resp) {
-        hideLoader(loopInterval);
-        // Signal to auto-activate Analysis tab after reload
-        sessionStorage.setItem('proc_goto_tab_' + btn.getAttribute('data-request-pk'), 'analysis');
-        window.location.reload();
-      })
-      .catch(function (err) {
-        hideLoader(loopInterval);
-        btn.disabled = false;
-        if (sel) sel.disabled = false;
-        // Fallback: submit normally
-        var fallbackForm = document.createElement('form');
-        fallbackForm.method = 'POST';
-        fallbackForm.action = triggerUrl;
-        var csrfInput = document.createElement('input');
-        csrfInput.type = 'hidden'; csrfInput.name = 'csrfmiddlewaretoken'; csrfInput.value = csrf;
-        var rtInput = document.createElement('input');
-        rtInput.type = 'hidden'; rtInput.name = 'run_type'; rtInput.value = runType;
-        fallbackForm.appendChild(csrfInput);
-        fallbackForm.appendChild(rtInput);
-        document.body.appendChild(fallbackForm);
-        fallbackForm.submit();
-      });
-    });
-  }
-})();
-
-// ============================================================
-// Auto-activate Analysis tab when arriving after a run
-// (sessionStorage key set by the thought process loader)
-// ============================================================
-(function () {
-  var reqPk = '{{ proc_request.pk }}';
-  var tabKey = 'proc_goto_tab_' + reqPk;
-  var target = sessionStorage.getItem(tabKey);
-  if (target) {
-    sessionStorage.removeItem(tabKey);
-    var tabBtn = document.getElementById('tab-' + target + '-btn');
-    if (tabBtn) setTimeout(function () { tabBtn.click(); }, 100);
-  }
-})();
-
-// ============================================================
-// Quotation PDF prefill upload
-var qForm = document.getElementById('quotation-prefill-form');
-if (qForm) {
-  qForm.addEventListener('submit', function(e) {
-    e.preventDefault();
-    var formData = new FormData(this);
-    var progress = document.getElementById('quotation-extract-progress');
-    var errorDiv = document.getElementById('quotation-extract-error');
-    var btn = document.getElementById('btn-quotation-extract');
-    progress.style.display = 'block';
-    errorDiv.style.display = 'none';
+(function(){
+  const btn = document.getElementById("btn-run-analysis");
+  if (!btn) return;
+  btn.addEventListener("click", function(){
+    const runType = document.getElementById("run-type-select").value;
+    const url = btn.dataset.triggerUrl;
+    const csrf = btn.dataset.csrf;
     btn.disabled = true;
-
-    fetch('/api/v1/procurement/quotations/prefill/?request_id={{ proc_request.pk }}', {
-      method: 'POST',
-      body: formData,
-      headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...';
+    fetch(url, {
+      method: "POST",
+      headers: {"X-CSRFToken": csrf, "Content-Type": "application/x-www-form-urlencoded"},
+      body: "run_type=" + encodeURIComponent(runType),
     })
-    .then(function(resp) {
-      if (!resp.ok) return resp.json().then(function(err) { throw new Error(err.error || err.detail || 'Upload failed'); });
-      return resp.json();
+    .then(r => r.json())
+    .then(data => {
+      if(data.status === "ok" || data.status === "success"){
+        window.location.reload();
+      } else {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run Analysis';
+        alert(data.error || "Failed to trigger analysis.");
+      }
     })
-    .then(function(data) {
-      // Reload page to show the new quotation with prefill status
-      window.location.reload();
-    })
-    .catch(function(err) {
-      errorDiv.textContent = err.message;
-      errorDiv.style.display = 'block';
-      progress.style.display = 'none';
+    .catch(() => {
       btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run Analysis';
     });
   });
-}
+})();
 </script>
 {% endblock %}

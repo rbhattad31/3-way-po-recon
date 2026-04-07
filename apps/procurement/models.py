@@ -21,6 +21,7 @@ from apps.core.enums import (
     AttributeDataType,
     BenchmarkRiskLevel,
     ComplianceStatus,
+    ExternalSourceClass,
     ExtractionSourceType,
     ExtractionStatus,
     HVACSystemType,
@@ -1019,3 +1020,205 @@ class RecommendationLog(BaseModel):
 
     def __str__(self) -> str:
         return f"Recommendation {self.recommendation_id} for {self.room.room_code if self.room else 'N/A'}"
+
+
+# ---------------------------------------------------------------------------
+# External Source Registry (HVAC Flow A -- Phase 2)
+# ---------------------------------------------------------------------------
+class ExternalSourceRegistry(BaseModel):
+    """Allow-list of approved external sources for HVAC product discovery.
+
+    Controls which web sources the AI discovery agent is permitted to query.
+    A source may be active for discovery, compliance reference, or both.
+    """
+
+    source_name = models.CharField(max_length=200, help_text="Display name e.g. 'Daikin MEA Official'")
+    domain = models.CharField(max_length=300, help_text="Root domain e.g. daikinmea.com")
+    source_type = models.CharField(
+        max_length=40,
+        choices=ExternalSourceClass.choices,
+        default=ExternalSourceClass.OEM_OFFICIAL,
+        db_index=True,
+    )
+    country_scope = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of country codes this source covers e.g. ['UAE','KSA']",
+    )
+    priority = models.PositiveIntegerField(default=10, help_text="Lower number = higher priority")
+    trust_score = models.FloatField(
+        default=0.8,
+        help_text="Trust score 0.0-1.0 used in candidate ranking",
+    )
+    allowed_for_discovery = models.BooleanField(
+        default=True,
+        help_text="Allow AI discovery agent to search this source for product candidates",
+    )
+    allowed_for_compliance = models.BooleanField(
+        default=False,
+        help_text="Allow this source to be cited as compliance / regulatory evidence",
+    )
+    fetch_mode = models.CharField(
+        max_length=10,
+        choices=[("PAGE", "Web Page"), ("PDF", "PDF Download"), ("API", "API Endpoint")],
+        default="PAGE",
+    )
+    notes = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        db_table = "procurement_external_source_registry"
+        ordering = ["priority", "source_name"]
+        verbose_name = "External Source Registry"
+        verbose_name_plural = "External Source Registry"
+
+    def __str__(self) -> str:
+        return f"{self.source_name} ({self.source_type})"
+
+
+# ---------------------------------------------------------------------------
+# HVACRecommendationRule -- DB-driven decision matrix
+# ---------------------------------------------------------------------------
+class HVACRecommendationRule(BaseModel):
+    """Decision matrix rule for HVAC system recommendation.
+
+    Rules are evaluated in `priority` order (lower = first).  The first rule
+    whose conditions are ALL satisfied determines the recommended system.
+    Blank / null condition fields mean ANY (wildcard).
+
+    Recommended system codes map to HVACSystemType choices:
+        VRF          -> VRF System
+        SPLIT_AC     -> Split AC
+        PACKAGED_DX  -> Packaged DX Unit
+        CHILLER      -> Chilled Water System
+        FCU          -> Fan Coil Unit
+        CASSETTE     -> Cassette Split
+    """
+
+    STORE_TYPE_CHOICES = [
+        ("", "Any"),
+        ("MALL", "Mall"),
+        ("STANDALONE", "Standalone"),
+        ("HOSPITAL", "Hospital"),
+        ("WAREHOUSE", "Warehouse"),
+        ("OFFICE", "Office"),
+        ("HYPERMARKET", "Hypermarket"),
+        ("DATA_CENTER", "Data Center"),
+    ]
+
+    BUDGET_CHOICES = [
+        ("", "Any"),
+        ("LOW", "Low"),
+        ("MEDIUM", "Medium"),
+        ("HIGH", "High"),
+        ("LOW_MEDIUM", "Low / Medium"),
+        ("MEDIUM_HIGH", "Medium / High"),
+    ]
+
+    ENERGY_PRIORITY_CHOICES = [
+        ("", "Any"),
+        ("LOW", "Low"),
+        ("MEDIUM", "Medium"),
+        ("HIGH", "High"),
+        ("LOW_MEDIUM", "Low / Medium"),
+        ("MEDIUM_HIGH", "Medium / High"),
+    ]
+
+    rule_code = models.CharField(
+        max_length=10, unique=True, db_index=True,
+        help_text="Display ID, e.g. R1, R2, R3",
+    )
+    rule_name = models.CharField(max_length=200, help_text="Short description of the rule")
+
+    # -- condition fields (blank/null = ANY / wildcard) -----------------------
+    store_type_filter = models.CharField(
+        max_length=20, blank=True, default="",
+        choices=STORE_TYPE_CHOICES,
+        help_text="Blank = any store type",
+    )
+    area_sq_ft_min = models.FloatField(
+        null=True, blank=True,
+        help_text="Lower bound on area (sq ft inclusive); null = no lower bound",
+    )
+    area_sq_ft_max = models.FloatField(
+        null=True, blank=True,
+        help_text="Upper bound on area (sq ft exclusive); null = no upper bound",
+    )
+    ambient_temp_min_c = models.FloatField(
+        null=True, blank=True,
+        help_text="Lower bound on ambient temperature (C inclusive); null = no lower bound",
+    )
+    budget_level_filter = models.CharField(
+        max_length=20, blank=True, default="",
+        choices=BUDGET_CHOICES,
+        help_text="Blank = any.  LOW_MEDIUM = matches LOW or MEDIUM.",
+    )
+    energy_priority_filter = models.CharField(
+        max_length=20, blank=True, default="",
+        choices=ENERGY_PRIORITY_CHOICES,
+        help_text="Blank = any.  LOW_MEDIUM = matches LOW or MEDIUM.",
+    )
+
+    # -- outcome ---------------------------------------------------------------
+    recommended_system = models.CharField(
+        max_length=30,
+        choices=HVACSystemType.choices,
+        db_index=True,
+        help_text="Recommended HVAC system type when this rule matches",
+    )
+    alternate_system = models.CharField(
+        max_length=30, blank=True, default="",
+        choices=[("", "None")] + list(HVACSystemType.choices),
+        help_text="Optional fallback / alternate system type",
+    )
+    rationale = models.TextField(
+        blank=True, default="",
+        help_text="Brief plain-text explanation for this rule (shown in the UI)",
+    )
+
+    # -- control ---------------------------------------------------------------
+    priority = models.PositiveIntegerField(
+        default=100,
+        help_text="Lower number = evaluated first; first match wins",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "procurement_hvac_recommendation_rule"
+        ordering = ["priority", "rule_code"]
+        verbose_name = "HVAC Recommendation Rule"
+        verbose_name_plural = "HVAC Recommendation Rules"
+        indexes = [
+            models.Index(fields=["is_active", "priority"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.rule_code} -> {self.recommended_system}"
+
+    # ------------------------------------------------------------------
+    def matches(self, attrs: dict) -> bool:
+        """Return True if all conditions in this rule are satisfied by attrs."""
+        store_type = str(attrs.get("store_type") or "").upper()
+        area = float(attrs.get("area_sq_ft") or 0)
+        ambient = float(attrs.get("ambient_temp_max_c") or 0)
+        budget = str(attrs.get("budget_level") or "").upper()
+        energy = str(attrs.get("energy_efficiency_priority") or "").upper()
+
+        if self.store_type_filter and self.store_type_filter != store_type:
+            return False
+        if self.area_sq_ft_min is not None and area < self.area_sq_ft_min:
+            return False
+        if self.area_sq_ft_max is not None and area >= self.area_sq_ft_max:
+            return False
+        if self.ambient_temp_min_c is not None and ambient < self.ambient_temp_min_c:
+            return False
+        if self.budget_level_filter:
+            allowed = self.budget_level_filter.split("_")
+            if budget not in allowed:
+                return False
+        if self.energy_priority_filter:
+            allowed = self.energy_priority_filter.split("_")
+            if energy not in allowed:
+                return False
+        return True

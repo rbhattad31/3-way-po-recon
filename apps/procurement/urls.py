@@ -1,4 +1,4 @@
-"""Template URL routing for procurement app — mounted at /procurement/."""
+"""Template URL routing for procurement app -- mounted at /procurement/."""
 from django.urls import path
 
 from apps.procurement import template_views
@@ -18,4 +18,32 @@ urlpatterns = [
     path("<int:pk>/validate/", template_views.trigger_validation, name="trigger_validation"),
     path("quotation/<int:pk>/prefill-review/", template_views.quotation_prefill_review, name="quotation_prefill_review"),
     path("run/<int:pk>/", template_views.run_detail, name="run_detail"),
+    # HVAC Flow A dedicated routes
+    path("hvac/requests/", template_views.hvac_request_list, name="hvac_request_list"),
+    path("hvac/requests/new/", template_views.hvac_request_form, name="hvac_request_create"),
+    path("hvac/requests/<int:pk>/", template_views.hvac_request_detail, name="hvac_request_detail"),
+    path("hvac/benchmarks/", template_views.hvac_benchmark_list, name="benchmark_list"),
+    path("hvac/config/", template_views.hvac_config, name="hvac_config"),
+    # -----------------------------------------------------------------------
+    # Procurement Configurations (full admin control, AJAX-backed CRUD)
+    # -----------------------------------------------------------------------
+    path("configurations/", template_views.proc_configurations, name="configurations"),
+    # AJAX API -- External Sources
+    path("api/config/sources/", template_views.api_config_sources, name="api_config_sources"),
+    path("api/config/sources/<int:pk>/", template_views.api_config_source_detail, name="api_config_source_detail"),
+    # AJAX API -- Validation Rule Sets
+    path("api/config/rulesets/", template_views.api_config_rulesets, name="api_config_rulesets"),
+    path("api/config/rulesets/<int:pk>/", template_views.api_config_ruleset_detail, name="api_config_ruleset_detail"),
+    # AJAX API -- Products
+    path("api/config/products/", template_views.api_config_products, name="api_config_products"),
+    path("api/config/products/<int:pk>/", template_views.api_config_product_detail, name="api_config_product_detail"),
+    # AJAX API -- Vendors
+    path("api/config/vendors/", template_views.api_config_vendors, name="api_config_vendors"),
+    path("api/config/vendors/<int:pk>/", template_views.api_config_vendor_detail, name="api_config_vendor_detail"),
+    # AJAX API -- Rooms
+    path("api/config/rooms/", template_views.api_config_rooms, name="api_config_rooms"),
+    path("api/config/rooms/<int:pk>/", template_views.api_config_room_detail, name="api_config_room_detail"),
+    # AJAX API -- HVAC Recommendation Rules
+    path("api/config/hvacrules/", template_views.api_config_hvacrules, name="api_config_hvacrules"),
+    path("api/config/hvacrules/<int:pk>/", template_views.api_config_hvacrule_detail, name="api_config_hvacrule_detail"),
 ]
