@@ -1,0 +1,64 @@
+{% load rbac_tags %}
+{# ── Procurement sidebar — clean light theme, no brand strip ── #}
+
+{% has_permission "procurement.view" as can_view_procurement %}
+
+{% if can_view_procurement %}
+<div class="proc-nav-section-label">Procurement</div>
+
+<a class="proc-nav-link {% if request.resolver_match.app_name == 'procurement' and request.resolver_match.url_name == 'home' %}active{% endif %}"
+   href="{% url 'procurement:home' %}">
+  <i class="bi bi-house {% if request.resolver_match.app_name == 'procurement' and request.resolver_match.url_name == 'home' %}{% else %}inactive{% endif %}"></i>
+  Home
+</a>
+
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'request_list' %}active{% endif %}"
+   href="{% url 'procurement:request_list' %}">
+  <i class="bi bi-grid-3x3-gap {% if request.resolver_match.url_name == 'request_list' %}{% else %}inactive{% endif %}"></i>
+  All Requests
+  {% if pending_procurement_count %}
+  <span class="proc-nav-badge">{{ pending_procurement_count }}</span>
+  {% endif %}
+</a>
+
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'hvac_create' %}active{% endif %}"
+   href="{% url 'procurement:hvac_create' %}">
+  <i class="bi bi-plus-circle {% if request.resolver_match.url_name == 'hvac_create' %}{% else %}inactive{% endif %}"></i>
+  New Request
+</a>
+
+{% has_permission "procurement.view_results" as can_view_results %}
+{% if can_view_results %}
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'procurement_dashboard' %}active{% endif %}"
+   href="{% url 'procurement:procurement_dashboard' %}">
+  <i class="bi bi-bar-chart-line {% if request.resolver_match.url_name == 'procurement_dashboard' %}{% else %}inactive{% endif %}"></i>
+  Dashboard
+</a>
+{% endif %}
+
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'configurations' %}active{% endif %}"
+   href="{% url 'procurement:configurations' %}">
+  <i class="bi bi-sliders {% if request.resolver_match.url_name == 'configurations' %}{% else %}inactive{% endif %}"></i>
+  Configurations
+</a>
+
+<div class="proc-nav-divider"></div>
+{% endif %}
+
+{# -- AP Ops users only -- #}
+{% has_permission "invoices.view" as can_view_cmd %}
+{% if can_view_cmd %}
+<div class="proc-nav-section-label">AP Operations</div>
+<a class="proc-nav-link {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}active{% endif %}"
+   href="{% url 'dashboard:index' %}">
+  <i class="bi bi-cpu {% if request.resolver_match.app_name == 'dashboard' and request.resolver_match.url_name == 'index' %}{% else %}inactive{% endif %}"></i>
+  Command Center
+</a>
+<div class="proc-nav-divider"></div>
+{% endif %}
+
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'agent_reference' %}active{% endif %}"
+   href="{% url 'agents:agent_reference' %}">
+  <i class="bi bi-journal-code {% if request.resolver_match.url_name == 'agent_reference' %}{% else %}inactive{% endif %}"></i>
+  Platform Reference
+</a>
