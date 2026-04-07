@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Procurement Dashboard — Landmark Group{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ===== GLOBAL ===== */
+body {
+  background: #f4f6f9;
+}
+
+/* ===== HERO ===== */
+.lmg-banner {
+  background: linear-gradient(135deg, #1f2937, #1e3a8a);
+  color: #fff;
+  border-radius: 12px;
+  padding: 1.5rem 1.75rem;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+}
+
+.lmg-banner .fw-bold {
+  font-size: 1.4rem;
+}
+
+.lmg-brand-pills .badge {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+}
+
+/* ===== KPI ===== */
+.proc-kpi {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 1.1rem;
+  text-align: center;
+  border: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+  transition: all 0.2s ease;
+}
+
+.proc-kpi:hover {
+  transform: translateY(-3px);
+}
+
+.proc-kpi .val {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.proc-kpi .lbl {
+  font-size: 0.85rem;
+  color: #374151;
+  margin-top: 0.3rem;
+  font-weight: 600;
+}
+
+.proc-kpi .sub {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+/* ===== GRID ===== */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+/* ===== CARD ===== */
+.ap-card {
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+
+.ap-card-header {
+  background: #f9fafb;
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ap-card-body {
+  padding: 1rem;
+}
+
+/* ===== TABLE ===== */
+.table {
+  font-size: 0.85rem;
+}
+
+.table thead {
+  background: #f3f4f6;
+}
+
+.table td, .table th {
+  vertical-align: middle;
+  padding: 0.55rem 0.6rem;
+}
+
+.table tbody tr:hover {
+  background: #f9fafb;
+}
+
+/* ===== TEXT ===== */
+.text-muted {
+  color: #6b7280 !important;
+}
+
+td {
+  color: #111827;
+}
+
+/* ===== BUTTON ===== */
+.btn {
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.btn-xs {
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+}
+
+/* ===== FLAGS ===== */
+.country-flag {
+  font-size: 1.2rem;
+  margin-right: 0.4rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- HERO -->
+<div class="lmg-banner mb-4 d-flex align-items-center justify-content-between flex-wrap gap-3">
+  <div>
+    <div class="fw-bold mb-2">
+      <i class="bi bi-building-fill-gear me-2 text-warning"></i>
+      LANDMARK GROUP — Procurement Intelligence
+    </div>
+
+    <div class="lmg-brand-pills mb-2">
+      <span class="badge bg-warning text-dark">Max Fashion</span>
+      <span class="badge bg-info text-dark">Home Centre</span>
+      <span class="badge bg-success">Splash</span>
+      <span class="badge bg-primary">Centrepoint</span>
+      <span class="badge bg-danger">Shoemart</span>
+      <span class="badge bg-secondary">Babyshop</span>
+      <span class="badge bg-dark">Emax</span>
+    </div>
+
+    <small>
+      UAE • KSA • Oman • Qatar • Kuwait • Bahrain
+    </small>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{% url 'procurement:hvac_create' %}" class="btn btn-warning text-dark fw-semibold">
+      New HVAC Request
+    </a>
+   
+    <a href="{% url 'procurement:request_list' %}" class="btn btn-outline-light">
+      All Requests
+    </a>
+  </div>
+</div>
+
+<!-- KPI -->
+<div class="stat-row mb-4">
+  <div class="proc-kpi">
+    <div class="val">{{ kpi.total }}</div>
+    <div class="lbl">Total Requests</div>
+    <div class="sub">All time</div>
+  </div>
+
+  <div class="proc-kpi">
+    <div class="val text-secondary">{{ kpi.draft }}</div>
+    <div class="lbl">Draft</div>
+    <div class="sub">In preparation</div>
+  </div>
+
+  <div class="proc-kpi">
+    <div class="val text-success">{{ kpi.ready }}</div>
+    <div class="lbl">Ready</div>
+    <div class="sub">Awaiting vendors</div>
+  </div>
+
+  <div class="proc-kpi">
+    <div class="val text-warning">{{ kpi.pending_approval }}</div>
+    <div class="lbl">Review</div>
+    <div class="sub">Needs action</div>
+  </div>
+
+  <div class="proc-kpi">
+    <div class="val text-primary">{{ kpi.approved }}</div>
+    <div class="lbl">Completed</div>
+    <div class="sub">Processed</div>
+  </div>
+
+  <div class="proc-kpi">
+    <div class="val text-info">{{ kpi.hvac }}</div>
+    <div class="lbl">HVAC</div>
+    <div class="sub">Cooling</div>
+  </div>
+</div>
+
+<!-- CHARTS -->
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="ap-card">
+      <div class="ap-card-header">Requests by Status</div>
+      <div class="ap-card-body">
+        <canvas id="statusChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="ap-card">
+      <div class="ap-card-header">Requests by Domain</div>
+      <div class="ap-card-body">
+        <canvas id="domainChart"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RECENT -->
+<div class="ap-card">
+  <div class="ap-card-header">Recent Requests</div>
+  <div class="ap-card-body p-0">
+    <table class="table mb-0">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Domain</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for req in recent_requests %}
+        <tr>
+          <td>{{ req.title }}</td>
+          <td>{{ req.domain_code }}</td>
+          <td>{{ req.status }}</td>
+          <td>{{ req.created_at|date:"d M" }}</td>
+          <td>
+            <a href="{% url 'procurement:request_workspace' req.pk %}" class="btn btn-xs btn-outline-primary">
+              Open
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="5" class="text-center text-muted py-3">No requests yet</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{{ status_chart|json_script:"status-chart-data" }}
+{{ domain_chart|json_script:"domain-chart-data" }}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+
+  var statusData = JSON.parse(document.getElementById('status-chart-data').textContent);
+  var domainData = JSON.parse(document.getElementById('domain-chart-data').textContent);
+
+  var statusCtx = document.getElementById('statusChart');
+  if (statusCtx) {
+    new Chart(statusCtx, {
+      type: 'doughnut',
+      data: {
+        labels: statusData.map(function(s) { return s.status; }),
+        datasets: [{
+          data: statusData.map(function(s) { return s.total; }),
+          backgroundColor: ['#6b7280', '#10b981', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899']
+        }]
+      }
+    });
+  }
+
+  var domainCtx = document.getElementById('domainChart');
+  if (domainCtx) {
+    new Chart(domainCtx, {
+      type: 'bar',
+      data: {
+        labels: domainData.map(function(d) { return d.domain_code; }),
+        datasets: [{
+          data: domainData.map(function(d) { return d.total; }),
+          backgroundColor: '#d4a017'
+        }]
+      }
+    });
+  }
+
+})();
+</script>
+{% endblock %}

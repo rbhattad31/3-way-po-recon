@@ -1,0 +1,173 @@
+<style>
+  .proc-chatbot {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    z-index: 1200;
+    font-family: Inter, sans-serif;
+  }
+  .proc-chatbot-btn {
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #0ea5e9, #0369a1);
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 11px 18px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 12px 28px rgba(14, 165, 233, 0.35);
+  }
+  .proc-chatbot-panel {
+    width: min(360px, calc(100vw - 32px));
+    margin-top: 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(125, 211, 252, 0.45);
+    background: rgba(7, 15, 29, 0.98);
+    color: #e2e8f0;
+    display: none;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(2, 8, 23, 0.55);
+  }
+  .proc-chatbot-panel.active { display: block; }
+  .proc-chatbot-head {
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(125, 211, 252, 0.2);
+    background: rgba(14, 165, 233, 0.14);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .proc-chatbot-head .title { font-size: 13px; font-weight: 700; color: #bae6fd; }
+  .proc-chatbot-body { padding: 12px 14px; max-height: 260px; overflow-y: auto; }
+  .proc-chatbot-msg {
+    font-size: 12.5px;
+    line-height: 1.5;
+    background: rgba(15, 23, 42, 0.96);
+    border: 1px solid rgba(148, 163, 184, 0.34);
+    border-radius: 10px;
+    padding: 9px 10px;
+    margin-bottom: 8px;
+  }
+  .proc-chatbot-msg.bot { color: #dbeafe; }
+  .proc-chatbot-msg.user {
+    color: #e2e8f0;
+    border-color: rgba(14, 165, 233, 0.45);
+    background: rgba(14, 165, 233, 0.22);
+  }
+  .proc-chatbot-quick {
+    padding: 0 14px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .proc-chatbot-quick button {
+    border: 1px solid rgba(125, 211, 252, 0.35);
+    background: rgba(14, 165, 233, 0.12);
+    color: #bae6fd;
+    border-radius: 999px;
+    font-size: 11px;
+    padding: 4px 9px;
+  }
+  .proc-chatbot-input {
+    padding: 10px 12px;
+    border-top: 1px solid rgba(125, 211, 252, 0.2);
+    display: flex;
+    gap: 8px;
+  }
+  .proc-chatbot-input input {
+    width: 100%;
+    border: 1px solid rgba(125, 211, 252, 0.45);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.98);
+    color: #f8fafc;
+    font-size: 12px;
+    padding: 7px 9px;
+  }
+  .proc-chatbot-input input::placeholder { color: #94a3b8; }
+  .proc-chatbot-input button {
+    border: 1px solid rgba(125, 211, 252, 0.35);
+    background: rgba(14, 165, 233, 0.2);
+    color: #bae6fd;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 7px 10px;
+    font-weight: 700;
+  }
+</style>
+
+<div class="proc-chatbot" id="procChatbot">
+  <button type="button" class="proc-chatbot-btn" id="procChatbotBtn">
+    <i class="bi bi-chat-dots-fill"></i>
+    How can I help you?
+  </button>
+
+  <div class="proc-chatbot-panel" id="procChatbotPanel">
+    <div class="proc-chatbot-head">
+      <div class="title">Procurement Assistant</div>
+      <button type="button" class="btn btn-sm btn-link text-info p-0" id="procChatbotClose"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div class="proc-chatbot-body" id="procChatbotBody">
+      <div class="proc-chatbot-msg bot">Welcome. I can help with HVAC requests, validation runs, quotation upload, and governance navigation.</div>
+    </div>
+    <div class="proc-chatbot-quick">
+      <button type="button" data-reply="To create a request, click New HVAC Request and complete required site parameters.">Create request</button>
+      <button type="button" data-reply="Run Validation from the workspace, then trigger Recommendation or Benchmark as needed.">Run validation</button>
+      <button type="button" data-reply="Upload quotation PDFs in workspace -> Quotations -> Upload PDF and Extract.">Upload quotation</button>
+      <button type="button" data-reply="Use Governance -> Audit Log and Agent Governance to track decisions and trace events.">Governance</button>
+    </div>
+    <div class="proc-chatbot-input">
+      <input id="procChatbotInput" type="text" placeholder="Type your procurement question...">
+      <button type="button" id="procChatbotSend">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById('procChatbotBtn');
+  var panel = document.getElementById('procChatbotPanel');
+  var close = document.getElementById('procChatbotClose');
+  var body = document.getElementById('procChatbotBody');
+  var send = document.getElementById('procChatbotSend');
+  var input = document.getElementById('procChatbotInput');
+
+  if (!btn || !panel || !body || !send || !input) return;
+
+  function appendMessage(text, who) {
+    var div = document.createElement('div');
+    div.className = 'proc-chatbot-msg ' + who;
+    div.textContent = text;
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  btn.addEventListener('click', function () { panel.classList.toggle('active'); });
+  if (close) close.addEventListener('click', function () { panel.classList.remove('active'); });
+
+  document.querySelectorAll('.proc-chatbot-quick button').forEach(function (q) {
+    q.addEventListener('click', function () {
+      var reply = q.getAttribute('data-reply') || 'Please open the relevant procurement section from sidebar.';
+      appendMessage(q.textContent, 'user');
+      appendMessage(reply, 'bot');
+    });
+  });
+
+  function sendMsg() {
+    var text = (input.value || '').trim();
+    if (!text) return;
+    appendMessage(text, 'user');
+    appendMessage('Thanks. For now I can guide workflow and navigation. For deep analysis, use procurement runs and governance screens.', 'bot');
+    input.value = '';
+  }
+
+  send.addEventListener('click', sendMsg);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendMsg();
+    }
+  });
+})();
+</script>

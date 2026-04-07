@@ -20,10 +20,13 @@ class RecommendationGraphState(TypedDict, total=False):
     run: AnalysisRun
     attributes: Dict[str, Any]
     rule_result: Dict[str, Any]
+    archetype: Dict[str, Any]
+    upstream_validation_context: Dict[str, Any]
     request_context: Dict[str, Any]
     validation_context: Dict[str, Any]
     needs_quotation_extraction: bool
     quotation_context: List[Dict[str, Any]]
+    web_context: Dict[str, Any]
     ai_payload: Dict[str, Any]
     ai_result: Dict[str, Any]
 
@@ -42,12 +45,16 @@ class RecommendationGraphService:
         run: AnalysisRun,
         attributes: Dict[str, Any],
         rule_result: Dict[str, Any],
+        archetype: Dict[str, Any] | None = None,
+        validation_context: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         state: RecommendationGraphState = {
             "request": request,
             "run": run,
             "attributes": attributes,
             "rule_result": rule_result,
+            "archetype": archetype or {},
+            "upstream_validation_context": validation_context or {},
         }
         final_state = cls._get_graph().invoke(state)
         return final_state.get("ai_result") or {}
@@ -61,6 +68,7 @@ class RecommendationGraphService:
             graph.add_node("check_quotation_context", cls._check_quotation_context)
             graph.add_node("extract_quotation_context", cls._extract_quotation_context)
             graph.add_node("collect_quotation_context", cls._collect_quotation_context)
+            graph.add_node("fetch_web_market_data", cls._fetch_web_market_data)
             graph.add_node("assemble_ai_payload", cls._assemble_ai_payload)
             graph.add_node("call_recommendation_agent", cls._call_recommendation_agent)
 
@@ -76,7 +84,8 @@ class RecommendationGraphService:
                 },
             )
             graph.add_edge("extract_quotation_context", "collect_quotation_context")
-            graph.add_edge("collect_quotation_context", "assemble_ai_payload")
+            graph.add_edge("collect_quotation_context", "fetch_web_market_data")
+            graph.add_edge("fetch_web_market_data", "assemble_ai_payload")
             graph.add_edge("assemble_ai_payload", "call_recommendation_agent")
             graph.add_edge("call_recommendation_agent", END)
             cls._compiled_graph = graph.compile()
@@ -170,13 +179,100 @@ class RecommendationGraphService:
         return {"quotation_context": quotation_context}
 
     @staticmethod
+    def _fetch_web_market_data(state: RecommendationGraphState) -> Dict[str, Any]:
+        """Fetch live market data from web search for the recommended system type.
+
+        Runs regardless of whether the rules engine was confident or not.
+        Gives the AI real-world product specs, brand options, and indicative
+        pricing instead of relying only on static catalogue constants.
+        """
+        try:
+            from apps.procurement.services.web_search_service import WebSearchService
+
+            attrs = state.get("attributes") or {}
+            rule_result = state.get("rule_result") or {}
+            request = state["request"]
+
+            # Determine what to search for
+            system_type_code = rule_result.get("system_type_code") or ""
+            if not system_type_code:
+                # Try to infer from rule result text
+                rec_text = (rule_result.get("recommended_option") or "").upper()
+                for code in ("FCU_CHILLED_WATER", "VRF_SYSTEM", "SPLIT_SYSTEM",
+                             "PACKAGED_DX_UNIT", "CHILLER_PLANT", "CASSETTE_SPLIT"):
+                    if code.replace("_", " ") in rec_text or code in rec_text:
+                        system_type_code = code
+                        break
+                if not system_type_code:
+                    # Derive from key attributes
+                    store_type = str(attrs.get("store_type") or "").upper()
+                    cw = str(attrs.get("chilled_water_available") or "NO").upper()
+                    zones = int(attrs.get("zone_count") or 1)
+                    if cw == "YES":
+                        system_type_code = "FCU_CHILLED_WATER"
+                    elif zones >= 3:
+                        system_type_code = "VRF_SYSTEM"
+                    else:
+                        system_type_code = "SPLIT_SYSTEM"
+
+            geography = (
+                getattr(request, "geography_country", "")
+                or str(getattr(request, "location", "") or "")
+                or "UAE"
+            )
+            currency = getattr(request, "currency", "AED") or "AED"
+            capacity_tr = None
+            try:
+                area = float(attrs.get("area_sqm") or 0)
+                if area:
+                    capacity_tr = round(area * 130 / 3517, 1)  # GCC rule of thumb
+            except (TypeError, ValueError):
+                pass
+
+            # Also search for the store type context
+            store_type_kw = str(attrs.get("store_type") or "").replace("_", " ").lower()
+            extra = f"retail {store_type_kw} GCC" if store_type_kw else ""
+
+            web_result = WebSearchService.search_product_info(
+                system_type=system_type_code,
+                capacity_tr=capacity_tr,
+                geography=geography,
+                currency=currency,
+                extra_keywords=extra,
+            )
+
+            logger.info(
+                "RecommendationGraphService: web search for system_type=%s, geography=%s -> "
+                "%d snippets, pricing=%s",
+                system_type_code,
+                geography,
+                len(web_result.get("snippets") or []),
+                web_result.get("pricing"),
+            )
+            return {"web_context": web_result}
+
+        except Exception as exc:
+            logger.warning(
+                "RecommendationGraphService._fetch_web_market_data failed (non-blocking): %s", exc
+            )
+            return {"web_context": {"snippets": [], "pricing": {}, "source": "WEB_SEARCH", "notes": f"Web search unavailable: {exc}"}}
+
+    @staticmethod
     def _assemble_ai_payload(state: RecommendationGraphState) -> Dict[str, Any]:
+        # Merge upstream (step-1 report) with any DB-sourced validation context.
+        # The upstream report from _validate_and_normalize is preferred when present.
+        upstream = state.get("upstream_validation_context") or {}
+        db_validation = state.get("validation_context") or {}
+        merged_validation = {**db_validation, **upstream} if upstream else db_validation
+
         payload = {
             "request": state.get("request_context") or {},
             "attributes": state.get("attributes") or {},
             "rule_result": state.get("rule_result") or {},
-            "validation_context": state.get("validation_context") or {},
+            "archetype": state.get("archetype") or {},
+            "validation_context": merged_validation,
             "quotation_context": state.get("quotation_context") or [],
+            "web_market_context": state.get("web_context") or {},
             "analysis_run": {
                 "run_id": str(state["run"].run_id),
                 "run_type": state["run"].run_type,

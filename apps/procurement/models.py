@@ -7,7 +7,8 @@ Hierarchy:
     └── AnalysisRun
           ├── RecommendationResult
           ├── BenchmarkResult ──> BenchmarkResultLine
-          └── ComplianceResult
+          ├── ComplianceResult
+          └── ProcurementAgentExecutionRecord  [Phase 1 agentic bridge]
 """
 import uuid
 
@@ -22,9 +23,13 @@ from apps.core.enums import (
     ComplianceStatus,
     ExtractionSourceType,
     ExtractionStatus,
+    HVACSystemType,
     PrefillStatus,
+    POStatus,
     ProcurementRequestStatus,
     ProcurementRequestType,
+    RecommendationMethod,
+    RoomUsageType,
     SourceDocumentType,
     ValidationEvaluationMode,
     ValidationItemStatus,
@@ -279,6 +284,14 @@ class AnalysisRun(BaseModel):
     confidence_score = models.FloatField(null=True, blank=True)
     trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
     error_message = models.TextField(blank=True, default="")
+    thought_process_log = models.JSONField(
+        null=True, blank=True,
+        help_text=(
+            "Step-by-step agent reasoning log: list of "
+            '{"step": N, "stage": str, "decision": str, "reasoning": str} '
+            "entries written during AI analysis for full traceability."
+        ),
+    )
 
     class Meta:
         db_table = "procurement_analysis_run"
@@ -425,6 +438,118 @@ class ComplianceResult(TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
+# 10. ProcurementAgentExecutionRecord  [Phase 1 agentic bridge]
+# ---------------------------------------------------------------------------
+class ProcurementAgentExecutionRecord(TimestampMixin):
+    """Lightweight per-agent execution record linked to an AnalysisRun.
+
+    Created by ProcurementAgentOrchestrator for every AI agent invocation.
+    Provides standard execution traceability consistent with the wider
+    agentic platform (AgentRun for reconciliation agents).
+
+    One AnalysisRun can have multiple records when several agents are invoked
+    in sequence (e.g., recommendation -> compliance).
+
+    This model is ADDITIVE -- it never replaces AnalysisRun.  It adds
+    per-agent granularity: which agent ran, what model, what confidence,
+    what reasoning, and the full trace/RBAC provenance.
+    """
+
+    run = models.ForeignKey(
+        AnalysisRun,
+        on_delete=models.CASCADE,
+        related_name="agent_execution_records",
+        help_text="The parent AnalysisRun that triggered this agent execution.",
+    )
+
+    # ------------------------------------------------------------------
+    # Agent identity
+    # ------------------------------------------------------------------
+    agent_type = models.CharField(
+        max_length=100, db_index=True,
+        help_text="Short label for the agent (e.g. 'recommendation', 'benchmark', 'compliance', 'validation').",
+    )
+
+    # ------------------------------------------------------------------
+    # Execution status
+    # ------------------------------------------------------------------
+    status = models.CharField(
+        max_length=20,
+        choices=AnalysisRunStatus.choices,
+        default=AnalysisRunStatus.RUNNING,
+        db_index=True,
+    )
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    # ------------------------------------------------------------------
+    # Output
+    # ------------------------------------------------------------------
+    confidence_score = models.FloatField(
+        null=True, blank=True,
+        help_text="Confidence returned by the agent (0.0 - 1.0).",
+    )
+    reasoning_summary = models.TextField(
+        blank=True, default="",
+        help_text="Short text summary of the agent's reasoning (ASCII only, max 2000 chars).",
+    )
+    input_snapshot = models.JSONField(
+        null=True, blank=True,
+        help_text="Serializable snapshot of ProcurementAgentContext at execution time.",
+    )
+    output_snapshot = models.JSONField(
+        null=True, blank=True,
+        help_text="Serializable output dict returned by the agent.",
+    )
+    error_message = models.TextField(
+        blank=True, default="",
+        help_text="Error message if status == FAILED.",
+    )
+
+    # ------------------------------------------------------------------
+    # Trace / observability
+    # ------------------------------------------------------------------
+    trace_id = models.CharField(
+        max_length=64, blank=True, default="", db_index=True,
+        help_text="Platform trace_id at time of execution (for Langfuse correlation).",
+    )
+    span_id = models.CharField(
+        max_length=64, blank=True, default="",
+        help_text="Platform span_id at time of execution.",
+    )
+
+    # ------------------------------------------------------------------
+    # RBAC provenance
+    # ------------------------------------------------------------------
+    actor_user_id = models.IntegerField(
+        null=True, blank=True,
+        help_text="PK of the user who triggered the run (null = system-triggered).",
+    )
+    actor_primary_role = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Primary role of the actor at execution time.",
+    )
+
+    class Meta:
+        db_table = "procurement_agent_execution_record"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["run", "agent_type"]),
+            models.Index(fields=["status", "started_at"]),
+            models.Index(fields=["trace_id"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"AgentExec: {self.agent_type} / {self.status} (run={self.run_id})"
+
+    @property
+    def duration_ms(self) -> int | None:
+        if self.started_at and self.completed_at:
+            return int((self.completed_at - self.started_at).total_seconds() * 1000)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # 10. ValidationRuleSet
 # ---------------------------------------------------------------------------
 class ValidationRuleSet(BaseModel):
@@ -565,6 +690,15 @@ class ValidationResult(TimestampMixin):
         null=True, blank=True,
         help_text="Full structured output for API consumers",
     )
+    failure_digest_text = models.TextField(
+        blank=True, default="",
+        help_text=(
+            "Plain-English root-cause digest of every validation failure: "
+            "what is missing, why each item is required, and the exact "
+            "remediation step needed to fix it. Written after each run for "
+            "developer and analyst debugging."
+        ),
+    )
 
     class Meta:
         db_table = "procurement_validation_result"
@@ -618,3 +752,270 @@ class ValidationResultItem(TimestampMixin):
 
     def __str__(self) -> str:
         return f"{self.item_code}: {self.status}"
+
+
+# =============================================================================
+# RoomWise Pre-Procurement Recommender Models
+# =============================================================================
+
+
+class Room(BaseModel):
+    """Represents a physical space (room/facility) for HVAC recommendations."""
+
+    room_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    room_code = models.CharField(
+        max_length=50, unique=True, db_index=True,
+        help_text="Human-readable identifier (e.g., SRV-A, OFF-101)",
+    )
+    building_name = models.CharField(max_length=200, db_index=True)
+    floor_number = models.IntegerField(help_text="0=ground, -1=basement")
+    location_description = models.TextField(blank=True, default="")
+    area_sqm = models.DecimalField(max_digits=8, decimal_places=2, help_text="Room area in square meters")
+    ceiling_height_m = models.DecimalField(max_digits=5, decimal_places=2)
+    usage_type = models.CharField(
+        max_length=30,
+        choices=RoomUsageType.choices,
+        db_index=True,
+    )
+    design_temp_c = models.DecimalField(max_digits=4, decimal_places=1, help_text="Target temperature in Celsius")
+    temp_tolerance_c = models.DecimalField(max_digits=3, decimal_places=1, help_text="Allowable tolerance (±ΔT)")
+    design_cooling_load_kw = models.DecimalField(max_digits=8, decimal_places=2, help_text="Estimated cooling load in kW")
+    design_humidity_pct = models.IntegerField(null=True, blank=True, help_text="Target humidity percentage if critical")
+    noise_limit_db = models.IntegerField(null=True, blank=True, help_text="Maximum acceptable noise in dB")
+    current_hvac_type = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Type of existing HVAC system",
+    )
+    current_hvac_age_years = models.IntegerField(null=True, blank=True)
+    access_constraints = models.TextField(
+        blank=True, default="",
+        help_text="Physical/spatial constraints (e.g., low ceiling, tight ductwork)",
+    )
+    contact_name = models.CharField(max_length=100, blank=True, default="")
+    contact_email = models.EmailField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "roomwise_rooms"
+        ordering = ["building_name", "floor_number", "room_code"]
+        indexes = [
+            models.Index(fields=["building_name", "floor_number"]),
+            models.Index(fields=["usage_type", "area_sqm"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.room_code} ({self.building_name})"
+
+
+class Product(BaseModel):
+    """HVAC product/equipment from manufacturers."""
+
+    product_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    sku = models.CharField(max_length=100, unique=True, db_index=True)
+    manufacturer = models.CharField(max_length=100, db_index=True, help_text="Brand/OEM")
+    product_name = models.CharField(max_length=200)
+    system_type = models.CharField(
+        max_length=30,
+        choices=HVACSystemType.choices,
+        db_index=True,
+    )
+    capacity_kw = models.DecimalField(max_digits=8, decimal_places=2, db_index=True)
+    sound_level_db_full_load = models.IntegerField(help_text="Noise at 100% capacity")
+    sound_level_db_part_load = models.IntegerField(null=True, blank=True, help_text="Noise at 50% capacity")
+    power_input_kw = models.DecimalField(max_digits=8, decimal_places=2)
+    refrigerant_type = models.CharField(max_length=50, blank=True, default="")
+    cop_rating = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    seer_rating = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    length_mm = models.IntegerField(null=True, blank=True)
+    width_mm = models.IntegerField(null=True, blank=True)
+    height_mm = models.IntegerField(null=True, blank=True)
+    weight_kg = models.IntegerField(null=True, blank=True)
+    warranty_months = models.IntegerField()
+    installation_support_required = models.BooleanField(default=False)
+    approved_use_cases = models.JSONField(default=list, help_text="List of RoomUsageType values")
+    efficiency_compliance = models.JSONField(default=dict, help_text="Geo-specific compliance standards")
+    datasheet_url = models.URLField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "roomwise_products"
+        ordering = ["manufacturer", "system_type", "capacity_kw"]
+        indexes = [
+            models.Index(fields=["system_type", "capacity_kw"]),
+            models.Index(fields=["manufacturer"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.manufacturer} {self.product_name} ({self.capacity_kw}kW)"
+
+
+class Vendor(BaseModel):
+    """HVAC vendors/suppliers."""
+
+    vendor_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    vendor_name = models.CharField(max_length=200, unique=True, db_index=True)
+    country = models.CharField(max_length=100, db_index=True)
+    city = models.CharField(max_length=100, db_index=True)
+    address = models.TextField()
+    contact_email = models.EmailField()
+    contact_phone = models.CharField(max_length=20)
+    average_lead_time_days = models.IntegerField(help_text="Typical delivery time in days")
+    payment_terms = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="e.g., Net 30, 50% upfront",
+    )
+    min_order_qty = models.IntegerField(default=1)
+    bulk_discount_available = models.BooleanField(default=False)
+    rush_order_capable = models.BooleanField(default=False)
+    preferred_vendor = models.BooleanField(default=False, db_index=True)
+    reliability_score = models.DecimalField(
+        max_digits=3, decimal_places=2,
+        help_text="Historical rating 0.0-5.0",
+    )
+    total_purchases = models.IntegerField(default=0)
+    on_time_delivery_pct = models.DecimalField(
+        max_digits=5, decimal_places=2,
+        help_text="Percentage of orders delivered on time",
+    )
+    quality_issues_count = models.IntegerField(default=0)
+    notes = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "roomwise_vendors"
+        ordering = ["vendor_name"]
+        indexes = [
+            models.Index(fields=["country", "city"]),
+            models.Index(fields=["reliability_score"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.vendor_name
+
+
+class VendorProduct(BaseModel):
+    """Linking table: vendor's offer for a specific product with pricing/lead time."""
+
+    vendor_product_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name="vendor_products")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="vendor_offerings")
+    vendor_sku = models.CharField(max_length=100, blank=True, default="")
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, db_index=True)
+    currency = models.CharField(max_length=3, default="INR")
+    stock_available = models.IntegerField(null=True, blank=True, help_text="Units in stock (NULL if unknown)")
+    lead_time_days = models.IntegerField()
+    bulk_discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    installation_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    warranty_months_extended = models.IntegerField(default=0)
+    last_quoted = models.DateField(null=True, blank=True)
+    quote_validity_days = models.IntegerField(default=30)
+    is_preferred = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "roomwise_vendor_products"
+        unique_together = ["vendor", "product"]
+        ordering = ["unit_price"]
+        indexes = [
+            models.Index(fields=["vendor", "unit_price"]),
+            models.Index(fields=["product", "lead_time_days"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.vendor.vendor_name} - {self.product.sku}"
+
+
+class PurchaseHistory(BaseModel):
+    """Historical purchase orders and their outcomes."""
+
+    po_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    po_number = models.CharField(max_length=50, unique=True, db_index=True)
+    room = models.ForeignKey(Room, on_delete=models.SET_NULL, null=True, blank=True)
+    product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True)
+    vendor = models.ForeignKey(Vendor, on_delete=models.SET_NULL, null=True, blank=True)
+    vendor_product = models.ForeignKey(VendorProduct, on_delete=models.SET_NULL, null=True, blank=True)
+    quantity = models.IntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Unit price on PO date")
+    total_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    po_date = models.DateField(db_index=True)
+    promised_delivery_date = models.DateField()
+    actual_delivery_date = models.DateField(null=True, blank=True)
+    po_status = models.CharField(
+        max_length=20,
+        choices=POStatus.choices,
+        db_index=True,
+    )
+    performance_rating = models.IntegerField(null=True, blank=True, help_text="1-5 stars")
+    meets_spec = models.BooleanField(null=True, blank=True)
+    issues_reported = models.TextField(blank=True, default="")
+    delivered_by = models.CharField(max_length=100, blank=True, default="")
+    installer_name = models.CharField(max_length=100, blank=True, default="")
+    installation_date = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="purchase_orders_created",
+    )
+
+    class Meta:
+        db_table = "roomwise_purchase_history"
+        ordering = ["-po_date"]
+        indexes = [
+            models.Index(fields=["room", "po_date"]),
+            models.Index(fields=["po_status", "promised_delivery_date"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.po_number
+
+
+class RecommendationLog(BaseModel):
+    """Log each recommendation request and result for audit and ML learning."""
+
+    recommendation_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    room = models.ForeignKey(Room, on_delete=models.SET_NULL, null=True, blank=True)
+    requirement_text = models.TextField(help_text="Raw user input or free-text requirement")
+    recommendation_input_json = models.JSONField(help_text="Parsed room attributes")
+    recommended_products_json = models.JSONField(
+        default=list,
+        help_text="Ranked results array with scoring details",
+    )
+    recommendation_method = models.CharField(
+        max_length=20,
+        choices=RecommendationMethod.choices,
+        default=RecommendationMethod.DETERMINISTIC,
+    )
+    top_ranked_vendor_product = models.ForeignKey(
+        VendorProduct, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="top_recommendations",
+    )
+    top_ranked_score = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Score of top recommendation (0-100)",
+    )
+    num_options_generated = models.IntegerField(default=0)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="recommendations_requested",
+    )
+    user_feedback = models.TextField(blank=True, default="", help_text="User acceptance/rejection feedback")
+    outcome_purchase_order = models.ForeignKey(
+        PurchaseHistory, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="recommendation_source",
+    )
+    is_accepted = models.BooleanField(default=False, help_text="Did user act on this recommendation?")
+    trace_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+
+    class Meta:
+        db_table = "roomwise_recommendation_logs"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["room", "created_at"]),
+            models.Index(fields=["is_accepted"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Recommendation {self.recommendation_id} for {self.room.room_code if self.room else 'N/A'}"

@@ -920,3 +920,41 @@ class PostingRuleType(models.TextChoices):
 class PostingApprovalAction(models.TextChoices):
     APPROVED = "APPROVED", "Approved"
     REJECTED = "REJECTED", "Rejected"
+
+# =============================================================================
+# RoomWise Pre-Procurement Recommender Enums
+# =============================================================================
+
+class RoomUsageType(models.TextChoices):
+    DATA_CENTER = "DATA_CENTER", "Data Centre"
+    OFFICE = "OFFICE", "Office"
+    WAREHOUSE = "WAREHOUSE", "Warehouse"
+    RETAIL = "RETAIL", "Retail"
+    LAB = "LAB", "Lab"
+    MEDICAL = "MEDICAL", "Medical"
+    OTHER = "OTHER", "Other"
+
+
+class HVACSystemType(models.TextChoices):
+    VRF = "VRF", "VRF System"
+    SPLIT_AC = "SPLIT_AC", "Split AC"
+    PACKAGED_DX = "PACKAGED_DX", "Packaged DX Unit"
+    FCU = "FCU", "Fan Coil Unit"
+    CHILLER = "CHILLER", "Chiller"
+    CASSETTE = "CASSETTE", "Cassette Split"
+
+
+class POStatus(models.TextChoices):
+    DRAFT = "DRAFT", "Draft"
+    ISSUED = "ISSUED", "Issued"
+    ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged"
+    IN_TRANSIT = "IN_TRANSIT", "In Transit"
+    DELIVERED = "DELIVERED", "Delivered"
+    CANCELLED = "CANCELLED", "Cancelled"
+    DELAYED = "DELAYED", "Delayed"
+
+
+class RecommendationMethod(models.TextChoices):
+    DETERMINISTIC = "DETERMINISTIC", "Deterministic"
+    ML_MODEL = "ML_MODEL", "ML Model"
+    MANUAL_OVERRIDE = "MANUAL_OVERRIDE", "Manual Override"

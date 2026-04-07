@@ -34,9 +34,25 @@ def command_center(request):
 def analytics(request):
     summary = DashboardService.get_summary(user=request.user)
     recent_activity = DashboardService.get_recent_activity(limit=15, user=request.user)
+
+    # Procurement quick-view for Landmark Group KPI strip
+    proc_summary = {}
+    try:
+        from apps.procurement.models import ProcurementRequest
+        qs = ProcurementRequest.objects.all()
+        proc_summary = {
+            "total_requests": qs.count(),
+            "pending_approval": qs.filter(status="REVIEW_REQUIRED").count(),
+            "hvac_requests": qs.filter(domain_code="HVAC").count(),
+            "ready_requests": qs.filter(status="READY").count(),
+        }
+    except Exception:
+        proc_summary = {"total_requests": 0, "pending_approval": 0, "hvac_requests": 0, "ready_requests": 0}
+
     return render(request, "dashboard/index.html", {
         "summary": summary,
         "recent_activity": recent_activity,
+        "proc_summary": proc_summary,
     })
 
 

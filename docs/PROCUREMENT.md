@@ -1,6 +1,6 @@
 # Procurement Intelligence Platform — Project Documentation
 
-> **Version**: 1.0 · **Last Updated**: March 2026  
+> **Version**: 2.0 · **Last Updated**: April 2026  
 > **Stack**: Django 4.2 · MySQL · Celery + Redis · Azure OpenAI · Bootstrap 5  
 > **App**: `apps.procurement`
 
@@ -9,7 +9,8 @@
 ## Table of Contents
 
 1. [Executive Summary](#1-executive-summary)
-2. [Architecture Overview](#2-architecture-overview)
+2. [Architecture Overview](#2-architecture-overview)  
+   2a. [Phase 1 Agentic Bridge](#2a-phase-1-agentic-bridge-architecture)
 3. [Data Models](#3-data-models)
 4. [Business Enumerations](#4-business-enumerations)
 5. [Service Layer](#5-service-layer)
@@ -90,54 +91,278 @@ The **Procurement Intelligence Platform** is a generic, domain-agnostic module b
 
 ```
 ProcurementRequest (top-level business entity)
-  ├── ProcurementRequestAttribute  (dynamic key-value requirements)
-  ├── SupplierQuotation            (vendor quote with document link)
-  │     └── QuotationLineItem      (individual priced items)
-  └── AnalysisRun                  (execution instance — can have many per request)
-        ├── RecommendationResult   (1:1 with RECOMMENDATION run)
-        ├── BenchmarkResult        (1:N with BENCHMARK run per quotation)
-        │     └── BenchmarkResultLine  (per-line comparison)
-        ├── ComplianceResult       (1:1 compliance check output)
-        └── ValidationResult       (1:1 with VALIDATION run)
-              └── ValidationResultItem  (individual findings)
+  ├─ ProcurementRequestAttribute  (dynamic key-value requirements)
+  ├─ SupplierQuotation            (vendor quote with document link)
+  │    └─ QuotationLineItem       (individual priced items)
+  └─ AnalysisRun                  (execution instance -- can have many per request)
+       ├─ RecommendationResult    (1:1 with RECOMMENDATION run)
+       ├─ BenchmarkResult         (1:N with BENCHMARK run per quotation)
+       │    └─ BenchmarkResultLine  (per-line comparison)
+       ├─ ComplianceResult        (1:1 compliance check output)
+       ├─ ValidationResult        (1:1 with VALIDATION run)
+       │    └─ ValidationResultItem  (individual findings)
+       └─ ProcurementAgentExecutionRecord  (Phase 1 -- one per AI agent invocation)
 
 ValidationRuleSet (reusable rule definitions, domain/schema-scoped)
-  └── ValidationRule (individual rules within a set)
+  └─ ValidationRule (individual rules within a set)
 ```
 
 ### Layered Architecture
 
 ```
-┌───────────────────────────────────────────────┐
-│               UI Layer (Bootstrap 5)          │
-│  request_list · request_create · workspace ·  │
-│  run_detail · validation_summary partial      │
-├───────────────────────────────────────────────┤
-│               API Layer (DRF)                 │
-│  ProcurementRequestViewSet (CRUD + actions)   │
-│  SupplierQuotationViewSet                     │
-│  ValidationRuleSetViewSet (read-only)         │
-│  AnalysisRunValidationView                    │
-├───────────────────────────────────────────────┤
-│             Celery Tasks                      │
-│  run_analysis_task · run_validation_task      │
-├───────────────────────────────────────────────┤
-│             Service Layer                     │
-│  ProcurementRequestService · AttributeService │
-│  QuotationService · LineItemNormalizationSvc  │
-│  RecommendationService · BenchmarkService     │
-│  ComplianceService · AnalysisRunService       │
-├───────────────────────────────────────────────┤
-│             Agent Layer                       │
-│  RecommendationAgent · BenchmarkAgent         │
-│  ComplianceAgent                              │
-├───────────────────────────────────────────────┤
-│        Existing Platform Services (REUSED)    │
-│  AuditService · TraceContext · MetricsService │
-│  LLMClient · @observed_service/task           │
-│  RBAC · ProcessingLog · AuditEvent            │
-└───────────────────────────────────────────────┘
++-----------------------------------------------+
+|              UI Layer (Bootstrap 5)           |
+|  request_list . request_create . workspace .  |
+|  run_detail . validation_summary partial      |
++-----------------------------------------------+
+|              API Layer (DRF)                  |
+|  ProcurementRequestViewSet (CRUD + actions)   |
+|  SupplierQuotationViewSet                     |
+|  ValidationRuleSetViewSet (read-only)         |
+|  AnalysisRunValidationView                    |
++-----------------------------------------------+
+|            Celery Tasks                       |
+|  run_analysis_task . run_validation_task      |
++-----------------------------------------------+
+|            Service Layer                      |
+|  ProcurementRequestService . AttributeService |
+|  QuotationService . LineItemNormalizationSvc  |
+|  RecommendationService . BenchmarkService     |
+|  ComplianceService . AnalysisRunService       |
++-----------------------------------------------+
+|            Agentic Bridge (Phase 1)           |
+|  ProcurementAgentOrchestrator                 |
+|  ProcurementAgentContext                      |
+|  ProcurementAgentMemory                       |
++-----------------------------------------------+
+|            Agent Layer                        |
+|  RecommendationAgent . BenchmarkAgent         |
+|  ComplianceAgent . ValidationAgentService     |
++-----------------------------------------------+
+|       Existing Platform Services (REUSED)     |
+|  AuditService . TraceContext . MetricsService |
+|  LLMClient . @observed_service/task           |
+|  RBAC . ProcessingLog . AuditEvent            |
++-----------------------------------------------+
 ```
+
+---
+
+## 2a. Phase 1 Agentic Bridge Architecture
+
+> Added in v2.0 (April 2026). This section documents the thin compatibility bridge
+> added to make `apps.procurement` consistent with the shared agentic platform
+> patterns already used by reconciliation, extraction, posting, and ERP integration.
+
+### Motivation
+
+Prior to Phase 1, the three AI entry points in `apps.procurement` invoked their
+underlying agents directly (bypassing shared governance):
+
+| Entry Point | AI Call (before) |
+|---|---|
+| `RecommendationService.run_recommendation()` | `RecommendationGraphService.run()` inline |
+| `BenchmarkService.run_benchmark()` | `BenchmarkAgent.resolve_benchmark_for_item()` inline |
+| `ValidationOrchestratorService._run_agent_augmentation()` | `ValidationAgentService.augment_findings()` inline |
+
+This meant: no `ProcurementAgentExecutionRecord` DB row, no Langfuse span, no
+`PROCUREMENT_AGENT_RUN_*` audit events, and no standard context/memory bag.
+
+### Phase 1 Bridge Components
+
+All new files live under `apps/procurement/runtime/`.
+
+#### `ProcurementAgentMemory`
+Dataclass (`apps/procurement/runtime/procurement_agent_memory.py`). Analogous to
+`apps.agents.services.agent_memory.AgentMemory` but scoped to procurement. Holds
+cross-agent working memory during a single orchestration run:
+
+```python
+@dataclass
+class ProcurementAgentMemory:
+    recommended_solution: Optional[str]
+    recommended_category: Optional[str]
+    benchmark_findings: Dict[str, Any]    # keyed by line pk or item code
+    compliance_findings: Dict[str, Any]
+    validation_flags: Dict[str, str]
+    market_signals: List[str]
+    agent_summaries: Dict[str, str]       # agent_type -> summary text
+    facts: Dict[str, Any]
+    current_recommendation: Optional[str]
+    current_confidence: float
+```
+
+#### `ProcurementAgentContext`
+Dataclass (`apps/procurement/runtime/procurement_agent_context.py`). Analogous to
+`apps.agents.services.base_agent.AgentContext` but procurement-domain specific.
+Carries request data, RBAC fields, trace IDs, and a reference to `ProcurementAgentMemory`:
+
+```python
+@dataclass
+class ProcurementAgentContext:
+    procurement_request_id: int
+    analysis_run_id: int
+    analysis_type: str          # AnalysisRunType value
+    domain_code: str
+    schema_code: str
+    attributes: Dict[str, Any]
+    quotation_summaries: List[Dict[str, Any]]
+    validation_context: Dict[str, Any]
+    constraints: List[str]
+    assumptions: List[str]
+    rule_result: Dict[str, Any]
+    actor_user_id: Optional[int]
+    actor_primary_role: str
+    actor_roles_snapshot: List[str]
+    permission_checked: str
+    permission_source: str
+    access_granted: bool
+    trace_id: str               # from TraceContext.get_current()
+    span_id: str
+    memory: Optional[ProcurementAgentMemory]
+```
+
+#### `ProcurementAgentOrchestrator`
+The central bridge class (`apps/procurement/runtime/procurement_agent_orchestrator.py`).
+Every AI invocation in procurement now flows through `.run()`:
+
+```python
+orchestrator = ProcurementAgentOrchestrator()
+result = orchestrator.run(
+    run=analysis_run,           # AnalysisRun instance
+    agent_type="recommendation",  # string label
+    agent_fn=lambda ctx: ...,   # callable receives ProcurementAgentContext
+    memory=memory,              # ProcurementAgentMemory
+    extra_context={...},        # arbitrary additional fields
+    request_user=request.user,  # optional Django user for RBAC snapshot
+)
+```
+
+`agent_fn` is a zero-knowledge lambda — it wraps the existing agent call without
+requiring any agent code changes. The orchestrator constructs a `ProcurementAgentContext`,
+passes it to `agent_fn`, then normalises the output.
+
+**What `.run()` does:**
+1. Builds `ProcurementAgentContext` (RBAC snapshot, trace IDs from `TraceContext`)
+2. Creates a `ProcurementAgentExecutionRecord` DB row (status=RUNNING)
+3. Fires `PROCUREMENT_AGENT_RUN_STARTED` audit event via `AuditService`
+4. Opens a Langfuse span (fail-silent; sets `procurement_agent` tag)
+5. Calls `agent_fn(ctx)` -- existing agent code runs here unchanged
+6. Normalises raw output to `Dict[str, Any]`
+7. Updates `ProcurementAgentExecutionRecord` to COMPLETED + sets confidence
+8. Fires `PROCUREMENT_AGENT_RUN_COMPLETED` audit event
+9. Emits `procurement_agent_confidence` score to Langfuse
+10. Returns `ProcurementOrchestrationResult`
+
+On any exception: status set to FAILED, `PROCUREMENT_AGENT_RUN_FAILED` audit event fires,
+Langfuse span closed with level=ERROR. **Never re-raises** -- business flow continues.
+
+#### `ProcurementOrchestrationResult`
+Return type from `.run()`:
+
+```python
+@dataclass
+class ProcurementOrchestrationResult:
+    agent_type: str
+    status: str           # "completed" | "failed" | "skipped"
+    output: Dict[str, Any]
+    confidence: float     # 0.0-1.0
+    reasoning_summary: str
+    error: str
+    duration_ms: int
+    execution_record_id: Optional[int]
+```
+
+#### `ProcurementAgentExecutionRecord` (Model)
+New DB table (`procurement_agent_execution_record`) added to `apps/procurement/models.py`.
+One row per agent invocation. Links back to `AnalysisRun` via FK.
+
+Migration: `apps/procurement/migrations/0004_procurementagentexecutionrecord.py`
+
+Key fields:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `run` | FK(AnalysisRun) | Parent execution run |
+| `agent_type` | CharField | e.g. `"recommendation"`, `"benchmark_item_42"` |
+| `status` | CharField | `AnalysisRunStatus` value |
+| `confidence_score` | FloatField | 0.0-1.0 output confidence |
+| `reasoning_summary` | TextField | Human-readable agent summary |
+| `input_snapshot` | JSONField | `ctx.to_snapshot()` at call time |
+| `output_snapshot` | JSONField | Normalised agent output dict |
+| `error_message` | TextField | Error if `status=FAILED` |
+| `trace_id` | CharField | Linked to platform TraceContext |
+| `actor_user_id` | IntegerField | User who triggered the run |
+| `actor_primary_role` | CharField | RBAC role at time of invocation |
+
+### Updated AI Flow (Post Phase 1)
+
+```
+RecommendationService.run_recommendation()
+  |-- deterministic: _apply_rules(request)
+  |-- if rule confidence low:
+  |     ProcurementAgentOrchestrator.run(
+  |       agent_type="recommendation",
+  |       agent_fn=lambda ctx: RecommendationGraphService.run(run)
+  |     )
+  |       -> ProcurementAgentExecutionRecord created
+  |       -> AuditEvent: PROCUREMENT_AGENT_RUN_STARTED
+  |       -> Langfuse span: "procurement_recommendation_agent"
+  |       -> RecommendationGraphService.run(run)   <-- unchanged
+  |       -> AuditEvent: PROCUREMENT_AGENT_RUN_COMPLETED
+  |       -> score_trace: procurement_agent_confidence
+  |-- _merge_recommendation_result(rule_result, ai_output)
+
+BenchmarkService.run_benchmark()
+  |-- for each QuotationLineItem:
+  |     ProcurementAgentOrchestrator.run(
+  |       agent_type="benchmark_item_{pk}",
+  |       agent_fn=lambda ctx: BenchmarkAgent.resolve_benchmark_for_item(item)
+  |     )
+  |       -> ProcurementAgentExecutionRecord per line
+  |       -> memory.benchmark_findings[item_code] = result
+  |-- compute variance, classify risk
+
+ValidationOrchestratorService.run_validation()
+  |-- 6 deterministic validators run first
+  |-- if agent_enabled and ambiguous_count >= 3:
+  |     ProcurementAgentOrchestrator.run(
+  |       agent_type="validation_augmentation",
+  |       agent_fn=lambda ctx: ValidationAgentService.augment_findings(...)
+  |     )
+  |       -> ProcurementAgentExecutionRecord created (outer)
+  |       -> ValidationAgentService creates its own AgentRun internally (unchanged)
+  |-- score and classify updated findings
+```
+
+### Phase 1 Scope Boundaries
+
+**What Phase 1 DID:**
+- Added `ProcurementAgentContext`, `ProcurementAgentMemory`, `ProcurementAgentOrchestrator`
+- All three AI entry points route through the orchestrator bridge
+- `ProcurementAgentExecutionRecord` DB row per AI invocation
+- Standard audit events (`PROCUREMENT_AGENT_RUN_STARTED/COMPLETED/FAILED`)
+- Langfuse spans attached to existing trace context
+- `request_user` propagated for RBAC snapshot recording
+- Extension point stubs: `_ProcurementPlannerStub`, `_ProcurementToolRegistryStub`
+
+**What Phase 1 deliberately did NOT do:**
+- Did NOT register procurement agents in shared `AgentRun` / `AgentOrchestrator` tables
+- Did NOT rewrite `RecommendationGraphService`, `BenchmarkAgent`, or `ValidationAgentService`
+- Did NOT add new tool classes to `apps/tools/registry/`
+- Did NOT add `AgentDefinition` catalog rows for procurement agents
+- Did NOT change task signatures (callers of `run_analysis_task`, `run_validation_task`)
+
+### Phase 2 Roadmap
+
+| Item | Description |
+|---|---|
+| Planner integration | Replace `_ProcurementPlannerStub` with a `ReasoningPlanner` call to select which agents to run and in what order |
+| Tool registration | Promote stub tool names (`market_benchmark_lookup`, `vendor_catalog_lookup`, `standards_compliance_lookup`, `erp_reference_lookup`) to real `BaseTool` subclasses in `apps/tools/registry/` |
+| `AgentDefinition` catalog | Add `AgentDefinition` DB rows for `recommendation`, `benchmark`, `validation_augmentation` so they appear in governance dashboards |
+| Shared `AgentRun` convergence | Consider writing a shared `AgentRun` record alongside `ProcurementAgentExecutionRecord` so procurement agents appear in the unified agent trace view |
+| ReAct loop | Upgrade `RecommendationAgent` from LangGraph `StateGraph` to the shared `BaseAgent` ReAct loop |
+| Memory persistence | Serialise `ProcurementAgentMemory.to_snapshot()` to `AnalysisRun.output_payload_json` for replay |
 
 ---
 
@@ -435,7 +660,36 @@ ValidationRuleSet
   └── ──< ValidationRule (rules)
 
 SupplierQuotation ── FK ──> DocumentUpload (existing documents app)
+
+-- Phase 1 addition --
+AnalysisRun ──< ProcurementAgentExecutionRecord (agent_execution_records)
 ```
+
+### 3.14 ProcurementAgentExecutionRecord (Phase 1)
+
+Added in v2.0. One row per AI agent invocation within an `AnalysisRun`.
+Written by `ProcurementAgentOrchestrator` -- never written directly by service code.
+
+| Field | Type | Notes |
+|---|---|---|
+| `run` | FK(AnalysisRun) | CASCADE delete |
+| `agent_type` | CharField(100) | e.g. `"recommendation"`, `"benchmark_item_42"` |
+| `status` | CharField(20) | `AnalysisRunStatus` value |
+| `started_at` | DateTimeField | Set on create (`auto_now_add`) |
+| `completed_at` | DateTimeField(null) | Set when orchestrator receives output |
+| `confidence_score` | FloatField(null) | 0.0-1.0 agent-reported confidence |
+| `reasoning_summary` | TextField | Short text summary from agent output |
+| `input_snapshot` | JSONField(null) | `ctx.to_snapshot()` at call time |
+| `output_snapshot` | JSONField(null) | Normalised agent output dict |
+| `error_message` | TextField | Exception message if `status=FAILED` |
+| `trace_id` | CharField(64) | From `TraceContext` at invocation time |
+| `span_id` | CharField(64) | From `TraceContext` |
+| `actor_user_id` | IntegerField(null) | User who triggered the run |
+| `actor_primary_role` | CharField(100) | Primary RBAC role at invocation |
+
+**Inherits**: `TimestampMixin`  
+**DB table**: `procurement_agent_execution_record`  
+**Indexes**: `[run, agent_type]`, `[status, started_at]`, `[trace_id]`
 
 ---
 

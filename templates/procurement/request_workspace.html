@@ -15,6 +15,28 @@
 
 {% block content %}
 
+{# ── Landmark Group Header Banner (shown for HVAC domain) ── #}
+{% if proc_request.domain_code == "HVAC" %}
+<div class="rounded-3 mb-4 p-3 d-flex align-items-center gap-3"
+     style="background:linear-gradient(135deg,#003366 0%,#0055a5 60%,#0077cc 100%);">
+  <div class="d-flex align-items-center justify-content-center rounded-circle"
+       style="width:48px;height:48px;background:rgba(255,255,255,.15);flex-shrink:0;">
+    <i class="bi bi-hexagon-fill fs-5 text-warning"></i>
+  </div>
+  <div>
+    <div class="fw-bold text-white">Landmark Group — HVAC Procurement Workspace</div>
+    <div class="text-white-50 small">
+      GCC Climate Intelligence &bull; AED Market Benchmarks &bull; End-to-End Procurement
+    </div>
+  </div>
+  <div class="ms-auto d-none d-md-flex align-items-center gap-2">
+    <span class="badge bg-light text-primary fw-semibold">{{ proc_request.geography_country|default:"GCC" }}</span>
+    <span class="badge bg-warning text-dark fw-semibold">{{ proc_request.currency|default:"AED" }}</span>
+    <span class="badge bg-success bg-opacity-75 text-white">HVAC Domain</span>
+  </div>
+</div>
+{% endif %}
+
 {# ── Request Summary ── #}
 <div class="card mb-4">
   <div class="card-header d-flex justify-content-between align-items-center">
@@ -27,15 +49,19 @@
       </form>
       {% endif %}
       {% if proc_request.status == "READY" or proc_request.status == "COMPLETED" or proc_request.status == "REVIEW_REQUIRED" %}
-      <form method="post" action="{% url 'procurement:trigger_analysis' pk=proc_request.pk %}" class="d-flex gap-1">
-        {% csrf_token %}
-        <select name="run_type" class="form-select form-select-sm" style="width:auto">
+      <div class="d-flex gap-1" id="run-analysis-wrapper">
+        <select id="run-type-select" class="form-select form-select-sm" style="width:auto">
           <option value="RECOMMENDATION">Recommendation</option>
           <option value="BENCHMARK">Benchmark</option>
           <option value="VALIDATION">Validation</option>
         </select>
-        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-play-fill me-1"></i>Run Analysis</button>
-      </form>
+        <button type="button" id="btn-run-analysis" class="btn btn-primary btn-sm"
+                data-request-pk="{{ proc_request.pk }}"
+                data-trigger-url="{% url 'procurement:trigger_analysis' pk=proc_request.pk %}"
+                data-csrf="{{ csrf_token }}">
+          <i class="bi bi-play-fill me-1"></i>Run Analysis
+        </button>
+      </div>
       {% endif %}
     </div>
   </div>
@@ -83,6 +109,33 @@
   {# ── Left Column ── #}
   <div class="col-lg-8">
 
+    {# ── Workspace Tab Navigation ── #}
+    <ul class="nav nav-tabs border-bottom-0 mb-0" id="workspaceTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active fw-semibold" id="tab-details-btn"
+                data-bs-toggle="tab" data-bs-target="#tab-details" type="button" role="tab">
+          <i class="bi bi-list-ul me-1"></i>Details
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link fw-semibold" id="tab-analysis-btn"
+                data-bs-toggle="tab" data-bs-target="#tab-analysis" type="button" role="tab">
+          <i class="bi bi-bar-chart me-1"></i>Analysis
+          {% if benchmarks or recommendation or compliance %}
+          <span class="badge bg-primary rounded-pill ms-1" style="font-size:.65rem;">
+            {% if recommendation %}1{% endif %}{% if benchmarks %}{{ benchmarks|length }}{% endif %}
+          </span>
+          {% endif %}
+        </button>
+      </li>
+    </ul>
+
+    {# ── Tab Content ── #}
+    <div class="tab-content border border-top-0 rounded-bottom bg-white p-0 mb-4">
+
+      {# ---- Tab 1: Details (Attributes + Validation) ---- #}
+      <div class="tab-pane fade show active p-3" id="tab-details" role="tabpanel">
+
     {# Attributes #}
     <div class="card mb-4">
       <div class="card-header"><h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Attributes</h6></div>
@@ -109,6 +162,11 @@
 
     {# Validation Summary #}
     {% include "procurement/partials/validation_summary.html" %}
+
+      </div>{# end tab-details #}
+
+      {# ---- Tab 2: Analysis (Recommendation + Benchmark + Compliance) ---- #}
+      <div class="tab-pane fade p-3" id="tab-analysis" role="tabpanel">
 
     {# Recommendation Result #}
     {% if recommendation %}
@@ -203,7 +261,19 @@
     </div>
     {% endif %}
 
-  </div>
+    {% if not recommendation and not benchmarks and not compliance %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-bar-chart display-6 mb-3 d-block opacity-50"></i>
+      <div class="fw-semibold">No analysis runs yet.</div>
+      <div class="small mt-1">Use the <strong>Run Analysis</strong> button above to trigger a Benchmark, Recommendation, or Validation run.</div>
+    </div>
+    {% endif %}
+
+      </div>{# end tab-analysis #}
+
+    </div>{# end tab-content #}
+
+  </div>{# end col-lg-8 #}
 
   {# ── Right Column ── #}
   <div class="col-lg-4">
@@ -319,10 +389,305 @@
 
   </div>
 </div>
+
+{# ========================================================= #}
+{# THOUGHT PROCESS LOADER OVERLAY (inside content block)   #}
+{# ========================================================= #}
+<div id="tpl-overlay" aria-live="polite" aria-atomic="true" style="
+  display:none;
+  position:fixed;inset:0;
+  background:rgba(0,5,20,.72);
+  backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);
+  z-index:9999;
+  align-items:center;
+  justify-content:center;
+">
+  <div style="
+    background:linear-gradient(160deg,#0a1628 0%,#0d2244 55%,#0a1a38 100%);
+    border:1px solid rgba(0,120,255,.25);
+    border-radius:20px;
+    box-shadow:0 0 60px rgba(0,100,255,.18),0 24px 64px rgba(0,0,0,.6);
+    padding:2.4rem 2.8rem;
+    max-width:520px;
+    width:92vw;
+    position:relative;
+    overflow:hidden;
+  " id="tpl-card">
+    <!-- shimmer sweep -->
+    <div style="
+      position:absolute;inset:0;
+      background:linear-gradient(105deg,transparent 35%,rgba(100,160,255,.05) 50%,transparent 65%);
+      animation:tplShimmer 3.2s linear infinite;
+      pointer-events:none;
+    "></div>
+
+    <!-- header -->
+    <div class="d-flex align-items-center gap-3 mb-3">
+      <div id="tpl-icon-ring" style="
+        width:52px;height:52px;border-radius:50%;
+        background:rgba(0,110,255,.15);
+        border:2px solid rgba(0,130,255,.35);
+        display:flex;align-items:center;justify-content:center;
+        flex-shrink:0;
+        animation:tplPulseRing 2s ease-in-out infinite;
+      ">
+        <i id="tpl-icon" class="bi bi-cpu-fill fs-4 text-primary"></i>
+      </div>
+      <div>
+        <div id="tpl-title" class="fw-bold text-white" style="font-size:1.05rem;"></div>
+        <div class="text-white-50" style="font-size:.8rem;">Landmark Group Procurement Intelligence</div>
+      </div>
+    </div>
+
+    <!-- current status line -->
+    <div class="mb-3 px-3 py-2 rounded-2" style="background:rgba(0,100,255,.1);border:1px solid rgba(0,120,255,.2);">
+      <div class="d-flex align-items-center gap-2">
+        <div class="spinner-grow spinner-grow-sm text-primary flex-shrink-0" style="animation-duration:1s;"></div>
+        <span id="tpl-current-msg" class="text-white" style="font-size:.88rem;font-weight:500;"></span>
+      </div>
+    </div>
+
+    <!-- step list -->
+    <div id="tpl-steps" style="display:flex;flex-direction:column;gap:.45rem;max-height:280px;overflow:hidden;"></div>
+
+    <!-- footer -->
+    <div class="mt-3 d-flex align-items-center justify-content-between">
+      <div style="width:100%;">
+        <div id="tpl-progress-bar-wrap" class="progress" style="height:4px;border-radius:4px;background:rgba(255,255,255,.08);">
+          <div id="tpl-progress-bar" class="progress-bar bg-primary"
+               role="progressbar" style="width:0%;transition:width .6s ease;"></div>
+        </div>
+      </div>
+    </div>
+    <div class="text-center mt-2" style="font-size:.72rem;color:rgba(255,255,255,.3);">
+      Processing in progress &mdash; please wait
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+@keyframes tplShimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+@keyframes tplPulseRing {
+  0%,100% { box-shadow:0 0 0 0 rgba(0,120,255,.4); }
+  50%      { box-shadow:0 0 0 10px rgba(0,120,255,.0); }
+}
+@keyframes tplFadeIn {
+  from { opacity:0; transform:translateY(6px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+</style>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+// ============================================================
+// THOUGHT PROCESS LOADER — Run Analysis interception
+// ============================================================
+(function () {
+  var STEPS = {
+    RECOMMENDATION: [
+      { icon: 'bi-file-earmark-text',  msg: 'Reading procurement request details and specifications...' },
+      { icon: 'bi-list-check',         msg: 'Extracting HVAC attribute specifications from request...' },
+      { icon: 'bi-search',             msg: 'Checking required fields — store type, area, zones, temperature, chilled water...' },
+      { icon: 'bi-diagram-3',          msg: 'Querying deterministic rules engine against GCC HVAC rule matrix...' },
+      { icon: 'bi-database-check',     msg: 'Scanning internal product catalogue for matching configurations...' },
+      { icon: 'bi-globe2',             msg: 'No confident match — fetching live market data from GCC HVAC sources...' },
+      { icon: 'bi-cloud-arrow-down',   msg: 'Retrieving current pricing from online market intelligence feeds...' },
+      { icon: 'bi-thermometer-sun',    msg: 'Analysing GCC climate conditions and energy efficiency standards...' },
+      { icon: 'bi-robot',              msg: 'Consulting AI recommendation engine with full context...' },
+      { icon: 'bi-bar-chart-line',     msg: 'Comparing vendor options, system types, and regional pricing...' },
+      { icon: 'bi-shield-check',       msg: 'Generating compliance report against Dewa / SASO standards...' },
+      { icon: 'bi-patch-check-fill',   msg: 'Finalising recommendation with confidence scoring...' },
+    ],
+    BENCHMARK: [
+      { icon: 'bi-file-earmark-text',  msg: 'Loading supplier quotation data and line items...' },
+      { icon: 'bi-list-ol',            msg: 'Parsing line items, unit prices, and quantities...' },
+      { icon: 'bi-database-check',     msg: 'Searching primary data source — internal procurement history...' },
+      { icon: 'bi-database-x',         msg: 'Limited data in primary source — expanding to web market search...' },
+      { icon: 'bi-globe2',             msg: 'Fetching GCC benchmark pricing via web intelligence...' },
+      { icon: 'bi-cloud-arrow-down',   msg: 'Aggregating market data and computing benchmark averages...' },
+      { icon: 'bi-calculator',         msg: 'Calculating variance percentages per line item...' },
+      { icon: 'bi-exclamation-triangle', msg: 'Assessing risk levels — HIGH / MEDIUM / LOW variance lines...' },
+      { icon: 'bi-bar-chart-line',     msg: 'Comparing quoted values against regional market benchmarks...' },
+      { icon: 'bi-patch-check-fill',   msg: 'Compiling full benchmark analysis report...' },
+    ],
+    VALIDATION: [
+      { icon: 'bi-file-earmark-text',  msg: 'Loading request attributes and validation rule set...' },
+      { icon: 'bi-check2-square',      msg: 'Running mandatory field checks...' },
+      { icon: 'bi-rulers',             msg: 'Validating value ranges and GCC compliance constraints...' },
+      { icon: 'bi-shield-check',       msg: 'Cross-checking against domain-specific validation rules...' },
+      { icon: 'bi-patch-check-fill',   msg: 'Finalising validation report...' },
+    ],
+  };
+
+  var ICONS_BY_TYPE = {
+    RECOMMENDATION: 'bi-lightbulb-fill',
+    BENCHMARK:      'bi-bar-chart-fill',
+    VALIDATION:     'bi-check2-circle',
+  };
+
+  var TITLES_BY_TYPE = {
+    RECOMMENDATION: 'Running Recommendation Analysis',
+    BENCHMARK:      'Running Benchmark Analysis',
+    VALIDATION:     'Running Validation Analysis',
+  };
+
+  function showLoader(runType) {
+    var overlay   = document.getElementById('tpl-overlay');
+    var stepsEl   = document.getElementById('tpl-steps');
+    var titleEl   = document.getElementById('tpl-title');
+    var iconEl    = document.getElementById('tpl-icon');
+    var currentEl = document.getElementById('tpl-current-msg');
+    var barEl     = document.getElementById('tpl-progress-bar');
+
+    var steps = STEPS[runType] || STEPS['RECOMMENDATION'];
+    var title = TITLES_BY_TYPE[runType] || 'Running Analysis';
+    var iconCls = ICONS_BY_TYPE[runType] || 'bi-cpu-fill';
+
+    titleEl.textContent = title;
+    iconEl.className = 'bi ' + iconCls + ' fs-4 text-primary';
+    stepsEl.innerHTML = '';
+    barEl.style.width = '0%';
+
+    // Pre-render all step rows (hidden)
+    steps.forEach(function (step, i) {
+      var row = document.createElement('div');
+      row.id  = 'tpl-step-' + i;
+      row.style.cssText = (
+        'display:flex;align-items:center;gap:.55rem;padding:.3rem .5rem;' +
+        'border-radius:8px;opacity:.22;transition:opacity .4s,background .4s;'
+      );
+      row.innerHTML = (
+        '<i class="bi ' + step.icon + ' flex-shrink-0" style="font-size:.9rem;color:#4d9fff;width:16px;text-align:center;"></i>' +
+        '<span style="font-size:.8rem;color:rgba(255,255,255,.75);">' + step.msg + '</span>' +
+        '<i class="bi bi-check-circle-fill ms-auto flex-shrink-0" id="tpl-tick-' + i + '" style="font-size:.8rem;color:#28c76f;display:none;"></i>'
+      );
+      stepsEl.appendChild(row);
+    });
+
+    overlay.style.display = 'flex';
+
+    // Animate steps
+    var STEP_MS    = 1350;
+    var activeIdx  = 0;
+    currentEl.textContent = steps[0].msg;
+    _activateStep(0, steps);
+
+    var interval = setInterval(function () {
+      // tick previous step
+      var prevTick = document.getElementById('tpl-tick-' + activeIdx);
+      if (prevTick) prevTick.style.display = 'inline';
+      var prevRow = document.getElementById('tpl-step-' + activeIdx);
+      if (prevRow) { prevRow.style.opacity = '.45'; prevRow.style.background = 'none'; }
+
+      activeIdx++;
+      if (activeIdx >= steps.length) { activeIdx = steps.length - 1; return; }
+
+      _activateStep(activeIdx, steps);
+      currentEl.textContent = steps[activeIdx].msg;
+      // progress bar
+      var pct = Math.round(((activeIdx + 1) / steps.length) * 92);
+      barEl.style.width = pct + '%';
+    }, STEP_MS);
+
+    return interval;
+  }
+
+  function _activateStep(idx, steps) {
+    var row = document.getElementById('tpl-step-' + idx);
+    if (!row) return;
+    row.style.opacity = '1';
+    row.style.background = 'rgba(0,100,255,.12)';
+    row.style.animation  = 'tplFadeIn .3s ease';
+    // scroll into view if needed
+    row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function hideLoader(interval) {
+    clearInterval(interval);
+    var barEl   = document.getElementById('tpl-progress-bar');
+    var overlay = document.getElementById('tpl-overlay');
+    var curEl   = document.getElementById('tpl-current-msg');
+    barEl.style.width = '100%';
+    curEl.textContent  = 'Analysis complete — loading results...';
+    setTimeout(function () { overlay.style.display = 'none'; }, 600);
+  }
+
+  // Wire up the Run Analysis button
+  var btn = document.getElementById('btn-run-analysis');
+  if (btn) {
+    btn.addEventListener('click', function () {
+      var runType = document.getElementById('run-type-select').value;
+      var triggerUrl = btn.getAttribute('data-trigger-url');
+      var csrf = btn.getAttribute('data-csrf');
+
+      var loopInterval = showLoader(runType);
+
+      // Disable button
+      btn.disabled = true;
+      var sel = document.getElementById('run-type-select');
+      if (sel) sel.disabled = true;
+
+      // POST to trigger_analysis via fetch
+      var formData = new FormData();
+      formData.append('run_type', runType);
+      formData.append('csrfmiddlewaretoken', csrf);
+
+      fetch(triggerUrl, {
+        method: 'POST',
+        body: formData,
+        credentials: 'same-origin',
+        redirect: 'follow',
+      })
+      .then(function (resp) {
+        hideLoader(loopInterval);
+        // Signal to auto-activate Analysis tab after reload
+        sessionStorage.setItem('proc_goto_tab_' + btn.getAttribute('data-request-pk'), 'analysis');
+        window.location.reload();
+      })
+      .catch(function (err) {
+        hideLoader(loopInterval);
+        btn.disabled = false;
+        if (sel) sel.disabled = false;
+        // Fallback: submit normally
+        var fallbackForm = document.createElement('form');
+        fallbackForm.method = 'POST';
+        fallbackForm.action = triggerUrl;
+        var csrfInput = document.createElement('input');
+        csrfInput.type = 'hidden'; csrfInput.name = 'csrfmiddlewaretoken'; csrfInput.value = csrf;
+        var rtInput = document.createElement('input');
+        rtInput.type = 'hidden'; rtInput.name = 'run_type'; rtInput.value = runType;
+        fallbackForm.appendChild(csrfInput);
+        fallbackForm.appendChild(rtInput);
+        document.body.appendChild(fallbackForm);
+        fallbackForm.submit();
+      });
+    });
+  }
+})();
+
+// ============================================================
+// Auto-activate Analysis tab when arriving after a run
+// (sessionStorage key set by the thought process loader)
+// ============================================================
+(function () {
+  var reqPk = '{{ proc_request.pk }}';
+  var tabKey = 'proc_goto_tab_' + reqPk;
+  var target = sessionStorage.getItem(tabKey);
+  if (target) {
+    sessionStorage.removeItem(tabKey);
+    var tabBtn = document.getElementById('tab-' + target + '-btn');
+    if (tabBtn) setTimeout(function () { tabBtn.click(); }, 100);
+  }
+})();
+
+// ============================================================
 // Quotation PDF prefill upload
 var qForm = document.getElementById('quotation-prefill-form');
 if (qForm) {
