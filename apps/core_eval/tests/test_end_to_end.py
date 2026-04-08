@@ -27,6 +27,7 @@ from apps.core_eval.services.learning_engine import (
 )
 from apps.documents.models import DocumentUpload, Invoice
 from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection, ExtractionResult
+from apps.extraction_core.models import ExtractionRun
 from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
 
 User = get_user_model()
@@ -60,12 +61,16 @@ def _make_invoice(upload, *, invoice_number="INV-E2E-001", confidence=0.88, **kw
 
 
 def _make_ext_result(upload, invoice, *, raw_response=None, confidence=None):
+    run = ExtractionRun.objects.create(
+        document_upload=upload,
+        overall_confidence=confidence or invoice.extraction_confidence,
+        extracted_data_json=raw_response or {},
+        status="COMPLETED",
+    )
     return ExtractionResult.objects.create(
         document_upload=upload,
-        invoice=invoice,
+        extraction_run=run,
         success=True,
-        confidence=confidence or invoice.extraction_confidence,
-        raw_response=raw_response or {},
     )
 
 

@@ -7,6 +7,7 @@ from rest_framework.filters import OrderingFilter
 
 from apps.accounts.models import User
 from apps.core.permissions import IsAdminOrReadOnly
+from apps.core.tenant_utils import TenantQuerysetMixin
 from apps.reviews.models import ReviewAssignment
 from apps.reviews.serializers import (
     ReviewAssignmentDetailSerializer,
@@ -18,7 +19,7 @@ from apps.reviews.serializers import (
 from apps.reviews.services import ReviewWorkflowService
 
 
-class ReviewAssignmentViewSet(viewsets.ModelViewSet):
+class ReviewAssignmentViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     queryset = (
         ReviewAssignment.objects.select_related(
             "reconciliation_result",

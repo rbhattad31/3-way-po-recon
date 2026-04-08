@@ -12,6 +12,7 @@ from apps.cases.models import APCase
 from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode, UserRole
 from apps.core.permissions import permission_required_code, _has_permission_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,7 @@ def _build_copilot_context(case, invoice, po, grns, stages, decisions,
 @login_required
 def case_inbox(request):
     """AP Cases inbox — main listing of all cases with filters."""
+    tenant = require_tenant(request)
     vendor_id = request.GET.get("vendor", "")
     assigned_to_id = request.GET.get("assigned_to", "")
     qs = CaseSelectors.inbox(
@@ -270,6 +272,8 @@ def case_inbox(request):
     # Handle "unassigned" filter
     if assigned_to_id == "unassigned":
         qs = qs.filter(assigned_to__isnull=True)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     qs = CaseSelectors.scope_for_user(qs, request.user)
 
     paginator = Paginator(qs, 25)
@@ -280,6 +284,8 @@ def case_inbox(request):
     # Build vendor choices scoped for user
     from apps.vendors.models import Vendor
     vendor_qs = Vendor.objects.filter(is_active=True).order_by("name")
+    if tenant is not None:
+        vendor_qs = vendor_qs.filter(tenant=tenant)
     from apps.vendors.template_views import _scope_vendors_for_user
     vendor_qs = _scope_vendors_for_user(vendor_qs, request.user)
     vendor_choices = list(vendor_qs.values_list("id", "name"))
@@ -324,7 +330,7 @@ def case_inbox(request):
     # ----- Pending invoices: approved / READY_FOR_RECON but no active case -----
     from apps.documents.models import Invoice
     from apps.core.enums import InvoiceStatus
-    pending_invoices = (
+    pending_invoices_qs = (
         Invoice.objects.filter(
             status=InvoiceStatus.READY_FOR_RECON,
         )
@@ -332,8 +338,11 @@ def case_inbox(request):
             pk__in=APCase.objects.filter(is_active=True).values_list("invoice_id", flat=True)
         )
         .select_related("document_upload__uploaded_by", "vendor")
-        .order_by("-created_at")[:50]
+        .order_by("-created_at")
     )
+    if tenant is not None:
+        pending_invoices_qs = pending_invoices_qs.filter(tenant=tenant)
+    pending_invoices = pending_invoices_qs[:50]
 
     return render(request, "cases/case_inbox.html", {
         "cases": page_obj,
@@ -418,7 +427,7 @@ def create_case_for_invoice(request, invoice_pk):
     from apps.cases.tasks import process_case_task
     from apps.core.utils import dispatch_task
     try:
-        dispatch_task(process_case_task, case_id=case.pk)
+        dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
         messages.success(request, f"Case {case.case_number} created and processing started.")
     except Exception as exc:
         messages.warning(request, f"Case {case.case_number} created but processing failed to start: {exc}")
@@ -429,6 +438,7 @@ def create_case_for_invoice(request, invoice_pk):
 @login_required
 def case_agent_view(request, pk):
     """Agentic case view — ChatGPT-style conversation feed for case investigation."""
+    tenant = require_tenant(request)
     base_qs = APCase.objects.select_related(
         "invoice", "invoice__vendor", "invoice__document_upload",
         "vendor", "purchase_order", "reconciliation_result",
@@ -437,6 +447,8 @@ def case_agent_view(request, pk):
         "stages", "artifacts", "decisions",
         "assignments", "comments", "activities",
     ).filter(is_active=True)
+    if tenant is not None:
+        base_qs = base_qs.filter(tenant=tenant)
     base_qs = CaseSelectors.scope_for_user(base_qs, request.user)
     case = get_object_or_404(base_qs, pk=pk)
 
@@ -462,9 +474,17 @@ def case_agent_view(request, pk):
     if recon_result:
         exceptions = list(recon_result.exceptions.all().order_by("-severity", "exception_type"))
 
-    # Non-PO validation issues
+    # Non-PO validation issues — skip when reconciliation exceptions already
+    # exist for this case because _create_non_po_recon_result() converts
+    # failed validation checks into ReconciliationException records.
+    # Showing both would double-count.
     validation_issues = []
-    validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version", "-created_at").first()
+    validation_artifact = (
+        case.artifacts.filter(artifact_type="VALIDATION_RESULT")
+        .order_by("-version", "-created_at")
+        .first()
+        if not exceptions else None
+    )
     if validation_artifact and isinstance(validation_artifact.payload, dict):
         checks = validation_artifact.payload.get("checks", {})
         if isinstance(checks, dict):
@@ -521,7 +541,7 @@ def case_agent_view(request, pk):
 
     # Timeline (from audit/governance service)
     from apps.auditlog.timeline_service import CaseTimelineService
-    timeline = CaseTimelineService.get_case_timeline(invoice.pk)
+    timeline = CaseTimelineService.get_case_timeline(invoice.pk, tenant=getattr(request, 'tenant', None))
 
     # Role-based trace visibility
     from apps.core.enums import UserRole
@@ -898,6 +918,7 @@ def case_add_comment(request, pk):
             case=case,
             author=request.user,
             body=body,
+            tenant=getattr(case, 'tenant', None),
         )
 
     messages.success(request, "Comment added.")

@@ -17,5 +17,5 @@ urlpatterns = [
     path("v1/extraction-core/", include("apps.extraction_core.api_urls")),
     path("v1/extraction-pipeline/", include("apps.extraction_core.extraction_api_urls")),
     path("v1/extraction-configs/", include("apps.extraction_configs.api_urls")),
-    path("v1/extraction-documents/", include("apps.extraction_documents.api_urls")),
+
 ]

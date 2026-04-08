@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from apps.core.enums import InvoicePostingStatus, InvoiceStatus, PostingRunStatus
 from apps.documents.models import Invoice
+from apps.extraction.models import ExtractionApproval
 from apps.posting.models import InvoicePosting
 from apps.posting_core.models import PostingRun
 
@@ -62,7 +63,6 @@ class PostingEligibilityService:
 
         # 5. Approved extraction exists
         try:
-            from apps.extraction.models import ExtractionApproval
             from apps.core.enums import ExtractionApprovalStatus
             has_approval = ExtractionApproval.objects.filter(
                 invoice=invoice,

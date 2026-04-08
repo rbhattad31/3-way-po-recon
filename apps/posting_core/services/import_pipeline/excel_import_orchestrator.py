@@ -59,6 +59,7 @@ class ExcelImportOrchestrator:
         file_path: str,
         batch_type: str,
         *,
+        tenant=None,
         user=None,
         source_as_of=None,
         column_map: Optional[Dict[str, str]] = None,
@@ -96,6 +97,7 @@ class ExcelImportOrchestrator:
             status=ERPReferenceBatchStatus.PENDING,
             imported_by=user,
             metadata_json=metadata or {},
+            tenant=tenant,
         )
 
         cls._log_audit(

@@ -47,7 +47,6 @@ INSTALLED_APPS = [
     "apps.procurement",
     "apps.extraction_core",
     "apps.extraction_configs",
-    "apps.extraction_documents",
     "apps.posting",
     "apps.posting_core",
     "apps.erp_integration",
@@ -60,6 +59,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.core.middleware.TenantMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.LoginRequiredMiddleware",
@@ -141,7 +141,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Cache-busting version counter — bump after static file changes
-STATIC_VERSION = "1.1.3"
+STATIC_VERSION = "1.1.4"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"

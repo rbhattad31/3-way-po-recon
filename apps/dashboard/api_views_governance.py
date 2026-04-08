@@ -31,7 +31,7 @@ class _GovBaseView(APIView):
 class GovDashSummaryView(_GovBaseView):
     def get(self, request):
         data = AgentGovernanceDashboardService.get_summary(
-            filters=_get_gov_filters(request), user=request.user,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -39,7 +39,7 @@ class GovDashSummaryView(_GovBaseView):
 class GovIdentityView(_GovBaseView):
     def get(self, request):
         data = AgentGovernanceDashboardService.get_execution_identity(
-            filters=_get_gov_filters(request), user=request.user,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -47,7 +47,7 @@ class GovIdentityView(_GovBaseView):
 class GovAuthorizationView(_GovBaseView):
     def get(self, request):
         data = AgentGovernanceDashboardService.get_authorization_matrix(
-            filters=_get_gov_filters(request), user=request.user,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -55,7 +55,7 @@ class GovAuthorizationView(_GovBaseView):
 class GovToolAuthorizationView(_GovBaseView):
     def get(self, request):
         data = AgentGovernanceDashboardService.get_tool_authorization(
-            filters=_get_gov_filters(request), user=request.user,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -63,7 +63,7 @@ class GovToolAuthorizationView(_GovBaseView):
 class GovRecommendationsView(_GovBaseView):
     def get(self, request):
         data = AgentGovernanceDashboardService.get_recommendation_governance(
-            filters=_get_gov_filters(request), user=request.user,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -71,7 +71,7 @@ class GovRecommendationsView(_GovBaseView):
 class GovProtectedActionsView(_GovBaseView):
     def get(self, request):
         data = AgentGovernanceDashboardService.get_protected_action_outcomes(
-            filters=_get_gov_filters(request), user=request.user,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -80,7 +80,7 @@ class GovDenialsView(_GovBaseView):
     def get(self, request):
         limit = min(int(request.query_params.get("limit", 50)), 100)
         data = AgentGovernanceDashboardService.get_denials(
-            filters=_get_gov_filters(request), user=request.user, limit=limit,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None), limit=limit,
         )
         return Response(data)
 
@@ -88,7 +88,7 @@ class GovDenialsView(_GovBaseView):
 class GovCoverageTrendView(_GovBaseView):
     def get(self, request):
         data = AgentGovernanceDashboardService.get_coverage_trend(
-            filters=_get_gov_filters(request), user=request.user,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -99,7 +99,7 @@ class GovSystemAgentView(_GovBaseView):
 
     def get(self, request):
         data = AgentGovernanceDashboardService.get_system_agent_oversight(
-            filters=_get_gov_filters(request), user=request.user,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -107,7 +107,7 @@ class GovSystemAgentView(_GovBaseView):
 class GovTraceDetailView(_GovBaseView):
     def get(self, request, run_id):
         data = AgentGovernanceDashboardService.get_trace_detail(
-            run_id=run_id, user=request.user,
+            run_id=run_id, user=request.user, tenant=getattr(request, 'tenant', None),
         )
         if data is None:
             return Response({"detail": "Not found."}, status=404)
@@ -118,6 +118,6 @@ class GovTraceRunListView(_GovBaseView):
     def get(self, request):
         limit = min(int(request.query_params.get("limit", 50)), 100)
         data = AgentGovernanceDashboardService.get_trace_run_list(
-            filters=_get_gov_filters(request), user=request.user, limit=limit,
+            filters=_get_gov_filters(request), user=request.user, tenant=getattr(request, 'tenant', None), limit=limit,
         )
         return Response(data)

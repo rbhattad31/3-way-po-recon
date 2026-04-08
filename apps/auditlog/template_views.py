@@ -16,7 +16,12 @@ from apps.documents.models import Invoice
 @permission_required_code("governance.view")
 def audit_event_list(request):
     """Browsable audit event log with filtering (including RBAC filters)."""
+    from apps.core.tenant_utils import get_tenant_or_none
+    tenant = get_tenant_or_none(request)
+
     qs = AuditEvent.objects.select_related("performed_by").order_by("-created_at")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # Filters
     entity_type = request.GET.get("entity_type")
@@ -46,25 +51,28 @@ def audit_event_list(request):
     page_obj = paginator.get_page(request.GET.get("page"))
 
     # Distinct values for filter dropdowns
+    dropdown_base = AuditEvent.objects.all()
+    if tenant is not None:
+        dropdown_base = dropdown_base.filter(tenant=tenant)
     entity_types = (
-        AuditEvent.objects.order_by("entity_type")
+        dropdown_base.order_by("entity_type")
         .values_list("entity_type", flat=True)
         .distinct()
     )
     event_types = (
-        AuditEvent.objects.exclude(event_type="")
+        dropdown_base.exclude(event_type="")
         .order_by("event_type")
         .values_list("event_type", flat=True)
         .distinct()
     )
     roles = (
-        AuditEvent.objects.exclude(actor_primary_role="")
+        dropdown_base.exclude(actor_primary_role="")
         .order_by("actor_primary_role")
         .values_list("actor_primary_role", flat=True)
         .distinct()
     )
     users = (
-        AuditEvent.objects.filter(performed_by__isnull=False)
+        dropdown_base.filter(performed_by__isnull=False)
         .order_by("performed_by__email")
         .values_list("performed_by__email", flat=True)
         .distinct()
@@ -91,33 +99,38 @@ def audit_event_list(request):
 @permission_required_code("governance.view")
 def invoice_governance(request, invoice_id):
     """Full governance view for a single invoice — audit trail, agent trace, timeline."""
-    invoice = get_object_or_404(
-        Invoice.objects.select_related("vendor"),
-        pk=invoice_id,
-    )
+    invoice_qs = Invoice.objects.select_related("vendor")
+    tenant = getattr(request, 'tenant', None)
+    if tenant is not None:
+        invoice_qs = invoice_qs.filter(tenant=tenant)
+    invoice = get_object_or_404(invoice_qs, pk=invoice_id)
 
     # Timeline (all events merged)
-    timeline = CaseTimelineService.get_case_timeline(invoice_id)
+    timeline = CaseTimelineService.get_case_timeline(invoice_id, tenant=tenant)
 
     # Agent trace
-    trace = AgentTraceService.get_trace_for_invoice(invoice_id)
+    trace = AgentTraceService.get_trace_for_invoice(invoice_id, tenant=tenant)
 
     # Recommendations
+    rec_qs = AgentRecommendation.objects.filter(invoice_id=invoice_id)
+    if tenant is not None:
+        rec_qs = rec_qs.filter(tenant=tenant)
     recommendations = (
-        AgentRecommendation.objects
-        .filter(invoice_id=invoice_id)
+        rec_qs
         .select_related("agent_run", "accepted_by")
         .order_by("-confidence")
     )
 
     # Audit events for this invoice (with RBAC cross-reference)
     from django.db.models import Q
+    audit_qs = AuditEvent.objects.filter(
+        Q(entity_type="Invoice", entity_id=invoice_id) |
+        Q(invoice_id=invoice_id)
+    )
+    if tenant is not None:
+        audit_qs = audit_qs.filter(tenant=tenant)
     audit_events = (
-        AuditEvent.objects
-        .filter(
-            Q(entity_type="Invoice", entity_id=invoice_id) |
-            Q(invoice_id=invoice_id)
-        )
+        audit_qs
         .select_related("performed_by")
         .order_by("-created_at")
         .distinct()

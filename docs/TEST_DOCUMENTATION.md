@@ -1168,6 +1168,7 @@ The following apps have **zero test files**:
 6. **PostingMappingEngine Tests** -- Test vendor/item/tax/cost-center/PO resolution strategy chains (exact code -> alias -> name -> fuzzy). High priority remaining gap.
 7. **DB Fallback Adapter Tests** -- Test individual ERP DB fallback adapters (vendor, item, tax, cost center, PO dual-tier, GRN).
 8. **Serializer Tests** -- DRF serializer validation for critical models (Invoice, ReconciliationResult, PostingRun).
+9. **Multi-Tenant Isolation Tests** -- Verify tenant scoping on ViewSets, template views, agent tools, and Celery tasks. Test that users in Tenant A cannot access Tenant B data. Test platform admin cross-tenant access. See [MULTI_TENANT.md](MULTI_TENANT.md).
 
 ---
 

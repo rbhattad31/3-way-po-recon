@@ -1,8 +1,10 @@
 # Database Documentation — 3-Way PO Reconciliation Platform
 
 **Database**: MySQL (utf8mb4)
-**Generated**: 2026-04-01
+**Generated**: 2026-04-07
 **Total tables**: 109 (Django system + application)
+
+> **Changelog** — 2026-04-07: Added country-specific tax fields to `documents_purchase_order` (8 fields: `country`, `gstin`, `state_code`, `vendor_gstin`, `vendor_state_code`, `reverse_charge`, `place_of_supply`, `india_supply_type`) and `documents_po_line` (12 fields: `hsn_sac_code`, `discount_percent`, CGST/SGST/IGST/Cess/VAT rate+amount columns) via migration `0010_country_tax_fields`. Added `langfuse_trace_id` (VARCHAR 64, indexed) to `extraction_result`, `reconciliation_run`, and `posting_core_posting_run` via observability upgrade migrations.
 
 ---
 
@@ -124,6 +126,8 @@ These are abstract Django models — they add fields to every concrete model tha
 
 Combines `TimestampMixin` + `AuditMixin`. Used by all business entity tables.
 
+All `BaseModel` tables also have a **`tenant_id`** FK to `accounts_companyprofile` (nullable), providing row-level tenant isolation. See [MULTI_TENANT.md](MULTI_TENANT.md) for the full architecture.
+
 ### SoftDeleteMixin (abstract)
 
 | Column | Type | Notes |
@@ -145,6 +149,8 @@ Custom user with email login. Current rows: **18**
 | `first_name` | VARCHAR(150) | | |
 | `last_name` | VARCHAR(150) | | |
 | `role` | VARCHAR(30) | | Legacy single-role field; RBAC multi-role via `accounts_user_role` |
+| `company_id` | FK -> accounts_companyprofile | nullable, indexed | Tenant assignment; NULL for platform admins and system accounts |
+| `is_platform_admin` | BOOL | default False | Cross-tenant platform admin; bypasses all tenant scoping |
 | `is_active` | BOOL | | |
 | `is_staff` | BOOL | | Django admin access |
 | `department` | VARCHAR(100) | | |
@@ -164,7 +170,7 @@ Custom user with email login. Current rows: **18**
 
 ### `accounts_role`
 
-RBAC roles. Current rows: **9** (ADMIN, AP_PROCESSOR, REVIEWER, FINANCE_MANAGER, AUDITOR, SYSTEM, SYSTEM_AGENT + 2 custom)
+RBAC roles. Current rows: **10** (SUPER_ADMIN, ADMIN, AP_PROCESSOR, REVIEWER, FINANCE_MANAGER, AUDITOR, PROCUREMENT, SYSTEM, SYSTEM_AGENT + 1 custom)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -172,9 +178,9 @@ RBAC roles. Current rows: **9** (ADMIN, AP_PROCESSOR, REVIEWER, FINANCE_MANAGER,
 | `code` | VARCHAR(50) | UNIQUE — used in code: `"ADMIN"`, `"AP_PROCESSOR"` etc. |
 | `name` | VARCHAR(150) | Display name |
 | `description` | TEXT | |
-| `is_system_role` | BOOL | System roles (ADMIN, SYSTEM_AGENT) bypass scope checks |
+| `is_system_role` | BOOL | System roles (SUPER_ADMIN, ADMIN, SYSTEM_AGENT) bypass scope checks |
 | `is_active` | BOOL | indexed |
-| `rank` | INT UNSIGNED | Lower = higher privilege; ADMIN=10, SYSTEM_AGENT=100 |
+| `rank` | INT UNSIGNED | Lower = higher privilege; SUPER_ADMIN=1, ADMIN=10, SYSTEM_AGENT=100 |
 | `created_at` | DATETIME | |
 | `updated_at` | DATETIME | |
 
@@ -182,7 +188,7 @@ RBAC roles. Current rows: **9** (ADMIN, AP_PROCESSOR, REVIEWER, FINANCE_MANAGER,
 
 ### `accounts_permission`
 
-Permission catalog. Current rows: **55**
+Permission catalog. Current rows: **65**
 
 | Column | Type | Notes |
 |---|---|---|
@@ -388,12 +394,25 @@ PO header. Current rows: **1**
 | `vendor_id` | FK -> vendors_vendor | SET NULL |
 | `po_date` | DATE | Nullable |
 | `currency` | VARCHAR(10) | Default: USD |
-| `total_amount` | DECIMAL(18,2) | Nullable |
-| `tax_amount` | DECIMAL(18,2) | Nullable |
-| `status` | VARCHAR(30) | Default: OPEN, indexed |
+| `total_amount` | DECIMAL(18,2) | Nullable — auto-summed from line items |
+| `tax_amount` | DECIMAL(18,2) | Nullable — total tax across all lines |
+| `status` | VARCHAR(30) | Default: OPEN, indexed (`OPEN`, `CLOSED`, `PARTIALLY_RECEIVED`, `CANCELLED`) |
 | `buyer_name` / `department` | VARCHAR(255) | |
 | `notes` | TEXT | Via NotesMixin |
+| **Country & Tax Compliance** | | *Added migration 0010* |
+| `country` | VARCHAR(10) | ISO country code driving tax schema — `IN`, `AE`, `SA`, `US`, `GB`, etc. Auto-populated from vendor on PO creation |
+| `gstin` | VARCHAR(20) | Buyer GSTIN (India) or TRN / VAT Reg No (UAE, SA) |
+| `state_code` | VARCHAR(10) | Buyer state code (India) — e.g. `36` for Telangana |
+| `vendor_gstin` | VARCHAR(20) | Vendor GSTIN on this PO (India) — auto-filled from `vendors_vendor.tax_id` |
+| `vendor_state_code` | VARCHAR(10) | Vendor state code (India) |
+| `reverse_charge` | BOOL | Default: False — Reverse Charge Applicable flag (India GST) |
+| `place_of_supply` | VARCHAR(100) | Place of supply (India) |
+| `india_supply_type` | VARCHAR(10) | `INTRA` (CGST + SGST, same state) or `INTER` (IGST, different states). Default: `INTRA` |
 | timestamps + audit FKs | | |
+
+**Indexes**: `idx_po_number`, `idx_po_norm_number`, `idx_po_vendor`, `idx_po_status`
+
+> `country` drives which tax columns are active in the PO create/edit UI. India (`IN`) shows the Tax Compliance card with GSTIN, state codes, and supply type. UAE/SA shows TRN. All other countries show only a generic tax column.
 
 ---
 
@@ -405,18 +424,39 @@ PO line items. Current rows: **1**
 |---|---|---|
 | `id` | BIGINT PK | |
 | `purchase_order_id` | FK -> documents_purchase_order | CASCADE |
-| `line_number` | INT UNSIGNED | |
+| `line_number` | INT UNSIGNED | Default: 1 |
 | `item_code` | VARCHAR(100) | |
 | `description` | TEXT | |
 | `quantity` | DECIMAL(18,4) | |
 | `unit_price` | DECIMAL(18,4) | |
-| `tax_amount` | DECIMAL(18,2) | Nullable |
-| `line_amount` | DECIMAL(18,2) | |
+| `tax_amount` | DECIMAL(18,2) | Nullable — total tax on this line (sum of applicable tax components) |
+| `line_amount` | DECIMAL(18,2) | Taxable base amount (before tax): Qty × Unit Price × (1 − Discount%) |
 | `unit_of_measure` | VARCHAR(30) | Default: EA |
 | `item_category` | VARCHAR(100) | |
-| `is_service_item` | BOOL | Nullable |
+| `is_service_item` | BOOL | Nullable — drives 2-way vs 3-way mode resolution |
 | `is_stock_item` | BOOL | Nullable |
+| **Country-Specific Tax Fields** | | *Added migration 0010* |
+| `hsn_sac_code` | VARCHAR(20) | HSN code (goods) or SAC code (services) — India |
+| `discount_percent` | DECIMAL(7,4) | Nullable — line-level discount % |
+| `cgst_rate` | DECIMAL(7,4) | Nullable — CGST rate % (India intra-state; always equals `sgst_rate`, 50:50 split) |
+| `cgst_amount` | DECIMAL(18,2) | Nullable — CGST amount = `line_amount × cgst_rate / 100` |
+| `sgst_rate` | DECIMAL(7,4) | Nullable — SGST rate % (India intra-state; always equals `cgst_rate`) |
+| `sgst_amount` | DECIMAL(18,2) | Nullable — SGST amount = `line_amount × sgst_rate / 100` |
+| `igst_rate` | DECIMAL(7,4) | Nullable — IGST rate % (India inter-state) |
+| `igst_amount` | DECIMAL(18,2) | Nullable — IGST amount = `line_amount × igst_rate / 100` |
+| `cess_rate` | DECIMAL(7,4) | Nullable — Cess rate % (India, applied on top of GST) |
+| `cess_amount` | DECIMAL(18,2) | Nullable — Cess amount |
+| `vat_rate` | DECIMAL(7,4) | Nullable — VAT rate % (UAE: 5%, SA: 15%) |
+| `vat_amount` | DECIMAL(18,2) | Nullable — VAT amount = `line_amount × vat_rate / 100` |
 | `created_at` / `updated_at` | DATETIME | |
+
+**Indexes**: `idx_poline_num` on `(purchase_order_id, line_number)`, `idx_poline_itemcode`
+
+> **Tax logic by country** (enforced in UI; `tax_amount` stores the total for reconciliation):
+> - India intra-state: `tax_amount = cgst_amount + sgst_amount + cess_amount`
+> - India inter-state: `tax_amount = igst_amount + cess_amount`
+> - UAE / SA: `tax_amount = vat_amount`
+> - All other: `tax_amount` entered directly
 
 ---
 
@@ -558,6 +598,7 @@ UI-facing extraction result. Current rows: **4**
 | `agent_run_id` | BIGINT | indexed |
 | `ocr_page_count` / `ocr_duration_ms` / `ocr_char_count` | INT UNSIGNED | |
 | `ocr_text` | TEXT | Raw OCR output (truncated at 60K chars) |
+| `langfuse_trace_id` | VARCHAR(64) | Langfuse trace ID for this extraction run — indexed. Persisted by `extraction_pipeline` trace. Used for cross-flow correlation. |
 | timestamps + audit FKs | | |
 
 ---
@@ -800,7 +841,8 @@ Top-level reconciliation execution for a batch (legacy). Current rows: **0**
 | `status` | VARCHAR(20) | `PENDING`, `RUNNING`, `COMPLETED`, `FAILED` |
 | `total_invoices` / `matched` / `partial` / `unmatched` / `errors` | INT | |
 | `config_snapshot` | JSON | Config at run time |
-| `trace_id` | VARCHAR(64) | indexed |
+| `trace_id` | VARCHAR(64) | Internal correlation ID, indexed |
+| `langfuse_trace_id` | VARCHAR(64) | Langfuse trace ID — indexed. Persisted by `reconciliation_pipeline` trace. Enables cross-flow correlation with extraction and agent runs. |
 | timestamps + audit FKs | | |
 
 ---
@@ -1086,7 +1128,8 @@ One execution of the 9-stage posting pipeline. Current rows: **1**
 | `error_code` / `error_message` | VARCHAR / TEXT | |
 | `erp_source_metadata_json` | JSON | Per-field ERP resolution provenance |
 | `vendor_code_resolved` | VARCHAR(50) | |
-| `trace_id` | VARCHAR(64) | |
+| `trace_id` | VARCHAR(64) | Internal correlation ID |
+| `langfuse_trace_id` | VARCHAR(64) | Langfuse trace ID — indexed. Persisted by `posting_pipeline` trace. Enables cross-flow correlation with reconciliation and extraction. |
 | timestamps + audit FKs | | |
 
 ---

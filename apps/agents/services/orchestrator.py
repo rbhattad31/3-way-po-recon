@@ -110,7 +110,7 @@ class AgentOrchestrator:
         self.resolver = DeterministicResolver()
 
     @observed_service("agents.orchestrator.execute", audit_event="AGENT_PIPELINE_STARTED", entity_type="ReconciliationResult")
-    def execute(self, result: ReconciliationResult, request_user=None) -> OrchestrationResult:
+    def execute(self, result: ReconciliationResult, request_user=None, tenant=None) -> OrchestrationResult:
         """Run the full agentic pipeline for one reconciliation result.
 
         Args:
@@ -266,6 +266,7 @@ class AgentOrchestrator:
                 started_at=timezone.now(),
                 completed_at=timezone.now(),
                 duration_ms=0,
+                tenant=tenant,
             )
 
             # Auto-close by tolerance band: upgrade PARTIAL_MATCH → MATCHED
@@ -305,6 +306,7 @@ class AgentOrchestrator:
             actor_user_id=actor.pk,
             trace_id=trace_ctx.trace_id,
             started_at=timezone.now(),
+            tenant=tenant,
         )
 
         # 2. Partition agents: LLM-required vs deterministic-replaceable
@@ -348,6 +350,7 @@ class AgentOrchestrator:
             access_granted=True,
             trace_id=trace_ctx.trace_id,
             span_id=trace_ctx.span_id,
+            tenant=tenant,
         )
 
         # Store actor on instance for use by helper methods
@@ -713,6 +716,7 @@ class AgentOrchestrator:
                     severity=ExceptionSeverity.HIGH,
                     reason=orch.final_reasoning or "Low confidence — requires manager review",
                     suggested_assignee_role="FINANCE_MANAGER",
+                    tenant=getattr(last_run, "tenant", None),
                 )
             logger.info("Escalated result %s", result.pk)
 
@@ -733,6 +737,9 @@ class AgentOrchestrator:
         ``SystemCaseSummaryAgent``).  EXCEPTION_ANALYSIS retains the
         legacy synthetic AgentRun approach.
         """
+        # Derive tenant from the result (not passed as a parameter)
+        tenant = getattr(result, "tenant", None)
+
         # Re-fetch exceptions (may have changed from feedback loop)
         fresh_exceptions = list(
             result.exceptions.values(
@@ -801,6 +808,7 @@ class AgentOrchestrator:
                     actor_roles_snapshot_json=actor_rbac.get("actor_roles_snapshot", []),
                     permission_source=actor_rbac.get("permission_source", ""),
                     access_granted=True,
+                    tenant=tenant,
                 )
                 orch.agents_executed.append(det_agent_type)
                 orch.agent_runs.append(det_run)

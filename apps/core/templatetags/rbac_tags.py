@@ -59,7 +59,7 @@ def has_role(context, role_code):
         return False
     role_codes = context.get("user_role_codes")
     if role_codes is not None:
-        if "ADMIN" in role_codes:
+        if "ADMIN" in role_codes or "SUPER_ADMIN" in role_codes:
             return True
         return role_code in role_codes
     if hasattr(user, "has_role"):

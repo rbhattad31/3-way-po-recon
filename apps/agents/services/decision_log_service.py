@@ -23,6 +23,7 @@ class DecisionLogService:
         rationale: str = "",
         confidence: Optional[float] = None,
         evidence: Optional[dict] = None,
+        tenant=None,
     ) -> DecisionLog:
         return DecisionLog.objects.create(
             agent_run=agent_run,
@@ -30,6 +31,7 @@ class DecisionLogService:
             rationale=rationale,
             confidence=confidence,
             evidence_refs=evidence,
+            tenant=tenant,
         )
 
     @staticmethod
@@ -40,6 +42,7 @@ class DecisionLogService:
         confidence: float = 0.0,
         reasoning: str = "",
         evidence: Optional[dict] = None,
+        tenant=None,
     ) -> AgentRecommendation:
         """Create a recommendation record, or return the existing pending one.
 
@@ -72,6 +75,7 @@ class DecisionLogService:
             confidence=confidence,
             reasoning=reasoning,
             evidence=evidence,
+            tenant=tenant,
         )
 
     # ------------------------------------------------------------------

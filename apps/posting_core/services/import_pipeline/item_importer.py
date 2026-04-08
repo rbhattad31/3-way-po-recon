@@ -49,6 +49,7 @@ class ItemImporter:
 
             valid_records.append(ERPItemReference(
                 batch=batch,
+                tenant=batch.tenant,
                 item_code=item_code,
                 item_name=item_name,
                 normalized_item_name=normalize_text(item_name),

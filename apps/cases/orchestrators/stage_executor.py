@@ -455,7 +455,7 @@ class StageExecutor:
         # Map failed validation checks to ReconciliationException records
         # so the agent pipeline can reason over them.
         _CHECK_TO_EXCEPTION = {
-            "vendor": (ExceptionType.VENDOR_MISMATCH, ExceptionSeverity.HIGH),
+            "vendor": (ExceptionType.VENDOR_NOT_VERIFIED, ExceptionSeverity.HIGH),
             "duplicate": (ExceptionType.DUPLICATE_INVOICE, ExceptionSeverity.HIGH),
             "mandatory_fields": (ExceptionType.MISSING_MANDATORY_FIELDS, ExceptionSeverity.HIGH),
             "tax": (ExceptionType.TAX_MISMATCH, ExceptionSeverity.MEDIUM),
@@ -570,8 +570,11 @@ class StageExecutor:
             from apps.agents.services.orchestrator import AgentOrchestrator
 
             orchestrator = AgentOrchestrator()
-            orch_result = orchestrator.execute(case.reconciliation_result)
-            # Note: request_user omitted — stage executor runs inside Celery
+            orch_result = orchestrator.execute(
+                case.reconciliation_result,
+                tenant=getattr(case, "tenant", None),
+            )
+            # Note: request_user omitted -- stage executor runs inside Celery
             # or system context, so the orchestrator resolves to system-agent.
 
             # Handle auto-close: when the orchestrator skips agents because

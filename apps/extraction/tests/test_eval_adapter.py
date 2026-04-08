@@ -20,6 +20,7 @@ from apps.core.enums import ExtractionApprovalStatus, InvoiceStatus
 from apps.core_eval.models import EvalFieldOutcome, EvalMetric, EvalRun, LearningSignal
 from apps.documents.models import DocumentUpload, Invoice
 from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection, ExtractionResult
+from apps.extraction_core.models import ExtractionRun
 
 User = get_user_model()
 
@@ -51,12 +52,16 @@ def _make_invoice(upload, **overrides):
 
 
 def _make_ext_result(upload, invoice, raw_response=None):
+    run = ExtractionRun.objects.create(
+        document_upload=upload,
+        overall_confidence=0.88,
+        extracted_data_json=raw_response or {},
+        status="COMPLETED",
+    )
     return ExtractionResult.objects.create(
         document_upload=upload,
-        invoice=invoice,
+        extraction_run=run,
         success=True,
-        confidence=0.88,
-        raw_response=raw_response or {},
     )
 
 

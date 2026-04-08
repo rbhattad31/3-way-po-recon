@@ -48,6 +48,7 @@ class RoutedMatchOutput:
     grn_required: bool = True
     grn_checked: bool = False
     mode_resolution: Optional[ModeResolutionResult] = None
+    po_balance: Optional[object] = None  # POBalance instance when partial invoicing detected
 
     @classmethod
     def from_two_way(
@@ -95,9 +96,10 @@ class ReconciliationExecutionRouter:
         # output.header_result, output.line_result, output.grn_result
     """
 
-    def __init__(self, tolerance_engine: ToleranceEngine):
+    def __init__(self, tolerance_engine: ToleranceEngine, partial_invoice_threshold_pct: float = 50.0):
         self._two_way = TwoWayMatchService(tolerance_engine)
         self._three_way = ThreeWayMatchService(tolerance_engine)
+        self._partial_invoice_threshold_pct = partial_invoice_threshold_pct
 
     def execute(
         self,
@@ -117,7 +119,7 @@ class ReconciliationExecutionRouter:
         """
         if not po_result.found:
             logger.info(
-                "Router: PO not found for invoice %s — returning early (mode=%s)",
+                "Router: PO not found for invoice %s -- returning early (mode=%s)",
                 invoice.pk, mode_resolution.mode,
             )
             return RoutedMatchOutput(
@@ -127,6 +129,17 @@ class ReconciliationExecutionRouter:
                 mode_resolution=mode_resolution,
             )
 
+        # Compute PO balance for partial / milestone invoice support
+        po_balance = None
+        try:
+            from apps.reconciliation.services.po_balance_service import POBalanceService
+            po_balance = POBalanceService.compute(
+                po_result.purchase_order, invoice,
+                partial_threshold_pct=self._partial_invoice_threshold_pct,
+            )
+        except Exception:
+            logger.exception("Failed to compute PO balance for invoice %s", invoice.pk)
+
         mode = mode_resolution.mode
 
         if mode == ReconciliationMode.TWO_WAY:
@@ -134,13 +147,17 @@ class ReconciliationExecutionRouter:
                 "Router: dispatching invoice %s to 2-way pipeline (reason=%s)",
                 invoice.pk, mode_resolution.reason,
             )
-            two_way_output = self._two_way.match(invoice, po_result)
-            return RoutedMatchOutput.from_two_way(two_way_output, mode_resolution)
+            two_way_output = self._two_way.match(invoice, po_result, po_balance=po_balance)
+            routed = RoutedMatchOutput.from_two_way(two_way_output, mode_resolution)
+            routed.po_balance = po_balance
+            return routed
 
         # Default: THREE_WAY
         logger.info(
             "Router: dispatching invoice %s to 3-way pipeline (reason=%s)",
             invoice.pk, mode_resolution.reason,
         )
-        three_way_output = self._three_way.match(invoice, po_result)
-        return RoutedMatchOutput.from_three_way(three_way_output, mode_resolution)
+        three_way_output = self._three_way.match(invoice, po_result, po_balance=po_balance)
+        routed = RoutedMatchOutput.from_three_way(three_way_output, mode_resolution)
+        routed.po_balance = po_balance
+        return routed

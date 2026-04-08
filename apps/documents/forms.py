@@ -5,6 +5,17 @@ from django.forms import inlineformset_factory
 from apps.documents.models import GoodsReceiptNote, PurchaseOrder, PurchaseOrderLineItem
 from apps.vendors.models import Vendor
 
+COUNTRY_CHOICES = [
+    ("", "— Select Country —"),
+    ("IN", "India"),
+    ("AE", "UAE"),
+    ("SA", "Saudi Arabia"),
+    ("US", "United States"),
+    ("GB", "United Kingdom"),
+    ("SG", "Singapore"),
+    ("OTHER", "Other"),
+]
+
 PO_STATUS_CHOICES = [
     ("OPEN", "Open"),
     ("CLOSED", "Closed"),
@@ -25,7 +36,7 @@ class PurchaseOrderForm(forms.ModelForm):
 
     vendor = forms.ModelChoiceField(
         queryset=Vendor.objects.none(),
-        required=False,
+        required=True,
         empty_label="— Select Vendor —",
         widget=forms.Select(attrs={"class": "form-select"}),
     )
@@ -33,6 +44,7 @@ class PurchaseOrderForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["vendor"].queryset = Vendor.objects.order_by("name")
+        self.fields["po_date"].required = True
 
     class Meta:
         model = PurchaseOrder
@@ -40,6 +52,9 @@ class PurchaseOrderForm(forms.ModelForm):
             "po_number", "vendor", "po_date", "currency",
             "total_amount", "tax_amount", "status",
             "buyer_name", "department", "notes",
+            "country", "gstin", "state_code",
+            "vendor_gstin", "vendor_state_code",
+            "reverse_charge", "place_of_supply", "india_supply_type",
         ]
         widgets = {
             "po_number": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. PO-2026-001"}),
@@ -54,6 +69,17 @@ class PurchaseOrderForm(forms.ModelForm):
             "buyer_name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Buyer name"}),
             "department": forms.TextInput(attrs={"class": "form-control", "placeholder": "Requesting department"}),
             "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "Additional notes"}),
+            "country": forms.Select(
+                choices=COUNTRY_CHOICES,
+                attrs={"class": "form-select", "id": "id_country"},
+            ),
+            "gstin": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. 27AAPFU0939F1ZV"}),
+            "state_code": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. 27"}),
+            "vendor_gstin": forms.TextInput(attrs={"class": "form-control", "placeholder": "Vendor GSTIN"}),
+            "vendor_state_code": forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. 29"}),
+            "reverse_charge": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "place_of_supply": forms.TextInput(attrs={"class": "form-control", "placeholder": "State / Place of supply"}),
+            "india_supply_type": forms.Select(attrs={"class": "form-select", "id": "id_india_supply_type"}),
         }
         labels = {
             "po_number": "PO Number",
@@ -61,17 +87,37 @@ class PurchaseOrderForm(forms.ModelForm):
             "total_amount": "Total Amount",
             "tax_amount": "Tax Amount",
             "buyer_name": "Buyer Name",
+            "country": "Country",
+            "gstin": "Buyer GSTIN",
+            "state_code": "Buyer State Code",
+            "vendor_gstin": "Vendor GSTIN",
+            "vendor_state_code": "Vendor State Code",
+            "reverse_charge": "Reverse Charge Applicable",
+            "place_of_supply": "Place of Supply",
+            "india_supply_type": "Supply Type",
         }
 
 
 class PurchaseOrderLineItemForm(forms.ModelForm):
     """Single PO line item row — used inside the inline formset."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["description"].required = True
+        self.fields["quantity"].required = True
+        self.fields["unit_price"].required = True
+
     class Meta:
         model = PurchaseOrderLineItem
         fields = [
             "line_number", "item_code", "description",
+            "hsn_sac_code", "discount_percent",
             "quantity", "unit_price", "unit_of_measure",
+            "cgst_rate", "cgst_amount",
+            "sgst_rate", "sgst_amount",
+            "igst_rate", "igst_amount",
+            "cess_rate", "cess_amount",
+            "vat_rate", "vat_amount",
             "tax_amount", "line_amount",
         ]
         widgets = {
@@ -84,6 +130,12 @@ class PurchaseOrderLineItemForm(forms.ModelForm):
             "description": forms.TextInput(attrs={
                 "class": "form-control form-control-sm", "placeholder": "Item description",
             }),
+            "hsn_sac_code": forms.TextInput(attrs={
+                "class": "form-control form-control-sm", "placeholder": "HSN/SAC",
+            }),
+            "discount_percent": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-discount text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
             "quantity": forms.NumberInput(attrs={
                 "class": "form-control form-control-sm line-qty text-end", "step": "0.0001", "min": "0", "placeholder": "0",
             }),
@@ -93,8 +145,38 @@ class PurchaseOrderLineItemForm(forms.ModelForm):
             "unit_of_measure": forms.TextInput(attrs={
                 "class": "form-control form-control-sm text-center", "placeholder": "EA", "style": "width:56px",
             }),
+            "cgst_rate": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-cgst-rate text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "cgst_amount": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-cgst-amount text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "sgst_rate": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-sgst-rate text-end", "step": "0.01", "min": "0", "placeholder": "0.00", "readonly": "readonly",
+            }),
+            "sgst_amount": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-sgst-amount text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "igst_rate": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-igst-rate text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "igst_amount": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-igst-amount text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "cess_rate": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-cess-rate text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "cess_amount": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-cess-amount text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "vat_rate": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-vat-rate text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
+            "vat_amount": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm line-vat-amount text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+            }),
             "tax_amount": forms.NumberInput(attrs={
-                "class": "form-control form-control-sm text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
+                "class": "form-control form-control-sm line-tax-generic text-end", "step": "0.01", "min": "0", "placeholder": "0.00",
             }),
             "line_amount": forms.NumberInput(attrs={
                 "class": "form-control form-control-sm line-amount text-end", "step": "0.01", "placeholder": "0.00",
@@ -118,25 +200,19 @@ class GoodsReceiptNoteForm(forms.ModelForm):
 
     purchase_order = forms.ModelChoiceField(
         queryset=PurchaseOrder.objects.none(),
-        empty_label="— Select Purchase Order —",
-        widget=forms.Select(attrs={"class": "form-select"}),
-    )
-    vendor = forms.ModelChoiceField(
-        queryset=Vendor.objects.none(),
-        required=False,
-        empty_label="— Select Vendor —",
-        widget=forms.Select(attrs={"class": "form-select"}),
+        empty_label="-- Select Purchase Order --",
+        widget=forms.Select(attrs={"class": "form-select", "id": "id_purchase_order"}),
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["purchase_order"].queryset = PurchaseOrder.objects.order_by("-po_date")
-        self.fields["vendor"].queryset = Vendor.objects.order_by("name")
+        self.fields["receipt_date"].required = True
 
     class Meta:
         model = GoodsReceiptNote
         fields = [
-            "grn_number", "purchase_order", "vendor",
+            "grn_number", "purchase_order",
             "receipt_date", "status", "warehouse", "receiver_name",
         ]
         widgets = {

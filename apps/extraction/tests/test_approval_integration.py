@@ -22,7 +22,8 @@ from apps.core.enums import (
     UserRole as UserRoleEnum,
 )
 from apps.documents.models import DocumentUpload, Invoice
-from apps.extraction.models import ExtractionApproval, ExtractionResult
+from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection, ExtractionResult
+from apps.extraction_core.models import ExtractionRun
 
 User = get_user_model()
 
@@ -54,11 +55,15 @@ def _make_invoice(upload, **kwargs):
 
 
 def _make_extraction_result(upload, invoice):
+    run = ExtractionRun.objects.create(
+        document_upload=upload,
+        overall_confidence=0.92,
+        status="COMPLETED",
+    )
     return ExtractionResult.objects.create(
         document_upload=upload,
-        invoice=invoice,
+        extraction_run=run,
         success=True,
-        confidence=0.92,
     )
 
 
@@ -326,7 +331,6 @@ class TestApprovalServiceIntegration:
 
     def test_touchless_approval_no_corrections(self, db):
         """Approval without corrections (inline or pre-saved) should be marked touchless."""
-        from apps.extraction.models import ExtractionFieldCorrection
         from apps.extraction.services.approval_service import ExtractionApprovalService
 
         user = _admin_user(db)
@@ -566,7 +570,6 @@ class TestPreExistingCorrections:
     def test_presaved_corrections_mark_approval_not_touchless(self, db):
         """approve(corrections=None) with pre-existing ExtractionFieldCorrection
         records should set is_touchless=False and fields_corrected_count > 0."""
-        from apps.extraction.models import ExtractionFieldCorrection
         from apps.extraction.services.approval_service import ExtractionApprovalService
 
         user = _admin_user(db)
@@ -603,7 +606,6 @@ class TestPreExistingCorrections:
     def test_presaved_corrections_create_field_signals(self, db):
         """Pre-existing corrections should produce field_correction learning signals."""
         from apps.core_eval.models import LearningSignal
-        from apps.extraction.models import ExtractionFieldCorrection
         from apps.extraction.services.approval_service import ExtractionApprovalService
 
         user = _admin_user(db)
@@ -635,7 +637,6 @@ class TestPreExistingCorrections:
     def test_presaved_corrections_create_review_override_signal(self, db):
         """Pre-existing corrections should produce a review_override signal."""
         from apps.core_eval.models import LearningSignal
-        from apps.extraction.models import ExtractionFieldCorrection
         from apps.extraction.services.approval_service import ExtractionApprovalService
 
         user = _admin_user(db)
@@ -668,7 +669,6 @@ class TestPreExistingCorrections:
     def test_mixed_presaved_and_inline_corrections_merged(self, db):
         """When both pre-saved AND inline corrections exist, both should count."""
         from apps.core_eval.models import LearningSignal
-        from apps.extraction.models import ExtractionFieldCorrection
         from apps.extraction.services.approval_service import ExtractionApprovalService
 
         user = _admin_user(db)
@@ -710,7 +710,6 @@ class TestPreExistingCorrections:
     def test_presaved_corrections_audit_event_includes_details(self, db):
         """Audit event for EXTRACTION_FIELD_CORRECTED should list pre-saved corrections."""
         from apps.auditlog.models import AuditEvent
-        from apps.extraction.models import ExtractionFieldCorrection
         from apps.extraction.services.approval_service import ExtractionApprovalService
 
         user = _admin_user(db)
@@ -747,7 +746,6 @@ class TestPreExistingCorrections:
     def test_presaved_corrections_update_eval_metrics(self, db):
         """Pre-saved corrections should update extraction_corrections_count metric."""
         from apps.core_eval.models import EvalMetric, EvalRun
-        from apps.extraction.models import ExtractionFieldCorrection
         from apps.extraction.services.approval_service import ExtractionApprovalService
         from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
 

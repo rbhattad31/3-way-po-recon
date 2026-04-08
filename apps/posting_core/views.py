@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.tenant_utils import TenantQuerysetMixin
+
 from apps.posting_core.models import (
     ERPCostCenterReference,
     ERPItemReference,
@@ -41,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── PostingRun ──────────────────────────────────────────────────────
-class PostingRunViewSet(viewsets.ReadOnlyModelViewSet):
+class PostingRunViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only access to posting execution runs."""
 
     queryset = PostingRun.objects.select_related("invoice").order_by("-created_at")
@@ -64,7 +66,7 @@ class PostingRunViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 # ── Import Batches ──────────────────────────────────────────────────
-class ERPReferenceImportBatchViewSet(viewsets.ReadOnlyModelViewSet):
+class ERPReferenceImportBatchViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     """List / retrieve ERP reference import batch records."""
 
     queryset = ERPReferenceImportBatch.objects.select_related(
@@ -85,7 +87,7 @@ class ERPReferenceImportBatchViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 # ── Reference data (read-only) ──────────────────────────────────────
-class ERPVendorReferenceViewSet(viewsets.ReadOnlyModelViewSet):
+class ERPVendorReferenceViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = ERPVendorReference.objects.order_by("vendor_code")
     serializer_class = ERPVendorReferenceSerializer
     permission_classes = [IsAuthenticated]
@@ -98,7 +100,7 @@ class ERPVendorReferenceViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
-class ERPItemReferenceViewSet(viewsets.ReadOnlyModelViewSet):
+class ERPItemReferenceViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = ERPItemReference.objects.order_by("item_code")
     serializer_class = ERPItemReferenceSerializer
     permission_classes = [IsAuthenticated]
@@ -111,13 +113,13 @@ class ERPItemReferenceViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
-class ERPTaxCodeReferenceViewSet(viewsets.ReadOnlyModelViewSet):
+class ERPTaxCodeReferenceViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = ERPTaxCodeReference.objects.order_by("tax_code")
     serializer_class = ERPTaxCodeReferenceSerializer
     permission_classes = [IsAuthenticated]
 
 
-class ERPCostCenterReferenceViewSet(viewsets.ReadOnlyModelViewSet):
+class ERPCostCenterReferenceViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = ERPCostCenterReference.objects.order_by("cost_center_code")
     serializer_class = ERPCostCenterReferenceSerializer
     permission_classes = [IsAuthenticated]
@@ -130,7 +132,7 @@ class ERPCostCenterReferenceViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
 
-class ERPPOReferenceViewSet(viewsets.ReadOnlyModelViewSet):
+class ERPPOReferenceViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = ERPPOReference.objects.order_by("po_number", "po_line_number")
     serializer_class = ERPPOReferenceSerializer
     permission_classes = [IsAuthenticated]
@@ -147,7 +149,7 @@ class ERPPOReferenceViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 # ── Alias Mappings ──────────────────────────────────────────────────
-class VendorAliasMappingViewSet(viewsets.ModelViewSet):
+class VendorAliasMappingViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     queryset = VendorAliasMapping.objects.select_related(
         "vendor_reference",
     ).order_by("-created_at")
@@ -155,7 +157,7 @@ class VendorAliasMappingViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
-class ItemAliasMappingViewSet(viewsets.ModelViewSet):
+class ItemAliasMappingViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     queryset = ItemAliasMapping.objects.select_related(
         "item_reference",
     ).order_by("-created_at")
@@ -164,7 +166,7 @@ class ItemAliasMappingViewSet(viewsets.ModelViewSet):
 
 
 # ── Posting Rules ───────────────────────────────────────────────────
-class PostingRuleViewSet(viewsets.ModelViewSet):
+class PostingRuleViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     queryset = PostingRule.objects.order_by("priority")
     serializer_class = PostingRuleSerializer
     permission_classes = [IsAuthenticated]
@@ -195,6 +197,7 @@ class ERPReferenceUploadView(APIView):
             tmp_path = tmp.name
 
         import_reference_excel_task.delay(
+            request.tenant.pk if request.tenant else None,
             file_path=tmp_path,
             batch_type=batch_type,
             user_id=request.user.pk,

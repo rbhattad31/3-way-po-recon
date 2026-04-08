@@ -59,6 +59,7 @@ class ValidationOrchestratorService:
         run: AnalysisRun,
         *,
         agent_enabled: bool = False,
+        tenant=None,
     ) -> ValidationResult:
         """Execute the full validation pipeline.
 
@@ -160,6 +161,7 @@ class ValidationOrchestratorService:
                         "ambiguous": len(ambiguous),
                         "rules_applied": len(rules),
                     },
+                    tenant=tenant,
                 )
 
                 # Create individual result items

@@ -27,6 +27,14 @@ class InvoicePosting(BaseModel):
         on_delete=models.CASCADE,
         related_name="posting",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     extraction_result = models.ForeignKey(
         "extraction.ExtractionResult",
         on_delete=models.SET_NULL,
@@ -100,6 +108,14 @@ class InvoicePostingFieldCorrection(TimestampMixin):
         InvoicePosting,
         on_delete=models.CASCADE,
         related_name="field_corrections",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     entity_type = models.CharField(
         max_length=20,

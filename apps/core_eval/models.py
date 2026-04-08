@@ -25,9 +25,13 @@ class EvalRun(TimestampMixin):
         FAILED = "FAILED", "Failed"
 
     # -- tenant --
-    tenant_id = models.CharField(
-        max_length=100, db_index=True, blank=True, default="",
-        help_text="Lightweight tenant identifier for multi-tenant isolation.",
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
 
     # -- scoping / routing --
@@ -117,9 +121,13 @@ class EvalMetric(TimestampMixin):
     """
 
     # -- tenant --
-    tenant_id = models.CharField(
-        max_length=100, db_index=True, blank=True, default="",
-        help_text="Lightweight tenant identifier for multi-tenant isolation.",
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
 
     eval_run = models.ForeignKey(
@@ -188,9 +196,13 @@ class EvalFieldOutcome(TimestampMixin):
         SKIPPED = "SKIPPED", "Skipped"
 
     # -- tenant --
-    tenant_id = models.CharField(
-        max_length=100, db_index=True, blank=True, default="",
-        help_text="Lightweight tenant identifier for multi-tenant isolation.",
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
 
     eval_run = models.ForeignKey(
@@ -233,9 +245,13 @@ class LearningSignal(TimestampMixin):
     """Captures a raw learning signal from any module (correction, rejection, etc.)."""
 
     # -- tenant --
-    tenant_id = models.CharField(
-        max_length=100, db_index=True, blank=True, default="",
-        help_text="Lightweight tenant identifier for multi-tenant isolation.",
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
 
     app_module = models.CharField(
@@ -312,9 +328,13 @@ class LearningAction(TimestampMixin):
         FAILED = "FAILED", "Failed"
 
     # -- tenant --
-    tenant_id = models.CharField(
-        max_length=100, db_index=True, blank=True, default="",
-        help_text="Lightweight tenant identifier for multi-tenant isolation.",
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
 
     action_type = models.CharField(

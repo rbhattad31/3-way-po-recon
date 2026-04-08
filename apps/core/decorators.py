@@ -418,6 +418,7 @@ def _write_processing_log(
             agent_run_id=ctx.agent_run_id,
             user_id=ctx.actor_user_id,
             trace_id=ctx.trace_id or "",
+            tenant_id=ctx.tenant_id,
         )
     except Exception:
         logger.debug("Failed to write ProcessingLog (non-critical)", exc_info=True)
@@ -444,6 +445,7 @@ def _write_audit_event(
             event_type=event_type,
             event_description=description[:2000],
             performed_by_id=ctx.actor_user_id,
+            tenant_id=ctx.tenant_id,
             metadata_json={
                 **ctx.as_audit_dict(),
                 "duration_ms": duration_ms,

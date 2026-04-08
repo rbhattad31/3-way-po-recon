@@ -236,6 +236,7 @@ class ReconciliationEvalAdapter:
 
         now = timezone.now()
         result_pk = str(result.pk)
+        _tenant = getattr(result, "tenant", None)
 
         # Resolve context
         ctx = cls._resolve_context(result)
@@ -295,6 +296,7 @@ class ReconciliationEvalAdapter:
             trace_id=_trace_id,
             config_json=config_json,
             input_snapshot_json=input_snapshot,
+            tenant=_tenant,
         )
 
         # Set timing if not already set
@@ -312,10 +314,10 @@ class ReconciliationEvalAdapter:
         ])
 
         # Store predicted metrics
-        cls._store_predicted_metrics(eval_run, predicted, tenant_id=tenant_id)
+        cls._store_predicted_metrics(eval_run, predicted, tenant_id=tenant_id, tenant=_tenant)
 
         # Store runtime mirror metrics
-        cls._store_runtime_metrics(eval_run, result, ctx, tenant_id=tenant_id)
+        cls._store_runtime_metrics(eval_run, result, ctx, tenant_id=tenant_id, tenant=_tenant)
 
     # ======================================================================
     # INTERNAL: sync_for_review_assignment
@@ -334,6 +336,7 @@ class ReconciliationEvalAdapter:
         if result is None:
             return
 
+        _tenant = getattr(result, "tenant", None)
         result_pk = str(result.pk)
         _run_key = f"reconciliation_result::{result_pk}"
 
@@ -350,6 +353,7 @@ class ReconciliationEvalAdapter:
             metric_name=RECON_ACTUAL_REVIEW_CREATED,
             metric_value=1.0,
             tenant_id=tenant_id,
+            tenant=_tenant,
             dimension_json={"scope": "business_outcome"},
         )
 
@@ -399,6 +403,7 @@ class ReconciliationEvalAdapter:
         )
         if eval_run is None:
             return
+        _tenant = getattr(eval_run, "tenant", None)
 
         # Derive review outcome
         review_outcome = cls._derive_review_outcome(assignment)
@@ -447,6 +452,7 @@ class ReconciliationEvalAdapter:
             string_value=actual_match_status,
             tenant_id=tenant_id,
             dimension_json={"scope": "business_outcome"},
+            tenant=_tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -454,6 +460,7 @@ class ReconciliationEvalAdapter:
             string_value=decision_status,
             tenant_id=tenant_id,
             dimension_json={"scope": "human_feedback"},
+            tenant=_tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -461,6 +468,7 @@ class ReconciliationEvalAdapter:
             metric_value=1.0 if corrections_count > 0 else 0.0,
             tenant_id=tenant_id,
             dimension_json={"scope": "human_feedback"},
+            tenant=_tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -468,6 +476,7 @@ class ReconciliationEvalAdapter:
             metric_value=1.0 if is_reprocessed else 0.0,
             tenant_id=tenant_id,
             dimension_json={"scope": "business_outcome"},
+            tenant=_tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -475,6 +484,7 @@ class ReconciliationEvalAdapter:
             metric_value=_bool_to_score(actual_auto_close),
             tenant_id=tenant_id,
             dimension_json={"scope": "business_outcome"},
+            tenant=_tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -482,6 +492,7 @@ class ReconciliationEvalAdapter:
             string_value=actual_final_route,
             tenant_id=tenant_id,
             dimension_json={"scope": "business_outcome"},
+            tenant=_tenant,
         )
 
         # Correctness metrics (only when both predicted and actual are known)
@@ -493,6 +504,7 @@ class ReconciliationEvalAdapter:
                 metric_value=1.0 if _match_correct else 0.0,
                 tenant_id=tenant_id,
                 dimension_json={"scope": "business_outcome"},
+                tenant=_tenant,
             )
 
         if predicted_requires_review is not None:
@@ -503,6 +515,7 @@ class ReconciliationEvalAdapter:
                 metric_value=1.0 if _review_correct else 0.0,
                 tenant_id=tenant_id,
                 dimension_json={"scope": "business_outcome"},
+                tenant=_tenant,
             )
 
         if predicted_auto_close is not None:
@@ -513,6 +526,7 @@ class ReconciliationEvalAdapter:
                 metric_value=1.0 if _auto_correct else 0.0,
                 tenant_id=tenant_id,
                 dimension_json={"scope": "business_outcome"},
+                tenant=_tenant,
             )
 
         # Update result_json with actual
@@ -541,6 +555,7 @@ class ReconciliationEvalAdapter:
             corrections_count=corrections_count,
             is_reprocessed=is_reprocessed,
             tenant_id=tenant_id,
+            tenant=_tenant,
         )
 
         # Store structured field outcomes for reviewer corrections
@@ -548,6 +563,7 @@ class ReconciliationEvalAdapter:
             eval_run=eval_run,
             assignment=assignment,
             tenant_id=tenant_id,
+            tenant=_tenant,
         )
 
     # ======================================================================
@@ -565,6 +581,7 @@ class ReconciliationEvalAdapter:
         from apps.core_eval.services.learning_signal_service import LearningSignalService
         from apps.core.evaluation_constants import RECON_REPROCESSED
 
+        _tenant = getattr(result, "tenant", None)
         result_pk = str(result.pk)
         _run_key = f"reconciliation_result::{result_pk}"
 
@@ -579,6 +596,7 @@ class ReconciliationEvalAdapter:
             metric_name=RECON_REPROCESSED,
             metric_value=1.0,
             tenant_id=tenant_id,
+            tenant=_tenant,
             dimension_json={"scope": "business_outcome"},
         )
 
@@ -593,6 +611,7 @@ class ReconciliationEvalAdapter:
             confidence=0.8,
             eval_run=eval_run,
             tenant_id=tenant_id,
+            tenant=_tenant,
             payload_json={
                 "reconciliation_mode": ctx.get("reconciliation_mode"),
                 "match_status": _str(result.match_status),
@@ -755,7 +774,7 @@ class ReconciliationEvalAdapter:
     # ======================================================================
     @classmethod
     def _store_predicted_metrics(
-        cls, eval_run, predicted: Dict[str, Any], *, tenant_id: str = "",
+        cls, eval_run, predicted: Dict[str, Any], *, tenant_id: str = "", tenant=None,
     ) -> None:
         """Store predicted-outcome metrics as EvalMetric records."""
         from apps.core_eval.services.eval_metric_service import EvalMetricService
@@ -775,6 +794,7 @@ class ReconciliationEvalAdapter:
             string_value=predicted.get("match_status", ""),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -782,6 +802,7 @@ class ReconciliationEvalAdapter:
             metric_value=_bool_to_score(predicted.get("requires_review")),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -789,6 +810,7 @@ class ReconciliationEvalAdapter:
             metric_value=_bool_to_score(predicted.get("auto_close_eligible")),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -796,6 +818,7 @@ class ReconciliationEvalAdapter:
             metric_value=_bool_to_score(predicted.get("po_found")),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -803,11 +826,12 @@ class ReconciliationEvalAdapter:
             metric_value=_bool_to_score(predicted.get("grn_found")),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
 
     @classmethod
     def _store_runtime_metrics(
-        cls, eval_run, result, ctx: Dict[str, Any], *, tenant_id: str = "",
+        cls, eval_run, result, ctx: Dict[str, Any], *, tenant_id: str = "", tenant=None,
     ) -> None:
         """Mirror key runtime reconciliation scores as EvalMetric records."""
         from apps.core_eval.services.eval_metric_service import EvalMetricService
@@ -834,6 +858,7 @@ class ReconciliationEvalAdapter:
             metric_value=_score_map.get(match_status, 0.0),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -841,6 +866,7 @@ class ReconciliationEvalAdapter:
             metric_value=_bool_to_score(ctx.get("po_found")),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -848,6 +874,7 @@ class ReconciliationEvalAdapter:
             metric_value=_bool_to_score(ctx.get("grn_available")),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -855,6 +882,7 @@ class ReconciliationEvalAdapter:
             metric_value=_bool_to_score(match_status == "MATCHED"),
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
         EvalMetricService.upsert(
             eval_run=eval_run,
@@ -863,6 +891,7 @@ class ReconciliationEvalAdapter:
             unit="count",
             tenant_id=tenant_id,
             dimension_json=_dim,
+            tenant=tenant,
         )
 
     # ======================================================================
@@ -911,6 +940,7 @@ class ReconciliationEvalAdapter:
         corrections_count: int,
         is_reprocessed: bool,
         tenant_id: str = "",
+        tenant=None,
     ) -> None:
         """Generate deterministic learning signals based on predicted/actual diff."""
         from apps.core_eval.services.learning_signal_service import LearningSignalService
@@ -938,6 +968,7 @@ class ReconciliationEvalAdapter:
                 confidence=0.9,
                 eval_run=eval_run,
                 tenant_id=tenant_id,
+                tenant=tenant,
                 payload_json={
                     **_base_payload,
                     "predicted": predicted_match,
@@ -957,6 +988,7 @@ class ReconciliationEvalAdapter:
                 confidence=0.85,
                 eval_run=eval_run,
                 tenant_id=tenant_id,
+                tenant=tenant,
                 payload_json={
                     **_base_payload,
                     "predicted": predicted_auto_close,
@@ -977,6 +1009,7 @@ class ReconciliationEvalAdapter:
                 confidence=0.85,
                 eval_run=eval_run,
                 tenant_id=tenant_id,
+                tenant=tenant,
                 payload_json={
                     **_base_payload,
                     "predicted_requires_review": predicted_review,
@@ -995,6 +1028,7 @@ class ReconciliationEvalAdapter:
                 confidence=0.9,
                 eval_run=eval_run,
                 tenant_id=tenant_id,
+                tenant=tenant,
                 payload_json={
                     **_base_payload,
                     "corrections_count": corrections_count,
@@ -1017,6 +1051,7 @@ class ReconciliationEvalAdapter:
                 confidence=0.8,
                 eval_run=eval_run,
                 tenant_id=tenant_id,
+                tenant=tenant,
                 payload_json={
                     **_base_payload,
                     "predicted_match_status": predicted_match,
@@ -1038,6 +1073,7 @@ class ReconciliationEvalAdapter:
                 confidence=0.7,
                 eval_run=eval_run,
                 tenant_id=tenant_id,
+                tenant=tenant,
                 payload_json={
                     **_base_payload,
                     "predicted_match_status": predicted_match,
@@ -1057,6 +1093,7 @@ class ReconciliationEvalAdapter:
         eval_run,
         assignment,
         tenant_id: str = "",
+        tenant=None,
     ) -> None:
         """Store EvalFieldOutcome for structured reviewer corrections.
 
@@ -1100,4 +1137,5 @@ class ReconciliationEvalAdapter:
                 eval_run=eval_run,
                 outcomes=outcomes,
                 tenant_id=tenant_id,
+                tenant=tenant,
             )

@@ -66,9 +66,11 @@ class AgentGovernanceDashboardService:
         return result
 
     @staticmethod
-    def _base_runs_qs(filters: Optional[Dict] = None):
-        """All runs — governance users see everything."""
+    def _base_runs_qs(filters: Optional[Dict] = None, tenant=None):
+        """All runs -- governance users see everything within tenant."""
         qs = AgentRun.objects.all()
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         f = AgentGovernanceDashboardService._parse_filters(filters)
 
         if "date_from" in f:
@@ -86,9 +88,11 @@ class AgentGovernanceDashboardService:
         return qs
 
     @staticmethod
-    def _audit_qs(filters: Optional[Dict] = None):
+    def _audit_qs(filters: Optional[Dict] = None, tenant=None):
         from apps.auditlog.models import AuditEvent
         qs = AuditEvent.objects.all()
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         f = AgentGovernanceDashboardService._parse_filters(filters)
         if "date_from" in f:
             qs = qs.filter(created_at__date__gte=f["date_from"])
@@ -118,9 +122,9 @@ class AgentGovernanceDashboardService:
     # 1. Governance Health KPI Summary
     # ------------------------------------------------------------------
     @staticmethod
-    def get_summary(filters=None, user=None) -> Dict[str, Any]:
-        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
-        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
+    def get_summary(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters, tenant=tenant)
+        audit_qs = AgentGovernanceDashboardService._audit_qs(filters, tenant=tenant)
         total = run_qs.count() or 1
 
         # RBAC coverage
@@ -196,8 +200,8 @@ class AgentGovernanceDashboardService:
     # 2. Execution Identity Breakdown
     # ------------------------------------------------------------------
     @staticmethod
-    def get_execution_identity(filters=None, user=None) -> Dict[str, Any]:
-        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
+    def get_execution_identity(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters, tenant=tenant)
         total = run_qs.count() or 1
 
         # By permission source
@@ -255,8 +259,8 @@ class AgentGovernanceDashboardService:
     # 3. Agent Authorization Matrix
     # ------------------------------------------------------------------
     @staticmethod
-    def get_authorization_matrix(filters=None, user=None) -> Dict[str, Any]:
-        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
+    def get_authorization_matrix(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters, tenant=tenant)
         rows = (
             run_qs.values("agent_type")
             .annotate(
@@ -292,8 +296,8 @@ class AgentGovernanceDashboardService:
     # 4. Tool Authorization Dashboard
     # ------------------------------------------------------------------
     @staticmethod
-    def get_tool_authorization(filters=None, user=None) -> Dict[str, Any]:
-        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
+    def get_tool_authorization(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        audit_qs = AgentGovernanceDashboardService._audit_qs(filters, tenant=tenant)
         tool_events = audit_qs.filter(
             event_type__in=[
                 AuditEventType.TOOL_CALL_AUTHORIZED,
@@ -315,7 +319,7 @@ class AgentGovernanceDashboardService:
         )
 
         # Also get avg duration from ToolCall if possible
-        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
+        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters, tenant=tenant)
         run_ids = run_qs.values_list("id", flat=True)
         tool_durations = dict(
             ToolCall.objects.filter(agent_run_id__in=run_ids)
@@ -350,8 +354,8 @@ class AgentGovernanceDashboardService:
     # 5. Recommendation Governance
     # ------------------------------------------------------------------
     @staticmethod
-    def get_recommendation_governance(filters=None, user=None) -> Dict[str, Any]:
-        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
+    def get_recommendation_governance(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        audit_qs = AgentGovernanceDashboardService._audit_qs(filters, tenant=tenant)
         rec_events = audit_qs.filter(
             event_type__in=[
                 AuditEventType.RECOMMENDATION_ACCEPTED,
@@ -360,7 +364,7 @@ class AgentGovernanceDashboardService:
         )
 
         # Also pull operational recommendation data
-        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
+        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters, tenant=tenant)
         run_ids = list(run_qs.values_list("id", flat=True))
         rec_qs = AgentRecommendation.objects.filter(agent_run_id__in=run_ids)
 
@@ -410,8 +414,8 @@ class AgentGovernanceDashboardService:
     # 6. Protected Action Outcomes
     # ------------------------------------------------------------------
     @staticmethod
-    def get_protected_action_outcomes(filters=None, user=None) -> List[Dict[str, Any]]:
-        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
+    def get_protected_action_outcomes(filters=None, user=None, tenant=None) -> List[Dict[str, Any]]:
+        audit_qs = AgentGovernanceDashboardService._audit_qs(filters, tenant=tenant)
 
         actions = [
             {
@@ -470,8 +474,8 @@ class AgentGovernanceDashboardService:
     # 7. Denied Operations
     # ------------------------------------------------------------------
     @staticmethod
-    def get_denials(filters=None, user=None, limit=50) -> Dict[str, Any]:
-        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
+    def get_denials(filters=None, user=None, tenant=None, limit=50) -> Dict[str, Any]:
+        audit_qs = AgentGovernanceDashboardService._audit_qs(filters, tenant=tenant)
         denied_qs = audit_qs.filter(access_granted=False)
 
         events = list(
@@ -519,9 +523,9 @@ class AgentGovernanceDashboardService:
     # 8. Guardrail Coverage Trend
     # ------------------------------------------------------------------
     @staticmethod
-    def get_coverage_trend(filters=None, user=None) -> Dict[str, Any]:
-        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
-        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
+    def get_coverage_trend(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters, tenant=tenant)
+        audit_qs = AgentGovernanceDashboardService._audit_qs(filters, tenant=tenant)
 
         # Daily trend for runs
         daily_runs = list(
@@ -583,8 +587,8 @@ class AgentGovernanceDashboardService:
     # 9. SYSTEM_AGENT Oversight
     # ------------------------------------------------------------------
     @staticmethod
-    def get_system_agent_oversight(filters=None, user=None) -> Dict[str, Any]:
-        all_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
+    def get_system_agent_oversight(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        all_qs = AgentGovernanceDashboardService._base_runs_qs(filters, tenant=tenant)
         sys_qs = all_qs.filter(permission_source="SYSTEM_AGENT")
         total_all = all_qs.count() or 1
 
@@ -596,7 +600,7 @@ class AgentGovernanceDashboardService:
         failed = sys_qs.filter(status=AgentRunStatus.FAILED).count()
 
         # Auto-close actions from audit events
-        audit_qs = AgentGovernanceDashboardService._audit_qs(filters)
+        audit_qs = AgentGovernanceDashboardService._audit_qs(filters, tenant=tenant)
         auto_close_actions = audit_qs.filter(
             event_type=AuditEventType.AUTO_CLOSE_AUTHORIZED,
             permission_source="SYSTEM_AGENT",
@@ -664,12 +668,15 @@ class AgentGovernanceDashboardService:
     # 10. Trace & Authorization Detail (single run)
     # ------------------------------------------------------------------
     @staticmethod
-    def get_trace_detail(run_id, user=None) -> Optional[Dict[str, Any]]:
+    def get_trace_detail(run_id, user=None, tenant=None) -> Optional[Dict[str, Any]]:
         try:
-            run = AgentRun.objects.select_related(
+            qs = AgentRun.objects.select_related(
                 "reconciliation_result__invoice",
                 "agent_definition",
-            ).get(pk=run_id)
+            )
+            if tenant is not None:
+                qs = qs.filter(tenant=tenant)
+            run = qs.get(pk=run_id)
         except AgentRun.DoesNotExist:
             return None
 
@@ -809,9 +816,9 @@ class AgentGovernanceDashboardService:
     # 11. Trace Run List (for trace explorer panel)
     # ------------------------------------------------------------------
     @staticmethod
-    def get_trace_run_list(filters=None, user=None, limit=50) -> List[Dict[str, Any]]:
+    def get_trace_run_list(filters=None, user=None, tenant=None, limit=50) -> List[Dict[str, Any]]:
         """Return recent agent runs with governance fields for the trace explorer."""
-        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters)
+        run_qs = AgentGovernanceDashboardService._base_runs_qs(filters, tenant=tenant)
         runs = (
             run_qs.select_related("reconciliation_result__invoice")
             .order_by("-created_at")[:limit]

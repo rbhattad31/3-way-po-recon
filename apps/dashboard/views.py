@@ -19,6 +19,7 @@ from apps.core.enums import (
     UserRole,
 )
 from apps.dashboard.services import DashboardService
+from apps.core.tenant_utils import get_tenant_or_none
 
 
 @login_required
@@ -84,6 +85,9 @@ def agent_monitor(request):
     case_qs = APCase.objects.select_related(
         "invoice", "vendor", "purchase_order", "assigned_to",
     )
+    tenant = get_tenant_or_none(request)
+    if tenant is not None:
+        case_qs = case_qs.filter(tenant=tenant)
     case_qs = CaseSelectors.scope_for_user(case_qs, request.user)
 
     if path_filter:
@@ -187,12 +191,13 @@ def agent_performance(request):
     user_role = getattr(request.user, "role", "")
 
     start_date = timezone.now() - datetime.timedelta(days=7)
+    agent_run_qs = AgentRun.objects.filter(started_at__gte=start_date)
+    tenant = get_tenant_or_none(request)
+    if tenant is not None:
+        agent_run_qs = agent_run_qs.filter(tenant=tenant)
     plan_rows = (
-        AgentRun.objects
-        .filter(
-            started_at__gte=start_date,
-            input_payload__plan_source__isnull=False,
-        )
+        agent_run_qs
+        .filter(input_payload__plan_source__isnull=False)
         .values("input_payload__plan_source")
         .annotate(
             count=Count("id"),
@@ -256,11 +261,16 @@ def invoice_pipeline(request):
     ]
 
     invoices = Invoice.objects.select_related("vendor").order_by("-created_at")
+    tenant = get_tenant_or_none(request)
+    if tenant is not None:
+        invoices = invoices.filter(tenant=tenant)
     invoice_ids = list(invoices.values_list("id", flat=True))
 
     ext_map = {}
-    for er in ExtractionResult.objects.filter(invoice_id__in=invoice_ids).only("id", "invoice_id"):
-        ext_map[er.invoice_id] = er.id
+    for er in ExtractionResult.objects.filter(document_upload__invoices__pk__in=invoice_ids).select_related("document_upload"):
+        inv = er.invoice
+        if inv:
+            ext_map[inv.pk] = er.id
 
     case_map = {}
     for c in APCase.objects.filter(invoice_id__in=invoice_ids).only(

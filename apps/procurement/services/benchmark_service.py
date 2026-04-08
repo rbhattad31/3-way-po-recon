@@ -57,6 +57,7 @@ class BenchmarkService:
         quotation: SupplierQuotation,
         *,
         use_ai: bool = True,
+        tenant=None,
     ) -> BenchmarkResult:
         AnalysisRunService.start_run(run)
 
@@ -103,6 +104,7 @@ class BenchmarkService:
                         "total_benchmark": str(total_benchmark),
                         "variance_pct": str(overall_variance_pct),
                     },
+                    tenant=tenant,
                 )
 
                 benchmark_lines = []

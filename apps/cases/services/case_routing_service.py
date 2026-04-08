@@ -111,7 +111,7 @@ class CaseRoutingService:
         )
 
     @staticmethod
-    def reroute_path(case: APCase, new_path: str, reason: str, source: str = DecisionSource.HUMAN) -> str:
+    def reroute_path(case: APCase, new_path: str, reason: str, source: str = DecisionSource.HUMAN, tenant=None) -> str:
         """
         Reroute a case to a different processing path.
 
@@ -129,13 +129,14 @@ class CaseRoutingService:
             decision_value=new_path,
             rationale=f"Rerouted from {old_path} to {new_path}: {reason}",
             evidence={"old_path": old_path, "new_path": new_path},
+            tenant=tenant,
         )
 
         logger.info("Case %s rerouted: %s -> %s (%s)", case.case_number, old_path, new_path, reason)
         return new_path
 
     @staticmethod
-    def _record_decision(case, path, source, rationale, confidence=None, evidence=None) -> str:
+    def _record_decision(case, path, source, rationale, confidence=None, evidence=None, tenant=None) -> str:
         """Record path decision and update case."""
         case.processing_path = path
         if path == ProcessingPath.NON_PO:
@@ -150,6 +151,7 @@ class CaseRoutingService:
             confidence=confidence,
             rationale=rationale,
             evidence=evidence or {},
+            tenant=tenant,
         )
 
         logger.info("Case %s path resolved: %s", case.case_number, path)

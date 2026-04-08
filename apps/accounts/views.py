@@ -45,7 +45,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return UserDetailSerializer
 
     def perform_create(self, serializer):
-        user = serializer.save()
+        user = serializer.save(company=getattr(self.request, 'tenant', None))
         RBACEventService.log_user_created(user, self.request.user)
 
     def perform_update(self, serializer):

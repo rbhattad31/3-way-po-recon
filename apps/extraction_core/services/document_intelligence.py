@@ -10,7 +10,7 @@ containing:
     - Party information (supplier, buyer, ship-to, bill-to)
 
 The result is attached to the ``ExtractionResult`` and persisted with
-the ``ExtractionDocument``.
+the ``ExtractionRun``.
 
 Design principles:
     - Country-agnostic: no hardcoded country logic

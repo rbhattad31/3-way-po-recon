@@ -34,7 +34,18 @@
       "Bash(python -m pytest apps/extraction/tests/test_qr_decoder_service.py -x -q)",
       "Bash(python manage.py shell -c \"import apps.extraction.tasks as t; print\\([x for x in dir\\(t\\) if not x.startswith\\(''''_''''\\)]\\)\")",
       "Bash(python -m pytest apps/extraction/tests/test_evidence_confidence.py apps/extraction/tests/test_qr_decoder_service.py -x -q)",
-      "Bash(python -m pytest apps/extraction/tests/ -q --tb=no)"
+      "Bash(python -m pytest apps/extraction/tests/ -q --tb=no)",
+      "Bash(python manage.py migrate documents --run-syncdb)",
+      "Bash(python manage.py migrate documents 0010 --fake)",
+      "Bash(python manage.py migrate documents)",
+      "Bash(set DJANGO_SETTINGS_MODULE=config.settings)",
+      "Bash(python -c \"import django; django.setup\\(\\); from apps.documents.forms import PurchaseOrderForm, POLineItemFormSet; f = PurchaseOrderForm\\(\\); lf = POLineItemFormSet\\(\\); print\\(''''Header fields:'''', [k for k in f.fields]\\); print\\(''''Line fields:'''', list\\(lf.empty_form.fields\\)\\)\")",
+      "Bash(python manage.py shell -c \"from apps.documents.forms import PurchaseOrderForm, POLineItemFormSet; f = PurchaseOrderForm\\(\\); lf = POLineItemFormSet\\(\\); print\\(''''OK''''\\); print\\(''''Header fields:'''', list\\(f.fields.keys\\(\\)\\)\\); print\\(''''Line fields:'''', list\\(lf.empty_form.fields.keys\\(\\)\\)\\)\")",
+      "Bash(python manage.py check --deploy)",
+      "Bash(python manage.py check)",
+      "Bash(python manage.py showmigrations documents)",
+      "Bash(find /c/3-way-po-recon/apps -name migrations -type d -exec ls -la {}/0001_initial.py)",
+      "Bash(2)"
     ]
   }
 }

@@ -34,6 +34,7 @@ class QuotationService:
         currency: str = "USD",
         uploaded_document=None,
         created_by=None,
+        tenant=None,
     ) -> SupplierQuotation:
         quotation = SupplierQuotation.objects.create(
             request=request,
@@ -45,6 +46,7 @@ class QuotationService:
             uploaded_document=uploaded_document,
             extraction_status=ExtractionStatus.PENDING,
             created_by=created_by,
+            tenant=tenant,
         )
         AuditService.log_event(
             entity_type="SupplierQuotation",

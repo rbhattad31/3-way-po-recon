@@ -21,9 +21,10 @@ from apps.cases.api.serializers import (
     RunStageSerializer,
 )
 from apps.cases.models import APCase
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 
-class APCaseViewSet(viewsets.ModelViewSet):
+class APCaseViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     """
     API viewset for AP Cases.
 
@@ -31,6 +32,7 @@ class APCaseViewSet(viewsets.ModelViewSet):
     detail: GET /api/v1/cases/{id}/
     """
 
+    queryset = APCase.objects.all()
     permission_classes = [IsAuthenticated, CanViewCase]
     filterset_fields = ["processing_path", "status", "priority", "assigned_to"]
     search_fields = ["case_number", "invoice__invoice_number", "vendor__name"]
@@ -38,12 +40,17 @@ class APCaseViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
+        qs = super().get_queryset()  # mixin handles tenant filter
         qs = CaseSelectors.inbox(
             processing_path=self.request.query_params.get("processing_path", ""),
             status=self.request.query_params.get("status", ""),
             priority=self.request.query_params.get("priority", ""),
             search=self.request.query_params.get("search", ""),
         )
+        # Re-apply tenant filter after inbox rebuilds the queryset
+        tenant = getattr(self.request, "tenant", None)
+        if tenant is not None and not self.request.user.is_superuser:
+            qs = qs.filter(tenant=tenant)
         return CaseSelectors.scope_for_user(qs, self.request.user)
 
     def get_serializer_class(self):
@@ -59,7 +66,7 @@ class APCaseViewSet(viewsets.ModelViewSet):
         case = self.get_object()
         from apps.auditlog.timeline_service import CaseTimelineService
 
-        events = CaseTimelineService.get_case_timeline(case.invoice_id)
+        events = CaseTimelineService.get_case_timeline(case.invoice_id, tenant=getattr(request, 'tenant', None))
         return Response({"events": events})
 
     @action(detail=True, methods=["get"])

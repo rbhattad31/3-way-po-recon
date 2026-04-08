@@ -114,7 +114,7 @@ class CaseOrchestrator:
         self._skip_before_stage = None  # set by run_from() to skip earlier stages
 
     @observed_service("cases.orchestrator.run", audit_event="CASE_PROCESSING_STARTED", entity_type="APCase")
-    def run(self, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
+    def run(self, tenant=None, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
         """Execute the case from its current position through completion."""
         self._lf_trace = lf_trace
         self._lf_trace_id = lf_trace_id
@@ -220,7 +220,7 @@ class CaseOrchestrator:
         CaseStageType.CASE_SUMMARY: CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS,
     }
 
-    def run_from(self, stage: str, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
+    def run_from(self, stage: str, tenant=None, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
         """Reprocess from a specific stage forward."""
         self._lf_trace = lf_trace
         self._lf_trace_id = lf_trace_id

@@ -345,7 +345,14 @@
             {% endif %}
           </td>
           <td style="font-size:var(--ap-font-size-sm)">
-            {% if r.invoice %}{{ r.invoice.vendor.name|default:r.invoice.raw_vendor_name|default:"—"|truncatechars:25 }}{% else %}—{% endif %}
+            {% if r.invoice %}
+              {% if r.invoice.vendor %}
+                <i class="bi bi-check-circle-fill text-success me-1" style="font-size:.7rem" title="Vendor matched in system"></i>
+              {% elif r.invoice.raw_vendor_name %}
+                <i class="bi bi-exclamation-circle-fill text-warning me-1" style="font-size:.7rem" title="Vendor not found in system"></i>
+              {% endif %}
+              {{ r.invoice.vendor.name|default:r.invoice.raw_vendor_name|default:"—"|truncatechars:25 }}
+            {% else %}—{% endif %}
           </td>
           <td style="text-align:right">
             {% if r.invoice and r.invoice.total_amount %}
@@ -572,7 +579,14 @@
               {{ appr.invoice.invoice_number|default:"—" }}
             </a>
           </td>
-          <td>{{ appr.invoice.vendor.name|default:appr.invoice.raw_vendor_name|default:"—" }}</td>
+          <td>
+            {% if appr.invoice.vendor %}
+              <i class="bi bi-check-circle-fill text-success me-1" style="font-size:.7rem" title="Vendor matched in system"></i>
+            {% elif appr.invoice.raw_vendor_name %}
+              <i class="bi bi-exclamation-circle-fill text-warning me-1" style="font-size:.7rem" title="Vendor not found in system"></i>
+            {% endif %}
+            {{ appr.invoice.vendor.name|default:appr.invoice.raw_vendor_name|default:"—" }}
+          </td>
           <td>{{ appr.invoice.currency }} {{ appr.invoice.total_amount|default:"—" }}</td>
           <td>
             {% if appr.confidence_at_review is not None %}
@@ -865,10 +879,15 @@
         ? `<span style="font-weight:500">${escHtml(r.currency)} ${parseFloat(r.total_amount).toFixed(2)}</span>`
         : '—';
       const vendorName = r.vendor ? (r.vendor.length > 25 ? r.vendor.substring(0, 22) + '…' : r.vendor) : '—';
+      const vendorIcon = r.vendor
+        ? (r.vendor_linked
+          ? '<i class="bi bi-check-circle-fill text-success me-1" style="font-size:.7rem" title="Vendor matched in system"></i>'
+          : '<i class="bi bi-exclamation-circle-fill text-warning me-1" style="font-size:.7rem" title="Vendor not found in system"></i>')
+        : '';
 
       return `<tr${isProc ? ' data-processing="true"' : ''}>
         <td>${invLink}</td>
-        <td style="font-size:var(--ap-font-size-sm)">${escHtml(vendorName)}</td>
+        <td style="font-size:var(--ap-font-size-sm)">${vendorIcon}${escHtml(vendorName)}</td>
         <td style="text-align:right">${amount}</td>
         <td>${confBar}</td>
         <td>${statusBadge}</td>

@@ -61,7 +61,7 @@ class PostingPipeline:
         entity_type="PostingRun",
         audit_event="POSTING_STARTED",
     )
-    def run(cls, invoice: Invoice, *, user=None) -> PostingRun:
+    def run(cls, invoice: Invoice, *, user=None, tenant=None) -> PostingRun:
         """Execute the full posting pipeline for an invoice.
 
         Returns the PostingRun with all artifacts persisted.
@@ -75,6 +75,7 @@ class PostingPipeline:
             stage_code=PostingStage.ELIGIBILITY_CHECK,
             started_at=timezone.now(),
             created_by=user,
+            tenant=tenant,
         )
 
         # Link extraction records if available

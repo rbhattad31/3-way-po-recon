@@ -23,6 +23,7 @@ class EvalFieldOutcomeService:
         confidence: Optional[float] = None,
         tenant_id: str = "",
         detail_json: Optional[dict] = None,
+        tenant=None,
     ) -> EvalFieldOutcome:
         return EvalFieldOutcome.objects.create(
             eval_run=eval_run,
@@ -33,6 +34,7 @@ class EvalFieldOutcomeService:
             confidence=confidence,
             tenant_id=tenant_id,
             detail_json=detail_json or {},
+            tenant=tenant,
         )
 
     @staticmethod
@@ -41,6 +43,7 @@ class EvalFieldOutcomeService:
         eval_run: Optional[EvalRun] = None,
         outcomes: List[dict],
         tenant_id: str = "",
+        tenant=None,
     ) -> List[EvalFieldOutcome]:
         """Create multiple field outcomes in one batch.
 
@@ -58,6 +61,7 @@ class EvalFieldOutcomeService:
                 confidence=o.get("confidence"),
                 tenant_id=o.get("tenant_id", tenant_id),
                 detail_json=o.get("detail_json", {}),
+                tenant=o.get("tenant", tenant),
             )
             for o in outcomes
         ]
@@ -69,6 +73,7 @@ class EvalFieldOutcomeService:
         eval_run: EvalRun,
         outcomes: List[dict],
         tenant_id: str = "",
+        tenant=None,
     ) -> List[EvalFieldOutcome]:
         """Delete existing outcomes for *eval_run* then bulk-create new ones.
 
@@ -86,6 +91,7 @@ class EvalFieldOutcomeService:
                 confidence=o.get("confidence"),
                 tenant_id=o.get("tenant_id", tenant_id),
                 detail_json=o.get("detail_json", {}),
+                tenant=o.get("tenant", tenant),
             )
             for o in outcomes
         ]

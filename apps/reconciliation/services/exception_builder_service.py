@@ -1,9 +1,9 @@
-"""Exception builder — creates structured ReconciliationException records from comparison evidence."""
+"""Exception builder -- creates structured ReconciliationException records from comparison evidence."""
 from __future__  import annotations
 
 import logging
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 from apps.core.constants import THREE_WAY_ONLY_EXCEPTION_TYPES
 from apps.core.enums import ExceptionSeverity, ExceptionType, ReconciliationMode, ReconciliationModeApplicability
@@ -12,6 +12,9 @@ from apps.reconciliation.services.header_match_service import HeaderMatchResult
 from apps.reconciliation.services.line_match_service import LineMatchPair, LineMatchResult
 from apps.reconciliation.services.grn_match_service import GRNMatchResult
 from apps.reconciliation.services.po_lookup_service import POLookupResult
+
+if TYPE_CHECKING:
+    from apps.reconciliation.services.po_balance_service import POBalance
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,7 @@ class ExceptionBuilderService:
         extraction_confidence: Optional[float] = None,
         confidence_threshold: float = 0.75,
         reconciliation_mode: str = "",
+        po_balance: Optional["POBalance"] = None,
     ) -> List[ReconciliationException]:
         """Return a list of unsaved ReconciliationException instances."""
         is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
@@ -83,7 +87,7 @@ class ExceptionBuilderService:
 
         # Header-level exceptions
         if header_result:
-            exceptions.extend(self._header_exceptions(result, header_result))
+            exceptions.extend(self._header_exceptions(result, header_result, po_balance))
 
         # Line-level exceptions
         if line_result and result_line_map:
@@ -91,7 +95,7 @@ class ExceptionBuilderService:
 
         # GRN exceptions (3-way only)
         if not is_two_way and grn_result:
-            exceptions.extend(self._grn_exceptions(result, grn_result))
+            exceptions.extend(self._grn_exceptions(result, grn_result, po_balance))
 
         # Tag each exception with the applicable mode
         for exc in exceptions:
@@ -108,7 +112,8 @@ class ExceptionBuilderService:
     # Header exceptions
     # ------------------------------------------------------------------
     def _header_exceptions(
-        self, result: ReconciliationResult, header: HeaderMatchResult
+        self, result: ReconciliationResult, header: HeaderMatchResult,
+        po_balance: Optional["POBalance"] = None,
     ) -> List[ReconciliationException]:
         excs: List[ReconciliationException] = []
 
@@ -132,22 +137,74 @@ class ExceptionBuilderService:
                 message=f"Currency mismatch: invoice={result.invoice.currency}, PO={result.purchase_order.currency if result.purchase_order else ''}",
             ))
 
+        # Partial invoice informational exception
+        if header.is_partial_invoice and po_balance:
+            covers_pct = po_balance.invoice_covers_pct
+            prior_count = po_balance.prior_invoice_count
+            if po_balance.is_first_partial:
+                partial_msg = (
+                    f"Partial invoice detected: invoice total={result.invoice.total_amount} "
+                    f"covers {covers_pct}% of PO total={po_balance.po_total}. "
+                    f"This PO may have multiple invoices (milestone/partial billing)."
+                )
+            else:
+                partial_msg = (
+                    f"Partial invoice: invoice total={result.invoice.total_amount} "
+                    f"against PO remaining={po_balance.remaining_total} "
+                    f"(PO total={po_balance.po_total}, "
+                    f"prior invoiced={po_balance.prior_invoiced_total}, "
+                    f"prior invoices={prior_count})."
+                )
+            excs.append(self._make(
+                result=result,
+                exc_type=ExceptionType.PARTIAL_INVOICE,
+                severity=ExceptionSeverity.LOW,
+                message=partial_msg,
+                details={
+                    "is_partial_invoice": True,
+                    "is_first_partial": po_balance.is_first_partial,
+                    "invoice_total": str(result.invoice.total_amount),
+                    "po_total": str(po_balance.po_total),
+                    "covers_pct": str(covers_pct),
+                    "prior_invoiced_total": str(po_balance.prior_invoiced_total),
+                    "remaining_total": str(po_balance.remaining_total),
+                    "prior_invoice_count": prior_count,
+                },
+            ))
+
         if header.po_total_match is False and header.total_comparison:
             tc = header.total_comparison
+            # Partial invoice context
+            partial_note = ""
+            details = {
+                "invoice_total": str(tc.invoice_value),
+                "po_total": str(tc.po_value),
+                "difference": str(tc.difference),
+                "difference_pct": str(tc.difference_pct),
+            }
+            if header.is_partial_invoice and po_balance:
+                partial_note = (
+                    f" (partial invoice: PO total={po_balance.po_total}, "
+                    f"prior invoiced={po_balance.prior_invoiced_total}, "
+                    f"remaining={po_balance.remaining_total}, "
+                    f"prior invoices={po_balance.prior_invoice_count})"
+                )
+                details["is_partial_invoice"] = True
+                details["po_original_total"] = str(po_balance.po_total)
+                details["prior_invoiced_total"] = str(po_balance.prior_invoiced_total)
+                details["remaining_total"] = str(po_balance.remaining_total)
+                details["prior_invoice_count"] = po_balance.prior_invoice_count
+
             excs.append(self._make(
                 result=result,
                 exc_type=ExceptionType.AMOUNT_MISMATCH,
                 severity=ExceptionSeverity.HIGH,
                 message=(
                     f"Total amount mismatch: invoice={tc.invoice_value}, "
-                    f"PO={tc.po_value}, diff={tc.difference} ({tc.difference_pct}%)"
+                    f"PO remaining={tc.po_value}, diff={tc.difference} ({tc.difference_pct}%)"
+                    f"{partial_note}"
                 ),
-                details={
-                    "invoice_total": str(tc.invoice_value),
-                    "po_total": str(tc.po_value),
-                    "difference": str(tc.difference),
-                    "difference_pct": str(tc.difference_pct),
-                },
+                details=details,
             ))
 
         if header.tax_match is False and header.tax_comparison:
@@ -168,11 +225,51 @@ class ExceptionBuilderService:
                 },
             ))
 
-        return excs
+        # -- Tax compliance exceptions (GSTIN, country, supply type) --
+        if header.gstin_match is False:
+            d = header.tax_compliance_details
+            excs.append(self._make(
+                result=result,
+                exc_type=ExceptionType.GSTIN_MISMATCH,
+                severity=ExceptionSeverity.HIGH,
+                message=(
+                    f"Vendor GSTIN/Tax-ID mismatch: "
+                    f"invoice={d.get('invoice_vendor_tax_id', '?')}, "
+                    f"PO={d.get('po_vendor_gstin', '?')}"
+                ),
+                details=d,
+            ))
 
-    # ------------------------------------------------------------------
-    # Line exceptions
-    # ------------------------------------------------------------------
+        if header.country_match is False:
+            d = header.tax_compliance_details
+            excs.append(self._make(
+                result=result,
+                exc_type=ExceptionType.COUNTRY_MISMATCH,
+                severity=ExceptionSeverity.HIGH,
+                message=(
+                    f"Country mismatch: invoice country (inferred)="
+                    f"{d.get('invoice_country_inferred', '?')}, "
+                    f"PO country={d.get('po_country', '?')}"
+                ),
+                details=d,
+            ))
+
+        if header.supply_type_match is False:
+            d = header.tax_compliance_details
+            excs.append(self._make(
+                result=result,
+                exc_type=ExceptionType.SUPPLY_TYPE_MISMATCH,
+                severity=ExceptionSeverity.MEDIUM,
+                message=(
+                    f"Supply type mismatch: invoice inferred="
+                    f"{d.get('invoice_supply_type_inferred', '?')}, "
+                    f"PO={d.get('po_supply_type', '?')} "
+                    f"(INTRA=CGST+SGST, INTER=IGST)"
+                ),
+                details=d,
+            ))
+
+        return excs
     def _line_exceptions(
         self,
         result: ReconciliationResult,
@@ -257,6 +354,26 @@ class ExceptionBuilderService:
                     ),
                 ))
 
+            # Tax rate mismatch (component-level rate comparison)
+            if pair.tax_rate_match is False and pair.tax_rate_details:
+                d = pair.tax_rate_details
+                excs.append(self._make(
+                    result=result,
+                    result_line=rl,
+                    exc_type=ExceptionType.TAX_RATE_MISMATCH,
+                    severity=ExceptionSeverity.MEDIUM,
+                    message=(
+                        f"Line {pair.invoice_line.line_number}: tax rate mismatch "
+                        f"invoice={d.get('invoice_tax_rate', '?')}% vs "
+                        f"PO={d.get('po_effective_tax_rate', '?')}% "
+                        f"(diff={d.get('rate_difference', '?')}%)"
+                    ),
+                    details={
+                        "line_number": pair.invoice_line.line_number,
+                        **d,
+                    },
+                ))
+
         # Unmatched invoice lines
         for inv_line in line_result.unmatched_invoice_lines:
             excs.append(self._make(
@@ -276,17 +393,30 @@ class ExceptionBuilderService:
     # GRN exceptions
     # ------------------------------------------------------------------
     def _grn_exceptions(
-        self, result: ReconciliationResult, grn: GRNMatchResult
+        self, result: ReconciliationResult, grn: GRNMatchResult,
+        po_balance: Optional["POBalance"] = None,
     ) -> List[ReconciliationException]:
         excs: List[ReconciliationException] = []
+        is_partial = po_balance.is_partial if po_balance else False
 
         if not grn.grn_available:
-            excs.append(self._make(
-                result=result,
-                exc_type=ExceptionType.GRN_NOT_FOUND,
-                severity=ExceptionSeverity.MEDIUM,
-                message="No goods receipt notes found for this PO",
-            ))
+            if is_partial:
+                excs.append(self._make(
+                    result=result,
+                    exc_type=ExceptionType.GRN_NOT_FOUND,
+                    severity=ExceptionSeverity.LOW,
+                    message=(
+                        "No goods receipt notes found for this PO. "
+                        "This is a partial invoice -- GRN may arrive separately."
+                    ),
+                ))
+            else:
+                excs.append(self._make(
+                    result=result,
+                    exc_type=ExceptionType.GRN_NOT_FOUND,
+                    severity=ExceptionSeverity.MEDIUM,
+                    message="No goods receipt notes found for this PO",
+                ))
             return excs
 
         for cmp in grn.line_comparisons:

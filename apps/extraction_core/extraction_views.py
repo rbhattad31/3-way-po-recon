@@ -342,9 +342,10 @@ class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
         from apps.extraction_core.services.extraction_pipeline import (
             ExtractionPipeline,
         )
+        ocr_record = getattr(run, "ocr_text_record", None)
         new_run = ExtractionPipeline.run(
-            extraction_document_id=run.document_id,
-            ocr_text=run.document.ocr_text or "",
+            extraction_document_id=run.document_upload_id,
+            ocr_text=ocr_record.ocr_text if ocr_record else "",
             document_type=run.schema.document_type if run.schema else "INVOICE",
             user=request.user,
         )

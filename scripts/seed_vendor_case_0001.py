@@ -8,6 +8,10 @@ Run:
 """
 from apps.vendors.models import Vendor
 from apps.documents.models import Invoice
+from apps.accounts.models import CompanyProfile
+
+# Use the first available company as tenant (Bradsol)
+_tenant = CompanyProfile.objects.order_by("pk").first()
 
 # -- Vendor master --------------------------------------------------------
 vendor, created = Vendor.objects.update_or_create(
@@ -26,6 +30,7 @@ vendor, created = Vendor.objects.update_or_create(
         "payment_terms": "Net 30",
         "contact_email": "accounts@deetyagems.com",
         "is_active": True,
+        "tenant": _tenant,
     },
 )
 

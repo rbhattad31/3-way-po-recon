@@ -1,6 +1,7 @@
 """Document template views (server-side rendered)."""
 import hashlib
-from decimal import Decimal
+import json
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -13,6 +14,7 @@ from django.views.decorators.http import require_POST
 from apps.core.enums import DocumentType, InvoiceStatus, UserRole
 from apps.core.decorators import observed_action
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.core.utils import normalize_category, parse_percentage, resolve_line_tax_percentage, resolve_tax_percentage
 from apps.documents.forms import GoodsReceiptNoteForm, POLineItemFormSet, PurchaseOrderForm
 from apps.documents.models import DocumentUpload, GoodsReceiptNote, Invoice, PurchaseOrder
@@ -159,6 +161,7 @@ def upload_invoice(request):
         content_type=uploaded_file.content_type,
         document_type=document_type,
         uploaded_by=request.user,
+        tenant=getattr(request, 'tenant', None),
     )
 
     try:
@@ -200,7 +203,7 @@ def upload_invoice(request):
     # Trigger extraction pipeline — try async first, fall back to sync
     try:
         from apps.extraction.tasks import process_invoice_upload_task
-        process_invoice_upload_task.delay(doc_upload.pk)
+        process_invoice_upload_task.delay(request.tenant.pk if request.tenant else None, doc_upload.pk)
         messages.success(request, f"'{uploaded_file.name}' uploaded successfully. Extraction processing has started.")
     except Exception:
         # Celery broker unavailable — run extraction synchronously
@@ -219,7 +222,10 @@ def upload_invoice(request):
 def invoice_list(request):
     from django.db.models import Count, Sum, Q
 
+    tenant = require_tenant(request)
     qs = Invoice.objects.select_related("vendor").prefetch_related("ap_case").order_by("-created_at")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     qs = _scope_invoices_for_user(qs, request.user)
 
     # --- Primary filters ---
@@ -272,14 +278,20 @@ def invoice_list(request):
 
     # Pending uploads that haven't been processed into invoices yet
     from apps.core.enums import FileProcessingState
-    pending_uploads = DocumentUpload.objects.filter(
+    pending_uploads_qs = DocumentUpload.objects.filter(
         processing_state__in=[FileProcessingState.QUEUED, FileProcessingState.PROCESSING],
         document_type=DocumentType.INVOICE,
-    ).select_related("uploaded_by").order_by("-created_at")[:10]
+    ).select_related("uploaded_by").order_by("-created_at")
+    if tenant is not None:
+        pending_uploads_qs = pending_uploads_qs.filter(tenant=tenant)
+    pending_uploads = pending_uploads_qs[:10]
 
     # KPI stats (scoped to same visibility as the listing)
     from django.db.models import Count, Sum, Q
-    base_inv = _scope_invoices_for_user(Invoice.objects.all(), request.user)
+    base_qs = Invoice.objects.all()
+    if tenant is not None:
+        base_qs = base_qs.filter(tenant=tenant)
+    base_inv = _scope_invoices_for_user(base_qs, request.user)
     total_invoices = base_inv.count()
     by_status = dict(
         base_inv.values_list("status").annotate(c=Count("id")).values_list("status", "c")
@@ -312,10 +324,15 @@ def invoice_list(request):
 def pending_uploads_status(request):
     """Return pending uploads as JSON for AJAX polling."""
     from apps.core.enums import FileProcessingState
+    from apps.core.tenant_utils import get_tenant_or_none
 
-    pending = DocumentUpload.objects.filter(
+    tenant = get_tenant_or_none(request)
+    pending_qs = DocumentUpload.objects.filter(
         processing_state__in=[FileProcessingState.QUEUED, FileProcessingState.PROCESSING],
-    ).select_related("uploaded_by").order_by("-created_at")[:10]
+    ).select_related("uploaded_by").order_by("-created_at")
+    if tenant is not None:
+        pending_qs = pending_qs.filter(tenant=tenant)
+    pending = pending_qs[:10]
 
     uploads = []
     for u in pending:
@@ -335,7 +352,7 @@ def pending_uploads_status(request):
 def invoice_detail(request, pk):
     # Redirect to extraction console if an ExtractionResult exists for this invoice
     from apps.extraction.models import ExtractionResult
-    ext = ExtractionResult.objects.filter(invoice_id=pk).order_by("-created_at").first()
+    ext = ExtractionResult.objects.filter(document_upload__invoices__pk=pk).order_by("-created_at").first()
     if ext:
         from django.shortcuts import redirect
         return redirect("extraction:console", pk=ext.pk)
@@ -375,7 +392,10 @@ def invoice_detail(request, pk):
 @login_required
 @permission_required_code("purchase_orders.view")
 def po_list(request):
+    tenant = require_tenant(request)
     qs = PurchaseOrder.objects.select_related("vendor").order_by("-po_date")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     qs = _scope_pos_for_user(qs, request.user)
 
     status_filter = request.GET.get("status")
@@ -421,6 +441,15 @@ def po_list(request):
     })
 
 
+def _vendors_meta_json():
+    """Build a JSON-serialisable dict of vendor PK → {country, tax_id}."""
+    from apps.vendors.models import Vendor as VendorModel
+    return json.dumps({
+        str(v.pk): {"country": v.country or "", "tax_id": v.tax_id or ""}
+        for v in VendorModel.objects.only("pk", "country", "tax_id")
+    })
+
+
 @login_required
 @permission_required_code("purchase_orders.create")
 def po_create(request):
@@ -428,7 +457,9 @@ def po_create(request):
         form = PurchaseOrderForm(request.POST)
         formset = POLineItemFormSet(request.POST)
         if form.is_valid() and formset.is_valid():
-            po = form.save()
+            po = form.save(commit=False)
+            po.tenant = getattr(request, 'tenant', None)
+            po.save()
             formset.instance = po
             formset.save()
             messages.success(request, f"Purchase Order '{po.po_number}' created successfully.")
@@ -436,7 +467,11 @@ def po_create(request):
     else:
         form = PurchaseOrderForm()
         formset = POLineItemFormSet()
-    return render(request, "documents/po_create.html", {"form": form, "formset": formset})
+    return render(request, "documents/po_create.html", {
+        "form": form,
+        "formset": formset,
+        "vendors_meta_json": _vendors_meta_json(),
+    })
 
 
 @login_required
@@ -454,7 +489,12 @@ def po_edit(request, pk):
     else:
         form = PurchaseOrderForm(instance=po)
         formset = POLineItemFormSet(instance=po)
-    return render(request, "documents/po_edit.html", {"form": form, "po": po, "formset": formset})
+    return render(request, "documents/po_edit.html", {
+        "form": form,
+        "po": po,
+        "formset": formset,
+        "vendors_meta_json": _vendors_meta_json(),
+    })
 
 
 @login_required
@@ -476,7 +516,10 @@ def po_detail(request, pk):
 @login_required
 @permission_required_code("grns.view")
 def grn_list(request):
+    tenant = require_tenant(request)
     qs = GoodsReceiptNote.objects.select_related("purchase_order", "vendor").order_by("-receipt_date")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     qs = _scope_grns_for_user(qs, request.user)
 
     status_filter = request.GET.get("status")
@@ -527,7 +570,38 @@ def grn_create(request):
     if request.method == "POST":
         form = GoodsReceiptNoteForm(request.POST)
         if form.is_valid():
-            grn = form.save()
+            grn = form.save(commit=False)
+            grn.tenant = getattr(request, 'tenant', None)
+            # Auto-set vendor from PO
+            if grn.purchase_order and grn.purchase_order.vendor:
+                grn.vendor = grn.purchase_order.vendor
+            grn.save()
+
+            # Create GRN line items from submitted quantities
+            if grn.purchase_order:
+                from apps.documents.models import GRNLineItem
+                for po_line in grn.purchase_order.line_items.order_by("line_number"):
+                    qty_key = f"qty_{po_line.pk}"
+                    raw_qty = request.POST.get(qty_key, "")
+                    if not raw_qty:
+                        continue
+                    try:
+                        qty_received = Decimal(raw_qty)
+                    except (InvalidOperation, ValueError):
+                        continue
+                    if qty_received <= 0:
+                        continue
+                    GRNLineItem.objects.create(
+                        grn=grn,
+                        line_number=po_line.line_number,
+                        po_line=po_line,
+                        item_code=po_line.item_code or "",
+                        description=po_line.description or "",
+                        quantity_received=qty_received,
+                        quantity_accepted=qty_received,
+                        unit_of_measure=po_line.unit_of_measure or "EA",
+                    )
+
             messages.success(request, f"GRN '{grn.grn_number}' created successfully.")
             return redirect("grn_detail", pk=grn.pk)
     else:

@@ -24,14 +24,24 @@ from apps.core.enums import UserRole
 # Helpers
 # ============================================================================
 
-def _is_admin(user) -> bool:
-    """Check if user has ADMIN role via legacy field or RBAC."""
+def _is_platform_admin(user) -> bool:
+    """Check if user is a platform-level super admin."""
     if not user or not user.is_authenticated:
         return False
-    if getattr(user, "role", None) == UserRole.ADMIN:
+    return getattr(user, "is_platform_admin", False)
+
+
+def _is_admin(user) -> bool:
+    """Check if user has ADMIN (or SUPER_ADMIN / platform admin) role."""
+    if not user or not user.is_authenticated:
+        return False
+    if _is_platform_admin(user):
+        return True
+    if getattr(user, "role", None) in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
         return True
     if hasattr(user, "get_role_codes"):
-        return "ADMIN" in user.get_role_codes()
+        codes = user.get_role_codes()
+        return "ADMIN" in codes or "SUPER_ADMIN" in codes
     return False
 
 

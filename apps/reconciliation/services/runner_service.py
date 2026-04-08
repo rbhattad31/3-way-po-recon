@@ -79,7 +79,10 @@ class ReconciliationRunnerService:
         # Sub-services
         self.po_lookup = POLookupService()
         self.mode_resolver = ReconciliationModeResolver(self.config)
-        self.router = ReconciliationExecutionRouter(self.tolerance)
+        self.router = ReconciliationExecutionRouter(
+            self.tolerance,
+            partial_invoice_threshold_pct=getattr(self.config, 'partial_invoice_threshold_pct', 50.0),
+        )
         self.classifier = ClassificationService()
         self.exception_builder = ExceptionBuilderService()
         self.result_service = ReconciliationResultService()
@@ -94,6 +97,7 @@ class ReconciliationRunnerService:
         triggered_by=None,
         lf_trace=None,
         lf_trace_id=None,
+        tenant=None,
     ) -> ReconciliationRun:
         """Execute reconciliation for a set of invoices.
 
@@ -112,6 +116,7 @@ class ReconciliationRunnerService:
             started_at=timezone.now(),
             total_invoices=len(invoices),
             triggered_by=triggered_by,
+            tenant=tenant,
         )
 
         # Langfuse: open a "reconciliation_run" span.
@@ -413,6 +418,8 @@ class ReconciliationRunnerService:
             "grn_match_ratio": round(_grn_ratio, 3) if reconciliation_mode == "THREE_WAY" else None,
             "grn_checked": routed.grn_checked,
             "amount_delta": round(_amount_delta, 2),
+            "is_partial_invoice": bool(routed.po_balance and routed.po_balance.is_partial),
+            "prior_invoice_count": routed.po_balance.prior_invoice_count if routed.po_balance else 0,
         }
         end_span_safe(_lf_match, output=_match_meta)
         score_observation_safe(_lf_match, RECON_HEADER_MATCH_RATIO, _header_ratio)
@@ -523,6 +530,7 @@ class ReconciliationRunnerService:
             extraction_confidence=invoice.extraction_confidence,
             confidence_threshold=self.config.extraction_confidence_threshold,
             reconciliation_mode=reconciliation_mode,
+            po_balance=routed.po_balance,
         )
         if exceptions:
             from apps.reconciliation.models import ReconciliationException

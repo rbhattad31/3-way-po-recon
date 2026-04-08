@@ -57,6 +57,7 @@ The **3-Way PO Reconciliation Platform** is an enterprise Django application tha
 | **ERP Integration Layer** | Connector framework (Dynamics, Zoho, Salesforce, Custom) with cache, resolver, and fallback chain |
 | **Procurement Intelligence** | Product recommendation, should-cost benchmarking, and 6-dimension validation for procurement requests |
 | **Multi-Country Extraction** | Jurisdiction-aware extraction platform with credit system, OCR cost tracking, and country pack governance |
+| **Multi-Tenant Architecture** | Shared-database row-level tenant isolation via CompanyProfile FK; TenantMiddleware, TenantQuerysetMixin, BaseTool._scoped(); platform admin cross-tenant access |
 
 ### Business Flow Summary
 
@@ -277,15 +278,16 @@ Additional mixins:
 
 | Model | Fields | Notes |
 |---|---|---|
-| **User** | email (login), first_name, last_name, role (legacy), is_active, is_staff, department | Custom model; RBAC helpers: `get_primary_role()`, `get_all_roles()`, `has_permission()`, `get_effective_permissions()`, `clear_permission_cache()`, `sync_legacy_role_field()` |
-| **Role** | code, name, description, is_system_role, is_active, rank | 6 system roles seeded; supports custom roles |
-| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 40 permissions across 14 modules |
+| **CompanyProfile** | name, legal_name, country, currency, industry, size_category, website, logo | Tenant entity; related: CompanyAlias, CompanyTaxID |
+| **User** | email (login), first_name, last_name, role (legacy), company (FK CompanyProfile), is_platform_admin, is_active, is_staff, department | Custom model; `company` = tenant FK; `is_platform_admin` = cross-tenant platform admin flag; RBAC helpers: `get_primary_role()`, `get_all_roles()`, `has_permission()`, `get_effective_permissions()`, `clear_permission_cache()`, `sync_legacy_role_field()` |
+| **Role** | code, name, description, is_system_role, is_active, rank | 10 system roles seeded (incl. SUPER_ADMIN rank 1, PROCUREMENT rank 45); supports custom roles |
+| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 65 permissions across 18 modules (incl. tenants.*, platform.settings, eval.*, procurement.*) |
 | **RolePermission** | role FK, permission FK, is_allowed | Many-to-many with explicit allow flag; unique_together |
 | **UserRole** | user FK, role FK, is_primary, assigned_by, expires_at, is_active | Multi-role with expiry; `is_expired`/`is_effective` properties |
 | **UserPermissionOverride** | user FK, permission FK, override_type (ALLOW/DENY), reason, assigned_by, expires_at | Per-user overrides with audit trail |
 | **MenuConfig** | label, icon_class, url_name, required_permission, parent FK, order, is_separator | Dynamic menu items (future use) |
 
-**Permission Resolution Order**: Admin bypass → User DENY overrides → User ALLOW overrides → Role permissions
+**Permission Resolution Order**: Platform Admin bypass (`is_platform_admin`) -> Admin bypass -> User DENY overrides -> User ALLOW overrides -> Role permissions
 
 Legacy roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`, `AUDITOR` — synced to new RBAC UserRole table
 
@@ -2081,21 +2083,24 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 #### Permission Resolution Order
 
 ```
-1. Admin bypass → all permissions granted
-2. User DENY overrides → explicitly blocked
-3. User ALLOW overrides → explicitly granted
-4. Role permissions → union of all active role permissions
-5. Legacy fallback → uses User.role field if no UserRole entries exist
+0. Platform Admin bypass (is_platform_admin=True) -> all permissions granted
+1. Tenant Admin bypass (ADMIN role) -> all non-platform permissions granted
+2. User DENY overrides -> explicitly blocked
+3. User ALLOW overrides -> explicitly granted
+4. Role permissions -> union of all active role permissions
+5. Legacy fallback -> uses User.role field if no UserRole entries exist
 ```
 
 #### Seeded Roles & Permission Matrix
 
 | Role | Rank | Key Permissions |
 |---|---|---|
-| **ADMIN** | 10 | All 40 permissions |
+| **SUPER_ADMIN** | 1 | All 65 permissions including tenants.view/manage/impersonate, platform.settings. Cross-tenant access via `is_platform_admin=True`. |
+| **ADMIN** | 10 | All non-platform permissions (tenant-scoped) |
 | **FINANCE_MANAGER** | 20 | invoices.view, reconciliation.view/override, cases.view/assign/escalate/add_comment, reviews.view/assign/decide, governance.view, agents.view/orchestrate, users.manage, roles.manage, purchase_orders.view, grns.view, vendors.view, recommendations.auto_close/route_review/escalate/reprocess/route_procurement/vendor_clarification |
 | **AUDITOR** | 30 | *.view (read-only across all modules), governance.view, vendors.view, purchase_orders.view, grns.view |
 | **REVIEWER** | 40 | invoices.view, reconciliation.view, cases.view/add_comment, reviews.view/decide, agents.view/use_copilot, governance.view, purchase_orders.view, grns.view, vendors.view, recommendations.route_review |
+| **PROCUREMENT** | 45 | procurement.view/create/edit/approve, vendors.view, purchase_orders.view |
 | **AP_PROCESSOR** | 50 | invoices.view/create/edit/trigger_reconciliation, reconciliation.view/run, reviews.view, cases.view/edit/add_comment, agents.view/use_copilot, purchase_orders.view*, grns.view*, vendors.view* |
 | **SYSTEM_AGENT** | 100 | agents.orchestrate + all agents.run_* + purchase_orders.view, grns.view, vendors.view, invoices.view, reconciliation.view + recommendations.auto_close/route_review/escalate/reprocess + cases.escalate |
 
@@ -2103,7 +2108,7 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 
 *\*\* SYSTEM_AGENT: Dedicated service account (`system-agent@internal`) for autonomous agent operations. `is_system_role=True`, rank 100. Used by `AgentGuardrailsService.resolve_actor()` when no human user context is available.*
 
-#### Permission Codes (40 total, 14 modules)
+#### Permission Codes (65 total, 18 modules)
 
 | Module | Permissions |
 |---|---|
@@ -2121,6 +2126,10 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 | grns | `view` |
 | recommendations | `auto_close`, `route_review`, `escalate`, `reprocess`, `route_procurement`, `vendor_clarification` |
 | extraction | `reprocess` |
+| tenants | `view`, `manage`, `impersonate` |
+| platform | `settings` |
+| eval | `view`, `manage` |
+| procurement | `view`, `create`, `edit`, `approve` |
 
 #### Data Scoping (AP_PROCESSOR)
 
@@ -2232,9 +2241,42 @@ Full Bootstrap 5 management screens at `/accounts/admin-console/`:
 
 Sidebar navigation shows Admin Console links only to users with `users.manage` or `roles.manage` permissions.
 
-### 20.9 Soft Delete
+### 20.9 Multi-Tenant Isolation
 
-Business entities use `SoftDeleteMixin` (is_active flag) — never hard-delete. This ensures auditability and data integrity.
+The platform uses **shared-database, shared-schema** multi-tenancy with row-level isolation. The tenant entity is `CompanyProfile` (`apps/accounts/models.py`).
+
+#### Tenant Resolution
+
+| Layer | Mechanism |
+|---|---|
+| **TenantMiddleware** (`apps/core/middleware.py`) | Sets `request.tenant` from `user.company`; platform admins (`is_platform_admin`) bypass (tenant=None, cross-tenant) |
+| **TenantQuerysetMixin** (`apps/core/tenant_utils.py`) | Filters `get_queryset()` by `request.tenant` on all DRF ViewSets and template CBVs |
+| **require_tenant()** | FBV helper; returns tenant or raises PermissionDenied |
+| **scoped_queryset()** | Service-layer helper: `scoped_queryset(Model, tenant)` |
+| **BaseTool._scoped()** | Agent tool helper: filters tool queries by tenant from AgentContext |
+| **assert_tenant_access()** | Detail-view guard: verifies object belongs to correct tenant |
+
+#### Tenant-Scoped Models (28+)
+
+All business models have a `tenant` FK to `CompanyProfile`. This includes: Invoice, PurchaseOrder, GoodsReceiptNote, Vendor, ReconciliationRun, ReconciliationResult, AgentOrchestrationRun, AgentRun, ReviewAssignment, APCase, DocumentUpload, ExtractionResult, InvoicePosting, PostingRun, EvalRun, AuditEvent, ERPConnection, CopilotSession, ProcurementRequest, and more.
+
+#### Platform Admin
+
+Users with `is_platform_admin=True` and the `SUPER_ADMIN` role (rank 1) operate cross-tenant. They see all data, bypass all permission checks, and hold 4 exclusive permissions: `tenants.view`, `tenants.manage`, `tenants.impersonate`, `platform.settings`.
+
+#### Celery Task Tenant Propagation
+
+All tenant-aware tasks accept `tenant_id` as a parameter and resolve it to a `CompanyProfile` instance. Task entity fetches are guarded with `filter(tenant=tenant)` when a tenant is provided.
+
+#### Agent Tool Tenant Scoping
+
+The agent pipeline threads `tenant` from the source entity through `AgentContext` -> `BaseAgent._execute_tool()` -> `BaseTool._scoped(queryset)`, ensuring all agent DB queries respect tenant boundaries.
+
+> For full details, see [MULTI_TENANT.md](MULTI_TENANT.md).
+
+### 20.10 Soft Delete
+
+Business entities use `SoftDeleteMixin` (is_active flag) -- never hard-delete. This ensures auditability and data integrity.
 
 ---
 
@@ -2381,7 +2423,8 @@ celery -A config worker -l info
 - Observability: TraceContext, structured JSON logging, MetricsService, RequestTraceMiddleware, @observed_service/@observed_action/@observed_task decorators; Langfuse integration (fail-silent tracing, scores, prompt management); ERP-specific Langfuse tracing helpers (`langfuse_helpers.py` -- metadata sanitisation, per-stage span wrappers, 19 ERP scores)
 - DRF APIs with filtering, search, pagination; vendor UI (list + detail)
 - RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own invoices
-- Enterprise RBAC: Role, Permission, RolePermission, UserRole (with scope_json), UserPermissionOverride; RBAC engine, middleware, template tags, DRF classes, CBV mixins, admin console (8 screens), API, seed (6 roles incl. SYSTEM_AGENT, 40 permissions)
+- Enterprise RBAC: Role, Permission, RolePermission, UserRole (with scope_json), UserPermissionOverride; RBAC engine, middleware, template tags, DRF classes, CBV mixins, admin console (8 screens), API, seed (10 roles incl. SUPER_ADMIN and SYSTEM_AGENT, 65 permissions)
+- **Multi-Tenant Architecture**: Shared-database row-level isolation via `CompanyProfile` tenant FK on 28+ models; `TenantMiddleware` sets `request.tenant`; `TenantQuerysetMixin` on all ViewSets and template views; `require_tenant()` / `scoped_queryset()` for FBVs and services; `BaseTool._scoped()` for agent tools; Celery tasks accept `tenant_id`; platform admin (`is_platform_admin` + SUPER_ADMIN role rank 1) bypasses tenant scoping. See [MULTI_TENANT.md](MULTI_TENANT.md).
 - Prompt registry with 18 defaults; pushed to Langfuse via `push_prompts_to_langfuse`
 - Seed data (4 commands): config, rbac, prompts, ap_data (30+ scenarios, 6-stage pipeline)
 - **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` bridges extraction/approval into eval layer (predicted = LLM value, ground truth = empty until human approval confirms/corrects); `ReconciliationEvalAdapter` bridges reconciliation engine + review workflow into eval layer (predicted = match result, ground truth = review decision); `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation. See [EVAL_LEARNING.md](EVAL_LEARNING.md).

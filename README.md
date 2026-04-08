@@ -1,6 +1,6 @@
 # 3-Way PO Reconciliation Platform
 
-An enterprise Django application that automates **configurable 2-way and 3-way Purchase Order (PO) reconciliation** — matching Invoices against Purchase Orders (POs) and, when applicable, Goods Receipt Notes (GRNs). The system extracts invoice data from uploaded PDFs using a modular AI pipeline, resolves the reconciliation mode, performs deterministic matching with tolerance-based comparison, routes complex cases to LLM-powered agents, and sends unresolvable items to human reviewers.
+An enterprise Django application that automates **configurable 2-way and 3-way Purchase Order (PO) reconciliation** -- matching Invoices against Purchase Orders (POs) and, when applicable, Goods Receipt Notes (GRNs). The system uses **shared-database multi-tenancy** (row-level isolation via `CompanyProfile`) to support multiple organizations. It extracts invoice data from uploaded PDFs using a modular AI pipeline, resolves the reconciliation mode, performs deterministic matching with tolerance-based comparison, routes complex cases to LLM-powered agents, and sends unresolvable items to human reviewers.
 
 ## Tech Stack
 

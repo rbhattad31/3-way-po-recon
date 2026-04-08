@@ -68,6 +68,7 @@ class VendorImporter:
 
             valid_records.append(ERPVendorReference(
                 batch=batch,
+                tenant=batch.tenant,
                 vendor_code=vendor_code,
                 vendor_name=vendor_name,
                 normalized_vendor_name=normalize_text(vendor_name),
@@ -123,6 +124,7 @@ class VendorImporter:
                         currency=ref.currency or "USD",
                         payment_terms=ref.payment_terms,
                         is_active=ref.is_active,
+                        tenant=batch.tenant,
                     ),
                 )
 
@@ -137,6 +139,7 @@ class VendorImporter:
                         source="erp_import",
                         confidence=1.0,
                         is_active=True,
+                        tenant=batch.tenant,
                     ),
                 )
                 # If alias already existed but vendor FK was missing, back-fill it

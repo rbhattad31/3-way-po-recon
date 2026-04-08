@@ -93,10 +93,12 @@ class LearningEngine:
         days: int = DEFAULT_DAYS,
         min_confidence: float = DEFAULT_MIN_CONFIDENCE,
         cooldown_days: int = COOLDOWN_DAYS,
+        tenant=None,
     ):
         self.days = days
         self.min_confidence = min_confidence
         self.cooldown_days = cooldown_days
+        self._tenant = tenant
         self._cutoff = timezone.now() - timedelta(days=self.days)
         self._cooldown_cutoff = timezone.now() - timedelta(days=self.cooldown_days)
 
@@ -662,6 +664,8 @@ class LearningEngine:
             qs = qs.filter(confidence__gte=self.min_confidence)
         if module:
             qs = qs.filter(app_module=module)
+        if self._tenant is not None:
+            qs = qs.filter(tenant=self._tenant)
         return qs
 
     def _propose_action(
@@ -676,6 +680,7 @@ class LearningEngine:
         action_payload_json: dict,
         summary: EngineRunSummary,
         dry_run: bool,
+        tenant=None,
     ) -> Optional[LearningAction]:
         """Create a LearningAction if not duplicated or on cooldown.
 
@@ -741,6 +746,7 @@ class LearningEngine:
             rationale=rationale,
             input_signals_json=input_signals_json,
             action_payload_json=action_payload_json,
+            tenant=tenant if tenant is not None else self._tenant,
         )
 
         summary.actions_proposed += 1

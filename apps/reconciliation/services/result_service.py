@@ -40,6 +40,7 @@ class ReconciliationResultService:
         exceptions: Optional[List[ReconciliationException]] = None,
         reconciliation_mode: str = "",
         mode_resolution: Optional[ModeResolutionResult] = None,
+        tenant=None,
     ) -> ReconciliationResult:
         po: Optional[PurchaseOrder] = po_result.purchase_order if po_result.found else None
         is_two_way = reconciliation_mode == ReconciliationMode.TWO_WAY
@@ -52,6 +53,7 @@ class ReconciliationResultService:
             invoice=invoice,
             purchase_order=po,
             match_status=match_status,
+            tenant=tenant,
             requires_review=match_status in (
                 MatchStatus.PARTIAL_MATCH,
                 MatchStatus.UNMATCHED,

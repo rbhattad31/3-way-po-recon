@@ -75,6 +75,12 @@
             </div>
           </div>
           <div class="row g-3 mt-1">
+            <div class="col-md-4">
+              <label class="form-label">Company</label>
+              {{ profile_form.company }}
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
             <div class="col-12">
               <div class="form-check">
                 {{ profile_form.is_active }}
@@ -94,6 +100,7 @@
       <div class="card-body">
         <table class="table table-sm mb-0">
           <tr><td class="text-muted" style="width:200px">Email</td><td>{{ target_user.email }}</td></tr>
+          <tr><td class="text-muted">Company</td><td>{% if target_user.company %}<a href="{% url 'accounts:company_detail' target_user.company.pk %}">{{ target_user.company.name }}</a>{% else %}<span class="text-muted">--</span>{% endif %}</td></tr>
           <tr><td class="text-muted">Legacy Role Field</td><td><code>{{ target_user.role }}</code></td></tr>
           <tr><td class="text-muted">Staff Status</td><td>{% if target_user.is_staff %}Yes{% else %}No{% endif %}</td></tr>
           <tr><td class="text-muted">Last Login</td><td>{{ target_user.last_login|date:"M d, Y H:i"|default:"Never" }}</td></tr>

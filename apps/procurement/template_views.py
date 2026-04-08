@@ -37,11 +37,16 @@ logger = logging.getLogger(__name__)
 @permission_required_code("procurement.view")
 def request_list(request):
     """List all procurement requests with filters."""
+    from apps.core.tenant_utils import require_tenant
+    tenant = require_tenant(request)
+
     qs = ProcurementRequest.objects.select_related("created_by", "assigned_to").annotate(
         attribute_count=Count("attributes"),
         quotation_count=Count("quotations"),
         run_count=Count("analysis_runs"),
     )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # Filters
     status_filter = request.GET.get("status")
@@ -63,8 +68,11 @@ def request_list(request):
     page = paginator.get_page(request.GET.get("page"))
 
     # Distinct domain codes for filter dropdown
+    domains_qs = ProcurementRequest.objects.all()
+    if tenant is not None:
+        domains_qs = domains_qs.filter(tenant=tenant)
     domains = (
-        ProcurementRequest.objects.values_list("domain_code", flat=True)
+        domains_qs.values_list("domain_code", flat=True)
         .distinct()
         .order_by("domain_code")
     )
@@ -256,7 +264,7 @@ def trigger_analysis(request, pk):
         run_type=run_type,
         triggered_by=request.user,
     )
-    run_analysis_task.delay(run.pk)
+    run_analysis_task.delay(request.tenant.pk if request.tenant else None, run.pk)
     messages.success(request, f"{run_type} analysis queued (Run {run.run_id}).")
     return redirect("procurement:request_workspace", pk=pk)
 
@@ -324,7 +332,7 @@ def trigger_validation(request, pk):
         run_type=AnalysisRunType.VALIDATION,
         triggered_by=request.user,
     )
-    run_validation_task.delay(run.pk)
+    run_validation_task.delay(request.tenant.pk if request.tenant else None, run.pk)
     messages.success(request, f"Validation queued (Run {run.run_id}).")
     return redirect("procurement:request_workspace", pk=pk)
 

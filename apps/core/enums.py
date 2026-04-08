@@ -120,6 +120,13 @@ class ExceptionType(models.TextChoices):
     MISSING_MANDATORY_FIELDS = "MISSING_MANDATORY_FIELDS", "Missing Mandatory Fields"
     CURRENCY_MISMATCH = "CURRENCY_MISMATCH", "Currency Mismatch"
     LOCATION_MISMATCH = "LOCATION_MISMATCH", "Location Mismatch"
+    GSTIN_MISMATCH = "GSTIN_MISMATCH", "GSTIN / Tax ID Mismatch"
+    SUPPLY_TYPE_MISMATCH = "SUPPLY_TYPE_MISMATCH", "Supply Type Mismatch (Intra/Inter)"
+    TAX_RATE_MISMATCH = "TAX_RATE_MISMATCH", "Tax Rate Mismatch"
+    COUNTRY_MISMATCH = "COUNTRY_MISMATCH", "Country Mismatch"
+    PARTIAL_INVOICE = "PARTIAL_INVOICE", "Partial Invoice"
+    # NON_PO-specific
+    VENDOR_NOT_VERIFIED = "VENDOR_NOT_VERIFIED", "Vendor Not Verified"
     # THREE_WAY-specific (receipt/GRN related)
     GRN_NOT_FOUND = "GRN_NOT_FOUND", "GRN Not Found"
     RECEIPT_SHORTAGE = "RECEIPT_SHORTAGE", "Receipt Shortage"
@@ -131,6 +138,7 @@ class ExceptionType(models.TextChoices):
 
 
 class UserRole(models.TextChoices):
+    SUPER_ADMIN = "SUPER_ADMIN", "Super Admin"
     ADMIN = "ADMIN", "Admin"
     AP_PROCESSOR = "AP_PROCESSOR", "AP Processor"
     REVIEWER = "REVIEWER", "Reviewer"

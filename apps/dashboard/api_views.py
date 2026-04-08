@@ -20,7 +20,7 @@ class DashboardSummaryAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_summary(user=request.user)
+        data = DashboardService.get_summary(user=request.user, tenant=getattr(request, 'tenant', None))
         return Response(DashboardSummarySerializer(data).data)
 
 
@@ -28,7 +28,7 @@ class MatchStatusBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_match_status_breakdown(user=request.user)
+        data = DashboardService.get_match_status_breakdown(user=request.user, tenant=getattr(request, 'tenant', None))
         return Response(MatchStatusBreakdownSerializer(data, many=True).data)
 
 
@@ -36,7 +36,7 @@ class ExceptionBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_exception_breakdown(user=request.user)
+        data = DashboardService.get_exception_breakdown(user=request.user, tenant=getattr(request, 'tenant', None))
         return Response(ExceptionBreakdownSerializer(data, many=True).data)
 
 
@@ -44,7 +44,7 @@ class AgentPerformanceAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_agent_performance(user=request.user)
+        data = DashboardService.get_agent_performance(user=request.user, tenant=getattr(request, 'tenant', None))
         return Response(AgentPerformanceSerializer(data, many=True).data)
 
 
@@ -53,7 +53,7 @@ class DailyVolumeAPIView(APIView):
 
     def get(self, request):
         days = int(request.query_params.get("days", 30))
-        data = DashboardService.get_daily_volume(days=min(days, 90), user=request.user)
+        data = DashboardService.get_daily_volume(days=min(days, 90), user=request.user, tenant=getattr(request, 'tenant', None))
         return Response(DailyVolumeSerializer(data, many=True).data)
 
 
@@ -62,7 +62,7 @@ class RecentActivityAPIView(APIView):
 
     def get(self, request):
         limit = int(request.query_params.get("limit", 20))
-        data = DashboardService.get_recent_activity(limit=min(limit, 50), user=request.user)
+        data = DashboardService.get_recent_activity(limit=min(limit, 50), user=request.user, tenant=getattr(request, 'tenant', None))
         return Response(RecentActivitySerializer(data, many=True).data)
 
 
@@ -70,7 +70,7 @@ class ModeBreakdownAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        data = DashboardService.get_mode_breakdown(user=request.user)
+        data = DashboardService.get_mode_breakdown(user=request.user, tenant=getattr(request, 'tenant', None))
         return Response(ModeBreakdownSerializer(data, many=True).data)
 
 
@@ -94,7 +94,7 @@ class APSummaryAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_summary(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -104,7 +104,7 @@ class APUtilizationAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_utilization(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -114,7 +114,7 @@ class APSuccessAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_success_metrics(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -124,7 +124,7 @@ class APLatencyAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_latency_metrics(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -134,7 +134,7 @@ class APTokensAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_token_metrics(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -144,7 +144,7 @@ class APToolsAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_tool_metrics(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -154,7 +154,7 @@ class APRecommendationsAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_recommendation_metrics(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -165,7 +165,7 @@ class APLiveFeedAPIView(APIView):
     def get(self, request):
         limit = min(int(request.query_params.get("limit", 25)), 50)
         data = AgentPerformanceDashboardService.get_live_feed(
-            filters=_get_ap_filters(request), user=request.user, limit=limit,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None), limit=limit,
         )
         return Response(data)
 
@@ -175,7 +175,7 @@ class APEscalationsAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_escalation_metrics(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -185,7 +185,7 @@ class APFailuresAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_failure_metrics(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -196,7 +196,7 @@ class APGovernanceAPIView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_governance_metrics(
-            filters=_get_ap_filters(request), user=request.user,
+            filters=_get_ap_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         if data is None:
             return Response({"detail": "Insufficient permissions."}, status=403)
@@ -208,7 +208,7 @@ class APTraceDetailAPIView(APIView):
 
     def get(self, request, run_id):
         data = AgentPerformanceDashboardService.get_trace_detail(
-            run_id=run_id, user=request.user,
+            run_id=run_id, user=request.user, tenant=getattr(request, 'tenant', None),
         )
         if data is None:
             return Response({"detail": "Not found."}, status=404)

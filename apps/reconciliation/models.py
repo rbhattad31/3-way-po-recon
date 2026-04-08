@@ -19,6 +19,14 @@ from apps.core.models import BaseModel, TimestampMixin
 class ReconciliationConfig(BaseModel):
     """Run-time configuration for tolerance thresholds and feature flags."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     name = models.CharField(max_length=100, unique=True)
     quantity_tolerance_pct = models.FloatField(default=2.0)
     price_tolerance_pct = models.FloatField(default=1.0)
@@ -45,6 +53,13 @@ class ReconciliationConfig(BaseModel):
     )
     enable_two_way_for_services = models.BooleanField(
         default=True, help_text="Auto-select 2-way mode for service invoices",
+    )
+    partial_invoice_threshold_pct = models.FloatField(
+        default=50.0,
+        help_text=(
+            "When an invoice total is below this percentage of the PO total "
+            "and no prior invoices exist, treat it as a partial/milestone invoice."
+        ),
     )
 
     # Access control
@@ -74,6 +89,14 @@ class ReconciliationPolicy(BaseModel):
     """
 
     policy_code = models.CharField(max_length=50, unique=True, db_index=True)
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     policy_name = models.CharField(max_length=200)
     reconciliation_mode = models.CharField(
         max_length=20, choices=ReconciliationMode.choices,
@@ -121,6 +144,14 @@ class ReconciliationPolicy(BaseModel):
 class ReconciliationRun(BaseModel):
     """One execution of the reconciliation engine (may cover 1+ invoices)."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     status = models.CharField(
         max_length=20, choices=ReconciliationRunStatus.choices, default=ReconciliationRunStatus.PENDING, db_index=True
     )
@@ -184,6 +215,14 @@ class ReconciliationResult(BaseModel):
     """Header-level reconciliation outcome for one invoice."""
 
     run = models.ForeignKey(ReconciliationRun, on_delete=models.CASCADE, related_name="results")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     invoice = models.ForeignKey(
         "documents.Invoice", on_delete=models.CASCADE, related_name="recon_results"
     )
@@ -277,6 +316,14 @@ class ReconciliationResultLine(TimestampMixin):
     """Line-level comparison result."""
 
     result = models.ForeignKey(ReconciliationResult, on_delete=models.CASCADE, related_name="line_results")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     invoice_line = models.ForeignKey(
         "documents.InvoiceLineItem", on_delete=models.SET_NULL, null=True, blank=True
     )
@@ -328,6 +375,14 @@ class ReconciliationException(TimestampMixin):
     """Structured exception raised during reconciliation."""
 
     result = models.ForeignKey(ReconciliationResult, on_delete=models.CASCADE, related_name="exceptions")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     result_line = models.ForeignKey(
         ReconciliationResultLine, on_delete=models.SET_NULL, null=True, blank=True, related_name="exceptions"
     )

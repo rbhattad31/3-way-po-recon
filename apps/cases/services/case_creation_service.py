@@ -35,7 +35,7 @@ class CaseCreationService:
     @staticmethod
     @transaction.atomic
     @observed_service("cases.creation.create_from_document_upload", audit_event="CASE_CREATED", entity_type="APCase")
-    def create_from_document_upload(upload, uploaded_by=None, source_channel=None) -> APCase:
+    def create_from_document_upload(upload, uploaded_by=None, source_channel=None, tenant=None) -> APCase:
         """Create an APCase from a DocumentUpload BEFORE extraction.
 
         The case is created with invoice=None. After extraction persists
@@ -73,6 +73,7 @@ class CaseCreationService:
             current_stage="",
             priority=CasePriority.MEDIUM,
             created_by=uploaded_by,
+            tenant=tenant,
         )
 
         # Create initial intake stage
@@ -80,6 +81,7 @@ class CaseCreationService:
             case=case,
             stage_name=CaseStageType.INTAKE,
             stage_status=StageStatus.PENDING,
+            tenant=tenant,
         )
 
         logger.info(
@@ -118,7 +120,7 @@ class CaseCreationService:
     @staticmethod
     @transaction.atomic
     @observed_service("cases.creation.create_from_upload", audit_event="CASE_CREATED", entity_type="APCase")
-    def create_from_upload(invoice, uploaded_by=None, source_channel=None) -> APCase:
+    def create_from_upload(invoice, uploaded_by=None, source_channel=None, tenant=None) -> APCase:
         """Create an APCase for an uploaded invoice (backward-compat).
 
         If a case already exists for this invoice, returns it.
@@ -168,6 +170,7 @@ class CaseCreationService:
             priority=CaseCreationService._assess_priority(invoice),
             extraction_confidence=invoice.extraction_confidence,
             created_by=uploaded_by,
+            tenant=tenant,
         )
 
         # Create initial intake stage
@@ -175,6 +178,7 @@ class CaseCreationService:
             case=case,
             stage_name=CaseStageType.INTAKE,
             stage_status=StageStatus.PENDING,
+            tenant=tenant,
         )
 
         logger.info("Created AP Case %s for invoice %s", case_number, invoice.invoice_number)

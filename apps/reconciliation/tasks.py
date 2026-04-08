@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, max_retries=1, default_retry_delay=60)
 def run_reconciliation_task(
     self,
+    tenant_id: Optional[int] = None,
     invoice_ids: Optional[List[int]] = None,
     config_id: Optional[int] = None,
     triggered_by_id: Optional[int] = None,
@@ -34,11 +35,14 @@ def run_reconciliation_task(
     """Execute a full reconciliation run as a Celery task.
 
     Args:
+        tenant_id: PK of the CompanyProfile (tenant) for this run.
         invoice_ids: Specific invoice PKs to reconcile.
                      If None, all READY_FOR_RECON invoices are processed.
         config_id: ReconciliationConfig PK.  Falls back to the default config.
         triggered_by_id: User PK of the person who triggered the run.
     """
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.reconciliation.services.runner_service import ReconciliationRunnerService
 
     # Resolve config
@@ -123,6 +127,7 @@ def run_reconciliation_task(
     run = None
     try:
         run = runner.run(
+            tenant=tenant,
             invoices=invoices,
             triggered_by=triggered_by,
             lf_trace=_lf_task_trace,
@@ -206,7 +211,7 @@ def run_reconciliation_task(
     from apps.core.utils import dispatch_task
     actor_id = triggered_by.pk if triggered_by else None
     for result_id in agent_result_ids:
-        dispatch_task(run_agent_pipeline_task, result_id, actor_id)
+        dispatch_task(run_agent_pipeline_task, tenant_id, result_id, actor_id)
 
     # Langfuse: emit trace-level scores summarising the run outcome
     if run and _lf_task_trace_id:
@@ -235,8 +240,8 @@ def run_reconciliation_task(
 
 
 @shared_task
-def reconcile_single_invoice_task(invoice_id: int, config_id: Optional[int] = None) -> dict:
+def reconcile_single_invoice_task(tenant_id: Optional[int] = None, invoice_id: int = 0, config_id: Optional[int] = None) -> dict:
     """Reconcile a single invoice (convenience wrapper)."""
     return run_reconciliation_task.apply(
-        args=([invoice_id], config_id, None)
+        args=(tenant_id, [invoice_id], config_id, None)
     ).get()

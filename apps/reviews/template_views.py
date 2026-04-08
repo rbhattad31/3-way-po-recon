@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.core.enums import MatchStatus, ReviewStatus, UserRole
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.reconciliation.models import ReconciliationResult
 from apps.reviews.models import ReviewAssignment
 from apps.reviews.services import ReviewWorkflowService
@@ -26,11 +27,14 @@ def _scope_for_ap_processor(user, qs):
 
 @login_required
 def assignment_list(request):
+    tenant = require_tenant(request)
     qs = (
         ReviewAssignment.objects
         .select_related("reconciliation_result", "reconciliation_result__invoice", "assigned_to")
         .order_by("priority", "-created_at")
     )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     qs = _scope_for_ap_processor(request.user, qs)
     status_filter = request.GET.get("status")
     if status_filter:
@@ -40,9 +44,11 @@ def assignment_list(request):
 
     # Results that need review but have no assignment yet
     assigned_result_ids = ReviewAssignment.objects.values_list("reconciliation_result_id", flat=True)
+    unassigned_qs = ReconciliationResult.objects.filter(match_status=MatchStatus.REQUIRES_REVIEW)
+    if tenant is not None:
+        unassigned_qs = unassigned_qs.filter(tenant=tenant)
     unassigned_results = (
-        ReconciliationResult.objects
-        .filter(match_status=MatchStatus.REQUIRES_REVIEW)
+        unassigned_qs
         .exclude(pk__in=assigned_result_ids)
         .select_related("invoice", "invoice__vendor", "purchase_order")
         .order_by("-created_at")

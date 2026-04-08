@@ -17,6 +17,14 @@ from apps.core.models import BaseModel, TimestampMixin
 class AgentDefinition(BaseModel):
     """Registry entry describing an available agent."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     agent_type = models.CharField(max_length=40, choices=AgentType.choices, unique=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, default="")
@@ -101,6 +109,14 @@ class AgentRun(BaseModel):
     """One execution of an agent within an orchestration pipeline."""
 
     agent_definition = models.ForeignKey(AgentDefinition, on_delete=models.SET_NULL, null=True, related_name="runs")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     agent_type = models.CharField(max_length=40, choices=AgentType.choices, db_index=True)
     document_upload = models.ForeignKey(
         "documents.DocumentUpload", on_delete=models.SET_NULL, null=True, blank=True,
@@ -187,6 +203,14 @@ class AgentOrchestrationRun(BaseModel):
         on_delete=models.CASCADE,
         related_name="orchestration_runs",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
@@ -239,6 +263,14 @@ class AgentStep(TimestampMixin):
     """Ordered substep within an agent run."""
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="steps")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     step_number = models.PositiveIntegerField(default=1)
     action = models.CharField(max_length=200)
     input_data = models.JSONField(null=True, blank=True)
@@ -270,6 +302,14 @@ class AgentMessage(TimestampMixin):
     ]
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="messages")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     content = models.TextField()
     token_count = models.PositiveIntegerField(null=True, blank=True)
@@ -297,6 +337,15 @@ class DecisionLog(TimestampMixin):
     """
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="decisions", null=True, blank=True)
+
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
 
     # Decision identification
     decision_type = models.CharField(max_length=100, blank=True, default="", db_index=True,
@@ -349,6 +398,14 @@ class AgentRecommendation(TimestampMixin):
     """Recommendation produced by an agent (routing, action, etc.)."""
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="recommendations")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     reconciliation_result = models.ForeignKey(
         "reconciliation.ReconciliationResult", on_delete=models.CASCADE, related_name="agent_recommendations"
     )
@@ -394,6 +451,14 @@ class AgentEscalation(TimestampMixin):
     """Escalation produced by an agent when confidence is below threshold."""
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="escalations")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     reconciliation_result = models.ForeignKey(
         "reconciliation.ReconciliationResult", on_delete=models.CASCADE, related_name="agent_escalations"
     )

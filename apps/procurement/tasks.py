@@ -12,11 +12,13 @@ logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("procurement.run_analysis", audit_event="ANALYSIS_RUN_STARTED", entity_type="AnalysisRun")
-def run_analysis_task(self, run_id: int) -> dict:
+def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
     """Execute an analysis run (recommendation or benchmark).
 
     Dispatches to the appropriate service based on run_type.
     """
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.core.enums import AnalysisRunType, ProcurementRequestStatus
     from apps.procurement.models import AnalysisRun
     from apps.procurement.services.analysis_run_service import AnalysisRunService
@@ -32,7 +34,7 @@ def run_analysis_task(self, run_id: int) -> dict:
 
     try:
         if run.run_type == AnalysisRunType.RECOMMENDATION:
-            result = RecommendationService.run_recommendation(request, run)
+            result = RecommendationService.run_recommendation(request, run, tenant=tenant)
             return {
                 "status": "completed",
                 "run_id": str(run.run_id),
@@ -51,7 +53,7 @@ def run_analysis_task(self, run_id: int) -> dict:
                 )
                 return {"status": "failed", "error": "No quotation available"}
 
-            result = BenchmarkService.run_benchmark(request, run, quotation)
+            result = BenchmarkService.run_benchmark(request, run, quotation, tenant=tenant)
             return {
                 "status": "completed",
                 "run_id": str(run.run_id),
@@ -65,7 +67,7 @@ def run_analysis_task(self, run_id: int) -> dict:
                 ValidationOrchestratorService,
             )
 
-            result = ValidationOrchestratorService.run_validation(request, run)
+            result = ValidationOrchestratorService.run_validation(request, run, tenant=tenant)
             return {
                 "status": "completed",
                 "run_id": str(run.run_id),
@@ -85,12 +87,14 @@ def run_analysis_task(self, run_id: int) -> dict:
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("procurement.run_validation", audit_event="VALIDATION_RUN_STARTED", entity_type="AnalysisRun")
-def run_validation_task(self, run_id: int, *, agent_enabled: bool = False) -> dict:
+def run_validation_task(self, tenant_id: int = None, run_id: int = 0, *, agent_enabled: bool = False) -> dict:
     """Execute a validation run for a procurement request.
 
     Invokes the ValidationOrchestratorService to run all applicable
     deterministic validators and optionally the ValidationAgent.
     """
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.core.enums import ProcurementRequestStatus, ValidationOverallStatus
     from apps.procurement.models import AnalysisRun
     from apps.procurement.services.request_service import ProcurementRequestService
@@ -103,7 +107,7 @@ def run_validation_task(self, run_id: int, *, agent_enabled: bool = False) -> di
 
     try:
         result = ValidationOrchestratorService.run_validation(
-            request, run, agent_enabled=agent_enabled,
+            request, run, tenant=tenant, agent_enabled=agent_enabled,
         )
 
         # Update request status based on validation outcome
@@ -134,15 +138,17 @@ def run_validation_task(self, run_id: int, *, agent_enabled: bool = False) -> di
 # ---------------------------------------------------------------------------
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("procurement.request_prefill", audit_event="PREFILL_STARTED", entity_type="ProcurementRequest")
-def run_request_prefill_task(self, request_id: int) -> dict:
+def run_request_prefill_task(self, tenant_id: int = None, request_id: int = 0) -> dict:
     """Run OCR + LLM extraction to prefill a ProcurementRequest from an uploaded document."""
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.procurement.models import ProcurementRequest
     from apps.procurement.services.prefill.request_prefill_service import RequestDocumentPrefillService
 
     proc_request = ProcurementRequest.objects.select_related("uploaded_document").get(pk=request_id)
 
     try:
-        payload = RequestDocumentPrefillService.run_prefill(proc_request)
+        payload = RequestDocumentPrefillService.run_prefill(proc_request, tenant=tenant)
         return {
             "status": "completed",
             "request_id": request_id,
@@ -158,15 +164,17 @@ def run_request_prefill_task(self, request_id: int) -> dict:
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("procurement.quotation_prefill", audit_event="PREFILL_STARTED", entity_type="SupplierQuotation")
-def run_quotation_prefill_task(self, quotation_id: int) -> dict:
+def run_quotation_prefill_task(self, tenant_id: int = None, quotation_id: int = 0) -> dict:
     """Run OCR + LLM extraction to prefill a SupplierQuotation from an uploaded document."""
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.procurement.models import SupplierQuotation
     from apps.procurement.services.prefill.quotation_prefill_service import QuotationDocumentPrefillService
 
     quotation = SupplierQuotation.objects.select_related("uploaded_document", "request").get(pk=quotation_id)
 
     try:
-        payload = QuotationDocumentPrefillService.run_prefill(quotation)
+        payload = QuotationDocumentPrefillService.run_prefill(quotation, tenant=tenant)
         return {
             "status": "completed",
             "quotation_id": quotation_id,

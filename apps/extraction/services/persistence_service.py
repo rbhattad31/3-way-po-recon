@@ -33,6 +33,7 @@ class InvoicePersistenceService:
         extraction_raw_json: dict | None = None,
         validation_result: ValidationResult | None = None,
         duplicate_result: DuplicateCheckResult | None = None,
+        tenant=None,
     ) -> Invoice:
         vendor = self._resolve_vendor(normalized.vendor_name_normalized)
 
@@ -91,6 +92,9 @@ class InvoicePersistenceService:
             extraction_raw_json=extraction_raw_json,
         )
 
+        # Resolve tenant: explicit > upload > None
+        resolved_tenant = tenant or getattr(upload, "tenant", None)
+
         if existing_invoice:
             # Update existing invoice in-place
             for attr, value in field_values.items():
@@ -98,9 +102,11 @@ class InvoicePersistenceService:
             # Reset duplicate flags -- will be re-evaluated below
             existing_invoice.is_duplicate = False
             existing_invoice.duplicate_of_id = None
+            if resolved_tenant and not existing_invoice.tenant_id:
+                existing_invoice.tenant = resolved_tenant
             invoice = existing_invoice
         else:
-            invoice = Invoice(document_upload=upload, **field_values)
+            invoice = Invoice(document_upload=upload, tenant=resolved_tenant, **field_values)
 
         # Duplicate handling
         if duplicate_result and duplicate_result.is_duplicate:
@@ -135,6 +141,7 @@ class InvoicePersistenceService:
         for li in normalized.line_items:
             line_objs.append(InvoiceLineItem(
                 invoice=invoice,
+                tenant=resolved_tenant,
                 line_number=li.line_number,
                 raw_description=li.raw_description,
                 raw_quantity=li.raw_quantity,
@@ -246,6 +253,10 @@ class InvoicePersistenceService:
         if not normalized_vendor_name:
             return None
         vendor = Vendor.objects.filter(normalized_name=normalized_vendor_name, is_active=True).first()
+        if not vendor:
+            # Fallback: case-insensitive exact name match (covers vendors
+            # created before normalized_name was auto-populated on save).
+            vendor = Vendor.objects.filter(name__iexact=normalized_vendor_name, is_active=True).first()
         if vendor:
             return vendor
         from apps.posting_core.models import VendorAliasMapping
@@ -281,26 +292,12 @@ class ExtractionResultPersistenceService:
         except Exception:
             pass
 
-        # Prefer deterministic confidence from invoice over LLM self-report
-        confidence = extraction_response.confidence
-        if invoice and invoice.extraction_confidence is not None:
-            confidence = invoice.extraction_confidence
-
         field_vals = dict(
-            invoice=invoice,
             extraction_run=extraction_run,
             engine_name=extraction_response.engine_name,
             engine_version=extraction_response.engine_version,
-            raw_response=extraction_response.raw_json,
-            confidence=confidence,
-            duration_ms=extraction_response.duration_ms,
             success=extraction_response.success,
             error_message=extraction_response.error_message,
-            agent_run_id=getattr(extraction_response, 'agent_run_id', None),
-            ocr_page_count=getattr(extraction_response, 'ocr_page_count', 0),
-            ocr_duration_ms=getattr(extraction_response, 'ocr_duration_ms', None),
-            ocr_char_count=getattr(extraction_response, 'ocr_char_count', 0),
-            ocr_text=getattr(extraction_response, 'ocr_text', '') or '',
         )
 
         # Reuse existing ExtractionResult for same upload (reprocessing)
@@ -313,9 +310,13 @@ class ExtractionResultPersistenceService:
         if existing:
             for attr, value in field_vals.items():
                 setattr(existing, attr, value)
+            if not existing.tenant_id:
+                existing.tenant = getattr(upload, 'tenant', None)
             existing.save()
             return existing
 
         return ExtractionResult.objects.create(
-            document_upload=upload, **field_vals
+            document_upload=upload,
+            tenant=getattr(upload, 'tenant', None),
+            **field_vals
         )

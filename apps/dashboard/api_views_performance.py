@@ -20,7 +20,7 @@ class PerfSummaryView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_summary(
-            filters=_get_perf_filters(request), user=request.user,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -30,7 +30,7 @@ class PerfUtilizationView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_utilization(
-            filters=_get_perf_filters(request), user=request.user,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -40,7 +40,7 @@ class PerfReliabilityView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_reliability(
-            filters=_get_perf_filters(request), user=request.user,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -50,7 +50,7 @@ class PerfLatencyView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_latency(
-            filters=_get_perf_filters(request), user=request.user,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -60,7 +60,7 @@ class PerfTokensView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_tokens(
-            filters=_get_perf_filters(request), user=request.user,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -70,7 +70,7 @@ class PerfToolUsageView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_tool_usage(
-            filters=_get_perf_filters(request), user=request.user,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -80,7 +80,7 @@ class PerfRecommendationsView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_recommendation_intelligence(
-            filters=_get_perf_filters(request), user=request.user,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None),
         )
         return Response(data)
 
@@ -91,7 +91,7 @@ class PerfLiveFeedView(APIView):
     def get(self, request):
         limit = min(int(request.query_params.get("limit", 25)), 50)
         data = AgentPerformanceDashboardService.get_live_feed(
-            filters=_get_perf_filters(request), user=request.user, limit=limit,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None), limit=limit,
         )
         return Response(data)
 
@@ -101,6 +101,6 @@ class PerfPlanComparisonView(APIView):
 
     def get(self, request):
         data = AgentPerformanceDashboardService.get_plan_comparison(
-            filters=_get_perf_filters(request), user=request.user, limit=20,
+            filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None), limit=20,
         )
         return Response(data)

@@ -1,4 +1,4 @@
-"""User and role models."""
+"""User, company profile, and role models."""
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
 from django.utils import timezone
@@ -6,6 +6,170 @@ from django.utils import timezone
 from apps.core.enums import UserRole
 from apps.core.models import TimestampMixin
 from apps.accounts.managers import UserManager
+
+
+# ---------------------------------------------------------------------------
+# Company Profile -- the organisation that owns this platform instance
+# ---------------------------------------------------------------------------
+
+class CompanyProfile(TimestampMixin):
+    """Organisation profile for self-company detection during extraction.
+
+    Stores the buyer/owning company's identifiers (legal name, trading
+    names, GSTIN/VAT numbers) so the extraction pipeline can distinguish
+    the vendor (who issued the invoice) from the buyer (our company).
+
+    Typically one active profile exists per deployment, but the model
+    supports multiple profiles for group companies / subsidiaries.
+    """
+
+    name = models.CharField(max_length=255, help_text="Primary display name")
+    legal_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Registered legal name (for exact matching)",
+    )
+    tax_id = models.CharField(
+        max_length=50, blank=True, default="",
+        help_text="Primary GSTIN / VAT / TIN of the company",
+    )
+    country = models.CharField(
+        max_length=10, blank=True, default="",
+        help_text="ISO country code (IN, AE, US, ...)",
+    )
+    state_code = models.CharField(
+        max_length=10, blank=True, default="",
+        help_text="State code (for India GST)",
+    )
+    address = models.TextField(blank=True, default="")
+    currency = models.CharField(max_length=10, blank=True, default="INR")
+    website = models.URLField(blank=True, default="")
+
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Mark as the primary company profile for extraction",
+    )
+    is_active = models.BooleanField(default=True)
+
+    # ------------------------------------------------------------------
+    # Tenant / SaaS fields
+    # ------------------------------------------------------------------
+    slug = models.SlugField(
+        max_length=80, unique=True, db_index=True, blank=True,
+        help_text="URL-safe identifier used for subdomain or path routing.",
+    )
+    plan_type = models.CharField(
+        max_length=30,
+        choices=[
+            ("trial", "Trial"),
+            ("starter", "Starter"),
+            ("professional", "Professional"),
+            ("enterprise", "Enterprise"),
+        ],
+        default="trial",
+    )
+    timezone = models.CharField(max_length=60, default="UTC")
+    max_users = models.PositiveSmallIntegerField(default=10)
+    created_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_tenants",
+    )
+    onboarded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "accounts_company_profile"
+        ordering = ["-is_default", "name"]
+        verbose_name = "Tenant / Company Profile"
+        verbose_name_plural = "Tenants / Company Profiles"
+
+    def __str__(self) -> str:
+        return self.name
+
+    def save(self, *args, **kwargs):
+        # Ensure only one default profile
+        if self.is_default:
+            CompanyProfile.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_default(cls) -> "CompanyProfile | None":
+        """Return the default (primary) company profile, or None."""
+        return cls.objects.filter(is_default=True, is_active=True).first()
+
+
+class CompanyAlias(TimestampMixin):
+    """Alternate names / trading names for a company.
+
+    Used during extraction to detect when the LLM picks the buyer's
+    company name as the vendor.  Examples: abbreviations, former names,
+    division names, subsidiary names.
+    """
+
+    company = models.ForeignKey(
+        CompanyProfile, on_delete=models.CASCADE, related_name="aliases",
+    )
+    alias_name = models.CharField(max_length=255)
+    normalized_alias = models.CharField(
+        max_length=255, blank=True, db_index=True,
+        help_text="Auto-generated lowercase stripped version for matching",
+    )
+
+    class Meta:
+        db_table = "accounts_company_alias"
+        ordering = ["company", "alias_name"]
+        verbose_name = "Company Alias"
+        verbose_name_plural = "Company Aliases"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["company", "normalized_alias"],
+                name="uq_company_alias_norm",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.alias_name} -> {self.company.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.normalized_alias:
+            self.normalized_alias = self.alias_name.strip().lower()
+        super().save(*args, **kwargs)
+
+
+class CompanyTaxID(TimestampMixin):
+    """Additional GSTIN / VAT / TIN numbers for a company.
+
+    A company may have multiple GSTINs (one per Indian state) or
+    multiple VAT registrations. These are all used during self-company
+    detection.
+    """
+
+    company = models.ForeignKey(
+        CompanyProfile, on_delete=models.CASCADE, related_name="tax_ids",
+    )
+    tax_id = models.CharField(max_length=50, db_index=True)
+    label = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Optional label, e.g. 'Maharashtra GSTIN', 'Karnataka GSTIN'",
+    )
+    state_code = models.CharField(max_length=10, blank=True, default="")
+
+    class Meta:
+        db_table = "accounts_company_tax_id"
+        ordering = ["company", "tax_id"]
+        verbose_name = "Company Tax ID"
+        verbose_name_plural = "Company Tax IDs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["company", "tax_id"],
+                name="uq_company_tax_id",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        label = f" ({self.label})" if self.label else ""
+        return f"{self.tax_id}{label}"
 
 
 class User(AbstractBaseUser, PermissionsMixin, TimestampMixin):
@@ -17,7 +181,16 @@ class User(AbstractBaseUser, PermissionsMixin, TimestampMixin):
     role = models.CharField(max_length=30, choices=UserRole.choices, default=UserRole.AP_PROCESSOR)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    is_platform_admin = models.BooleanField(
+        default=False,
+        help_text="Platform-level super admin -- bypasses tenant scoping and has all permissions across all tenants.",
+    )
     department = models.CharField(max_length=100, blank=True, default="")
+    company = models.ForeignKey(
+        CompanyProfile, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="users",
+        help_text="The organisation this user belongs to",
+    )
 
     objects = UserManager()
 
@@ -88,12 +261,16 @@ class User(AbstractBaseUser, PermissionsMixin, TimestampMixin):
 
     def has_role(self, role_code: str) -> bool:
         """Check if user has a specific role (active, non-expired)."""
+        if self.is_platform_admin:
+            return True
         if self.role == "ADMIN" or "ADMIN" in self.get_role_codes():
             return True
         return role_code in self.get_role_codes()
 
     def has_any_role(self, role_codes) -> bool:
         """Check if user has any of the given roles."""
+        if self.is_platform_admin:
+            return True
         if self.role == "ADMIN" or "ADMIN" in self.get_role_codes():
             return True
         return bool(set(role_codes) & self.get_role_codes())
@@ -108,6 +285,8 @@ class User(AbstractBaseUser, PermissionsMixin, TimestampMixin):
         4. Role-level permission → True if any role grants it
         5. Default → False
         """
+        if self.is_platform_admin:
+            return True
         if self.role == "ADMIN" or "ADMIN" in self.get_role_codes():
             return True
         effective = self.get_effective_permissions()
@@ -115,6 +294,8 @@ class User(AbstractBaseUser, PermissionsMixin, TimestampMixin):
 
     def has_any_permission(self, permission_codes) -> bool:
         """Check if user has any of the given permissions."""
+        if self.is_platform_admin:
+            return True
         if self.role == "ADMIN" or "ADMIN" in self.get_role_codes():
             return True
         effective = self.get_effective_permissions()
@@ -193,6 +374,45 @@ class User(AbstractBaseUser, PermissionsMixin, TimestampMixin):
             if self.role != new_code:
                 self.role = new_code
                 self.save(update_fields=["role", "updated_at"])
+
+
+class TenantInvitation(TimestampMixin):
+    """Tracks pending email invitations for new users to join a tenant."""
+
+    tenant = models.ForeignKey(
+        CompanyProfile, on_delete=models.CASCADE, related_name="invitations"
+    )
+    email = models.EmailField(db_index=True)
+    invited_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sent_invitations",
+    )
+    role_code = models.CharField(max_length=50, default="AP_PROCESSOR")
+    token = models.CharField(max_length=128, unique=True, db_index=True)
+    accepted = models.BooleanField(default=False)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "accounts_tenant_invitation"
+        unique_together = [("tenant", "email")]
+        verbose_name = "Tenant Invitation"
+        verbose_name_plural = "Tenant Invitations"
+
+    def __str__(self) -> str:
+        return f"Invitation for {self.email} → {self.tenant.name}"
+
+    @property
+    def is_expired(self) -> bool:
+        from django.utils import timezone as tz
+        return tz.now() > self.expires_at
+
+    @property
+    def is_usable(self) -> bool:
+        return not self.accepted and not self.is_expired
 
 
 # Re-export RBAC models so they are accessible from apps.accounts.models

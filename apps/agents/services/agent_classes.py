@@ -336,6 +336,7 @@ class InvoiceExtractionAgent(BaseAgent):
             access_granted=ctx.access_granted,
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
+            tenant=ctx.tenant,
         )
 
         import time as _time

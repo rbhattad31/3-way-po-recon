@@ -237,8 +237,14 @@ class TestEndToEndApprovalToReconLinkage:
         _make_recon_config(db)
 
         from apps.extraction.models import ExtractionApproval, ExtractionResult
+        from apps.extraction_core.models import ExtractionRun
+        run = ExtractionRun.objects.create(
+            document_upload=upload,
+            overall_confidence=0.92,
+            status="COMPLETED",
+        )
         er = ExtractionResult.objects.create(
-            document_upload=upload, invoice=invoice, success=True, confidence=0.92,
+            document_upload=upload, extraction_run=run, success=True,
         )
         approval = ExtractionApproval.objects.create(
             invoice=invoice,

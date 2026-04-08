@@ -79,6 +79,7 @@ class ExtractionApprovalService:
                 "reviewed_by": None,
                 "reviewed_at": None,
                 "is_touchless": False,
+                "tenant": getattr(invoice, 'tenant', None),
             },
         )
 
@@ -127,6 +128,7 @@ class ExtractionApprovalService:
                 "original_values_snapshot": snapshot,
                 "is_touchless": True,
                 "reviewed_by": None,
+                "tenant": getattr(invoice, 'tenant', None),
             },
         )
 
@@ -576,6 +578,7 @@ class ExtractionApprovalService:
                 original_value=old_value,
                 corrected_value=new_value_str,
                 corrected_by=user,
+                tenant=getattr(approval, 'tenant', None),
             ))
 
         if len(update_fields) > 1:
@@ -625,6 +628,7 @@ class ExtractionApprovalService:
                     original_value=old_value,
                     corrected_value=new_value_str,
                     corrected_by=user,
+                    tenant=getattr(approval, 'tenant', None),
                 ))
 
             if len(line_update_fields) > 1:
@@ -651,6 +655,11 @@ class ExtractionApprovalService:
             from apps.posting_core.models import VendorAliasMapping
             norm = normalize_string(invoice.raw_vendor_name)
             vendor = Vendor.objects.filter(normalized_name=norm, is_active=True).first()
+            if not vendor:
+                # Fallback: case-insensitive exact name match
+                vendor = Vendor.objects.filter(
+                    name__iexact=invoice.raw_vendor_name.strip(), is_active=True
+                ).first()
             if not vendor:
                 alias = VendorAliasMapping.objects.filter(
                     normalized_alias=norm, is_active=True
@@ -772,14 +781,14 @@ class ExtractionApprovalService:
                     "Resuming case %s from extraction approval gate (invoice %s approved)",
                     case.case_number, invoice.pk,
                 )
-                dispatch_task(process_case_task, case.pk)
+                dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
             elif case:
                 # Case exists but in a different status -- just trigger processing
                 logger.info(
                     "Case %s exists (status=%s), triggering processing for invoice %s",
                     case.case_number, case.status, invoice.pk,
                 )
-                dispatch_task(process_case_task, case.pk)
+                dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
             else:
                 # No case yet -- create one (backward compatibility)
                 uploaded_by = user or (
@@ -791,7 +800,7 @@ class ExtractionApprovalService:
                     uploaded_by=uploaded_by,
                 )
                 logger.info("Created AP Case %s for invoice %s", case.case_number, invoice.pk)
-                dispatch_task(process_case_task, case.pk)
+                dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
         except Exception:
             logger.exception(
                 "Failed to resume/create AP Case for invoice %s", invoice.pk,
@@ -833,6 +842,7 @@ class ExtractionApprovalService:
             from apps.reconciliation.tasks import run_reconciliation_task
             user_id = user.pk if user else None
             run_reconciliation_task.delay(
+                invoice.tenant_id if invoice.tenant_id else None,
                 invoice_ids=[invoice.pk],
                 triggered_by_id=user_id,
             )
@@ -853,6 +863,7 @@ class ExtractionApprovalService:
             user_id = user.pk if user else None
             trigger = "approval" if user else "auto_approval"
             prepare_posting_task.delay(
+                invoice.tenant_id if invoice.tenant_id else None,
                 invoice_id=invoice.pk,
                 user_id=user_id,
                 trigger=trigger,

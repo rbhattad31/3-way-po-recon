@@ -29,6 +29,7 @@ class EvalRunService:
         triggered_by=None,
         config_json: Optional[dict] = None,
         input_snapshot_json: Optional[dict] = None,
+        tenant=None,
     ) -> EvalRun:
         return EvalRun.objects.create(
             app_module=app_module,
@@ -43,6 +44,7 @@ class EvalRunService:
             triggered_by=triggered_by,
             config_json=config_json or {},
             input_snapshot_json=input_snapshot_json or {},
+            tenant=tenant,
         )
 
     @staticmethod
@@ -60,6 +62,7 @@ class EvalRunService:
         triggered_by=None,
         config_json: Optional[dict] = None,
         input_snapshot_json: Optional[dict] = None,
+        tenant=None,
     ) -> tuple[EvalRun, bool]:
         """Upsert an EvalRun keyed by (app_module, entity_type, entity_id, run_key).
 
@@ -80,6 +83,7 @@ class EvalRunService:
             "triggered_by": triggered_by,
             "config_json": config_json or {},
             "input_snapshot_json": input_snapshot_json or {},
+            "tenant": tenant,
         }
         return EvalRun.objects.update_or_create(defaults=defaults, **lookup)
 

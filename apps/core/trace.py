@@ -59,6 +59,9 @@ class TraceContext:
     permission_source: str = ""  # ROLE / USER_OVERRIDE_ALLOW / ADMIN_BYPASS / ...
     access_granted: Optional[bool] = None
 
+    # --- Tenant ---
+    tenant_id: Optional[int] = None
+
     # -----------------------------------------------------------------
     # Constructors
     # -----------------------------------------------------------------
@@ -122,6 +125,7 @@ class TraceContext:
             d["actor_user_id"] = user.pk
             d["actor_email"] = getattr(user, "email", "")
             d["actor_primary_role"] = getattr(user, "role", "")
+            d["tenant_id"] = getattr(user, "company_id", None)
             if hasattr(user, "get_role_codes"):
                 try:
                     d["actor_roles_snapshot"] = list(user.get_role_codes())

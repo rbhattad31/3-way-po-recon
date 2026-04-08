@@ -217,6 +217,11 @@
           <i class="bi bi-people me-2"></i>Users
         </a>
       </li>
+      <li class="nav-item">
+        <a class="nav-link {% if request.resolver_match.url_name == 'company_list' or request.resolver_match.url_name == 'company_detail' %}active fw-bold{% endif %}" href="{% url 'accounts:company_list' %}">
+          <i class="bi bi-building me-2"></i>Company Profiles
+        </a>
+      </li>
       {% endif %}
       {% if can_manage_roles %}
       <li class="nav-item">

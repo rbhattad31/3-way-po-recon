@@ -132,6 +132,9 @@ class AuditService:
         safe_input = redact_dict(summarize_payload(input_snapshot)) if input_snapshot else None
         safe_output = redact_dict(summarize_payload(output_snapshot)) if output_snapshot else None
 
+        # Resolve tenant from user
+        _tenant = getattr(user, 'company', None) if user else None
+
         event = AuditEvent.objects.create(
             entity_type=entity_type,
             entity_id=entity_id,
@@ -141,6 +144,7 @@ class AuditService:
             performed_by=user,
             performed_by_agent=agent,
             metadata_json=metadata,
+            tenant=_tenant,
             # Trace
             trace_id=trace_id,
             span_id=span_id,
@@ -185,13 +189,17 @@ class AuditService:
     def fetch_entity_history(
         entity_type: str,
         entity_id: int,
+        tenant=None,
     ) -> List[Dict[str, Any]]:
         """Return all audit events for a given entity, ordered chronologically."""
+        qs = AuditEvent.objects.filter(
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         return list(
-            AuditEvent.objects.filter(
-                entity_type=entity_type,
-                entity_id=entity_id,
-            ).values(
+            qs.values(
                 "id", "action", "event_type", "event_description",
                 "performed_by__email", "performed_by_agent",
                 "metadata_json", "created_at",
@@ -226,10 +234,13 @@ class AuditService:
         )
 
     @staticmethod
-    def fetch_case_history(case_id: int) -> List[Dict[str, Any]]:
+    def fetch_case_history(case_id: int, tenant=None) -> List[Dict[str, Any]]:
         """Return all audit events linked to a case."""
+        qs = AuditEvent.objects.filter(case_id=case_id)
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         return list(
-            AuditEvent.objects.filter(case_id=case_id).values(
+            qs.values(
                 "id", "action", "event_type", "event_description",
                 "entity_type", "entity_id",
                 "performed_by__email", "performed_by_agent",
@@ -246,14 +257,21 @@ class AuditService:
     def fetch_access_history(
         invoice_id: Optional[int] = None,
         case_id: Optional[int] = None,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[int] = None,
+        tenant=None,
     ) -> List[Dict[str, Any]]:
         """Return audit events where RBAC context was captured (sensitive actions)."""
         from django.db.models import Q
         qs = AuditEvent.objects.exclude(permission_checked="")
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if invoice_id:
             qs = qs.filter(Q(entity_type="Invoice", entity_id=invoice_id) | Q(invoice_id=invoice_id))
         if case_id:
             qs = qs.filter(case_id=case_id)
+        if entity_type and entity_id:
+            qs = qs.filter(entity_type=entity_type, entity_id=entity_id)
         return list(
             qs.values(
                 "id", "event_type", "event_description",
@@ -264,10 +282,13 @@ class AuditService:
         )
 
     @staticmethod
-    def fetch_permission_denials(limit: int = 50) -> List[Dict[str, Any]]:
+    def fetch_permission_denials(limit: int = 50, tenant=None) -> List[Dict[str, Any]]:
         """Return recent permission denials for governance dashboard."""
+        qs = AuditEvent.objects.filter(access_granted=False)
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         return list(
-            AuditEvent.objects.filter(access_granted=False).values(
+            qs.values(
                 "id", "event_type", "event_description",
                 "entity_type", "entity_id",
                 "actor_email", "actor_primary_role",
@@ -277,15 +298,18 @@ class AuditService:
         )
 
     @staticmethod
-    def fetch_rbac_activity(limit: int = 50) -> List[Dict[str, Any]]:
+    def fetch_rbac_activity(limit: int = 50, tenant=None) -> List[Dict[str, Any]]:
         """Return recent RBAC-related events."""
         rbac_types = [
             "ROLE_ASSIGNED", "ROLE_REMOVED", "ROLE_PERMISSION_CHANGED",
             "USER_PERMISSION_OVERRIDE", "USER_ACTIVATED", "USER_DEACTIVATED",
             "ROLE_CREATED", "ROLE_UPDATED", "PRIMARY_ROLE_CHANGED",
         ]
+        qs = AuditEvent.objects.filter(event_type__in=rbac_types)
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         return list(
-            AuditEvent.objects.filter(event_type__in=rbac_types).values(
+            qs.values(
                 "id", "event_type", "event_description",
                 "actor_email", "actor_primary_role",
                 "metadata_json", "created_at",

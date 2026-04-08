@@ -48,6 +48,7 @@ class ReviewWorkflowService:
         assigned_to=None,
         priority: int = 5,
         notes: str = "",
+        tenant=None,
     ) -> ReviewAssignment:
         assignment = ReviewAssignment.objects.create(
             reconciliation_result=result,
@@ -55,6 +56,7 @@ class ReviewWorkflowService:
             status=ReviewStatus.ASSIGNED if assigned_to else ReviewStatus.PENDING,
             priority=priority,
             notes=notes,
+            tenant=tenant,
         )
         result.requires_review = True
         result.save(update_fields=["requires_review", "updated_at"])
@@ -237,6 +239,7 @@ class ReviewWorkflowService:
         old_value: str = "",
         new_value: str = "",
         reason: str = "",
+        tenant=None,
     ) -> ManualReviewAction:
         action = ManualReviewAction.objects.create(
             assignment=assignment,
@@ -246,6 +249,7 @@ class ReviewWorkflowService:
             old_value=old_value,
             new_value=new_value,
             reason=reason,
+            tenant=tenant,
         )
 
         # -- Langfuse: record action span
@@ -305,12 +309,14 @@ class ReviewWorkflowService:
         user,
         body: str,
         is_internal: bool = True,
+        tenant=None,
     ) -> ReviewComment:
         comment = ReviewComment.objects.create(
             assignment=assignment,
             author=user,
             body=body,
             is_internal=is_internal,
+            tenant=tenant,
         )
         try:
             from apps.core.langfuse_client import get_client, end_span_safe
@@ -399,6 +405,7 @@ class ReviewWorkflowService:
                 "decided_by": user,
                 "decision": decision_status,
                 "reason": reason,
+                "tenant": getattr(assignment, "tenant", None),
             },
         )
 
@@ -505,7 +512,7 @@ class ReviewWorkflowService:
         return decision
 
     @staticmethod
-    def _record_action(assignment, user, decision_status, reason):
+    def _record_action(assignment, user, decision_status, reason, tenant=None):
         action_map = {
             ReviewStatus.APPROVED: ReviewActionType.APPROVE,
             ReviewStatus.REJECTED: ReviewActionType.REJECT,
@@ -517,4 +524,5 @@ class ReviewWorkflowService:
             performed_by=user,
             action_type=action_type,
             reason=reason,
+            tenant=tenant,
         )

@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404, render
 
 from apps.core.prompt_registry import PromptRegistry
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 from apps.agents.models import AgentRun, DecisionLog, AgentRecommendation
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
@@ -1123,10 +1124,13 @@ def agent_reference(request):
 @permission_required_code("agents.view")
 def agent_runs_list(request):
     """Browsable agent run log with filtering."""
+    tenant = require_tenant(request)
     qs = AgentRun.objects.select_related(
         "reconciliation_result", "reconciliation_result__invoice",
         "agent_definition", "document_upload",
     ).order_by("-created_at")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # ---- Filters ----
     agent_type = request.GET.get("agent_type", "").strip()
@@ -1190,11 +1194,13 @@ def agent_runs_list(request):
             from apps.extraction.models import ExtractionResult
             for ext in (
                 ExtractionResult.objects
-                .filter(document_upload_id__in=upload_ids, invoice__isnull=False)
-                .select_related("invoice")
+                .filter(document_upload_id__in=upload_ids)
+                .select_related("document_upload")
                 .order_by("document_upload_id", "-created_at")
             ):
-                _upload_invoice_map.setdefault(ext.document_upload_id, ext.invoice)
+                _inv = ext.invoice
+                if _inv:
+                    _upload_invoice_map.setdefault(ext.document_upload_id, _inv)
         except Exception:
             pass
     # Pre-load invoice lookups from input_payload for runs without recon_result/upload

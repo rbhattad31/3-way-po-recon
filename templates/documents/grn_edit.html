@@ -45,7 +45,7 @@
           {% if form.grn_number.errors %}<div class="text-danger small mt-1">{{ form.grn_number.errors.0 }}</div>{% endif %}
         </div>
         <div class="col-md-4">
-          <label class="form-label fw-medium">Receipt Date</label>
+          <label class="form-label fw-medium">Receipt Date <span class="text-danger">*</span></label>
           {{ form.receipt_date }}
         </div>
         <div class="col-md-4">

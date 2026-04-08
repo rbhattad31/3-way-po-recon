@@ -45,6 +45,14 @@ from apps.core.models import BaseModel, TimestampMixin
 class ProcurementRequest(BaseModel):
     """Top-level procurement request entity."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     request_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True, default="")
@@ -125,6 +133,14 @@ class ProcurementRequest(BaseModel):
 class ProcurementRequestAttribute(TimestampMixin):
     """Dynamic key-value attributes for a procurement request."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     request = models.ForeignKey(
         ProcurementRequest,
         on_delete=models.CASCADE,
@@ -164,6 +180,14 @@ class ProcurementRequestAttribute(TimestampMixin):
 class SupplierQuotation(BaseModel):
     """Supplier quotation uploaded against a procurement request."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     request = models.ForeignKey(
         ProcurementRequest,
         on_delete=models.CASCADE,
@@ -212,6 +236,14 @@ class SupplierQuotation(BaseModel):
 class QuotationLineItem(TimestampMixin):
     """Individual line item from a supplier quotation."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     quotation = models.ForeignKey(
         SupplierQuotation,
         on_delete=models.CASCADE,
@@ -249,6 +281,14 @@ class QuotationLineItem(TimestampMixin):
 class AnalysisRun(BaseModel):
     """Single execution of an analysis (recommendation or benchmark)."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     run_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
     request = models.ForeignKey(
         ProcurementRequest,
@@ -303,6 +343,14 @@ class AnalysisRun(BaseModel):
 class RecommendationResult(TimestampMixin):
     """Output of a recommendation analysis run."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     run = models.OneToOneField(
         AnalysisRun,
         on_delete=models.CASCADE,
@@ -333,6 +381,14 @@ class RecommendationResult(TimestampMixin):
 class BenchmarkResult(TimestampMixin):
     """Header-level benchmark output for a quotation."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     run = models.ForeignKey(
         AnalysisRun,
         on_delete=models.CASCADE,
@@ -367,6 +423,14 @@ class BenchmarkResult(TimestampMixin):
 class BenchmarkResultLine(TimestampMixin):
     """Per-line benchmark comparison."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     benchmark_result = models.ForeignKey(
         BenchmarkResult,
         on_delete=models.CASCADE,
@@ -403,6 +467,14 @@ class BenchmarkResultLine(TimestampMixin):
 class ComplianceResult(TimestampMixin):
     """Compliance check output attached to an analysis run."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     run = models.OneToOneField(
         AnalysisRun,
         on_delete=models.CASCADE,
@@ -520,6 +592,14 @@ class ValidationRule(TimestampMixin):
 class ValidationResult(TimestampMixin):
     """Top-level output of a validation run."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     run = models.OneToOneField(
         AnalysisRun,
         on_delete=models.CASCADE,
@@ -579,6 +659,14 @@ class ValidationResult(TimestampMixin):
 class ValidationResultItem(TimestampMixin):
     """Individual finding within a validation result."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     validation_result = models.ForeignKey(
         ValidationResult,
         on_delete=models.CASCADE,

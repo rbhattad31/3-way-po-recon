@@ -49,6 +49,7 @@ class RecommendationService:
         run: AnalysisRun,
         *,
         use_ai: bool = True,
+        tenant=None,
     ) -> RecommendationResult:
         AnalysisRunService.start_run(run)
 
@@ -92,6 +93,7 @@ class RecommendationService:
                     constraints_json=final.get("constraints"),
                     compliance_status=compliance_status,
                     output_payload_json=final,
+                    tenant=tenant,
                 )
 
                 if compliance_data:
@@ -101,6 +103,7 @@ class RecommendationService:
                         rules_checked_json=compliance_data.get("rules_checked"),
                         violations_json=compliance_data.get("violations"),
                         recommendations_json=compliance_data.get("recommendations"),
+                        tenant=tenant,
                     )
 
             # Step 6: Finalize run and update request status

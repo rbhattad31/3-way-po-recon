@@ -66,6 +66,7 @@ class AgentContext:
     # Structured in-process memory shared across all agents in the pipeline.
     memory: Optional[AgentMemory] = None
     _langfuse_trace: Any = None
+    tenant: Any = None
 
 
 @dataclass
@@ -134,6 +135,7 @@ class BaseAgent(ABC):
             access_granted=ctx.access_granted,
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
+            tenant=ctx.tenant,
         )
 
         # Stamp the current prompt version on the run for auditability.
@@ -197,6 +199,7 @@ class BaseAgent(ABC):
             "prompt_version": getattr(agent_run, "prompt_version", ""),
         }
         self._actor_user = self._resolve_actor(ctx)
+        self._agent_context = ctx  # retained for tenant injection into tools
         start = time.monotonic()
         step_counter = 0
         timeout_s = (
@@ -603,6 +606,7 @@ class BaseAgent(ABC):
                         input_data=arguments,
                         output_data={"error": result.error, "permission_denied": True},
                         success=False,
+                        tenant=agent_run.tenant,
                     )
                     return result
 
@@ -610,9 +614,13 @@ class BaseAgent(ABC):
             # create child spans under the agent trace.
             if _tool_span is not None:
                 arguments["lf_parent_span"] = _tool_span
+            # Inject tenant from AgentContext so tools scope queries.
+            if hasattr(self, "_agent_context") and getattr(self._agent_context, "tenant", None):
+                arguments["tenant"] = self._agent_context.tenant
             result = tool.execute(**arguments)
             # Remove non-serialisable span before audit persistence.
             arguments.pop("lf_parent_span", None)
+            arguments.pop("tenant", None)
 
         # Audit log
         ToolCallLogger.log(agent_run, tool_name, arguments, result)
@@ -624,6 +632,7 @@ class BaseAgent(ABC):
             output_data=result.data if result.success else {"error": result.error},
             success=result.success,
             duration_ms=result.duration_ms,
+            tenant=agent_run.tenant,
         )
         return result
 
@@ -721,6 +730,7 @@ class BaseAgent(ABC):
                 invoice_id=getattr(agent_run, "invoice_id", None),
                 recommendation_type=output.recommendation_type or "",
                 prompt_version=getattr(agent_run, "prompt_version", "") or "",
+                tenant=agent_run.tenant,
             )
 
     @staticmethod
@@ -917,6 +927,7 @@ class BaseAgent(ABC):
             role=role,
             content=content,
             message_index=index,
+            tenant=agent_run.tenant,
         )
 
     @staticmethod

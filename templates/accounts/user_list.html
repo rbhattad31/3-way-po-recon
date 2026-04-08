@@ -72,6 +72,7 @@
         <tr>
           <th>Name</th>
           <th>Email</th>
+          <th>Company</th>
           <th>Department</th>
           <th>Primary Role</th>
           <th>All Roles</th>
@@ -85,6 +86,7 @@
         <tr>
           <td>{{ u.get_full_name }}</td>
           <td><small class="text-muted">{{ u.email }}</small></td>
+          <td>{% if u.company %}<a href="{% url 'accounts:company_detail' pk=u.company.pk %}">{{ u.company.name }}</a>{% else %}<span class="text-muted">--</span>{% endif %}</td>
           <td>{{ u.department|default:"-" }}</td>
           <td>
             <span class="badge bg-primary">{{ u.get_role_display }}</span>
@@ -109,7 +111,7 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="8" class="text-center text-muted py-3">No users found.</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-3">No users found.</td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -98,6 +98,7 @@ class ExtractionEvalAdapter:
         from apps.core_eval.models import EvalRun
 
         entity_id = str(ext_result.pk)
+        _tenant = getattr(invoice, "tenant", None)
 
         # -- Resolve execution context for prompt provenance --
         prompt_hash = ""
@@ -136,6 +137,7 @@ class ExtractionEvalAdapter:
             prompt_slug=prompt_slug,
             trace_id=trace_id,
             input_snapshot_json=input_snap,
+            tenant=_tenant,
         )
         # Populate timing fields that create_or_update doesn't set
         _timing_dirty = False
@@ -159,6 +161,7 @@ class ExtractionEvalAdapter:
                 eval_run=eval_run,
                 metric_name=name,
                 metric_value=value,
+                tenant=_tenant,
                 **kw,
             )
 
@@ -193,6 +196,7 @@ class ExtractionEvalAdapter:
                 eval_run=eval_run,
                 metric_name="decision_codes",
                 json_value=decision_codes,
+                tenant=_tenant,
             )
 
         # Response repair
@@ -279,6 +283,7 @@ class ExtractionEvalAdapter:
         invoice = getattr(approval, "invoice", None)
         invoice_pk = getattr(invoice, "pk", None)
         status = getattr(approval, "status", "")
+        _tenant = getattr(invoice, "tenant", None)
 
         # -- Approval outcome signal --
         is_auto = status == "AUTO_APPROVED"
@@ -302,6 +307,7 @@ class ExtractionEvalAdapter:
                 ),
             },
             eval_run=eval_run,
+            tenant=_tenant,
         )
 
         # -- Approval metrics on the extraction EvalRun --
@@ -310,6 +316,7 @@ class ExtractionEvalAdapter:
                 eval_run=eval_run,
                 metric_name="extraction_approval_decision",
                 metric_value=1.0 if outcome_value == "approved" else 0.0,
+                tenant=_tenant,
             )
             EvalMetricService.upsert(
                 eval_run=eval_run,
@@ -318,6 +325,7 @@ class ExtractionEvalAdapter:
                     getattr(approval, "confidence_at_review", 0) or 0
                 ),
                 unit="ratio",
+                tenant=_tenant,
             )
 
         # -- Field correction signals --
@@ -328,6 +336,7 @@ class ExtractionEvalAdapter:
                     metric_name="extraction_corrections_count",
                     metric_value=float(len(correction_records)),
                     unit="count",
+                    tenant=_tenant,
                 )
             for corr in correction_records:
                 LearningSignalService.record(
@@ -346,11 +355,12 @@ class ExtractionEvalAdapter:
                         "approval_id": approval.pk,
                     },
                     eval_run=eval_run,
+                    tenant=_tenant,
                 )
 
             # Update field outcomes to INCORRECT for corrected fields
             cls._update_field_outcomes_from_corrections(
-                eval_run, correction_records,
+                eval_run, correction_records, _tenant,
             )
 
         # -- Confirm ground truth for non-corrected fields --
@@ -391,6 +401,7 @@ class ExtractionEvalAdapter:
                     ],
                 },
                 eval_run=eval_run,
+                tenant=_tenant,
             )
 
     # ------------------------------------------------------------------
@@ -432,7 +443,7 @@ class ExtractionEvalAdapter:
             return
 
         # Replace existing outcomes for this run (idempotent on rerun)
-        EvalFieldOutcomeService.replace_for_run(eval_run=eval_run, outcomes=outcomes)
+        EvalFieldOutcomeService.replace_for_run(eval_run=eval_run, outcomes=outcomes, tenant=getattr(eval_run, 'tenant', None))
 
     @classmethod
     def _build_invoice_truth_map(cls, invoice) -> dict:
@@ -652,7 +663,7 @@ class ExtractionEvalAdapter:
     # Update field outcomes after approval corrections
     # ------------------------------------------------------------------
     @classmethod
-    def _update_field_outcomes_from_corrections(cls, eval_run, correction_records):
+    def _update_field_outcomes_from_corrections(cls, eval_run, correction_records, tenant=None):
         """Mark corrected fields as INCORRECT in the existing field outcomes."""
         if not eval_run:
             return
@@ -681,6 +692,7 @@ class ExtractionEvalAdapter:
                         "source": "approval_correction",
                         "entity_type": getattr(corr, "entity_type", ""),
                     },
+                    tenant=tenant,
                 )
 
     # ------------------------------------------------------------------
@@ -718,6 +730,7 @@ class ExtractionEvalAdapter:
     def _emit_validation_failure_signals(cls, eval_run, ext_result, validation_result):
         from apps.core_eval.services.learning_signal_service import LearningSignalService
 
+        _tenant = getattr(eval_run, "tenant", None)
         errors = getattr(validation_result, "errors", [])
         for err in errors[:20]:  # cap to avoid spam
             err_str = str(err) if not isinstance(err, str) else err
@@ -729,6 +742,7 @@ class ExtractionEvalAdapter:
                 aggregation_key=f"extraction-{ext_result.pk}",
                 payload_json={"error": err_str[:500]},
                 eval_run=eval_run,
+                tenant=_tenant,
             )
 
     # ------------------------------------------------------------------
@@ -763,4 +777,5 @@ class ExtractionEvalAdapter:
                 "recovery_lane_invoked": ctx.recovery_lane_invoked,
             },
             eval_run=eval_run,
+            tenant=getattr(eval_run, "tenant", None),
         )

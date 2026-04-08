@@ -29,7 +29,7 @@
 
 ## 1. Executive Summary
 
-The **Procurement Intelligence Platform** is a generic, domain-agnostic module built on top of the existing Django enterprise stack. It supports three primary analysis flows:
+The **Procurement Intelligence Platform** is a generic, domain-agnostic module built on top of the existing Django enterprise stack. All procurement models (`ProcurementRequest`, `ProcurementRecommendation`, quotation-related models) are tenant-scoped via the `CompanyProfile` FK (see [MULTI_TENANT.md](MULTI_TENANT.md)). It supports three primary analysis flows:
 
 | Flow | Description |
 |---|---|

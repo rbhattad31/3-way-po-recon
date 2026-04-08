@@ -14,6 +14,14 @@ from apps.vendors.models import Vendor
 class DocumentUpload(BaseModel):
     """Tracks every file uploaded into the system."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     file = models.FileField(upload_to="invoices/%Y/%m/", blank=True, default="")
     original_filename = models.CharField(max_length=500)
     file_size = models.PositiveIntegerField(default=0, help_text="Bytes")
@@ -58,6 +66,14 @@ class DocumentUpload(BaseModel):
 class Invoice(BaseModel, NotesMixin):
     """Invoice header — stores both raw extracted and normalized values."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     document_upload = models.ForeignKey(
         DocumentUpload, on_delete=models.SET_NULL, null=True, blank=True, related_name="invoices"
     )
@@ -143,6 +159,14 @@ class Invoice(BaseModel, NotesMixin):
 class InvoiceLineItem(TimestampMixin):
     """Invoice line item — raw and normalized."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="line_items")
     line_number = models.PositiveIntegerField(default=1)
 
@@ -191,6 +215,14 @@ class InvoiceLineItem(TimestampMixin):
 class PurchaseOrder(BaseModel, NotesMixin):
     """Purchase Order header."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     po_number = models.CharField(max_length=100, unique=True, db_index=True)
     normalized_po_number = models.CharField(max_length=100, blank=True, db_index=True)
     vendor = models.ForeignKey(Vendor, on_delete=models.SET_NULL, null=True, blank=True, related_name="purchase_orders")
@@ -201,6 +233,19 @@ class PurchaseOrder(BaseModel, NotesMixin):
     status = models.CharField(max_length=30, default="OPEN", db_index=True)
     buyer_name = models.CharField(max_length=255, blank=True, default="")
     department = models.CharField(max_length=255, blank=True, default="")
+
+    # Country & tax compliance
+    country = models.CharField(max_length=10, blank=True, default="", help_text="ISO country code — drives tax schema (IN, AE, SA, US, …)")
+    gstin = models.CharField(max_length=20, blank=True, default="", help_text="Buyer GSTIN (India) / TRN (UAE/SA)")
+    state_code = models.CharField(max_length=10, blank=True, default="", help_text="Buyer state code (India)")
+    vendor_gstin = models.CharField(max_length=20, blank=True, default="", help_text="Vendor GSTIN on this PO")
+    vendor_state_code = models.CharField(max_length=10, blank=True, default="", help_text="Vendor state code (India)")
+    reverse_charge = models.BooleanField(default=False)
+    place_of_supply = models.CharField(max_length=100, blank=True, default="")
+    india_supply_type = models.CharField(
+        max_length=10, blank=True, default="INTRA",
+        choices=[("INTRA", "Intra-state (CGST + SGST)"), ("INTER", "Inter-state (IGST)")],
+    )
 
     class Meta:
         db_table = "documents_purchase_order"
@@ -221,6 +266,14 @@ class PurchaseOrder(BaseModel, NotesMixin):
 class PurchaseOrderLineItem(TimestampMixin):
     """PO line item."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="line_items")
     line_number = models.PositiveIntegerField(default=1)
     item_code = models.CharField(max_length=100, blank=True, default="")
@@ -235,6 +288,20 @@ class PurchaseOrderLineItem(TimestampMixin):
     item_category = models.CharField(max_length=100, blank=True, default="")
     is_service_item = models.BooleanField(null=True, blank=True)
     is_stock_item = models.BooleanField(null=True, blank=True)
+
+    # Country-specific tax fields
+    hsn_sac_code = models.CharField(max_length=20, blank=True, default="", help_text="HSN (goods) / SAC (services) code — India")
+    discount_percent = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    cgst_rate = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    cgst_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    sgst_rate = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    sgst_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    igst_rate = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    igst_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    cess_rate = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    cess_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    vat_rate = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True, help_text="VAT rate % — UAE, SA")
+    vat_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
 
     class Meta:
         db_table = "documents_po_line"
@@ -256,6 +323,14 @@ class PurchaseOrderLineItem(TimestampMixin):
 class GoodsReceiptNote(BaseModel, NotesMixin):
     """Goods Receipt Note header — multiple GRNs can exist per PO."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     grn_number = models.CharField(max_length=100, unique=True, db_index=True)
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="grns")
     vendor = models.ForeignKey(Vendor, on_delete=models.SET_NULL, null=True, blank=True, related_name="grns")
@@ -282,6 +357,14 @@ class GoodsReceiptNote(BaseModel, NotesMixin):
 class GRNLineItem(TimestampMixin):
     """GRN line item."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     grn = models.ForeignKey(GoodsReceiptNote, on_delete=models.CASCADE, related_name="line_items")
     line_number = models.PositiveIntegerField(default=1)
     po_line = models.ForeignKey(

@@ -24,6 +24,7 @@ class EvalMetricService:
         tenant_id: str = "",
         dimension_json: Optional[dict] = None,
         metadata_json: Optional[dict] = None,
+        tenant=None,
     ) -> EvalMetric:
         return EvalMetric.objects.create(
             eval_run=eval_run,
@@ -35,6 +36,7 @@ class EvalMetricService:
             tenant_id=tenant_id,
             dimension_json=dimension_json or {},
             metadata_json=metadata_json or {},
+            tenant=tenant,
         )
 
     @staticmethod
@@ -49,6 +51,7 @@ class EvalMetricService:
         tenant_id: str = "",
         dimension_json: Optional[dict] = None,
         metadata_json: Optional[dict] = None,
+        tenant=None,
     ) -> tuple[EvalMetric, bool]:
         """Create or update a metric for a given run + name.
 
@@ -62,6 +65,7 @@ class EvalMetricService:
             "tenant_id": tenant_id,
             "dimension_json": dimension_json or {},
             "metadata_json": metadata_json or {},
+            "tenant": tenant,
         }
         return EvalMetric.objects.update_or_create(
             eval_run=eval_run,

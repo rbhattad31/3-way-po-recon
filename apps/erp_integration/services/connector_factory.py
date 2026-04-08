@@ -55,7 +55,7 @@ class ConnectorFactory:
             "db_password_encrypted": connection.db_password_encrypted,
             "db_driver": connection.db_driver,
             "db_trust_cert": connection.db_trust_cert,
-            "tenant_id": connection.tenant_id,
+            "tenant_id": connection.erp_tenant_id,
             "client_id_env": connection.client_id_env,
             "client_secret_env": connection.client_secret_env,
         }

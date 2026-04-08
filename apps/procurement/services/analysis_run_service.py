@@ -26,6 +26,7 @@ class AnalysisRunService:
         request: ProcurementRequest,
         run_type: str,
         triggered_by=None,
+        tenant=None,
     ) -> AnalysisRun:
         ctx = TraceContext.get_current()
 
@@ -72,6 +73,7 @@ class AnalysisRunService:
             triggered_by=triggered_by,
             input_snapshot_json=input_snapshot,
             trace_id=ctx.trace_id if ctx else "",
+            tenant=tenant,
         )
 
         AuditService.log_event(

@@ -3,53 +3,42 @@ from django.conf import settings
 from django.db import models
 
 from apps.core.enums import ExtractionApprovalStatus
-from apps.core.models import BaseModel, TimestampMixin
+from apps.core.models import BaseModel
 
 # Import credit models so Django discovers them for migrations
 from apps.extraction.credit_models import CreditTransaction, UserCreditAccount  # noqa: F401
 
 
 class ExtractionResult(BaseModel):
-    """UI-facing extraction summary and legacy compatibility record.
+    """Thin linking record between DocumentUpload and ExtractionRun.
 
-    This is NOT the execution source of truth.
-    For execution state, timing, confidence breakdown, schema, and
-    review routing, use ExtractionRun (apps/extraction_core).
-    ExtractionResult.extraction_run links to the governing run where available.
+    All execution state, timing, confidence, OCR data, and extracted
+    payloads now live on ExtractionRun (apps/extraction_core).
+    This model exists for backward-compatible FK references only.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     document_upload = models.ForeignKey(
         "documents.DocumentUpload", on_delete=models.CASCADE, related_name="extraction_results"
     )
-    invoice = models.ForeignKey(
-        "documents.Invoice", on_delete=models.SET_NULL, null=True, blank=True, related_name="extraction_results"
-    )
-    extraction_run = models.ForeignKey(
+    extraction_run = models.OneToOneField(
         "extraction_core.ExtractionRun",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name="summary_results",
-        help_text="Link to the governing ExtractionRun where available. "
-                  "Always reflects the most recent governed run.",
+        related_name="summary_result",
     )
     engine_name = models.CharField(max_length=100, default="default", help_text="Extraction engine identifier")
     engine_version = models.CharField(max_length=50, blank=True, default="")
-    raw_response = models.JSONField(null=True, blank=True)
-    confidence = models.FloatField(null=True, blank=True)
-    duration_ms = models.PositiveIntegerField(null=True, blank=True)
     success = models.BooleanField(default=False)
     error_message = models.TextField(blank=True, default="")
-    agent_run_id = models.BigIntegerField(null=True, blank=True, db_index=True,
-                                          help_text="FK to AgentRun that performed extraction")
-    ocr_page_count = models.PositiveIntegerField(default=0, help_text="Number of pages processed by OCR")
-    ocr_duration_ms = models.PositiveIntegerField(null=True, blank=True, help_text="OCR processing time in ms")
-    ocr_char_count = models.PositiveIntegerField(default=0, help_text="Characters extracted by OCR")
-    ocr_text = models.TextField(
-        blank=True,
-        default="",
-        help_text="Raw OCR text sent to the LLM -- preserved for debugging missed extractions",
-    )
     langfuse_trace_id = models.CharField(
         max_length=64, blank=True, default="", db_index=True,
         help_text="Langfuse root trace ID for the extraction pipeline run",
@@ -64,29 +53,109 @@ class ExtractionResult(BaseModel):
     def __str__(self) -> str:
         return f"Extraction #{self.pk} – upload {self.document_upload_id}"
 
+    # ------------------------------------------------------------------
+    # Backward-compatible read-only properties
+    # Delegate to extraction_run so downstream code keeps working
+    # while callers are migrated to read from ExtractionRun directly.
+    # ------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Extraction Approval — human-in-the-loop gate post-extraction
-# ---------------------------------------------------------------------------
+    @property
+    def confidence(self):
+        override = self.__dict__.get("_confidence_override")
+        if override is not None:
+            return override
+        run = self.extraction_run
+        return run.overall_confidence if run else None
+
+    @confidence.setter
+    def confidence(self, value):
+        # Allow in-memory override for template annotation.
+        self.__dict__["_confidence_override"] = value
+
+    @property
+    def duration_ms(self):
+        run = self.extraction_run
+        return run.duration_ms if run else None
+
+    @property
+    def raw_response(self):
+        run = self.extraction_run
+        return run.extracted_data_json if run else None
+
+    @property
+    def invoice(self):
+        try:
+            if self.document_upload_id:
+                return self.document_upload.invoices.first()
+        except Exception:
+            pass
+        return None
+
+    @property
+    def invoice_id(self):
+        inv = self.invoice
+        return inv.pk if inv else None
+
+    @property
+    def agent_run_id(self):
+        return None
+
+    @property
+    def ocr_page_count(self):
+        run = self.extraction_run
+        if run:
+            try:
+                return run.ocr_text_record.ocr_page_count
+            except Exception:
+                return 0
+        return 0
+
+    @property
+    def ocr_duration_ms(self):
+        run = self.extraction_run
+        if run:
+            try:
+                return run.ocr_text_record.ocr_duration_ms
+            except Exception:
+                return None
+        return None
+
+    @property
+    def ocr_char_count(self):
+        run = self.extraction_run
+        if run:
+            try:
+                return run.ocr_text_record.ocr_char_count
+            except Exception:
+                return 0
+        return 0
+
+    @property
+    def ocr_text(self):
+        run = self.extraction_run
+        if run:
+            try:
+                return run.ocr_text_record.ocr_text
+            except Exception:
+                return ""
+        return ""
+
+
 class ExtractionApproval(BaseModel):
-    """Business-facing invoice approval workflow.
+    """Human-in-the-loop approval gate for extraction results.
 
-    Tracks whether an extracted invoice has been reviewed and approved
-    before entering reconciliation.
-    This is the PRIMARY approval state machine. All UI approval actions
-    operate against this model.
-    GovernanceTrailService mirrors decisions to ExtractionApprovalRecord
-    for governed audit purposes.
-
-    Every successful extraction creates an ExtractionApproval in PENDING
-    state.  A human reviewer inspects the extracted data, optionally
-    corrects fields, then approves/rejects.  When confidence exceeds the
-    configured auto-approval threshold the system may auto-approve.
-
-    Analytics queries on ``is_touchless`` and ``fields_corrected_count``
-    provide touchless-processing vs human-in-the-loop metrics.
+    Tracks approval status, reviewer, field corrections, and touchless
+    analytics for each extracted invoice.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     invoice = models.OneToOneField(
         "documents.Invoice",
         on_delete=models.CASCADE,
@@ -105,6 +174,16 @@ class ExtractionApproval(BaseModel):
         default=ExtractionApprovalStatus.PENDING,
         db_index=True,
     )
+    confidence_at_review = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Extraction confidence at time of review",
+    )
+    original_values_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Snapshot of invoice values before corrections",
+    )
     reviewed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -114,26 +193,10 @@ class ExtractionApproval(BaseModel):
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True, default="")
-
-    # Snapshot of extraction confidence at approval time
-    confidence_at_review = models.FloatField(null=True, blank=True)
-
-    # Snapshot of extracted values BEFORE any human corrections
-    original_values_snapshot = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Invoice header + line item values as extracted (pre-correction).",
-    )
-
-    # Summary counters for analytics
-    fields_corrected_count = models.PositiveIntegerField(
-        default=0,
-        help_text="Number of individual fields corrected by human.",
-    )
+    fields_corrected_count = models.PositiveIntegerField(default=0)
     is_touchless = models.BooleanField(
         default=False,
-        db_index=True,
-        help_text="True if approved without any human field corrections.",
+        help_text="True if approved without any field corrections",
     )
 
     class Meta:
@@ -141,35 +204,35 @@ class ExtractionApproval(BaseModel):
         ordering = ["-created_at"]
         verbose_name = "Extraction Approval"
         verbose_name_plural = "Extraction Approvals"
-        indexes = [
-            models.Index(fields=["status"], name="idx_extappr_status"),
-            models.Index(fields=["is_touchless"], name="idx_extappr_touchless"),
-        ]
 
     def __str__(self) -> str:
-        return f"Approval #{self.pk} – Invoice {self.invoice_id} ({self.status})"
+        return f"Approval #{self.pk} -- invoice {self.invoice_id} ({self.status})"
 
 
-class ExtractionFieldCorrection(TimestampMixin):
-    """Records a single field correction made during extraction approval.
-
-    Each row captures the before/after value for one field, enabling
-    granular analytics on which fields the model gets wrong most often.
-    """
+class ExtractionFieldCorrection(BaseModel):
+    """Audit trail for field corrections made during extraction approval."""
 
     approval = models.ForeignKey(
         ExtractionApproval,
         on_delete=models.CASCADE,
         related_name="corrections",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     entity_type = models.CharField(
         max_length=20,
         help_text="'header' or 'line_item'",
     )
-    entity_id = models.PositiveIntegerField(
+    entity_id = models.IntegerField(
         null=True,
         blank=True,
-        help_text="PK of the InvoiceLineItem (null for header corrections).",
+        help_text="PK of InvoiceLineItem (null for header corrections)",
     )
     field_name = models.CharField(max_length=100)
     original_value = models.TextField(blank=True, default="")
@@ -184,13 +247,9 @@ class ExtractionFieldCorrection(TimestampMixin):
 
     class Meta:
         db_table = "extraction_field_correction"
-        ordering = ["approval", "entity_type", "field_name"]
+        ordering = ["-created_at"]
         verbose_name = "Extraction Field Correction"
         verbose_name_plural = "Extraction Field Corrections"
-        indexes = [
-            models.Index(fields=["field_name"], name="idx_extcorr_field"),
-            models.Index(fields=["entity_type"], name="idx_extcorr_entity"),
-        ]
 
     def __str__(self) -> str:
-        return f"Correction: {self.entity_type}.{self.field_name} on Approval #{self.approval_id}"
+        return f"Correction #{self.pk} -- {self.entity_type}.{self.field_name}"

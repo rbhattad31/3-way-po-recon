@@ -12,6 +12,14 @@ class ProcessingLog(TimestampMixin):
     Do NOT use this for business audit events (use AuditEvent instead).
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     level = models.CharField(max_length=10, default="INFO", db_index=True)
     source = models.CharField(max_length=100, db_index=True, help_text="Module or service name")
     event = models.CharField(max_length=200, db_index=True)
@@ -77,6 +85,14 @@ class AuditEvent(TimestampMixin):
 
     entity_type = models.CharField(max_length=100, db_index=True, help_text="e.g. Invoice, ReconciliationResult")
     entity_id = models.BigIntegerField(db_index=True)
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     action = models.CharField(max_length=50, db_index=True, help_text="created, updated, status_change, etc.")
     old_values = models.JSONField(null=True, blank=True)
     new_values = models.JSONField(null=True, blank=True)
@@ -155,6 +171,14 @@ class FileProcessingStatus(TimestampMixin):
 
     document_upload = models.ForeignKey(
         "documents.DocumentUpload", on_delete=models.CASCADE, related_name="processing_statuses"
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     stage = models.CharField(max_length=100, db_index=True, help_text="upload, extraction, validation, recon, etc.")
     status = models.CharField(max_length=30, db_index=True)

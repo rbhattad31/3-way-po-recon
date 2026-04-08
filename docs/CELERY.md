@@ -353,6 +353,28 @@ return {
 }
 ```
 
+### Tenant propagation
+
+All tenant-aware tasks accept `tenant_id` as a parameter. The tenant is resolved
+from `CompanyProfile` at the start of the task and used for:
+1. Guarding entity fetches: `qs.filter(tenant=tenant)` when tenant is set.
+2. Propagating to child records and downstream services.
+3. Passing to sub-tasks (e.g., `run_agent_pipeline_task.delay(tenant_id=..., ...)`).
+
+```python
+@shared_task(bind=True, max_retries=2, acks_late=True)
+def process_case_task(self, tenant_id=None, case_id=0):
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
+    qs = APCase.objects.all()
+    if tenant:
+        qs = qs.filter(tenant=tenant)
+    case = qs.get(id=case_id)
+    ...
+```
+
+See [MULTI_TENANT.md](MULTI_TENANT.md) for the full multi-tenant architecture.
+
 ---
 
 ## 4. Task Chaining

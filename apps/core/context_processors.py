@@ -31,7 +31,12 @@ def rbac_context(request):
     if user and user.is_authenticated and hasattr(user, "get_effective_permissions"):
         perms = user.get_effective_permissions()
         role_codes = user.get_role_codes()
-        is_admin = "ADMIN" in role_codes or getattr(user, "role", "") == "ADMIN"
+        is_admin = (
+            getattr(user, "is_platform_admin", False)
+            or "SUPER_ADMIN" in role_codes
+            or "ADMIN" in role_codes
+            or getattr(user, "role", "") in ("ADMIN", "SUPER_ADMIN")
+        )
         return {
             "user_permissions": perms,
             "user_role_codes": role_codes,

@@ -111,7 +111,7 @@ def _update_progress(upload_id: int, message: str):
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("extraction.process_invoice_upload", audit_event="EXTRACTION_STARTED", entity_type="DocumentUpload")
-def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "document_upload", credit_ref_id: str = "", case_id: int = None, case_number: str = None) -> dict:
+def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0, credit_ref_type: str = "document_upload", credit_ref_id: str = "", case_id: int = None, case_number: str = None) -> dict:
     """End-to-end extraction pipeline for a single DocumentUpload.
 
     Steps executed sequentially:
@@ -123,6 +123,8 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
       6. Persist invoice + line items + extraction result
       7. Transition upload & invoice status
     """
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.extraction.services.extraction_adapter import InvoiceExtractionAdapter, ExtractionResponse
     from apps.extraction.services.parser_service import ExtractionParserService
     from apps.extraction.services.normalization_service import NormalizationService
@@ -282,6 +284,41 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             "line_items_count": len(normalized.line_items),
         })
 
+        # 3x. Self-company detection -- swap vendor/buyer if the LLM
+        # extracted our own company as the vendor.
+        _s_self_co = _lf_span(_lf_root, "self_company_detection", metadata={"upload_id": upload_id})
+        _self_co_swapped = False
+        try:
+            from apps.extraction_core.services.master_data_enrichment import MasterDataEnrichmentService
+            swap = MasterDataEnrichmentService._detect_and_swap_self_company(
+                normalized.raw_vendor_name,
+                normalized.raw_vendor_tax_id,
+                normalized.raw_buyer_name,
+            )
+            if swap:
+                new_vendor, new_buyer = swap
+                _orig_vendor = normalized.raw_vendor_name
+                # Swap raw fields
+                normalized.raw_vendor_name = new_vendor
+                normalized.raw_buyer_name = new_buyer
+                # Swap normalised fields
+                from apps.core.utils import normalize_string
+                normalized.vendor_name_normalized = normalize_string(new_vendor)
+                normalized.buyer_name = new_buyer.strip()
+                # Tax IDs: the extracted vendor_tax_id belongs to our company,
+                # so clear it -- we don't have the real vendor's tax ID from the
+                # buyer field.
+                normalized.raw_vendor_tax_id = ""
+                normalized.vendor_tax_id = ""
+                _self_co_swapped = True
+                logger.info(
+                    "Self-company swap applied on upload %s: '%s' -> '%s'",
+                    upload_id, _orig_vendor, new_vendor,
+                )
+        except Exception:
+            logger.exception("Self-company detection failed (non-fatal)")
+        _lf_end(_s_self_co, output={"swapped": _self_co_swapped})
+
         # 3a. Field-level confidence scoring
         _update_progress(upload_id, "Evaluating extraction quality...")
         _s_field_conf = _lf_span(_lf_root, "field_confidence", metadata={"upload_id": upload_id})
@@ -380,7 +417,6 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
                 field_conf_result=field_conf_result,
                 prompt_source_type=_prompt_source_type,
                 qr_data=extraction_resp.qr_data,
-                repair_metadata=_repair_meta,
             )
             extraction_resp.raw_json["_decision_codes"] = decision_codes
         except Exception as dc_exc:
@@ -434,6 +470,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             extraction_raw_json=extraction_resp.raw_json,
             validation_result=validation_result,
             duplicate_result=dup_result,
+            tenant=tenant,
         )
         ext_result = ExtractionResultPersistenceService.save(upload, invoice, extraction_resp)
         # Persist Langfuse trace ID on the extraction result for cross-referencing
@@ -663,7 +700,7 @@ def process_invoice_upload_task(self, upload_id: int, credit_ref_type: str = "do
             # approval, the pipeline pauses at PENDING_EXTRACTION_APPROVAL.
             from apps.cases.tasks import process_case_task
             from apps.core.utils import dispatch_task
-            dispatch_task(process_case_task, case_id=case.pk)
+            dispatch_task(process_case_task, tenant_id, case.pk)
         except Exception as case_exc:
             logger.exception(
                 "AP Case link/processing failed for invoice %s: %s",
@@ -758,29 +795,18 @@ def _classify_document(ocr_text: str):
 def _run_governed_pipeline(upload: DocumentUpload, extraction_resp) -> None:
     """Run the governed extraction pipeline as enrichment.
 
-    Creates an ExtractionDocument linked to this upload, then runs the
-    ExtractionPipeline to produce an ExtractionRun with jurisdiction,
-    schema, and review-routing metadata.  This is additive — the legacy
-    adapter result is still used for Invoice persistence.
+    Passes the DocumentUpload PK directly to ExtractionPipeline.run(),
+    which stores it on ExtractionRun.document_upload.  This is additive
+    -- the legacy adapter result is still used for Invoice persistence.
 
     Gracefully degrades on any failure (missing jurisdiction profiles,
-    schema configs, etc.) — the upload continues as "Legacy".
+    schema configs, etc.) -- the upload continues as "Legacy".
     """
     try:
-        from apps.extraction_documents.models import ExtractionDocument
         from apps.extraction_core.services.extraction_pipeline import ExtractionPipeline
 
-        ext_doc = ExtractionDocument.objects.create(
-            document_upload=upload,
-            file_name=upload.original_filename,
-            file_path=upload.blob_path or "",
-            file_hash=upload.file_hash or "",
-            page_count=getattr(extraction_resp, "ocr_page_count", 0) or 0,
-            ocr_text=extraction_resp.ocr_text or "",
-        )
-
         run = ExtractionPipeline.run(
-            extraction_document_id=ext_doc.pk,
+            extraction_document_id=upload.pk,
             ocr_text=extraction_resp.ocr_text or "",
             document_type="INVOICE",
             vendor_id=None,

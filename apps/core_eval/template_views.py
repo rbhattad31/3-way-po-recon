@@ -6,6 +6,7 @@ from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, render
 
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.core_eval.models import EvalRun, EvalFieldOutcome, EvalMetric, LearningAction, LearningSignal
 
 _VIEW_PERM = "eval.view"
@@ -18,7 +19,10 @@ _VIEW_PERM = "eval.view"
 @permission_required_code(_VIEW_PERM)
 def eval_run_list(request):
     """Browsable list of evaluation runs with filtering."""
+    tenant = require_tenant(request)
     qs = EvalRun.objects.order_by("-created_at")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # Filters
     app_module = request.GET.get("app_module", "").strip()
@@ -36,26 +40,29 @@ def eval_run_list(request):
     page_obj = paginator.get_page(request.GET.get("page"))
 
     # Distinct values for filter dropdowns
+    dropdown_base = EvalRun.objects.all()
+    if tenant is not None:
+        dropdown_base = dropdown_base.filter(tenant=tenant)
     app_modules = (
-        EvalRun.objects.order_by("app_module")
+        dropdown_base.order_by("app_module")
         .values_list("app_module", flat=True)
         .distinct()
     )
     statuses = (
-        EvalRun.objects.order_by("status")
+        dropdown_base.order_by("status")
         .values_list("status", flat=True)
         .distinct()
     )
     entity_types = (
-        EvalRun.objects.order_by("entity_type")
+        dropdown_base.order_by("entity_type")
         .values_list("entity_type", flat=True)
         .distinct()
     )
 
     # KPI counts
-    total = EvalRun.objects.count()
-    completed = EvalRun.objects.filter(status=EvalRun.Status.COMPLETED).count()
-    failed = EvalRun.objects.filter(status=EvalRun.Status.FAILED).count()
+    total = dropdown_base.count()
+    completed = dropdown_base.filter(status=EvalRun.Status.COMPLETED).count()
+    failed = dropdown_base.filter(status=EvalRun.Status.FAILED).count()
 
     return render(request, "core_eval/eval_run_list.html", {
         "page_obj": page_obj,
@@ -128,7 +135,10 @@ def eval_run_detail(request, pk):
 @permission_required_code(_VIEW_PERM)
 def learning_signal_list(request):
     """Browsable list of learning signals with filtering."""
+    tenant = require_tenant(request)
     qs = LearningSignal.objects.select_related("actor").order_by("-created_at")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # Filters
     app_module = request.GET.get("app_module", "").strip()
@@ -146,18 +156,21 @@ def learning_signal_list(request):
     page_obj = paginator.get_page(request.GET.get("page"))
 
     # Distinct values for filter dropdowns
+    signal_base = LearningSignal.objects.all()
+    if tenant is not None:
+        signal_base = signal_base.filter(tenant=tenant)
     app_modules = (
-        LearningSignal.objects.order_by("app_module")
+        signal_base.order_by("app_module")
         .values_list("app_module", flat=True)
         .distinct()
     )
     signal_types = (
-        LearningSignal.objects.order_by("signal_type")
+        signal_base.order_by("signal_type")
         .values_list("signal_type", flat=True)
         .distinct()
     )
     field_names = (
-        LearningSignal.objects.exclude(field_name="")
+        signal_base.exclude(field_name="")
         .order_by("field_name")
         .values_list("field_name", flat=True)
         .distinct()
@@ -201,7 +214,10 @@ def learning_signal_detail(request, pk):
 @permission_required_code(_VIEW_PERM)
 def learning_action_list(request):
     """Browsable list of learning actions with filtering."""
+    tenant = require_tenant(request)
     qs = LearningAction.objects.select_related("proposed_by", "approved_by").order_by("-created_at")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # Filters
     action_type = request.GET.get("action_type", "").strip()
@@ -219,28 +235,31 @@ def learning_action_list(request):
     page_obj = paginator.get_page(request.GET.get("page"))
 
     # Distinct values for filter dropdowns
+    action_base = LearningAction.objects.all()
+    if tenant is not None:
+        action_base = action_base.filter(tenant=tenant)
     action_types = (
-        LearningAction.objects.order_by("action_type")
+        action_base.order_by("action_type")
         .values_list("action_type", flat=True)
         .distinct()
     )
     statuses = (
-        LearningAction.objects.order_by("status")
+        action_base.order_by("status")
         .values_list("status", flat=True)
         .distinct()
     )
     app_modules = (
-        LearningAction.objects.exclude(app_module="")
+        action_base.exclude(app_module="")
         .order_by("app_module")
         .values_list("app_module", flat=True)
         .distinct()
     )
 
     # KPI counts
-    proposed = LearningAction.objects.filter(status=LearningAction.Status.PROPOSED).count()
-    approved = LearningAction.objects.filter(status=LearningAction.Status.APPROVED).count()
-    applied = LearningAction.objects.filter(status=LearningAction.Status.APPLIED).count()
-    rejected = LearningAction.objects.filter(status=LearningAction.Status.REJECTED).count()
+    proposed = action_base.filter(status=LearningAction.Status.PROPOSED).count()
+    approved = action_base.filter(status=LearningAction.Status.APPROVED).count()
+    applied = action_base.filter(status=LearningAction.Status.APPLIED).count()
+    rejected = action_base.filter(status=LearningAction.Status.REJECTED).count()
 
     return render(request, "core_eval/learning_action_list.html", {
         "page_obj": page_obj,

@@ -7,6 +7,14 @@ from apps.core.models import BaseModel
 class IntegrationConfig(BaseModel):
     """Configuration for an external integration endpoint."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     name = models.CharField(max_length=100, unique=True)
     integration_type = models.CharField(
         max_length=30,
@@ -37,6 +45,14 @@ class IntegrationLog(BaseModel):
     """Audit log for integration calls."""
 
     integration = models.ForeignKey(IntegrationConfig, on_delete=models.CASCADE, related_name="logs")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     direction = models.CharField(max_length=10, choices=[("INBOUND", "Inbound"), ("OUTBOUND", "Outbound")])
     status = models.CharField(max_length=20, default="SUCCESS")
     request_payload = models.JSONField(null=True, blank=True)

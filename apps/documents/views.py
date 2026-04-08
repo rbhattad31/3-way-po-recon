@@ -7,6 +7,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.permissions import IsAdminOrReadOnly
+from apps.core.tenant_utils import TenantQuerysetMixin
 from apps.documents.models import (
     DocumentUpload,
     GoodsReceiptNote,
@@ -24,7 +25,7 @@ from apps.documents.serializers import (
 )
 
 
-class DocumentUploadViewSet(viewsets.ModelViewSet):
+class DocumentUploadViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     queryset = DocumentUpload.objects.select_related("uploaded_by").order_by("-created_at")
     serializer_class = DocumentUploadSerializer
     permission_classes = [IsAdminOrReadOnly]
@@ -44,7 +45,7 @@ class DocumentUploadViewSet(viewsets.ModelViewSet):
         )
 
 
-class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
+class InvoiceViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = Invoice.objects.select_related("vendor", "document_upload").order_by("-created_at")
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -59,7 +60,7 @@ class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
         return InvoiceDetailSerializer
 
 
-class PurchaseOrderViewSet(viewsets.ReadOnlyModelViewSet):
+class PurchaseOrderViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = PurchaseOrder.objects.select_related("vendor").order_by("-po_date")
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -74,7 +75,7 @@ class PurchaseOrderViewSet(viewsets.ReadOnlyModelViewSet):
         return PurchaseOrderDetailSerializer
 
 
-class GRNViewSet(viewsets.ReadOnlyModelViewSet):
+class GRNViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = GoodsReceiptNote.objects.select_related(
         "purchase_order", "vendor"
     ).order_by("-receipt_date")

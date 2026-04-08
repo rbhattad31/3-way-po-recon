@@ -1,4 +1,4 @@
-"""Two-way match service — Invoice vs PO (no GRN verification).
+"""Two-way match service -- Invoice vs PO (no GRN verification).
 
 Performs header-level and line-level matching only. GRN lookup and
 matching are intentionally skipped. The returned result uses the same
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from apps.documents.models import Invoice, PurchaseOrder
 from apps.reconciliation.services.grn_match_service import GRNMatchResult
@@ -23,6 +23,9 @@ from apps.reconciliation.services.line_match_service import (
 )
 from apps.reconciliation.services.po_lookup_service import POLookupResult
 from apps.reconciliation.services.tolerance_engine import ToleranceEngine
+
+if TYPE_CHECKING:
+    from apps.reconciliation.services.po_balance_service import POBalance
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +67,14 @@ class TwoWayMatchService:
         self,
         invoice: Invoice,
         po_result: POLookupResult,
+        po_balance: Optional["POBalance"] = None,
     ) -> TwoWayMatchOutput:
         """Run 2-way matching for a single invoice.
 
         Args:
             invoice: The invoice to reconcile.
             po_result: The PO lookup result (must have ``found=True``).
+            po_balance: Optional remaining PO balance for partial invoicing.
 
         Returns:
             TwoWayMatchOutput with header and line results; grn_result is None.
@@ -82,8 +87,8 @@ class TwoWayMatchService:
 
         po: PurchaseOrder = po_result.purchase_order
 
-        header_result = self.header_match.match(invoice, po)
-        line_result = self.line_match.match(invoice, po)
+        header_result = self.header_match.match(invoice, po, po_balance=po_balance)
+        line_result = self.line_match.match(invoice, po, po_balance=po_balance)
 
         logger.info(
             "2-way match for invoice %s vs PO %s: header_ok=%s lines_matched=%s",

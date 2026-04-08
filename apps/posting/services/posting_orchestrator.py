@@ -68,6 +68,7 @@ class PostingOrchestrator:
             defaults={
                 "status": InvoicePostingStatus.MAPPING_IN_PROGRESS,
                 "created_by": user,
+                "tenant": getattr(invoice, "tenant", None),
             },
         )
 

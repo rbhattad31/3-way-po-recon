@@ -118,20 +118,16 @@ class Command(BaseCommand):
             self.stdout.write(f"  {model.__name__}: {count}")
 
         # --- Extraction ---
-        from apps.extraction.models import ExtractionResult
+        from apps.extraction.models import (
+            ExtractionApproval, ExtractionFieldCorrection, ExtractionResult,
+        )
 
+        count = ExtractionFieldCorrection.objects.all().delete()[0]
+        self.stdout.write(f"  ExtractionFieldCorrection: {count}")
+        count = ExtractionApproval.objects.all().delete()[0]
+        self.stdout.write(f"  ExtractionApproval: {count}")
         count = ExtractionResult.objects.all().delete()[0]
         self.stdout.write(f"  ExtractionResult: {count}")
-
-        # Extraction approvals
-        try:
-            from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection
-            count = ExtractionFieldCorrection.objects.all().delete()[0]
-            self.stdout.write(f"  ExtractionFieldCorrection: {count}")
-            count = ExtractionApproval.objects.all().delete()[0]
-            self.stdout.write(f"  ExtractionApproval: {count}")
-        except ImportError:
-            pass
 
         # Credit accounts: delete transactions, reset balances to seed default
         try:
@@ -211,7 +207,7 @@ class Command(BaseCommand):
             ToolCall,
             ReconciliationException, ReconciliationResultLine,
             ReconciliationResult, ReconciliationRun,
-            ExtractionResult,
+            ExtractionFieldCorrection, ExtractionApproval, ExtractionResult,
             CopilotSessionArtifact, CopilotMessage, CopilotSession,
             GRNLineItem, GoodsReceiptNote,
             InvoiceLineItem, Invoice,
@@ -224,11 +220,6 @@ class Command(BaseCommand):
     def _reset_auto_increments(self, flushed_models):
         """Reset AUTO_INCREMENT to 1 for all flushed tables."""
         # Conditionally add models that may not be importable
-        try:
-            from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection
-            flushed_models.extend([ExtractionFieldCorrection, ExtractionApproval])
-        except ImportError:
-            pass
         try:
             from apps.extraction.bulk_models import BulkExtractionItem, BulkExtractionJob
             flushed_models.extend([BulkExtractionItem, BulkExtractionJob])

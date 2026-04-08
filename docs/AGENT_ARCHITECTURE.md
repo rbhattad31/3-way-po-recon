@@ -664,8 +664,10 @@ BaseTool (abstract)
   +-- failure_handling_instruction: str
   +-- evidence_keys_produced: list
   +-- authoritative_fields: list
+  +-- _tenant: CompanyProfile | None  # set by execute() from kwargs
+  +-- _scoped(qs) -> QuerySet         # applies tenant filter if _tenant is set
   +-- run(**kwargs) -> ToolResult    # implement this
-  +-- execute(**kwargs) -> ToolResult  # wraps run() with timing + error handling
+  +-- execute(**kwargs) -> ToolResult  # wraps run() with timing + error handling + tenant extraction
   +-- get_spec() -> ToolSpec         # builds LLM-facing spec (see 5.3)
 
 ToolRegistry (singleton)
@@ -684,6 +686,11 @@ ToolRegistry (singleton)
 | `invoice_details` | `invoices.view` | Full invoice data (header + lines) |
 | `exception_list` | `reconciliation.view` | Active exceptions for a reconciliation result |
 | `reconciliation_summary` | `reconciliation.view` | Match status + key metrics |
+
+> **Multi-Tenant Note**: All tools use `self._scoped(queryset)` on every DB query.
+> `BaseAgent._execute_tool()` injects `tenant=self._agent_context.tenant` into
+> tool kwargs. `BaseTool.execute()` extracts `tenant` and stores it as `self._tenant`.
+> When `_tenant` is set, `_scoped()` applies `.filter(tenant=self._tenant)`.
 
 ### 5.3 How `get_spec()` Composes the LLM Description
 
@@ -1117,6 +1124,13 @@ When no human user is available (Celery async, scheduled jobs),
 `SYSTEM_AGENT` role (rank 100, `is_system_role=True`). This identity has
 exactly the permissions seeded in `seed_rbac` -- it is never an admin bypass.
 
+`system-agent@internal` has `company=NULL` (no tenant). When running on behalf
+of a specific entity (e.g., `ReconciliationResult`), the tenant is resolved from
+the entity itself (`entity.tenant`) and threaded through the pipeline via
+`AgentContext.tenant`. `StageExecutor` passes `tenant=case.tenant` to the
+orchestrator. Celery tasks (`run_agent_pipeline_task`, `process_case_task`) also
+pass `tenant_id` and guard entity fetches with `filter(tenant=tenant)`.
+
 ### 8.3 Data-Scope Authorization [IMPLEMENTED]
 
 `AgentGuardrailsService.authorize_data_scope(actor, result)` is called in
@@ -1137,6 +1151,7 @@ Scope stored in `UserRole.scope_json` (nullable). Null means unrestricted.
 |---|---|---|---|
 | Business unit | `UserRole.scope_json["allowed_business_units"]` | `ReconciliationPolicy.business_unit` | ENFORCED |
 | Vendor | `UserRole.scope_json["allowed_vendor_ids"]` | `result.invoice.vendor_id` | ENFORCED |
+| **Tenant** | `user.company` (CompanyProfile FK) | `result.tenant` | **ENFORCED** (middleware + tool scoping) |
 | Country / legal entity | -- | No `country_code` field on Invoice/PO | PENDING |
 | Cost centre | -- | No `cost_centre` field on Invoice/PO | PENDING |
 
@@ -1474,6 +1489,7 @@ Follow the checklist in Section 5.5. Key points:
 - Create a `ToolDefinition` DB record.
 - Add to the relevant agent's `config_json["allowed_tools"]`.
 - Seed any new permission in `seed_rbac`.
+- **Tenant scoping**: Use `self._scoped(queryset)` on every database query in `run()`. This is inherited from `BaseTool` and applies the tenant filter automatically when a tenant is present in the agent context.
 
 ### 10.3 When to Add a New Agent vs Extend an Existing One
 

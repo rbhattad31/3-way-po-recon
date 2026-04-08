@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from apps.documents.models import Invoice, PurchaseOrder
 from apps.reconciliation.services.grn_lookup_service import GRNLookupService, GRNSummary
@@ -27,6 +27,9 @@ from apps.reconciliation.services.line_match_service import (
 )
 from apps.reconciliation.services.po_lookup_service import POLookupResult
 from apps.reconciliation.services.tolerance_engine import ToleranceEngine
+
+if TYPE_CHECKING:
+    from apps.reconciliation.services.po_balance_service import POBalance
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +72,14 @@ class ThreeWayMatchService:
         self,
         invoice: Invoice,
         po_result: POLookupResult,
+        po_balance: Optional["POBalance"] = None,
     ) -> ThreeWayMatchOutput:
         """Run 3-way matching for a single invoice.
 
         Args:
             invoice: The invoice to reconcile.
             po_result: The PO lookup result (must have ``found=True``).
+            po_balance: Optional remaining PO balance for partial invoicing.
 
         Returns:
             ThreeWayMatchOutput with header, line, and GRN results.
@@ -88,10 +93,10 @@ class ThreeWayMatchService:
         po: PurchaseOrder = po_result.purchase_order
 
         # 1. Header match
-        header_result = self.header_match.match(invoice, po)
+        header_result = self.header_match.match(invoice, po, po_balance=po_balance)
 
         # 2. Line match
-        line_result = self.line_match.match(invoice, po)
+        line_result = self.line_match.match(invoice, po, po_balance=po_balance)
 
         # 3. GRN lookup
         grn_summary: GRNSummary = self.grn_lookup.lookup(po)

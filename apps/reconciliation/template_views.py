@@ -12,6 +12,7 @@ from apps.auditlog.timeline_service import CaseTimelineService
 from apps.core.enums import InvoiceStatus, MatchStatus, ReconciliationMode, UserRole
 from apps.core.decorators import observed_action
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy, ReconciliationResult
 from apps.reviews.models import ReviewAssignment
@@ -20,12 +21,15 @@ from apps.tools.models import ToolCall
 
 @login_required
 def result_list(request):
+    tenant = require_tenant(request)
     qs = (
         ReconciliationResult.objects
         .select_related("invoice", "invoice__vendor", "purchase_order")
         .prefetch_related("exceptions")
         .order_by("-created_at")
     )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     match_status = request.GET.get("match_status")
     if match_status:
         qs = qs.filter(match_status=match_status)
@@ -35,12 +39,10 @@ def result_list(request):
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
-    ready_invoices = (
-        Invoice.objects
-        .filter(status=InvoiceStatus.READY_FOR_RECON)
-        .select_related("vendor")
-        .order_by("-created_at")
-    )
+    ready_inv_qs = Invoice.objects.filter(status=InvoiceStatus.READY_FOR_RECON)
+    if tenant is not None:
+        ready_inv_qs = ready_inv_qs.filter(tenant=tenant)
+    ready_invoices = ready_inv_qs.select_related("vendor").order_by("-created_at")
 
     return render(request, "reconciliation/result_list.html", {
         "results": page_obj,
@@ -85,7 +87,7 @@ def result_detail(request, pk):
     )
 
     # Governance: Case timeline
-    timeline = CaseTimelineService.get_case_timeline(result.invoice_id)
+    timeline = CaseTimelineService.get_case_timeline(result.invoice_id, tenant=getattr(request, 'tenant', None))
 
     # Security: only admins/auditors see full trace; reviewers see summary only
     user_role = getattr(request.user, "role", None)
@@ -179,7 +181,7 @@ def case_console(request, pk):
     primary_recommendation = recommendations[0] if recommendations else None
 
     # Timeline
-    timeline = CaseTimelineService.get_case_timeline(invoice.pk)
+    timeline = CaseTimelineService.get_case_timeline(invoice.pk, tenant=getattr(request, 'tenant', None))
 
     # Review assignment
     review_assignment = (

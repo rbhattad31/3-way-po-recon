@@ -45,6 +45,7 @@ def _append_orphan_agent_runs(
     timeline: List[Dict[str, Any]],
     invoice_id: int,
     seen_run_ids: set,
+    tenant=None,
 ) -> None:
     """Append agent runs not linked to a reconciliation result.
 
@@ -57,6 +58,8 @@ def _append_orphan_agent_runs(
         reconciliation_result__isnull=True,
         input_payload__invoice_id=invoice_id,
     ).exclude(pk__in=seen_run_ids).select_related("agent_definition")
+    if tenant is not None:
+        orphan_runs = orphan_runs.filter(tenant=tenant)
 
     # Also pick up runs referenced by case stages
     case = APCase.objects.filter(invoice_id=invoice_id).first()
@@ -138,7 +141,7 @@ class CaseTimelineService:
     """
 
     @staticmethod
-    def get_case_timeline(invoice_id: int) -> List[Dict[str, Any]]:
+    def get_case_timeline(invoice_id: int, tenant=None) -> List[Dict[str, Any]]:
         """Return an ordered list of all governance events for one invoice."""
         timeline: List[Dict[str, Any]] = []
 
@@ -147,7 +150,10 @@ class CaseTimelineService:
         audit_events = AuditEvent.objects.filter(
             Q(entity_type="Invoice", entity_id=invoice_id) |
             Q(invoice_id=invoice_id)
-        ).select_related("performed_by").order_by("created_at")
+        )
+        if tenant is not None:
+            audit_events = audit_events.filter(tenant=tenant)
+        audit_events = audit_events.select_related("performed_by").order_by("created_at")
 
         seen_audit_ids = set()
         for ev in audit_events:
@@ -196,7 +202,10 @@ class CaseTimelineService:
         # 3. Audit events on reconciliation results
         result_events = AuditEvent.objects.filter(
             entity_type="ReconciliationResult", entity_id__in=result_ids,
-        ).select_related("performed_by").order_by("created_at")
+        )
+        if tenant is not None:
+            result_events = result_events.filter(tenant=tenant)
+        result_events = result_events.select_related("performed_by").order_by("created_at")
         for ev in result_events:
             if ev.pk in seen_audit_ids:
                 continue
@@ -281,7 +290,7 @@ class CaseTimelineService:
                 })
 
         # 4c. Orphaned agent runs (e.g., PO_RETRIEVAL before reconciliation)
-        _append_orphan_agent_runs(timeline, invoice_id, seen_run_ids)
+        _append_orphan_agent_runs(timeline, invoice_id, seen_run_ids, tenant=tenant)
 
         # 5. Agent recommendations
         recommendations = AgentRecommendation.objects.filter(
@@ -471,10 +480,13 @@ class CaseTimelineService:
         return timeline
 
     @staticmethod
-    def get_stage_timeline(case_id: int) -> List[Dict[str, Any]]:
+    def get_stage_timeline(case_id: int, tenant=None) -> List[Dict[str, Any]]:
         """Return a stage-focused execution timeline for a case."""
         try:
-            case = APCase.objects.get(pk=case_id, is_active=True)
+            qs = APCase.objects.filter(pk=case_id, is_active=True)
+            if tenant is not None:
+                qs = qs.filter(tenant=tenant)
+            case = qs.get()
         except APCase.DoesNotExist:
             return []
 

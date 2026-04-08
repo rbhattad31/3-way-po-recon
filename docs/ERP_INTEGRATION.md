@@ -124,7 +124,7 @@ simultaneously. One connection is designated as the default (`is_default=True`).
 | `timeout_seconds` | PositiveIntegerField | API call timeout (default 30 s) |
 | `auth_type` | CharField | `BEARER`, `BASIC`, `API_KEY`, `OAUTH2` |
 | `api_key_env` | CharField | Env var name holding API key / bearer token |
-| `tenant_id` | CharField | OAuth tenant/org ID (cloud ERPs) |
+| `tenant_id` | CharField | OAuth tenant/org ID (cloud ERPs) -- **Note:** this is the _ERP system's_ tenant/org identifier, not the platform `CompanyProfile` tenant. The platform tenant FK is inherited from `BaseModel.tenant` and is used for row-level multi-tenant isolation. |", "oldString": "| `tenant_id` | CharField | OAuth tenant/org ID (cloud ERPs) |
 | `client_id_env` | CharField | Env var name for OAuth client ID |
 | `client_secret_env` | CharField | Env var name for OAuth client secret |
 | `connection_string_env` | CharField | Env var name for ODBC connection string |

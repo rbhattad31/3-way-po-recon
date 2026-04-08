@@ -315,7 +315,7 @@ def _copilot_local_pipeline(upload_id, user_pk, case_id=None, case_number=None):
         DocumentUpload.objects.filter(pk=upload_id).update(
             processing_message="Matching against purchase orders and receipts..."
         )
-        dispatch_task(process_case_task, case_id=case.pk)
+        dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
     except Exception:
         logger.exception("Case creation failed for invoice %s", invoice.pk)
 
@@ -382,6 +382,7 @@ def invoice_upload(request):
             document_type=DocumentType.INVOICE,
             processing_state=FileProcessingState.PROCESSING,
             uploaded_by=request.user,
+            tenant=getattr(request, 'tenant', None),
         )
     except Exception as exc:
         CreditService.refund(
@@ -416,6 +417,7 @@ def invoice_upload(request):
         case = CaseCreationService.create_from_document_upload(
             upload=doc_upload,
             uploaded_by=request.user,
+            tenant=getattr(request, 'tenant', None),
         )
         case_id = case.pk
         case_number = case.case_number

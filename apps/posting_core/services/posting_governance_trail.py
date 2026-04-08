@@ -38,6 +38,7 @@ class PostingGovernanceTrailService:
                 "approved_by": user,
                 "comments": comments,
                 "decided_at": timezone.now(),
+                "tenant": getattr(run, "tenant", None),
             },
         )
 

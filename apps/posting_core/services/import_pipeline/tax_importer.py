@@ -48,6 +48,7 @@ class TaxImporter:
 
             valid_records.append(ERPTaxCodeReference(
                 batch=batch,
+                tenant=batch.tenant,
                 tax_code=tax_code,
                 tax_label=str(row.get("tax_label", "")).strip() or tax_code,
                 country_code=str(row.get("country_code", "")).strip()[:3],

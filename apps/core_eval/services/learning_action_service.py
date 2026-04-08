@@ -48,6 +48,7 @@ class LearningActionService:
         input_signals_json: Optional[dict] = None,
         action_payload_json: Optional[dict] = None,
         proposed_by=None,
+        tenant=None,
     ) -> LearningAction:
         return LearningAction.objects.create(
             action_type=action_type,
@@ -59,6 +60,7 @@ class LearningActionService:
             input_signals_json=input_signals_json or {},
             action_payload_json=action_payload_json or {},
             proposed_by=proposed_by,
+            tenant=tenant,
         )
 
     @staticmethod

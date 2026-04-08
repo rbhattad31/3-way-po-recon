@@ -14,12 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30, acks_late=True)
-def process_case_task(self, case_id: int):
+def process_case_task(self, tenant_id: int = None, case_id: int = 0):
     """
     Run the CaseOrchestrator for an APCase asynchronously.
 
     Called after invoice upload + extraction, or when reprocessing.
     """
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.cases.models import APCase
     from apps.cases.orchestrators.case_orchestrator import CaseOrchestrator
 
@@ -77,7 +79,10 @@ def process_case_task(self, case_id: int):
         pass
 
     try:
-        case = APCase.objects.get(id=case_id)
+        _case_qs = APCase.objects.all()
+        if tenant:
+            _case_qs = _case_qs.filter(tenant=tenant)
+        case = _case_qs.get(id=case_id)
 
         # --- System agent: governance-visible case intake record ---
         try:
@@ -112,7 +117,7 @@ def process_case_task(self, case_id: int):
             )
 
         orchestrator = CaseOrchestrator(case)
-        orchestrator.run(lf_trace=_lf_trace, lf_trace_id=_trace_id)
+        orchestrator.run(tenant=tenant, lf_trace=_lf_trace, lf_trace_id=_trace_id)
         logger.info("Case %s processing completed (status=%s)", case.case_number, case.status)
         try:
             from apps.core.langfuse_client import end_span_safe, update_trace_safe, score_trace_safe
@@ -152,8 +157,10 @@ def process_case_task(self, case_id: int):
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=10, acks_late=True)
-def reprocess_case_from_stage_task(self, case_id: int, stage: str):
+def reprocess_case_from_stage_task(self, tenant_id: int = None, case_id: int = 0, stage: str = ""):
     """Reprocess a case from a specific stage."""
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.cases.models import APCase
     from apps.cases.orchestrators.case_orchestrator import CaseOrchestrator
 
@@ -199,9 +206,12 @@ def reprocess_case_from_stage_task(self, case_id: int, stage: str):
         pass
 
     try:
-        case = APCase.objects.get(id=case_id)
+        _rpc_qs = APCase.objects.all()
+        if tenant:
+            _rpc_qs = _rpc_qs.filter(tenant=tenant)
+        case = _rpc_qs.get(id=case_id)
         orchestrator = CaseOrchestrator(case)
-        orchestrator.run_from(stage, lf_trace=_lf_trace, lf_trace_id=_trace_id)
+        orchestrator.run_from(stage, tenant=tenant, lf_trace=_lf_trace, lf_trace_id=_trace_id)
         logger.info("Case %s reprocessed from %s (status=%s)", case.case_number, stage, case.status)
         try:
             from apps.core.langfuse_client import end_span_safe, score_trace_safe

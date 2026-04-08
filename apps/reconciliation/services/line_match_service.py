@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from thefuzz import fuzz
 
@@ -18,7 +18,12 @@ from apps.documents.models import (
 )
 from apps.reconciliation.services.tolerance_engine import FieldComparison, ToleranceEngine
 
+if TYPE_CHECKING:
+    from apps.reconciliation.services.po_balance_service import POBalance
+
 logger = logging.getLogger(__name__)
+
+ZERO = Decimal("0.00")
 
 
 @dataclass
@@ -33,6 +38,8 @@ class LineMatchPair:
     tax_invoice: Optional[Decimal] = None
     tax_po: Optional[Decimal] = None
     tax_difference: Optional[Decimal] = None
+    tax_rate_match: Optional[bool] = None  # line-level tax rate agreement
+    tax_rate_details: Optional[Dict] = None  # invoice vs PO rate breakdown
     description_similarity: float = 0.0
     matched: bool = False
 
@@ -60,7 +67,7 @@ class LineMatchService:
     def __init__(self, tolerance_engine: ToleranceEngine):
         self.engine = tolerance_engine
 
-    def match(self, invoice: Invoice, po: PurchaseOrder) -> LineMatchResult:
+    def match(self, invoice: Invoice, po: PurchaseOrder, po_balance: Optional["POBalance"] = None) -> LineMatchResult:
         inv_lines = list(
             InvoiceLineItem.objects.filter(invoice=invoice).order_by("line_number")
         )
@@ -82,12 +89,12 @@ class LineMatchService:
                 all_within_tolerance=False,
             )
 
-        # Build candidate scores: (inv_line, po_line) → score
+        # Build candidate scores: (inv_line, po_line) -> score
         used_po_lines: set = set()
         pairs: List[LineMatchPair] = []
 
         for inv_line in inv_lines:
-            best_pair = self._find_best_po_match(inv_line, po_lines, used_po_lines)
+            best_pair = self._find_best_po_match(inv_line, po_lines, used_po_lines, po_balance)
             if best_pair and best_pair.matched:
                 used_po_lines.add(best_pair.po_line.pk)
             pairs.append(best_pair or LineMatchPair(invoice_line=inv_line))
@@ -95,7 +102,13 @@ class LineMatchService:
         unmatched_inv = [p.invoice_line for p in pairs if not p.matched]
         unmatched_po = [pl for pl in po_lines if pl.pk not in used_po_lines]
 
-        all_matched = len(unmatched_inv) == 0 and len(unmatched_po) == 0
+        # For partial invoices, unmatched PO lines are expected (remaining
+        # lines will be invoiced later), so don't penalise them.
+        is_partial = po_balance.is_partial if po_balance else False
+        if is_partial:
+            all_matched = len(unmatched_inv) == 0
+        else:
+            all_matched = len(unmatched_inv) == 0 and len(unmatched_po) == 0
         all_tol = all_matched and all(
             (p.qty_comparison and p.qty_comparison.within_tolerance is True)
             and (p.price_comparison and p.price_comparison.within_tolerance is True)
@@ -125,6 +138,7 @@ class LineMatchService:
         inv_line: InvoiceLineItem,
         po_lines: List[PurchaseOrderLineItem],
         used: set,
+        po_balance: Optional["POBalance"] = None,
     ) -> Optional[LineMatchPair]:
         """Score every candidate PO line and return the best match."""
         candidates: List[Tuple[float, LineMatchPair]] = []
@@ -132,7 +146,7 @@ class LineMatchService:
         for po_line in po_lines:
             if po_line.pk in used:
                 continue
-            score, pair = self._score_pair(inv_line, po_line)
+            score, pair = self._score_pair(inv_line, po_line, po_balance)
             if score > 0:
                 candidates.append((score, pair))
 
@@ -149,23 +163,49 @@ class LineMatchService:
         return best_pair
 
     def _score_pair(
-        self, inv_line: InvoiceLineItem, po_line: PurchaseOrderLineItem
+        self, inv_line: InvoiceLineItem, po_line: PurchaseOrderLineItem,
+        po_balance: Optional["POBalance"] = None,
     ) -> Tuple[float, LineMatchPair]:
-        """Compute a composite matching score (0–1) for an inv↔po line pair."""
+        """Compute a composite matching score (0-1) for an inv/po line pair."""
 
         # Description similarity
         inv_desc = normalize_string(inv_line.description or inv_line.raw_description)
         po_desc = normalize_string(po_line.description)
         desc_sim = fuzz.token_sort_ratio(inv_desc, po_desc) if inv_desc and po_desc else 0.0
 
+        # When a PO has prior invoices, compare against remaining qty/amount
+        compare_qty = po_line.quantity
+        compare_amount = po_line.line_amount
+        if po_balance and po_balance.is_partial:
+            if po_balance.prior_invoice_count > 0:
+                # Subsequent partial: compare against remaining balance
+                line_bal = po_balance.line_balances.get(po_line.pk)
+                if line_bal:
+                    compare_qty = line_bal.remaining_qty
+                    compare_amount = line_bal.remaining_amount
+            else:
+                # First partial: invoice is less than PO by design.
+                # Compare against the invoice's own values so the match
+                # passes; the partial context is surfaced separately.
+                compare_qty = inv_line.quantity or ZERO
+                compare_amount = inv_line.line_amount or ZERO
+
         # Numeric comparisons
-        qty_cmp = self.engine.compare_quantity(inv_line.quantity, po_line.quantity)
-        price_cmp = self.engine.compare_price(inv_line.unit_price, po_line.unit_price)
-        amount_cmp = self.engine.compare_amount(inv_line.line_amount, po_line.line_amount)
+        compare_price = po_line.unit_price
+        if po_balance and po_balance.is_first_partial:
+            # First partial: unit price may be a fraction of the PO line
+            # price (milestone billing). Accept the invoice price as-is.
+            compare_price = inv_line.unit_price
+        qty_cmp = self.engine.compare_quantity(inv_line.quantity, compare_qty)
+        price_cmp = self.engine.compare_price(inv_line.unit_price, compare_price)
+        amount_cmp = self.engine.compare_amount(inv_line.line_amount, compare_amount)
 
         # Tax (simple diff, not tolerance-based)
         tax_inv = inv_line.tax_amount
         tax_po = po_line.tax_amount
+        if po_balance and po_balance.is_first_partial:
+            # First partial: tax is proportional to billed amount, not full PO tax
+            tax_po = tax_inv
         tax_diff = (tax_inv - tax_po) if tax_inv is not None and tax_po is not None else None
 
         # Composite score
@@ -199,6 +239,9 @@ class LineMatchService:
         elif amount_cmp.within_tolerance is False:
             score += 0.03
 
+        # Tax rate comparison
+        tax_rate_match, tax_rate_details = _compare_line_tax_rate(inv_line, po_line)
+
         pair = LineMatchPair(
             invoice_line=inv_line,
             po_line=po_line,
@@ -208,6 +251,53 @@ class LineMatchService:
             tax_invoice=tax_inv,
             tax_po=tax_po,
             tax_difference=tax_diff,
+            tax_rate_match=tax_rate_match,
+            tax_rate_details=tax_rate_details,
             description_similarity=desc_sim,
         )
         return score, pair
+
+
+def _compare_line_tax_rate(
+    inv_line: InvoiceLineItem, po_line: PurchaseOrderLineItem,
+) -> Tuple[Optional[bool], Optional[Dict[str, Any]]]:
+    """Compare the effective tax rate on an invoice line vs a PO line.
+
+    PO lines may carry component-level rates (cgst_rate, sgst_rate,
+    igst_rate, vat_rate).  We derive the effective PO rate from those
+    components and compare against the invoice line's ``tax_percentage``.
+
+    Returns (match_bool_or_None, details_dict_or_None).
+    """
+    inv_rate = inv_line.tax_percentage  # e.g. 18.0 for 18%
+    if inv_rate is None:
+        return None, None
+
+    # Derive PO-side effective rate from component columns
+    cgst = getattr(po_line, "cgst_rate", None) or Decimal("0")
+    sgst = getattr(po_line, "sgst_rate", None) or Decimal("0")
+    igst = getattr(po_line, "igst_rate", None) or Decimal("0")
+    vat = getattr(po_line, "vat_rate", None) or Decimal("0")
+    cess = getattr(po_line, "cess_rate", None) or Decimal("0")
+
+    po_effective_rate = cgst + sgst + igst + vat + cess
+
+    if po_effective_rate == Decimal("0"):
+        # No component rates on PO line -- cannot compare
+        return None, None
+
+    # Allow 0.5% absolute tolerance on tax rate (e.g. rounding)
+    diff = abs(Decimal(str(inv_rate)) - po_effective_rate)
+    rate_match = diff <= Decimal("0.5")
+
+    details = {
+        "invoice_tax_rate": str(inv_rate),
+        "po_effective_tax_rate": str(po_effective_rate),
+        "po_cgst_rate": str(cgst),
+        "po_sgst_rate": str(sgst),
+        "po_igst_rate": str(igst),
+        "po_vat_rate": str(vat),
+        "po_cess_rate": str(cess),
+        "rate_difference": str(diff),
+    }
+    return rate_match, details

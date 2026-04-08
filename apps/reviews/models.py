@@ -12,6 +12,14 @@ class ReviewAssignment(BaseModel):
     reconciliation_result = models.ForeignKey(
         "reconciliation.ReconciliationResult", on_delete=models.CASCADE, related_name="review_assignments"
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     assigned_to = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="review_assignments"
     )
@@ -53,6 +61,14 @@ class ReviewComment(TimestampMixin):
     """Reviewer comment on a review assignment."""
 
     assignment = models.ForeignKey(ReviewAssignment, on_delete=models.CASCADE, related_name="comments")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     body = models.TextField()
     is_internal = models.BooleanField(default=True, help_text="Internal vs. visible to vendor")
@@ -71,6 +87,14 @@ class ManualReviewAction(TimestampMixin):
     """Every discrete action taken on a review (correct field, approve, etc.)."""
 
     assignment = models.ForeignKey(ReviewAssignment, on_delete=models.CASCADE, related_name="actions")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     action_type = models.CharField(max_length=30, choices=ReviewActionType.choices, db_index=True)
     field_name = models.CharField(max_length=100, blank=True, default="", help_text="Field corrected, if applicable")
@@ -95,6 +119,14 @@ class ReviewDecision(TimestampMixin):
     """Final decision on a review assignment."""
 
     assignment = models.OneToOneField(ReviewAssignment, on_delete=models.CASCADE, related_name="decision")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     decision = models.CharField(max_length=20, choices=ReviewStatus.choices)
     reason = models.TextField(blank=True, default="")

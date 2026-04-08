@@ -12,11 +12,13 @@ logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=60, acks_late=True)
 @observed_task("posting.prepare_posting", audit_event="POSTING_STARTED", entity_type="Invoice")
-def prepare_posting_task(self, invoice_id: int, user_id: int | None = None, trigger: str = "system") -> dict:
+def prepare_posting_task(self, tenant_id: int | None = None, invoice_id: int = 0, user_id: int | None = None, trigger: str = "system") -> dict:
     """Prepare a posting proposal for a single invoice.
 
     Called automatically after extraction approval or manually from the UI.
     """
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from django.contrib.auth import get_user_model
     from apps.posting.services.posting_orchestrator import PostingOrchestrator
 
@@ -30,6 +32,7 @@ def prepare_posting_task(self, invoice_id: int, user_id: int | None = None, trig
 
     try:
         posting = PostingOrchestrator.prepare_posting(
+            tenant=tenant,
             invoice_id=invoice_id,
             user=user,
             trigger=trigger,
@@ -48,8 +51,9 @@ def prepare_posting_task(self, invoice_id: int, user_id: int | None = None, trig
 @observed_task("posting.import_reference_excel", audit_event="ERP_REFERENCE_IMPORT_STARTED", entity_type="ERPReferenceImportBatch")
 def import_reference_excel_task(
     self,
-    file_path: str,
-    batch_type: str,
+    tenant_id: int | None = None,
+    file_path: str = "",
+    batch_type: str = "",
     user_id: int | None = None,
     source_as_of: str | None = None,
     column_map: dict | None = None,
@@ -63,6 +67,8 @@ def import_reference_excel_task(
         source_as_of: ISO date string for the data as-of date.
         column_map: Optional header overrides.
     """
+    from apps.accounts.models import CompanyProfile
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from datetime import date
     from django.contrib.auth import get_user_model
     from apps.posting_core.services.import_pipeline.excel_import_orchestrator import (
@@ -86,6 +92,7 @@ def import_reference_excel_task(
 
     try:
         batch = ExcelImportOrchestrator.run_import(
+            tenant=tenant,
             file_path=file_path,
             batch_type=batch_type,
             user=user,

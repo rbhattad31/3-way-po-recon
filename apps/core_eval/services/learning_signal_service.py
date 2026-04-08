@@ -28,6 +28,7 @@ class LearningSignalService:
         new_value: str = "",
         payload_json: Optional[dict] = None,
         eval_run: Optional[EvalRun] = None,
+        tenant=None,
     ) -> LearningSignal:
         return LearningSignal.objects.create(
             app_module=app_module,
@@ -43,6 +44,7 @@ class LearningSignalService:
             new_value=new_value,
             payload_json=payload_json or {},
             eval_run=eval_run,
+            tenant=tenant,
         )
 
     @staticmethod

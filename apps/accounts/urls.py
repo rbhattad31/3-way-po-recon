@@ -6,6 +6,9 @@ from apps.accounts.template_views import (
     RoleListView, RoleDetailView, RoleCreateView,
     PermissionListView,
     RolePermissionMatrixView,
+    CompanyProfileListView, CompanyProfileDetailView,
+    TenantProfileView, TenantUserListView, InviteUserView,
+    TenantSettingsView, AcceptInvitationView,
 )
 
 app_name = "accounts"
@@ -30,4 +33,16 @@ urlpatterns = [
 
     # Admin Console — Role-Permission Matrix
     path("admin-console/role-matrix/", RolePermissionMatrixView.as_view(), name="role_matrix"),
+
+    # Admin Console — Company Profile
+    path("admin-console/company/", CompanyProfileListView.as_view(), name="company_list"),
+    path("admin-console/company/<int:pk>/", CompanyProfileDetailView.as_view(), name="company_detail"),
+
+    # Organisation self-service
+    path("organisation/", TenantProfileView.as_view(), name="organisation_profile"),
+    path("organisation/users/", TenantUserListView.as_view(), name="organisation_users"),
+    path("organisation/invite/", InviteUserView.as_view(), name="invite_user"),
+    path("organisation/settings/", TenantSettingsView.as_view(), name="organisation_settings"),
+    # Accept invitation (exempt from LoginRequired — new users not yet logged in)
+    path("invite/<str:token>/", AcceptInvitationView.as_view(), name="accept_invitation"),
 ]

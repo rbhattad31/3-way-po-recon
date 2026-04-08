@@ -53,16 +53,21 @@ class Command(BaseCommand):
             ExtractionApproval.objects.values_list("invoice_id", flat=True)
         )
 
-        # Get ExtractionResults linked to invoices (pick latest per invoice)
-        er_map = {}
+        # Get ExtractionResults linked to invoices (pick latest per upload)
+        # ExtractionResult no longer has a direct invoice FK; look up via
+        # document_upload -> invoices reverse relation.
+        er_map = {}  # invoice_id -> ExtractionResult
         for er in (
             ExtractionResult.objects
-            .exclude(invoice=None)
-            .select_related("invoice")
-            .order_by("invoice_id", "-created_at")
+            .select_related("document_upload")
+            .order_by("-created_at")
         ):
-            if er.invoice_id not in er_map:
-                er_map[er.invoice_id] = er
+            inv = er.invoice  # property: document_upload.invoices.first()
+            if inv is None:
+                continue
+            inv_id = inv.pk
+            if inv_id not in er_map:
+                er_map[inv_id] = er
 
         auto_approved = 0
         pending = 0

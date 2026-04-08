@@ -275,8 +275,7 @@ ExtractionParserService → NormalizationService → ValidationService
 
 ## 3. Extraction Pipeline
 
-**Task**: `process_invoice_upload_task` in `apps/extraction/tasks.py`  
-**Decorator**: `@shared_task(bind=True, max_retries=2, default_retry_delay=30)`
+**Task**: `process_invoice_upload_task` in `apps/extraction/tasks.py`  \n**Decorator**: `@shared_task(bind=True, max_retries=2, default_retry_delay=30)`\n\n> **Tenant propagation**: The task accepts `tenant_id` and resolves it to a `CompanyProfile` instance. All records created during extraction (Invoice, InvoiceLineItem, ExtractionResult, ExtractionApproval, APCase) inherit the tenant from the upload or from the resolved tenant. See [MULTI_TENANT.md](MULTI_TENANT.md).", "oldString": "**Task**: `process_invoice_upload_task` in `apps/extraction/tasks.py`  \n**Decorator**: `@shared_task(bind=True, max_retries=2, default_retry_delay=30)`
 
 > **Execution path**: `ExtractionPipeline` (governed, 11-stage, in `apps/extraction_core`) is the preferred execution path. `ExtractionService` (legacy) remains active for backward compatibility. Step 6 also writes `extraction_run` to `ExtractionResult.extraction_run` FK, linking the UI summary to the authoritative execution record.
 

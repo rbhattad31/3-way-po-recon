@@ -46,6 +46,15 @@ class APCase(BaseModel, SoftDeleteMixin):
         help_text="Auto-generated case identifier, e.g. AP-000123",
     )
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+
     # --- Linked documents ---
     document_upload = models.ForeignKey(
         "documents.DocumentUpload",
@@ -180,6 +189,14 @@ class APCaseStage(TimestampMixin):
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="stages",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     stage_name = models.CharField(
         max_length=50, choices=CaseStageType.choices,
     )
@@ -234,6 +251,14 @@ class APCaseArtifact(TimestampMixin):
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="artifacts",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     artifact_type = models.CharField(
         max_length=50, choices=ArtifactType.choices,
     )
@@ -269,6 +294,14 @@ class APCaseDecision(TimestampMixin):
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="decisions",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     decision_type = models.CharField(
         max_length=50, choices=DecisionType.choices,
     )
@@ -295,6 +328,14 @@ class APCaseAssignment(TimestampMixin):
 
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="assignments",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     assignment_type = models.CharField(
         max_length=30, choices=AssignmentType.choices,
@@ -336,6 +377,14 @@ class APCaseSummary(TimestampMixin):
     case = models.OneToOneField(
         APCase, on_delete=models.CASCADE, related_name="summary",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     latest_summary = models.TextField(blank=True, default="")
     reviewer_summary = models.TextField(blank=True, default="")
     finance_summary = models.TextField(blank=True, default="")
@@ -358,6 +407,14 @@ class APCaseComment(TimestampMixin):
 
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="comments",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -385,6 +442,14 @@ class APCaseActivity(TimestampMixin):
 
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="activities",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     activity_type = models.CharField(max_length=100)
     description = models.TextField(blank=True, default="")

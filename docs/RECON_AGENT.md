@@ -1131,6 +1131,8 @@ Every guardrail decision (grant or deny) is logged as:
 
 All tools extend `BaseTool` and are registered via the `@register_tool` decorator. The registry is a module-level singleton; tools are loaded at import time.
 
+**Multi-Tenant Scoping:** All tools use `self._scoped(queryset)` on every DB query. The tenant is injected from `AgentContext.tenant` via `BaseAgent._execute_tool()` -> `BaseTool.execute()`. When a tenant is set, `_scoped()` applies `.filter(tenant=self._tenant)` to ensure tools only access data within the correct tenant boundary. See [MULTI_TENANT.md](MULTI_TENANT.md).
+
 ### `BaseTool` interface
 
 Each tool declares:
