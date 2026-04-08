@@ -135,6 +135,11 @@ class ExceptionType(models.TextChoices):
     MULTI_GRN_PARTIAL_RECEIPT = "MULTI_GRN_PARTIAL_RECEIPT", "Multi-GRN Partial Receipt"
     RECEIPT_LOCATION_MISMATCH = "RECEIPT_LOCATION_MISMATCH", "Receipt Location Mismatch"
     DELAYED_RECEIPT = "DELAYED_RECEIPT", "Delayed Receipt"
+    # Line-match quality (deterministic scorer)
+    NO_CONFIDENT_PO_LINE_MATCH = "NO_CONFIDENT_PO_LINE_MATCH", "No Confident PO Line Match"
+    MULTIPLE_PO_LINE_CANDIDATES = "MULTIPLE_PO_LINE_CANDIDATES", "Multiple PO Line Candidates"
+    LINE_DESCRIPTION_AMBIGUOUS = "LINE_DESCRIPTION_AMBIGUOUS", "Line Description Ambiguous"
+    LINE_MATCH_LOW_CONFIDENCE = "LINE_MATCH_LOW_CONFIDENCE", "Line Match Low Confidence"
 
 
 class UserRole(models.TextChoices):

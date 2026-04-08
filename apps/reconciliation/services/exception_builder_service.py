@@ -387,6 +387,70 @@ class ExceptionBuilderService:
                 },
             ))
 
+        # v2: deterministic scorer-derived exceptions
+        for decision in getattr(line_result, "decisions", []):
+            rl = result_line_map.get(decision.invoice_line.pk)
+            ln = decision.invoice_line.line_number
+
+            if decision.status == "UNRESOLVED" and decision.candidate_count > 0:
+                excs.append(self._make(
+                    result=result,
+                    result_line=rl,
+                    exc_type=ExceptionType.NO_CONFIDENT_PO_LINE_MATCH,
+                    severity=ExceptionSeverity.HIGH,
+                    message=(
+                        f"Line {ln}: no PO-line candidate reached confidence threshold "
+                        f"(best score {decision.best_score:.2f})"
+                    ),
+                    details={
+                        "line_number": ln,
+                        "best_score": decision.best_score,
+                        "candidate_count": decision.candidate_count,
+                        "confidence_band": decision.confidence_band_val,
+                    },
+                ))
+
+            if decision.is_ambiguous:
+                excs.append(self._make(
+                    result=result,
+                    result_line=rl,
+                    exc_type=ExceptionType.MULTIPLE_PO_LINE_CANDIDATES,
+                    severity=ExceptionSeverity.MEDIUM,
+                    message=(
+                        f"Line {ln}: ambiguous match -- {decision.candidate_count} candidates, "
+                        f"top gap {decision.top_gap:.2f}"
+                    ),
+                    details={
+                        "line_number": ln,
+                        "best_score": decision.best_score,
+                        "second_best_score": decision.second_best_score,
+                        "top_gap": decision.top_gap,
+                        "candidate_count": decision.candidate_count,
+                    },
+                ))
+
+            if (
+                decision.status == "MATCHED"
+                and decision.confidence_band_val in ("LOW", "MODERATE")
+            ):
+                excs.append(self._make(
+                    result=result,
+                    result_line=rl,
+                    exc_type=ExceptionType.LINE_MATCH_LOW_CONFIDENCE,
+                    severity=ExceptionSeverity.LOW,
+                    message=(
+                        f"Line {ln}: matched with {decision.confidence_band_val} confidence "
+                        f"(score {decision.total_score:.2f})"
+                    ),
+                    details={
+                        "line_number": ln,
+                        "total_score": decision.total_score,
+                        "confidence_band": decision.confidence_band_val,
+                        "match_method": decision.match_method,
+                        "matched_signals": decision.matched_signals,
+                    },
+                ))
+
         return excs
 
     # ------------------------------------------------------------------

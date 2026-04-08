@@ -179,6 +179,28 @@ class ReconciliationResultService:
             description_similarity=pair.description_similarity,
         )
 
+        # --- v2: persist deterministic scorer metadata ---
+        decision = pair.decision
+        if decision:
+            rl.match_method = decision.match_method
+            rl.match_confidence = Decimal(str(round(decision.total_score, 4)))
+            rl.confidence_band = decision.confidence_band_val
+            rl.candidate_count = decision.candidate_count
+            rl.is_ambiguous = decision.is_ambiguous
+            rl.matched_signals = decision.matched_signals
+            rl.rejected_signals = decision.rejected_signals
+            rl.line_match_meta = decision.to_result_line_metadata()
+
+            # Per-signal scores from the best candidate
+            if decision.candidate_scores:
+                best = decision.candidate_scores[0]
+                rl.description_match_score = Decimal(str(round(best.description_exact_score, 4)))
+                rl.token_similarity_score = Decimal(str(round(best.token_similarity_raw, 4)))
+                rl.fuzzy_similarity_score = Decimal(str(round(best.fuzzy_similarity_raw, 4)))
+                rl.quantity_match_score = Decimal(str(round(best.quantity_score, 4)))
+                rl.price_match_score = Decimal(str(round(best.unit_price_score, 4)))
+                rl.amount_match_score = Decimal(str(round(best.amount_score, 4)))
+
         # Qty
         if pair.qty_comparison:
             rl.qty_invoice = pair.qty_comparison.invoice_value

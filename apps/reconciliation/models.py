@@ -354,6 +354,46 @@ class ReconciliationResultLine(TimestampMixin):
 
     description_similarity = models.FloatField(null=True, blank=True, help_text="0-100 fuzzy score")
 
+    # --- Line match v2 fields (deterministic scorer) ---
+    match_method = models.CharField(
+        max_length=30, blank=True, default="",
+        help_text="EXACT / DETERMINISTIC / LLM_FALLBACK / NONE",
+    )
+    match_confidence = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+        help_text="Composite score 0.0000..1.0000 from deterministic scorer",
+    )
+    confidence_band = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="HIGH / GOOD / MODERATE / LOW / NONE",
+    )
+    description_match_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    token_similarity_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    fuzzy_similarity_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    quantity_match_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    price_match_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    amount_match_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    candidate_count = models.PositiveIntegerField(null=True, blank=True)
+    is_ambiguous = models.BooleanField(default=False)
+    matched_signals = models.JSONField(default=list, blank=True)
+    rejected_signals = models.JSONField(default=list, blank=True)
+    line_match_meta = models.JSONField(
+        default=dict, blank=True,
+        help_text="Detailed scorer metadata: top_gap, second_best_score, etc.",
+    )
+
     class Meta:
         db_table = "reconciliation_result_line"
         ordering = ["result", "id"]
