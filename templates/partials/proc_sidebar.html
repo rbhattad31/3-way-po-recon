@@ -30,35 +30,33 @@
    href="#hvacMenu"
    role="button"
    aria-expanded="{% if request.resolver_match.url_name in 'request_list configurations' %}true{% else %}false{% endif %}">
+   
   <i class="bi bi-tools"></i>
   HVAC Requests
 </a>
 
 <div class="collapse {% if request.resolver_match.url_name in 'request_list configurations' %}show{% endif %}" 
      id="hvacMenu"
-     data-bs-parent="#procSidebar">
+     data-bs-parent="#procSidebar"  style="padding: 15px; gap: 10px; display: flex; flex-direction: column; gap: 15px;">
 
   <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'request_list' %}active{% endif %}"
-     href="{% url 'procurement:request_list' %}">
+     href="{% url 'procurement:request_list' %}" style=" text-decoration: none;">
     <i class="bi bi-list-task me-2"></i>
     All Requests
   </a>
-  <br>
 
-  <a class="proc-nav-sublink" href="javascript:void(0);">
+  <a class="proc-nav-sublink" href="javascript:void(0);" style=" text-decoration: none;">
     <i class="bi bi-box-seam me-2"></i>
     Stores Management
   </a>
-  <br>
 
-  <a class="proc-nav-sublink" href="javascript:void(0);">
+  <a class="proc-nav-sublink" href="javascript:void(0);" style=" text-decoration: none;">
     <i class="bi bi-graph-up me-2"></i>
     Reports
   </a>
-  <br>
 
   <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'configurations' %}active{% endif %}"
-     href="{% url 'procurement:configurations' %}">
+     href="{% url 'procurement:configurations' %}" style=" text-decoration: none;">
     <i class="bi bi-gear me-2"></i>
     Configurations
   </a>
@@ -70,35 +68,39 @@
    data-bs-toggle="collapse"
    href="#costMenu"
    role="button"
-   aria-expanded="{% if request.resolver_match.url_name == 'hvac_create' %}true{% else %}false{% endif %}">
+   aria-expanded="{% if request.resolver_match.app_name == 'benchmarking' %}true{% else %}false{% endif %}">
   <i class="bi bi-boxes"></i>
   Bench Marking Requests
 </a>
 
-<div class="collapse {% if request.resolver_match.url_name == 'hvac_create' %}show{% endif %}" 
+<div class="collapse {% if request.resolver_match.app_name == 'benchmarking' %}show{% endif %}"
      id="costMenu"
-     data-bs-parent="#procSidebar">
+     data-bs-parent="#procSidebar" style="padding: 15px; gap: 10px; display: flex; flex-direction: column; gap: 15px;">
 
-  <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'hvac_create' %}active{% endif %}"
-     href="{% url 'procurement:hvac_create' %}">
-    <i class="bi bi-file-earmark-plus me-2"></i>
+  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name in 'request_list request_create request_detail request_reprocess request_export' %}active{% endif %}"
+     href="{% url 'benchmarking:request_list' %}"
+     style=" text-decoration: none;">
+    <i class="bi bi-list-columns me-2"></i>
     All Requests
   </a>
-  <br>
+  <!-- <br> -->
 
-  <a class="proc-nav-sublink" href="javascript:void(0);">
+  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'quotation_list' %}active{% endif %}"
+     href="{% url 'benchmarking:quotation_list' %}" style="text-decoration: none;">
     <i class="bi bi-currency-dollar me-2"></i>
     Quotations
   </a>
-  <br>
+  <!-- <br> -->
 
-  <a class="proc-nav-sublink" href="javascript:void(0);">
+  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'reports' %}active{% endif %}"
+     href="{% url 'benchmarking:reports' %}" style="text-decoration: none;">
     <i class="bi bi-bar-chart me-2"></i>
     Reports
   </a>
-  <br>
+  <!-- <br> -->
 
-  <a class="proc-nav-sublink" href="javascript:void(0);">
+  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'configurations' %}active{% endif %}"
+     href="{% url 'benchmarking:configurations' %}" style="text-decoration: none;">
     <i class="bi bi-sliders me-2"></i>
     Configurations
   </a>

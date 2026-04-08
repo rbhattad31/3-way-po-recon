@@ -114,6 +114,20 @@
         </div>
       </div>
     </div>
+    {% if recommendation %}
+<div class="px-3 py-2 rounded-3 border">
+
+ 
+  <div class="fw-semibold text-dark" style="font-size:.9rem;">
+    {% if reason_summary %}
+      {{ reason_summary.system_name }}
+    {% else %}
+      {{ recommendation.recommended_option|truncatechars:50 }}
+    {% endif %}
+  </div>
+
+</div>
+{% endif %}
     <div class="d-flex gap-2 flex-wrap">
       {% if proc_request.status == "DRAFT" %}
       <form method="post" action="{% url 'procurement:mark_ready' pk=proc_request.pk %}">
@@ -123,22 +137,7 @@
         </button>
       </form>
       {% endif %}
-      {% if proc_request.status == "READY" or proc_request.status == "COMPLETED" or proc_request.status == "REVIEW_REQUIRED" %}
-      <div class="d-flex gap-1" id="run-analysis-wrapper">
-        <select id="run-type-select" class="form-select form-select-sm" style="width:auto;font-size:.78rem;">
-          <option value="RECOMMENDATION">Recommendation</option>
-          <option value="BENCHMARK">Benchmark</option>
-          <option value="VALIDATION">Validation</option>
-        </select>
-        <button type="button" id="btn-run-analysis"
-                class="btn btn-sm btn-primary fw-semibold"
-                data-request-pk="{{ proc_request.pk }}"
-                data-trigger-url="{% url 'procurement:trigger_analysis' pk=proc_request.pk %}"
-                data-csrf="{{ csrf_token }}">
-          <i class="bi bi-play-fill me-1"></i>Run Analysis
-        </button>
-      </div>
-      {% endif %}
+      
     </div>
   </div>
   {% if proc_request.description %}
@@ -154,8 +153,17 @@
     </button>
   </li>
   <li class="nav-item" role="presentation">
-    <button class="nav-link" id="external-tab" data-bs-toggle="tab" data-bs-target="#external" type="button" role="tab">
-      <i class="bi bi-globe me-1 text-info"></i>External Suggestions
+    <a class="nav-link"
+   id="external-tab"
+   href="{% url 'procurement:market_intelligence' pk=proc_request.pk %}"
+   role="tab">
+  <i class="bi bi-globe me-1 text-info"></i>External Suggestions
+</a>
+
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="RFQ-tab" data-bs-toggle="tab" data-bs-target="#RFQ" type="button" role="tab">
+      <i class="bi bi-robot me-1 text-primary"></i>Create RFQ Document
     </button>
   </li>
 </ul>
@@ -260,7 +268,7 @@
               <i class="bi bi-lightbulb me-2 text-warning"></i>Why This System Was Selected
             </button>
           </h2>
-          <div id="rsPanel-why" class="accordion-collapse collapse show" aria-labelledby="rsHead-why" data-bs-parent="#rsAccordion">
+          <div id="rsPanel-why" class="accordion-collapse collapse show" aria-labelledby="rsHead-why" data-bs-parent="#rsAccordion" style="padding: 25px; gap: 10px;">
             <div class="accordion-body">
               {% if reason_summary.headline %}
               <p class="fw-semibold text-dark mb-2" style="font-size:.85rem;">{{ reason_summary.headline }}</p>
@@ -539,22 +547,19 @@
       <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
         <div class="ws-card-title mb-0">
           <i class="bi bi-stars text-info"></i>AI Market Intelligence
-          <span class="text-muted fw-normal small ms-2" style="font-size:.75rem;">Powered by AI analysis of your request</span>
         </div>
-        <button class="btn btn-sm btn-info text-white fw-semibold" id="btn-fetch-citations"
-                data-url="{% url 'procurement:api_external_suggestions' pk=proc_request.pk %}">
-          <i class="bi bi-robot me-1"></i>Run AI Market Analysis
-        </button>
+       
+        <a href="{% url 'procurement:market_intelligence' pk=proc_request.pk %}"
+           class="btn btn-sm fw-semibold text-white"
+           style="background:linear-gradient(135deg,#312e81,#4f46e5);"
+           title="Open full Perplexity market intelligence page with live web search and real citations">
+          <i class="bi bi-globe2 me-1"></i>Perplexity Market Intelligence
+        </a>
       </div>
 
       {# Loading / placeholder #}
       <div id="citations-area">
-        <div class="text-center text-muted py-4" id="citations-placeholder" style="font-size:.82rem;">
-          <i class="bi bi-bar-chart-steps fs-2 d-block mb-2 text-info opacity-60"></i>
-          <div class="fw-semibold mb-1">Market Intelligence Not Yet Loaded</div>
-          <div style="font-size:.78rem;">Click <strong>Run AI Market Analysis</strong> to let AI rephrase your request,
-          identify matching products on the market, and display pricing, compliance, and fit scores in a detailed table.</div>
-        </div>
+       
         <div id="citations-spinner" class="text-center py-4 d-none">
           <span class="spinner-border text-info mb-2" style="width:2rem;height:2rem;"></span>
           <div class="text-muted small mt-1">AI is analyzing your request and scanning market data...</div>

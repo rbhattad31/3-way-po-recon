@@ -1,194 +1,144 @@
-"""Management command to seed HVACRecommendationRule records."""
+"""Management command to seed the 10 official HVACRecommendationRule records."""
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
+# (rule_code, rule_name,
+#  country_filter, city_filter, store_type_filter,
+#  area_sq_ft_min, area_sq_ft_max, ambient_temp_min_c,
+#  budget_level_filter, energy_priority_filter,
+#  recommended_system, alternate_system,
+#  rationale, priority)
 RULES = [
-    # (rule_code, rule_name, store_type_filter,
-    #  area_sq_ft_min, area_sq_ft_max, ambient_temp_min_c,
-    #  budget_level_filter, energy_priority_filter,
-    #  recommended_system, alternate_system,
-    #  rationale, priority)
     (
-        "R1", "Mall -- any configuration", "MALL",
-        None, None, None, "", "",
+        "R1",
+        "Mall -- any configuration",
+        "", "", "MALL",
+        None, None, None,
+        "", "",
         "CHILLER", "FCU",
-        "Mall tenancies always use the landlord-provided chilled-water plant. "
+        "Mall tenancies use the landlord-provided chilled-water plant. "
         "Fan coil units (FCUs) distribute chilled water from the central plant.",
         10,
     ),
     (
-        "R2", "Small footprint -- under 2000 sq ft", "",
-        None, 2000.0, None, "", "",
-        "SPLIT_AC", "CASSETTE",
+        "R2",
+        "Small footprint -- under 2000 sq ft",
+        "", "", "",
+        None, 2000.0, None,
+        "", "",
+        "SPLIT_AC", "",
         "Spaces under 2000 sq ft rarely justify complex systems. "
-        "A split-AC (wall-mounted or multi-split) provides adequate capacity with "
-        "minimal installation complexity.",
+        "A split AC (wall-mounted or multi-split) provides adequate capacity "
+        "with minimal installation complexity.",
         20,
     ),
     (
-        "R3", "Standalone large -- extreme heat, high energy priority", "STANDALONE",
-        5000.0, None, 45.0, "", "HIGH",
-        "VRF", "PACKAGED_DX",
-        "Large standalone sites in extreme-heat climates where energy efficiency "
-        "is paramount benefit from VRF inverter technology and staged compressor capacity.",
+        "R3",
+        "GCC standalone large -- extreme heat, high energy priority",
+        "UAE|KSA|QATAR", "", "STANDALONE",
+        5000.0, None, 45.0,
+        "", "HIGH",
+        "VRF", "",
+        "Large standalone sites in extreme-heat GCC climates (UAE / KSA / Qatar) "
+        "where energy efficiency is paramount benefit from VRF inverter technology "
+        "and staged compressor capacity.",
         30,
     ),
     (
-        "R4", "Standalone large -- extreme heat, standard budget", "STANDALONE",
-        5000.0, None, 45.0, "LOW_MEDIUM", "",
-        "PACKAGED_DX", "VRF",
-        "High ambient temperature demands robust, proven packaged DX. "
-        "VRF is viable if CAPEX permits phased investment.",
+        "R4",
+        "GCC standalone large -- extreme heat, low/medium budget",
+        "UAE|KSA|QATAR", "", "STANDALONE",
+        5000.0, None, 45.0,
+        "LOW_MEDIUM", "LOW_MEDIUM",
+        "PACKAGED_DX", "",
+        "High ambient temperature in GCC demands robust packaged DX. "
+        "Low/medium budget rules out premium VRF investment.",
         40,
     ),
     (
-        "R5", "Mid-size -- low budget", "",
-        2000.0, 5000.0, None, "LOW", "",
+        "R5",
+        "Mid-size -- hot climate, low budget",
+        "", "", "",
+        2000.0, 5000.0, 40.0,
+        "LOW", "",
         "PACKAGED_DX", "",
-        "Budget-constrained mid-size installations are best served by "
-        "standard packaged DX rooftop / split units with low first cost and wide service availability.",
+        "Budget-constrained mid-size installations in hot climates are best served "
+        "by standard packaged DX units with low first cost and wide service availability.",
         50,
     ),
     (
-        "R6", "Mid-size -- medium-high budget, high energy priority", "",
-        2000.0, 5000.0, None, "MEDIUM_HIGH", "HIGH",
-        "VRF", "PACKAGED_DX",
-        "Mid-size sites with investment budget and high efficiency focus "
-        "can leverage VRF part-load efficiency to reduce operating costs over the lifecycle.",
+        "R6",
+        "Mid-size -- hot climate, medium/high budget, high energy priority",
+        "", "", "",
+        2000.0, 5000.0, 40.0,
+        "MEDIUM_HIGH", "HIGH",
+        "VRF", "",
+        "Mid-size sites with investment budget and high efficiency focus can leverage "
+        "VRF part-load efficiency to reduce operating costs over the lifecycle.",
         60,
     ),
     (
-        "R7", "Mid-size -- medium-high budget, standard energy priority", "",
-        2000.0, 5000.0, None, "MEDIUM_HIGH", "LOW_MEDIUM",
-        "PACKAGED_DX", "VRF",
-        "Higher budget does not guarantee VRF priority unless energy efficiency is the driver. "
-        "Packaged DX is reliable and easier to maintain.",
+        "R7",
+        "Dubai UAE -- large, extreme heat, high energy priority",
+        "UAE", "Dubai", "",
+        3000.0, None, 45.0,
+        "", "HIGH",
+        "VRF", "",
+        "Dubai sites with large area and extreme heat benefit most from VRF inverter "
+        "efficiency where energy efficiency is the priority.",
         70,
     ),
     (
-        "R8", "Hospital -- any size", "HOSPITAL",
-        None, None, None, "", "",
-        "VRF", "CHILLER",
-        "Hospital environments require precise temperature/humidity control, "
-        "zoning flexibility, and low-noise operation. "
-        "VRF systems with hot-gas bypass and humidity controls are preferred. "
-        "Chiller-based FCU systems are the alternative for large facilities.",
+        "R8",
+        "Riyadh KSA -- large, extreme heat",
+        "KSA", "Riyadh", "",
+        3000.0, None, 45.0,
+        "", "",
+        "PACKAGED_DX", "VRF",
+        "Riyadh sites in extreme heat with large area: Packaged DX is the primary "
+        "recommendation for reliability; VRF is a viable high-efficiency alternative.",
         80,
     ),
     (
-        "R9", "Warehouse -- large footprint", "WAREHOUSE",
-        10000.0, None, None, "", "",
+        "R9",
+        "Extreme ambient temperature -- any configuration",
+        "", "", "",
+        None, None, 50.0,
+        "", "",
         "PACKAGED_DX", "",
-        "Large warehouses have high open volumes, significant solar and occupancy loads, "
-        "and simple zoning requirements. "
-        "Packaged DX rooftop units with direct-drive fans are cost-effective and maintainable.",
+        "Ambient temperatures at or above 50 C require heavy-duty packaged units rated "
+        "for extreme climates. Standard split and VRF equipment may not be rated for "
+        "sustained operation above this threshold.",
         90,
     ),
     (
-        "R10", "Warehouse -- small to mid footprint", "WAREHOUSE",
-        None, 10000.0, None, "", "",
-        "SPLIT_AC", "PACKAGED_DX",
-        "Smaller warehouses with modest cooling loads can be served by "
-        "multi-split or cassette units without the overhead of rooftop plant.",
-        100,
-    ),
-    (
-        "R11", "Office -- small, any budget", "OFFICE",
-        None, 3000.0, None, "", "",
-        "SPLIT_AC", "CASSETTE",
-        "Small office spaces have limited zone diversity. "
-        "Variable-speed split-ACs balance comfort, energy efficiency, and low maintenance.",
-        110,
-    ),
-    (
-        "R12", "Office -- medium, high budget and energy priority", "OFFICE",
-        3000.0, 15000.0, None, "HIGH", "HIGH",
-        "VRF", "CHILLER",
-        "Medium-to-large offices with premium budget and strong sustainability targets "
-        "are ideal candidates for VRF with individual room control, occupancy sensing, and "
-        "centralised BMS integration.",
-        120,
-    ),
-    (
-        "R13", "Office -- medium, standard budget", "OFFICE",
-        3000.0, 15000.0, None, "LOW_MEDIUM", "",
-        "PACKAGED_DX", "VRF",
-        "Most commercial offices can be well-served by packaged DX with VAV distribution "
-        "at lower total cost than VRF while meeting standard comfort and code requirements.",
-        130,
-    ),
-    (
-        "R14", "Data centre -- any size", "DATA_CENTER",
-        None, None, None, "", "",
-        "CHILLER", "PACKAGED_DX",
-        "Data centres require precision cooling, N+1 redundancy, and high sensible heat ratios. "
-        "Chilled-water systems with Computer Room Air Handlers (CRAH) are the industry standard. "
-        "Packaged DX CRAC units are suitable for smaller or edge sites.",
-        140,
-    ),
-    (
-        "R15", "Hypermarket -- large", "HYPERMARKET",
-        20000.0, None, None, "", "",
-        "CHILLER", "PACKAGED_DX",
-        "Large hypermarkets combine retail, fresh food, and stockroom zones requiring "
-        "diverse set-points and high capacity. Central chiller plant with AHUs offers "
-        "flexibility and energy scale benefits.",
-        150,
-    ),
-    (
-        "R16", "Hypermarket -- small to mid", "HYPERMARKET",
-        None, 20000.0, None, "", "",
-        "PACKAGED_DX", "VRF",
-        "Smaller hypermarket formats can achieve comfortable results with packaged DX "
-        "rooftop units serving each zone individually.",
-        160,
-    ),
-    (
-        "R17", "Standalone -- moderate climate, high energy priority", "STANDALONE",
-        None, None, None, "", "HIGH",
-        "VRF", "PACKAGED_DX",
-        "Standalone sites in moderate climates with energy efficiency as the primary driver "
-        "benefit from VRF part-load performance and multi-zone flexibility.",
-        170,
-    ),
-    (
-        "R18", "Standalone -- moderate size, moderate budget", "STANDALONE",
-        2000.0, 5000.0, None, "MEDIUM", "",
-        "PACKAGED_DX", "SPLIT_AC",
-        "Mid-tier standalone retail of moderate size with an average budget is reliably "
-        "served by conventional packaged DX or multi-split systems.",
-        180,
-    ),
-    (
-        "R19", "FCU -- chiller-connected requirement", "",
-        None, None, None, "HIGH", "LOW",
-        "FCU", "VRF",
-        "When a site has access to a district or campus chilled-water loop but high "
-        "energy priority and a tight budget, FCU hook-up minimises CAPEX while "
-        "leveraging the central plant efficiency.",
-        190,
-    ),
-    (
-        "R20", "Default fallback -- any configuration", "",
-        None, None, None, "", "",
+        "R10",
+        "Default fallback -- any configuration",
+        "", "", "",
+        None, None, None,
+        "", "",
         "PACKAGED_DX", "",
-        "No more-specific rule matched. Packaged DX is the conservative, widely-supported default "
-        "recommendation across most climates, store types, and budget levels.",
+        "No more-specific rule matched. Packaged DX is the conservative, "
+        "widely-supported default recommendation across most climates, "
+        "store types, and budget levels.",
         999,
     ),
 ]
 
 
 class Command(BaseCommand):
-    help = "Seed 20 HVACRecommendationRule records (idempotent -- updates on rule_code conflict)."
+    help = (
+        "Seed the 10 official HVACRecommendationRule records "
+        "(idempotent -- updates on rule_code conflict; removes any extra rules)."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--flush",
             action="store_true",
             default=False,
-            help="Delete all existing HVACRecommendationRule records before seeding.",
+            help="Delete ALL existing HVACRecommendationRule records before seeding.",
         )
 
     def handle(self, *args, **options):
@@ -198,12 +148,14 @@ class Command(BaseCommand):
             deleted, _ = HVACRecommendationRule.objects.all().delete()
             self.stdout.write(self.style.WARNING(f"Flushed {deleted} existing rules."))
 
+        kept_codes = set()
         created_count = 0
         updated_count = 0
 
         for row in RULES:
             (
-                rule_code, rule_name, store_type_filter,
+                rule_code, rule_name,
+                country_filter, city_filter, store_type_filter,
                 area_sq_ft_min, area_sq_ft_max, ambient_temp_min_c,
                 budget_level_filter, energy_priority_filter,
                 recommended_system, alternate_system,
@@ -214,6 +166,8 @@ class Command(BaseCommand):
                 rule_code=rule_code,
                 defaults={
                     "rule_name": rule_name,
+                    "country_filter": country_filter,
+                    "city_filter": city_filter,
                     "store_type_filter": store_type_filter,
                     "area_sq_ft_min": area_sq_ft_min,
                     "area_sq_ft_max": area_sq_ft_max,
@@ -227,13 +181,26 @@ class Command(BaseCommand):
                     "is_active": True,
                 },
             )
+            kept_codes.add(rule_code)
             if created:
                 created_count += 1
             else:
                 updated_count += 1
 
+        # Remove any old rules not in the new set
+        extra_qs = HVACRecommendationRule.objects.exclude(rule_code__in=kept_codes)
+        extra_count = extra_qs.count()
+        if extra_count:
+            extra_qs.delete()
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Removed {extra_count} obsolete rule(s) not in the current set."
+                )
+            )
+
         self.stdout.write(
             self.style.SUCCESS(
-                f"HVAC rules seed complete: {created_count} created, {updated_count} updated."
+                f"HVAC rules seed complete: {created_count} created, "
+                f"{updated_count} updated, {extra_count} removed."
             )
         )

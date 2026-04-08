@@ -1,0 +1,156 @@
+{% extends "procurement/proc_base.html" %}
+{% block title %}All Benchmarking Requests | LMG Procurement{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:home' %}" class="text-decoration-none">Home</a></li>
+    <li class="breadcrumb-item active">Benchmarking Requests</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <h1 class="fs-5 fw-700 mb-0" style="color:#111827;">Benchmarking Requests</h1>
+    <p class="mb-0 mt-1" style="font-size:.82rem;color:#6b7280;">Should-cost analysis of supplier quotations</p>
+  </div>
+  <a href="{% url 'benchmarking:request_create' %}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-circle me-1"></i> New Request
+  </a>
+</div>
+
+{# KPI Cards #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;">Total Requests</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#111827;">{{ total_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#059669;text-transform:uppercase;letter-spacing:.04em;">Completed</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#059669;">{{ completed_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#d97706;text-transform:uppercase;letter-spacing:.04em;">Processing</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#d97706;">{{ processing_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:.04em;">Failed</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#dc2626;">{{ failed_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Filters #}
+<div class="card border-0 shadow-sm mb-3" style="border-radius:10px;">
+  <div class="card-body py-2 px-3">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-12 col-md-4">
+        <input type="text" name="q" value="{{ search }}" class="form-control form-control-sm"
+               placeholder="Search by title..." style="font-size:.82rem;">
+      </div>
+      <div class="col-6 col-md-3">
+        <select name="status" class="form-select form-select-sm" style="font-size:.82rem;">
+          <option value="">All Statuses</option>
+          {% for val, label in status_choices %}<option value="{{ val }}" {% if status_filter == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
+        <select name="geography" class="form-select form-select-sm" style="font-size:.82rem;">
+          <option value="">All Geographies</option>
+          {% for val, label in geography_choices %}<option value="{{ val }}" {% if geography_filter == val %}selected{% endif %}>{{ val }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2 d-flex gap-2">
+        <button type="submit" class="btn btn-sm btn-primary flex-fill">Filter</button>
+        <a href="{% url 'benchmarking:request_list' %}" class="btn btn-sm btn-outline-secondary flex-fill">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# Table #}
+<div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0" style="font-size:.82rem;">
+      <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+        <tr>
+          <th class="px-3 py-2 fw-600" style="color:#6b7280;">#</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Title / Project</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Geography</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Scope</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Status</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Overall Variance</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Submitted</th>
+          <th class="py-2"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for req in bench_requests %}
+        <tr>
+          <td class="px-3 py-2 text-muted">{{ req.pk }}</td>
+          <td class="py-2">
+            <a href="{% url 'benchmarking:request_detail' req.pk %}"
+               class="fw-600 text-decoration-none" style="color:#1665D8;">{{ req.title }}</a>
+            {% if req.project_name %}
+              <div style="font-size:.75rem;color:#9ca3af;">{{ req.project_name }}</div>
+            {% endif %}
+          </td>
+          <td class="py-2"><span class="badge bg-light text-dark border">{{ req.geography }}</span></td>
+          <td class="py-2">
+            <span style="font-size:.75rem;color:#6b7280;">{{ req.get_scope_type_display|default:req.scope_type }}</span>
+          </td>
+          <td class="py-2">
+            <span class="badge bg-{{ req.get_status_badge_class }}">{{ req.status }}</span>
+          </td>
+          <td class="py-2">
+            {% if req.status == 'COMPLETED' %}
+              {% with req.result as res %}
+                {% if res %}
+                  <span class="badge bg-{% if res.overall_status == 'WITHIN_RANGE' %}success{% elif res.overall_status == 'MODERATE' %}warning text-dark{% elif res.overall_status == 'HIGH' %}danger{% else %}secondary{% endif %}">
+                    {% if res.overall_deviation_pct is not None %}{{ res.overall_deviation_pct|floatformat:1 }}%{% else %}N/A{% endif %}
+                  </span>
+                {% endif %}
+              {% endwith %}
+            {% else %}
+              <span class="text-muted">--</span>
+            {% endif %}
+          </td>
+          <td class="py-2" style="color:#9ca3af;">{{ req.created_at|date:"d M Y" }}</td>
+          <td class="py-2">
+            <a href="{% url 'benchmarking:request_detail' req.pk %}"
+               class="btn btn-xs btn-outline-primary" style="font-size:.72rem;padding:2px 8px;">
+              View
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="8" class="text-center py-5 text-muted">
+            <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+            No benchmarking requests found.
+            <a href="{% url 'benchmarking:request_create' %}">Create the first one.</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -3,10 +3,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import requests
+from urllib.parse import urlparse
+
+from django.conf import settings
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.views.decorators.http import require_POST
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -308,6 +314,16 @@ def hvac_create(request):
                 triggered_by=request.user,
             )
             run_analysis_task.delay(run.pk)
+
+            # Generate market intelligence in parallel (best-effort, non-blocking)
+            try:
+                from apps.procurement.tasks import generate_market_intelligence_task
+                generate_market_intelligence_task.apply_async(
+                    args=[proc_request.pk],
+                    countdown=20,  # give recommendation a 20s head start
+                )
+            except Exception as _mi_exc:
+                logger.warning("Could not queue market intelligence task for pk=%s: %s", proc_request.pk, _mi_exc)
 
             messages.success(
                 request,
@@ -1777,6 +1793,8 @@ def api_config_hvacrules(request):
                 "id": r.pk,
                 "rule_code": r.rule_code,
                 "rule_name": r.rule_name,
+                "country_filter": r.country_filter,
+                "city_filter": r.city_filter,
                 "store_type_filter": r.store_type_filter,
                 "store_type_display": r.get_store_type_filter_display() if r.store_type_filter else "Any",
                 "area_sq_ft_min": r.area_sq_ft_min,
@@ -1806,6 +1824,8 @@ def api_config_hvacrules(request):
             rule = HVACRecommendationRule.objects.create(
                 rule_code=body.get("rule_code", "").strip(),
                 rule_name=body.get("rule_name", "").strip(),
+                country_filter=body.get("country_filter", ""),
+                city_filter=body.get("city_filter", ""),
                 store_type_filter=body.get("store_type_filter", ""),
                 area_sq_ft_min=float(body["area_sq_ft_min"]) if body.get("area_sq_ft_min") not in (None, "") else None,
                 area_sq_ft_max=float(body["area_sq_ft_max"]) if body.get("area_sq_ft_max") not in (None, "") else None,
@@ -1847,6 +1867,8 @@ def api_config_hvacrule_detail(request, pk):
             "id": rule.pk,
             "rule_code": rule.rule_code,
             "rule_name": rule.rule_name,
+            "country_filter": rule.country_filter,
+            "city_filter": rule.city_filter,
             "store_type_filter": rule.store_type_filter,
             "area_sq_ft_min": rule.area_sq_ft_min,
             "area_sq_ft_max": rule.area_sq_ft_max,
@@ -1879,6 +1901,8 @@ def api_config_hvacrule_detail(request, pk):
 
             rule.rule_code = body.get("rule_code", rule.rule_code).strip()
             rule.rule_name = body.get("rule_name", rule.rule_name).strip()
+            rule.country_filter = body.get("country_filter", rule.country_filter)
+            rule.city_filter = body.get("city_filter", rule.city_filter)
             rule.store_type_filter = body.get("store_type_filter", rule.store_type_filter)
             rule.area_sq_ft_min = float(body["area_sq_ft_min"]) if body.get("area_sq_ft_min") not in (None, "") else None
             rule.area_sq_ft_max = float(body["area_sq_ft_max"]) if body.get("area_sq_ft_max") not in (None, "") else None
@@ -1909,12 +1933,85 @@ def api_external_suggestions(request, pk):
     """Return AI-generated market intelligence with citations for this HVAC request.
 
     GET /procurement/<pk>/external-suggestions/
-    Calls the LLM to rephrase the request, fetch market-relevant product suggestions,
-    and return structured tabular data with citations.
+    Delegates to MarketIntelligenceService which handles LLM call, normalisation,
+    and DB persistence.  Result is returned as JSON for the AJAX Refresh button.
     """
+    from apps.procurement.services.market_intelligence_service import MarketIntelligenceService
+
     proc_request = get_object_or_404(ProcurementRequest, pk=pk)
 
-    # ---- Gather all request attributes ----
+    try:
+        result = MarketIntelligenceService.generate(
+            proc_request,
+            generated_by=request.user if request.user.is_authenticated else None,
+        )
+    except Exception as exc:
+        logger.warning("api_external_suggestions LLM call failed for pk=%s: %s", pk, exc)
+        _, system_code, system_name = MarketIntelligenceService.get_rec_context(proc_request)
+        return JsonResponse({
+            "system_code": system_code,
+            "system_name": system_name,
+            "rephrased_query": f"Market data for {system_name or 'HVAC system'} in {proc_request.geography_country or 'UAE'}",
+            "ai_summary": "AI market analysis is temporarily unavailable. Please try again shortly.",
+            "market_context": "",
+            "suggestions": [],
+            "error": str(exc),
+        }, status=200)
+
+    return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
+# Market Intelligence page
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def market_intelligence_page(request, pk):
+    """AI Market Intelligence page for a procurement request.
+
+    GET /procurement/<pk>/market-intelligence/
+    Shows AI-generated product suggestions immediately from the DB (latest saved run).
+    If none exist yet the page auto-triggers the LLM.  A Refresh button re-runs the LLM.
+    """
+    from apps.procurement.models import MarketIntelligenceSuggestion
+    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    attributes = list(
+        ProcurementRequestAttribute.objects
+        .filter(request=proc_request)
+        .values("attribute_label", "value_text", "value_number")
+    )
+    latest = (
+        MarketIntelligenceSuggestion.objects
+        .filter(request=proc_request)
+        .order_by("-created_at")
+        .first()
+    )
+    context = {
+        "proc_request": proc_request,
+        "attributes": attributes,
+        "latest": latest,
+        "page_title": f"Market Intelligence -- {proc_request.title}",
+        "default_query": (
+            f"Commercial HVAC system procurement for "
+            f"{proc_request.geography_country or 'UAE'} retail facility: "
+            f"{proc_request.title}. "
+            f"Location: {proc_request.geography_city or ''}, "
+            f"{proc_request.geography_country or 'UAE'}. "
+            f"Find real 2025/2026 product options, AED pricing, and GCC distributor availability."
+        ),
+    }
+    return render(request, "procurement/market_intelligence.html", context)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_perplexity_research(request, pk):
+    """AJAX: run a live Perplexity sonar-pro web search for market intelligence."""
+    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    custom_query = request.GET.get("query", "").strip()
+
+    # Build context blocks from DB
     attributes = list(
         ProcurementRequestAttribute.objects
         .filter(request=proc_request)
@@ -1927,134 +2024,194 @@ def api_external_suggestions(request, pk):
             attr_lines.append(f"  - {a['attribute_label']}: {val}")
     attrs_block = "\n".join(attr_lines) if attr_lines else "  (no attributes recorded)"
 
-    # ---- Gather recommendation if present ----
     recommendation = (
         RecommendationResult.objects
         .filter(run__request=proc_request)
         .order_by("-created_at")
         .first()
     )
-    rec_block = "(none yet)"
-    system_code = ""
-    system_name = ""
+    rec_block = "(no internal recommendation yet)"
     if recommendation:
         payload = recommendation.output_payload_json or {}
         system_code = payload.get("system_type_code", "")
-        details = recommendation.reasoning_details_json or payload.get("reasoning_details", {})
-        system_name = (
-            details.get("system_type", {}).get("name", "")
-            if isinstance(details, dict) else ""
-        ) or system_code.replace("_", " ").title()
-        rec_block = (
-            f"Recommended System: {system_name} ({system_code})\n"
-            f"Confidence: {int((recommendation.confidence_score or 0) * 100)}%\n"
-            f"Compliance: {recommendation.compliance_status or 'N/A'}"
+        conf = int((recommendation.confidence_score or 0) * 100)
+        rec_block = f"Recommended: {system_code} (confidence {conf}%)"
+
+    api_key = getattr(settings, "PERPLEXITY_API_KEY", "")
+    model = getattr(settings, "PERPLEXITY_MODEL", "sonar-pro")
+
+    if not api_key:
+        return JsonResponse(
+            {"error": "Perplexity API key is not configured in settings."},
+            status=500,
         )
 
-    # ---- Build the LLM prompt ----
+    # ---- Build prompts ----
     SYSTEM_PROMPT = (
         "You are a senior HVAC market intelligence analyst specializing in commercial "
         "and retail HVAC systems for the GCC/Middle East region. "
-        "You have deep knowledge of manufacturer product lines (Daikin, Carrier, Trane, "
-        "York, Mitsubishi Electric, LG, Samsung, Gree, Midea, Voltas), pricing in AED, "
-        "regional standards (ESMA, ASHRAE, Cooling India), and distributor availability. "
+        "You have live web search access. Research real current manufacturer product lines, "
+        "pricing in AED, regional distributor availability, and compliance with local standards "
+        "(ESMA, ASHRAE). Focus on brands active in the region: "
+        "Daikin, Carrier, Trane, York, Mitsubishi Electric, LG, Samsung, Gree, Midea, Voltas. "
         "Respond ONLY with a single valid JSON object and nothing else."
     )
 
-    USER_PROMPT = f"""Analyze the following HVAC procurement request and generate a comprehensive
-market intelligence report with at least 5 product suggestions.
+    research_focus = custom_query if custom_query else (
+        f"Commercial HVAC system procurement for a "
+        f"{proc_request.geography_country or 'UAE'} retail/commercial facility. "
+        f"Facility: {proc_request.title}. "
+        f"Location: {proc_request.geography_city or ''}, {proc_request.geography_country or 'UAE'}. "
+        f"{proc_request.description or ''}"
+    )
+
+    USER_PROMPT = f"""Research this HVAC procurement need using live web data and return exact JSON.
 
 === PROCUREMENT REQUEST ===
 Title: {proc_request.title}
 Description: {proc_request.description or '(not provided)'}
-Country: {proc_request.geography_country or 'UAE'}
-City: {proc_request.geography_city or ''}
-Priority: {proc_request.priority}
-Currency: {proc_request.currency or 'AED'}
+Country: {proc_request.geography_country or 'UAE'} / City: {proc_request.geography_city or ''}
+Priority: {proc_request.priority} | Currency: {proc_request.currency or 'AED'}
 
-=== REQUEST ATTRIBUTES ===
+=== TECHNICAL REQUIREMENTS ===
 {attrs_block}
 
-=== INTERNAL AI RECOMMENDATION ===
+=== INTERNAL AI RECOMMENDATION (context only) ===
 {rec_block}
 
-Return a JSON object with this exact structure:
+=== RESEARCH FOCUS ===
+{research_focus}
+
+Return this exact JSON object (no other text):
 {{
-  "rephrased_query": "<one sentence professional market query summarising this need>",
-  "ai_summary": "<2-3 sentence executive summary of market context and key considerations>",
-  "market_context": "<brief note on current market availability, lead times, or pricing trends in this region>",
+  "rephrased_query": "<one concise professional research query that captures this need>",
+  "narrative": "<3 to 5 paragraphs of detailed market research. Include specific current model names, real AED pricing, lead times from GCC distributors, and regional availability. Reference the live sources you searched.>",
+  "ai_summary": "<2-sentence executive summary of the best market options>",
+  "market_context": "<Current GCC/ME market trend note: lead times, pricing pressure, preferred brands in 2025/2026>",
   "suggestions": [
     {{
       "rank": 1,
       "product_name": "<full product/series name>",
       "manufacturer": "<brand name>",
-      "model_code": "<specific model or series code>",
-      "system_type": "<e.g. VRF, Chilled Water AHU, Split DX, Cassette, Rooftop>",
-      "cooling_capacity": "<e.g. 8 TR - 12 TR>",
+      "model_code": "<specific model or series code found online>",
+      "system_type": "<VRF | Chilled Water AHU | Split DX | Cassette | Rooftop>",
+      "cooling_capacity": "<e.g. 8 TR to 12 TR>",
       "cop_eer": "<e.g. COP 3.8 / EER 13.0>",
-      "price_range_aed": "<e.g. 45,000 - 70,000 AED supply & install>",
-      "market_availability": "<availability note for this region>",
+      "price_range_aed": "<e.g. 45,000 to 70,000 AED supply and install>",
+      "market_availability": "<UAE/KSA distributor availability note with lead time>",
       "key_benefits": ["benefit 1", "benefit 2", "benefit 3"],
       "limitations": ["limitation 1", "limitation 2"],
       "fit_score": 88,
-      "fit_rationale": "<one sentence why this fits or does not fit this request>",
+      "fit_rationale": "<one sentence why this fits this specific request>",
       "standards_compliance": ["ASHRAE 90.1", "ESMA UAE"],
-      "citation_url": "<manufacturer product page URL>",
-      "citation_source": "<source name e.g. Daikin Middle East>",
-      "category": "<MANUFACTURER or DISTRIBUTOR>"
+      "citation_url": "<real manufacturer or distributor product page URL you found via web search>",
+      "citation_source": "<source name>",
+      "category": "MANUFACTURER"
     }}
   ]
 }}
-Provide 5 to 7 suggestions ranked by fit_score descending. Use only real product lines.
+Provide 5 to 7 suggestions ranked by fit_score descending. Use only real verified product lines.
 """
 
-    # ---- Call the LLM ----
+    # ---- Call Perplexity sonar-pro (live web search) ----
     try:
-        llm = LLMClient(temperature=0.2, max_tokens=3000)
-        messages = [
-            LLMMessage(role="system", content=SYSTEM_PROMPT),
-            LLMMessage(role="user", content=USER_PROMPT),
-        ]
-        resp = llm.chat(messages, response_format={"type": "json_object"})
-        raw_content = (resp.content or "").strip()
-        data = json.loads(raw_content)
-    except Exception as exc:
-        logger.warning("api_external_suggestions LLM call failed for pk=%s: %s", pk, exc)
-        # Graceful fallback: return minimal static response
-        return JsonResponse({
-            "system_code": system_code,
-            "system_name": system_name,
-            "rephrased_query": f"Market data for {system_name or 'HVAC system'} in {proc_request.geography_country or 'UAE'}",
-            "ai_summary": "AI market analysis is temporarily unavailable. Please try again shortly.",
-            "market_context": "",
-            "suggestions": [],
-            "error": str(exc),
-        }, status=200)
+        pplx_payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": USER_PROMPT},
+            ],
+        }
+        resp = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=pplx_payload,
+            timeout=90,
+        )
+        resp.raise_for_status()
+        pplx_data = resp.json()
+        content = (
+            pplx_data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+        # Perplexity returns live web URLs it crawled during research
+        raw_citations = pplx_data.get("citations", [])
 
-    # ---- Normalise / enrich suggestions ----
-    _ICONS = {
-        "MANUFACTURER":   "bi-building",
-        "DISTRIBUTOR":    "bi-truck",
-        "REGULATOR":      "bi-shield-check",
-        "STANDARDS_BODY": "bi-patch-check",
-        "OTHER":          "bi-link-45deg",
-    }
+    except Exception as exc:
+        logger.warning("api_perplexity_research Perplexity call failed for pk=%s: %s", pk, exc)
+        return JsonResponse(
+            {
+                "error": f"Perplexity research failed: {exc}",
+                "rephrased_query": proc_request.title,
+                "narrative": "",
+                "ai_summary": "Perplexity research is temporarily unavailable. Please try again shortly.",
+                "market_context": "",
+                "suggestions": [],
+                "citations": [],
+                "model_used": model,
+            },
+            status=200,
+        )
+
+    # ---- Parse JSON from Perplexity response ----
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        # Try to extract JSON block if Perplexity wrapped in markdown code fences
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+        if m:
+            try:
+                data = json.loads(m.group(1))
+            except json.JSONDecodeError:
+                data = {}
+        else:
+            data = {"narrative": content}
+
+    # ---- Normalise suggestion fit scores ----
     suggestions = data.get("suggestions", [])
     for s in suggestions:
-        cat = s.get("category", "MANUFACTURER").upper()
-        s["icon_class"] = _ICONS.get(cat, "bi-building")
-        # Clamp fit_score
         try:
             s["fit_score"] = max(0, min(100, int(s.get("fit_score", 0))))
         except (TypeError, ValueError):
             s["fit_score"] = 0
 
+    # ---- Build citation cards (real live URLs from Perplexity) ----
+    citation_cards = []
+    seen_domains: set = set()
+    for url in raw_citations:
+        try:
+            domain = urlparse(url).netloc.replace("www.", "")
+        except Exception:
+            domain = url
+        if domain not in seen_domains:
+            seen_domains.add(domain)
+            citation_cards.append({"url": url, "domain": domain})
+
+    # Also add per-suggestion citation URLs if not already in the list
+    for s in suggestions:
+        curl = s.get("citation_url", "")
+        if curl:
+            try:
+                cdomain = urlparse(curl).netloc.replace("www.", "")
+            except Exception:
+                cdomain = curl
+            if cdomain not in seen_domains:
+                seen_domains.add(cdomain)
+                citation_cards.append({"url": curl, "domain": cdomain})
+
     return JsonResponse({
-        "system_code": system_code,
-        "system_name": system_name,
-        "rephrased_query": data.get("rephrased_query", ""),
+        "rephrased_query": data.get("rephrased_query", proc_request.title),
+        "narrative": data.get("narrative", content),
         "ai_summary": data.get("ai_summary", ""),
         "market_context": data.get("market_context", ""),
         "suggestions": suggestions,
+        "citations": citation_cards,
+        "model_used": model,
     })
+
 

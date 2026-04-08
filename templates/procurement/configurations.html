@@ -21,7 +21,6 @@
         <div class="d-flex flex-wrap gap-2 mt-2 position-relative" style="z-index:1;">
           <span class="cfg-hero-badge"><i class="bi bi-database me-1"></i>Live DB Sync</span>
           <span class="cfg-hero-badge"><i class="bi bi-shield-check me-1"></i>RBAC Secured</span>
-          <span class="cfg-hero-badge"><i class="bi bi-lightning-charge me-1"></i>AJAX Powered</span>
         </div>
       </div>
     </div>
@@ -271,6 +270,8 @@
       <thead>
         <tr>
           <th>Rule ID</th>
+          <th>Country</th>
+          <th>City</th>
           <th>Store Type</th>
           <th>Area (sq ft)</th>
           <th>Ambient Temp</th>
@@ -283,7 +284,7 @@
         </tr>
       </thead>
       <tbody id="hvac-tbody">
-        <tr><td colspan="10" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+        <tr><td colspan="12" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -774,6 +775,18 @@
         </div>
         <div class="cfg-form-row mb-3">
           <div>
+            <label class="form-label-cfg">Country Filter <small class="text-muted">(blank = Any)</small></label>
+            <input id="hrCountryFilter" class="form-control-cfg" type="text" placeholder="e.g. UAE|KSA|QATAR">
+            <div class="form-text" style="font-size:.72rem;color:#9ca3af;">Pipe-separated. e.g. UAE|KSA|QATAR</div>
+          </div>
+          <div>
+            <label class="form-label-cfg">City Filter <small class="text-muted">(blank = Any)</small></label>
+            <input id="hrCityFilter" class="form-control-cfg" type="text" placeholder="e.g. Dubai">
+            <div class="form-text" style="font-size:.72rem;color:#9ca3af;">Exact city name (case-insensitive).</div>
+          </div>
+        </div>
+        <div class="cfg-form-row mb-3">
+          <div>
             <label class="form-label-cfg">Store Type <small class="text-muted">(blank = Any)</small></label>
             <select id="hrStoreType" class="form-control-cfg">
               {% for val, lbl in hvac_store_type_choices %}
@@ -986,7 +999,7 @@ function renderTab(tab, items) {
   var prefix = {sources:'src', rulesets:'rs', products:'prod', vendors:'vend', rooms:'room', hvacrules:'hvac'}[tab];
   $('#' + prefix + '-count').text(items.length + ' record' + (items.length !== 1 ? 's' : ''));
   if (items.length === 0) {
-    var span = {sources:10, rulesets:8, products:9, vendors:9, rooms:9, hvacrules:10}[tab];
+    var span = {sources:10, rulesets:8, products:9, vendors:9, rooms:9, hvacrules:12}[tab];
     $('#' + prefix + '-tbody').html(
       '<tr><td colspan="' + span + '" class="cfg-empty">' +
       '<i class="bi bi-inbox"></i><p>No records found. Click "Add" to create the first one.</p></td></tr>'
@@ -1084,6 +1097,8 @@ function renderTab(tab, items) {
     $.each(items, function(i, r) {
       html += '<tr data-id="' + r.id + '">';
       html += '<td><code style="font-size:.74rem;background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;">' + escHtml(r.rule_code) + '</code></td>';
+      html += '<td><span style="font-size:.72rem;">' + (r.country_filter ? escHtml(r.country_filter) : '<span style="color:#9ca3af;">Any</span>') + '</span></td>';
+      html += '<td><span style="font-size:.72rem;">' + (r.city_filter ? escHtml(r.city_filter) : '<span style="color:#9ca3af;">Any</span>') + '</span></td>';
       html += '<td><span style="font-size:.72rem;">' + escHtml(r.store_type_display) + '</span></td>';
       html += '<td><span style="font-size:.72rem;">' + escHtml(r.area_display) + '</span></td>';
       html += '<td><span style="font-size:.72rem;">' + escHtml(r.temp_display) + '</span></td>';
@@ -1273,6 +1288,7 @@ function editHvacRule(id) {
   $.get(urlDetailMap.hvacrules + id + '/', function(d) {
     $('#hrId').val(d.id);
     $('#hrCode').val(d.rule_code); $('#hrName').val(d.rule_name);
+    $('#hrCountryFilter').val(d.country_filter || ''); $('#hrCityFilter').val(d.city_filter || '');
     $('#hrStoreType').val(d.store_type_filter);
     $('#hrAreaMin').val(d.area_sq_ft_min !== null ? d.area_sq_ft_min : '');
     $('#hrAreaMax').val(d.area_sq_ft_max !== null ? d.area_sq_ft_max : '');
@@ -1415,6 +1431,8 @@ function saveHvacRule() {
   var payload = {
     rule_code: $('#hrCode').val().trim(),
     rule_name: $('#hrName').val().trim(),
+    country_filter: $('#hrCountryFilter').val().trim(),
+    city_filter: $('#hrCityFilter').val().trim(),
     store_type_filter: $('#hrStoreType').val(),
     area_sq_ft_min: $('#hrAreaMin').val() || null,
     area_sq_ft_max: $('#hrAreaMax').val() || null,

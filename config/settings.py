@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "apps.posting_core",
     "apps.erp_integration",
     "apps.core_eval",
+    "apps.benchmarking",
 ]
 
 MIDDLEWARE = [
@@ -244,6 +245,11 @@ AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+
+# Perplexity AI -- used for live-web market intelligence research
+# Model: sonar-pro (live web search + citations)
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
+PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar-pro")
 # Set to True to activate the LLM-backed ReasoningPlanner for agent pipeline planning.
 # When False (default), the deterministic PolicyEngine is always used.
 AGENT_REASONING_ENGINE_ENABLED = os.getenv("AGENT_REASONING_ENGINE_ENABLED", "false").lower() == "true"

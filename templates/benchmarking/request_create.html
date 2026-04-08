@@ -1,0 +1,166 @@
+{% extends "procurement/proc_base.html" %}
+{% block title %}New Benchmarking Request | LMG Procurement{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:home' %}" class="text-decoration-none">Home</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'benchmarking:request_list' %}" class="text-decoration-none">Benchmarking Requests</a></li>
+    <li class="breadcrumb-item active">New Request</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+    <div class="card border-0 shadow-sm" style="border-radius:12px;">
+      <div class="card-header bg-white border-bottom" style="border-radius:12px 12px 0 0;padding:1.1rem 1.5rem;">
+        <h5 class="mb-0 fw-bold" style="color:#111827;">
+          <i class="bi bi-box-arrow-in-up-right me-2 text-primary"></i>New Benchmarking Request
+        </h5>
+        <p class="mb-0 mt-1" style="font-size:.81rem;color:#6b7280;">Upload a supplier quotation PDF for should-cost analysis.</p>
+      </div>
+      <div class="card-body p-4">
+        <form method="post" enctype="multipart/form-data" id="benchmarkForm">
+          {% csrf_token %}
+
+          {# -- Request Details -- #}
+          <div class="mb-4">
+            <div class="mb-1" style="font-size:.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;">
+              REQUEST DETAILS
+            </div>
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label fw-600" style="font-size:.82rem;">Request Title <span class="text-danger">*</span></label>
+                <input type="text" name="title" class="form-control" required
+                       style="font-size:.85rem;"
+                       value="{{ posted.title|default:'' }}"
+                       placeholder="e.g. HVAC Quotation -- Dubai Mall Expansion">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-600" style="font-size:.82rem;">Project Name</label>
+                <input type="text" name="project_name" class="form-control"
+                       style="font-size:.85rem;"
+                       value="{{ posted.project_name|default:'' }}"
+                       placeholder="e.g. Dubai Mall Phase 3">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-600" style="font-size:.82rem;">Store / Project Type</label>
+                <input type="text" name="store_type" class="form-control"
+                       style="font-size:.85rem;"
+                       value="{{ posted.store_type|default:'' }}"
+                       placeholder="e.g. MALL, HYPERMARKET, OFFICE">
+              </div>
+            </div>
+          </div>
+
+          {# -- Geography & Scope -- #}
+          <div class="mb-4">
+            <div class="mb-1" style="font-size:.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;">
+              GEOGRAPHY & SCOPE
+            </div>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-600" style="font-size:.82rem;">Geography <span class="text-danger">*</span></label>
+                <select name="geography" class="form-select" style="font-size:.85rem;" required>
+                  {% for val, label in geography_choices %}
+                    <option value="{{ val }}" {% if posted.geography == val or not posted %}{% if val == 'UAE' %}selected{% endif %}{% endif %}>
+                      {{ label }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-600" style="font-size:.82rem;">Commercial Scope <span class="text-danger">*</span></label>
+                <select name="scope_type" class="form-select" style="font-size:.85rem;" required>
+                  {% for val, label in scope_type_choices %}
+                    <option value="{{ val }}" {% if posted.scope_type == val or not posted %}{% if val == 'SITC' %}selected{% endif %}{% endif %}>
+                      {{ label }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {# -- Quotation Upload -- #}
+          <div class="mb-4">
+            <div class="mb-1" style="font-size:.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;">
+              SUPPLIER QUOTATION
+            </div>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-600" style="font-size:.82rem;">Supplier Name</label>
+                <input type="text" name="supplier_name" class="form-control"
+                       style="font-size:.85rem;"
+                       value="{{ posted.supplier_name|default:'' }}"
+                       placeholder="Supplier / contractor name">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-600" style="font-size:.82rem;">Quotation Reference</label>
+                <input type="text" name="quotation_ref" class="form-control"
+                       style="font-size:.85rem;"
+                       value="{{ posted.quotation_ref|default:'' }}"
+                       placeholder="Supplier quote ref number">
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-600" style="font-size:.82rem;">
+                  Quotation PDF <span class="text-danger">*</span>
+                </label>
+                <div class="border rounded p-3 text-center" id="dropZone"
+                     style="border-style:dashed!important;border-color:#d1d5db;background:#f9fafb;cursor:pointer;">
+                  <i class="bi bi-cloud-upload fs-2 text-primary d-block mb-1"></i>
+                  <div style="font-size:.82rem;color:#374151;">
+                    Drag & drop PDF here, or <label for="quotation_pdf" style="color:#1665D8;cursor:pointer;text-decoration:underline;">browse</label>
+                  </div>
+                  <div style="font-size:.73rem;color:#9ca3af;">PDF files only. Max 20MB.</div>
+                  <input type="file" id="quotation_pdf" name="quotation_pdf" accept=".pdf"
+                         class="form-control mt-2" style="font-size:.82rem;" required>
+                </div>
+                <div id="fileNameDisplay" class="mt-1 text-success" style="font-size:.78rem;"></div>
+              </div>
+            </div>
+          </div>
+
+          {# -- Notes -- #}
+          <div class="mb-4">
+            <label class="form-label fw-600" style="font-size:.82rem;">Notes (optional)</label>
+            <textarea name="notes" rows="2" class="form-control" style="font-size:.85rem;"
+                      placeholder="Any additional context for this analysis...">{{ posted.notes|default:'' }}</textarea>
+          </div>
+
+          {# Info callout #}
+          <div class="alert alert-info py-2 px-3 mb-4" style="font-size:.8rem;border-radius:8px;">
+            <i class="bi bi-info-circle me-1"></i>
+            After upload, the system will automatically extract line items, classify them, and compare
+            against benchmark corridors for the selected geography and scope.
+          </div>
+
+          {# Actions #}
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary" id="submitBtn">
+              <i class="bi bi-cpu me-1"></i> Analyse Quotation
+            </button>
+            <a href="{% url 'benchmarking:request_list' %}" class="btn btn-outline-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.getElementById('quotation_pdf').addEventListener('change', function() {
+    const name = this.files[0] ? this.files[0].name : '';
+    document.getElementById('fileNameDisplay').textContent = name ? 'Selected: ' + name : '';
+  });
+  document.getElementById('benchmarkForm').addEventListener('submit', function() {
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Analysing...';
+  });
+</script>
+{% endblock %}

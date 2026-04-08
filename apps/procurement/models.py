@@ -1131,6 +1131,14 @@ class HVACRecommendationRule(BaseModel):
     rule_name = models.CharField(max_length=200, help_text="Short description of the rule")
 
     # -- condition fields (blank/null = ANY / wildcard) -----------------------
+    country_filter = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Pipe-separated country names, e.g. UAE|KSA|Qatar. Blank = any.",
+    )
+    city_filter = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="City name (case-insensitive exact match). Blank = any.",
+    )
     store_type_filter = models.CharField(
         max_length=20, blank=True, default="",
         choices=STORE_TYPE_CHOICES,
@@ -1201,9 +1209,11 @@ class HVACRecommendationRule(BaseModel):
         """Return True if all conditions in this rule are satisfied by attrs.
 
         Accepted attr keys (matches the procurement request attributes dict):
-          store_type, area_sqft, ambient_temp_max, budget_level,
-          energy_efficiency_priority
+          country, city, store_type, area_sqft, ambient_temp_max,
+          budget_level, energy_efficiency_priority
         """
+        country = str(attrs.get("country") or attrs.get("geography_country") or "").strip()
+        city = str(attrs.get("city") or attrs.get("geography_city") or "").strip()
         store_type = str(attrs.get("store_type") or "").upper()
         # Support both spellings used across the codebase
         area = float(attrs.get("area_sqft") or attrs.get("area_sq_ft") or 0)
@@ -1211,6 +1221,18 @@ class HVACRecommendationRule(BaseModel):
         budget = str(attrs.get("budget_level") or "").upper()
         energy = str(attrs.get("energy_efficiency_priority") or "").upper()
 
+        # Country filter: pipe-separated list, e.g. "UAE|KSA|Qatar"
+        if self.country_filter:
+            allowed_countries = [
+                c.strip().upper() for c in self.country_filter.split("|")
+                if c.strip()
+            ]
+            if country.upper() not in allowed_countries:
+                return False
+        # City filter: exact case-insensitive match
+        if self.city_filter:
+            if city.upper() != self.city_filter.strip().upper():
+                return False
         if self.store_type_filter and self.store_type_filter.upper() != store_type:
             return False
         if self.area_sq_ft_min is not None and area < self.area_sq_ft_min:
@@ -1265,3 +1287,43 @@ class HVACStoreProfile(BaseModel):
 
     def __str__(self) -> str:
         return self.store_id
+
+
+# ---------------------------------------------------------------------------
+# Market Intelligence Suggestion Snapshot
+# ---------------------------------------------------------------------------
+class MarketIntelligenceSuggestion(BaseModel):
+    """AI-generated market intelligence + product suggestions for a procurement request.
+
+    One record is written each time the user (or the page auto-load) triggers
+    api_external_suggestions.  The page always shows the latest record.
+    """
+
+    request = models.ForeignKey(
+        "ProcurementRequest",
+        on_delete=models.CASCADE,
+        related_name="market_suggestions",
+    )
+    generated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="market_suggestions_generated",
+    )
+    rephrased_query = models.TextField(blank=True, default="")
+    ai_summary = models.TextField(blank=True, default="")
+    market_context = models.TextField(blank=True, default="")
+    system_code = models.CharField(max_length=100, blank=True, default="")
+    system_name = models.CharField(max_length=200, blank=True, default="")
+    suggestions_json = models.JSONField(
+        default=list,
+        help_text="Full list of suggestion dicts as returned by the LLM.",
+    )
+    suggestion_count = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = "procurement_market_intelligence_suggestion"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Market Suggestions for {self.request.title} ({self.created_at.date() if self.created_at else 'new'})"

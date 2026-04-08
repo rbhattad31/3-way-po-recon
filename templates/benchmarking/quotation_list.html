@@ -1,0 +1,149 @@
+{% extends "procurement/proc_base.html" %}
+{% block title %}Quotations | Benchmarking{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:home' %}" class="text-decoration-none">Home</a></li>
+    <li class="breadcrumb-item active">Quotations</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div>
+    <h1 class="fs-5 fw-bold mb-0" style="color:#111827;">All Quotations</h1>
+    <p class="mb-0 mt-1" style="font-size:.82rem;color:#6b7280;">Uploaded supplier quotations across all benchmarking requests</p>
+  </div>
+  <a href="{% url 'benchmarking:request_create' %}" class="btn btn-sm btn-primary">
+    <i class="bi bi-plus-circle me-1"></i>Upload New
+  </a>
+</div>
+
+{# KPI Cards #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Total Quotations</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#111827;">{{ quotations|length }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#059669;text-transform:uppercase;">Extraction Done</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#059669;">
+          {% with done_count=0 %}{{ quotations|length }}{% endwith %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#d97706;text-transform:uppercase;">Pending</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#d97706;"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#dc2626;text-transform:uppercase;">Failed</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#dc2626;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Filters #}
+<div class="card border-0 shadow-sm mb-3" style="border-radius:10px;">
+  <div class="card-body py-2 px-3">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-12 col-md-5">
+        <input type="text" name="q" value="{{ search }}" class="form-control form-control-sm"
+               placeholder="Search by supplier name..." style="font-size:.82rem;">
+      </div>
+      <div class="col-6 col-md-3">
+        <select name="status" class="form-select form-select-sm" style="font-size:.82rem;">
+          <option value="">All Extraction Statuses</option>
+          {% for val, label in extraction_status_choices %}<option value="{{ val }}" {% if status_filter == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2 d-flex gap-2">
+        <button type="submit" class="btn btn-sm btn-primary flex-fill">Filter</button>
+        <a href="{% url 'benchmarking:quotation_list' %}" class="btn btn-sm btn-outline-secondary flex-fill">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0" style="font-size:.82rem;">
+      <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+        <tr>
+          <th class="px-3 py-2 fw-600" style="color:#6b7280;">Supplier</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Quote Ref</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Request</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Geography</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Extraction</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Lines</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Uploaded</th>
+          <th class="py-2"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for q in quotations %}
+        <tr>
+          <td class="px-3 py-2 fw-600" style="color:#111827;">
+            <a href="{% url 'benchmarking:quotation_detail' q.pk %}"
+               class="text-decoration-none fw-600" style="color:#111827;">
+              {{ q.supplier_name|default:"Unknown Supplier" }}
+            </a>
+          </td>
+          <td class="py-2 text-muted">{{ q.quotation_ref|default:"--" }}</td>
+          <td class="py-2">
+            <a href="{% url 'benchmarking:request_detail' q.request.pk %}"
+               class="text-decoration-none" style="color:#1665D8;">
+              {{ q.request.title|truncatechars:35 }}
+            </a>
+          </td>
+          <td class="py-2"><span class="badge bg-light text-dark border">{{ q.request.geography }}</span></td>
+          <td class="py-2">
+            <span class="badge bg-{% if q.extraction_status == 'DONE' %}success{% elif q.extraction_status == 'FAILED' %}danger{% else %}secondary{% endif %}">
+              {{ q.extraction_status }}
+            </span>
+          </td>
+          <td class="py-2">{{ q.line_items.count }}</td>
+          <td class="py-2 text-muted">{{ q.created_at|date:"d M Y" }}</td>
+          <td class="py-2">
+            <div class="d-flex gap-1">
+              <a href="{% url 'benchmarking:quotation_detail' q.pk %}"
+                 class="btn btn-xs btn-outline-primary" style="font-size:.72rem;padding:2px 8px;">
+                <i class="bi bi-list-columns me-1"></i>Lines
+              </a>
+              <a href="{% url 'benchmarking:request_detail' q.request.pk %}"
+                 class="btn btn-xs btn-outline-secondary" style="font-size:.72rem;padding:2px 8px;">
+                <i class="bi bi-diagram-3 me-1"></i>Request
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="8" class="text-center py-5 text-muted">
+            <i class="bi bi-folder2-open fs-3 d-block mb-2"></i>
+            No quotations uploaded yet.
+            <a href="{% url 'benchmarking:request_create' %}">Upload the first one.</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

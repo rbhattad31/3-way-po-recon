@@ -16,7 +16,60 @@
 {% block extra_css %}
 <!-- SweetAlert2 -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+<!-- Select2 -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
 <link rel="stylesheet" href="{% static 'css/procurement/request-create.css' %}">
+<style>
+  /* Select2 Bootstrap 5 alignment */
+  .select2-container--default .select2-selection--single {
+    height: 38px;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+  }
+  .select2-container--default .select2-selection--single .select2-selection__rendered {
+    color: #212529;
+    line-height: 1.5;
+    padding-left: 4px;
+    padding-right: 24px;
+  }
+  .select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 36px;
+    top: 1px;
+    right: 6px;
+  }
+  .select2-container--default .select2-selection--single .select2-selection__clear {
+    margin-right: 12px;
+    font-size: 1rem;
+    line-height: 1;
+    color: #6c757d;
+  }
+  .select2-dropdown {
+    border-color: #dee2e6;
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,.10);
+  }
+  .select2-search--dropdown .select2-search__field {
+    border-color: #dee2e6;
+    border-radius: 0.375rem;
+    padding: 6px 10px;
+  }
+  .select2-container--default .select2-results__option--highlighted[aria-selected] {
+    background-color: #6366f1;
+  }
+  .select2-container--default .select2-results__option[data-select2-tag="true"] {
+    color: #4f46e5;
+    font-style: italic;
+  }
+  .select2-container--focus .select2-selection--single,
+  .select2-container--open .select2-selection--single {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 0.2rem rgba(99,102,241,.20) !important;
+    outline: none;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -146,18 +199,10 @@
             <div class="card-body">
               <div class="row g-3">
                 <div class="col-md-4">
-                  <label class="form-label fw-medium">Store ID</label>
-                  <div class="input-group">
-                    <select id="f_store_id_select" class="form-select" onchange="onStoreIdSelectChange(this.value)">
-                      <option value="">-- Loading stores... --</option>
-                    </select>
-                    <button type="button" class="btn btn-outline-primary" id="btn-open-new-store-modal"
-                      title="Create a new Store ID" data-bs-toggle="modal" data-bs-target="#newStoreModal">
-                      <i class="bi bi-plus-lg"></i>
-                    </button>
-                  </div>
+                  <label class="form-label fw-medium">Store ID <span class="text-danger">*</span></label>
+                  <select id="f_store_id_select" style="width:100%;"></select>
                   <input type="hidden" name="f_store_id" id="f_store_id_value" value="">
-                  <div class="form-text" id="store-id-hint">Select an existing store to auto-fill all fields below, or <a href="#" onclick="openNewStoreModal(); return false;">create a new store</a>.</div>
+                  <div class="form-text mt-1" id="store-id-hint" style="min-height:1.4em;">Select an existing store or type a new Store ID.</div>
                 </div>
                 <div class="col-md-4">
                   <label class="form-label fw-medium">Brand</label>
@@ -169,227 +214,6 @@
             </div>
           </div>
         </div>
-
-
-<div class="modal fade" id="newStoreModal" tabindex="-1" aria-labelledby="newStoreModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(90deg,#eef2ff,#f5f3ff);border-bottom:1.5px solid rgba(99,102,241,.2);">
-        <h5 class="modal-title d-flex align-items-center gap-2" id="newStoreModalLabel">
-          <i class="bi bi-building-add" style="color:#6366f1;"></i>
-          Create New Store Profile
-        </h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <p class="text-muted mb-4" style="font-size:.88rem;">
-          <i class="bi bi-info-circle me-1"></i>
-          Fill in the store details below. Once saved, the store will be added to the
-          dropdown and all fields will be auto-filled automatically.
-        </p>
-        <div id="new-store-error" class="alert alert-danger d-none"></div>
-
-        <!-- Row 1: Identity -->
-        <div class="row g-3 mb-3">
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Store ID <span class="text-danger">*</span></label>
-            <input type="text" id="ns_store_id" class="form-control" placeholder="e.g. UAE-DXB-MAX-011" autocomplete="off">
-            <div class="form-text">Unique identifier for this store.</div>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Brand <span class="text-danger">*</span></label>
-            <input type="text" id="ns_brand" class="form-control" placeholder="e.g. Max Fashion">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Country <span class="text-danger">*</span></label>
-            <select id="ns_country" class="form-select">
-              <option value="">-- Select --</option>
-              <option value="UAE">UAE</option>
-              <option value="KSA">Saudi Arabia (KSA)</option>
-              <option value="QATAR">Qatar</option>
-              <option value="OMAN">Oman</option>
-              <option value="KUWAIT">Kuwait</option>
-              <option value="BAHRAIN">Bahrain</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">City <span class="text-danger">*</span></label>
-            <input type="text" id="ns_city" class="form-control" placeholder="e.g. Dubai">
-          </div>
-        </div>
-
-        <!-- Row 2: Store classification -->
-        <div class="row g-3 mb-3">
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Store Type <span class="text-danger">*</span></label>
-            <select id="ns_store_type" class="form-select">
-              <option value="">-- Select --</option>
-              <option value="MALL">Mall</option>
-              <option value="STANDALONE">Standalone</option>
-              <option value="WAREHOUSE">Warehouse</option>
-              <option value="OFFICE">Office</option>
-              <option value="DATA_CENTER">Data Center</option>
-              <option value="RESTAURANT">Restaurant / F&amp;B</option>
-              <option value="OTHER">Other</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Store Format</label>
-            <select id="ns_store_format" class="form-select">
-              <option value="">-- Select --</option>
-              <option value="RETAIL">Retail</option>
-              <option value="HYPERMARKET">Hypermarket</option>
-              <option value="FURNITURE">Furniture</option>
-              <option value="ELECTRONICS">Electronics</option>
-              <option value="FOOD_BEVERAGE">Food &amp; Beverage</option>
-              <option value="OTHER">Other</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Area (sq ft) <span class="text-danger">*</span></label>
-            <input type="number" id="ns_area_sqft" class="form-control" min="1" placeholder="e.g. 10000">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Ceiling Height (ft)</label>
-            <input type="number" step="0.1" id="ns_ceiling_height_ft" class="form-control" min="1" placeholder="e.g. 12">
-          </div>
-        </div>
-
-        <!-- Row 3: Physical + Env -->
-        <div class="row g-3 mb-3">
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Operating Hours</label>
-            <select id="ns_operating_hours" class="form-select">
-              <option value="">Not specified</option>
-              <option value="8 AM - 6 PM">8 AM - 6 PM (Office)</option>
-              <option value="9 AM - 10 PM">9 AM - 10 PM</option>
-              <option value="9 AM - 11 PM">9 AM - 11 PM</option>
-              <option value="10 AM - 10 PM">10 AM - 10 PM</option>
-              <option value="10 AM - 11 PM">10 AM - 11 PM</option>
-              <option value="10 AM - 12 AM">10 AM - 12 AM</option>
-              <option value="9 AM - 12 AM">9 AM - 12 AM</option>
-              <option value="6 AM - 10 PM">6 AM - 10 PM</option>
-              <option value="24 Hours">24 Hours</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Footfall Category</label>
-            <select id="ns_footfall_category" class="form-select">
-              <option value="">Not specified</option>
-              <option value="LOW">Low</option>
-              <option value="MEDIUM">Medium</option>
-              <option value="HIGH">High</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Ambient Temp Max (C) <span class="text-danger">*</span></label>
-            <input type="number" id="ns_ambient_temp_max" class="form-control" value="48" min="30" max="60">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Humidity Level</label>
-            <select id="ns_humidity_level" class="form-select">
-              <option value="">-- Select --</option>
-              <option value="LOW">Low</option>
-              <option value="MEDIUM" selected>Medium</option>
-              <option value="HIGH">High</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Row 4: Env cont. + Commercial -->
-        <div class="row g-3 mb-3">
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Dust Exposure</label>
-            <select id="ns_dust_exposure" class="form-select">
-              <option value="">-- Select --</option>
-              <option value="LOW">Low</option>
-              <option value="MEDIUM" selected>Medium</option>
-              <option value="HIGH">High</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Heat Load Category</label>
-            <select id="ns_heat_load_category" class="form-select">
-              <option value="">-- Select --</option>
-              <option value="LOW">Low</option>
-              <option value="MEDIUM" selected>Medium</option>
-              <option value="HIGH">High</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Fresh Air Requirement</label>
-            <select id="ns_fresh_air_requirement" class="form-select">
-              <option value="">Not specified</option>
-              <option value="LOW">Low</option>
-              <option value="MEDIUM">Medium</option>
-              <option value="HIGH">High</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Budget Level <span class="text-danger">*</span></label>
-            <select id="ns_budget_level" class="form-select">
-              <option value="">-- Select --</option>
-              <option value="LOW">Low</option>
-              <option value="MEDIUM">Medium</option>
-              <option value="HIGH">High</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Row 5: Commercial + Infrastructure -->
-        <div class="row g-3 mb-3">
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Energy Efficiency Priority <span class="text-danger">*</span></label>
-            <select id="ns_energy_efficiency_priority" class="form-select">
-              <option value="">-- Select --</option>
-              <option value="LOW">Low</option>
-              <option value="MEDIUM">Medium</option>
-              <option value="HIGH">High</option>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-medium">Existing HVAC Type</label>
-            <select id="ns_existing_hvac_type" class="form-select">
-              <option value="">None / Not specified</option>
-              <option value="None">None (New Installation)</option>
-              <option value="Split Systems">Split Systems</option>
-              <option value="VRF/VRV">VRF / VRV</option>
-              <option value="Chilled water interface">Chilled Water Interface</option>
-              <option value="Packaged DX units">Packaged DX Units</option>
-              <option value="Central chiller plant">Central Chiller Plant</option>
-              <option value="Fan coil units (FCU)">Fan Coil Units (FCU)</option>
-              <option value="Ducted central AC">Ducted Central AC</option>
-              <option value="Mixed systems">Mixed Systems</option>
-            </select>
-          </div>
-          <div class="col-md-6">
-            <label class="form-label fw-medium">Landlord Constraints</label>
-            <select id="ns_landlord_select" class="form-select mb-1" onchange="nsLandlordChange(this.value)">
-              <option value="">None / Not specified</option>
-              <option value="No outdoor units on roof">No outdoor units on roof</option>
-              <option value="Chilled water available at back of house">Chilled water available at back of house</option>
-              <option value="Mall-managed chilled water system">Mall-managed chilled water system</option>
-              <option value="No roof penetrations allowed">No roof penetrations allowed</option>
-              <option value="Condenser units in plant room only">Condenser units in plant room only</option>
-              <option value="Restricted electrical capacity">Restricted electrical capacity</option>
-              <option value="No outdoor units on roof; Chilled water available">No outdoor units on roof + Chilled water</option>
-              <option value="OTHER">Other (specify below)</option>
-            </select>
-            <textarea id="ns_landlord_custom" class="form-control d-none" rows="2"
-              placeholder="Describe the landlord constraint..."></textarea>
-          </div>
-        </div>
-      </div>{# /modal-body #}
-
-      <div class="modal-footer" style="background:#f8fafc;border-top:1.5px solid rgba(99,102,241,.15);">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-primary px-4" id="btn-save-new-store" onclick="submitNewStore()">
-          <i class="bi bi-floppy me-1"></i>Save &amp; Use this Store
-        </button>
-      </div>
-    </div>
-  </div>
-</div>{# /newStoreModal #}
 
 
         {# ── Location & Store Details ── #}
@@ -692,6 +516,9 @@
 {% block extra_js %}
 <!-- SweetAlert2 -->
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<!-- Select2 (requires jQuery — loaded via proc_base.html Bootstrap bundle) -->
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
 // ── Store type change -> contextual hints ──────────────────────────────
 const storeTypeHints = {
@@ -729,131 +556,7 @@ function syncLandlordCustom(val) {
   if (hidden) hidden.value = val;
 }
 
-// -- New Store Modal helpers --------------------------------------------
-function nsLandlordChange(val) {
-  const custom = document.getElementById('ns_landlord_custom');
-  if (custom) {
-    custom.classList.toggle('d-none', val !== 'OTHER');
-    if (val !== 'OTHER') custom.value = '';
-  }
-}
-
-function openNewStoreModal() {
-  const modal = new bootstrap.Modal(document.getElementById('newStoreModal'));
-  modal.show();
-}
-
-async function submitNewStore() {
-  const btn = document.getElementById('btn-save-new-store');
-  const errBox = document.getElementById('new-store-error');
-  errBox.classList.add('d-none'); errBox.textContent = '';
-
-  // Collect values
-  const storeId   = (document.getElementById('ns_store_id').value   || '').trim();
-  const brand     = (document.getElementById('ns_brand').value      || '').trim();
-  const country   = (document.getElementById('ns_country').value    || '').trim();
-  const city      = (document.getElementById('ns_city').value       || '').trim();
-  const storeType = (document.getElementById('ns_store_type').value || '').trim();
-  const areaSqft  = (document.getElementById('ns_area_sqft').value  || '').trim();
-  const ambTemp   = (document.getElementById('ns_ambient_temp_max').value || '').trim();
-  const budget    = (document.getElementById('ns_budget_level').value || '').trim();
-  const enePri    = (document.getElementById('ns_energy_efficiency_priority').value || '').trim();
-
-  // Validate required
-  const missing = [];
-  if (!storeId)   missing.push('Store ID');
-  if (!brand)     missing.push('Brand');
-  if (!country)   missing.push('Country');
-  if (!city)      missing.push('City');
-  if (!storeType) missing.push('Store Type');
-  if (!areaSqft)  missing.push('Area (sq ft)');
-  if (!ambTemp)   missing.push('Ambient Temp Max');
-  if (!budget)    missing.push('Budget Level');
-  if (!enePri)    missing.push('Energy Efficiency Priority');
-  if (missing.length) {
-    errBox.textContent = 'Please fill: ' + missing.join(', ');
-    errBox.classList.remove('d-none');
-    return;
-  }
-
-  // Landlord value
-  const landlordSel = document.getElementById('ns_landlord_select').value;
-  const landlordVal = landlordSel === 'OTHER'
-    ? (document.getElementById('ns_landlord_custom').value || '').trim()
-    : landlordSel;
-
-  // Build form data
-  const payload = new FormData();
-  payload.append('store_id',                   storeId);
-  payload.append('f_brand',                    brand);
-  payload.append('f_country',                  country);
-  payload.append('f_city',                     city);
-  payload.append('f_store_type',               storeType);
-  payload.append('f_store_format',             document.getElementById('ns_store_format').value || '');
-  payload.append('f_area_sqft',                areaSqft);
-  payload.append('f_ceiling_height_ft',        document.getElementById('ns_ceiling_height_ft').value || '');
-  payload.append('f_operating_hours',          document.getElementById('ns_operating_hours').value || '');
-  payload.append('f_footfall_category',        document.getElementById('ns_footfall_category').value || '');
-  payload.append('f_ambient_temp_max',         ambTemp);
-  payload.append('f_humidity_level',           document.getElementById('ns_humidity_level').value || '');
-  payload.append('f_dust_exposure',            document.getElementById('ns_dust_exposure').value || '');
-  payload.append('f_heat_load_category',       document.getElementById('ns_heat_load_category').value || '');
-  payload.append('f_fresh_air_requirement',    document.getElementById('ns_fresh_air_requirement').value || '');
-  payload.append('f_landlord_constraints',     landlordVal);
-  payload.append('f_existing_hvac_type',       document.getElementById('ns_existing_hvac_type').value || '');
-  payload.append('f_budget_level',             budget);
-  payload.append('f_energy_efficiency_priority', enePri);
-  payload.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
-
-  try {
-    const resp = await fetch('{% url "procurement:api_hvac_store_create" %}', {
-      method: 'POST',
-      body: payload,
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    });
-    const json = await resp.json();
-    if (!resp.ok) {
-      errBox.textContent = json.error || 'Failed to save store.';
-      errBox.classList.remove('d-none');
-      return;
-    }
-
-    // Add the new profile to our in-memory map
-    const profile = json.profile;
-    storeProfilesById[profile.store_id] = profile;
-
-    // Add to the dropdown
-    const sel = document.getElementById('f_store_id_select');
-    const newOpt = document.createElement('option');
-    newOpt.value = profile.store_id;
-    const extra = profile.brand ? ' (' + profile.brand + (profile.city ? ', ' + profile.city : '') + ')' : '';
-    newOpt.textContent = profile.store_id + extra;
-    sel.appendChild(newOpt);
-
-    // Select the new option and trigger autofill
-    sel.value = profile.store_id;
-    onStoreIdSelectChange(profile.store_id);
-
-    // Close modal
-    bootstrap.Modal.getInstance(document.getElementById('newStoreModal')).hide();
-
-    // Toast-style success indicator on the hint
-    const hint = document.getElementById('store-id-hint');
-    if (hint) hint.innerHTML = '<span class="text-success fw-medium"><i class="bi bi-check-circle me-1"></i>New store \"' + profile.store_id + '\" saved and selected.</span>';
-
-  } catch (e) {
-    errBox.textContent = 'Network error. Please try again.';
-    errBox.classList.remove('d-none');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save &amp; Use this Store';
-  }
-}
-
-// -- Store ID dropdown + autofill ---------------------------------------
+// -- Store ID Select2: searchable + create-new ---------------------------
 const storeProfilesById = {};
 
 function setFieldValue(fieldName, value) {
@@ -910,59 +613,71 @@ function applyStoreProfile(profile) {
   onStoreTypeChange();
 }
 
-function onStoreIdSelectChange(val) {
-  const storeIdHidden = document.getElementById('f_store_id_value');
-  const hint          = document.getElementById('store-id-hint');
+function initStoreSelect2(results) {
+  // Build <option> elements directly on the <select> so Select2 reads from DOM.
+  // A leading blank <option value=""> is mandatory for placeholder + allowClear.
+  var sel = document.getElementById('f_store_id_select');
+  if (!sel) return;
+  sel.innerHTML = '<option value=""></option>';  // reset + blank placeholder option
+  results.forEach(function(p) {
+    var opt = document.createElement('option');
+    opt.value = p.store_id;
+    opt.textContent = p.store_id + (p.brand ? ' (' + p.brand + (p.city ? ', ' + p.city : '') + ')' : '');
+    sel.appendChild(opt);
+  });
 
-  if (val === '') {
-    if (storeIdHidden) storeIdHidden.value = '';
-    if (hint) hint.innerHTML = 'Select an existing store to auto-fill all fields below, or <a href="#" onclick="openNewStoreModal(); return false;">create a new store</a>.';
-  } else {
-    if (storeIdHidden) storeIdHidden.value = val;
-    if (hint) hint.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Store profile loaded. Fields auto-filled.</span>';
-    const profile = storeProfilesById[val];
-    if (profile) applyStoreProfile(profile);
-  }
-}
+  $('#f_store_id_select').select2({
+    placeholder: '-- Select or type a Store ID --',
+    allowClear: true,
+    tags: true,
+    createTag: function(params) {
+      var term = $.trim(params.term);
+      if (!term) return null;
+      return { id: term, text: term + ' (new)', newTag: true };
+    },
+    width: '100%',
+  });
 
-async function populateStoreDropdown() {
-  const select = document.getElementById('f_store_id_select');
-  if (!select) return;
-  try {
-    const response = await fetch(
-      '{% url "procurement:api_hvac_store_suggestions" %}?q=',
-      { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
-    );
-    if (!response.ok) throw new Error('Request failed');
-    const payload = await response.json();
-    const results = payload.results || [];
+  // Force Select2 to display the placeholder (not auto-select first option)
+  $('#f_store_id_select').val(null).trigger('change');
 
-    select.innerHTML = '';
-    const placeholder = document.createElement('option');
-    placeholder.value = ''; placeholder.textContent = '-- Select Store ID --';
-    select.appendChild(placeholder);
-
-    if (results.length > 0) {
-      const divider = document.createElement('option');
-      divider.disabled = true; divider.textContent = '\u2500\u2500 Existing Stores \u2500\u2500';
-      select.appendChild(divider);
+  $('#f_store_id_select').on('select2:select', function(e) {
+    var val   = e.params.data.id;
+    var isNew = e.params.data.newTag === true || !storeProfilesById[val];
+    var hidden = document.getElementById('f_store_id_value');
+    var hint   = document.getElementById('store-id-hint');
+    if (hidden) hidden.value = val;
+    if (isNew) {
+      if (hint) hint.innerHTML = '<span class="text-info"><i class="bi bi-plus-circle me-1"></i>New Store ID <strong>' + val + '</strong> will be saved when you submit.</span>';
+    } else {
+      if (hint) hint.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Store profile loaded. Fields auto-filled.</span>';
+      applyStoreProfile(storeProfilesById[val]);
     }
+  });
 
-    results.forEach(function (p) {
-      storeProfilesById[p.store_id] = p;
-      const opt = document.createElement('option');
-      opt.value = p.store_id;
-      const extra = p.brand ? ' (' + p.brand + (p.city ? ', ' + p.city : '') + ')' : '';
-      opt.textContent = p.store_id + extra;
-      select.appendChild(opt);
-    });
-  } catch (e) {
-    const sel = document.getElementById('f_store_id_select');
-    if (sel) sel.innerHTML = '<option value="">-- Select Store ID --</option>';
-  }
+  $('#f_store_id_select').on('select2:unselect select2:clear', function() {
+    var hidden = document.getElementById('f_store_id_value');
+    var hint   = document.getElementById('store-id-hint');
+    if (hidden) hidden.value = '';
+    if (hint) hint.textContent = 'Select an existing store or type a new Store ID.';
+  });
 }
 
-populateStoreDropdown();
+(function loadStoreProfiles() {
+  fetch('{% url "procurement:api_hvac_store_suggestions" %}?q=', {
+    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+  }).then(function(r) {
+    if (!r.ok) throw new Error('Request failed');
+    return r.json();
+  }).then(function(payload) {
+    var results = payload.results || [];
+    results.forEach(function(p) { storeProfilesById[p.store_id] = p; });
+    initStoreSelect2(results);
+  }).catch(function(e) {
+    console.warn('Store profiles fetch failed:', e);
+    initStoreSelect2([]);
+  });
+})();
 
 // ── On form submit: SweetAlert confirm, then convert f_* to attr arrays ──
 document.getElementById('hvac-form').addEventListener('submit', function(e) {

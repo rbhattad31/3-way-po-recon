@@ -19,6 +19,9 @@ urlpatterns = [
     path("<int:pk>/quotation/", template_views.upload_quotation, name="upload_quotation"),
     path("<int:pk>/validate/", template_views.trigger_validation, name="trigger_validation"),
     path("<int:pk>/external-suggestions/", template_views.api_external_suggestions, name="api_external_suggestions"),
+    # AI Market Intelligence -- direct LLM suggestions, cached in DB
+    path("<int:pk>/market-intelligence/", template_views.market_intelligence_page, name="market_intelligence"),
+    path("<int:pk>/market-intelligence/research/", template_views.api_perplexity_research, name="api_perplexity_research"),
     path("quotation/<int:pk>/prefill-review/", template_views.quotation_prefill_review, name="quotation_prefill_review"),
     path("run/<int:pk>/", template_views.run_detail, name="run_detail"),
     # HVAC Flow A dedicated routes
