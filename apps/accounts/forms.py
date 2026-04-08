@@ -17,6 +17,12 @@ class UserCreateForm(forms.ModelForm):
         label="Confirm Password",
         widget=forms.PasswordInput(attrs={"class": "form-control", "autocomplete": "new-password"}),
     )
+    company = forms.ModelChoiceField(
+        queryset=CompanyProfile.objects.filter(is_active=True).order_by("name"),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="Assign user to a company (tenant)",
+    )
     initial_role = forms.ModelChoiceField(
         queryset=Role.objects.filter(is_active=True).order_by("rank"),
         required=False,
@@ -26,7 +32,7 @@ class UserCreateForm(forms.ModelForm):
 
     class Meta:
         model = User
-        fields = ["email", "first_name", "last_name", "department"]
+        fields = ["email", "first_name", "last_name", "department", "company"]
         widgets = {
             "email": forms.EmailInput(attrs={"class": "form-control"}),
             "first_name": forms.TextInput(attrs={"class": "form-control"}),

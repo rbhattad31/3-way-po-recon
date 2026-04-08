@@ -97,7 +97,8 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
         if form.is_valid():
             with transaction.atomic():
                 user = form.save(commit=False)
-                user.company = getattr(request, 'tenant', None)
+                if not user.company:
+                    user.company = getattr(request, 'tenant', None)
                 user.save()
                 # Assign initial role if selected
                 initial_role = form.cleaned_data.get("initial_role")
