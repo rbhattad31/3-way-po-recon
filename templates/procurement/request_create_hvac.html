@@ -87,8 +87,8 @@
                   <label class="form-label fw-medium">Request Type <span class="text-danger">*</span></label>
                   <select name="request_type" class="form-select" required>
                     <option value="RECOMMENDATION">Recommendation</option>
-                    <option value="BENCHMARK">Benchmark</option>
-                    <option value="BOTH" selected>Both (Recommendation + Benchmark)</option>
+                    <!-- <option value="BENCHMARK">Benchmark</option>
+                    <option value="BOTH" selected>Both (Recommendation + Benchmark)</option> -->
                   </select>
                 </div>
                 <div class="col-12">
@@ -114,7 +114,7 @@
         </div>
 
         {# ── Card 2: Store & Site Parameters (mandatory for recommendation) ── #}
-        <div class="col-12">
+        <!-- <div class="col-12">
           <div class="hvac-card card" style="border-color:rgba(14,165,233,.35) !important;">
             <div class="card-header" style="background:linear-gradient(90deg,#e0f9ff,#f0f9ff) !important;border-color:rgba(14,165,233,.25) !important;">
               <h6 class="mb-0" style="color:#0369a1;"><i class="bi bi-cloud-upload me-2"></i>Quotation Upload <span class="ai-section-badge ms-2">Optional</span></h6>
@@ -132,7 +132,7 @@
               </div>
             </div>
           </div>
-        </div>
+        </div> -->
 
         {# ── Store Identification ── #}
         <div class="col-12">
@@ -146,14 +146,22 @@
             <div class="card-body">
               <div class="row g-3">
                 <div class="col-md-4">
-                  <label class="form-label fw-medium">Store ID <span class="text-danger">*</span></label>
-                  <input type="text" name="f_store_id" class="form-control" required
-                    placeholder="e.g. LM-UAE-001">
-                  <div class="form-text">Unique reference for this store / analysis case.</div>
+                  <label class="form-label fw-medium">Store ID</label>
+                  <div class="input-group">
+                    <select id="f_store_id_select" class="form-select" onchange="onStoreIdSelectChange(this.value)">
+                      <option value="">-- Loading stores... --</option>
+                    </select>
+                    <button type="button" class="btn btn-outline-primary" id="btn-open-new-store-modal"
+                      title="Create a new Store ID" data-bs-toggle="modal" data-bs-target="#newStoreModal">
+                      <i class="bi bi-plus-lg"></i>
+                    </button>
+                  </div>
+                  <input type="hidden" name="f_store_id" id="f_store_id_value" value="">
+                  <div class="form-text" id="store-id-hint">Select an existing store to auto-fill all fields below, or <a href="#" onclick="openNewStoreModal(); return false;">create a new store</a>.</div>
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label fw-medium">Brand <span class="text-danger">*</span></label>
-                  <input type="text" name="f_brand" class="form-control" required
+                  <label class="form-label fw-medium">Brand</label>
+                  <input type="text" name="f_brand" class="form-control"
                     placeholder="e.g. Max, Home Centre, Splash">
                   <div class="form-text">Brand or business unit operating this store.</div>
                 </div>
@@ -161,6 +169,228 @@
             </div>
           </div>
         </div>
+
+
+<div class="modal fade" id="newStoreModal" tabindex="-1" aria-labelledby="newStoreModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(90deg,#eef2ff,#f5f3ff);border-bottom:1.5px solid rgba(99,102,241,.2);">
+        <h5 class="modal-title d-flex align-items-center gap-2" id="newStoreModalLabel">
+          <i class="bi bi-building-add" style="color:#6366f1;"></i>
+          Create New Store Profile
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-4" style="font-size:.88rem;">
+          <i class="bi bi-info-circle me-1"></i>
+          Fill in the store details below. Once saved, the store will be added to the
+          dropdown and all fields will be auto-filled automatically.
+        </p>
+        <div id="new-store-error" class="alert alert-danger d-none"></div>
+
+        <!-- Row 1: Identity -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Store ID <span class="text-danger">*</span></label>
+            <input type="text" id="ns_store_id" class="form-control" placeholder="e.g. UAE-DXB-MAX-011" autocomplete="off">
+            <div class="form-text">Unique identifier for this store.</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Brand <span class="text-danger">*</span></label>
+            <input type="text" id="ns_brand" class="form-control" placeholder="e.g. Max Fashion">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Country <span class="text-danger">*</span></label>
+            <select id="ns_country" class="form-select">
+              <option value="">-- Select --</option>
+              <option value="UAE">UAE</option>
+              <option value="KSA">Saudi Arabia (KSA)</option>
+              <option value="QATAR">Qatar</option>
+              <option value="OMAN">Oman</option>
+              <option value="KUWAIT">Kuwait</option>
+              <option value="BAHRAIN">Bahrain</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">City <span class="text-danger">*</span></label>
+            <input type="text" id="ns_city" class="form-control" placeholder="e.g. Dubai">
+          </div>
+        </div>
+
+        <!-- Row 2: Store classification -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Store Type <span class="text-danger">*</span></label>
+            <select id="ns_store_type" class="form-select">
+              <option value="">-- Select --</option>
+              <option value="MALL">Mall</option>
+              <option value="STANDALONE">Standalone</option>
+              <option value="WAREHOUSE">Warehouse</option>
+              <option value="OFFICE">Office</option>
+              <option value="DATA_CENTER">Data Center</option>
+              <option value="RESTAURANT">Restaurant / F&amp;B</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Store Format</label>
+            <select id="ns_store_format" class="form-select">
+              <option value="">-- Select --</option>
+              <option value="RETAIL">Retail</option>
+              <option value="HYPERMARKET">Hypermarket</option>
+              <option value="FURNITURE">Furniture</option>
+              <option value="ELECTRONICS">Electronics</option>
+              <option value="FOOD_BEVERAGE">Food &amp; Beverage</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Area (sq ft) <span class="text-danger">*</span></label>
+            <input type="number" id="ns_area_sqft" class="form-control" min="1" placeholder="e.g. 10000">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Ceiling Height (ft)</label>
+            <input type="number" step="0.1" id="ns_ceiling_height_ft" class="form-control" min="1" placeholder="e.g. 12">
+          </div>
+        </div>
+
+        <!-- Row 3: Physical + Env -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Operating Hours</label>
+            <select id="ns_operating_hours" class="form-select">
+              <option value="">Not specified</option>
+              <option value="8 AM - 6 PM">8 AM - 6 PM (Office)</option>
+              <option value="9 AM - 10 PM">9 AM - 10 PM</option>
+              <option value="9 AM - 11 PM">9 AM - 11 PM</option>
+              <option value="10 AM - 10 PM">10 AM - 10 PM</option>
+              <option value="10 AM - 11 PM">10 AM - 11 PM</option>
+              <option value="10 AM - 12 AM">10 AM - 12 AM</option>
+              <option value="9 AM - 12 AM">9 AM - 12 AM</option>
+              <option value="6 AM - 10 PM">6 AM - 10 PM</option>
+              <option value="24 Hours">24 Hours</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Footfall Category</label>
+            <select id="ns_footfall_category" class="form-select">
+              <option value="">Not specified</option>
+              <option value="LOW">Low</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="HIGH">High</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Ambient Temp Max (C) <span class="text-danger">*</span></label>
+            <input type="number" id="ns_ambient_temp_max" class="form-control" value="48" min="30" max="60">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Humidity Level</label>
+            <select id="ns_humidity_level" class="form-select">
+              <option value="">-- Select --</option>
+              <option value="LOW">Low</option>
+              <option value="MEDIUM" selected>Medium</option>
+              <option value="HIGH">High</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Row 4: Env cont. + Commercial -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Dust Exposure</label>
+            <select id="ns_dust_exposure" class="form-select">
+              <option value="">-- Select --</option>
+              <option value="LOW">Low</option>
+              <option value="MEDIUM" selected>Medium</option>
+              <option value="HIGH">High</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Heat Load Category</label>
+            <select id="ns_heat_load_category" class="form-select">
+              <option value="">-- Select --</option>
+              <option value="LOW">Low</option>
+              <option value="MEDIUM" selected>Medium</option>
+              <option value="HIGH">High</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Fresh Air Requirement</label>
+            <select id="ns_fresh_air_requirement" class="form-select">
+              <option value="">Not specified</option>
+              <option value="LOW">Low</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="HIGH">High</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Budget Level <span class="text-danger">*</span></label>
+            <select id="ns_budget_level" class="form-select">
+              <option value="">-- Select --</option>
+              <option value="LOW">Low</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="HIGH">High</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Row 5: Commercial + Infrastructure -->
+        <div class="row g-3 mb-3">
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Energy Efficiency Priority <span class="text-danger">*</span></label>
+            <select id="ns_energy_efficiency_priority" class="form-select">
+              <option value="">-- Select --</option>
+              <option value="LOW">Low</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="HIGH">High</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Existing HVAC Type</label>
+            <select id="ns_existing_hvac_type" class="form-select">
+              <option value="">None / Not specified</option>
+              <option value="None">None (New Installation)</option>
+              <option value="Split Systems">Split Systems</option>
+              <option value="VRF/VRV">VRF / VRV</option>
+              <option value="Chilled water interface">Chilled Water Interface</option>
+              <option value="Packaged DX units">Packaged DX Units</option>
+              <option value="Central chiller plant">Central Chiller Plant</option>
+              <option value="Fan coil units (FCU)">Fan Coil Units (FCU)</option>
+              <option value="Ducted central AC">Ducted Central AC</option>
+              <option value="Mixed systems">Mixed Systems</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-medium">Landlord Constraints</label>
+            <select id="ns_landlord_select" class="form-select mb-1" onchange="nsLandlordChange(this.value)">
+              <option value="">None / Not specified</option>
+              <option value="No outdoor units on roof">No outdoor units on roof</option>
+              <option value="Chilled water available at back of house">Chilled water available at back of house</option>
+              <option value="Mall-managed chilled water system">Mall-managed chilled water system</option>
+              <option value="No roof penetrations allowed">No roof penetrations allowed</option>
+              <option value="Condenser units in plant room only">Condenser units in plant room only</option>
+              <option value="Restricted electrical capacity">Restricted electrical capacity</option>
+              <option value="No outdoor units on roof; Chilled water available">No outdoor units on roof + Chilled water</option>
+              <option value="OTHER">Other (specify below)</option>
+            </select>
+            <textarea id="ns_landlord_custom" class="form-control d-none" rows="2"
+              placeholder="Describe the landlord constraint..."></textarea>
+          </div>
+        </div>
+      </div>{# /modal-body #}
+
+      <div class="modal-footer" style="background:#f8fafc;border-top:1.5px solid rgba(99,102,241,.15);">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary px-4" id="btn-save-new-store" onclick="submitNewStore()">
+          <i class="bi bi-floppy me-1"></i>Save &amp; Use this Store
+        </button>
+      </div>
+    </div>
+  </div>
+</div>{# /newStoreModal #}
+
 
         {# ── Location & Store Details ── #}
         <div class="col-12">
@@ -205,8 +435,8 @@
                   <div class="form-text" id="store-type-hint"></div>
                 </div>
                 <div class="col-md-3">
-                  <label class="form-label fw-medium">Store Format <span class="text-danger">*</span></label>
-                  <select name="f_store_format" class="form-select" required>
+                  <label class="form-label fw-medium">Store Format</label>
+                  <select name="f_store_format" class="form-select">
                     <option value="">— Select —</option>
                     <option value="RETAIL">Retail</option>
                     <option value="HYPERMARKET">Hypermarket</option>
@@ -239,15 +469,25 @@
                   <div class="form-text">Total conditioned floor area in square feet.</div>
                 </div>
                 <div class="col-md-3">
-                  <label class="form-label fw-medium">Ceiling Height (ft) <span class="text-danger">*</span></label>
-                  <input type="number" step="0.1" name="f_ceiling_height_ft" class="form-control" required min="1"
+                  <label class="form-label fw-medium">Ceiling Height (ft)</label>
+                  <input type="number" step="0.1" name="f_ceiling_height_ft" class="form-control" min="1"
                     placeholder="e.g. 12">
                   <div class="form-text">Average finished ceiling height in feet.</div>
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-medium">Operating Hours</label>
-                  <input type="text" name="f_operating_hours" class="form-control"
-                    placeholder="e.g. 10 AM - 12 AM">
+                  <select name="f_operating_hours" class="form-select">
+                    <option value="">Not specified</option>
+                    <option value="8 AM - 6 PM">8 AM - 6 PM (Office Hours)</option>
+                    <option value="9 AM - 10 PM">9 AM - 10 PM</option>
+                    <option value="9 AM - 11 PM">9 AM - 11 PM</option>
+                    <option value="10 AM - 10 PM">10 AM - 10 PM</option>
+                    <option value="10 AM - 11 PM">10 AM - 11 PM</option>
+                    <option value="10 AM - 12 AM" selected>10 AM - 12 AM</option>
+                    <option value="9 AM - 12 AM">9 AM - 12 AM</option>
+                    <option value="6 AM - 10 PM">6 AM - 10 PM</option>
+                    <option value="24 Hours">24 Hours</option>
+                  </select>
                   <div class="form-text">Store operating hours.</div>
                 </div>
                 <div class="col-md-3">
@@ -283,8 +523,8 @@
                   <div class="form-text">GCC typical: 46-52C</div>
                 </div>
                 <div class="col-md-2">
-                  <label class="form-label fw-medium">Humidity Level <span class="text-danger">*</span></label>
-                  <select name="f_humidity_level" class="form-select" required>
+                  <label class="form-label fw-medium">Humidity Level</label>
+                  <select name="f_humidity_level" class="form-select">
                     <option value="">— Select —</option>
                     <option value="LOW">Low</option>
                     <option value="MEDIUM" selected>Medium</option>
@@ -292,8 +532,8 @@
                   </select>
                 </div>
                 <div class="col-md-2">
-                  <label class="form-label fw-medium">Dust Exposure <span class="text-danger">*</span></label>
-                  <select name="f_dust_exposure" class="form-select" required>
+                  <label class="form-label fw-medium">Dust Exposure</label>
+                  <select name="f_dust_exposure" class="form-select">
                     <option value="">— Select —</option>
                     <option value="LOW">Low</option>
                     <option value="MEDIUM" selected>Medium</option>
@@ -301,8 +541,8 @@
                   </select>
                 </div>
                 <div class="col-md-3">
-                  <label class="form-label fw-medium">Heat Load Category <span class="text-danger">*</span></label>
-                  <select name="f_heat_load_category" class="form-select" required>
+                  <label class="form-label fw-medium">Heat Load Category</label>
+                  <select name="f_heat_load_category" class="form-select">
                     <option value="">— Select —</option>
                     <option value="LOW">Low</option>
                     <option value="MEDIUM" selected>Medium</option>
@@ -332,15 +572,40 @@
             <div class="card-body">
               <div class="row g-3">
                 <div class="col-12">
-                  <label class="form-label fw-medium">Landlord Constraints <span class="text-danger">*</span></label>
-                  <textarea name="f_landlord_constraints" class="form-control" rows="3" required
-                    placeholder="e.g. No outdoor units allowed on roof. Chilled water available at back of house."></textarea>
-                  <div class="form-text">Describe restrictions and available infrastructure.</div>
+                  <label class="form-label fw-medium">Landlord Constraints</label>
+                  <select id="f_landlord_select" class="form-select" onchange="onLandlordChange(this.value)">
+                    <option value="">None / Not specified</option>
+                    <option value="No outdoor units on roof">No outdoor units on roof</option>
+                    <option value="Chilled water available at back of house">Chilled water available at back of house</option>
+                    <option value="Mall-managed chilled water system">Mall-managed chilled water system</option>
+                    <option value="No roof penetrations allowed">No roof penetrations allowed</option>
+                    <option value="Condenser units in plant room only">Condenser units in plant room only</option>
+                    <option value="Restricted electrical capacity">Restricted electrical capacity</option>
+                    <option value="No outdoor units on roof; Chilled water available">No outdoor units on roof + Chilled water available</option>
+                    <option value="OTHER">Other (specify below)</option>
+                  </select>
+                  <textarea id="f_landlord_custom" class="form-control mt-2 d-none" rows="2"
+                    placeholder="Describe restrictions and available infrastructure."
+                    oninput="syncLandlordCustom(this.value)"></textarea>
+                  <input type="hidden" name="f_landlord_constraints" id="f_landlord_constraints" value="">
+                  <div class="form-text">Select restriction type. Choose 'Other' to enter custom text.</div>
                 </div>
                 <div class="col-12">
                   <label class="form-label fw-medium">Existing HVAC Type</label>
-                  <input type="text" name="f_existing_hvac_type" class="form-control"
-                    placeholder="e.g. Chilled water interface, Split systems, None">
+                  <select name="f_existing_hvac_type" class="form-select">
+                    <option value="">None / Not specified</option>
+                    <option value="None">None (New Installation)</option>
+                    <option value="Split Systems">Split Systems</option>
+                    <option value="VRF/VRV">VRF / VRV</option>
+                    <option value="Chilled water interface">Chilled Water Interface</option>
+                    <option value="Packaged DX units">Packaged DX Units</option>
+                    <option value="Window units">Window Units</option>
+                    <option value="Central chiller plant">Central Chiller Plant</option>
+                    <option value="Fan coil units (FCU)">Fan Coil Units (FCU)</option>
+                    <option value="Ducted central AC">Ducted Central AC</option>
+                    <option value="Evaporative coolers">Evaporative Coolers</option>
+                    <option value="Mixed systems">Mixed Systems</option>
+                  </select>
                   <div class="form-text">Useful in retrofit / replacement cases.</div>
                 </div>
               </div>
@@ -358,14 +623,14 @@
                   <select name="f_budget_level" class="form-select" required>
                     <option value="">— Select —</option>
                     <option value="LOW">Low</option>
-                    <option value="MEDIUM" selected>Medium</option>
+                    <option value="MEDIUM">Medium</option>
                     <option value="HIGH">High</option>
                   </select>
                 </div>
                 <div class="col-md-6">
-                  <label class="form-label fw-medium">Energy Efficiency Priority</label>
-                  <select name="f_energy_efficiency_priority" class="form-select">
-                    <option value="">Not specified</option>
+                  <label class="form-label fw-medium">Energy Efficiency Priority <span class="text-danger">*</span></label>
+                  <select name="f_energy_efficiency_priority" class="form-select" required>
+                    <option value="">— Select —</option>
                     <option value="LOW">Low</option>
                     <option value="MEDIUM">Medium</option>
                     <option value="HIGH">High</option>
@@ -446,10 +711,290 @@ function onStoreTypeChange() {
 
 function onCountryChange() { /* reserved for country-specific hint logic */ }
 
+// ── Landlord Constraints helpers ──────────────────────────────────────
+function onLandlordChange(val) {
+  const custom = document.getElementById('f_landlord_custom');
+  const hidden = document.getElementById('f_landlord_constraints');
+  if (val === 'OTHER') {
+    if (custom) custom.classList.remove('d-none');
+    if (hidden) hidden.value = '';
+  } else {
+    if (custom) { custom.classList.add('d-none'); custom.value = ''; }
+    if (hidden) hidden.value = val;
+  }
+}
+
+function syncLandlordCustom(val) {
+  const hidden = document.getElementById('f_landlord_constraints');
+  if (hidden) hidden.value = val;
+}
+
+// -- New Store Modal helpers --------------------------------------------
+function nsLandlordChange(val) {
+  const custom = document.getElementById('ns_landlord_custom');
+  if (custom) {
+    custom.classList.toggle('d-none', val !== 'OTHER');
+    if (val !== 'OTHER') custom.value = '';
+  }
+}
+
+function openNewStoreModal() {
+  const modal = new bootstrap.Modal(document.getElementById('newStoreModal'));
+  modal.show();
+}
+
+async function submitNewStore() {
+  const btn = document.getElementById('btn-save-new-store');
+  const errBox = document.getElementById('new-store-error');
+  errBox.classList.add('d-none'); errBox.textContent = '';
+
+  // Collect values
+  const storeId   = (document.getElementById('ns_store_id').value   || '').trim();
+  const brand     = (document.getElementById('ns_brand').value      || '').trim();
+  const country   = (document.getElementById('ns_country').value    || '').trim();
+  const city      = (document.getElementById('ns_city').value       || '').trim();
+  const storeType = (document.getElementById('ns_store_type').value || '').trim();
+  const areaSqft  = (document.getElementById('ns_area_sqft').value  || '').trim();
+  const ambTemp   = (document.getElementById('ns_ambient_temp_max').value || '').trim();
+  const budget    = (document.getElementById('ns_budget_level').value || '').trim();
+  const enePri    = (document.getElementById('ns_energy_efficiency_priority').value || '').trim();
+
+  // Validate required
+  const missing = [];
+  if (!storeId)   missing.push('Store ID');
+  if (!brand)     missing.push('Brand');
+  if (!country)   missing.push('Country');
+  if (!city)      missing.push('City');
+  if (!storeType) missing.push('Store Type');
+  if (!areaSqft)  missing.push('Area (sq ft)');
+  if (!ambTemp)   missing.push('Ambient Temp Max');
+  if (!budget)    missing.push('Budget Level');
+  if (!enePri)    missing.push('Energy Efficiency Priority');
+  if (missing.length) {
+    errBox.textContent = 'Please fill: ' + missing.join(', ');
+    errBox.classList.remove('d-none');
+    return;
+  }
+
+  // Landlord value
+  const landlordSel = document.getElementById('ns_landlord_select').value;
+  const landlordVal = landlordSel === 'OTHER'
+    ? (document.getElementById('ns_landlord_custom').value || '').trim()
+    : landlordSel;
+
+  // Build form data
+  const payload = new FormData();
+  payload.append('store_id',                   storeId);
+  payload.append('f_brand',                    brand);
+  payload.append('f_country',                  country);
+  payload.append('f_city',                     city);
+  payload.append('f_store_type',               storeType);
+  payload.append('f_store_format',             document.getElementById('ns_store_format').value || '');
+  payload.append('f_area_sqft',                areaSqft);
+  payload.append('f_ceiling_height_ft',        document.getElementById('ns_ceiling_height_ft').value || '');
+  payload.append('f_operating_hours',          document.getElementById('ns_operating_hours').value || '');
+  payload.append('f_footfall_category',        document.getElementById('ns_footfall_category').value || '');
+  payload.append('f_ambient_temp_max',         ambTemp);
+  payload.append('f_humidity_level',           document.getElementById('ns_humidity_level').value || '');
+  payload.append('f_dust_exposure',            document.getElementById('ns_dust_exposure').value || '');
+  payload.append('f_heat_load_category',       document.getElementById('ns_heat_load_category').value || '');
+  payload.append('f_fresh_air_requirement',    document.getElementById('ns_fresh_air_requirement').value || '');
+  payload.append('f_landlord_constraints',     landlordVal);
+  payload.append('f_existing_hvac_type',       document.getElementById('ns_existing_hvac_type').value || '');
+  payload.append('f_budget_level',             budget);
+  payload.append('f_energy_efficiency_priority', enePri);
+  payload.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+
+  try {
+    const resp = await fetch('{% url "procurement:api_hvac_store_create" %}', {
+      method: 'POST',
+      body: payload,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const json = await resp.json();
+    if (!resp.ok) {
+      errBox.textContent = json.error || 'Failed to save store.';
+      errBox.classList.remove('d-none');
+      return;
+    }
+
+    // Add the new profile to our in-memory map
+    const profile = json.profile;
+    storeProfilesById[profile.store_id] = profile;
+
+    // Add to the dropdown
+    const sel = document.getElementById('f_store_id_select');
+    const newOpt = document.createElement('option');
+    newOpt.value = profile.store_id;
+    const extra = profile.brand ? ' (' + profile.brand + (profile.city ? ', ' + profile.city : '') + ')' : '';
+    newOpt.textContent = profile.store_id + extra;
+    sel.appendChild(newOpt);
+
+    // Select the new option and trigger autofill
+    sel.value = profile.store_id;
+    onStoreIdSelectChange(profile.store_id);
+
+    // Close modal
+    bootstrap.Modal.getInstance(document.getElementById('newStoreModal')).hide();
+
+    // Toast-style success indicator on the hint
+    const hint = document.getElementById('store-id-hint');
+    if (hint) hint.innerHTML = '<span class="text-success fw-medium"><i class="bi bi-check-circle me-1"></i>New store \"' + profile.store_id + '\" saved and selected.</span>';
+
+  } catch (e) {
+    errBox.textContent = 'Network error. Please try again.';
+    errBox.classList.remove('d-none');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-floppy me-1"></i>Save &amp; Use this Store';
+  }
+}
+
+// -- Store ID dropdown + autofill ---------------------------------------
+const storeProfilesById = {};
+
+function setFieldValue(fieldName, value) {
+  const field = document.querySelector('[name="' + fieldName + '"]');
+  if (!field || value === null || value === undefined) return;
+  field.value = String(value);
+}
+
+function applyStoreProfile(profile) {
+  setFieldValue('f_brand',                     (profile && profile.brand)                     || '');
+  setFieldValue('f_country',                   (profile && profile.country)                   || '');
+  setFieldValue('f_city',                      (profile && profile.city)                      || '');
+  setFieldValue('f_store_type',                (profile && profile.store_type)                || '');
+  setFieldValue('f_store_format',              (profile && profile.store_format)              || '');
+  setFieldValue('f_area_sqft',                 (profile && profile.area_sqft)                 || '');
+  setFieldValue('f_ceiling_height_ft',         (profile && profile.ceiling_height_ft)         || '');
+  setFieldValue('f_operating_hours',           (profile && profile.operating_hours)           || '');
+  setFieldValue('f_footfall_category',         (profile && profile.footfall_category)         || '');
+  setFieldValue('f_ambient_temp_max',          (profile && profile.ambient_temp_max)          || '48');
+  setFieldValue('f_humidity_level',            (profile && profile.humidity_level)            || '');
+  setFieldValue('f_dust_exposure',             (profile && profile.dust_exposure)             || '');
+  setFieldValue('f_heat_load_category',        (profile && profile.heat_load_category)        || '');
+  setFieldValue('f_fresh_air_requirement',     (profile && profile.fresh_air_requirement)     || '');
+  setFieldValue('f_budget_level',              (profile && profile.budget_level)              || '');
+  setFieldValue('f_energy_efficiency_priority',(profile && profile.energy_efficiency_priority)|| '');
+  setFieldValue('f_existing_hvac_type',        (profile && profile.existing_hvac_type)        || '');
+
+  // Landlord constraints: try to match a select option, else show custom textarea
+  const landlordVal = (profile && profile.landlord_constraints) || '';
+  const landlordSelect = document.getElementById('f_landlord_select');
+  const landlordHidden = document.getElementById('f_landlord_constraints');
+  const landlordCustom = document.getElementById('f_landlord_custom');
+  if (landlordSelect) {
+    let matched = false;
+    for (let i = 0; i < landlordSelect.options.length; i++) {
+      if (landlordSelect.options[i].value === landlordVal && landlordVal !== 'OTHER') {
+        landlordSelect.value = landlordVal;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched && landlordVal) {
+      landlordSelect.value = 'OTHER';
+      if (landlordCustom) { landlordCustom.classList.remove('d-none'); landlordCustom.value = landlordVal; }
+    } else if (!landlordVal) {
+      landlordSelect.value = '';
+      if (landlordCustom) { landlordCustom.classList.add('d-none'); landlordCustom.value = ''; }
+    } else {
+      if (landlordCustom) { landlordCustom.classList.add('d-none'); landlordCustom.value = ''; }
+    }
+    if (landlordHidden) landlordHidden.value = landlordVal;
+  }
+
+  onStoreTypeChange();
+}
+
+function onStoreIdSelectChange(val) {
+  const storeIdHidden = document.getElementById('f_store_id_value');
+  const hint          = document.getElementById('store-id-hint');
+
+  if (val === '') {
+    if (storeIdHidden) storeIdHidden.value = '';
+    if (hint) hint.innerHTML = 'Select an existing store to auto-fill all fields below, or <a href="#" onclick="openNewStoreModal(); return false;">create a new store</a>.';
+  } else {
+    if (storeIdHidden) storeIdHidden.value = val;
+    if (hint) hint.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Store profile loaded. Fields auto-filled.</span>';
+    const profile = storeProfilesById[val];
+    if (profile) applyStoreProfile(profile);
+  }
+}
+
+async function populateStoreDropdown() {
+  const select = document.getElementById('f_store_id_select');
+  if (!select) return;
+  try {
+    const response = await fetch(
+      '{% url "procurement:api_hvac_store_suggestions" %}?q=',
+      { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+    );
+    if (!response.ok) throw new Error('Request failed');
+    const payload = await response.json();
+    const results = payload.results || [];
+
+    select.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = ''; placeholder.textContent = '-- Select Store ID --';
+    select.appendChild(placeholder);
+
+    if (results.length > 0) {
+      const divider = document.createElement('option');
+      divider.disabled = true; divider.textContent = '\u2500\u2500 Existing Stores \u2500\u2500';
+      select.appendChild(divider);
+    }
+
+    results.forEach(function (p) {
+      storeProfilesById[p.store_id] = p;
+      const opt = document.createElement('option');
+      opt.value = p.store_id;
+      const extra = p.brand ? ' (' + p.brand + (p.city ? ', ' + p.city : '') + ')' : '';
+      opt.textContent = p.store_id + extra;
+      select.appendChild(opt);
+    });
+  } catch (e) {
+    const sel = document.getElementById('f_store_id_select');
+    if (sel) sel.innerHTML = '<option value="">-- Select Store ID --</option>';
+  }
+}
+
+populateStoreDropdown();
+
 // ── On form submit: SweetAlert confirm, then convert f_* to attr arrays ──
 document.getElementById('hvac-form').addEventListener('submit', function(e) {
   e.preventDefault();
   const form = this;
+
+  const mandatoryFields = [
+    { name: 'f_country', label: 'Country' },
+    { name: 'f_city', label: 'City' },
+    { name: 'f_store_type', label: 'Store Type' },
+    { name: 'f_area_sqft', label: 'Area (sq ft)' },
+    { name: 'f_ambient_temp_max', label: 'Ambient Temp Max (C)' },
+    { name: 'f_budget_level', label: 'Budget' },
+    { name: 'f_energy_efficiency_priority', label: 'Energy Priority' },
+  ];
+
+  const missingLabels = mandatoryFields
+    .filter(function(field) {
+      const element = form.querySelector('[name="' + field.name + '"]');
+      return !element || !String(element.value || '').trim();
+    })
+    .map(function(field) { return field.label; });
+
+  if (missingLabels.length) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Mandatory fields missing',
+      html: 'Please fill: <strong>' + missingLabels.join(', ') + '</strong>',
+      confirmButtonColor: '#4f46e5',
+    });
+    return;
+  }
 
   Swal.fire({
     title: '<span style="color:#4f46e5;font-weight:700;">Submit HVAC Request?</span>',

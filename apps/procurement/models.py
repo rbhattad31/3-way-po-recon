@@ -1198,14 +1198,20 @@ class HVACRecommendationRule(BaseModel):
 
     # ------------------------------------------------------------------
     def matches(self, attrs: dict) -> bool:
-        """Return True if all conditions in this rule are satisfied by attrs."""
+        """Return True if all conditions in this rule are satisfied by attrs.
+
+        Accepted attr keys (matches the procurement request attributes dict):
+          store_type, area_sqft, ambient_temp_max, budget_level,
+          energy_efficiency_priority
+        """
         store_type = str(attrs.get("store_type") or "").upper()
-        area = float(attrs.get("area_sq_ft") or 0)
-        ambient = float(attrs.get("ambient_temp_max_c") or 0)
+        # Support both spellings used across the codebase
+        area = float(attrs.get("area_sqft") or attrs.get("area_sq_ft") or 0)
+        ambient = float(attrs.get("ambient_temp_max") or attrs.get("ambient_temp_max_c") or 0)
         budget = str(attrs.get("budget_level") or "").upper()
         energy = str(attrs.get("energy_efficiency_priority") or "").upper()
 
-        if self.store_type_filter and self.store_type_filter != store_type:
+        if self.store_type_filter and self.store_type_filter.upper() != store_type:
             return False
         if self.area_sq_ft_min is not None and area < self.area_sq_ft_min:
             return False
@@ -1214,11 +1220,48 @@ class HVACRecommendationRule(BaseModel):
         if self.ambient_temp_min_c is not None and ambient < self.ambient_temp_min_c:
             return False
         if self.budget_level_filter:
-            allowed = self.budget_level_filter.split("_")
+            # e.g. "LOW_MEDIUM" matches budget in {"LOW", "MEDIUM"}
+            allowed = [p.upper() for p in self.budget_level_filter.split("_") if p]
             if budget not in allowed:
                 return False
         if self.energy_priority_filter:
-            allowed = self.energy_priority_filter.split("_")
+            allowed = [p.upper() for p in self.energy_priority_filter.split("_") if p]
             if energy not in allowed:
                 return False
         return True
+
+
+class HVACStoreProfile(BaseModel):
+    """Store profile used for HVAC form autosuggest and autofill."""
+
+    # NOTE: is_active was included in migration 0009_hvacstoreprofile but is not
+    # part of the current BaseModel. Declared here explicitly to keep the Python
+    # model in sync with the DB column.
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    store_id = models.CharField(max_length=120, unique=True, db_index=True)
+    brand = models.CharField(max_length=200, blank=True, default="")
+    country = models.CharField(max_length=100, blank=True, default="")
+    city = models.CharField(max_length=100, blank=True, default="")
+    store_type = models.CharField(max_length=50, blank=True, default="")
+    store_format = models.CharField(max_length=50, blank=True, default="")
+    area_sqft = models.FloatField(null=True, blank=True)
+    ceiling_height_ft = models.FloatField(null=True, blank=True)
+    operating_hours = models.CharField(max_length=120, blank=True, default="")
+    footfall_category = models.CharField(max_length=50, blank=True, default="")
+    ambient_temp_max = models.FloatField(null=True, blank=True)
+    humidity_level = models.CharField(max_length=50, blank=True, default="")
+    dust_exposure = models.CharField(max_length=50, blank=True, default="")
+    heat_load_category = models.CharField(max_length=50, blank=True, default="")
+    fresh_air_requirement = models.CharField(max_length=50, blank=True, default="")
+    landlord_constraints = models.TextField(blank=True, default="")
+    existing_hvac_type = models.CharField(max_length=200, blank=True, default="")
+    budget_level = models.CharField(max_length=50, blank=True, default="")
+    energy_efficiency_priority = models.CharField(max_length=50, blank=True, default="")
+
+    class Meta:
+        db_table = "procurement_hvac_store_profile"
+        ordering = ["store_id"]
+
+    def __str__(self) -> str:
+        return self.store_id

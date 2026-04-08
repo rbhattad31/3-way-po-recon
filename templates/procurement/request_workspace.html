@@ -5,6 +5,62 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/procurement/workspace.css' %}">
+<style>
+/* ---- Reasoning Summary accordion overrides ---- */
+.rs-accordion .accordion-button {
+  font-size: .83rem;
+  font-weight: 600;
+  padding: .55rem .9rem;
+  background: #f8fafc;
+  color: #1e293b;
+  border-radius: 6px !important;
+}
+.rs-accordion .accordion-button:not(.collapsed) {
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: none;
+}
+.rs-accordion .accordion-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px !important;
+  margin-bottom: .45rem;
+  overflow: hidden;
+}
+.rs-accordion .accordion-body {
+  padding: .75rem 1rem;
+  font-size: .82rem;
+}
+.rs-table { font-size: .8rem; }
+.rs-table th { background: #f1f5f9; font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+.rs-badge-primary { font-size: .7rem; padding: .2em .55em; }
+/* Citation cards */
+.citation-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: .75rem 1rem;
+  margin-bottom: .6rem;
+  background: #fafafa;
+  transition: box-shadow .15s;
+}
+.citation-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); border-color: #bfdbfe; }
+.citation-source { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.citation-snippet { font-size: .8rem; color: #475569; margin: .3rem 0 .3rem; }
+.citation-url { font-size: .75rem; color: #2563eb; word-break: break-all; }
+/* Recommendation summary table */
+.rec-summary-table td, .rec-summary-table th { vertical-align: middle; font-size: .82rem; }
+.rec-summary-table th { font-size: .73rem; text-transform: uppercase; letter-spacing: .04em; color: #64748b; background: #f8fafc; }
+.driver-chip {
+  display: inline-block;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  border-radius: 20px;
+  padding: .2em .75em;
+  font-size: .75rem;
+  font-weight: 600;
+  margin: .15rem .15rem;
+}
+</style>
 {% endblock %}
 
 {% block breadcrumb %}
@@ -109,46 +165,320 @@
   <div class="tab-pane fade show active pt-3" id="internal" role="tabpanel">
 
     {% if recommendation %}
+
+    {# ---- 1. Recommendation Summary Table ---- #}
     <div class="ws-card">
-      <div class="ws-card-title"><i class="bi bi-stars text-warning"></i>AI Recommendation</div>
-      <div class="rec-main mb-3">
-        <div class="text-muted small text-uppercase mb-1" style="letter-spacing:.05em">Recommended Option</div>
-        <div class="fw-semibold text-success mb-2" style="font-size:.95rem;">{{ recommendation.recommended_option|default:"--" }}</div>
-        {% if recommendation.confidence_score %}
-        <div class="d-flex align-items-center gap-2 mb-2">
-          <span class="text-muted small">Confidence</span>
-          <div class="conf-bar-wrap flex-grow-1">
-            <div class="conf-bar" style="width:{% widthratio recommendation.confidence_score 1 100 %}%;"></div>
-          </div>
-          <span class="small fw-bold text-success">{% widthratio recommendation.confidence_score 1 100 %}%</span>
-        </div>
-        {% endif %}
-        {% if recommendation.rationale %}
-        <div class="mt-2 pt-2 border-top">
-          <div class="text-muted small text-uppercase mb-1" style="letter-spacing:.06em;">Rationale</div>
-          <p class="small mb-0 text-secondary">{{ recommendation.rationale }}</p>
-        </div>
-        {% endif %}
-      </div>
-      {% if recommendation.options_detail_json %}
-      <div class="sec-label">Evaluated Options</div>
-      <div class="table-responsive">
-        <table class="table table-sm opts-table mb-0">
-          <thead><tr><th>Option</th><th>Score</th><th>Notes</th></tr></thead>
-          <tbody>
-            {% for opt in recommendation.options_detail_json %}
+      <div class="ws-card-title"><i class="bi bi-stars text-warning"></i>Recommended System</div>
+      <div class="table-responsive mb-0">
+        <table class="table table-bordered rec-summary-table mb-0">
+          <thead>
             <tr>
-              <td class="fw-semibold">{{ opt.option|default:opt }}</td>
-              <td>{{ opt.score|default:"--" }}</td>
-              <td class="text-muted">{{ opt.notes|default:"" }}</td>
+              <th>System</th>
+              <th>System Code</th>
+              <th>Confidence</th>
+              <th>Compliance</th>
+              <th>Cooling Capacity</th>
+              <th>Human Review</th>
             </tr>
-            {% endfor %}
+          </thead>
+          <tbody>
+            <tr>
+              <td class="fw-semibold text-success">
+                {% if reason_summary %}{{ reason_summary.system_name }}{% else %}{{ recommendation.recommended_option|truncatechars:60 }}{% endif %}
+              </td>
+              <td>
+                {% if reason_summary and reason_summary.system_code %}
+                  <code class="text-primary">{{ reason_summary.system_code }}</code>
+                {% else %}<span class="text-muted">--</span>{% endif %}
+              </td>
+              <td>
+                {% if recommendation.confidence_score %}
+                <div class="d-flex align-items-center gap-2">
+                  <div class="conf-bar-wrap" style="width:80px;">
+                    <div class="conf-bar" style="width:{% widthratio recommendation.confidence_score 1 100 %}%;"></div>
+                  </div>
+                  <span class="fw-bold text-success small">{% widthratio recommendation.confidence_score 1 100 %}%</span>
+                </div>
+                {% else %}<span class="text-muted">--</span>{% endif %}
+              </td>
+              <td>
+                {% with cs=recommendation.compliance_status %}
+                  {% if cs == "PASS" or cs == "COMPLIANT" %}
+                    <span class="badge bg-success">PASS</span>
+                  {% elif cs == "FAIL" or cs == "NON_COMPLIANT" %}
+                    <span class="badge bg-danger">FAIL</span>
+                  {% elif cs %}
+                    <span class="badge bg-warning text-dark">{{ cs }}</span>
+                  {% else %}
+                    <span class="text-muted small">Not checked</span>
+                  {% endif %}
+                {% endwith %}
+              </td>
+              <td class="text-dark small">
+                {% if reason_summary and reason_summary.capacity_guidance %}
+                  {{ reason_summary.capacity_guidance }}
+                {% else %}<span class="text-muted">--</span>{% endif %}
+              </td>
+              <td>
+                {% if reason_summary and reason_summary.human_validation %}
+                  <span class="badge bg-warning text-dark"><i class="bi bi-person-check me-1"></i>Required</span>
+                {% else %}
+                  <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>None</span>
+                {% endif %}
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
+      {% if reason_summary and reason_summary.top_drivers %}
+      <div class="mt-3 pt-2 border-top">
+        <div class="text-muted small fw-semibold mb-2 text-uppercase" style="letter-spacing:.05em;font-size:.7rem;">Top Decision Drivers</div>
+        <div>
+          {% for driver in reason_summary.top_drivers %}
+            <span class="driver-chip"><i class="bi bi-check2 me-1"></i>{{ driver }}</span>
+          {% endfor %}
+        </div>
+      </div>
       {% endif %}
     </div>
-    {% else %}
+
+    {# ---- 2. Reasoning Summary Accordion ---- #}
+    {% if reason_summary %}
+    <div class="ws-card">
+      <div class="ws-card-title">
+        <i class="bi bi-diagram-3 text-primary"></i>Reasoning Summary
+        <span class="text-muted fw-normal small ms-2" style="font-size:.75rem;">Click any panel to expand</span>
+      </div>
+
+      <div class="accordion rs-accordion" id="rsAccordion">
+
+        {# Panel A: Why This Was Selected #}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-why">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-why" aria-expanded="true" aria-controls="rsPanel-why">
+              <i class="bi bi-lightbulb me-2 text-warning"></i>Why This System Was Selected
+            </button>
+          </h2>
+          <div id="rsPanel-why" class="accordion-collapse collapse show" aria-labelledby="rsHead-why" data-bs-parent="#rsAccordion">
+            <div class="accordion-body">
+              {% if reason_summary.headline %}
+              <p class="fw-semibold text-dark mb-2" style="font-size:.85rem;">{{ reason_summary.headline }}</p>
+              {% endif %}
+              {% if reason_summary.reasoning_summary %}
+              <p class="text-secondary mb-0" style="line-height:1.55;">{{ reason_summary.reasoning_summary }}</p>
+              {% endif %}
+              {% if reason_summary.standards %}
+              <div class="mt-3 pt-2 border-top">
+                <div class="text-muted small fw-semibold mb-1">Applicable Standards</div>
+                {% for std in reason_summary.standards %}
+                  <span class="badge bg-light text-dark border me-1 mb-1" style="font-size:.72rem;">{{ std }}</span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        {# Panel B: Rules Engine Analysis #}
+        {% if reason_summary.rules_table %}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-rules">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-rules" aria-expanded="false" aria-controls="rsPanel-rules">
+              <i class="bi bi-gear-wide-connected me-2 text-info"></i>Rules Engine Analysis
+              <span class="badge bg-info ms-2" style="font-size:.65rem;">{{ reason_summary.rules_table|length }} rule{% if reason_summary.rules_table|length != 1 %}s{% endif %} fired</span>
+            </button>
+          </h2>
+          <div id="rsPanel-rules" class="accordion-collapse collapse" aria-labelledby="rsHead-rules" data-bs-parent="#rsAccordion">
+            <div class="accordion-body p-0">
+              <div class="table-responsive">
+                <table class="table table-sm rs-table mb-0">
+                  <thead>
+                    <tr>
+                      <th style="width:32%;">Rule Code</th>
+                      <th>Description</th>
+                      <th style="width:22%;">Role</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for rule in reason_summary.rules_table %}
+                    <tr>
+                      <td>
+                        <code style="font-size:.72rem;color:#0369a1;">{{ rule.code }}</code>
+                      </td>
+                      <td class="text-secondary">{{ rule.description }}</td>
+                      <td>
+                        <span class="badge {{ rule.badge_class }} rs-badge-primary">{{ rule.role }}</span>
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Panel C: Matched Input Conditions #}
+        {% if reason_summary.conditions_table %}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-cond">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-cond" aria-expanded="false" aria-controls="rsPanel-cond">
+              <i class="bi bi-sliders me-2 text-purple" style="color:#7c3aed;"></i>Matched Input Conditions
+              <span class="badge bg-secondary ms-2" style="font-size:.65rem;">{{ reason_summary.conditions_table|length }} factor{% if reason_summary.conditions_table|length != 1 %}s{% endif %}</span>
+            </button>
+          </h2>
+          <div id="rsPanel-cond" class="accordion-collapse collapse" aria-labelledby="rsHead-cond" data-bs-parent="#rsAccordion">
+            <div class="accordion-body p-0">
+              <div class="table-responsive">
+                <table class="table table-sm rs-table mb-0">
+                  <thead>
+                    <tr>
+                      <th style="width:28%;">Input Factor</th>
+                      <th style="width:22%;">Value</th>
+                      <th>Impact on Decision</th>
+                      <th style="width:10%;text-align:center;">Key?</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for cond in reason_summary.conditions_table %}
+                    <tr {% if cond.is_key %}class="table-light fw-semibold"{% endif %}>
+                      <td>
+                        {{ cond.factor }}
+                        {% if cond.derived %}
+                          <span class="badge bg-light text-secondary border ms-1" style="font-size:.62rem;">derived</span>
+                        {% endif %}
+                      </td>
+                      <td class="{{ cond.highlight }}">{{ cond.value }}</td>
+                      <td class="text-secondary">{{ cond.impact }}</td>
+                      <td style="text-align:center;">
+                        {% if cond.is_key %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<span class="text-muted">--</span>{% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Panel D: Alternatives Considered #}
+        {% if reason_summary.alternate_option or reason_summary.alternatives_table %}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-alt">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-alt" aria-expanded="false" aria-controls="rsPanel-alt">
+              <i class="bi bi-arrow-left-right me-2 text-warning"></i>Alternatives Considered
+            </button>
+          </h2>
+          <div id="rsPanel-alt" class="accordion-collapse collapse" aria-labelledby="rsHead-alt" data-bs-parent="#rsAccordion">
+            <div class="accordion-body p-0">
+              <div class="table-responsive">
+                <table class="table table-sm rs-table mb-0">
+                  <thead><tr><th style="width:38%;">Alternate System</th><th>Why Not Selected</th></tr></thead>
+                  <tbody>
+                    {% for alt in reason_summary.alternatives_table %}
+                    <tr>
+                      <td class="fw-semibold text-secondary">{{ alt.system }}</td>
+                      <td class="{{ alt.reason_class }}">{{ alt.reason_rejected }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                      <td colspan="2">
+                        {% if reason_summary.alternate_option %}
+                          <span class="text-secondary">{{ reason_summary.alternate_option }}</span>
+                        {% else %}
+                          <span class="text-muted">No alternatives recorded.</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Panel E: Constraints & Assumptions #}
+        {% if reason_summary.constraints or reason_summary.assumptions %}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-const">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-const" aria-expanded="false" aria-controls="rsPanel-const">
+              <i class="bi bi-exclamation-triangle me-2 text-orange" style="color:#ea580c;"></i>Constraints &amp; Assumptions
+            </button>
+          </h2>
+          <div id="rsPanel-const" class="accordion-collapse collapse" aria-labelledby="rsHead-const" data-bs-parent="#rsAccordion">
+            <div class="accordion-body">
+              <div class="row g-3">
+                {% if reason_summary.constraints.landlord %}
+                <div class="col-sm-6">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-building me-1 text-info"></i>Landlord / Site</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.constraints.landlord %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% if reason_summary.constraints.environmental %}
+                <div class="col-sm-6">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-thermometer-half me-1 text-danger"></i>Environmental</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.constraints.environmental %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% if reason_summary.constraints.operational %}
+                <div class="col-sm-6">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-tools me-1 text-warning"></i>Operational</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.constraints.operational %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% if reason_summary.constraints.budget %}
+                <div class="col-sm-6">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-cash-stack me-1 text-success"></i>Budget</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.constraints.budget %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% if reason_summary.assumptions %}
+                <div class="col-12">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-info-circle me-1 text-muted"></i>Assumptions</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.assumptions %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+      </div>{# end accordion #}
+    </div>
+    {% endif %}{# end reason_summary #}
+
+    {% else %}{# no recommendation #}
     <div class="ws-card text-center py-4">
       <i class="bi bi-robot fs-2 mb-2 d-block text-muted"></i>
       <div class="text-muted small">No AI recommendation generated yet.</div>
@@ -204,6 +534,105 @@
 
   <div class="tab-pane fade pt-3" id="external" role="tabpanel">
 
+    {# ---- AI Market Intelligence Panel ---- #}
+    <div class="ws-card">
+      <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+        <div class="ws-card-title mb-0">
+          <i class="bi bi-stars text-info"></i>AI Market Intelligence
+          <span class="text-muted fw-normal small ms-2" style="font-size:.75rem;">Powered by AI analysis of your request</span>
+        </div>
+        <button class="btn btn-sm btn-info text-white fw-semibold" id="btn-fetch-citations"
+                data-url="{% url 'procurement:api_external_suggestions' pk=proc_request.pk %}">
+          <i class="bi bi-robot me-1"></i>Run AI Market Analysis
+        </button>
+      </div>
+
+      {# Loading / placeholder #}
+      <div id="citations-area">
+        <div class="text-center text-muted py-4" id="citations-placeholder" style="font-size:.82rem;">
+          <i class="bi bi-bar-chart-steps fs-2 d-block mb-2 text-info opacity-60"></i>
+          <div class="fw-semibold mb-1">Market Intelligence Not Yet Loaded</div>
+          <div style="font-size:.78rem;">Click <strong>Run AI Market Analysis</strong> to let AI rephrase your request,
+          identify matching products on the market, and display pricing, compliance, and fit scores in a detailed table.</div>
+        </div>
+        <div id="citations-spinner" class="text-center py-4 d-none">
+          <span class="spinner-border text-info mb-2" style="width:2rem;height:2rem;"></span>
+          <div class="text-muted small mt-1">AI is analyzing your request and scanning market data...</div>
+          <div class="text-muted mt-1" style="font-size:.73rem;">This may take 10 - 20 seconds</div>
+        </div>
+
+        {# AI results rendered here #}
+        <div id="citations-results" class="d-none">
+
+          {# Rephrased query banner #}
+          <div id="ai-query-banner" class="rounded-3 p-3 mb-3" style="background:linear-gradient(135deg,#eff6ff,#e0f2fe);border:1px solid #bae6fd;">
+            <div class="d-flex align-items-start gap-2">
+              <i class="bi bi-search text-info mt-1"></i>
+              <div>
+                <div class="fw-semibold text-dark mb-1" style="font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;">AI-Rephrased Market Query</div>
+                <div id="ai-rephrased-query" class="text-dark" style="font-size:.9rem;font-style:italic;"></div>
+              </div>
+            </div>
+          </div>
+
+          {# AI Summary + Market Context #}
+          <div class="row g-3 mb-3">
+            <div class="col-md-7">
+              <div class="rounded-3 p-3 h-100" style="background:#f8fafc;border:1px solid #e2e8f0;">
+                <div class="fw-semibold text-dark mb-2" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;"><i class="bi bi-lightbulb text-warning me-1"></i>AI Analysis Summary</div>
+                <div id="ai-summary-text" class="text-secondary" style="font-size:.85rem;line-height:1.6;"></div>
+              </div>
+            </div>
+            <div class="col-md-5">
+              <div class="rounded-3 p-3 h-100" style="background:#f0fdf4;border:1px solid #bbf7d0;">
+                <div class="fw-semibold text-dark mb-2" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;"><i class="bi bi-graph-up-arrow text-success me-1"></i>Market Context</div>
+                <div id="ai-market-context" class="text-secondary" style="font-size:.83rem;line-height:1.55;"></div>
+              </div>
+            </div>
+          </div>
+
+          {# Results table #}
+          <div class="fw-semibold text-dark mb-2" style="font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;">
+            <i class="bi bi-table text-primary me-1"></i>Product Suggestions &amp; Market Comparison
+            <span id="results-count-badge" class="badge bg-primary ms-2" style="font-size:.65rem;"></span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="ai-suggestions-table" style="font-size:.82rem;">
+              <thead style="background:#f1f5f9;">
+                <tr>
+                  <th style="width:32px;font-size:.7rem;">#</th>
+                  <th>Product / Model</th>
+                  <th style="width:120px;">System Type</th>
+                  <th style="width:110px;">Capacity</th>
+                  <th style="width:90px;">COP / EER</th>
+                  <th style="width:150px;">Price Range (AED)</th>
+                  <th style="width:90px;text-align:center;">Fit Score</th>
+                  <th>Key Benefits</th>
+                  <th style="width:90px;text-align:center;">Citation</th>
+                </tr>
+              </thead>
+              <tbody id="ai-suggestions-tbody">
+              </tbody>
+            </table>
+          </div>
+
+          {# Disclaimer #}
+          <div class="mt-3 pt-2 border-top text-muted" style="font-size:.72rem;">
+            <i class="bi bi-info-circle me-1"></i>
+            Prices, availability, and specifications are AI-generated estimates for planning purposes only.
+            Always verify with local distributors before procurement decisions.
+          </div>
+        </div>
+
+        <div id="citations-error" class="d-none">
+          <div class="alert alert-warning py-2 small">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <span id="citations-error-msg">Could not load market intelligence.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     {% if benchmarks %}
     <div class="ws-card">
       <div class="ws-card-title"><i class="bi bi-bar-chart-line text-warning"></i>Market Benchmark Results</div>
@@ -254,11 +683,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <div class="ws-card text-center py-4">
-      <i class="bi bi-bar-chart-line fs-2 mb-2 d-block text-muted"></i>
-      <div class="text-muted small">No benchmark data yet.</div>
-      <div class="text-muted" style="font-size:.75rem;margin-top:.3rem;">Run a Benchmark analysis to compare against GCC market prices.</div>
-    </div>
+    
     {% endif %}
 
     {% if quotations %}
@@ -290,11 +715,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <div class="ws-card text-center py-4">
-      <i class="bi bi-file-earmark-plus fs-2 mb-2 d-block text-muted"></i>
-      <div class="text-muted small">No quotations uploaded.</div>
-      <div class="text-muted" style="font-size:.75rem;margin-top:.3rem;">Upload supplier quotations to enable AI-powered analysis and benchmarking.</div>
-    </div>
+    
     {% endif %}
 
     {% if compliance %}
@@ -330,37 +751,177 @@
   </div>
 </div>
 
-{# -- Run Analysis JS -- #}
+{# -- Run Analysis + Citations JS -- #}
 <script>
 (function(){
+  /* ---- Run Analysis ---- */
   const btn = document.getElementById("btn-run-analysis");
-  if (!btn) return;
-  btn.addEventListener("click", function(){
-    const runType = document.getElementById("run-type-select").value;
-    const url = btn.dataset.triggerUrl;
-    const csrf = btn.dataset.csrf;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...';
-    fetch(url, {
-      method: "POST",
-      headers: {"X-CSRFToken": csrf, "Content-Type": "application/x-www-form-urlencoded"},
-      body: "run_type=" + encodeURIComponent(runType),
-    })
-    .then(r => r.json())
-    .then(data => {
-      if(data.status === "ok" || data.status === "success"){
-        window.location.reload();
-      } else {
+  if (btn) {
+    btn.addEventListener("click", function(){
+      const runType = document.getElementById("run-type-select").value;
+      const url = btn.dataset.triggerUrl;
+      const csrf = btn.dataset.csrf;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...';
+      fetch(url, {
+        method: "POST",
+        headers: {"X-CSRFToken": csrf, "Content-Type": "application/x-www-form-urlencoded"},
+        body: "run_type=" + encodeURIComponent(runType),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if(data.status === "ok" || data.status === "success"){
+          window.location.reload();
+        } else {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run Analysis';
+          alert(data.error || "Failed to trigger analysis.");
+        }
+      })
+      .catch(() => {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run Analysis';
-        alert(data.error || "Failed to trigger analysis.");
-      }
-    })
-    .catch(() => {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run Analysis';
+      });
     });
-  });
+  }
+
+  /* ---- External Citations (AI Market Intelligence) ---- */
+  const fetchBtn = document.getElementById("btn-fetch-citations");
+  if (fetchBtn) {
+    fetchBtn.addEventListener("click", function(){
+      const url = fetchBtn.dataset.url;
+      const placeholder = document.getElementById("citations-placeholder");
+      const spinner    = document.getElementById("citations-spinner");
+      const results    = document.getElementById("citations-results");
+      const errBox     = document.getElementById("citations-error");
+      const errMsg     = document.getElementById("citations-error-msg");
+
+      placeholder.classList.add("d-none");
+      spinner.classList.remove("d-none");
+      results.classList.add("d-none");
+      errBox.classList.add("d-none");
+
+      fetchBtn.disabled = true;
+      fetchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analyzing...';
+
+      fetch(url, {credentials: "same-origin"})
+        .then(r => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(data => {
+          spinner.classList.add("d-none");
+          fetchBtn.disabled = false;
+          fetchBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Re-run Analysis';
+
+          if (data.suggestions && data.suggestions.length === 0 && data.error) {
+            errMsg.textContent = data.ai_summary || "AI analysis unavailable. Please try again shortly.";
+            errBox.classList.remove("d-none");
+            return;
+          }
+
+          /* Populate AI query banner */
+          document.getElementById("ai-rephrased-query").textContent =
+            data.rephrased_query || ("Market analysis for " + (data.system_name || "HVAC system"));
+
+          /* AI summary + market context */
+          document.getElementById("ai-summary-text").textContent = data.ai_summary || "--";
+          document.getElementById("ai-market-context").textContent = data.market_context || "--";
+
+          /* Results count badge */
+          const suggestions = data.suggestions || [];
+          document.getElementById("results-count-badge").textContent =
+            suggestions.length + " product" + (suggestions.length !== 1 ? "s" : "");
+
+          /* Build table rows */
+          const tbody = document.getElementById("ai-suggestions-tbody");
+          tbody.innerHTML = "";
+
+          suggestions.forEach(function(s, idx){
+            const score = s.fit_score || 0;
+            const scoreColor = score >= 80 ? "#16a34a" : score >= 60 ? "#d97706" : "#dc2626";
+            const scoreBg    = score >= 80 ? "#f0fdf4" : score >= 60 ? "#fffbeb" : "#fef2f2";
+
+            const benefits = (s.key_benefits || []).slice(0, 3).map(function(b){
+              return '<span style="display:inline-block;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:20px;padding:.15em .6em;font-size:.72rem;margin:.1rem .1rem;">'
+                + escHtml(b) + '</span>';
+            }).join("");
+
+            const standards = (s.standards_compliance || []).map(function(std){
+              return '<span class="badge bg-light text-dark border" style="font-size:.62rem;margin:.1rem;">' + escHtml(std) + '</span>';
+            }).join("");
+
+            const limitations = (s.limitations || []).map(function(lim){
+              return '<li class="text-secondary" style="font-size:.78rem;">' + escHtml(lim) + '</li>';
+            }).join("");
+
+            const citationCell = s.citation_url && s.citation_url !== "#"
+              ? '<a href="' + escHtml(s.citation_url) + '" target="_blank" rel="noopener noreferrer" '
+                + 'class="btn btn-xs btn-outline-info" style="font-size:.7rem;padding:.2rem .5rem;" '
+                + 'title="' + escHtml(s.citation_source || "Source") + '">'
+                + '<i class="bi ' + escHtml(s.icon_class || "bi-box-arrow-up-right") + ' me-1"></i>'
+                + escHtml(s.citation_source || "Source") + '</a>'
+              : '<span class="text-muted small">' + escHtml(s.citation_source || "N/A") + '</span>';
+
+            const rowId = "sug-detail-" + idx;
+            const hasDetail = (s.limitations && s.limitations.length > 0) || s.fit_rationale || s.market_availability;
+
+            const expandBtn = hasDetail
+              ? '<button class="btn btn-link btn-sm p-0 ms-1 text-muted" style="font-size:.7rem;" '
+                + 'data-bs-toggle="collapse" data-bs-target="#' + rowId + '">'
+                + '<i class="bi bi-chevron-down"></i></button>'
+              : '';
+
+            const tr = document.createElement("tr");
+            tr.innerHTML = '<td class="text-muted fw-semibold" style="font-size:.75rem;">' + s.rank + '</td>'
+              + '<td>'
+              + '<div class="fw-semibold text-dark">' + escHtml(s.product_name || "") + expandBtn + '</div>'
+              + '<div class="text-muted" style="font-size:.75rem;">'
+              + escHtml(s.manufacturer || "") + (s.model_code ? ' &bull; <code style="font-size:.7rem;">' + escHtml(s.model_code) + '</code>' : '')
+              + '</div>'
+              + (hasDetail
+                ? '<div class="collapse" id="' + rowId + '">'
+                  + '<div class="mt-2 pt-2 border-top">'
+                  + (s.fit_rationale ? '<div class="text-secondary mb-1" style="font-size:.78rem;"><i class="bi bi-info-circle me-1 text-info"></i>' + escHtml(s.fit_rationale) + '</div>' : '')
+                  + (s.market_availability ? '<div class="text-secondary mb-1" style="font-size:.78rem;"><i class="bi bi-geo-alt me-1 text-success"></i>' + escHtml(s.market_availability) + '</div>' : '')
+                  + (limitations ? '<div class="text-muted fw-semibold mt-1 mb-1" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;">Limitations</div><ul class="mb-0 ps-3">' + limitations + '</ul>' : '')
+                  + '</div></div>'
+                : '')
+              + '</td>'
+              + '<td><span class="badge bg-secondary" style="font-size:.72rem;">' + escHtml(s.system_type || "") + '</span></td>'
+              + '<td class="fw-semibold text-dark">' + escHtml(s.cooling_capacity || "--") + '</td>'
+              + '<td class="text-muted small">' + escHtml(s.cop_eer || "--") + '</td>'
+              + '<td class="fw-semibold" style="color:#15803d;font-size:.8rem;">' + escHtml(s.price_range_aed || "--") + '</td>'
+              + '<td style="text-align:center;">'
+              + '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">'
+              + '<div style="width:48px;height:48px;border-radius:50%;background:' + scoreBg + ';border:3px solid ' + scoreColor + ';display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;color:' + scoreColor + ';">' + score + '</div>'
+              + (standards ? '<div style="margin-top:3px;">' + standards + '</div>' : '')
+              + '</div>'
+              + '</td>'
+              + '<td>' + (benefits || '<span class="text-muted small">--</span>') + '</td>'
+              + '<td style="text-align:center;">' + citationCell + '</td>';
+
+            tbody.appendChild(tr);
+          });
+
+          results.classList.remove("d-none");
+        })
+        .catch(function(err){
+          spinner.classList.add("d-none");
+          fetchBtn.disabled = false;
+          fetchBtn.innerHTML = '<i class="bi bi-robot me-1"></i>Retry Analysis';
+          errMsg.textContent = "AI market analysis failed: " + err.message;
+          errBox.classList.remove("d-none");
+        });
+    });
+  }
+
+  /* HTML escape helper */
+  function escHtml(str){
+    if (typeof str !== "string") return str != null ? String(str) : "";
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+              .replace(/"/g,"&quot;").replace(/'/g,"&#x27;");
+  }
 })();
 </script>
 {% endblock %}
