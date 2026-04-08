@@ -81,7 +81,7 @@ class ReconciliationRunnerService:
         self.mode_resolver = ReconciliationModeResolver(self.config)
         self.router = ReconciliationExecutionRouter(
             self.tolerance,
-            partial_invoice_threshold_pct=getattr(self.config, 'partial_invoice_threshold_pct', 50.0),
+            partial_invoice_threshold_pct=getattr(self.config, 'partial_invoice_threshold_pct', 95.0),
         )
         self.classifier = ClassificationService()
         self.exception_builder = ExceptionBuilderService()

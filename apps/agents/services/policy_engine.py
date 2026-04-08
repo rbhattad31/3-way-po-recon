@@ -77,14 +77,24 @@ class PolicyEngine:
 
         # Rule 1b: PARTIAL_MATCH within auto-close tolerance band -> auto-close, skip agents
         #   Exception: GRN_NOT_FOUND in 3-way mode blocks auto-close (goods not confirmed received)
+        #   Exception: First-partial invoices (no prior invoices on PO) use
+        #   self-comparison so tolerances always pass; they must go to review.
         grn_blocks_close = (
             not is_two_way
             and not is_non_po
             and ExceptionType.GRN_NOT_FOUND in exc_types
         )
+        first_partial_blocks_close = any(
+            exc.get("is_first_partial") is True
+            for exc in result.exceptions.filter(
+                exception_type=ExceptionType.PARTIAL_INVOICE,
+            ).values_list("details", flat=True)
+            if isinstance(exc, dict)
+        )
         if (
             status == MatchStatus.PARTIAL_MATCH
             and not grn_blocks_close
+            and not first_partial_blocks_close
             and not is_non_po
             and self._within_auto_close_band(result)
         ):

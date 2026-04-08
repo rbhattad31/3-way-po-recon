@@ -57,13 +57,30 @@ class ClassificationService:
             )
             return MatchStatus.REQUIRES_REVIEW
 
-        # In 2-way mode, GRN issues are irrelevant
+        # In 2-way mode, GRN issues are irrelevant.
+        # For partial invoices in 3-way mode, missing GRN is expected
+        # (GRN may arrive with subsequent invoices) -- only flag receipt
+        # issues on GRNs that actually exist.
+        is_partial = header_result.is_partial_invoice if header_result else False
         grn_ok = True
         if not is_two_way and grn_result is not None:
-            # Missing GRN (grn_available=False) is itself a critical issue in 3-way mode
-            grn_ok = grn_result.grn_available and not grn_result.has_receipt_issues
+            if is_partial:
+                # Partial: missing GRN is acceptable; only flag receipt issues
+                grn_ok = not grn_result.has_receipt_issues
+            else:
+                # Full invoice: missing GRN is a critical issue in 3-way mode
+                grn_ok = grn_result.grn_available and not grn_result.has_receipt_issues
 
         # Gate 3: Full match
+        # First-partial invoices (no prior invoices on this PO) use
+        # self-comparison so tolerances always pass.  Classify them as
+        # PARTIAL_MATCH so a human can verify the partial billing amount
+        # before the case is closed.
+        is_first_partial = (
+            is_partial
+            and header_result is not None
+            and header_result.prior_invoice_count == 0
+        )
         if (
             header_result
             and header_result.all_ok
@@ -72,6 +89,12 @@ class ClassificationService:
             and line_result.all_within_tolerance
             and grn_ok
         ):
+            if is_first_partial:
+                logger.info(
+                    "Classification: PARTIAL_MATCH (first partial invoice -- "
+                    "amounts compared against self, needs human verification)"
+                )
+                return MatchStatus.PARTIAL_MATCH
             mode_label = "2-way" if is_two_way else "3-way"
             logger.info("Classification: MATCHED (full %s deterministic match)", mode_label)
             return MatchStatus.MATCHED

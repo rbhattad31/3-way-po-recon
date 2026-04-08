@@ -96,7 +96,7 @@ class ReconciliationResultService:
         # Line-level results
         result_line_map: Dict[int, ReconciliationResultLine] = {}
         if line_result:
-            result_line_map = self._save_line_results(result, line_result)
+            result_line_map = self._save_line_results(result, line_result, grn_result)
 
         # Exceptions
         if exceptions:
@@ -115,13 +115,26 @@ class ReconciliationResultService:
     # Line results
     # ------------------------------------------------------------------
     def _save_line_results(
-        self, result: ReconciliationResult, line_result: LineMatchResult
+        self,
+        result: ReconciliationResult,
+        line_result: LineMatchResult,
+        grn_result: Optional[GRNMatchResult] = None,
     ) -> Dict[int, ReconciliationResultLine]:
         """Create ReconciliationResultLine rows. Returns {inv_line_id: result_line}."""
+        # Build lookup: po_line_id -> qty_received from GRN comparisons
+        grn_qty_by_po_line: Dict[int, Decimal] = {}
+        if grn_result and grn_result.grn_available:
+            for cmp in grn_result.line_comparisons:
+                if cmp.po_line_id is not None and cmp.qty_received is not None:
+                    grn_qty_by_po_line[cmp.po_line_id] = cmp.qty_received
+
         objs: List[ReconciliationResultLine] = []
 
         for pair in line_result.pairs:
             rl = self._line_from_pair(result, pair)
+            # Merge GRN received quantity
+            if rl.po_line_id and rl.po_line_id in grn_qty_by_po_line:
+                rl.qty_received = grn_qty_by_po_line[rl.po_line_id]
             objs.append(rl)
 
         # Unmatched invoice lines not already covered

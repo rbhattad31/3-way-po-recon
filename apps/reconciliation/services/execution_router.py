@@ -96,7 +96,7 @@ class ReconciliationExecutionRouter:
         # output.header_result, output.line_result, output.grn_result
     """
 
-    def __init__(self, tolerance_engine: ToleranceEngine, partial_invoice_threshold_pct: float = 50.0):
+    def __init__(self, tolerance_engine: ToleranceEngine, partial_invoice_threshold_pct: float = 95.0):
         self._two_way = TwoWayMatchService(tolerance_engine)
         self._three_way = ThreeWayMatchService(tolerance_engine)
         self._partial_invoice_threshold_pct = partial_invoice_threshold_pct

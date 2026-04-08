@@ -423,6 +423,7 @@ def create_recon_config(tenant: CompanyProfile):
     config.enable_mode_resolver = True
     config.enable_two_way_for_services = True
     config.enable_grn_for_stock_items = True
+    config.partial_invoice_threshold_pct = 95.0
     config.default_reconciliation_mode = ReconciliationMode.THREE_WAY
     config.ap_processor_sees_all_cases = False
     config.save()

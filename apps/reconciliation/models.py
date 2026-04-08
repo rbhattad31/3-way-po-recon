@@ -55,7 +55,7 @@ class ReconciliationConfig(BaseModel):
         default=True, help_text="Auto-select 2-way mode for service invoices",
     )
     partial_invoice_threshold_pct = models.FloatField(
-        default=50.0,
+        default=95.0,
         help_text=(
             "When an invoice total is below this percentage of the PO total "
             "and no prior invoices exist, treat it as a partial/milestone invoice."

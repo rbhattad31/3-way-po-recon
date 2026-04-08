@@ -34,6 +34,7 @@ class PostingOrchestrator:
         cls,
         invoice_id: int,
         *,
+        tenant=None,
         user=None,
         trigger: str = "system",
     ) -> InvoicePosting:
