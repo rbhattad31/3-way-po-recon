@@ -8,6 +8,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, OuterRef, Q, Subquery
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.auditlog.services import AuditService
@@ -23,6 +24,7 @@ from apps.procurement.models import (
     BenchmarkResult,
     ComplianceResult,
     ExternalSourceRegistry,
+    HVACStoreProfile,
     ProcurementRequest,
     ProcurementRequestAttribute,
     RecommendationResult,
@@ -30,7 +32,68 @@ from apps.procurement.models import (
     ValidationResult,
 )
 
+from apps.procurement.agents.reason_summary_agent import ReasonSummaryAgent
+from apps.agents.services.llm_client import LLMClient, LLMMessage
+
 logger = logging.getLogger(__name__)
+
+
+HVAC_MANDATORY_FIELDS = [
+    ("f_country", "Country"),
+    ("f_city", "City"),
+    ("f_store_type", "Store Type"),
+    ("f_area_sqft", "Area (sq ft)"),
+    ("f_ambient_temp_max", "Ambient Temp Max (C)"),
+    ("f_budget_level", "Budget"),
+    ("f_energy_efficiency_priority", "Energy Priority"),
+]
+
+
+def _safe_float(value):
+    try:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_hvac_store_profile_defaults(post_data) -> dict:
+    return {
+        "brand": (post_data.get("f_brand") or "").strip(),
+        "country": (post_data.get("f_country") or "").strip(),
+        "city": (post_data.get("f_city") or "").strip(),
+        "store_type": (post_data.get("f_store_type") or "").strip(),
+        "store_format": (post_data.get("f_store_format") or "").strip(),
+        "area_sqft": _safe_float(post_data.get("f_area_sqft")),
+        "ceiling_height_ft": _safe_float(post_data.get("f_ceiling_height_ft")),
+        "operating_hours": (post_data.get("f_operating_hours") or "").strip(),
+        "footfall_category": (post_data.get("f_footfall_category") or "").strip(),
+        "ambient_temp_max": _safe_float(post_data.get("f_ambient_temp_max")),
+        "humidity_level": (post_data.get("f_humidity_level") or "").strip(),
+        "dust_exposure": (post_data.get("f_dust_exposure") or "").strip(),
+        "heat_load_category": (post_data.get("f_heat_load_category") or "").strip(),
+        "fresh_air_requirement": (post_data.get("f_fresh_air_requirement") or "").strip(),
+        "landlord_constraints": (post_data.get("f_landlord_constraints") or "").strip(),
+        "existing_hvac_type": (post_data.get("f_existing_hvac_type") or "").strip(),
+        "budget_level": (post_data.get("f_budget_level") or "").strip(),
+        "energy_efficiency_priority": (post_data.get("f_energy_efficiency_priority") or "").strip(),
+    }
+
+
+def _hvac_create_context() -> dict:
+    return {
+        "type_choices": ProcurementRequestType.choices,
+        "priority_choices": [
+            ("LOW", "Low"),
+            ("MEDIUM", "Medium"),
+            ("HIGH", "High"),
+            ("CRITICAL", "Critical"),
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +243,20 @@ def hvac_create(request):
     """Create a new HVAC procurement request using the Landmark Group HVAC form."""
     if request.method == "POST":
         from apps.procurement.services.request_service import ProcurementRequestService
+        from apps.procurement.services.analysis_run_service import AnalysisRunService
+        from apps.procurement.tasks import run_analysis_task
+
+        missing_fields = []
+        for field_name, field_label in HVAC_MANDATORY_FIELDS:
+            if not (request.POST.get(field_name) or "").strip():
+                missing_fields.append(field_label)
+
+        if missing_fields:
+            messages.error(
+                request,
+                "Please fill all mandatory fields before submitting: " + ", ".join(missing_fields),
+            )
+            return render(request, "procurement/request_create_hvac.html", _hvac_create_context())
 
         attrs_data = []
         attr_codes = request.POST.getlist("attr_code[]")
@@ -212,19 +289,129 @@ def hvac_create(request):
                 created_by=request.user,
                 attributes=attrs_data if attrs_data else None,
             )
+
+            store_id = (request.POST.get("f_store_id") or "").strip()
+            if store_id:
+                defaults = _build_hvac_store_profile_defaults(request.POST)
+                defaults["updated_by"] = request.user
+                profile, created = HVACStoreProfile.objects.update_or_create(
+                    store_id=store_id,
+                    defaults=defaults,
+                )
+                if created:
+                    profile.created_by = request.user
+                    profile.save(update_fields=["created_by"])
+
+            run = AnalysisRunService.create_run(
+                request=proc_request,
+                run_type=AnalysisRunType.RECOMMENDATION,
+                triggered_by=request.user,
+            )
+            run_analysis_task.delay(run.pk)
+
             messages.success(
                 request,
-                f"HVAC Procurement Request '{proc_request.title}' created successfully.",
+                (
+                    f"HVAC Procurement Request '{proc_request.title}' created successfully. "
+                    "Recommendation analysis started."
+                ),
             )
             return redirect("procurement:request_workspace", pk=proc_request.pk)
         except Exception as exc:
             logger.exception("hvac_create failed: %s", exc)
             messages.error(request, f"Failed to create HVAC request: {exc}")
 
-    return render(request, "procurement/request_create_hvac.html", {
-        "type_choices": ProcurementRequestType.choices,
-        "priority_choices": [("LOW", "Low"), ("MEDIUM", "Medium"), ("HIGH", "High"), ("CRITICAL", "Critical")],
-    })
+    return render(request, "procurement/request_create_hvac.html", _hvac_create_context())
+
+
+@login_required
+@permission_required_code("procurement.create")
+def api_hvac_store_suggestions(request):
+    """Return Store ID suggestions for HVAC form autosuggest/autofill."""
+    query = (request.GET.get("q") or "").strip()
+
+    qs = HVACStoreProfile.objects.filter(is_active=True)
+    if query:
+        qs = qs.filter(store_id__icontains=query)
+
+    limit = 50 if query else 500
+    qs = qs.order_by("store_id")[:limit]
+
+    results = []
+    for profile in qs:
+        results.append({
+            "store_id": profile.store_id,
+            "brand": profile.brand,
+            "country": profile.country,
+            "city": profile.city,
+            "store_type": profile.store_type,
+            "store_format": profile.store_format,
+            "area_sqft": profile.area_sqft,
+            "ceiling_height_ft": profile.ceiling_height_ft,
+            "operating_hours": profile.operating_hours,
+            "footfall_category": profile.footfall_category,
+            "ambient_temp_max": profile.ambient_temp_max,
+            "humidity_level": profile.humidity_level,
+            "dust_exposure": profile.dust_exposure,
+            "heat_load_category": profile.heat_load_category,
+            "fresh_air_requirement": profile.fresh_air_requirement,
+            "landlord_constraints": profile.landlord_constraints,
+            "existing_hvac_type": profile.existing_hvac_type,
+            "budget_level": profile.budget_level,
+            "energy_efficiency_priority": profile.energy_efficiency_priority,
+        })
+
+    return JsonResponse({"results": results})
+
+
+@login_required
+@permission_required_code("procurement.create")
+def api_hvac_store_create(request):
+    """AJAX POST -- create a new HVACStoreProfile and return the full profile JSON."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    data = request.POST
+    store_id = (data.get("store_id") or "").strip()
+    if not store_id:
+        return JsonResponse({"error": "Store ID is required."}, status=400)
+
+    if HVACStoreProfile.objects.filter(store_id=store_id).exists():
+        return JsonResponse({"error": f"Store ID '{store_id}' already exists. Please choose a different ID."},
+                            status=409)
+
+    try:
+        defaults = _build_hvac_store_profile_defaults(data)
+        profile = HVACStoreProfile.objects.create(
+            store_id=store_id,
+            created_by=request.user,
+            **defaults,
+        )
+        result = {
+            "store_id": profile.store_id,
+            "brand": profile.brand,
+            "country": profile.country,
+            "city": profile.city,
+            "store_type": profile.store_type,
+            "store_format": profile.store_format,
+            "area_sqft": profile.area_sqft,
+            "ceiling_height_ft": profile.ceiling_height_ft,
+            "operating_hours": profile.operating_hours,
+            "footfall_category": profile.footfall_category,
+            "ambient_temp_max": profile.ambient_temp_max,
+            "humidity_level": profile.humidity_level,
+            "dust_exposure": profile.dust_exposure,
+            "heat_load_category": profile.heat_load_category,
+            "fresh_air_requirement": profile.fresh_air_requirement,
+            "landlord_constraints": profile.landlord_constraints,
+            "existing_hvac_type": profile.existing_hvac_type,
+            "budget_level": profile.budget_level,
+            "energy_efficiency_priority": profile.energy_efficiency_priority,
+        }
+        return JsonResponse({"ok": True, "profile": result}, status=201)
+    except Exception as exc:
+        logger.exception("api_hvac_store_create failed: %s", exc)
+        return JsonResponse({"error": str(exc)}, status=500)
 
 
 # ---------------------------------------------------------------------------
@@ -271,12 +458,21 @@ def request_workspace(request, pk):
     )
     validation_items = validation_result.items.all() if validation_result else []
 
+    # ReasonSummaryAgent -- structured explanation for the workspace UI
+    reason_summary = None
+    if recommendation:
+        try:
+            reason_summary = ReasonSummaryAgent.generate(recommendation)
+        except Exception as _e:
+            logger.warning("ReasonSummaryAgent failed for request %s: %s", pk, _e)
+
     return render(request, "procurement/request_workspace.html", {
         "proc_request": proc_request,
         "attributes": attributes,
         "quotations": quotations,
         "runs": runs,
         "recommendation": recommendation,
+        "reason_summary": reason_summary,
         "benchmarks": benchmarks,
         "compliance": compliance,
         "validation_result": validation_result,
@@ -1702,3 +1898,163 @@ def api_config_hvacrule_detail(request, pk):
             return JsonResponse({"success": False, "message": str(exc)}, status=400)
 
     return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+# ---------------------------------------------------------------------------
+# External Suggestions API
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.view")
+def api_external_suggestions(request, pk):
+    """Return AI-generated market intelligence with citations for this HVAC request.
+
+    GET /procurement/<pk>/external-suggestions/
+    Calls the LLM to rephrase the request, fetch market-relevant product suggestions,
+    and return structured tabular data with citations.
+    """
+    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+
+    # ---- Gather all request attributes ----
+    attributes = list(
+        ProcurementRequestAttribute.objects
+        .filter(request=proc_request)
+        .values("attribute_code", "attribute_label", "value_text", "value_number")
+    )
+    attr_lines = []
+    for a in attributes:
+        val = a["value_text"] or (str(a["value_number"]) if a["value_number"] else "")
+        if val:
+            attr_lines.append(f"  - {a['attribute_label']}: {val}")
+    attrs_block = "\n".join(attr_lines) if attr_lines else "  (no attributes recorded)"
+
+    # ---- Gather recommendation if present ----
+    recommendation = (
+        RecommendationResult.objects
+        .filter(run__request=proc_request)
+        .order_by("-created_at")
+        .first()
+    )
+    rec_block = "(none yet)"
+    system_code = ""
+    system_name = ""
+    if recommendation:
+        payload = recommendation.output_payload_json or {}
+        system_code = payload.get("system_type_code", "")
+        details = recommendation.reasoning_details_json or payload.get("reasoning_details", {})
+        system_name = (
+            details.get("system_type", {}).get("name", "")
+            if isinstance(details, dict) else ""
+        ) or system_code.replace("_", " ").title()
+        rec_block = (
+            f"Recommended System: {system_name} ({system_code})\n"
+            f"Confidence: {int((recommendation.confidence_score or 0) * 100)}%\n"
+            f"Compliance: {recommendation.compliance_status or 'N/A'}"
+        )
+
+    # ---- Build the LLM prompt ----
+    SYSTEM_PROMPT = (
+        "You are a senior HVAC market intelligence analyst specializing in commercial "
+        "and retail HVAC systems for the GCC/Middle East region. "
+        "You have deep knowledge of manufacturer product lines (Daikin, Carrier, Trane, "
+        "York, Mitsubishi Electric, LG, Samsung, Gree, Midea, Voltas), pricing in AED, "
+        "regional standards (ESMA, ASHRAE, Cooling India), and distributor availability. "
+        "Respond ONLY with a single valid JSON object and nothing else."
+    )
+
+    USER_PROMPT = f"""Analyze the following HVAC procurement request and generate a comprehensive
+market intelligence report with at least 5 product suggestions.
+
+=== PROCUREMENT REQUEST ===
+Title: {proc_request.title}
+Description: {proc_request.description or '(not provided)'}
+Country: {proc_request.geography_country or 'UAE'}
+City: {proc_request.geography_city or ''}
+Priority: {proc_request.priority}
+Currency: {proc_request.currency or 'AED'}
+
+=== REQUEST ATTRIBUTES ===
+{attrs_block}
+
+=== INTERNAL AI RECOMMENDATION ===
+{rec_block}
+
+Return a JSON object with this exact structure:
+{{
+  "rephrased_query": "<one sentence professional market query summarising this need>",
+  "ai_summary": "<2-3 sentence executive summary of market context and key considerations>",
+  "market_context": "<brief note on current market availability, lead times, or pricing trends in this region>",
+  "suggestions": [
+    {{
+      "rank": 1,
+      "product_name": "<full product/series name>",
+      "manufacturer": "<brand name>",
+      "model_code": "<specific model or series code>",
+      "system_type": "<e.g. VRF, Chilled Water AHU, Split DX, Cassette, Rooftop>",
+      "cooling_capacity": "<e.g. 8 TR - 12 TR>",
+      "cop_eer": "<e.g. COP 3.8 / EER 13.0>",
+      "price_range_aed": "<e.g. 45,000 - 70,000 AED supply & install>",
+      "market_availability": "<availability note for this region>",
+      "key_benefits": ["benefit 1", "benefit 2", "benefit 3"],
+      "limitations": ["limitation 1", "limitation 2"],
+      "fit_score": 88,
+      "fit_rationale": "<one sentence why this fits or does not fit this request>",
+      "standards_compliance": ["ASHRAE 90.1", "ESMA UAE"],
+      "citation_url": "<manufacturer product page URL>",
+      "citation_source": "<source name e.g. Daikin Middle East>",
+      "category": "<MANUFACTURER or DISTRIBUTOR>"
+    }}
+  ]
+}}
+Provide 5 to 7 suggestions ranked by fit_score descending. Use only real product lines.
+"""
+
+    # ---- Call the LLM ----
+    try:
+        llm = LLMClient(temperature=0.2, max_tokens=3000)
+        messages = [
+            LLMMessage(role="system", content=SYSTEM_PROMPT),
+            LLMMessage(role="user", content=USER_PROMPT),
+        ]
+        resp = llm.chat(messages, response_format={"type": "json_object"})
+        raw_content = (resp.content or "").strip()
+        data = json.loads(raw_content)
+    except Exception as exc:
+        logger.warning("api_external_suggestions LLM call failed for pk=%s: %s", pk, exc)
+        # Graceful fallback: return minimal static response
+        return JsonResponse({
+            "system_code": system_code,
+            "system_name": system_name,
+            "rephrased_query": f"Market data for {system_name or 'HVAC system'} in {proc_request.geography_country or 'UAE'}",
+            "ai_summary": "AI market analysis is temporarily unavailable. Please try again shortly.",
+            "market_context": "",
+            "suggestions": [],
+            "error": str(exc),
+        }, status=200)
+
+    # ---- Normalise / enrich suggestions ----
+    _ICONS = {
+        "MANUFACTURER":   "bi-building",
+        "DISTRIBUTOR":    "bi-truck",
+        "REGULATOR":      "bi-shield-check",
+        "STANDARDS_BODY": "bi-patch-check",
+        "OTHER":          "bi-link-45deg",
+    }
+    suggestions = data.get("suggestions", [])
+    for s in suggestions:
+        cat = s.get("category", "MANUFACTURER").upper()
+        s["icon_class"] = _ICONS.get(cat, "bi-building")
+        # Clamp fit_score
+        try:
+            s["fit_score"] = max(0, min(100, int(s.get("fit_score", 0))))
+        except (TypeError, ValueError):
+            s["fit_score"] = 0
+
+    return JsonResponse({
+        "system_code": system_code,
+        "system_name": system_name,
+        "rephrased_query": data.get("rephrased_query", ""),
+        "ai_summary": data.get("ai_summary", ""),
+        "market_context": data.get("market_context", ""),
+        "suggestions": suggestions,
+    })
+

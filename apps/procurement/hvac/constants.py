@@ -496,9 +496,8 @@ HVAC_ATTRIBUTE_SCHEMA: List[Dict[str, Any]] = [
 
 # Attributes that are required for recommendation to proceed
 HVAC_REQUIRED_FOR_RECOMMENDATION = {
-    "store_id", "brand", "country", "city", "store_type", "store_format",
-    "area_sqft", "ceiling_height_ft", "ambient_temp_max", "humidity_level",
-    "dust_exposure", "heat_load_category", "landlord_constraints", "budget_level",
+    "country", "city", "store_type", "area_sqft", "ambient_temp_max",
+    "budget_level", "energy_efficiency_priority",
 }
 
 # Attributes that are required for benchmarking to proceed
