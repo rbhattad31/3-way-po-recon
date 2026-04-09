@@ -136,6 +136,7 @@ class ReconciliationRunnerService:
                     lf_trace,
                     "reconciliation_run",
                     metadata={
+                        "tenant_id": getattr(recon_run, "tenant_id", None),
                         "run_pk": recon_run.pk,
                         "total_invoices": len(invoices),
                         "config": self.config.name,
@@ -166,6 +167,7 @@ class ReconciliationRunnerService:
                     user_id=getattr(triggered_by, "pk", None) if triggered_by else None,
                     session_id=_run_session_id,
                     metadata={
+                        "tenant_id": getattr(recon_run, "tenant_id", None),
                         "run_pk": recon_run.pk,
                         "total_invoices": len(invoices),
                         "config": self.config.name,
@@ -287,11 +289,13 @@ class ReconciliationRunnerService:
         )
 
         _tid = lf_trace_id or getattr(run, "trace_id", "") or str(run.pk)
+        _tenant_id = getattr(run, "tenant_id", None)
 
         # ---------------------------------------------------------------
         # 1. PO Lookup
         # ---------------------------------------------------------------
         _lf_po = start_span_safe(lf_trace, "po_lookup", metadata={
+            "tenant_id": _tenant_id,
             "invoice_id": invoice.pk,
             "po_number": invoice.po_number or "",
         })
@@ -558,7 +562,7 @@ class ReconciliationRunnerService:
         })
         _review_created = False
         if match_status == MatchStatus.REQUIRES_REVIEW:
-            from apps.reviews.services import ReviewWorkflowService
+            from apps.cases.services.review_workflow_service import ReviewWorkflowService
             ReviewWorkflowService.create_assignment(
                 result=result,
                 priority=3 if exceptions else 5,
@@ -602,6 +606,7 @@ class ReconciliationRunnerService:
 
         # Update root trace metadata with eval-ready summary
         _eval_meta = {
+            "tenant_id": _tenant_id,
             "invoice_id": invoice.pk,
             "reconciliation_result_id": result.pk,
             "reconciliation_run_id": run.pk,

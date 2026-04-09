@@ -199,7 +199,7 @@ class PostingSubmitResolver:
                     is_root=True,
                 )
         except Exception:
-            pass
+            logger.debug("Langfuse span finalization failed for submit (non-fatal)", exc_info=True)
 
         PostingSubmitResolver._log_submission(
             submission_type, result, payload, start,
@@ -283,7 +283,7 @@ class PostingSubmitResolver:
                     is_root=True,
                 )
         except Exception:
-            pass
+            logger.debug("Langfuse span finalization failed for get_status (non-fatal)", exc_info=True)
 
         PostingSubmitResolver._log_submission(
             ERPSubmissionType.GET_STATUS, result, {"document_number": erp_document_number},

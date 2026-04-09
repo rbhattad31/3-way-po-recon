@@ -143,3 +143,27 @@ class RecommendationService:
             recommendation_id, "accepted" if accepted else "rejected", user,
         )
         return rec
+
+    @staticmethod
+    def mark_recommendation_overridden(
+        rec_id: int,
+        decision,
+        reason: str,
+        user=None,
+    ) -> AgentRecommendation:
+        """Mark a recommendation as overridden by a human case decision."""
+        rec = AgentRecommendation.objects.get(pk=rec_id)
+        rec.accepted = False
+        rec.accepted_by = user
+        rec.accepted_at = timezone.now()
+        rec.overridden_by_decision = decision
+        rec.override_reason = reason
+        rec.save(update_fields=[
+            "accepted", "accepted_by", "accepted_at",
+            "overridden_by_decision", "override_reason", "updated_at",
+        ])
+        logger.info(
+            "Recommendation %s overridden by decision %s: %s",
+            rec_id, getattr(decision, "pk", None), reason[:80],
+        )
+        return rec

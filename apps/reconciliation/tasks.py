@@ -24,7 +24,7 @@ from apps.reconciliation.models import ReconciliationConfig, ReconciliationRun
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=1, default_retry_delay=60)
+@shared_task(bind=True, max_retries=5, default_retry_delay=60)
 def run_reconciliation_task(
     self,
     tenant_id: Optional[int] = None,
@@ -93,7 +93,7 @@ def run_reconciliation_task(
                         invoice_id=_single_invoice_id, is_active=True,
                     ).values_list("case_number", flat=True).first()
                 except Exception:
-                    pass
+                    logger.debug("Case number lookup failed for Langfuse session_id (non-fatal)", exc_info=True)
 
             _lf_task_trace = start_trace_safe(
                 _lf_task_trace_id,
@@ -104,6 +104,7 @@ def run_reconciliation_task(
                     invoice_id=_single_invoice_id,
                 ),
                 metadata=build_observability_context(
+                    tenant_id=tenant_id,
                     invoice_id=_single_invoice_id,
                     actor_user_id=triggered_by.pk if triggered_by else None,
                     trigger="manual" if triggered_by_id else "auto",
@@ -117,12 +118,12 @@ def run_reconciliation_task(
                 ),
             )
     except Exception:
-        pass
+        logger.debug("Langfuse trace start failed for reconciliation task (non-fatal)", exc_info=True)
     try:
         from apps.core.langfuse_client import set_current_span
         set_current_span(_lf_task_trace)
     except Exception:
-        pass
+        logger.debug("Langfuse set_current_span failed (non-fatal)", exc_info=True)
 
     run = None
     try:
@@ -139,7 +140,7 @@ def run_reconciliation_task(
                 run.langfuse_trace_id = _lf_task_trace_id
                 run.save(update_fields=["langfuse_trace_id", "updated_at"])
             except Exception:
-                pass
+                logger.debug("Failed to persist Langfuse trace ID on run (non-fatal)", exc_info=True)
     except Exception as exc:
         logger.exception("Reconciliation task failed")
         try:
@@ -147,7 +148,7 @@ def run_reconciliation_task(
             end_span_safe(_lf_task_trace, output={"error": str(exc)[:200]}, level="ERROR")
             _lf_task_trace = None
         except Exception:
-            pass
+            logger.debug("Langfuse error span failed (non-fatal)", exc_info=True)
         from apps.core.utils import safe_retry
         safe_retry(self, exc)
     finally:
@@ -169,7 +170,7 @@ def run_reconciliation_task(
                     })
                 end_span_safe(_lf_task_trace, output=_run_output, is_root=True)
         except Exception:
-            pass
+            logger.debug("Langfuse trace finalization failed (non-fatal)", exc_info=True)
 
     # Link reconciliation results back to their APCase records.
     # Cases are created during extraction approval (before recon runs),
@@ -224,7 +225,7 @@ def run_reconciliation_task(
             score_trace_safe(_lf_task_trace_id, RECON_ROUTED_TO_AGENTS, 1.0 if _routed_agents > 0 else 0.0, span=_lf_task_trace)
             # RECON_ROUTED_TO_REVIEW is emitted per-invoice in runner_service (canonical point)
         except Exception:
-            pass
+            logger.debug("Langfuse score recording failed (non-fatal)", exc_info=True)
 
     return {
         "status": "ok",

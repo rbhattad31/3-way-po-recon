@@ -198,10 +198,11 @@ class ExtractionApprovalService:
     ) -> ExtractionApproval:
         """Approve an extraction after optional field corrections.
 
-        Concurrency: Locks the ExtractionApproval row via select_for_update()
+        Concurrency: Locks the ExtractionApproval row via select_for_update(nowait=True)
         inside the atomic block.  Only PENDING → APPROVED is allowed.
         Simultaneous approve/reject calls will serialize on the row lock;
-        the second caller will see a non-PENDING status and raise ValueError.
+        the second caller will receive an OperationalError immediately rather than
+        blocking indefinitely, preventing deadlocks under high concurrency.
 
         ``corrections`` format::
 
@@ -213,12 +214,21 @@ class ExtractionApprovalService:
                 ]
             }
         """
-        # Lock the row to prevent concurrent approve/reject/reprocess
-        approval = (
-            ExtractionApproval.objects
-            .select_for_update()
-            .get(pk=approval.pk)
-        )
+        from django.db import OperationalError as DBOperationalError
+        # Lock the row to prevent concurrent approve/reject/reprocess.
+        # nowait=True raises OperationalError immediately if another transaction
+        # holds the lock, preventing indefinite blocking / deadlocks.
+        try:
+            approval = (
+                ExtractionApproval.objects
+                .select_for_update(nowait=True)
+                .get(pk=approval.pk)
+            )
+        except DBOperationalError:
+            raise ValueError(
+                f"Approval {approval.pk} is currently being processed by another request. "
+                "Please retry in a moment."
+            )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
@@ -405,15 +415,21 @@ class ExtractionApprovalService:
     ) -> ExtractionApproval:
         """Reject an extraction — invoice stays in PENDING_APPROVAL.
 
-        Concurrency: Locks the ExtractionApproval row via select_for_update().
+        Concurrency: Locks the ExtractionApproval row via select_for_update(nowait=True).
         Only PENDING → REJECTED is allowed.
         """
-        # Lock the row to prevent concurrent approve/reject/reprocess
-        approval = (
-            ExtractionApproval.objects
-            .select_for_update()
-            .get(pk=approval.pk)
-        )
+        from django.db import OperationalError as DBOperationalError
+        try:
+            approval = (
+                ExtractionApproval.objects
+                .select_for_update(nowait=True)
+                .get(pk=approval.pk)
+            )
+        except DBOperationalError:
+            raise ValueError(
+                f"Approval {approval.pk} is currently being processed by another request. "
+                "Please retry in a moment."
+            )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 

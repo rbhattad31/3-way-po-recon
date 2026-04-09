@@ -20,21 +20,21 @@ from apps.documents.models import InvoiceLineItem, PurchaseOrderLineItem
 # ------------------------------------------------------------------
 # Confidence bands
 # ------------------------------------------------------------------
-BAND_HIGH = "HIGH"          # >= 0.85
-BAND_GOOD = "GOOD"          # 0.75 .. <0.85
-BAND_MODERATE = "MODERATE"  # 0.62 .. <0.75
-BAND_LOW = "LOW"            # 0.50 .. <0.62
-BAND_NONE = "NONE"          # < 0.50
+BAND_HIGH = "HIGH"          # >= 0.80
+BAND_GOOD = "GOOD"          # 0.68 .. <0.80
+BAND_MODERATE = "MODERATE"  # 0.52 .. <0.68
+BAND_LOW = "LOW"            # 0.40 .. <0.52
+BAND_NONE = "NONE"          # < 0.40
 
 
 def confidence_band(score: float) -> str:
-    if score >= 0.85:
+    if score >= 0.80:
         return BAND_HIGH
-    if score >= 0.75:
+    if score >= 0.68:
         return BAND_GOOD
-    if score >= 0.62:
+    if score >= 0.52:
         return BAND_MODERATE
-    if score >= 0.50:
+    if score >= 0.40:
         return BAND_LOW
     return BAND_NONE
 
@@ -58,17 +58,20 @@ STATUS_UNRESOLVED = "UNRESOLVED"
 # ------------------------------------------------------------------
 # Thresholds (named constants, single source of truth)
 # ------------------------------------------------------------------
-STRONG_MATCH_SCORE = 0.75
+# Lowered from 0.75 / 0.62 / 0.50 because item_code weight was
+# redistributed from 0.30 to 0.05 (vendor item codes rarely match
+# buyer item codes). Description signals now dominate scoring.
+STRONG_MATCH_SCORE = 0.68
 STRONG_MATCH_GAP = 0.10
 
-MODERATE_MATCH_SCORE = 0.62
+MODERATE_MATCH_SCORE = 0.52
 MODERATE_MATCH_GAP = 0.08
 
-WEAK_THRESHOLD = 0.50
+WEAK_THRESHOLD = 0.40
 
 AMBIGUITY_GAP = 0.08
 AMBIGUITY_CLOSE_RANGE = 0.05
-AMBIGUITY_CLOSE_MIN_SCORE = 0.55
+AMBIGUITY_CLOSE_MIN_SCORE = 0.45
 
 
 # ------------------------------------------------------------------
@@ -103,6 +106,7 @@ class LineCandidateScore:
     # Raw similarity values (for explainability)
     token_similarity_raw: float = 0.0
     fuzzy_similarity_raw: float = 0.0
+    containment_ratio: float = 0.0   # shorter-set recall (PO tokens in invoice)
     qty_variance_pct: Optional[float] = None
     price_variance_pct: Optional[float] = None
     amount_variance_pct: Optional[float] = None

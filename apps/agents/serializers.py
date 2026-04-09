@@ -4,6 +4,7 @@ from rest_framework import serializers
 from apps.agents.models import (
     AgentDefinition,
     AgentEscalation,
+    AgentMessage,
     AgentRecommendation,
     AgentRun,
     AgentStep,
@@ -91,6 +92,15 @@ class AgentEscalationSerializer(serializers.ModelSerializer):
         ]
 
 
+class AgentMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AgentMessage
+        fields = [
+            "id", "role", "content", "token_count",
+            "message_index", "created_at",
+        ]
+
+
 class AgentRunDetailSerializer(serializers.ModelSerializer):
     agent_name = serializers.CharField(
         source="agent_definition.name", read_only=True, default=""
@@ -100,6 +110,7 @@ class AgentRunDetailSerializer(serializers.ModelSerializer):
     decisions = DecisionLogSerializer(many=True, read_only=True)
     recommendations = AgentRecommendationSerializer(many=True, read_only=True)
     escalations = AgentEscalationSerializer(many=True, read_only=True)
+    messages = AgentMessageSerializer(many=True, read_only=True)
 
     class Meta:
         model = AgentRun
@@ -111,7 +122,7 @@ class AgentRunDetailSerializer(serializers.ModelSerializer):
             "duration_ms", "error_message",
             "started_at", "completed_at",
             "steps", "tool_calls", "decisions",
-            "recommendations", "escalations",
+            "recommendations", "escalations", "messages",
             "created_at",
         ]
 

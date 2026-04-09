@@ -57,6 +57,11 @@ def bulk_job_list(request):
         .order_by("-created_at")
     )
 
+    # Scope to current tenant; superusers see all jobs
+    tenant = getattr(request, "tenant", None)
+    if tenant is not None:
+        jobs_qs = jobs_qs.filter(tenant=tenant)
+
     status_filter = request.GET.get("status")
     if status_filter and status_filter in dict(BulkJobStatus.choices):
         jobs_qs = jobs_qs.filter(status=status_filter)
@@ -103,6 +108,7 @@ def bulk_job_start(request):
     job = BulkExtractionService.create_job(
         source_connection=source,
         started_by=request.user,
+        tenant=getattr(request, "tenant", None),
     )
 
     # Dispatch via Celery (or sync fallback)
@@ -191,12 +197,11 @@ def bulk_source_test(request):
 )
 def bulk_job_detail(request, job_id: int):
     """Show bulk job summary and item-level details."""
-    job = get_object_or_404(
-        BulkExtractionJob.objects.select_related(
-            "source_connection", "started_by",
-        ),
-        pk=job_id,
-    )
+    tenant = getattr(request, "tenant", None)
+    job_qs = BulkExtractionJob.objects.select_related("source_connection", "started_by")
+    if tenant is not None:
+        job_qs = job_qs.filter(tenant=tenant)
+    job = get_object_or_404(job_qs, pk=job_id)
 
     items_qs = job.items.select_related(
         "document_upload", "extraction_run",
@@ -269,7 +274,14 @@ def bulk_source_list(request):
     entity_type="BulkSourceConnection",
 )
 def bulk_source_edit(request, pk: int):
-    """Edit an existing BulkSourceConnection."""
+    """Edit an existing BulkSourceConnection.
+
+    BulkSourceConnection is platform-level configuration. Only platform admins
+    and superusers should be able to edit connections.
+    """
+    if not (request.user.is_superuser or getattr(request.user, "is_platform_admin", False)):
+        from django.core.exceptions import PermissionDenied
+        raise PermissionDenied("Only platform admins can edit source connections.")
     source = get_object_or_404(BulkSourceConnection, pk=pk)
 
     if request.method == "POST":
@@ -315,7 +327,14 @@ def bulk_source_edit(request, pk: int):
 @require_POST
 @permission_required_code("extraction.bulk_create")
 def bulk_source_delete(request, pk: int):
-    """Deactivate (soft-delete) a source connection."""
+    """Deactivate (soft-delete) a source connection.
+
+    BulkSourceConnection is platform-level configuration. Only platform admins
+    and superusers should be able to deactivate connections.
+    """
+    if not (request.user.is_superuser or getattr(request.user, "is_platform_admin", False)):
+        from django.core.exceptions import PermissionDenied
+        raise PermissionDenied("Only platform admins can delete source connections.")
     source = get_object_or_404(BulkSourceConnection, pk=pk)
     source.is_active = False
     source.save(update_fields=["is_active", "updated_at"])
@@ -332,7 +351,11 @@ def bulk_job_retry(request, job_id: int):
     from apps.extraction.bulk_tasks import run_bulk_job_task
     from django.utils import timezone
 
-    job = get_object_or_404(BulkExtractionJob, pk=job_id)
+    tenant = getattr(request, "tenant", None)
+    job_qs = BulkExtractionJob.objects.all()
+    if tenant is not None:
+        job_qs = job_qs.filter(tenant=tenant)
+    job = get_object_or_404(job_qs, pk=job_id)
 
     # Only allow retry for non-running states
     if job.status in (BulkJobStatus.SCANNING, BulkJobStatus.PROCESSING):

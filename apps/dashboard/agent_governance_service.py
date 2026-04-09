@@ -715,7 +715,7 @@ class AgentGovernanceDashboardService:
             "permission_source": run.permission_source or "",
             "access_granted": run.access_granted,
             "prompt_version": run.prompt_version or "",
-            "cost_estimate": float(run.cost_estimate or 0),
+            "cost_estimate": float(run.actual_cost_usd or run.cost_estimate or 0),
             "llm_model_used": run.llm_model_used or "",
             "prompt_tokens": run.prompt_tokens or 0,
             "completion_tokens": run.completion_tokens or 0,

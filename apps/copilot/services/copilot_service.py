@@ -280,7 +280,7 @@ class APCopilotService:
     @staticmethod
     def _scoped_reviews(user, tenant=None):
         """Return ReviewAssignment queryset scoped to user."""
-        from apps.reviews.models import ReviewAssignment
+        from apps.cases.models import ReviewAssignment
         qs = ReviewAssignment.objects.all()
         if tenant is not None:
             qs = qs.filter(tenant=tenant)
@@ -400,6 +400,7 @@ class APCopilotService:
                 user_id=user.pk if user else None,
                 session_id=f"copilot-{session.pk}",
                 metadata={
+                    "tenant_id": getattr(tenant, "pk", None) if tenant else None,
                     "session_id": str(session.pk),
                     "case_id": case_id,
                     "role": primary_role,
@@ -1028,6 +1029,7 @@ class APCopilotService:
                 user_id=user.pk if user else None,
                 session_id=f"copilot-{session.pk}",
                 metadata={
+                    "tenant_id": getattr(session, "tenant_id", None),
                     "session_id": str(session.pk),
                     "case_id": session.linked_case_id,
                 },

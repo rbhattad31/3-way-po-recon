@@ -33,7 +33,7 @@ All raw string score names replaced with constants from `evaluation_constants.py
 | `apps/extraction/bulk_tasks.py` | 1 score call -> `EXTRACTION_BULK_JOB_SUCCESS_RATE` |
 | `apps/extraction/services/approval_service.py` | 5 score calls -> constants |
 | `apps/posting_core/services/posting_pipeline.py` | 2 score calls -> `POSTING_FINAL_CONFIDENCE`, `POSTING_FINAL_REQUIRES_REVIEW`; persist `langfuse_trace_id` on `PostingRun` |
-| `apps/reviews/services.py` | 9 score calls -> constants |
+| `apps/cases/services/review_workflow_service.py` | 9 score calls -> constants |
 | `apps/copilot/services/copilot_service.py` | 1 score call -> `COPILOT_SESSION_LENGTH` |
 
 ### DB Model Changes

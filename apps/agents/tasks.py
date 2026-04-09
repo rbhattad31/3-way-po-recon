@@ -78,6 +78,7 @@ def run_agent_pipeline_task(self, tenant_id: int | None = None, reconciliation_r
                     invoice_id=result.invoice_id,
                 ),
                 metadata=build_observability_context(
+                    tenant_id=tenant_id,
                     invoice_id=result.invoice_id,
                     reconciliation_result_id=reconciliation_result_id,
                     actor_user_id=actor_user_id,

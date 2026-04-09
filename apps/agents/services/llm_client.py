@@ -62,16 +62,24 @@ class LLMResponse:
 class LLMClient:
     """Unified wrapper around Azure OpenAI / OpenAI chat completions."""
 
+    # Default per-call timeout in seconds (overridable via LLM_REQUEST_TIMEOUT env var).
+    # Prevents stalled LLM calls from blocking Celery workers indefinitely.
+    DEFAULT_TIMEOUT_SECONDS = 120
+
     def __init__(
         self,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        timeout: Optional[int] = None,
     ):
         provider = getattr(settings, "LLM_PROVIDER", "azure_openai")
         self.model = model or getattr(settings, "LLM_MODEL_NAME", "gpt-4o")
         self.temperature = temperature if temperature is not None else getattr(settings, "LLM_TEMPERATURE", 0.1)
         self.max_tokens = max_tokens or getattr(settings, "LLM_MAX_TOKENS", 4096)
+        self.timeout = timeout if timeout is not None else int(
+            getattr(settings, "LLM_REQUEST_TIMEOUT", self.DEFAULT_TIMEOUT_SECONDS)
+        )
 
         if provider == "azure_openai":
             self._client = AzureOpenAI(
@@ -113,9 +121,12 @@ class LLMClient:
             kwargs["tools"] = [self._tool_to_dict(t) for t in tools]
             kwargs["tool_choice"] = tool_choice
 
-        logger.debug("LLM request: model=%s messages=%d tools=%d", self.model, len(messages), len(tools or []))
+        logger.debug(
+            "LLM request: model=%s messages=%d tools=%d timeout=%ds",
+            self.model, len(messages), len(tools or []), self.timeout,
+        )
 
-        raw = self._client.chat.completions.create(**kwargs)
+        raw = self._client.chat.completions.create(**kwargs, timeout=self.timeout)
         parsed = self._parse_response(raw)
         if self._langfuse_span is not None:
             try:
@@ -140,7 +151,7 @@ class LLMClient:
                     prompt=self._langfuse_prompt,
                 )
             except Exception:
-                pass
+                logger.debug("Langfuse generation logging failed (non-fatal)", exc_info=True)
         return parsed
 
     # ------------------------------------------------------------------

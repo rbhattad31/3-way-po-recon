@@ -105,10 +105,10 @@ ReconciliationRunnerService
 ├── ReconciliationExecutionRouter
 │   ├── TwoWayMatchService
 │   │   ├── HeaderMatchService → ToleranceEngine
-│   │   └── LineMatchService → ToleranceEngine
+│   │   └── LineMatchService (v2 multi-signal scorer) → ToleranceEngine
 │   └── ThreeWayMatchService
 │       ├── HeaderMatchService → ToleranceEngine
-│       ├── LineMatchService → ToleranceEngine
+│       ├── LineMatchService (v2 multi-signal scorer) → ToleranceEngine
 │       ├── GRNLookupService (via ERPResolutionService)
 │       └── GRNMatchService
 ├── ClassificationService
@@ -336,7 +336,7 @@ UPLOADED -> EXTRACTION_IN_PROGRESS -> EXTRACTED -> VALIDATED -> PENDING_APPROVAL
 | **ReconciliationPolicy** | policy_code, reconciliation_mode, vendor, invoice_type, item_category, business_unit, location_code, is_service/stock_invoice, priority, effective_from/to | Mode resolution rules; lower priority = higher precedence |
 | **ReconciliationRun** | status, started_at, completed_at, total_invoices, matched/partial/unmatched/error/review counts, triggered_by, reconciliation_mode | FK: config |
 | **ReconciliationResult** | match_status, requires_review, vendor_match, currency_match, po_total_match, total_amount_difference, grn_available, grn_fully_received, extraction/deterministic confidence, reconciliation_mode, mode_resolution_reason, summary | FK: run, invoice, purchase_order |
-| **ReconciliationResultLine** | qty_invoice/po/received, qty_difference/within_tolerance, price_invoice/po, price_difference/within_tolerance, amount_invoice/po, amount_difference/within_tolerance, tax_invoice/po/difference, description_similarity | FK: result, invoice_line, po_line |
+| **ReconciliationResultLine** | qty_invoice/po/received, qty_difference/within_tolerance, price_invoice/po, price_difference/within_tolerance, amount_invoice/po, amount_difference/within_tolerance, tax_invoice/po/difference, description_similarity, **match_method** (EXACT/DETERMINISTIC/LLM_FALLBACK/NONE), **match_confidence** (0-1 Decimal), **confidence_band** (HIGH/GOOD/MODERATE/LOW/NONE), **description_match_score**, **token_similarity_score**, **fuzzy_similarity_score**, **quantity_match_score**, **price_match_score**, **amount_match_score** (all Decimal 5,4), **candidate_count**, **is_ambiguous** (bool), **matched_signals** (JSON list), **rejected_signals** (JSON list), **line_match_meta** (JSON dict) | FK: result, invoice_line, po_line |
 | **ReconciliationException** | exception_type, severity, message, details (JSON), applies_to_mode, resolved, resolved_by, resolved_at | FK: result |
 
 #### Match Status Values
@@ -384,7 +384,7 @@ NEW → INTAKE_IN_PROGRESS → EXTRACTION_IN_PROGRESS → PATH_RESOLUTION_IN_PRO
     → IN_REVIEW → CLOSED | REJECTED | ESCALATED | FAILED
 ```
 
-### 5.9 Reviews (`apps/reviews/models.py`)
+### 5.9 Reviews (`apps/cases/models.py` -- merged from `apps/reviews`)
 
 | Model | Key Fields | Notes |
 |---|---|---|
@@ -408,8 +408,6 @@ PENDING → ASSIGNED → IN_REVIEW → APPROVED | REJECTED | REPROCESSED
 | **IntegrationLog** | integrations | Integration call audit log |
 | **ProcessingLog** | auditlog | Operational logging |
 | **AuditEvent** | auditlog | State change/governance events (38+ types) |
-| **FileProcessingStatus** | auditlog | File upload lifecycle tracking |
-| **GeneratedReport** | reports | Report generation tracking |
 
 ### 5.11 ERP Integration (`apps/erp_integration/models.py`)
 
@@ -508,6 +506,9 @@ AgentRun ──< AgentStep, AgentMessage, DecisionLog
 ReviewAssignment ──< ReviewComment, ManualReviewAction
                  ── ReviewDecision (1:1)
 
+> **Note:** Review models were merged from `apps/reviews` into `apps/cases`.
+> The `reviews` entry in INSTALLED_APPS is a migrations-only stub.
+
 ToolDefinition ──< ToolCall ── AgentRun
 ```
 
@@ -533,7 +534,7 @@ Core app enums live in `apps/core/enums.py` (25 classes). ERP-specific enums liv
 | `ReconciliationModeApplicability` | TWO_WAY, THREE_WAY, BOTH |
 | `ReconciliationRunStatus` | PENDING, RUNNING, COMPLETED, FAILED, PARTIAL |
 | `MatchStatus` | MATCHED, PARTIAL_MATCH, UNMATCHED, ERROR, REQUIRES_REVIEW |
-| `ExceptionType` | PO_NOT_FOUND, VENDOR_MISMATCH, ITEM_MISMATCH, QTY_MISMATCH, PRICE_MISMATCH, TAX_MISMATCH, AMOUNT_MISMATCH, DUPLICATE_INVOICE, EXTRACTION_LOW_CONFIDENCE, CURRENCY_MISMATCH, LOCATION_MISMATCH, GRN_NOT_FOUND, RECEIPT_SHORTAGE, INVOICE_QTY_EXCEEDS_RECEIVED, OVER_RECEIPT, MULTI_GRN_PARTIAL_RECEIPT, RECEIPT_LOCATION_MISMATCH, DELAYED_RECEIPT |
+| `ExceptionType` | PO_NOT_FOUND, VENDOR_MISMATCH, ITEM_MISMATCH, QTY_MISMATCH, PRICE_MISMATCH, TAX_MISMATCH, AMOUNT_MISMATCH, DUPLICATE_INVOICE, EXTRACTION_LOW_CONFIDENCE, CURRENCY_MISMATCH, LOCATION_MISMATCH, GRN_NOT_FOUND, RECEIPT_SHORTAGE, INVOICE_QTY_EXCEEDS_RECEIVED, OVER_RECEIPT, MULTI_GRN_PARTIAL_RECEIPT, RECEIPT_LOCATION_MISMATCH, DELAYED_RECEIPT, **NO_CONFIDENT_PO_LINE_MATCH**, **MULTIPLE_PO_LINE_CANDIDATES**, **LINE_DESCRIPTION_AMBIGUOUS**, **LINE_MATCH_LOW_CONFIDENCE** |
 | `ExceptionSeverity` | LOW, MEDIUM, HIGH, CRITICAL |
 
 ### Agents
@@ -760,15 +761,27 @@ Compares Invoice ↔ PO:
    - Currency: exact match
    - Total amount: within tolerance (default 1%)
 
-2. **Line Match** (`LineMatchService`)
-   - Composite scoring algorithm per line pair:
-     - Line number bonus: 0.20 (if same position)
-     - Description similarity: 0–0.30 (fuzzy match threshold: 70%)
-     - Quantity comparison: 0–0.20
-     - Price comparison: 0–0.20
-     - Amount comparison: 0–0.20
-   - Minimum score to match: 0.30
-   - Best-match assignment (greedy)
+2. **Line Match** (`LineMatchService` -- v2 deterministic multi-signal scorer)
+   - 11 weighted signals per candidate pair (total weight: 1.00):
+     - Item code exact match: 0.30 (when both sides have item_code)
+     - Description exact (normalised): 0.20
+     - Description token overlap (Jaccard): 0-0.15 (tiered: >=0.85/0.70/0.55/0.40)
+     - Description fuzzy (RapidFuzz token_sort_ratio): 0-0.10 (tiered: >=90/80/70/60)
+     - Quantity proximity: 0-0.10 (tiered: exact/<=2%/<=5%/<=10%)
+     - Unit price proximity: 0-0.07 (tiered: <=1%/<=3%/<=5%)
+     - Line amount proximity: 0-0.03 (tiered: <=1%/<=3%/<=5%)
+     - UOM compatibility: 0-0.02 (equivalence map with ~20 UOM groups)
+     - Category compatibility: 0-0.01
+     - Service/stock compatibility: 0-0.01
+     - Line number alignment: 0.01 (same position)
+   - 4 penalty types: service/stock contradiction (-0.10), severe qty contradiction (-0.08), severe price contradiction (-0.08), description contradiction (-0.05)
+   - 5 confidence bands: HIGH (>=0.85), GOOD (>=0.75), MODERATE (>=0.62), LOW (>=0.50), NONE (<0.50)
+   - Classification: MATCHED (strong: score>=0.75+gap>=0.10, moderate: score>=0.62+gap>=0.08), AMBIGUOUS (gap too small, multiple close candidates, single candidate in LOW band), UNRESOLVED (score<0.50 or contradiction+score<0.75)
+   - Ambiguity detection: gap < 0.08, or >=2 candidates within 0.05 of best, or no item_code + multiple candidates >= 0.50
+   - Optional LLM fallback: invoked only for AMBIGUOUS/UNRESOLVED lines when configured
+   - Best-match assignment (greedy, PO line deduplication via used_po_lines set)
+   - Rich `LineMatchDecision` per invoice line with full signal breakdown, matched tokens, and reviewer-facing explanation
+   - Backward compatible: still produces `LineMatchPair` with `FieldComparison` for downstream services
 
 ### 8.5 Three-Way Match Service
 
@@ -1512,7 +1525,7 @@ All APIs are under `/api/v1/` using Django REST Framework.
 | `runs/` | GET | List agent runs |
 | `runs/{id}/` | GET | Run detail with steps, messages, decisions |
 
-### 14.4 Reviews API (`/api/v1/reviews/`)
+### 14.4 Reviews API (`/api/v1/reviews/` -- served from `apps/cases`)
 
 | Endpoint | Method | Description |
 |---|---|---|

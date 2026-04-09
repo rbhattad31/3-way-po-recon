@@ -233,15 +233,15 @@
         <tr>
           <td><code>{{ m.metric_name }}</code></td>
           <td>
-            {% if m.metric_value is not None %}
+            {% if m.value_type == "float" and m.raw_value %}
               {% if m.unit == "ratio" %}
-                {% widthratio m.metric_value 1 100 %}%
+                {% widthratio m.raw_value 1 100 %}%
               {% else %}
-                {{ m.metric_value }}
+                {{ m.raw_value }}
               {% endif %}
-            {% elif m.string_value %}
-              {{ m.string_value|truncatechars:60 }}
-            {% elif m.json_value is not None %}
+            {% elif m.value_type == "string" and m.raw_value %}
+              {{ m.raw_value|truncatechars:60 }}
+            {% elif m.value_type == "json" and m.raw_value %}
               <details><summary class="text-muted small">[JSON] click to expand</summary><pre class="small mb-0 mt-1" style="max-height:120px;overflow:auto">{{ m.json_value_pretty|default:"--" }}</pre></details>
             {% else %}
               <small class="text-muted">--</small>

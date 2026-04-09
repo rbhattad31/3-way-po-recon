@@ -202,6 +202,7 @@ class ReconciliationRun(BaseModel):
         verbose_name_plural = "Reconciliation Runs"
         indexes = [
             models.Index(fields=["status"], name="idx_recon_run_status"),
+            models.Index(fields=["tenant", "status"], name="idx_recon_run_tenant_status"),
         ]
 
     def __str__(self) -> str:
@@ -302,6 +303,7 @@ class ReconciliationResult(BaseModel):
             models.Index(fields=["match_status"], name="idx_recon_result_status"),
             models.Index(fields=["requires_review"], name="idx_recon_result_review"),
             models.Index(fields=["run", "invoice"], name="idx_recon_result_run_inv"),
+            models.Index(fields=["tenant", "match_status"], name="idx_recon_result_tenant_status"),
             models.Index(fields=["reconciliation_mode"], name="idx_recon_result_mode"),
         ]
 
@@ -392,6 +394,28 @@ class ReconciliationResultLine(TimestampMixin):
     line_match_meta = models.JSONField(
         default=dict, blank=True,
         help_text="Detailed scorer metadata: top_gap, second_best_score, etc.",
+    )
+
+    # --- Receipt availability fields (partial-invoice 3-way matching) ---
+    cumulative_received_qty = models.DecimalField(
+        max_digits=18, decimal_places=4, null=True, blank=True,
+        help_text="Total GRN-received qty for the matched PO line (across all GRNs)",
+    )
+    previously_consumed_qty = models.DecimalField(
+        max_digits=18, decimal_places=4, null=True, blank=True,
+        help_text="Sum of qty_invoice from prior reconciliation result lines paired to the same PO line",
+    )
+    available_qty = models.DecimalField(
+        max_digits=18, decimal_places=4, null=True, blank=True,
+        help_text="cumulative_received_qty - previously_consumed_qty (available for this invoice)",
+    )
+    contributing_grn_line_ids = models.JSONField(
+        default=list, blank=True,
+        help_text="GRN line item PKs that contribute to cumulative_received_qty",
+    )
+    invoiced_exceeds_available = models.BooleanField(
+        default=False,
+        help_text="True when qty_invoice > available_qty (overbilling against available receipt)",
     )
 
     class Meta:

@@ -150,6 +150,7 @@ class Invoice(BaseModel, NotesMixin):
             models.Index(fields=["normalized_po_number"], name="idx_inv_norm_po"),
             models.Index(fields=["status"], name="idx_inv_status"),
             models.Index(fields=["vendor", "invoice_number"], name="idx_inv_vendor_num"),
+            models.Index(fields=["tenant", "status"], name="idx_inv_tenant_status"),
         ]
 
     def __str__(self) -> str:

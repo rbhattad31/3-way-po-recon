@@ -44,6 +44,7 @@ class ConnectorFactory:
             "metadata_json": connection.metadata_json or {},
             "connection_id": connection.id,
             "connection_name": connection.name,
+            "app_tenant_id": connection.tenant_id,
             # Typed credential fields
             "auth_type": connection.auth_type,
             "api_key_env": connection.api_key_env,

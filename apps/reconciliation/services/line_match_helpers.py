@@ -110,13 +110,37 @@ def token_similarity(a: Optional[str], b: Optional[str]) -> float:
     return len(intersection) / len(union) if union else 0.0
 
 
+def token_containment(a: Optional[str], b: Optional[str]) -> float:
+    """Shorter-set recall: fraction of shorter token set found in longer set.
+
+    Returns 0.0-1.0.  Values near 1.0 mean the shorter description (often the
+    PO line) is fully contained within the longer description (invoice).
+    This complements Jaccard which penalises length differences heavily.
+    """
+    tokens_a = extract_meaningful_tokens(a)
+    tokens_b = extract_meaningful_tokens(b)
+    if not tokens_a or not tokens_b:
+        return 0.0
+    shorter = tokens_a if len(tokens_a) <= len(tokens_b) else tokens_b
+    longer = tokens_b if len(tokens_a) <= len(tokens_b) else tokens_a
+    intersection = shorter & longer
+    return len(intersection) / len(shorter) if shorter else 0.0
+
+
 def fuzzy_similarity(a: Optional[str], b: Optional[str]) -> float:
-    """RapidFuzz token-sort ratio in [0, 100]."""
+    """RapidFuzz token-set ratio in [0, 100].
+
+    Uses ``token_set_ratio`` instead of ``token_sort_ratio`` so that
+    abbreviated PO descriptions (e.g. "RPA") that appear as a subset of
+    a longer invoice description score highly.  ``token_set_ratio``
+    isolates the intersection tokens before comparing, which handles
+    length asymmetry gracefully.
+    """
     na = normalize_line_text(a)
     nb = normalize_line_text(b)
     if not na or not nb:
         return 0.0
-    return rf_fuzz.token_sort_ratio(na, nb)
+    return rf_fuzz.token_set_ratio(na, nb)
 
 
 # ===================================================================
@@ -180,6 +204,7 @@ def price_proximity(inv_price, po_price) -> Tuple[Optional[float], float]:
     - exact or within 1% -> 0.07
     - within 3% -> 0.05
     - within 5% -> 0.03
+    - partial invoice (inv < po, ratio >= 10%) -> 0.02
     - else -> 0.00
     """
     a = _safe_decimal(inv_price)
@@ -193,6 +218,12 @@ def price_proximity(inv_price, po_price) -> Tuple[Optional[float], float]:
         return pv, 0.05
     if pv <= 5.0:
         return pv, 0.03
+    # Partial invoice: invoice price less than PO price is plausible
+    # partial billing, not a contradiction.
+    if a is not None and b is not None and a > 0 and b > 0 and a < b:
+        ratio = float(a / b)
+        if ratio >= 0.10:
+            return pv, 0.02
     return pv, 0.0
 
 
@@ -203,6 +234,7 @@ def amount_proximity(inv_amount, po_amount) -> Tuple[Optional[float], float]:
     - within 1% -> 0.03
     - within 3% -> 0.02
     - within 5% -> 0.01
+    - partial invoice (inv < po, ratio >= 10%) -> 0.01
     - else -> 0.00
     """
     a = _safe_decimal(inv_amount)
@@ -216,6 +248,11 @@ def amount_proximity(inv_amount, po_amount) -> Tuple[Optional[float], float]:
         return pv, 0.02
     if pv <= 5.0:
         return pv, 0.01
+    # Partial invoice: invoiced amount less than PO amount is plausible.
+    if a is not None and b is not None and a > 0 and b > 0 and a < b:
+        ratio = float(a / b)
+        if ratio >= 0.10:
+            return pv, 0.01
     return pv, 0.0
 
 

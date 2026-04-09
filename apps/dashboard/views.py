@@ -246,9 +246,8 @@ def invoice_pipeline(request):
     from apps.documents.models import Invoice
     from apps.extraction.models import ExtractionResult
     from apps.reconciliation.models import ReconciliationResult, ReconciliationException
-    from apps.reviews.models import ReviewAssignment
+    from apps.cases.models import APCase, ReviewAssignment
     from apps.posting.models import InvoicePosting
-    from apps.cases.models import APCase
     from apps.agents.models import AgentRun
     from apps.core.enums import InvoiceStatus, AgentRunStatus
 

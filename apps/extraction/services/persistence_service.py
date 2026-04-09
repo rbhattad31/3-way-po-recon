@@ -235,7 +235,20 @@ class InvoicePersistenceService:
                     )
                     return
 
+        # Guard: if line sum is approximately equal to total_amount, the
+        # line amounts are tax-inclusive -- overriding subtotal with the
+        # line sum would cause tax to be added twice.
         tax = invoice.tax_amount or Decimal("0.00")
+        if total > 0 and tax > 0:
+            tolerance = float(total) * 0.02  # 2% tolerance
+            if abs(float(computed_subtotal - total)) <= tolerance:
+                logger.info(
+                    "Invoice %s: line sum (%s) matches total (%s) -- "
+                    "line amounts appear tax-inclusive; keeping header subtotal (%s)",
+                    invoice.pk, computed_subtotal, total, stored_subtotal,
+                )
+                return
+
         new_total = computed_subtotal + tax
 
         logger.info(

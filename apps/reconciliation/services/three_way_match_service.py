@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 from apps.documents.models import Invoice, PurchaseOrder
 from apps.reconciliation.services.grn_lookup_service import GRNLookupService, GRNSummary
@@ -26,6 +26,10 @@ from apps.reconciliation.services.line_match_service import (
     LineMatchService,
 )
 from apps.reconciliation.services.po_lookup_service import POLookupResult
+from apps.reconciliation.services.receipt_availability_service import (
+    ReceiptAvailability,
+    ReceiptAvailabilityService,
+)
 from apps.reconciliation.services.tolerance_engine import ToleranceEngine
 
 if TYPE_CHECKING:
@@ -42,6 +46,7 @@ class ThreeWayMatchOutput:
     header_result: Optional[HeaderMatchResult] = None
     line_result: Optional[LineMatchResult] = None
     grn_result: Optional[GRNMatchResult] = field(default=None)
+    receipt_availability: Optional[ReceiptAvailability] = field(default=None)
 
     @property
     def grn_required(self) -> bool:
@@ -101,10 +106,27 @@ class ThreeWayMatchService:
         # 3. GRN lookup
         grn_summary: GRNSummary = self.grn_lookup.lookup(po)
 
+        # 3b. Receipt availability (partial-invoice aware)
+        receipt_availability: Optional[ReceiptAvailability] = None
+        if grn_summary.grn_available and grn_summary.total_received_by_po_line:
+            # Build grn_line_ids_by_po_line for provenance
+            grn_line_ids_by_po_line = self._collect_grn_line_ids(po)
+            receipt_availability = ReceiptAvailabilityService.compute(
+                po_id=po.pk,
+                total_received_by_po_line=grn_summary.total_received_by_po_line,
+                exclude_result_id=None,  # no result persisted yet
+                grn_line_ids_by_po_line=grn_line_ids_by_po_line,
+            )
+
         # 4. GRN match (only if GRNs exist and lines were matched)
         grn_result: Optional[GRNMatchResult] = None
         if grn_summary.grn_available and line_result:
-            grn_result = self.grn_match.match(line_result.pairs, grn_summary, po_date=po.po_date)
+            grn_result = self.grn_match.match(
+                line_result.pairs,
+                grn_summary,
+                po_date=po.po_date,
+                receipt_availability=receipt_availability,
+            )
         elif not grn_summary.grn_available:
             grn_result = GRNMatchResult(grn_available=False)
 
@@ -131,4 +153,23 @@ class ThreeWayMatchService:
             header_result=header_result,
             line_result=line_result,
             grn_result=grn_result,
+            receipt_availability=receipt_availability,
         )
+
+    @staticmethod
+    def _collect_grn_line_ids(po: PurchaseOrder) -> Dict[int, List[int]]:
+        """Build {po_line_id: [grn_line_pk, ...]} for provenance tracking."""
+        from apps.documents.models import GRNLineItem
+
+        result: Dict[int, List[int]] = {}
+        grn_lines = (
+            GRNLineItem.objects
+            .filter(
+                grn__purchase_order=po,
+                po_line__isnull=False,
+            )
+            .values_list("po_line_id", "pk")
+        )
+        for po_line_id, grn_line_pk in grn_lines:
+            result.setdefault(po_line_id, []).append(grn_line_pk)
+        return result

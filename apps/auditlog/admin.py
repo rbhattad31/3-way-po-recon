@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from apps.auditlog.models import ProcessingLog, AuditEvent, FileProcessingStatus
+from apps.auditlog.models import ProcessingLog, AuditEvent
 
 
 @admin.register(ProcessingLog)
@@ -83,31 +83,4 @@ class AuditEventAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(FileProcessingStatus)
-class FileProcessingStatusAdmin(admin.ModelAdmin):
-    list_display = ("id", "document_upload", "stage", "status_badge", "started_at", "completed_at", "duration_display")
-    list_filter = ("stage", "status")
-    list_per_page = 25
-    readonly_fields = ("created_at", "updated_at")
-    fieldsets = (
-        ("File", {"fields": ("document_upload",)}),
-        ("Processing", {"fields": ("stage", "status", "message")}),
-        ("Timing", {"fields": ("started_at", "completed_at")}),
-        ("Timestamps", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
-    )
 
-    @admin.display(description="Status")
-    def status_badge(self, obj):
-        colours = {"QUEUED": "#6c757d", "PROCESSING": "#0d6efd", "COMPLETED": "#198754", "FAILED": "#dc3545"}
-        c = colours.get(obj.status, "#6c757d")
-        return format_html(
-            '<span style="background:{};color:#fff;padding:2px 6px;border-radius:3px;font-size:11px;">{}</span>',
-            c, obj.status,
-        )
-
-    @admin.display(description="Duration")
-    def duration_display(self, obj):
-        if obj.started_at and obj.completed_at:
-            delta = obj.completed_at - obj.started_at
-            return f"{delta.total_seconds():.1f}s"
-        return "-"

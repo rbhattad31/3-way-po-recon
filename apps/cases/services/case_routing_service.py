@@ -122,7 +122,7 @@ class CaseRoutingService:
         case.processing_path = new_path
         case.save(update_fields=["processing_path", "updated_at"])
 
-        APCaseDecision.objects.create(
+        decision = APCaseDecision.objects.create(
             case=case,
             decision_type=DecisionType.PATH_REROUTED,
             decision_source=source,
@@ -131,6 +131,25 @@ class CaseRoutingService:
             evidence={"old_path": old_path, "new_path": new_path},
             tenant=tenant,
         )
+
+        # Override any pending agent recommendations on this case's invoice
+        if source == DecisionSource.HUMAN:
+            try:
+                from apps.agents.models import AgentRecommendation
+                from apps.agents.services.recommendation_service import RecommendationService
+
+                invoice = getattr(case, "invoice", None)
+                if invoice:
+                    pending_recs = AgentRecommendation.objects.filter(
+                        reconciliation_result__invoice=invoice,
+                        accepted__isnull=True,
+                    )
+                    for rec in pending_recs:
+                        RecommendationService.mark_recommendation_overridden(
+                            rec.pk, decision, reason,
+                        )
+            except Exception:
+                logger.debug("Failed to override recommendations on reroute (non-fatal)")
 
         logger.info("Case %s rerouted: %s -> %s (%s)", case.case_number, old_path, new_path, reason)
         return new_path

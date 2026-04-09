@@ -31,12 +31,11 @@ class EvalRunService:
         input_snapshot_json: Optional[dict] = None,
         tenant=None,
     ) -> EvalRun:
-        return EvalRun.objects.create(
+        kwargs = dict(
             app_module=app_module,
             entity_type=entity_type,
             entity_id=str(entity_id),
             run_key=run_key,
-            tenant_id=tenant_id,
             status=status,
             prompt_hash=prompt_hash,
             prompt_slug=prompt_slug,
@@ -44,8 +43,12 @@ class EvalRunService:
             triggered_by=triggered_by,
             config_json=config_json or {},
             input_snapshot_json=input_snapshot_json or {},
-            tenant=tenant,
         )
+        if tenant is not None:
+            kwargs["tenant"] = tenant
+        elif tenant_id:
+            kwargs["tenant_id"] = tenant_id
+        return EvalRun.objects.create(**kwargs)
 
     @staticmethod
     def create_or_update(
@@ -75,7 +78,6 @@ class EvalRunService:
             "run_key": run_key,
         }
         defaults = {
-            "tenant_id": tenant_id,
             "status": status,
             "prompt_hash": prompt_hash,
             "prompt_slug": prompt_slug,
@@ -83,8 +85,11 @@ class EvalRunService:
             "triggered_by": triggered_by,
             "config_json": config_json or {},
             "input_snapshot_json": input_snapshot_json or {},
-            "tenant": tenant,
         }
+        if tenant is not None:
+            defaults["tenant"] = tenant
+        elif tenant_id:
+            defaults["tenant_id"] = tenant_id
         return EvalRun.objects.update_or_create(defaults=defaults, **lookup)
 
     @staticmethod

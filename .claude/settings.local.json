@@ -45,7 +45,8 @@
       "Bash(python manage.py check)",
       "Bash(python manage.py showmigrations documents)",
       "Bash(find /c/3-way-po-recon/apps -name migrations -type d -exec ls -la {}/0001_initial.py)",
-      "Bash(2)"
+      "Bash(2)",
+      "Bash(wc -l /c/3-way-po-recon/docs/current_system_review/*.md)"
     ]
   }
 }

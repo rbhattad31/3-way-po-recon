@@ -727,23 +727,23 @@ class TestDeduplicationV2:
 class TestConfidenceBand:
     def test_high_band(self):
         assert confidence_band(0.90) == BAND_HIGH
-        assert confidence_band(0.85) == BAND_HIGH
+        assert confidence_band(0.80) == BAND_HIGH
         assert confidence_band(1.0) == BAND_HIGH
 
     def test_good_band(self):
-        assert confidence_band(0.80) == BAND_GOOD
         assert confidence_band(0.75) == BAND_GOOD
+        assert confidence_band(0.68) == BAND_GOOD
 
     def test_moderate_band(self):
-        assert confidence_band(0.70) == BAND_MODERATE
-        assert confidence_band(0.62) == BAND_MODERATE
+        assert confidence_band(0.65) == BAND_MODERATE
+        assert confidence_band(0.52) == BAND_MODERATE
 
     def test_low_band(self):
-        assert confidence_band(0.55) == BAND_LOW
-        assert confidence_band(0.50) == BAND_LOW
+        assert confidence_band(0.48) == BAND_LOW
+        assert confidence_band(0.40) == BAND_LOW
 
     def test_none_band(self):
-        assert confidence_band(0.49) == BAND_NONE
+        assert confidence_band(0.39) == BAND_NONE
         assert confidence_band(0.0) == BAND_NONE
 
 

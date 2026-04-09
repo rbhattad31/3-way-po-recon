@@ -164,36 +164,3 @@ class AuditEvent(TimestampMixin):
 
     def __str__(self) -> str:
         return f"{self.action} on {self.entity_type}#{self.entity_id}"
-
-
-class FileProcessingStatus(TimestampMixin):
-    """Tracks processing lifecycle for uploaded files."""
-
-    document_upload = models.ForeignKey(
-        "documents.DocumentUpload", on_delete=models.CASCADE, related_name="processing_statuses"
-    )
-    tenant = models.ForeignKey(
-        "accounts.CompanyProfile",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        db_index=True,
-        related_name="+",
-    )
-    stage = models.CharField(max_length=100, db_index=True, help_text="upload, extraction, validation, recon, etc.")
-    status = models.CharField(max_length=30, db_index=True)
-    message = models.TextField(blank=True, default="")
-    started_at = models.DateTimeField(null=True, blank=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        db_table = "auditlog_file_status"
-        ordering = ["-created_at"]
-        verbose_name = "File Processing Status"
-        verbose_name_plural = "File Processing Statuses"
-        indexes = [
-            models.Index(fields=["document_upload", "stage"], name="idx_filestatus_doc_stage"),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.stage} – {self.status} – Upload #{self.document_upload_id}"

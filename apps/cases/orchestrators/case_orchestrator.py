@@ -151,6 +151,14 @@ class CaseOrchestrator:
                 )
                 return self.case
 
+            # If the case was rejected (e.g. duplicate invoice), stop the pipeline.
+            if CaseStateMachine.is_terminal(self.case.status):
+                logger.info(
+                    "Case %s reached terminal status %s at extraction approval gate",
+                    self.case.case_number, self.case.status,
+                )
+                return self.case
+
             # Stage 3: Path resolution (if extraction completed/approved)
             if self.case.status == CaseStatus.EXTRACTION_COMPLETED:
                 self._execute_stage(CaseStageType.PATH_RESOLUTION)
@@ -195,6 +203,15 @@ class CaseOrchestrator:
             logger.exception("Case %s orchestration failed", self.case.case_number)
             self.case.status = CaseStatus.FAILED
             self.case.save(update_fields=["status", "updated_at"])
+            try:
+                from apps.cases.services.case_activity_service import CaseActivityService
+                CaseActivityService.log(
+                    self.case, "STATUS_CHANGED",
+                    description="Case status changed to FAILED",
+                    metadata={"status": CaseStatus.FAILED},
+                )
+            except Exception:
+                pass
             try:
                 from apps.core.langfuse_client import score_trace_safe
                 score_trace_safe(self._lf_trace_id, CASE_PROCESSING_SUCCESS, 0.0, comment="orchestration_failed", span=self._lf_trace)
@@ -415,6 +432,7 @@ class CaseOrchestrator:
                 self._lf_trace,
                 name=f"case_stage_{stage_name}",
                 metadata={
+                    "tenant_id": getattr(self.case, "tenant_id", None),
                     "stage_index": self._stage_index,
                     "stage_name": stage_name,
                     "case_id": self.case.pk,
@@ -434,6 +452,17 @@ class CaseOrchestrator:
             stage.completed_at = timezone.now()
             stage.output_payload = output or {}
             stage.save(update_fields=["stage_status", "completed_at", "output_payload", "updated_at"])
+
+            # -- Activity log
+            try:
+                from apps.cases.services.case_activity_service import CaseActivityService
+                CaseActivityService.log(
+                    self.case, "STAGE_COMPLETED",
+                    description=f"Stage '{stage_name}' completed",
+                    metadata={"stage_name": stage_name, "stage_index": self._stage_index},
+                )
+            except Exception:
+                pass
 
             # -- Langfuse: end span with output + observation scores
             try:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from django.db import transaction
 
@@ -128,6 +128,13 @@ class ReconciliationResultService:
                 if cmp.po_line_id is not None and cmp.qty_received is not None:
                     grn_qty_by_po_line[cmp.po_line_id] = cmp.qty_received
 
+        # Pre-build dict lookup: po_line_id -> GRN comparison object to avoid O(n×m) scan.
+        grn_cmp_by_po_line: Dict[int, Any] = {}
+        if grn_result and grn_result.grn_available:
+            for cmp in grn_result.line_comparisons:
+                if cmp.po_line_id is not None:
+                    grn_cmp_by_po_line[cmp.po_line_id] = cmp
+
         objs: List[ReconciliationResultLine] = []
 
         for pair in line_result.pairs:
@@ -135,6 +142,19 @@ class ReconciliationResultService:
             # Merge GRN received quantity
             if rl.po_line_id and rl.po_line_id in grn_qty_by_po_line:
                 rl.qty_received = grn_qty_by_po_line[rl.po_line_id]
+            # Merge receipt availability fields from GRN comparison (O(1) dict lookup)
+            if rl.po_line_id and grn_result and grn_result.grn_available:
+                cmp = grn_cmp_by_po_line.get(rl.po_line_id)
+                if cmp is not None:
+                    if cmp.cumulative_received_qty is not None:
+                        rl.cumulative_received_qty = cmp.cumulative_received_qty
+                    if cmp.previously_consumed_qty is not None:
+                        rl.previously_consumed_qty = cmp.previously_consumed_qty
+                    if cmp.available_qty is not None:
+                        rl.available_qty = cmp.available_qty
+                    if cmp.contributing_grn_line_ids:
+                        rl.contributing_grn_line_ids = cmp.contributing_grn_line_ids
+                    rl.invoiced_exceeds_available = cmp.invoiced_exceeds_available
             objs.append(rl)
 
         # Unmatched invoice lines not already covered
@@ -196,7 +216,7 @@ class ReconciliationResultService:
                 best = decision.candidate_scores[0]
                 rl.description_match_score = Decimal(str(round(best.description_exact_score, 4)))
                 rl.token_similarity_score = Decimal(str(round(best.token_similarity_raw, 4)))
-                rl.fuzzy_similarity_score = Decimal(str(round(best.fuzzy_similarity_raw, 4)))
+                rl.fuzzy_similarity_score = Decimal(str(round(best.fuzzy_similarity_raw / 100.0, 4)))
                 rl.quantity_match_score = Decimal(str(round(best.quantity_score, 4)))
                 rl.price_match_score = Decimal(str(round(best.unit_price_score, 4)))
                 rl.amount_match_score = Decimal(str(round(best.amount_score, 4)))

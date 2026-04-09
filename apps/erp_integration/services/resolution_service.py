@@ -75,6 +75,11 @@ class ERPResolutionService:
 
     def __init__(self, connector=None):
         self._connector = connector
+        self._app_tenant_id = (
+            connector.config.get("app_tenant_id")
+            if connector and hasattr(connector, "config")
+            else None
+        )
 
     # ------------------------------------------------------------------
     # Internal Langfuse helper
@@ -92,6 +97,7 @@ class ERPResolutionService:
         entity_key: str = "",
         connector_name: str = "",
         connector_type: str = "",
+        tenant_id: Optional[int] = None,
         invoice_id: Optional[int] = None,
         posting_run_id: Optional[int] = None,
         reconciliation_result_id: Optional[int] = None,
@@ -136,6 +142,7 @@ class ERPResolutionService:
 
         # Build safe metadata
         meta = {
+            "tenant_id": tenant_id,
             "operation_type": operation_type or f"lookup_{resolution_name.replace('resolve_', '')}",
             "entity_type": entity_type,
             "entity_key": entity_key,
@@ -308,6 +315,7 @@ class ERPResolutionService:
             entity_type="purchase_order",
             entity_key=po_number,
             connector_name=getattr(self._connector, "connector_name", ""),
+            tenant_id=self._app_tenant_id,
             invoice_id=invoice_id,
             posting_run_id=posting_run_id,
             reconciliation_result_id=reconciliation_result_id,
@@ -353,6 +361,7 @@ class ERPResolutionService:
             entity_type="goods_receipt_note",
             entity_key=po_number or grn_number,
             connector_name=getattr(self._connector, "connector_name", ""),
+            tenant_id=self._app_tenant_id,
             invoice_id=invoice_id,
             reconciliation_result_id=reconciliation_result_id,
         )
@@ -447,6 +456,7 @@ class ERPResolutionService:
             entity_type="vendor",
             entity_key=vendor_code or vendor_name,
             connector_name=getattr(self._connector, "connector_name", ""),
+            tenant_id=self._app_tenant_id,
             invoice_id=invoice_id,
             posting_run_id=posting_run_id,
         )
@@ -484,6 +494,7 @@ class ERPResolutionService:
             entity_type="item",
             entity_key=item_code or description,
             connector_name=getattr(self._connector, "connector_name", ""),
+            tenant_id=self._app_tenant_id,
             invoice_id=invoice_id,
             posting_run_id=posting_run_id,
         )
@@ -519,6 +530,7 @@ class ERPResolutionService:
             entity_type="tax_code",
             entity_key=tax_code,
             connector_name=getattr(self._connector, "connector_name", ""),
+            tenant_id=self._app_tenant_id,
             posting_run_id=posting_run_id,
         )
 
@@ -551,6 +563,7 @@ class ERPResolutionService:
             entity_type="cost_center",
             entity_key=cost_center_code,
             connector_name=getattr(self._connector, "connector_name", ""),
+            tenant_id=self._app_tenant_id,
             posting_run_id=posting_run_id,
         )
 
@@ -586,6 +599,7 @@ class ERPResolutionService:
             entity_type="invoice",
             entity_key=invoice_number,
             connector_name=getattr(self._connector, "connector_name", ""),
+            tenant_id=self._app_tenant_id,
             invoice_id=invoice_id,
             posting_run_id=posting_run_id,
         )

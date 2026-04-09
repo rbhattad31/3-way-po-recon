@@ -2,7 +2,7 @@
 from django.conf import settings
 
 from apps.core.enums import ReviewStatus
-from apps.reviews.models import ReviewAssignment
+from apps.cases.models import ReviewAssignment
 
 
 def static_version(request):

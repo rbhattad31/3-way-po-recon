@@ -5,7 +5,6 @@ outcomes, learning signals, and learning actions for any pipeline or module.
 Business-specific wiring is done externally by the consuming app.
 """
 from django.conf import settings
-from django.core.exceptions import ValidationError
 from django.db import models
 
 from apps.core.models import TimestampMixin
@@ -116,8 +115,9 @@ class EvalRun(TimestampMixin):
 class EvalMetric(TimestampMixin):
     """A single named metric produced during an EvalRun.
 
-    Supports three value types -- at most one should be populated per record:
-    ``metric_value`` (numeric), ``string_value`` (text), ``json_value`` (structured).
+    Value storage is unified into ``value_type`` (float/string/json) and
+    ``raw_value`` (text).  Use ``get_typed_value()`` to read back the typed
+    Python value.
     """
 
     # -- tenant --
@@ -136,9 +136,12 @@ class EvalMetric(TimestampMixin):
     )
 
     metric_name = models.CharField(max_length=200, db_index=True)
-    metric_value = models.FloatField(null=True, blank=True, help_text="Numeric metric value.")
-    string_value = models.TextField(blank=True, default="", help_text="Text metric value.")
-    json_value = models.JSONField(null=True, blank=True, default=None, help_text="Structured metric value.")
+    value_type = models.CharField(
+        max_length=10,
+        choices=[("float", "Float"), ("string", "String"), ("json", "JSON")],
+        default="float",
+    )
+    raw_value = models.TextField(blank=True, default="")
     unit = models.CharField(max_length=50, blank=True, default="", help_text="e.g. percent, seconds, count.")
 
     # -- optional dimensional tags --
@@ -159,27 +162,20 @@ class EvalMetric(TimestampMixin):
         verbose_name_plural = "Eval Metrics"
 
     def __str__(self) -> str:
-        if self.metric_value is not None:
-            return f"{self.metric_name}={self.metric_value}"
-        if self.string_value:
-            return f"{self.metric_name}={self.string_value!r}"
-        if self.json_value is not None:
-            return f"{self.metric_name}=[json]"
+        if self.raw_value:
+            display = self.raw_value[:60]
+            return f"{self.metric_name}={display}"
         return f"{self.metric_name}=(empty)"
 
-    def clean(self) -> None:
-        """Validate that at most one value field is populated."""
-        populated = []
-        if self.metric_value is not None:
-            populated.append("metric_value")
-        if self.string_value:
-            populated.append("string_value")
-        if self.json_value is not None:
-            populated.append("json_value")
-        if len(populated) > 1:
-            raise ValidationError(
-                f"At most one value field may be populated; got: {', '.join(populated)}."
-            )
+    def get_typed_value(self):
+        """Return *raw_value* converted back to its declared type."""
+        import json as _json
+
+        if self.value_type == "float":
+            return float(self.raw_value) if self.raw_value else None
+        if self.value_type == "json":
+            return _json.loads(self.raw_value) if self.raw_value else None
+        return self.raw_value
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +374,10 @@ class LearningAction(TimestampMixin):
         related_name="core_eval_learningaction_approved",
     )
     applied_at = models.DateTimeField(null=True, blank=True)
+    execution_log_json = models.JSONField(default=list, blank=True)
+    execution_error = models.TextField(blank=True, default="")
+    next_retry_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    retry_count = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         db_table = "core_eval_learning_action"

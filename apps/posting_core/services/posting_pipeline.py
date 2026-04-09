@@ -104,6 +104,7 @@ class PostingPipeline:
                 user_id=user.pk if user else None,
                 session_id=f"invoice-{invoice.pk}",
                 metadata={
+                    "tenant_id": getattr(tenant, "pk", None) if tenant else None,
                     "posting_run_pk": posting_run.pk,
                     "invoice_id": invoice.pk,
                     "invoice_number": invoice.invoice_number or "",
@@ -313,9 +314,11 @@ class PostingPipeline:
                 i.get("severity") == PostingIssueSeverity.ERROR for i in all_issues
             )
 
-            if has_blocking or requires_review:
-                posting_run.status = PostingRunStatus.COMPLETED
+            # Blocking validation errors mean the run cannot be auto-posted.
+            if has_blocking:
+                posting_run.status = PostingRunStatus.FAILED
             else:
+                # Completed — may still require human review if requires_review=True.
                 posting_run.status = PostingRunStatus.COMPLETED
 
             elapsed = int((time.time() - start) * 1000)

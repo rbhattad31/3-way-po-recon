@@ -248,7 +248,7 @@ def _copilot_pipeline_worker(upload_id, user_pk, has_blob, case_id=None, case_nu
                 processing_message="Pipeline failed unexpectedly",
             )
         except Exception:
-            pass
+            logger.warning("Failed to mark upload %s as FAILED in cleanup handler", upload_id, exc_info=True)
     finally:
         connection.close()
 
@@ -451,7 +451,7 @@ def invoice_upload(request):
             },
         )
     except Exception:
-        pass
+        logger.debug("Audit log for copilot upload start failed (non-fatal)", exc_info=True)
 
     return Response({
         "upload_id": doc_upload.pk,

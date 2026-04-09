@@ -361,7 +361,7 @@ class InvoiceExtractionAgent(BaseAgent):
                     invoice_id=ctx.invoice_id or None,
                     user_id=ctx.actor_user_id or None,
                     session_id=f"invoice-{ctx.invoice_id}" if ctx.invoice_id else None,
-                    metadata={"agent_run_id": agent_run.pk},
+                    metadata={"tenant_id": getattr(ctx, "tenant_id", None) or (ctx.tenant.pk if getattr(ctx, "tenant", None) else None), "agent_run_id": agent_run.pk},
                 )
                 _own_trace = True
             _lf_span = start_span(

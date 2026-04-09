@@ -88,6 +88,15 @@ class CaseCreationService:
             "Created AP Case %s for upload %s (pre-extraction)",
             case_number, upload.pk,
         )
+
+        from apps.cases.services.case_activity_service import CaseActivityService
+        CaseActivityService.log(
+            case, "CASE_CREATED",
+            description=f"Case {case_number} created from document upload",
+            actor=uploaded_by,
+            metadata={"upload_id": upload.pk, "source_channel": str(source_channel or "")},
+        )
+
         return case
 
     @staticmethod
@@ -115,6 +124,13 @@ class CaseCreationService:
         logger.info(
             "Linked invoice %s to case %s",
             invoice.pk, case.case_number,
+        )
+
+        from apps.cases.services.case_activity_service import CaseActivityService
+        CaseActivityService.log(
+            case, "INVOICE_LINKED",
+            description=f"Invoice {getattr(invoice, 'invoice_number', invoice.pk)} linked to case",
+            metadata={"invoice_id": invoice.pk},
         )
 
     @staticmethod

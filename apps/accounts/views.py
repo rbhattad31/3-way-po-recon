@@ -21,14 +21,19 @@ from apps.accounts.serializers import (
     UserPermissionOverrideSerializer, UserPermissionOverrideCreateSerializer,
 )
 from apps.core.permissions import HasPermissionCode
+from apps.core.tenant_utils import TenantQuerysetMixin
 
 
 # ============================================================================
 # User management API
 # ============================================================================
 
-class UserViewSet(viewsets.ModelViewSet):
-    """User management API — list, detail, update, role/override management."""
+class UserViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
+    """User management API — list, detail, update, role/override management.
+
+    Scoped to request.tenant automatically via TenantQuerysetMixin.
+    Platform admins and superusers see all users across tenants.
+    """
 
     queryset = User.objects.all().order_by("email")
     permission_classes = [IsAuthenticated, HasPermissionCode]
@@ -137,10 +142,10 @@ class UserViewSet(viewsets.ModelViewSet):
 
         # Prevent removing last admin
         if role.code == "ADMIN":
-            admin_count = UserRole.objects.filter(
+            has_other_admins = UserRole.objects.filter(
                 role__code="ADMIN", is_active=True
-            ).exclude(user=user).count()
-            if admin_count == 0:
+            ).exclude(user=user).exists()
+            if not has_other_admins:
                 return Response(
                     {"detail": "Cannot remove the last Admin role assignment."},
                     status=status.HTTP_400_BAD_REQUEST,

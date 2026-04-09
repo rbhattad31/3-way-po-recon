@@ -1,5 +1,5 @@
 """
-Tests for ReviewWorkflowService — DB-backed.
+Tests for ReviewWorkflowService -- DB-backed.
 
 Covers:
   - create_assignment: creates PENDING/ASSIGNED record, sets requires_review=True
@@ -17,10 +17,10 @@ import pytest
 from unittest.mock import patch
 
 from apps.core.enums import MatchStatus, ReviewStatus, ReviewActionType
-from apps.reviews.services import ReviewWorkflowService
+from apps.cases.services.review_workflow_service import ReviewWorkflowService
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────────────────
+# --- Fixtures -----------------------------------------------------------------
 
 @pytest.fixture
 def recon_result(db):
@@ -59,7 +59,7 @@ def assignment(recon_result):
         return ReviewWorkflowService.create_assignment(recon_result, priority=3)
 
 
-# ─── create_assignment ────────────────────────────────────────────────────────
+# --- create_assignment --------------------------------------------------------
 
 @pytest.mark.django_db
 class TestCreateAssignment:
@@ -101,7 +101,7 @@ class TestCreateAssignment:
         mock_log.assert_called_once()
 
 
-# ─── assign_reviewer ──────────────────────────────────────────────────────────
+# --- assign_reviewer ----------------------------------------------------------
 
 @pytest.mark.django_db
 class TestAssignReviewer:
@@ -120,7 +120,7 @@ class TestAssignReviewer:
         assert assignment.assigned_to == reviewer
 
 
-# ─── start_review ─────────────────────────────────────────────────────────────
+# --- start_review -------------------------------------------------------------
 
 @pytest.mark.django_db
 class TestStartReview:
@@ -135,7 +135,7 @@ class TestStartReview:
         assert updated.status == ReviewStatus.IN_REVIEW
 
 
-# ─── add_comment ──────────────────────────────────────────────────────────────
+# --- add_comment --------------------------------------------------------------
 
 @pytest.mark.django_db
 class TestAddComment:
@@ -154,13 +154,13 @@ class TestAddComment:
         assert comment.assignment == assignment
 
 
-# ─── approve ──────────────────────────────────────────────────────────────────
+# --- approve ------------------------------------------------------------------
 
 @pytest.mark.django_db
 class TestApprove:
     def test_approve_creates_review_decision(self, assignment, reviewer):
         """approve() returns a ReviewDecision (not an assignment with .status)."""
-        from apps.reviews.models import ReviewDecision
+        from apps.cases.models import ReviewDecision
         assignment.status = ReviewStatus.IN_REVIEW
         assignment.assigned_to = reviewer
         assignment.save()
@@ -175,13 +175,13 @@ class TestApprove:
         assert assignment.status == ReviewStatus.APPROVED
 
 
-# ─── reject ───────────────────────────────────────────────────────────────────
+# --- reject -------------------------------------------------------------------
 
 @pytest.mark.django_db
 class TestReject:
     def test_reject_creates_review_decision(self, assignment, reviewer):
         """reject() returns a ReviewDecision, transitions assignment to REJECTED."""
-        from apps.reviews.models import ReviewDecision
+        from apps.cases.models import ReviewDecision
         assignment.status = ReviewStatus.IN_REVIEW
         assignment.assigned_to = reviewer
         assignment.save()

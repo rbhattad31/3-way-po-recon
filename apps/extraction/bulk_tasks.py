@@ -45,6 +45,7 @@ def run_bulk_job_task(self, job_id: int) -> dict:
             user_id=getattr(job, "started_by_id", None),
             session_id=f"bulk-job-{job.pk}",
             metadata={
+                "tenant_id": getattr(job, "tenant_id", None),
                 "task_id": self.request.id,
                 "job_pk": job.pk,
                 "source_type": getattr(job.source_connection, "source_type", None),

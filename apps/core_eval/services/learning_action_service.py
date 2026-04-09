@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Optional
 
 from django.utils import timezone
@@ -50,18 +51,21 @@ class LearningActionService:
         proposed_by=None,
         tenant=None,
     ) -> LearningAction:
-        return LearningAction.objects.create(
+        kwargs = dict(
             action_type=action_type,
             status=LearningAction.Status.PROPOSED,
             app_module=app_module,
-            tenant_id=tenant_id,
             target_description=target_description,
             rationale=rationale,
             input_signals_json=input_signals_json or {},
             action_payload_json=action_payload_json or {},
             proposed_by=proposed_by,
-            tenant=tenant,
         )
+        if tenant is not None:
+            kwargs["tenant"] = tenant
+        elif tenant_id:
+            kwargs["tenant_id"] = tenant_id
+        return LearningAction.objects.create(**kwargs)
 
     @staticmethod
     def approve(action: LearningAction, *, approved_by=None) -> LearningAction:
@@ -86,7 +90,10 @@ class LearningActionService:
         action.applied_at = timezone.now()
         if result_json is not None:
             action.result_json = result_json
-        action.save(update_fields=["status", "applied_at", "result_json", "updated_at"])
+        action.save(update_fields=[
+            "status", "applied_at", "result_json",
+            "execution_log_json", "execution_error", "retry_count", "updated_at",
+        ])
         _audit_action_event(
             "LEARNING_ACTION_APPLIED", action, status_before=status_before,
         )
@@ -125,3 +132,34 @@ class LearningActionService:
     @staticmethod
     def list_by_type(action_type: str, limit: int = 100):
         return LearningAction.objects.filter(action_type=action_type).order_by("-created_at")[:limit]
+
+    @staticmethod
+    def record_execution_attempt(
+        action: LearningAction,
+        log_entry: str,
+        error: str | None = None,
+    ) -> LearningAction:
+        """Append an execution log entry and update status accordingly."""
+        status_before = action.status
+        action.execution_log_json = (action.execution_log_json or []) + [
+            {"timestamp": timezone.now().isoformat(), "log": log_entry, "error": error}
+        ]
+        if error:
+            action.execution_error = error
+            action.retry_count += 1
+            action.next_retry_at = timezone.now() + timedelta(minutes=30 * action.retry_count)
+            action.status = LearningAction.Status.FAILED
+        else:
+            action.execution_error = ""
+            action.next_retry_at = None
+            action.status = LearningAction.Status.APPLIED
+            action.applied_at = timezone.now()
+        action.save(update_fields=[
+            "execution_log_json", "execution_error", "retry_count",
+            "next_retry_at", "status", "applied_at", "updated_at",
+        ])
+        _audit_action_event(
+            "LEARNING_ACTION_APPLIED" if not error else "LEARNING_ACTION_FAILED",
+            action, status_before=status_before,
+        )
+        return action

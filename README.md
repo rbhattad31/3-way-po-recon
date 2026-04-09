@@ -27,7 +27,7 @@ Upload PDF
 ```
 
 **26 Django apps** under `apps/`:
-`core` · `accounts` · `vendors` · `documents` · `extraction` · `extraction_core` · `extraction_configs` · `extraction_documents` · `reconciliation` · `agents` · `tools` · `reviews` · `cases` · `copilot` · `dashboard` · `reports` · `auditlog` · `posting` · `posting_core` · `procurement` · `erp_integration` · `integrations` · `vendors`
+`core` · `accounts` · `vendors` · `documents` · `extraction` · `extraction_core` · `extraction_configs` · `extraction_documents` · `reconciliation` · `agents` · `tools` · `cases` · `copilot` · `dashboard` · `reports` · `auditlog` · `posting` · `posting_core` · `procurement` · `erp_integration` · `integrations` · `vendors`
 
 ## Key Features
 

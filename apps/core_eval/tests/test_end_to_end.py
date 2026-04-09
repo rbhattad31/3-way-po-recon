@@ -319,8 +319,14 @@ class TestE2EPromptWeakness:
             app_module="extraction",
         ).first()
         assert action is not None
+        assert action.status == LearningAction.Status.PROPOSED
         assert prompt_hash[:12] in action.target_description
-        assert action.action_payload_json["prompt_hash"] == prompt_hash
+        payload = action.action_payload_json
+        assert payload["prompt_hash"] == prompt_hash
+        assert "correction_rate" in payload
+        assert payload["correction_rate"] > PROMPT_WEAKNESS_CORRECTION_RATE
+        assert "correction_count" in payload
+        assert payload["correction_count"] >= PROMPT_WEAKNESS_MIN_CORRECTIONS
 
     def test_low_correction_rate_no_action(self, db):
         """When correction_rate < threshold, no prompt_review action."""
@@ -471,7 +477,11 @@ class TestE2EValidationFailureCluster:
             app_module="extraction",
         ).first()
         assert action is not None
-        assert action.action_payload_json["error_pattern"] == error_text
+        assert action.status == LearningAction.Status.PROPOSED
+        payload = action.action_payload_json
+        assert payload["error_pattern"] == error_text
+        assert "occurrence_count" in payload
+        assert payload["occurrence_count"] >= VALIDATION_CLUSTER_MIN_COUNT
 
 
 # ===========================================================================
@@ -527,6 +537,10 @@ class TestE2EFullPipelineRoundTrip:
             action_type="threshold_tune",
         ).first()
         assert tt_action is not None
+        assert tt_action.status == LearningAction.Status.PROPOSED
+        tt_payload = tt_action.action_payload_json
+        assert "risk_count" in tt_payload
+        assert tt_payload["risk_count"] >= AUTO_APPROVE_RISK_MIN_COUNT
 
     def test_idempotent_engine_run(self, db):
         """Running the engine twice on the same data does not create duplicate

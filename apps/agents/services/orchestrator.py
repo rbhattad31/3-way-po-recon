@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.agents.models import AgentEscalation, AgentOrchestrationRun, AgentRecommendation, AgentRun
@@ -110,8 +110,13 @@ class AgentOrchestrator:
         self.resolver = DeterministicResolver()
 
     @observed_service("agents.orchestrator.execute", audit_event="AGENT_PIPELINE_STARTED", entity_type="ReconciliationResult")
+    @transaction.atomic
     def execute(self, result: ReconciliationResult, request_user=None, tenant=None) -> OrchestrationResult:
         """Run the full agentic pipeline for one reconciliation result.
+
+        Wrapped in ``@transaction.atomic`` so that partial pipeline state
+        (e.g. AgentOrchestrationRun created but agents failed mid-way)
+        is rolled back atomically on unhandled exceptions.
 
         Args:
             result: The ReconciliationResult to process.
@@ -180,7 +185,7 @@ class AgentOrchestrator:
                 _case_id = _ap_case["pk"]
                 _case_number = _ap_case["case_number"]
         except Exception:
-            pass
+            logger.debug("Case metadata lookup failed for result %s (non-fatal)", result.pk, exc_info=True)
 
         try:
             from apps.core.langfuse_client import start_trace
@@ -198,27 +203,29 @@ class AgentOrchestrator:
                     case_number=_case_number,
                     invoice_id=result.invoice_id,
                 ),
-                metadata=build_observability_context(
-                    invoice_id=result.invoice_id,
-                    reconciliation_result_id=result.pk,
-                    case_id=_case_id,
-                    case_number=_case_number,
-                    reconciliation_mode=_recon_mode,
-                    match_status=_prior_match_status,
-                    actor_user_id=actor.pk if actor else None,
-                    po_number=(
-                        result.purchase_order.po_number if result.purchase_order else ""
+                metadata={
+                    **build_observability_context(
+                        tenant_id=tenant.pk if tenant else None,
+                        invoice_id=result.invoice_id,
+                        reconciliation_result_id=result.pk,
+                        case_id=_case_id,
+                        case_number=_case_number,
+                        reconciliation_mode=_recon_mode,
+                        match_status=_prior_match_status,
+                        actor_user_id=actor.pk if actor else None,
+                        po_number=(
+                            result.purchase_order.po_number if result.purchase_order else ""
+                        ),
+                        vendor_name=_vendor_name,
+                        source="agentic",
                     ),
-                    vendor_name=_vendor_name,
-                    source="agentic",
-                    **{
-                        "exception_count": _exc_count,
-                        "vendor_id": getattr(result.invoice, "vendor_id", None) if result.invoice else None,
-                        "grn_available": getattr(result, "grn_available", False),
-                    },
-                ),
+                    "exception_count": _exc_count,
+                    "vendor_id": getattr(result.invoice, "vendor_id", None) if result.invoice else None,
+                    "grn_available": getattr(result, "grn_available", False),
+                },
             )
         except Exception:
+            logger.debug("Langfuse trace start failed for result %s (non-fatal)", result.pk, exc_info=True)
             _lf_trace = None
 
         # Store the Langfuse span on the thread so downstream services
@@ -227,7 +234,7 @@ class AgentOrchestrator:
             from apps.core.langfuse_client import set_current_span
             set_current_span(_lf_trace)
         except Exception:
-            pass
+            logger.debug("Langfuse set_current_span failed (non-fatal)", exc_info=True)
 
         # 1. Build the plan
         plan = self.policy.plan(result)
@@ -397,7 +404,7 @@ class AgentOrchestrator:
 
                 # Pass review_assignment to ExceptionAnalysisAgent
                 if agent_type == AgentType.EXCEPTION_ANALYSIS:
-                    from apps.reviews.models import ReviewAssignment
+                    from apps.cases.models import ReviewAssignment
                     _review_assignment = (
                         ReviewAssignment.objects
                         .filter(reconciliation_result=result)
@@ -437,6 +444,7 @@ class AgentOrchestrator:
                             confidence=agent_run.confidence or 0.0,
                             reasoning=agent_run.summarized_reasoning or "",
                             evidence=output_payload.get("evidence"),
+                            tenant=tenant,
                         )
                     except IntegrityError:
                         logger.warning(
@@ -459,6 +467,13 @@ class AgentOrchestrator:
                             agent=agent_type,
                             metadata={"recommendation_id": rec.pk, "recommendation_type": rec_type, "confidence": agent_run.confidence},
                         )
+
+                # -- Eval adapter: per-agent eval record --
+                try:
+                    from apps.agents.services.eval_adapter import AgentEvalAdapter
+                    AgentEvalAdapter.sync_for_agent_run(agent_run)
+                except Exception:
+                    logger.debug("AgentEvalAdapter.sync_for_agent_run failed for %s (non-fatal)", agent_run.pk, exc_info=True)
 
             except Exception as exc:
                 logger.exception("Agent %s failed for result %s", agent_type, result.pk)
@@ -535,6 +550,13 @@ class AgentOrchestrator:
             "completed_at", "duration_ms", "executed_agents",
         ])
 
+        # -- Eval adapter: pipeline-level eval record --
+        try:
+            from apps.agents.services.eval_adapter import AgentEvalAdapter
+            AgentEvalAdapter.sync_for_orchestration(orch_db_run, orch_result, result)
+        except Exception:
+            logger.debug("AgentEvalAdapter.sync_for_orchestration failed for orch_run=%s (non-fatal)", orch_db_run.pk, exc_info=True)
+
         if _lf_trace is not None:
             try:
                 from apps.core.langfuse_client import end_span, score_trace
@@ -583,7 +605,7 @@ class AgentOrchestrator:
                     span=_lf_trace,
                 )
             except Exception:
-                pass
+                logger.debug("Langfuse score/span finalization failed for result %s (non-fatal)", result.pk, exc_info=True)
 
         logger.info(
             "Orchestration complete for result %s: agents=%s recommendation=%s confidence=%.2f",
@@ -708,15 +730,16 @@ class AgentOrchestrator:
                 logger.warning("Escalation denied for result %s — actor lacks permission", result.pk)
                 return
 
+            tenant = getattr(result, "tenant", None)
             last_run = orch.agent_runs[-1] if orch.agent_runs else None
             if last_run:
                 AgentEscalation.objects.create(
                     agent_run=last_run,
                     reconciliation_result=result,
                     severity=ExceptionSeverity.HIGH,
-                    reason=orch.final_reasoning or "Low confidence — requires manager review",
+                    reason=orch.final_reasoning or "Low confidence -- requires manager review",
                     suggested_assignee_role="FINANCE_MANAGER",
-                    tenant=getattr(last_run, "tenant", None),
+                    tenant=tenant,
                 )
             logger.info("Escalated result %s", result.pk)
 
@@ -813,6 +836,13 @@ class AgentOrchestrator:
                 orch.agents_executed.append(det_agent_type)
                 orch.agent_runs.append(det_run)
 
+                # Eval adapter: per-agent eval for legacy deterministic
+                try:
+                    from apps.agents.services.eval_adapter import AgentEvalAdapter
+                    AgentEvalAdapter.sync_for_agent_run(det_run)
+                except Exception:
+                    logger.debug("AgentEvalAdapter.sync_for_agent_run failed for det_run=%s (non-fatal)", det_run.pk, exc_info=True)
+
         # ---- System-agent path (REVIEW_ROUTING, CASE_SUMMARY) -----------
         for det_agent_type in system_agent_types:
             system_type = _SYSTEM_AGENT_REPLACEMENTS[det_agent_type]
@@ -897,6 +927,13 @@ class AgentOrchestrator:
                                 "system_agent": str(system_type),
                             },
                         )
+
+            # Eval adapter: per-agent eval for system agents
+            try:
+                from apps.agents.services.eval_adapter import AgentEvalAdapter
+                AgentEvalAdapter.sync_for_agent_run(sys_run)
+            except Exception:
+                logger.debug("AgentEvalAdapter.sync_for_agent_run failed for sys_run=%s (non-fatal)", sys_run.pk, exc_info=True)
 
         # Persist the case summary on the result from the case summary agent
         case_summary_run = None

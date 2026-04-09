@@ -16,8 +16,9 @@ import uuid
 
 from celery import shared_task
 from django.db import transaction
+from django.utils import timezone
 
-from apps.core.enums import FileProcessingState, InvoiceStatus
+from apps.core.enums import FileProcessingState, InvoiceStatus, ExtractionApprovalStatus
 from apps.core.decorators import observed_task
 from apps.core.evaluation_constants import (
     EXTRACTION_APPROVAL_CONFIDENCE,
@@ -154,6 +155,7 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
         user_id=upload.uploaded_by_id,
         session_id=_session_id,
         metadata={
+            "tenant_id": tenant_id,
             "upload_id": upload_id,
             "filename": upload.original_filename or "",
             "celery_task_id": _celery_task_id,
@@ -552,7 +554,7 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
             # Critical field failures force human review even if confidence passes threshold
             review_forced = getattr(validation_result, "requires_review_override", False)
 
-            # Try auto-approve first (disabled by default — threshold = 1.1)
+            # Try auto-approve first (disabled by default -- threshold = 1.1)
             # Skip auto-approval entirely when critical field review is forced
             auto_approval = None if review_forced else ExtractionApprovalService.try_auto_approve(
                 invoice, ext_result, lf_trace_id=_trace_id, lf_span=_lf_root,
@@ -572,6 +574,27 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
                     description=f"Extraction pending human approval for invoice {invoice.invoice_number}",
                     metadata={"upload_id": upload_id, "confidence": invoice.extraction_confidence},
                 )
+        elif dup_result.is_duplicate:
+            # Duplicate invoice -- mark INVALID and auto-reject
+            invoice.status = InvoiceStatus.INVALID
+            invoice.save(update_fields=["status", "updated_at"])
+            try:
+                from apps.extraction.services.approval_service import ExtractionApprovalService
+                from apps.extraction.models import ExtractionApproval
+                ExtractionApprovalService.create_pending_approval(invoice, ext_result)
+                approval = ExtractionApproval.objects.filter(invoice=invoice).first()
+                if approval:
+                    approval.status = ExtractionApprovalStatus.REJECTED
+                    approval.rejection_reason = (
+                        f"Duplicate of invoice #{dup_result.duplicate_invoice_id}: "
+                        f"{dup_result.reason}"
+                    )
+                    approval.reviewed_at = timezone.now()
+                    approval.save(update_fields=[
+                        "status", "rejection_reason", "reviewed_at", "updated_at",
+                    ])
+            except Exception:
+                logger.warning("Could not auto-reject duplicate invoice %s", invoice.pk)
 
         # Close approval gate span
         _approval_outcome = "skipped"

@@ -1910,7 +1910,7 @@ def extraction_console(request, pk):
     duplicate_blocks_approval = False
     if invoice and invoice.is_duplicate and invoice.duplicate_of_id:
         from apps.core.enums import ExtractionApprovalStatus as _EAS
-        duplicate_blocks_approval = _EA.objects.filter(
+        duplicate_blocks_approval = ExtractionApproval.objects.filter(
             invoice_id=invoice.duplicate_of_id,
             status__in=[_EAS.APPROVED, _EAS.AUTO_APPROVED],
         ).exists()

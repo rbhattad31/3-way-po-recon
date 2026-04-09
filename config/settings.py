@@ -8,9 +8,18 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
+from django.core.exceptions import ImproperlyConfigured
 
-DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() in ("true", "1", "yes")
+_secret_key = os.getenv("DJANGO_SECRET_KEY", "")
+if not _secret_key:
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY environment variable is not set. "
+        "Generate one with: python -c \"from django.core.utils.crypto import get_random_string; "
+        "print(get_random_string(50))\""
+    )
+SECRET_KEY = _secret_key
+
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() in ("true", "1", "yes")
 
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
@@ -37,7 +46,7 @@ INSTALLED_APPS = [
     "apps.reconciliation",
     "apps.agents",
     "apps.tools",
-    "apps.reviews",
+    "apps.reviews",  # migrations-only stub; models moved to apps.cases
     "apps.dashboard",
     "apps.reports",
     "apps.auditlog",
@@ -98,7 +107,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.mysql",
         "NAME": os.getenv("DB_NAME", "po_recon"),
         "USER": os.getenv("DB_USER", "root"),
-        "PASSWORD": os.getenv("DB_PASSWORD", ""),
+        "PASSWORD": os.getenv("DB_PASSWORD"),  # Must be set via environment variable
         "HOST": os.getenv("DB_HOST", "127.0.0.1"),
         "PORT": os.getenv("DB_PORT", "3306"),
         "OPTIONS": {
@@ -171,16 +180,28 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ],
-    "DEFAULT_RENDERER_CLASSES": [
-        "rest_framework.renderers.JSONRenderer",
-        "rest_framework.renderers.BrowsableAPIRenderer",
-    ],
+    "DEFAULT_RENDERER_CLASSES": (
+        [
+            "rest_framework.renderers.JSONRenderer",
+            "rest_framework.renderers.BrowsableAPIRenderer",
+        ]
+        if DEBUG
+        else [
+            "rest_framework.renderers.JSONRenderer",
+        ]
+    ),
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%S%z",
 }
 
 # ---------------------------------------------------------------------------
 # Celery
 # ---------------------------------------------------------------------------
+# SECURITY: In production the broker URL MUST include authentication credentials.
+# Use the rediss:// scheme for TLS, e.g.:
+#   CELERY_BROKER_URL=rediss://:your-password@your-redis-host:6380/0
+# The unauthenticated localhost default is intentional for local dev only and
+# MUST be overridden via the CELERY_BROKER_URL environment variable in every
+# non-development environment (staging, production, CI with an external Redis).
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = "django-db"
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -189,8 +210,9 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_DEFAULT_QUEUE = "default"
-# Run tasks synchronously when no Celery worker is available (e.g. Windows dev)
-CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "True").lower() in ("true", "1", "yes")
+# Run tasks synchronously — disabled in production; override via CELERY_TASK_ALWAYS_EAGER=true
+# for local dev or test_settings.py (which forces True unconditionally).
+CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "False").lower() in ("true", "1", "yes")
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 
 # ---------------------------------------------------------------------------
@@ -244,6 +266,9 @@ AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+# Per-call HTTP timeout for LLM requests (seconds). Prevents stalled calls from
+# blocking Celery workers indefinitely. Default: 120 s.
+LLM_REQUEST_TIMEOUT = int(os.getenv("LLM_REQUEST_TIMEOUT", "120"))
 # Set to True to activate the LLM-backed ReasoningPlanner for agent pipeline planning.
 # When False (default), the deterministic PolicyEngine is always used.
 AGENT_REASONING_ENGINE_ENABLED = os.getenv("AGENT_REASONING_ENGINE_ENABLED", "false").lower() == "true"

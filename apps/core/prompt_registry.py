@@ -55,7 +55,7 @@ def _load_from_langfuse(slug: str) -> Optional[str]:
             logger.debug("Prompt '%s' loaded from Langfuse (name=%s)", slug, lf_name)
             return text
     except Exception:
-        pass
+        logger.debug("Langfuse prompt load failed for '%s' (non-fatal)", slug, exc_info=True)
     return None
 
 
@@ -68,7 +68,7 @@ def _load_from_db(slug: str) -> Optional[str]:
             return pt.content
     except Exception:
         # DB not ready (e.g. during migrations) — fall through
-        pass
+        logger.debug("DB prompt load failed for '%s' — DB may not be ready (non-fatal)", slug)
     return None
 
 
@@ -138,7 +138,7 @@ class PromptRegistry:
                 if v is not None:
                     return f"langfuse-v{v}"
         except Exception:
-            pass
+            logger.debug("Langfuse version lookup failed for agent '%s' (non-fatal)", agent_type, exc_info=True)
         # Fall back to DB version
         try:
             from apps.core.models import PromptTemplate
@@ -146,7 +146,7 @@ class PromptRegistry:
             if pt:
                 return str(pt.version)
         except Exception:
-            pass
+            logger.debug("DB prompt version lookup failed for '%s' (non-fatal)", key)
         return ""
 
     @classmethod

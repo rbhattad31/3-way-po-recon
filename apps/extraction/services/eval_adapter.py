@@ -160,7 +160,8 @@ class ExtractionEvalAdapter:
             EvalMetricService.upsert(
                 eval_run=eval_run,
                 metric_name=name,
-                metric_value=value,
+                value=value,
+                value_type="float",
                 tenant=_tenant,
                 **kw,
             )
@@ -195,7 +196,8 @@ class ExtractionEvalAdapter:
             EvalMetricService.upsert(
                 eval_run=eval_run,
                 metric_name="decision_codes",
-                json_value=decision_codes,
+                value=decision_codes,
+                value_type="json",
                 tenant=_tenant,
             )
 
@@ -315,15 +317,17 @@ class ExtractionEvalAdapter:
             EvalMetricService.upsert(
                 eval_run=eval_run,
                 metric_name="extraction_approval_decision",
-                metric_value=1.0 if outcome_value == "approved" else 0.0,
+                value=1.0 if outcome_value == "approved" else 0.0,
+                value_type="float",
                 tenant=_tenant,
             )
             EvalMetricService.upsert(
                 eval_run=eval_run,
                 metric_name="extraction_approval_confidence",
-                metric_value=float(
+                value=float(
                     getattr(approval, "confidence_at_review", 0) or 0
                 ),
+                value_type="float",
                 unit="ratio",
                 tenant=_tenant,
             )
@@ -334,7 +338,8 @@ class ExtractionEvalAdapter:
                 EvalMetricService.upsert(
                     eval_run=eval_run,
                     metric_name="extraction_corrections_count",
-                    metric_value=float(len(correction_records)),
+                    value=float(len(correction_records)),
+                    value_type="float",
                     unit="count",
                     tenant=_tenant,
                 )
@@ -427,7 +432,7 @@ class ExtractionEvalAdapter:
         from apps.core_eval.models import EvalFieldOutcome
 
         # LLM extraction values = the actual predicted output
-        legacy_values = cls._build_legacy_value_map(ext_result)
+        legacy_values = cls._build_legacy_value_map(ext_result, invoice=invoice)
 
         outcomes = []
 
@@ -437,7 +442,7 @@ class ExtractionEvalAdapter:
                 legacy_values=legacy_values,
             )
         else:
-            outcomes = cls._field_outcomes_from_legacy(ext_result)
+            outcomes = cls._field_outcomes_from_legacy(ext_result, invoice=invoice)
 
         if not outcomes:
             return
@@ -553,6 +558,11 @@ class ExtractionEvalAdapter:
             if source == "llm" and llm_confidence is not None:
                 effective_confidence = llm_confidence
 
+            # MISSING fields get 0.0 -- pipeline confidence reflects
+            # extraction certainty, not whether a value was found.
+            if status == "MISSING":
+                effective_confidence = 0.0
+
             outcomes.append({
                 "field_name": fv["field_code"],
                 "status": status,
@@ -569,85 +579,110 @@ class ExtractionEvalAdapter:
         return outcomes
 
     @classmethod
-    def _build_legacy_value_map(cls, ext_result) -> dict:
-        """Build {field_code: {value, confidence}} from raw_response.
+    def _build_legacy_value_map(cls, ext_result, *, invoice=None) -> dict:
+        """Build {field_name: {value, confidence}} from extraction raw JSON.
 
-        Maps the flat top-level keys in raw_response (produced by the
-        legacy LLM extraction agent) to the governed field_code namespace.
-        Returns ``{field_code: {"value": str, "confidence": float}}``.
+        Reads ALL data fields from the raw JSON (excluding internal ``_``
+        prefixed metadata keys and non-scalar ``line_items``).  Confidence
+        per field comes from ``_field_confidence.header`` when available.
+
+        Returns ``{field_name: {"value": str, "confidence": float|None}}``.
         """
         raw = getattr(ext_result, "raw_response", None) or {}
+        if not isinstance(raw, dict) or not raw:
+            raw = getattr(invoice, "extraction_raw_json", None) or {}
         if not isinstance(raw, dict):
             return {}
 
         def _str(v):
             if v is None:
                 return ""
+            if isinstance(v, dict):
+                # Structured sub-objects like tax_breakdown -- JSON-encode
+                import json
+                return json.dumps(v)
             return str(v).strip()
 
-        # LLM per-field confidence from _field_confidence.header
+        # Per-field confidence from _field_confidence.header
         fc = raw.get("_field_confidence") or {}
         header_conf = fc.get("header") or {} if isinstance(fc, dict) else {}
+        if not isinstance(header_conf, dict):
+            header_conf = {}
 
-        # Map raw_response keys -> governed field_codes
-        mapping = {
-            "invoice_number": "invoice_number",
-            "invoice_date": "invoice_date",
-            "due_date": "due_date",
-            "po_number": "po_number",
-            "currency": "currency",
-            "total_amount": "total_amount",
-            "subtotal": "total_taxable_amount",
-            "tax_amount": "total_tax_amount",
-            "vendor_name": "supplier_name",
-            "vendor_tax_id": "supplier_gstin",
-            "buyer_name": "buyer_name",
-        }
+        # Skip internal metadata keys and line_items (tracked separately)
+        _skip = {"line_items", "confidence", "document_type"}
 
         result = {}
-        for raw_key, field_code in mapping.items():
-            val = _str(raw.get(raw_key))
-            if val:
-                conf = header_conf.get(raw_key)
-                result[field_code] = {
-                    "value": val,
-                    "confidence": float(conf) if conf is not None else None,
-                }
+        for key, val in raw.items():
+            if key.startswith("_") or key in _skip:
+                continue
+            str_val = _str(val)
+            conf = header_conf.get(key)
+            if isinstance(conf, dict):
+                conf = conf.get("confidence")
+            if conf is not None:
+                conf = float(conf)
+            result[key] = {
+                "value": str_val,
+                "confidence": conf,
+            }
         return result
 
     @classmethod
-    def _field_outcomes_from_legacy(cls, ext_result) -> list[dict]:
-        """Build field outcome dicts from raw_response.
+    def _field_outcomes_from_legacy(cls, ext_result, *, invoice=None) -> list[dict]:
+        """Build field outcome dicts from ALL extracted fields.
 
-        Predicted = LLM-extracted value from raw_response top-level keys.
-        Ground truth is left empty -- populated during human approval.
+        Captures every data field the LLM produced, with confidence from
+        _field_confidence.header when available.  Fields present in
+        confidence header but absent from data are tracked as MISSING.
         """
         raw = getattr(ext_result, "raw_response", None) or {}
+        if not isinstance(raw, dict) or not raw:
+            raw = getattr(invoice, "extraction_raw_json", None) or {}
         if not isinstance(raw, dict):
             return []
 
-        field_conf = raw.get("_field_confidence") or {}
-        if not isinstance(field_conf, dict):
-            return []
+        # Per-field confidence
+        fc = raw.get("_field_confidence") or {}
+        header_conf = {}
+        if isinstance(fc, dict):
+            if "header" in fc and isinstance(fc["header"], dict):
+                header_conf = fc["header"]
+            else:
+                # Flat format (field_name -> score)
+                header_conf = {k: v for k, v in fc.items()
+                               if isinstance(v, (int, float, dict))}
 
-        # Build predicted values from raw_response
-        legacy_values = cls._build_legacy_value_map(ext_result)
+        # All LLM-extracted data fields
+        legacy_values = cls._build_legacy_value_map(ext_result, invoice=invoice)
+
+        # Union of data fields + confidence fields to catch everything
+        all_field_names = set(legacy_values.keys()) | set(header_conf.keys())
 
         outcomes = []
-        for field_name, conf_value in field_conf.items():
-            conf = None
-            if isinstance(conf_value, (int, float)):
-                conf = float(conf_value)
-            elif isinstance(conf_value, dict):
-                conf = conf_value.get("confidence")
-                if conf is not None:
-                    conf = float(conf)
-
+        for field_name in sorted(all_field_names):
             lv = legacy_values.get(field_name)
             predicted = lv["value"] if lv else ""
+
+            # Confidence: prefer value from legacy_values (already parsed),
+            # fall back to header_conf entry
+            conf = None
             if lv and lv["confidence"] is not None:
                 conf = lv["confidence"]
+            else:
+                cv = header_conf.get(field_name)
+                if isinstance(cv, (int, float)):
+                    conf = float(cv)
+                elif isinstance(cv, dict):
+                    c = cv.get("confidence")
+                    if c is not None:
+                        conf = float(c)
+
             status = "CORRECT" if predicted else "MISSING"
+
+            # MISSING fields get 0.0 confidence
+            if status == "MISSING":
+                conf = 0.0
 
             outcomes.append({
                 "field_name": field_name,
@@ -655,7 +690,7 @@ class ExtractionEvalAdapter:
                 "predicted_value": predicted,
                 "ground_truth_value": "",
                 "confidence": conf,
-                "detail_json": {"source": "legacy"},
+                "detail_json": {"source": "llm"},
             })
         return outcomes
 

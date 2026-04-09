@@ -484,7 +484,29 @@ class ExceptionBuilderService:
             return excs
 
         for cmp in grn.line_comparisons:
-            if cmp.invoiced_exceeds_received:
+            # Receipt-availability overbilling check (most specific, takes priority)
+            if cmp.invoiced_exceeds_available:
+                excs.append(self._make(
+                    result=result,
+                    exc_type=ExceptionType.INVOICE_QTY_EXCEEDS_AVAILABLE,
+                    severity=ExceptionSeverity.HIGH,
+                    message=(
+                        f"Invoiced quantity ({cmp.qty_invoiced}) exceeds available "
+                        f"receipt ({cmp.available_qty}) for PO line {cmp.po_line_id} "
+                        f"(received={cmp.cumulative_received_qty}, "
+                        f"prior consumed={cmp.previously_consumed_qty})"
+                    ),
+                    details={
+                        "po_line_id": cmp.po_line_id,
+                        "qty_invoiced": str(cmp.qty_invoiced),
+                        "cumulative_received_qty": str(cmp.cumulative_received_qty),
+                        "previously_consumed_qty": str(cmp.previously_consumed_qty),
+                        "available_qty": str(cmp.available_qty),
+                        "qty_received": str(cmp.qty_received),
+                        "contributing_grn_line_ids": cmp.contributing_grn_line_ids,
+                    },
+                ))
+            elif cmp.invoiced_exceeds_received:
                 excs.append(self._make(
                     result=result,
                     exc_type=ExceptionType.INVOICE_QTY_EXCEEDS_RECEIVED,

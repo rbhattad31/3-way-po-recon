@@ -31,9 +31,12 @@ def process_case_task(self, tenant_id: int = None, case_id: int = 0):
 
     # Pre-load case for metadata (safe -- if not found, the try block below catches it)
     _case_meta = {}
+    _user_id = None
     try:
         _case_pre = APCase.objects.select_related("invoice", "invoice__vendor").get(id=case_id)
+        _user_id = getattr(_case_pre.invoice, "created_by_id", None) if _case_pre.invoice else None
         _case_meta = {
+            "tenant_id": tenant_id,
             "task_id": self.request.id,
             "case_id": case_id,
             "case_number": _case_pre.case_number,
@@ -54,7 +57,7 @@ def process_case_task(self, tenant_id: int = None, case_id: int = 0):
             "source": "mixed",
         }
     except Exception:
-        _case_meta = {"task_id": self.request.id, "case_id": case_id, "trigger": "full"}
+        _case_meta = {"tenant_id": tenant_id, "task_id": self.request.id, "case_id": case_id, "trigger": "full"}
 
     try:
         from apps.core.langfuse_client import start_trace_safe
@@ -62,7 +65,7 @@ def process_case_task(self, tenant_id: int = None, case_id: int = 0):
             _trace_id,
             TRACE_CASE_PIPELINE,
             invoice_id=_case_meta.get("invoice_id"),
-            user_id=None,
+            user_id=_user_id,
             session_id=derive_session_id(
                 case_number=_case_meta.get("case_number"),
                 invoice_id=_case_meta.get("invoice_id"),
@@ -71,12 +74,12 @@ def process_case_task(self, tenant_id: int = None, case_id: int = 0):
             metadata=_case_meta,
         )
     except Exception:
-        pass
+        logger.debug("Langfuse trace start failed for case %s (non-fatal)", case_id, exc_info=True)
     try:
         from apps.core.langfuse_client import set_current_span
         set_current_span(_lf_trace)
     except Exception:
-        pass
+        logger.debug("Langfuse set_current_span failed (non-fatal)", exc_info=True)
 
     try:
         _case_qs = APCase.objects.all()
@@ -135,7 +138,7 @@ def process_case_task(self, tenant_id: int = None, case_id: int = 0):
             }, is_root=True)
             score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 1.0, comment=f"case={case.case_number}", span=_lf_trace)
         except Exception:
-            pass
+            logger.debug("Langfuse finalization failed for case %s (non-fatal)", case_id, exc_info=True)
     except APCase.DoesNotExist:
         logger.error("Case %d not found", case_id)
         try:
@@ -143,7 +146,7 @@ def process_case_task(self, tenant_id: int = None, case_id: int = 0):
             end_span_safe(_lf_trace, output={"error": "not_found"}, level="ERROR")
             score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 0.0, comment="case not found", span=_lf_trace)
         except Exception:
-            pass
+            logger.debug("Langfuse error span failed (non-fatal)", exc_info=True)
     except Exception as exc:
         logger.exception("Case %d processing failed", case_id)
         try:
@@ -151,7 +154,7 @@ def process_case_task(self, tenant_id: int = None, case_id: int = 0):
             end_span_safe(_lf_trace, output={"error": str(exc)[:200]}, level="ERROR")
             score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 0.0, comment=str(exc)[:100], span=_lf_trace)
         except Exception:
-            pass
+            logger.debug("Langfuse error recording failed (non-fatal)", exc_info=True)
         from apps.core.utils import safe_retry
         safe_retry(self, exc)
 
@@ -169,9 +172,12 @@ def reprocess_case_from_stage_task(self, tenant_id: int = None, case_id: int = 0
     _lf_trace = None
 
     _case_meta = {}
+    _user_id = None
     try:
         _case_pre = APCase.objects.select_related("invoice").get(id=case_id)
+        _user_id = getattr(_case_pre.invoice, "created_by_id", None) if _case_pre.invoice else None
         _case_meta = {
+            "tenant_id": tenant_id,
             "task_id": self.request.id,
             "case_id": case_id,
             "case_number": _case_pre.case_number,
@@ -182,7 +188,7 @@ def reprocess_case_from_stage_task(self, tenant_id: int = None, case_id: int = 0
             "source": "mixed",
         }
     except Exception:
-        _case_meta = {"task_id": self.request.id, "case_id": case_id, "stage": stage, "trigger": "reprocess"}
+        _case_meta = {"tenant_id": tenant_id, "task_id": self.request.id, "case_id": case_id, "stage": stage, "trigger": "reprocess"}
 
     try:
         from apps.core.langfuse_client import start_trace_safe
@@ -190,6 +196,7 @@ def reprocess_case_from_stage_task(self, tenant_id: int = None, case_id: int = 0
             _trace_id,
             TRACE_CASE_PIPELINE,
             invoice_id=_case_meta.get("invoice_id"),
+            user_id=_user_id,
             session_id=derive_session_id(
                 case_number=_case_meta.get("case_number"),
                 invoice_id=_case_meta.get("invoice_id"),
@@ -198,12 +205,12 @@ def reprocess_case_from_stage_task(self, tenant_id: int = None, case_id: int = 0
             metadata=_case_meta,
         )
     except Exception:
-        pass
+        logger.debug("Langfuse trace start failed for reprocess case %s (non-fatal)", case_id, exc_info=True)
     try:
         from apps.core.langfuse_client import set_current_span
         set_current_span(_lf_trace)
     except Exception:
-        pass
+        logger.debug("Langfuse set_current_span failed (non-fatal)", exc_info=True)
 
     try:
         _rpc_qs = APCase.objects.all()
@@ -219,7 +226,7 @@ def reprocess_case_from_stage_task(self, tenant_id: int = None, case_id: int = 0
             score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 1.0, span=_lf_trace)
             score_trace_safe(_trace_id, CASE_REPROCESSED, 1.0, span=_lf_trace)
         except Exception:
-            pass
+            logger.debug("Langfuse finalization failed for reprocess case %s (non-fatal)", case_id, exc_info=True)
     except APCase.DoesNotExist:
         logger.error("Case %d not found", case_id)
         try:
@@ -227,7 +234,7 @@ def reprocess_case_from_stage_task(self, tenant_id: int = None, case_id: int = 0
             end_span_safe(_lf_trace, output={"error": "not_found"}, level="ERROR")
             score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 0.0, span=_lf_trace)
         except Exception:
-            pass
+            logger.debug("Langfuse error span failed (non-fatal)", exc_info=True)
     except Exception as exc:
         logger.exception("Case %d reprocessing failed from %s", case_id, stage)
         try:
@@ -235,6 +242,6 @@ def reprocess_case_from_stage_task(self, tenant_id: int = None, case_id: int = 0
             end_span_safe(_lf_trace, output={"error": str(exc)[:200]}, level="ERROR")
             score_trace_safe(_trace_id, CASE_PROCESSING_SUCCESS, 0.0, span=_lf_trace)
         except Exception:
-            pass
+            logger.debug("Langfuse error recording failed (non-fatal)", exc_info=True)
         from apps.core.utils import safe_retry
         safe_retry(self, exc)

@@ -179,14 +179,19 @@ def dispatch_task(task, *args, **kwargs):
         return task.run(*args, **kwargs)
 
 
-def safe_retry(task_self, exc):
-    """Attempt Celery retry; if the broker is down, re-raise the original error.
+def safe_retry(task_self, exc, base_delay: int = 60):
+    """Attempt Celery retry with exponential back-off; re-raise when retries
+    exhausted or when running outside a Celery worker context.
+
+    Back-off formula: ``base_delay * 2 ** retries`` (capped at 10 minutes).
 
     Use this instead of ``raise self.retry(exc=exc)`` in ``@shared_task``
     functions so tasks don't crash with a Redis ``ConnectionError`` on Windows.
     """
     try:
-        raise task_self.retry(exc=exc)
+        retries = getattr(task_self.request, "retries", 0)
+        countdown = min(base_delay * (2 ** retries), 600)  # max 10 minutes
+        raise task_self.retry(exc=exc, countdown=countdown)
     except (AttributeError, TypeError):
         # Running outside Celery context (sync fallback)
         raise exc

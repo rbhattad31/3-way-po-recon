@@ -1,4 +1,4 @@
-"""Review workflow service — manages assignment lifecycle and reviewer actions."""
+"""Review workflow service -- manages assignment lifecycle and reviewer actions."""
 from __future__ import annotations
 
 import logging
@@ -26,7 +26,7 @@ from apps.core.evaluation_constants import (
 )
 from apps.core.metrics import MetricsService
 from apps.reconciliation.models import ReconciliationResult
-from apps.reviews.models import (
+from apps.cases.models import (
     ManualReviewAction,
     ReviewAssignment,
     ReviewComment,
@@ -75,6 +75,21 @@ class ReviewWorkflowService:
 
         logger.info("Created review assignment %s for result %s", assignment.pk, result.pk)
 
+        # -- Activity log on the parent case
+        try:
+            from apps.cases.models import APCase
+            from apps.cases.services.case_activity_service import CaseActivityService
+            _case = APCase.objects.filter(invoice_id=result.invoice_id, is_active=True).first()
+            if _case:
+                CaseActivityService.log(
+                    _case, "REVIEW_ASSIGNED",
+                    description=f"Review assignment #{assignment.pk} created (priority: {priority})",
+                    actor=assigned_to,
+                    metadata={"assignment_id": assignment.pk, "match_status": result.match_status or ""},
+                )
+        except Exception:
+            pass
+
         try:
             from apps.core.langfuse_client import start_trace_safe, score_trace_safe
             _lf_trace_id = f"review-{assignment.pk}"
@@ -87,6 +102,7 @@ class ReviewWorkflowService:
                 user_id=getattr(assigned_to, "pk", None),
                 session_id=f"invoice-{result.invoice_id}",
                 metadata={
+                    "tenant_id": getattr(result, "tenant_id", None),
                     "assignment_pk": assignment.pk,
                     "reconciliation_result_id": result.pk,
                     "assigned_to": getattr(assignment.assigned_to, "pk", None),
@@ -119,14 +135,14 @@ class ReviewWorkflowService:
                 span=_lf_trace,
             )
         except Exception:
-            pass
+            logger.debug("Langfuse tracing failed in create_assignment", exc_info=True)
 
         # core_eval: sync review assignment context (best-effort)
         try:
             from apps.reconciliation.services.eval_adapter import ReconciliationEvalAdapter
             ReconciliationEvalAdapter.sync_for_review_assignment(assignment)
         except Exception:
-            pass
+            logger.debug("Eval adapter sync failed in create_assignment", exc_info=True)
 
         return assignment
 
@@ -144,6 +160,7 @@ class ReviewWorkflowService:
                     trace_id=f"review-{assignment.pk}",
                     name="review_assign_reviewer",
                     metadata={
+                        "tenant_id": getattr(assignment, "tenant_id", None),
                         "reviewer_id": getattr(user, "pk", None),
                         "reviewer_email": getattr(user, "email", ""),
                         "assignment_id": assignment.pk,
@@ -151,7 +168,7 @@ class ReviewWorkflowService:
                     },
                 )
         except Exception:
-            pass
+            logger.debug("Langfuse span creation failed in assign_reviewer", exc_info=True)
 
         try:
             previous_assignee = assignment.assigned_to
@@ -178,7 +195,7 @@ class ReviewWorkflowService:
                 from apps.core.langfuse_client import end_span_safe
                 end_span_safe(_lf_span, output={"status": assignment.status, "reviewer_assigned": True})
             except Exception:
-                pass
+                logger.debug("Langfuse end_span failed in assign_reviewer", exc_info=True)
 
         return assignment
 
@@ -193,13 +210,14 @@ class ReviewWorkflowService:
                     trace_id=f"review-{assignment.pk}",
                     name="review_start",
                     metadata={
+                        "tenant_id": getattr(assignment, "tenant_id", None),
                         "assignment_id": assignment.pk,
                         "reviewer_id": getattr(assignment.assigned_to, "pk", None),
                         "status_before": assignment.status or "",
                     },
                 )
         except Exception:
-            pass
+            logger.debug("Langfuse span creation failed in start_review", exc_info=True)
 
         try:
             assignment.status = ReviewStatus.IN_REVIEW
@@ -223,7 +241,7 @@ class ReviewWorkflowService:
                 from apps.core.langfuse_client import end_span_safe
                 end_span_safe(_lf_span, output={"status": assignment.status, "review_started": True})
             except Exception:
-                pass
+                logger.debug("Langfuse end_span failed in start_review", exc_info=True)
 
         return assignment
 
@@ -262,6 +280,7 @@ class ReviewWorkflowService:
                     trace_id=f"review-{assignment.pk}",
                     name="review_record_action",
                     metadata={
+                        "tenant_id": getattr(assignment, "tenant_id", None),
                         "action_type": action_type,
                         "field_name": field_name,
                         "user_id": getattr(user, "pk", None),
@@ -286,7 +305,7 @@ class ReviewWorkflowService:
                     span=_lf_span,
                 )
         except Exception:
-            pass
+            logger.debug("Langfuse tracing failed in record_action", exc_info=True)
 
         # Audit: field correction
         if action_type == ReviewActionType.CORRECT_FIELD and field_name:
@@ -327,13 +346,14 @@ class ReviewWorkflowService:
                     trace_id=f"review-{assignment.pk}",
                     name="review_add_comment",
                     metadata={
+                        "tenant_id": getattr(assignment, "tenant_id", None),
                         "user_id": getattr(user, "pk", None),
                         "is_internal": is_internal,
                     },
                 )
             end_span_safe(_lf_span, output={"comment_id": comment.pk})
         except Exception:
-            pass
+            logger.debug("Langfuse tracing failed in add_comment", exc_info=True)
         return comment
 
     # ------------------------------------------------------------------
@@ -384,6 +404,7 @@ class ReviewWorkflowService:
                     trace_id=_trace_id,
                     name="review_finalise",
                     metadata={
+                        "tenant_id": getattr(assignment, "tenant_id", None),
                         "decision_status": decision_status,
                         "user_id": getattr(user, "pk", None),
                         "status_before": assignment.status or "",
@@ -394,7 +415,7 @@ class ReviewWorkflowService:
                     },
                 )
         except Exception:
-            pass
+            logger.debug("Langfuse span creation failed in _finalise", exc_info=True)
 
         assignment.status = decision_status
         assignment.save(update_fields=["status", "updated_at"])
@@ -439,6 +460,22 @@ class ReviewWorkflowService:
         )
 
         logger.info("Review %s decided: %s by %s", assignment.pk, decision_status, user)
+
+        # -- Activity log on the parent case
+        try:
+            from apps.cases.models import APCase
+            from apps.cases.services.case_activity_service import CaseActivityService
+            _inv_id = getattr(result, "invoice_id", None)
+            _case = APCase.objects.filter(invoice_id=_inv_id, is_active=True).first() if _inv_id else None
+            if _case:
+                CaseActivityService.log(
+                    _case, f"REVIEW_{decision_status}",
+                    description=f"Review decided: {decision_status}",
+                    actor=user,
+                    metadata={"assignment_id": assignment.pk, "reason": reason[:300]},
+                )
+        except Exception:
+            pass
 
         try:
             from apps.core.langfuse_client import score_trace_safe
@@ -489,7 +526,7 @@ class ReviewWorkflowService:
                 span=_lf_span,
             )
         except Exception:
-            pass
+            logger.debug("Langfuse score tracing failed in _finalise", exc_info=True)
 
         try:
             from apps.core.langfuse_client import end_span_safe
@@ -500,14 +537,14 @@ class ReviewWorkflowService:
                 "comment_count": _comment_count,
             })
         except Exception:
-            pass
+            logger.debug("Langfuse end_span failed in _finalise", exc_info=True)
 
         # core_eval: sync review outcome (best-effort)
         try:
             from apps.reconciliation.services.eval_adapter import ReconciliationEvalAdapter
             ReconciliationEvalAdapter.sync_for_review_outcome(assignment)
         except Exception:
-            pass
+            logger.debug("Eval adapter sync failed in _finalise", exc_info=True)
 
         return decision
 

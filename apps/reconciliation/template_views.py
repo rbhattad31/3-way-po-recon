@@ -15,7 +15,7 @@ from apps.core.permissions import permission_required_code
 from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy, ReconciliationResult
-from apps.reviews.models import ReviewAssignment
+from apps.cases.models import ReviewAssignment
 from apps.tools.models import ToolCall
 
 

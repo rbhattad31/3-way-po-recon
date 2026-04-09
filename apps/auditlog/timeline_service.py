@@ -15,9 +15,8 @@ from typing import Any, Dict, List, Optional
 
 from apps.agents.models import AgentRecommendation, AgentRun, DecisionLog
 from apps.auditlog.models import AuditEvent
-from apps.cases.models import APCase
+from apps.cases.models import APCase, ManualReviewAction, ReviewAssignment, ReviewDecision
 from apps.reconciliation.models import ReconciliationResult
-from apps.reviews.models import ManualReviewAction, ReviewAssignment, ReviewDecision
 from apps.tools.models import ToolCall
 
 logger = logging.getLogger(__name__)

@@ -19,7 +19,7 @@
    - 4.4 [Agents (`apps/agents/`)](#44-agents-appsagents)
    - 4.5 [Extraction (`apps/extraction/`)](#45-extraction-appsextraction)
    - 4.6 [Cases (`apps/cases/`)](#46-cases-appscases)
-   - 4.7 [Reviews (`apps/reviews/`)](#47-reviews-appsreviews)
+   - 4.7 [Reviews (`apps/cases/` -- merged from `apps/reviews`)](#47-reviews-appscases----merged-from-appsreviews)
 5. [Factory & Fixture Catalog](#5-factory--fixture-catalog)
 6. [Mocking Strategy Reference](#6-mocking-strategy-reference)
 7. [Test Categorisation Matrix](#7-test-categorisation-matrix)
@@ -372,25 +372,75 @@ Tests header-level field comparisons between Invoice and PO.
 
 ---
 
-#### 4.3.5 `test_line_match_service.py` -- Invoice/PO Line Matching (21 tests, DB-backed)
+#### 4.3.5 `test_line_match_service.py` -- Invoice/PO Line Matching (v1 backward compat, 21 tests, DB-backed)
 
-Tests the line-level matching algorithm that pairs invoice lines to PO lines using a weighted scoring system.
+Tests the line-level matching algorithm backward compatibility. These tests were written against the original scoring system (v1) and verify that the v2 multi-signal scorer still produces correct `LineMatchPair`/`LineMatchResult` output for the core scenarios.
 
 | ID | Test | Scenario |
 |----|------|----------|
 | LM-01 | Single line exact match | Perfect description + qty + price + amount |
 | LM-02 | Multi-line all matched | 3 invoice lines paired to 3 PO lines |
-| LM-03 | Line number bonus | Same `line_number` adds +0.20 to score |
-| LM-04 | Fuzzy description match | `>= 80%` similarity adds +0.30 |
-| LM-05 | Poor description no match | `< 80%` similarity = no pairing |
+| LM-03 | Line number bonus | Same `line_number` contributes to score |
+| LM-04 | Fuzzy description match | Partial description similarity contributes to scoring |
+| LM-05 | Poor description no match | Completely different items = no pairing |
 | LM-06 | Unmatched invoice line | Extra invoice line with no PO counterpart |
 | LM-07 | Unmatched PO line | Extra PO line with no invoice counterpart |
 | LM-08 | Tolerance breach | Qty/price/amount exceeding 2%/1%/1% thresholds |
 | LM-09 | PO line deduplication | Same PO line not matched to two invoice lines |
 | LM-10 | Tax difference | Tax mismatch flagged separately from amount |
-| LM-11 | Minimum score threshold | Score below 0.30 = rejected as non-match |
+| LM-11 | Minimum score threshold | Low-scoring pairs rejected as non-match |
 
-**Scoring rules validated**: `line_number +0.20`, `description>=80% +0.30`, `qty_within_tolerance +0.15`, `price_within_tolerance +0.15`, `amount_within_tolerance +0.15`, minimum threshold `0.30`.
+**Note**: Some v1 test assertions were adjusted for v2 scorer behavior. The v2 scorer uses 11 weighted signals (total weight 1.00) with a minimum match threshold of 0.50 (up from 0.30), so some edge-case scenarios that previously matched may now classify as AMBIGUOUS or UNRESOLVED.
+
+---
+
+#### 4.3.5a `test_line_match_v2.py` -- Line Match v2 Multi-Signal Scorer (36 tests, DB-backed)
+
+Tests the deterministic multi-signal line matching scorer introduced in v2. Covers the full scoring pipeline: 11 weighted signals, 4 penalty types, ambiguity detection, confidence bands, LLM fallback hook, and backward compatibility.
+
+| ID | Test | Scenario |
+|----|------|----------|
+| V2-01 | Exact match (all signals) | Perfect description + qty + price + amount -> MATCHED |
+| V2-02 | Token overlap | Partial token overlap contributes deterministic score |
+| V2-03 | Item code ranking | Item code exact match boosts score (when present) |
+| V2-04 | Numeric mismatch | 50% qty deviation triggers qty contradiction penalty |
+| V2-05 | Ambiguity detection | Two near-identical candidates -> AMBIGUOUS |
+| V2-06 | Unresolved | Completely different descriptions -> UNRESOLVED |
+| V2-07 | Service/stock penalty | Service vs stock contradiction applies -0.10 penalty |
+| V2-08 | UOM equivalence | "kg" matches "kilograms" via equivalence map |
+| V2-09 | Moderate match | Score in MODERATE band (0.62-0.75) -> MATCHED with sufficient gap |
+| V2-10 | LLM fallback not configured | AMBIGUOUS status when no fallback service provided |
+| V2-11 | LLM fallback configured | LLM resolves ambiguous case -> MATCHED via LLM_FALLBACK |
+| V2-12 | LLM fallback error | Fallback exception handled gracefully, stays AMBIGUOUS |
+| V2-13 | Backward compat | `LineMatchPair` fields populated, `FieldComparison` objects present |
+| V2-14 | Decision metadata | `to_result_line_metadata()` serialization |
+| V2-15 | Deduplication | Used PO lines excluded from subsequent scoring |
+| V2-16 | Confidence bands | Thresholds: HIGH>=0.85, GOOD>=0.75, MODERATE>=0.62, LOW>=0.50, NONE<0.50 |
+| V2-17 | Edge cases | Empty descriptions, zero quantities, None values |
+| V2-18 | Penalty stacking | Multiple penalties accumulate correctly |
+
+**Scoring rules validated**: 11 signals (item_code 0.30, desc_exact 0.20, token_sim 0.15, fuzzy 0.10, qty 0.10, price 0.07, amount 0.03, uom 0.02, category 0.01, service_stock 0.01, line_number 0.01), penalties (-0.10/-0.08/-0.08/-0.05), match threshold 0.50, strong match 0.75+gap>=0.10, moderate match 0.62+gap>=0.08, ambiguity gap <0.08.
+
+---
+
+#### 4.3.5b `test_line_match_helpers.py` -- Line Match Helper Functions (52 tests, pure unit)
+
+Tests the reusable text normalization, similarity, and numeric proximity helper functions used by the v2 scorer.
+
+| Group | Tests | Coverage |
+|-------|-------|----------|
+| `normalize_line_text` | 6 | Lowercase, punctuation strip, whitespace collapse, None handling |
+| `extract_meaningful_tokens` | 6 | Tokenization, stopword removal, short word filtering |
+| `token_similarity` | 6 | Jaccard coefficient, empty sets, partial/full overlap |
+| `fuzzy_similarity` | 5 | RapidFuzz token_sort_ratio, identical/different/empty strings |
+| `quantity_proximity` | 7 | Tiered scoring (exact/2%/5%/10%/beyond), zero/None handling |
+| `price_proximity` | 6 | Tiered scoring (1%/3%/5%/beyond), zero/None handling |
+| `amount_proximity` | 5 | Tiered scoring (1%/3%/5%/beyond) |
+| `uom_compatibility` | 7 | Equivalence map, exact match, one-side missing, unknown UOMs |
+| `category_compatibility` | 4 | Exact match, both missing, mismatch, one-side missing |
+| `service_stock_compatibility` | 6 | Both service, both stock, contradiction, unknown flags |
+
+**Key constraint tested**: `InvoiceLineItem` does NOT have `item_code` or `unit_of_measure` fields (only PO lines do). Max achievable score without item_code is ~0.70.
 
 ---
 
@@ -809,11 +859,13 @@ Tests the deterministic state machine that governs case lifecycle.
 
 ---
 
-### 4.7 Reviews (`apps/reviews/`)
+### 4.7 Reviews (`apps/cases/` -- merged from `apps/reviews`)
 
 **1 test file, ~12 tests. All DB-backed.**
 
 #### 4.7.1 `test_review_workflow_service.py` -- Review Lifecycle (12 tests, DB-backed)
+
+> **Note:** Tests moved from `apps/reviews/tests/` to `apps/cases/tests/` during the reviews-to-cases merge.
 
 Tests the complete review assignment lifecycle from creation through approval/rejection.
 
@@ -1021,7 +1073,7 @@ Tests the `ERPCacheService` TTL-based database cache for ERP resolution results.
 | `apps.core.langfuse_client.end_span` | Suppress span closure |
 | `apps.core.langfuse_client.score_observation` | Suppress observation scores |
 | `apps.auditlog.services.AuditService.log_event` | Prevent audit event DB writes in non-audit tests |
-| `apps.reviews.services.ReviewWorkflowService.create_assignment` | Prevent review creation side effects |
+| `apps.cases.services.review_workflow_service.ReviewWorkflowService.create_assignment` | Prevent review creation side effects |
 | `apps.agents.services.agent_classes.InvoiceUnderstandingAgent` | Mock agent invocation in recovery lane tests |
 
 ---
@@ -1211,7 +1263,7 @@ The following apps have **zero test files**:
 | 33 | `apps/extraction/tests/test_credit_service.py` | 40 |
 | 34 | `apps/extraction/tests/test_credit_views.py` | 13 |
 | 35 | `apps/cases/tests/test_case_state_machine.py` | 28 |
-| 36 | `apps/reviews/tests/test_review_workflow_service.py` | 12 |
+| 36 | `apps/cases/tests/test_review_workflow_service.py` | 12 |
 | 37 | `apps/core/tests/test_middleware.py` | 14 |
 | 38 | `apps/core/tests/test_celery_tasks.py` | 5 |
 | 39 | `apps/agents/tests/test_orchestrator.py` | 5 |

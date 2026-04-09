@@ -16,6 +16,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.agents.models import (
@@ -160,6 +161,7 @@ class BaseAgent(ABC):
                     _lf_trace,
                     name=str(self.agent_type),
                     metadata={
+                        "tenant_id": getattr(ctx, "tenant_id", None) or (ctx.tenant.pk if getattr(ctx, "tenant", None) else None),
                         "agent_type": str(self.agent_type),
                         "agent_run_id": agent_run.pk,
                         "invoice_id": ctx.invoice_id,
@@ -173,6 +175,7 @@ class BaseAgent(ABC):
                     },
                 )
             except Exception:
+                logger.debug("Langfuse span start failed for agent %s (non-fatal)", self.agent_type, exc_info=True)
                 _lf_span = None
         self.llm._langfuse_span = _lf_span
         # Resolve the Langfuse prompt object so generations are linked to the
@@ -185,7 +188,7 @@ class BaseAgent(ABC):
             if _prompt_slug:
                 _lf_prompt = get_prompt(slug_to_langfuse_name(_prompt_slug))
         except Exception:
-            pass
+            logger.debug("Langfuse prompt resolve failed for agent %s (non-fatal)", self.agent_type, exc_info=True)
         self.llm._langfuse_prompt = _lf_prompt
         self.llm._langfuse_metadata = {
             "agent_type": str(self.agent_type),
@@ -348,7 +351,7 @@ class BaseAgent(ABC):
                                     span=_lf_span,
                                 )
                         except Exception:
-                            pass
+                            logger.debug("Langfuse span/score for agent %s failed (non-fatal)", self.agent_type, exc_info=True)
                     return agent_run
 
                 # Process tool calls — include tool_calls on the assistant msg
@@ -384,6 +387,7 @@ class BaseAgent(ABC):
                                 },
                             )
                         except Exception:
+                            logger.debug("Langfuse tool span start failed (non-fatal)", exc_info=True)
                             _tool_span = None
 
                     tool_result = self._execute_tool(tc.name, tc.arguments, agent_run, step_counter, _tool_span)
@@ -410,7 +414,7 @@ class BaseAgent(ABC):
                                 1.0 if tool_result.success else 0.0,
                             )
                         except Exception:
-                            pass
+                            logger.debug("Langfuse tool span finalization failed (non-fatal)", exc_info=True)
 
                     if not tool_result.success:
                         failed_tool_count += 1
@@ -533,7 +537,7 @@ class BaseAgent(ABC):
                             span=_lf_span,
                         )
                 except Exception:
-                    pass
+                    logger.debug("Langfuse score/span finalization failed for agent %s (non-fatal)", self.agent_type, exc_info=True)
 
         except Exception as exc:
             rr_pk = ctx.reconciliation_result.pk if ctx.reconciliation_result else None
@@ -551,7 +555,7 @@ class BaseAgent(ABC):
                         level="ERROR",
                     )
                 except Exception:
-                    pass
+                    logger.debug("Langfuse error span failed for agent %s (non-fatal)", self.agent_type, exc_info=True)
             agent_run.save()
 
         self.llm._langfuse_span = None
@@ -701,6 +705,7 @@ class BaseAgent(ABC):
         }
         agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
         agent_run.confidence = output.confidence
+        self._calculate_actual_cost(agent_run)
         agent_run.save()
 
         # Persist decisions
@@ -732,6 +737,32 @@ class BaseAgent(ABC):
                 prompt_version=getattr(agent_run, "prompt_version", "") or "",
                 tenant=agent_run.tenant,
             )
+
+    @staticmethod
+    def _calculate_actual_cost(agent_run) -> None:
+        """Look up the LLMCostRate for the model used and calculate actual_cost_usd."""
+        if not agent_run.llm_model_used or not agent_run.prompt_tokens:
+            return
+        try:
+            from apps.agents.models import LLMCostRate
+            from django.utils import timezone as tz
+
+            today = tz.now().date()
+            rate = (
+                LLMCostRate.objects
+                .filter(model_name=agent_run.llm_model_used, effective_from__lte=today)
+                .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today))
+                .order_by("-effective_from")
+                .first()
+            )
+            if rate is None:
+                return
+            from decimal import Decimal
+            prompt_cost = (Decimal(agent_run.prompt_tokens) / Decimal(1000)) * rate.input_cost_per_1k_tokens
+            completion_cost = (Decimal(agent_run.completion_tokens or 0) / Decimal(1000)) * rate.output_cost_per_1k_tokens
+            agent_run.actual_cost_usd = prompt_cost + completion_cost
+        except Exception:
+            logger.debug("Failed to calculate actual cost for AgentRun %s", agent_run.pk, exc_info=True)
 
     @staticmethod
     def _sanitise_text(text: str) -> str:

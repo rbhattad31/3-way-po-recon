@@ -184,17 +184,25 @@ class StageExecutor:
                 "invoice_status": invoice.status,
             }
 
-        # Invalid/duplicate invoices -- still pause, approval or rejection
-        # will be handled by the approval service.
-        CaseStateMachine.transition(
-            case, CaseStatus.PENDING_EXTRACTION_APPROVAL, PerformedByType.SYSTEM
-        )
-        return {
-            "approved": False,
-            "paused": True,
-            "invoice_status": invoice.status,
-            "note": "Invoice in unexpected status, pausing for review",
-        }
+        if invoice.status == InvoiceStatus.INVALID:
+            # Invalid or duplicate invoice -- reject the case
+            _reason = "duplicate invoice" if invoice.is_duplicate else "invalid extraction"
+            CaseStateMachine.transition(
+                case, CaseStatus.PENDING_EXTRACTION_APPROVAL, PerformedByType.SYSTEM
+            )
+            CaseStateMachine.transition(
+                case, CaseStatus.REJECTED, PerformedByType.SYSTEM
+            )
+            logger.info(
+                "Case %s: invoice %s is %s, rejecting case",
+                case.case_number, invoice.pk, _reason,
+            )
+            return {
+                "approved": False,
+                "rejected": True,
+                "invoice_status": invoice.status,
+                "reason": _reason,
+            }
 
     @staticmethod
     def _execute_path_resolution(case: APCase) -> Dict:

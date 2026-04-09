@@ -79,6 +79,7 @@ def derive_session_id(
 
 def build_observability_context(
     *,
+    tenant_id: Optional[int] = None,
     invoice_id: Optional[int] = None,
     document_upload_id: Optional[int] = None,
     extraction_result_id: Optional[int] = None,
@@ -104,6 +105,7 @@ def build_observability_context(
     Filters out None/empty values so the dict stays minimal.
     """
     raw = {
+        "tenant_id": tenant_id,
         "invoice_id": invoice_id,
         "document_upload_id": document_upload_id,
         "extraction_result_id": extraction_result_id,
@@ -246,7 +248,7 @@ def score_latency(
         _comment = comment or f"{int(latency_ms)}ms (threshold={int(threshold_ms)}ms)"
         score_observation_safe(observation, _name, _val, comment=_comment)
     except Exception:
-        pass
+        logger.debug("Langfuse latency score failed (non-fatal)", exc_info=True)
 
 
 # =====================================================================

@@ -28,6 +28,7 @@ CASE_TRANSITIONS = [
     (CaseStatus.EXTRACTION_COMPLETED, CaseStatus.PATH_RESOLUTION_IN_PROGRESS, {PerformedByType.SYSTEM}),
     (CaseStatus.PENDING_EXTRACTION_APPROVAL, CaseStatus.PATH_RESOLUTION_IN_PROGRESS, {PerformedByType.SYSTEM, PerformedByType.HUMAN}),
     (CaseStatus.PENDING_EXTRACTION_APPROVAL, CaseStatus.EXTRACTION_COMPLETED, {PerformedByType.SYSTEM, PerformedByType.HUMAN}),
+    (CaseStatus.PENDING_EXTRACTION_APPROVAL, CaseStatus.REJECTED, {PerformedByType.SYSTEM}),
 
     # --- Path resolution ---
     (CaseStatus.EXTRACTION_COMPLETED, CaseStatus.PATH_RESOLUTION_IN_PROGRESS, {PerformedByType.SYSTEM}),

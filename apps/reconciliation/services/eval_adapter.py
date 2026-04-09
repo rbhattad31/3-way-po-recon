@@ -208,7 +208,7 @@ class ReconciliationEvalAdapter:
             )
             # If review already has a decision, also sync outcome
             try:
-                from apps.reviews.models import ReviewDecision
+                from apps.cases.models import ReviewDecision
                 if ReviewDecision.objects.filter(assignment=review_assignment).exists():
                     cls.sync_for_review_outcome(
                         review_assignment, tenant_id=tenant_id,
@@ -351,7 +351,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_ACTUAL_REVIEW_CREATED,
-            metric_value=1.0,
+            value=1.0,
+            value_type="float",
             tenant_id=tenant_id,
             tenant=_tenant,
             dimension_json={"scope": "business_outcome"},
@@ -449,7 +450,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_ACTUAL_MATCH_STATUS,
-            string_value=actual_match_status,
+            value=actual_match_status,
+            value_type="string",
             tenant_id=tenant_id,
             dimension_json={"scope": "business_outcome"},
             tenant=_tenant,
@@ -457,7 +459,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_REVIEW_OUTCOME,
-            string_value=decision_status,
+            value=decision_status,
+            value_type="string",
             tenant_id=tenant_id,
             dimension_json={"scope": "human_feedback"},
             tenant=_tenant,
@@ -465,7 +468,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_CORRECTED_BY_REVIEWER,
-            metric_value=1.0 if corrections_count > 0 else 0.0,
+            value=1.0 if corrections_count > 0 else 0.0,
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json={"scope": "human_feedback"},
             tenant=_tenant,
@@ -473,7 +477,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_REPROCESSED,
-            metric_value=1.0 if is_reprocessed else 0.0,
+            value=1.0 if is_reprocessed else 0.0,
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json={"scope": "business_outcome"},
             tenant=_tenant,
@@ -481,7 +486,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_ACTUAL_AUTO_CLOSE,
-            metric_value=_bool_to_score(actual_auto_close),
+            value=_bool_to_score(actual_auto_close),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json={"scope": "business_outcome"},
             tenant=_tenant,
@@ -489,7 +495,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_ACTUAL_FINAL_ROUTE,
-            string_value=actual_final_route,
+            value=actual_final_route,
+            value_type="string",
             tenant_id=tenant_id,
             dimension_json={"scope": "business_outcome"},
             tenant=_tenant,
@@ -501,7 +508,8 @@ class ReconciliationEvalAdapter:
             EvalMetricService.upsert(
                 eval_run=eval_run,
                 metric_name=RECON_MATCH_STATUS_CORRECT,
-                metric_value=1.0 if _match_correct else 0.0,
+                value=1.0 if _match_correct else 0.0,
+                value_type="float",
                 tenant_id=tenant_id,
                 dimension_json={"scope": "business_outcome"},
                 tenant=_tenant,
@@ -512,7 +520,8 @@ class ReconciliationEvalAdapter:
             EvalMetricService.upsert(
                 eval_run=eval_run,
                 metric_name=RECON_REVIEW_ROUTE_CORRECT,
-                metric_value=1.0 if _review_correct else 0.0,
+                value=1.0 if _review_correct else 0.0,
+                value_type="float",
                 tenant_id=tenant_id,
                 dimension_json={"scope": "business_outcome"},
                 tenant=_tenant,
@@ -523,7 +532,8 @@ class ReconciliationEvalAdapter:
             EvalMetricService.upsert(
                 eval_run=eval_run,
                 metric_name=RECON_AUTO_CLOSE_CORRECT,
-                metric_value=1.0 if _auto_correct else 0.0,
+                value=1.0 if _auto_correct else 0.0,
+                value_type="float",
                 tenant_id=tenant_id,
                 dimension_json={"scope": "business_outcome"},
                 tenant=_tenant,
@@ -594,7 +604,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_REPROCESSED,
-            metric_value=1.0,
+            value=1.0,
+            value_type="float",
             tenant_id=tenant_id,
             tenant=_tenant,
             dimension_json={"scope": "business_outcome"},
@@ -791,7 +802,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_PREDICTED_MATCH_STATUS,
-            string_value=predicted.get("match_status", ""),
+            value=predicted.get("match_status", ""),
+            value_type="string",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -799,7 +811,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_PREDICTED_REQUIRES_REVIEW,
-            metric_value=_bool_to_score(predicted.get("requires_review")),
+            value=_bool_to_score(predicted.get("requires_review")),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -807,7 +820,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_PREDICTED_AUTO_CLOSE,
-            metric_value=_bool_to_score(predicted.get("auto_close_eligible")),
+            value=_bool_to_score(predicted.get("auto_close_eligible")),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -815,7 +829,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_PREDICTED_PO_FOUND,
-            metric_value=_bool_to_score(predicted.get("po_found")),
+            value=_bool_to_score(predicted.get("po_found")),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -823,7 +838,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_PREDICTED_GRN_FOUND,
-            metric_value=_bool_to_score(predicted.get("grn_found")),
+            value=_bool_to_score(predicted.get("grn_found")),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -855,7 +871,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_RECONCILIATION_MATCH,
-            metric_value=_score_map.get(match_status, 0.0),
+            value=_score_map.get(match_status, 0.0),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -863,7 +880,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_PO_FOUND,
-            metric_value=_bool_to_score(ctx.get("po_found")),
+            value=_bool_to_score(ctx.get("po_found")),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -871,7 +889,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_GRN_FOUND,
-            metric_value=_bool_to_score(ctx.get("grn_available")),
+            value=_bool_to_score(ctx.get("grn_available")),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -879,7 +898,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_AUTO_CLOSE_ELIGIBLE,
-            metric_value=_bool_to_score(match_status == "MATCHED"),
+            value=_bool_to_score(match_status == "MATCHED"),
+            value_type="float",
             tenant_id=tenant_id,
             dimension_json=_dim,
             tenant=tenant,
@@ -887,7 +907,8 @@ class ReconciliationEvalAdapter:
         EvalMetricService.upsert(
             eval_run=eval_run,
             metric_name=RECON_EXCEPTION_COUNT_FINAL,
-            metric_value=float(ctx.get("exception_count", 0)),
+            value=float(ctx.get("exception_count", 0)),
+            value_type="float",
             unit="count",
             tenant_id=tenant_id,
             dimension_json=_dim,
@@ -901,7 +922,7 @@ class ReconciliationEvalAdapter:
     def _derive_review_outcome(cls, assignment) -> Optional[Dict[str, Any]]:
         """Extract review decision and correction count from assignment."""
         try:
-            from apps.reviews.models import ReviewDecision, ManualReviewAction
+            from apps.cases.models import ReviewDecision, ManualReviewAction
             from apps.core.enums import ReviewActionType
         except ImportError:
             return None
@@ -1101,7 +1122,7 @@ class ReconciliationEvalAdapter:
         action_type=CORRECT_FIELD and field_name are available.
         """
         try:
-            from apps.reviews.models import ManualReviewAction
+            from apps.cases.models import ManualReviewAction
             from apps.core.enums import ReviewActionType
             from apps.core_eval.services.eval_field_outcome_service import (
                 EvalFieldOutcomeService,

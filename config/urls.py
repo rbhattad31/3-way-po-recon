@@ -46,7 +46,7 @@ urlpatterns = [
     path("extraction/", include("apps.extraction.urls")),
     path("extraction/control-center/", include("apps.extraction_core.urls")),
     path("reconciliation/", include("apps.reconciliation.urls")),
-    path("reviews/", include("apps.reviews.urls")),
+    path("reviews/", include("apps.cases.review_urls")),
     path("reports/", include("apps.reports.urls")),
     path("agents/", include("apps.agents.urls")),
     path("vendors/", include("apps.vendors.urls")),

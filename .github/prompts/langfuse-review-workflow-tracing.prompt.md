@@ -5,11 +5,11 @@ description: Add Langfuse tracing and scores to the review assignment workflow
 
 # Langfuse Tracing — Review Workflow
 
-Add Langfuse observability to `apps/reviews/services.py` so review assignments appear as traces with `review_priority` and `review_decision` quality scores.
+Add Langfuse observability to `apps/cases/services/review_workflow_service.py` so review assignments appear as traces with `review_priority` and `review_decision` quality scores.
 
 ## Target file
 
-`apps/reviews/services.py` — `ReviewService`
+`apps/cases/services/review_workflow_service.py` -- `ReviewWorkflowService`
 
 ## What to implement
 

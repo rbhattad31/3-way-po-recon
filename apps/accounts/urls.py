@@ -1,6 +1,7 @@
 from django.urls import path
 from django.contrib.auth import views as auth_views
 
+from apps.accounts.login_view import RateLimitedLoginView
 from apps.accounts.template_views import (
     UserListView, UserCreateView, UserDetailView,
     RoleListView, RoleDetailView, RoleCreateView,
@@ -14,8 +15,8 @@ from apps.accounts.template_views import (
 app_name = "accounts"
 
 urlpatterns = [
-    # Auth
-    path("login/", auth_views.LoginView.as_view(template_name="accounts/login.html"), name="login"),
+    # Auth — RateLimitedLoginView adds IP-based brute-force protection
+    path("login/", RateLimitedLoginView.as_view(), name="login"),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
 
     # Admin Console — User Management

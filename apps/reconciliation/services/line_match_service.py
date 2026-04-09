@@ -30,6 +30,7 @@ from apps.reconciliation.services.line_match_helpers import (
     price_proximity,
     quantity_proximity,
     service_stock_compatibility,
+    token_containment,
     token_similarity,
     uom_compatibility,
 )
@@ -317,7 +318,9 @@ class LineMatchService:
         signals: List[str] = []
         notes: List[str] = []
 
-        # 1. Item code (weight 0.30)
+        # 1. Item code (weight 0.05)
+        # Reduced from 0.30 -- vendor item codes rarely match buyer codes
+        # in cross-company invoicing; weight redistributed to descriptions.
         inv_item_code = getattr(inv_line, "item_code", "") or ""
         po_item_code = po_line.item_code or ""
         inv_code_norm = inv_item_code.strip().lower()
@@ -325,7 +328,7 @@ class LineMatchService:
 
         if inv_code_norm and po_code_norm:
             if inv_code_norm == po_code_norm:
-                cs.item_code_score = 0.30
+                cs.item_code_score = 0.05
                 signals.append("item_code_exact")
                 notes.append(f"Item code exact match: {po_item_code}")
             else:
@@ -335,29 +338,52 @@ class LineMatchService:
         else:
             notes.append("Item code present on one side only")
 
-        # 2. Exact normalised description (weight 0.20)
+        # 2. Exact normalised description (weight 0.30)
         inv_desc = normalize_line_text(inv_line.description or inv_line.raw_description)
         po_desc = normalize_line_text(po_line.description)
 
         if inv_desc and po_desc and inv_desc == po_desc:
-            cs.description_exact_score = 0.20
+            cs.description_exact_score = 0.30
             signals.append("description_exact")
             notes.append("Description exact match after normalisation")
 
-        # 3. Token-based description similarity (weight 0.15)
+        # 3. Token-based description similarity (weight 0.25)
         tok_sim = token_similarity(
             inv_line.description or inv_line.raw_description,
             po_line.description,
         )
         cs.token_similarity_raw = tok_sim
+
+        # Containment ratio: how much of the shorter description's tokens
+        # appear in the longer description.  Handles abbreviated PO lines
+        # like "RPA" matching "RPA Services (HSN/SAC: 998313)".
+        cont = token_containment(
+            inv_line.description or inv_line.raw_description,
+            po_line.description,
+        )
+        cs.containment_ratio = cont
+
+        # Jaccard-based tiers
         if tok_sim >= 0.85:
-            cs.description_token_score = 0.15
+            cs.description_token_score = 0.25
         elif tok_sim >= 0.70:
-            cs.description_token_score = 0.12
+            cs.description_token_score = 0.20
         elif tok_sim >= 0.55:
-            cs.description_token_score = 0.08
+            cs.description_token_score = 0.14
         elif tok_sim >= 0.40:
+            cs.description_token_score = 0.08
+        elif tok_sim >= 0.25:
             cs.description_token_score = 0.04
+
+        # Containment boost: when the PO description is mostly or fully
+        # contained in the invoice description, credit the overlap even
+        # if Jaccard is low (common with abbreviated PO line items).
+        if cont >= 0.90 and cs.description_token_score < 0.20:
+            cs.description_token_score = 0.20
+            signals.append(f"token_containment_{cont:.2f}")
+        elif cont >= 0.70 and cs.description_token_score < 0.14:
+            cs.description_token_score = 0.14
+            signals.append(f"token_containment_{cont:.2f}")
 
         if cs.description_token_score > 0:
             signals.append(f"token_overlap_{tok_sim:.2f}")
@@ -367,20 +393,20 @@ class LineMatchService:
         po_tokens = extract_meaningful_tokens(po_line.description)
         cs.matched_tokens = sorted(inv_tokens & po_tokens)
 
-        # 4. Fuzzy string description similarity (weight 0.10)
+        # 4. Fuzzy string description similarity (weight 0.15)
         fz = fuzzy_similarity(
             inv_line.description or inv_line.raw_description,
             po_line.description,
         )
         cs.fuzzy_similarity_raw = fz
         if fz >= 90:
-            cs.description_fuzzy_score = 0.10
+            cs.description_fuzzy_score = 0.15
         elif fz >= 80:
-            cs.description_fuzzy_score = 0.08
+            cs.description_fuzzy_score = 0.12
         elif fz >= 70:
-            cs.description_fuzzy_score = 0.05
+            cs.description_fuzzy_score = 0.08
         elif fz >= 60:
-            cs.description_fuzzy_score = 0.02
+            cs.description_fuzzy_score = 0.04
 
         if cs.description_fuzzy_score > 0:
             signals.append(f"fuzzy_{fz:.0f}")
@@ -510,10 +536,22 @@ class LineMatchService:
                 )
 
             # C. Severe price contradiction
+            # Suppressed when invoice price < PO price: that is a plausible
+            # partial billing scenario, not a contradiction.
+            _inv_pr = inv_line.unit_price
+            _po_pr = cs.po_line.unit_price
+            _is_partial_billing = (
+                _inv_pr is not None
+                and _po_pr is not None
+                and _inv_pr > 0
+                and _po_pr > 0
+                and _inv_pr < _po_pr
+            )
             if (
                 cs.price_variance_pct is not None
                 and cs.price_variance_pct > 20
                 and cs.description_token_score <= 0.04
+                and not _is_partial_billing
             ):
                 penalty += PENALTY_SEVERE_PRICE_CONTRADICTION
                 cs.disqualifiers.append("severe_price_contradiction")
@@ -550,6 +588,15 @@ class LineMatchService:
         close_count: int,
         best: LineCandidateScore,
     ) -> bool:
+        # Rule 0: both top candidates are strong matches -- the small gap
+        # reflects equivalent quality (e.g. identical PO line items), not
+        # genuine uncertainty.  Accept tiebreak (PK / line-number order).
+        if (
+            best_score >= STRONG_MATCH_SCORE
+            and second_best_score >= STRONG_MATCH_SCORE
+        ):
+            return False
+
         # Rule 1: gap too small
         if second_best_score > 0 and top_gap < AMBIGUITY_GAP:
             return True
@@ -582,14 +629,26 @@ class LineMatchService:
         if score < WEAK_THRESHOLD:
             return STATUS_UNRESOLVED, METHOD_NONE
 
-        if has_contradiction and score < STRONG_MATCH_SCORE:
+        if has_contradiction and score < MODERATE_MATCH_SCORE:
             return STATUS_UNRESOLVED, METHOD_NONE
 
         if score >= STRONG_MATCH_SCORE and top_gap >= STRONG_MATCH_GAP:
             method = METHOD_EXACT if score >= 0.95 else METHOD_DETERMINISTIC
             return STATUS_MATCHED, method
 
+        # Strong score, small gap: the match quality is inherently high
+        # even without a large gap (common when PO has near-identical
+        # line items).  Ambiguity detection already allowed this through.
+        if score >= STRONG_MATCH_SCORE:
+            return STATUS_MATCHED, METHOD_DETERMINISTIC
+
         if score >= MODERATE_MATCH_SCORE and top_gap >= MODERATE_MATCH_GAP:
+            return STATUS_MATCHED, METHOD_DETERMINISTIC
+
+        # Weak but confident: score is in the weak band but the gap to
+        # the second candidate is large enough to be decisive.  Typical
+        # for partial invoices with abbreviated PO descriptions.
+        if score >= WEAK_THRESHOLD and top_gap >= STRONG_MATCH_GAP:
             return STATUS_MATCHED, METHOD_DETERMINISTIC
 
         if score >= WEAK_THRESHOLD:

@@ -259,6 +259,17 @@
             </li>
             {% endif %}
 
+            {# Tab 8: Activity Log #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-activity" data-bs-toggle="pill"
+                      data-bs-target="#panel-activity" type="button" role="tab">
+                <i class="bi bi-activity me-1"></i>Activity
+                {% if activities %}
+                <span class="badge bg-secondary ms-1">{{ activities|length }}</span>
+                {% endif %}
+              </button>
+            </li>
+
           </ul>
         </div>
 
@@ -1137,6 +1148,13 @@
               {% endif %}
             </div>
             {% endif %}
+
+            {# ============================================================ #}
+            {# TAB 8: ACTIVITY LOG                                          #}
+            {# ============================================================ #}
+            <div class="tab-pane fade p-3" id="panel-activity" role="tabpanel">
+              {% include "cases/partials/_activity_panel.html" %}
+            </div>
 
           </div>{# /tab-content #}
         </div>

@@ -13,7 +13,7 @@ from apps.agents.models import AgentRun, AgentRecommendation, AgentEscalation, D
 from apps.core.enums import AgentRunStatus, AgentType, MatchStatus, RecommendationType, ReviewStatus, ToolCallStatus, UserRole
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
 from apps.reconciliation.models import ReconciliationException, ReconciliationResult
-from apps.reviews.models import ReviewAssignment
+from apps.cases.models import ReviewAssignment
 from apps.tools.models import ToolCall
 from apps.vendors.models import Vendor
 
@@ -865,7 +865,7 @@ class AgentPerformanceDashboardService:
                 "prompt_version": run.prompt_version,
                 "actor_user_id": run.actor_user_id,
                 "permission_checked": run.permission_checked,
-                "cost_estimate": float(run.cost_estimate or 0),
+                "cost_estimate": float(run.actual_cost_usd or run.cost_estimate or 0),
                 "llm_model_used": run.llm_model_used,
                 "prompt_tokens": run.prompt_tokens,
                 "completion_tokens": run.completion_tokens,
@@ -874,7 +874,7 @@ class AgentPerformanceDashboardService:
         elif is_ext:
             data.update({
                 "trace_id": run.trace_id,
-                "cost_estimate": float(run.cost_estimate or 0),
+                "cost_estimate": float(run.actual_cost_usd or run.cost_estimate or 0),
                 "total_tokens": run.total_tokens,
             })
 

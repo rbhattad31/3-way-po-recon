@@ -100,13 +100,18 @@ def eval_run_detail(request, pk):
     # KPI: extraction confidence from metrics
     run_confidence = None
     for m in metrics:
-        if m.metric_name == "extraction_confidence" and m.metric_value is not None:
-            run_confidence = m.metric_value
-            break
+        if m.metric_name == "extraction_confidence":
+            typed = m.get_typed_value()
+            if typed is not None:
+                run_confidence = typed
+                break
 
     # Pre-format JSON values on metrics for template rendering
     for m in metrics:
-        m.json_value_pretty = _fmt_json(m.json_value) if m.json_value else ""
+        if m.value_type == "json" and m.raw_value:
+            m.json_value_pretty = _fmt_json(m.get_typed_value())
+        else:
+            m.json_value_pretty = ""
 
     # Pre-format payload_json on signals for template rendering
     for sig in signals:

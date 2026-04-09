@@ -56,6 +56,15 @@ class BulkExtractionJob(BaseModel):
         on_delete=models.CASCADE,
         related_name="jobs",
     )
+    # Tenant scoping — identifies which organisation owns this job.
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text="Owning tenant for this bulk extraction job.",
+    )
     status = models.CharField(
         max_length=30,
         choices=BulkJobStatus.choices,

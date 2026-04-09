@@ -609,7 +609,7 @@ score_trace(
 `output.overall_confidence` is guarded with `or 0.0` since it may be `None`
 before confidence calculation completes.
 
-### 9. Review assignment priority (`apps/reviews/services.py` — `create_assignment()`)
+### 9. Review assignment priority (`apps/cases/services/review_workflow_service.py` -- `create_assignment()`)
 
 After the `ReviewAssignment` is created and the audit event is logged, a priority
 score is emitted using `f"review-{assignment.pk}"` as the trace ID:
@@ -626,7 +626,7 @@ score_trace(
 Using `f"review-{assignment.pk}"` consistently links the priority score at
 creation time with the final decision score (call site 10).
 
-### 10. Review decision (`apps/reviews/services.py` — `_finalise()`)
+### 10. Review decision (`apps/cases/services/review_workflow_service.py` -- `_finalise()`)
 
 After `ReviewDecision.objects.update_or_create(...)` and the audit log, a
 decision score is emitted using the same `f"review-{assignment.pk}"` trace ID:
@@ -1325,7 +1325,7 @@ scores floated free -- no parent trace meant no inherited user_id or session_id.
    | `apps/cases/orchestrators/case_orchestrator.py` | 8 | `self._lf_trace` |
    | `apps/reconciliation/tasks.py` | 3 | `_lf_task_trace` |
    | `apps/reconciliation/services/runner_service.py` | 10 | `lf_trace` |
-   | `apps/reviews/services.py` | 8 | `_lf_trace` or `_lf_span` |
+   | `apps/cases/services/review_workflow_service.py` | 8 | `_lf_trace` or `_lf_span` |
 
    **Total**: 35 `score_trace_safe()` calls now pass `span=`.
 

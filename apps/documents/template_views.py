@@ -1,7 +1,10 @@
 """Document template views (server-side rendered)."""
 import hashlib
 import json
+import logging
 from decimal import Decimal, InvalidOperation
+
+logger = logging.getLogger(__name__)
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -368,7 +371,7 @@ def invoice_detail(request, pk):
     try:
         ap_case = invoice.ap_case
     except Exception:
-        pass
+        logger.debug("No ap_case for invoice %s (non-fatal)", invoice.pk, exc_info=True)
 
     raw_invoice_tax_percentage = parse_percentage((invoice.extraction_raw_json or {}).get("tax_percentage"))
     invoice_tax_percentage = resolve_tax_percentage(

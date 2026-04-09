@@ -9,6 +9,7 @@ from apps.agents.models import (
     DecisionLog,
     AgentRecommendation,
     AgentEscalation,
+    LLMCostRate,
 )
 
 
@@ -250,3 +251,10 @@ class AgentEscalationAdmin(admin.ModelAdmin):
     @admin.action(description="Mark selected as resolved")
     def mark_resolved(self, request, queryset):
         queryset.filter(resolved=False).update(resolved=True)
+
+
+@admin.register(LLMCostRate)
+class LLMCostRateAdmin(admin.ModelAdmin):
+    list_display = ("model_name", "input_cost_per_1k_tokens", "output_cost_per_1k_tokens", "effective_from", "effective_to")
+    list_filter = ("model_name",)
+    list_per_page = 25

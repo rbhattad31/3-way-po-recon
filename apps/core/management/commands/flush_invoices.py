@@ -59,9 +59,8 @@ class Command(BaseCommand):
             flushed_models.append(model)
 
         # --- Audit / Observability ---
-        from apps.auditlog.models import AuditEvent, ProcessingLog, FileProcessingStatus
+        from apps.auditlog.models import AuditEvent, ProcessingLog
         _delete(ProcessingLog)
-        _delete(FileProcessingStatus)
         _delete(AuditEvent)
 
         # --- Cases (children first) ---
@@ -76,7 +75,7 @@ class Command(BaseCommand):
             _delete(model)
 
         # --- Reviews ---
-        from apps.reviews.models import (
+        from apps.cases.models import (
             ReviewAssignment, ReviewComment, ReviewDecision, ManualReviewAction,
         )
         for model in [ReviewDecision, ManualReviewAction, ReviewComment, ReviewAssignment]:
@@ -164,7 +163,11 @@ class Command(BaseCommand):
             for model in flushed_models:
                 table = model._meta.db_table
                 try:
-                    cursor.execute(f"ALTER TABLE `{table}` AUTO_INCREMENT = 1")
+                    # Table name cannot be parameterised in MySQL; validate it
+                    # against Django's known table registry before interpolating.
+                    if not table.replace("_", "").isalnum():
+                        raise ValueError(f"Refusing to reset unsafe table name: {table!r}")
+                    cursor.execute("ALTER TABLE `%s` AUTO_INCREMENT = 1" % table)  # nosec B608 – validated above
                     reset_count += 1
                 except Exception:
                     pass

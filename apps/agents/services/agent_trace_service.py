@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from apps.agents.models import (
     AgentDefinition,
+    AgentMessage,
     AgentRun,
     AgentStep,
     DecisionLog,
@@ -110,7 +111,7 @@ class AgentTraceService:
         try:
             _tenant = AgentRun.objects.filter(pk=agent_run_id).values_list("tenant_id", flat=True).first()
         except Exception:
-            pass
+            logger.debug("Tenant lookup failed for agent_run_id=%s (non-fatal)", agent_run_id, exc_info=True)
 
         tc = ToolCall.objects.create(
             agent_run_id=agent_run_id,
@@ -212,6 +213,12 @@ class AgentTraceService:
                     "evidence_refs", "created_at",
                 )
             )
+            messages = list(
+                AgentMessage.objects.filter(agent_run=run).order_by("message_index").values(
+                    "id", "role", "content", "token_count",
+                    "message_index", "created_at",
+                )
+            )
             trace_data.append({
                 "agent_run_id": run.pk,
                 "agent_type": run.agent_type,
@@ -225,6 +232,7 @@ class AgentTraceService:
                 "steps": steps,
                 "tool_calls": tool_calls,
                 "decisions": decisions,
+                "messages": messages,
             })
         return {
             "reconciliation_result_id": result_id,
@@ -283,7 +291,7 @@ class AgentTraceService:
                 ).exclude(pk__in=seen_run_ids).order_by("created_at")
                 orphan_runs = orphan_runs | stage_orphans
         except Exception:
-            pass
+            logger.debug("Orphan run detection failed (non-fatal)", exc_info=True)
 
         if orphan_runs.exists():
             orphan_trace_data: List[Dict[str, Any]] = []
