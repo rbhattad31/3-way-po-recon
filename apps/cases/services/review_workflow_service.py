@@ -4,8 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.utils import timezone
 
 from apps.core.enums import (
     MatchStatus,
@@ -24,7 +24,6 @@ from apps.core.evaluation_constants import (
     REVIEW_REJECTED,
     REVIEW_REPROCESS_REQUESTED,
 )
-from apps.core.metrics import MetricsService
 from apps.reconciliation.models import ReconciliationResult
 from apps.cases.models import (
     ManualReviewAction,
@@ -50,14 +49,25 @@ class ReviewWorkflowService:
         notes: str = "",
         tenant=None,
     ) -> ReviewAssignment:
-        assignment = ReviewAssignment.objects.create(
-            reconciliation_result=result,
-            assigned_to=assigned_to,
-            status=ReviewStatus.ASSIGNED if assigned_to else ReviewStatus.PENDING,
-            priority=priority,
-            notes=notes,
-            tenant=tenant,
-        )
+        effective_tenant = tenant or getattr(result, "tenant", None) or getattr(getattr(result, "invoice", None), "tenant", None)
+        with transaction.atomic():
+            assignment = (
+                ReviewAssignment.objects.select_for_update()
+                .filter(
+                    reconciliation_result=result,
+                    status__in=[ReviewStatus.PENDING, ReviewStatus.ASSIGNED, ReviewStatus.IN_REVIEW],
+                )
+                .first()
+            )
+            if assignment is None:
+                assignment = ReviewAssignment.objects.create(
+                    reconciliation_result=result,
+                    assigned_to=assigned_to,
+                    status=ReviewStatus.ASSIGNED if assigned_to else ReviewStatus.PENDING,
+                    priority=priority,
+                    notes=notes,
+                    tenant=effective_tenant,
+                )
         result.requires_review = True
         result.save(update_fields=["requires_review", "updated_at"])
 
@@ -200,8 +210,15 @@ class ReviewWorkflowService:
         return assignment
 
     @staticmethod
-    def start_review(assignment: ReviewAssignment) -> ReviewAssignment:
+    def start_review(assignment: ReviewAssignment, user=None) -> ReviewAssignment:
         _lf_span = None
+        if assignment.assigned_to_id is None:
+            raise ValidationError("Cannot start review without an assigned reviewer.")
+        if assignment.status not in {ReviewStatus.ASSIGNED, ReviewStatus.IN_REVIEW}:
+            raise ValidationError(f"Cannot start review from status '{assignment.status}'.")
+        if user is not None and assignment.assigned_to_id != user.pk:
+            if getattr(user, "role", None) not in {"FINANCE_MANAGER", "ADMIN"}:
+                raise PermissionDenied("Only the assigned reviewer can start this review.")
         try:
             from apps.core.langfuse_client import get_client
             _lf = get_client()
@@ -267,7 +284,7 @@ class ReviewWorkflowService:
             old_value=old_value,
             new_value=new_value,
             reason=reason,
-            tenant=tenant,
+            tenant=tenant or getattr(assignment, "tenant", None),
         )
 
         # -- Langfuse: record action span
@@ -335,7 +352,7 @@ class ReviewWorkflowService:
             author=user,
             body=body,
             is_internal=is_internal,
-            tenant=tenant,
+            tenant=tenant or getattr(assignment, "tenant", None),
         )
         try:
             from apps.core.langfuse_client import get_client, end_span_safe
@@ -388,6 +405,14 @@ class ReviewWorkflowService:
     ) -> ReviewDecision:
         _lf_span = None
         _trace_id = f"review-{assignment.pk}"
+        if assignment.assigned_to_id is None:
+            raise ValidationError("Cannot finalise review without an assigned reviewer.")
+        if assignment.assigned_to_id != getattr(user, "pk", None) and getattr(user, "role", None) not in {"FINANCE_MANAGER", "ADMIN"}:
+            raise PermissionDenied("Only the assigned reviewer can finalise this review.")
+        if assignment.status != ReviewStatus.IN_REVIEW:
+            raise ValidationError(f"Cannot finalise review from status '{assignment.status}'.")
+        if ReviewDecision.objects.filter(assignment=assignment).exists():
+            raise ValidationError("Review decision already recorded for this assignment.")
 
         # Gather pre-decision metrics for metadata
         _action_count = ManualReviewAction.objects.filter(assignment=assignment).count()
@@ -440,7 +465,7 @@ class ReviewWorkflowService:
             result.requires_review = False
         result.save(update_fields=["match_status", "requires_review", "updated_at"])
 
-        cls._record_action(assignment, user, decision_status, reason)
+        cls._record_action(assignment, user, decision_status, reason, tenant=getattr(assignment, "tenant", None))
 
         # Audit: review decision
         from apps.auditlog.services import AuditService
@@ -561,5 +586,5 @@ class ReviewWorkflowService:
             performed_by=user,
             action_type=action_type,
             reason=reason,
-            tenant=tenant,
+            tenant=tenant or getattr(assignment, "tenant", None),
         )

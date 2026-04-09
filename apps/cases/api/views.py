@@ -2,6 +2,7 @@
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied as DRFPermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -9,7 +10,15 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 
 from apps.accounts.models import User
-from apps.cases.api.permissions import CanAssignCase, CanEditCase, CanUseCopilot, CanViewCase
+from apps.cases.api.permissions import (
+    CanAssignCase,
+    CanAssignReview,
+    CanEditCase,
+    CanUseCopilot,
+    CanViewCase,
+    CanViewReview,
+    IsReviewActor,
+)
 from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.cases.api.serializers import (
     APCaseArtifactSerializer,
@@ -31,7 +40,6 @@ from apps.cases.api.serializers import (
 )
 from apps.cases.models import APCase, ReviewAssignment
 from apps.cases.services.review_workflow_service import ReviewWorkflowService
-from apps.core.permissions import IsAdminOrReadOnly
 from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 
@@ -189,6 +197,9 @@ class APCaseViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
             serializer = APCaseCommentSerializer(case.comments.all(), many=True)
             return Response(serializer.data)
 
+        if not getattr(request.user, "has_permission", None) or not request.user.has_permission("cases.add_comment"):
+            raise DRFPermissionDenied("You do not have permission to add case comments.")
+
         serializer = APCaseCommentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(case=case, author=request.user)
@@ -214,7 +225,6 @@ class ReviewAssignmentViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
         .prefetch_related("comments", "actions")
         .order_by("priority", "-created_at")
     )
-    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ["status", "assigned_to", "priority"]
     ordering_fields = ["priority", "created_at", "due_date"]
@@ -224,6 +234,15 @@ class ReviewAssignmentViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
         if self.action == "list":
             return ReviewAssignmentListSerializer
         return ReviewAssignmentDetailSerializer
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticated(), CanViewReview()]
+        if self.action == "assign_reviewer":
+            return [IsAuthenticated(), CanAssignReview()]
+        if self.action in {"start_review", "decide", "add_comment"}:
+            return [IsAuthenticated(), IsReviewActor()]
+        return [IsAuthenticated()]
 
     # POST /reviews/{id}/assign/
     @action(detail=True, methods=["post"], url_path="assign")
@@ -239,13 +258,15 @@ class ReviewAssignmentViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="start")
     def start_review(self, request, pk=None):
         assignment = self.get_object()
-        ReviewWorkflowService.start_review(assignment)
+        self.check_object_permissions(request, assignment)
+        ReviewWorkflowService.start_review(assignment, request.user)
         return Response(ReviewAssignmentDetailSerializer(assignment).data)
 
     # POST /reviews/{id}/decide/
     @action(detail=True, methods=["post"], url_path="decide")
     def decide(self, request, pk=None):
         assignment = self.get_object()
+        self.check_object_permissions(request, assignment)
         ser = ReviewDecisionWriteSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         decision_map = {
@@ -262,6 +283,7 @@ class ReviewAssignmentViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="comment")
     def add_comment(self, request, pk=None):
         assignment = self.get_object()
+        self.check_object_permissions(request, assignment)
         ser = ReviewCommentWriteSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         ReviewWorkflowService.add_comment(

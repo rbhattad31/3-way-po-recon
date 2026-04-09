@@ -5,6 +5,7 @@ import logging
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 
@@ -15,6 +16,14 @@ from apps.core.permissions import permission_required_code, _has_permission_code
 from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 logger = logging.getLogger(__name__)
+
+
+def _scoped_case_queryset(request):
+    tenant = require_tenant(request)
+    qs = CaseSelectors.scope_for_user(APCase.objects.filter(is_active=True), request.user)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return qs
 
 
 def _build_fallback_summary(case, decisions, validation_issues):
@@ -565,15 +574,6 @@ def case_agent_view(request, pk):
             .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
             .first()
         )
-        # Auto-create assignment if case needs review but none exists
-        if not review_assignment and case.status in ("READY_FOR_REVIEW", "IN_REVIEW"):
-            from apps.cases.models import ReviewAssignment
-            review_assignment = ReviewAssignment.objects.create(
-                reconciliation_result=recon_result,
-                assigned_to=request.user,
-                status="IN_REVIEW",
-                priority=5,
-            )
         # Fall back to the most recent completed/decided assignment for history
         if not review_assignment:
             review_assignment = (
@@ -744,14 +744,12 @@ def case_decide(request, pk):
     # Permission gate: reprocess/escalate needs cases.edit, approve/reject needs reviews.decide
     if decision in ("REPROCESSED", "ESCALATED"):
         if not _has_permission_code(request.user, "cases.edit"):
-            from django.core.exceptions import PermissionDenied
             raise PermissionDenied
     else:
         if not _has_permission_code(request.user, "reviews.decide"):
-            from django.core.exceptions import PermissionDenied
             raise PermissionDenied
 
-    scoped_qs = CaseSelectors.scope_for_user(APCase.objects.filter(is_active=True), request.user)
+    scoped_qs = _scoped_case_queryset(request)
     case = get_object_or_404(scoped_qs, pk=pk)
 
     # Block approval if there are open exceptions or failed validations
@@ -891,7 +889,7 @@ def case_add_comment(request, pk):
     if request.method != "POST":
         return redirect("cases:case_agent_view", pk=pk)
 
-    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    case = get_object_or_404(_scoped_case_queryset(request), pk=pk)
     body = request.POST.get("body", "").strip()
     if not body:
         messages.warning(request, "Comment cannot be empty.")
@@ -952,7 +950,7 @@ def case_assign(request, pk):
     if request.method != "POST":
         return redirect("cases:case_agent_view", pk=pk)
 
-    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    case = get_object_or_404(_scoped_case_queryset(request), pk=pk)
     assignee_id = request.POST.get("assigned_to", "").strip()
     previous_assignee = case.assigned_to
 
@@ -1009,21 +1007,28 @@ def _scope_reviews_for_ap_processor(user, qs):
     )
 
 
+def _scoped_review_queryset(request):
+    from apps.cases.models import ReviewAssignment
+
+    tenant = require_tenant(request)
+    qs = ReviewAssignment.objects.all()
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return _scope_reviews_for_ap_processor(request.user, qs)
+
+
 @login_required
 def review_assignment_list(request):
     from apps.cases.models import ReviewAssignment
     from apps.core.enums import ReviewStatus
     from apps.reconciliation.models import ReconciliationResult
 
-    tenant = require_tenant(request)
     qs = (
-        ReviewAssignment.objects
+        _scoped_review_queryset(request)
         .select_related("reconciliation_result", "reconciliation_result__invoice", "assigned_to")
         .order_by("priority", "-created_at")
     )
-    if tenant is not None:
-        qs = qs.filter(tenant=tenant)
-    qs = _scope_reviews_for_ap_processor(request.user, qs)
+    tenant = require_tenant(request)
     status_filter = request.GET.get("status")
     if status_filter:
         qs = qs.filter(status=status_filter)
@@ -1031,7 +1036,7 @@ def review_assignment_list(request):
     page_obj = paginator.get_page(request.GET.get("page"))
 
     # Results that need review but have no assignment yet
-    assigned_result_ids = ReviewAssignment.objects.values_list("reconciliation_result_id", flat=True)
+    assigned_result_ids = _scoped_review_queryset(request).values_list("reconciliation_result_id", flat=True)
     unassigned_qs = ReconciliationResult.objects.filter(match_status=MatchStatus.REQUIRES_REVIEW)
     if tenant is not None:
         unassigned_qs = unassigned_qs.filter(tenant=tenant)
@@ -1066,7 +1071,10 @@ def review_create_assignments(request):
         messages.warning(request, "No results selected.")
         return redirect("reviews:assignment_list")
 
+    tenant = require_tenant(request)
     results = ReconciliationResult.objects.filter(pk__in=[int(i) for i in result_ids])
+    if tenant is not None:
+        results = results.filter(tenant=tenant)
     count = 0
     for result in results:
         if not ReviewAssignment.objects.filter(reconciliation_result=result).exists():
@@ -1082,7 +1090,7 @@ def review_assignment_detail(request, pk):
     from apps.cases.models import ReviewAssignment
 
     assignment = get_object_or_404(
-        ReviewAssignment.objects.select_related(
+        _scoped_review_queryset(request).select_related(
             "reconciliation_result",
             "reconciliation_result__invoice",
             "reconciliation_result__invoice__vendor",
@@ -1110,7 +1118,7 @@ def review_decide(request, pk):
 
     if request.method != "POST":
         return redirect("reviews:assignment_detail", pk=pk)
-    assignment = get_object_or_404(ReviewAssignment, pk=pk)
+    assignment = get_object_or_404(_scoped_review_queryset(request), pk=pk)
     decision = request.POST.get("decision")
     reason = request.POST.get("reason", "")
     decision_map = {
@@ -1167,7 +1175,7 @@ def review_add_comment(request, pk):
 
     if request.method != "POST":
         return redirect("reviews:assignment_detail", pk=pk)
-    assignment = get_object_or_404(ReviewAssignment, pk=pk)
+    assignment = get_object_or_404(_scoped_review_queryset(request), pk=pk)
     body = request.POST.get("body", "").strip()
     if body:
         ReviewWorkflowService.add_comment(assignment, request.user, body)

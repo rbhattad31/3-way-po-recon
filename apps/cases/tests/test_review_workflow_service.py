@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import pytest
+from django.core.exceptions import PermissionDenied, ValidationError
 from unittest.mock import patch
 
 from apps.core.enums import MatchStatus, ReviewStatus, ReviewActionType
@@ -100,6 +101,25 @@ class TestCreateAssignment:
             ReviewWorkflowService.create_assignment(recon_result)
         mock_log.assert_called_once()
 
+    def test_inherits_tenant_from_reconciliation_result(self, recon_result):
+        recon_result.tenant = recon_result.invoice.tenant
+        recon_result.save(update_fields=["tenant", "updated_at"])
+        with patch("apps.auditlog.services.AuditService.log_event"), \
+             patch("apps.core.langfuse_client.start_trace"), \
+             patch("apps.core.langfuse_client.score_trace"), \
+             patch("apps.reconciliation.services.eval_adapter.ReconciliationEvalAdapter.sync_for_review_assignment"):
+            assignment = ReviewWorkflowService.create_assignment(recon_result)
+        assert assignment.tenant == recon_result.tenant
+
+    def test_reuses_existing_active_assignment(self, recon_result):
+        with patch("apps.auditlog.services.AuditService.log_event"), \
+             patch("apps.core.langfuse_client.start_trace"), \
+             patch("apps.core.langfuse_client.score_trace"), \
+             patch("apps.reconciliation.services.eval_adapter.ReconciliationEvalAdapter.sync_for_review_assignment"):
+            first = ReviewWorkflowService.create_assignment(recon_result)
+            second = ReviewWorkflowService.create_assignment(recon_result)
+        assert first.pk == second.pk
+
 
 # --- assign_reviewer ----------------------------------------------------------
 
@@ -131,8 +151,27 @@ class TestStartReview:
             ReviewWorkflowService.assign_reviewer(assignment, reviewer)
         with patch("apps.auditlog.services.AuditService.log_event"), \
              patch("apps.core.langfuse_client.get_client", return_value=None):
-            updated = ReviewWorkflowService.start_review(assignment)
+            updated = ReviewWorkflowService.start_review(assignment, reviewer)
         assert updated.status == ReviewStatus.IN_REVIEW
+
+    def test_start_review_requires_assigned_reviewer(self, assignment):
+        assignment.assigned_to = None
+        assignment.status = ReviewStatus.PENDING
+        assignment.save(update_fields=["assigned_to", "status", "updated_at"])
+
+        with pytest.raises(ValidationError):
+            ReviewWorkflowService.start_review(assignment)
+
+    def test_start_review_rejects_non_assignee(self, assignment, reviewer):
+        from apps.accounts.tests.factories import UserFactory
+
+        other_user = UserFactory(role="REVIEWER")
+        assignment.assigned_to = reviewer
+        assignment.status = ReviewStatus.ASSIGNED
+        assignment.save(update_fields=["assigned_to", "status", "updated_at"])
+
+        with pytest.raises(PermissionDenied):
+            ReviewWorkflowService.start_review(assignment, other_user)
 
 
 # --- add_comment --------------------------------------------------------------
@@ -152,6 +191,13 @@ class TestAddComment:
         with patch("apps.auditlog.services.AuditService.log_event"):
             comment = ReviewWorkflowService.add_comment(assignment, reviewer, "Test")
         assert comment.assignment == assignment
+
+    def test_comment_inherits_assignment_tenant(self, assignment, reviewer):
+        assignment.tenant = reviewer.company
+        assignment.save(update_fields=["tenant", "updated_at"])
+        with patch("apps.auditlog.services.AuditService.log_event"):
+            comment = ReviewWorkflowService.add_comment(assignment, reviewer, "Test")
+        assert comment.tenant == assignment.tenant
 
 
 # --- approve ------------------------------------------------------------------
@@ -173,6 +219,46 @@ class TestApprove:
         assert isinstance(decision, ReviewDecision)
         assignment.refresh_from_db()
         assert assignment.status == ReviewStatus.APPROVED
+
+    def test_approve_requires_in_review_state(self, assignment, reviewer):
+        assignment.status = ReviewStatus.ASSIGNED
+        assignment.assigned_to = reviewer
+        assignment.save()
+
+        with patch("apps.auditlog.services.AuditService.log_event"), \
+             patch("apps.core.langfuse_client.get_client", return_value=None), \
+             pytest.raises(ValidationError):
+            ReviewWorkflowService.approve(assignment, reviewer, reason="OK")
+
+    def test_approve_rejects_non_assignee(self, assignment, reviewer):
+        from apps.accounts.tests.factories import UserFactory
+
+        other_user = UserFactory(role="REVIEWER")
+        assignment.status = ReviewStatus.IN_REVIEW
+        assignment.assigned_to = reviewer
+        assignment.save()
+
+        with patch("apps.auditlog.services.AuditService.log_event"), \
+             patch("apps.core.langfuse_client.get_client", return_value=None), \
+             pytest.raises(PermissionDenied):
+            ReviewWorkflowService.approve(assignment, other_user, reason="OK")
+
+    def test_approve_rejects_duplicate_decision(self, assignment, reviewer):
+        assignment.status = ReviewStatus.IN_REVIEW
+        assignment.assigned_to = reviewer
+        assignment.save()
+
+        with patch("apps.auditlog.services.AuditService.log_event"), \
+             patch("apps.core.langfuse_client.get_client", return_value=None):
+            ReviewWorkflowService.approve(assignment, reviewer, reason="OK")
+
+        assignment.status = ReviewStatus.IN_REVIEW
+        assignment.save(update_fields=["status", "updated_at"])
+
+        with patch("apps.auditlog.services.AuditService.log_event"), \
+             patch("apps.core.langfuse_client.get_client", return_value=None), \
+             pytest.raises(ValidationError):
+            ReviewWorkflowService.approve(assignment, reviewer, reason="repeat")
 
 
 # --- reject -------------------------------------------------------------------
