@@ -1326,6 +1326,24 @@ def agent_run_detail(request, pk):
             except Exception:
                 pass
 
+    # ── Eval field outcomes ──
+    eval_field_outcomes = []
+    try:
+        from apps.core_eval.models import EvalRun
+        _er = (
+            EvalRun.objects.filter(
+                app_module="agents",
+                entity_type="AgentRun",
+                entity_id=str(run.pk),
+            )
+            .prefetch_related("field_outcomes")
+            .first()
+        )
+        if _er:
+            eval_field_outcomes = list(_er.field_outcomes.all())
+    except Exception:
+        pass
+
     return render(request, "agents/agent_run_detail.html", {
         "run": run,
         "steps": steps,
@@ -1333,4 +1351,85 @@ def agent_run_detail(request, pk):
         "decisions": decisions,
         "recommendations": recommendations,
         "linked_invoice": linked_invoice,
+        "eval_field_outcomes": eval_field_outcomes,
+    })
+
+
+@login_required
+@permission_required_code("eval.manage")
+def agent_run_eval_correct(request, pk):
+    """Record a human ground-truth correction on an EvalFieldOutcome for an agent run.
+
+    POST params:
+        field_outcome_id  -- PK of the EvalFieldOutcome
+        ground_truth      -- correct value
+        new_status        -- CORRECT / INCORRECT / MISSING / EXTRA / SKIPPED
+    """
+    from django.http import JsonResponse
+    from apps.core_eval.models import EvalFieldOutcome
+
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    tenant = require_tenant(request)
+
+    run = get_object_or_404(AgentRun, pk=pk)
+
+    fo_id = request.POST.get("field_outcome_id", "").strip()
+    ground_truth = request.POST.get("ground_truth", "").strip()
+    new_status = request.POST.get("new_status", "").strip().upper()
+
+    if not fo_id:
+        return JsonResponse({"error": "field_outcome_id required"}, status=400)
+
+    valid_statuses = {c.value for c in EvalFieldOutcome.Status}
+    if new_status and new_status not in valid_statuses:
+        return JsonResponse(
+            {"error": "Invalid status. Must be one of: %s" % ", ".join(sorted(valid_statuses))},
+            status=400,
+        )
+
+    try:
+        fo = EvalFieldOutcome.objects.select_related("eval_run").get(pk=int(fo_id))
+    except (EvalFieldOutcome.DoesNotExist, ValueError):
+        return JsonResponse({"error": "EvalFieldOutcome not found"}, status=404)
+
+    # Verify this outcome belongs to this agent run
+    if fo.eval_run.entity_id != str(run.pk) or fo.eval_run.entity_type != "AgentRun":
+        return JsonResponse({"error": "Outcome does not belong to this agent run"}, status=403)
+
+    update_fields = ["updated_at"]
+    if ground_truth:
+        fo.ground_truth_value = ground_truth
+        update_fields.append("ground_truth_value")
+    if new_status:
+        fo.status = new_status
+        update_fields.append("status")
+    fo.save(update_fields=update_fields)
+
+    # Record learning signal
+    try:
+        from apps.core_eval.services.learning_signal_service import LearningSignalService
+        LearningSignalService.record(
+            eval_run=fo.eval_run,
+            signal_type="human_correction",
+            signal_key=fo.field_name,
+            signal_value=ground_truth or new_status,
+            detail_json={
+                "field_outcome_id": fo.pk,
+                "original_predicted": fo.predicted_value,
+                "corrected_status": new_status or fo.status,
+                "corrected_by": request.user.email,
+                "agent_run_id": run.pk,
+            },
+            tenant=tenant,
+        )
+    except Exception:
+        pass
+
+    return JsonResponse({
+        "ok": True,
+        "field_outcome_id": fo.pk,
+        "ground_truth_value": fo.ground_truth_value,
+        "status": fo.status,
     })

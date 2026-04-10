@@ -376,3 +376,31 @@ class AgentEvalAdapter:
                 value_type="json",
                 tenant=_tenant,
             )
+
+        # -- Plan source tracking: enables LLM vs deterministic comparison --
+        _plan_source = getattr(orch_run, "plan_source", "") or getattr(orch_result, "plan_source", "") or ""
+        if _plan_source:
+            EvalMetricService.upsert(
+                eval_run=eval_run,
+                metric_name="plan_source",
+                value=_plan_source,
+                value_type="text",
+                tenant=_tenant,
+            )
+            _m("plan_source_is_llm", 1.0 if _plan_source == "llm" else 0.0)
+
+        _plan_confidence = getattr(orch_run, "plan_confidence", None)
+        if _plan_confidence is None:
+            _plan_confidence = getattr(orch_result, "plan_confidence", None)
+        if _plan_confidence is not None:
+            _m("plan_confidence", float(_plan_confidence))
+
+        _planned = getattr(orch_run, "planned_agents", None) or []
+        _executed = orch_result.agents_executed or []
+        if _planned:
+            _m("planned_agents_count", float(len(_planned)), unit="count")
+            # Plan adherence: fraction of planned agents that actually executed
+            if _executed:
+                _overlap = len(set(_planned) & set(_executed))
+                _adherence = _overlap / len(_planned) if _planned else 0.0
+                _m("plan_adherence", _adherence)

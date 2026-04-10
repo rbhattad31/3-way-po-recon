@@ -195,6 +195,7 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
                 document_upload_id=upload.pk,
                 langfuse_trace=_lf_root,
                 trace_id=_trace_id,
+                tenant=tenant,
             )
         finally:
             import os
@@ -520,6 +521,7 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
                     actor_user_id=upload.uploaded_by_id,
                     document_upload_id=upload.pk,
                     trace_id=_trace_id,
+                    tenant=tenant,
                 )
                 # Persist recovery data into the extraction result
                 if ext_result and recovery_result:

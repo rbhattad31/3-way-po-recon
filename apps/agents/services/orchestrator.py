@@ -38,6 +38,8 @@ from apps.agents.services.guardrails_service import (
 from apps.agents.services.policy_engine import PolicyEngine
 from apps.agents.services.reasoning_planner import ReasoningPlanner
 from apps.core.enums import AgentRunStatus, AgentType, ExceptionSeverity, MatchStatus, RecommendationType
+
+from django.conf import settings
 from apps.core.decorators import observed_service
 from apps.core.evaluation_constants import (
     AGENT_PIPELINE_AGENTS_EXECUTED_COUNT,
@@ -105,7 +107,10 @@ class AgentOrchestrator:
     """Orchestrates the agentic layer for a single ReconciliationResult."""
 
     def __init__(self):
-        self.policy = ReasoningPlanner()
+        if getattr(settings, "AGENT_REASONING_ENGINE_ENABLED", False):
+            self.policy = ReasoningPlanner()
+        else:
+            self.policy = PolicyEngine()
         self.decision_service = DecisionLogService()
         self.resolver = DeterministicResolver()
 
@@ -360,8 +365,10 @@ class AgentOrchestrator:
             tenant=tenant,
         )
 
-        # Store actor on instance for use by helper methods
+        # Store actor + trace context on instance for use by helper methods
         self._actor = actor
+        self._trace_id = trace_ctx.trace_id
+        self._lf_trace = _lf_trace
 
         # Attach structured memory to context for cross-agent data sharing.
         memory = AgentMemory()
@@ -831,6 +838,7 @@ class AgentOrchestrator:
                     actor_roles_snapshot_json=actor_rbac.get("actor_roles_snapshot", []),
                     permission_source=actor_rbac.get("permission_source", ""),
                     access_granted=True,
+                    trace_id=getattr(self, "_trace_id", "") or "",
                     tenant=tenant,
                 )
                 orch.agents_executed.append(det_agent_type)
@@ -876,6 +884,7 @@ class AgentOrchestrator:
                 access_granted=True,
                 trace_id=getattr(self, "_trace_id", "") or "",
                 _langfuse_trace=_lf_trace,
+                tenant=tenant,
             )
 
             agent = agent_cls()

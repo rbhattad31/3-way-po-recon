@@ -1,11 +1,12 @@
 """LLM-backed agent execution planner.
 
-CONTRACT (immutable):
-  - The LLM planner ALWAYS runs for every non-clean result.
+CONTRACT:
+  - Activated via ``AGENT_REASONING_ENGINE_ENABLED=true`` in settings.
+  - When enabled, the LLM planner runs for every non-clean result.
   - PolicyEngine always runs first as a baseline (fast, no LLM).
   - If the LLM call fails for any reason, the deterministic PolicyEngine
     result is returned as a safe fallback (plan_source = "deterministic").
-  - There is NO feature flag that gates the planner. It is always active.
+  - When disabled, the orchestrator uses PolicyEngine directly.
 
 Reflection (insertion of extra agents after each run) is part of the
 orchestrator, not the planner. It is always active and requires no flag.

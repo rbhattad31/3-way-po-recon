@@ -111,6 +111,7 @@ def process_case_task(self, tenant_id: int = None, case_id: int = 0):
                 access_granted=True,
                 trace_id=_trace_id or "",
                 _langfuse_trace=_lf_trace,
+                tenant=tenant,
             )
             SystemCaseIntakeAgent().run(_intake_ctx)
         except Exception:

@@ -172,6 +172,7 @@ class PostingOrchestrator:
                     actor_roles_snapshot=["SYSTEM_AGENT"],
                     permission_source="system",
                     access_granted=True,
+                    tenant=getattr(invoice, "tenant", None),
                 )
                 SystemPostingPreparationAgent().run(_posting_ctx)
             except Exception:

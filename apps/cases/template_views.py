@@ -523,6 +523,9 @@ def case_agent_view(request, pk):
     agent_run_q = Q()
     if recon_result:
         agent_run_q |= Q(reconciliation_result=recon_result)
+    # Include extraction agent runs linked via document_upload
+    if invoice.document_upload_id:
+        agent_run_q |= Q(document_upload_id=invoice.document_upload_id)
     # Include orphaned runs (e.g. PO_RETRIEVAL before reconciliation)
     agent_run_q |= Q(reconciliation_result__isnull=True, input_payload__invoice_id=invoice.pk)
     # Include runs linked via case stages
@@ -533,13 +536,40 @@ def case_agent_view(request, pk):
     if stage_run_ids:
         agent_run_q |= Q(pk__in=stage_run_ids)
 
+    agent_run_qs = AgentRun.objects.filter(agent_run_q)
+    if tenant is not None:
+        agent_run_qs = agent_run_qs.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
     agent_runs = list(
-        AgentRun.objects.filter(agent_run_q)
+        agent_run_qs
         .select_related("agent_definition")
-        .prefetch_related("steps", "tool_calls", "decisions", "recommendations")
+        .prefetch_related(
+            "steps", "tool_calls", "decisions", "recommendations",
+            "messages",
+        )
         .distinct()
         .order_by("created_at")
     )
+
+    # ── Attach eval field outcomes per agent run ──
+    _agent_run_ids = [r.pk for r in agent_runs]
+    _eval_field_map: dict = {}  # agent_run_pk -> list[EvalFieldOutcome]
+    if _agent_run_ids:
+        try:
+            from apps.core_eval.models import EvalRun, EvalFieldOutcome
+            _eval_runs = list(
+                EvalRun.objects.filter(
+                    app_module="agents",
+                    entity_type="AgentRun",
+                    entity_id__in=[str(pk) for pk in _agent_run_ids],
+                ).prefetch_related("field_outcomes")
+            )
+            for er in _eval_runs:
+                _eval_field_map[int(er.entity_id)] = list(er.field_outcomes.all())
+        except Exception:
+            pass  # fail-silent
+
+    for run in agent_runs:
+        run.eval_field_outcomes = _eval_field_map.get(run.pk, [])
 
     # Summary
     summary = getattr(case, "summary", None)
@@ -646,12 +676,14 @@ def case_agent_view(request, pk):
                 prompt_tk=Sum("prompt_tokens"),
                 completion_tk=Sum("completion_tokens"),
                 total_tk=Sum("total_tokens"),
+                dur_ms=Sum("duration_ms"),
             )
             prompt_tk = totals["prompt_tk"] or 0
             completion_tk = totals["completion_tk"] or 0
             total_tk = totals["total_tk"] or 0
+            total_duration_ms = totals["dur_ms"] or 0
 
-            if total_tk > 0:
+            if total_tk > 0 or total_duration_ms > 0:
                 llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
                 total_cost = llm_cost.quantize(Decimal("0.000001"))
                 latest_run = agent_runs[-1]  # ordered by created_at ASC
@@ -659,6 +691,7 @@ def case_agent_view(request, pk):
                     "prompt_tokens": prompt_tk,
                     "completion_tokens": completion_tk,
                     "total_tokens": total_tk,
+                    "total_duration_ms": total_duration_ms,
                     "llm_cost": llm_cost.quantize(Decimal("0.000001")),
                     "cost_estimate": total_cost,
                     "llm_model": getattr(latest_run, "llm_model_used", None) or "gpt-4o",
@@ -1180,3 +1213,90 @@ def review_add_comment(request, pk):
     if body:
         ReviewWorkflowService.add_comment(assignment, request.user, body)
     return redirect("reviews:assignment_detail", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Agent eval field correction (from Case Agent tab)
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("eval.manage")
+def submit_eval_correction(request, case_pk, agent_run_pk):
+    """Record a human ground-truth correction on an agent eval field outcome.
+
+    POST params:
+        field_outcome_id  -- PK of the EvalFieldOutcome to correct
+        ground_truth      -- the correct value
+        new_status        -- CORRECT / INCORRECT / MISSING / EXTRA / SKIPPED
+    """
+    from django.http import JsonResponse
+    from apps.core_eval.models import EvalFieldOutcome
+
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    tenant = require_tenant(request)
+    scoped_qs = _scoped_case_queryset(request)
+    case = get_object_or_404(scoped_qs, pk=case_pk)
+
+    fo_id = request.POST.get("field_outcome_id", "").strip()
+    ground_truth = request.POST.get("ground_truth", "").strip()
+    new_status = request.POST.get("new_status", "").strip().upper()
+
+    if not fo_id:
+        return JsonResponse({"error": "field_outcome_id required"}, status=400)
+
+    valid_statuses = {c.value for c in EvalFieldOutcome.Status}
+    if new_status and new_status not in valid_statuses:
+        return JsonResponse(
+            {"error": "Invalid status. Must be one of: %s" % ", ".join(sorted(valid_statuses))},
+            status=400,
+        )
+
+    try:
+        fo = EvalFieldOutcome.objects.select_related("eval_run").get(pk=int(fo_id))
+    except (EvalFieldOutcome.DoesNotExist, ValueError):
+        return JsonResponse({"error": "EvalFieldOutcome not found"}, status=404)
+
+    # Verify this outcome belongs to agent runs for this case
+    from apps.agents.models import AgentRun
+    if not AgentRun.objects.filter(pk=agent_run_pk).exists():
+        return JsonResponse({"error": "Agent run not found"}, status=404)
+
+    # Update the field outcome
+    update_fields = ["updated_at"]
+    if ground_truth:
+        fo.ground_truth_value = ground_truth
+        update_fields.append("ground_truth_value")
+    if new_status:
+        fo.status = new_status
+        update_fields.append("status")
+    fo.save(update_fields=update_fields)
+
+    # Record a learning signal for this correction
+    try:
+        from apps.core_eval.services.learning_signal_service import LearningSignalService
+        LearningSignalService.record(
+            eval_run=fo.eval_run,
+            signal_type="human_correction",
+            signal_key=fo.field_name,
+            signal_value=ground_truth or new_status,
+            detail_json={
+                "field_outcome_id": fo.pk,
+                "original_predicted": fo.predicted_value,
+                "corrected_status": new_status or fo.status,
+                "corrected_by": request.user.email,
+                "agent_run_id": agent_run_pk,
+                "case_id": case.pk,
+            },
+            tenant=tenant,
+        )
+    except Exception:
+        logger.debug("Learning signal for eval correction failed (non-fatal)", exc_info=True)
+
+    return JsonResponse({
+        "ok": True,
+        "field_outcome_id": fo.pk,
+        "ground_truth_value": fo.ground_truth_value,
+        "status": fo.status,
+    })

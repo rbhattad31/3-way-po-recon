@@ -38,6 +38,7 @@ class AgentTraceService:
         agent_name: str = "",
         input_payload: Optional[Dict[str, Any]] = None,
         tenant=None,
+        trace_id: str = "",
     ) -> AgentRun:
         """Begin a new agent run and return the persisted AgentRun."""
         agent_def = AgentDefinition.objects.filter(
@@ -51,6 +52,7 @@ class AgentTraceService:
             status=AgentRunStatus.RUNNING,
             input_payload=input_payload,
             started_at=timezone.now(),
+            trace_id=trace_id,
             tenant=tenant,
         )
         logger.info(
