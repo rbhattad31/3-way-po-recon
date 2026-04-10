@@ -251,8 +251,8 @@ class TestTenantInvitationUniqueTogether:
     def test_same_email_different_tenants_is_allowed(self):
         """TM-17: Same email can be invited by two different tenants."""
         import secrets
-        tenant_a = make_tenant("unique-ta", slug="unique-ta")
-        tenant_b = make_tenant("unique-tb", slug="unique-tb")
+        tenant_a = make_tenant("unique-ta")
+        tenant_b = make_tenant("unique-tb")
         TenantInvitation.objects.create(
             tenant=tenant_a,
             email="shared@example.com",

@@ -204,6 +204,18 @@ class StageExecutor:
                 "reason": _reason,
             }
 
+        # Unexpected status -- pause the pipeline and let a human decide
+        logger.warning(
+            "Case %s: invoice in unexpected status %s, pausing pipeline",
+            case.case_number, invoice.status,
+        )
+        return {
+            "approved": False,
+            "paused": True,
+            "invoice_status": invoice.status,
+            "reason": f"unexpected invoice status: {invoice.status}",
+        }
+
     @staticmethod
     def _execute_path_resolution(case: APCase) -> Dict:
         """

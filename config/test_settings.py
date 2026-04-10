@@ -21,6 +21,17 @@ DATABASES = {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Skip migrations: create tables directly from model state.
+# Running 144+ migration files against SQLite in-memory on every test run
+# adds 60-120s of overhead.  Setting each app's migration module to None
+# tells Django's test runner to use CREATE TABLE from the model definitions
+# instead, cutting test startup to a few seconds.
+# ---------------------------------------------------------------------------
+MIGRATION_MODULES = {app.split(".")[-1]: None for app in INSTALLED_APPS if app.startswith("apps.")}
+# Also disable migrations for django_celery_results (third-party)
+MIGRATION_MODULES["django_celery_results"] = None
+
 # Disable external services for tests
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True

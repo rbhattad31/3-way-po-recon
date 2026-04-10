@@ -151,7 +151,8 @@ class HeaderMatchService:
         missing data leaves the field as ``None`` (inconclusive).
         """
         details: Dict = {}
-        po_country = (po.country or "").strip().upper()
+        raw_country = po.country
+        po_country = raw_country.strip().upper() if isinstance(raw_country, str) and raw_country else ""
 
         # --- 1. Country / region match ---
         # Infer the invoice's country from vendor_tax_id format or currency.
@@ -162,8 +163,10 @@ class HeaderMatchService:
             details["po_country"] = po_country
 
         # --- 2. Vendor GSTIN / Tax ID match ---
-        inv_tax_id = (invoice.vendor_tax_id or "").strip().upper()
-        po_vendor_gstin = (po.vendor_gstin or "").strip().upper()
+        inv_tax_id = invoice.vendor_tax_id
+        inv_tax_id = inv_tax_id.strip().upper() if isinstance(inv_tax_id, str) and inv_tax_id else ""
+        po_vendor_gstin = po.vendor_gstin
+        po_vendor_gstin = po_vendor_gstin.strip().upper() if isinstance(po_vendor_gstin, str) and po_vendor_gstin else ""
         if inv_tax_id and po_vendor_gstin:
             result.gstin_match = inv_tax_id == po_vendor_gstin
             details["invoice_vendor_tax_id"] = inv_tax_id
@@ -192,12 +195,14 @@ def _infer_country(invoice: Invoice) -> str:
     Priority: GSTIN regex (India) -> currency code -> empty.
     """
     import re
-    tax_id = (invoice.vendor_tax_id or "").strip()
+    raw_tax_id = invoice.vendor_tax_id
+    tax_id = str(raw_tax_id).strip() if raw_tax_id and isinstance(raw_tax_id, str) else ""
     # Indian GSTIN: 2 digits + 10 alphanum (PAN) + 1 alphanum + Z + 1 alphanum
     if tax_id and re.match(r"^\d{2}[A-Z0-9]{10}[A-Z0-9]Z[A-Z0-9]$", tax_id.upper()):
         return "IN"
 
-    currency = (invoice.currency or "").strip().upper()
+    raw_currency = invoice.currency
+    currency = raw_currency.strip().upper() if isinstance(raw_currency, str) and raw_currency else ""
     _CURRENCY_COUNTRY = {
         "INR": "IN",
         "AED": "AE",

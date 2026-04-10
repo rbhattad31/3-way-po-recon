@@ -177,6 +177,29 @@ class EvalMetric(TimestampMixin):
             return _json.loads(self.raw_value) if self.raw_value else None
         return self.raw_value
 
+    # -- backward-compatible property accessors (old field names) -----------
+    @property
+    def metric_value(self):
+        """Legacy accessor: return raw_value as float (for value_type='float')."""
+        if self.value_type == "float" and self.raw_value:
+            return float(self.raw_value)
+        return None
+
+    @property
+    def string_value(self):
+        """Legacy accessor: return raw_value as string (for value_type='string')."""
+        if self.value_type == "string":
+            return self.raw_value
+        return None
+
+    @property
+    def json_value(self):
+        """Legacy accessor: return raw_value parsed as JSON (for value_type='json')."""
+        import json as _json
+        if self.value_type == "json" and self.raw_value:
+            return _json.loads(self.raw_value)
+        return None
+
 
 # ---------------------------------------------------------------------------
 # EvalFieldOutcome -- per-field accuracy record

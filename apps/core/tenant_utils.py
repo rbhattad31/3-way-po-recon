@@ -27,6 +27,21 @@ Usage
 from django.core.exceptions import PermissionDenied
 
 
+def _tenant_filter_kwargs(model, tenant):
+    """Return the correct filter kwargs for tenant scoping.
+
+    Most models use ``tenant`` FK; the User model uses ``company``.
+    """
+    for f in model._meta.get_fields():
+        if getattr(f, "name", None) == "tenant" and getattr(f, "related_model", None):
+            return {"tenant": tenant}
+    # Fallback: try 'company' (User model)
+    for f in model._meta.get_fields():
+        if getattr(f, "name", None) == "company" and getattr(f, "related_model", None):
+            return {"company": tenant}
+    return {"tenant": tenant}
+
+
 class TenantQuerysetMixin:
     """Mixin for Django class-based views and DRF ViewSets.
 
@@ -40,7 +55,7 @@ class TenantQuerysetMixin:
         tenant = getattr(self.request, "tenant", None)
         if getattr(self.request.user, "is_platform_admin", False) or self.request.user.is_superuser or tenant is None:
             return qs
-        return qs.filter(tenant=tenant)
+        return qs.filter(**_tenant_filter_kwargs(qs.model, tenant))
 
 
 def require_tenant(request):
@@ -79,7 +94,7 @@ def scoped_queryset(model_class, tenant):
     """
     qs = model_class.objects.all()
     if tenant is not None:
-        qs = qs.filter(tenant=tenant)
+        qs = qs.filter(**_tenant_filter_kwargs(model_class, tenant))
     return qs
 
 

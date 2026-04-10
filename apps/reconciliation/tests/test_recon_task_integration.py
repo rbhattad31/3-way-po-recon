@@ -110,7 +110,7 @@ class TestReconTaskCaseLinkage:
 
         from apps.reconciliation.tasks import run_reconciliation_task
         result = run_reconciliation_task.apply(
-            args=([invoice.pk], config.pk, admin.pk),
+            kwargs=dict(invoice_ids=[invoice.pk], config_id=config.pk, triggered_by_id=admin.pk),
         ).get()
 
         assert result["status"] == "ok"
@@ -134,7 +134,7 @@ class TestReconTaskCaseLinkage:
 
         from apps.reconciliation.tasks import run_reconciliation_task
         run_reconciliation_task.apply(
-            args=([invoice.pk], config.pk, admin.pk),
+            kwargs=dict(invoice_ids=[invoice.pk], config_id=config.pk, triggered_by_id=admin.pk),
         ).get()
 
         case.refresh_from_db()
@@ -152,7 +152,7 @@ class TestReconTaskCaseLinkage:
 
         from apps.reconciliation.tasks import run_reconciliation_task
         run_reconciliation_task.apply(
-            args=([invoice.pk], config.pk, admin.pk),
+            kwargs=dict(invoice_ids=[invoice.pk], config_id=config.pk, triggered_by_id=admin.pk),
         ).get()
 
         rr = ReconciliationResult.objects.filter(invoice=invoice).first()
@@ -172,7 +172,7 @@ class TestReconTaskCaseLinkage:
 
         from apps.reconciliation.tasks import run_reconciliation_task
         result = run_reconciliation_task.apply(
-            args=([invoice.pk], config.pk, admin.pk),
+            kwargs=dict(invoice_ids=[invoice.pk], config_id=config.pk, triggered_by_id=admin.pk),
         ).get()
 
         assert result["status"] == "ok"
@@ -193,7 +193,7 @@ class TestReconTaskCaseLinkage:
         # First reconciliation run
         from apps.reconciliation.tasks import run_reconciliation_task
         run_reconciliation_task.apply(
-            args=([invoice.pk], config.pk, admin.pk),
+            kwargs=dict(invoice_ids=[invoice.pk], config_id=config.pk, triggered_by_id=admin.pk),
         ).get()
 
         case.refresh_from_db()
@@ -205,7 +205,7 @@ class TestReconTaskCaseLinkage:
         invoice.save(update_fields=["status"])
 
         run_reconciliation_task.apply(
-            args=([invoice.pk], config.pk, admin.pk),
+            kwargs=dict(invoice_ids=[invoice.pk], config_id=config.pk, triggered_by_id=admin.pk),
         ).get()
 
         case.refresh_from_db()

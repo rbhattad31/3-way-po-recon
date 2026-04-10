@@ -170,15 +170,14 @@ class TestTenantQuerysetMixin:
 
     def _view_instance(self, request, model_class):
         """Build a minimal CBV-like object using the mixin."""
-        class FakeView(TenantQuerysetMixin):
-            queryset = model_class.objects.all()
-            request = None
+        from django.views.generic import ListView
 
-            def get_queryset(self_inner):
-                return super().get_queryset()
+        class FakeView(TenantQuerysetMixin, ListView):
+            model = model_class
 
         view = FakeView()
         view.request = request
+        view.kwargs = {}
         return view
 
     def test_filters_to_request_tenant(self, db, user_a, user_b, tenant_a, tenant_b):

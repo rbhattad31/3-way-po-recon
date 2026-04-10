@@ -44,6 +44,10 @@ def _patch_settings_for_sqlite():
                 "NAME": ":memory:",
             }
         }
+        # Skip migrations -- create tables directly from model state.
+        _apps = getattr(mod, "INSTALLED_APPS", [])
+        mod.MIGRATION_MODULES = {a.split(".")[-1]: None for a in _apps if a.startswith("apps.")}
+        mod.MIGRATION_MODULES["django_celery_results"] = None
         print("\n*** TEST DB OVERRIDE (already loaded): SQLite in-memory ***\n")
         return
 
@@ -72,6 +76,10 @@ def _patch_settings_for_sqlite():
                     "NAME": ":memory:",
                 }
             }
+            # Skip migrations -- create tables directly from model state.
+            _apps = getattr(mod, "INSTALLED_APPS", [])
+            mod.MIGRATION_MODULES = {a.split(".")[-1]: None for a in _apps if a.startswith("apps.")}
+            mod.MIGRATION_MODULES["django_celery_results"] = None
             print("\n*** TEST DB OVERRIDE: SQLite in-memory ***\n")
             return mod
 

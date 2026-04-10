@@ -164,7 +164,7 @@ class TestExtractionApprovalStageExecutor:
 
         case = MagicMock()
         invoice = MagicMock()
-        invoice.status = InvoiceStatus.INVALID
+        invoice.status = InvoiceStatus.RECONCILED  # truly unexpected for this stage
         case.invoice = invoice
         case.case_number = "AP-TEST-004"
         case.status = CaseStatus.EXTRACTION_COMPLETED
