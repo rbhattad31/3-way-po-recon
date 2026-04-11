@@ -1376,6 +1376,109 @@ flowchart LR
         <div class="col-md-6"><div class="p-3 border rounded small"><strong>Storage / Infra</strong><br>Azure Blob Storage (quotation PDFs) &bull; MySQL (all structured data) &bull; Redis (Celery broker + cache)</div></div>
         <div class="col-md-6"><div class="p-3 border rounded small"><strong>Observability</strong><br>Langfuse (LLM traces + scores) &bull; TraceContext (distributed trace IDs) &bull; JSONLogFormatter &bull; MetricsService</div></div>
       </div>
+
+      <h3 class="docs-h3" id="langfuse-scores">Langfuse Evaluation Score Catalog ({{ langfuse_total_scores }}+ constants)</h3>
+      <div class="alert alert-info border-0 py-2 mb-3 small">
+        <i class="bi bi-info-circle me-1"></i>
+        All score names are defined in <code>apps/core/evaluation_constants.py</code>.
+        Services import constants instead of using raw strings. Scores span {{ langfuse_score_domains|length }} domains.
+      </div>
+      <div class="row g-3 mb-4">
+        {% for domain in langfuse_score_domains %}
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100 border-start border-4 border-{{ domain.color }}">
+            <div class="card-body small">
+              <div class="fw-semibold mb-1">
+                <i class="bi {{ domain.icon }} me-1 text-{{ domain.color }}"></i>{{ domain.domain }}
+                <span class="badge bg-{{ domain.color }} ms-1">{{ domain.count }}</span>
+              </div>
+              <div class="text-muted" style="font-size:.75rem">
+                {% for ex in domain.examples %}<code class="me-1">{{ ex }}</code>{% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="latency-thresholds">Latency Thresholds</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered table-hover mb-0">
+          <thead class="table-light"><tr><th>Operation</th><th>Threshold</th></tr></thead>
+          <tbody>
+            {% for lt in langfuse_latency_thresholds %}
+            <tr><td class="small">{{ lt.operation }}</td><td class="small"><code>{{ lt.threshold_label }}</code> ({{ lt.threshold_ms }}ms)</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="root-traces">Root Trace Names ({{ langfuse_root_traces|length }})</h3>
+      <div class="card mb-4">
+        <div class="card-body small">
+          {% for trace in langfuse_root_traces %}
+          <code class="me-2 mb-1 d-inline-block">{{ trace }}</code>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CELERY TASKS ── -->
+    <div id="celery-tasks" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-arrow-repeat me-2 text-success"></i>Celery Tasks &amp; Async Flows</h2>
+
+      <div class="alert alert-success border-0 py-2 mb-4 small">
+        <i class="bi bi-info-circle me-1"></i>
+        {{ celery_tasks|length }} registered tasks. Broker: <strong>Redis</strong>. Result backend: <strong>django-db</strong>.
+        Actor identity propagated via <code>.as_celery_headers()</code> / <code>.from_celery_headers()</code>.
+        Only <strong>process_approved_learning_actions</strong> runs on Beat (every 30 min) -- all others are on-demand.
+      </div>
+
+      <h3 class="docs-h3" id="task-inventory">Task Inventory</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered table-hover mb-0">
+          <thead class="table-light"><tr><th>Task</th><th>Trigger</th><th>Retries</th><th>Delay</th><th>acks_late</th><th>Description</th></tr></thead>
+          <tbody>
+            {% for t in celery_tasks %}
+            <tr>
+              <td class="small"><code>{{ t.task }}</code></td>
+              <td class="small">{{ t.trigger }}</td>
+              <td class="small text-center">{{ t.max_retries }}</td>
+              <td class="small text-center">{{ t.retry_delay }}</td>
+              <td class="small text-center">{{ t.acks_late }}</td>
+              <td class="small text-muted">{{ t.description }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="task-chain">Task Chain</h3>
+      <div class="card mb-4">
+        <div class="card-body small">
+          <p class="mb-1"><strong>Auto-chain:</strong> {{ celery_task_chain.description }}</p>
+          <p class="mb-0 text-muted"><strong>Actor propagation:</strong> {{ celery_task_chain.actor_propagation }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── REVIEW WORKFLOW ── -->
+    <div id="review-workflow" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-people me-2 text-info"></i>Review Workflow</h2>
+
+      <h3 class="docs-h3" id="review-actions">Review Action Types</h3>
+      <div class="row g-3 mb-4">
+        {% for ra in review_action_types %}
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100 border-start border-4 border-{{ ra.color }}">
+            <div class="card-body py-2">
+              <div class="fw-semibold"><i class="bi {{ ra.icon }} text-{{ ra.color }} me-1"></i>{{ ra.action }}</div>
+              <div class="small text-muted">{{ ra.description }}</div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
     </div>
 
     <!-- ======================================================================== -->

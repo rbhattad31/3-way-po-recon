@@ -28,4 +28,14 @@ urlpatterns = [
     # Upload
     path("upload/", views.invoice_upload, name="invoice_upload"),
     path("upload/<int:upload_id>/status/", views.upload_status, name="upload_status"),
+
+    # Case reprocess status
+    path("case/<int:case_id>/reprocess-status/", views.case_reprocess_status, name="case_reprocess_status"),
+
+    # Supervisor agent
+    path("supervisor/run/", views.supervisor_run, name="supervisor_run"),
+    path("supervisor/stream/", views.supervisor_run_stream, name="supervisor_run_stream"),
+
+    # Case actions (approve, reject, escalate, reprocess, request_info)
+    path("case/<int:case_id>/action/", views.case_action, name="case_action"),
 ]

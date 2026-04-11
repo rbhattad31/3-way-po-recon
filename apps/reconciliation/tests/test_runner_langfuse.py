@@ -105,7 +105,7 @@ def patched_runner(db):
          patch("apps.reconciliation.services.runner_service.ExceptionBuilderService") as MockExcBuilder, \
          patch("apps.reconciliation.services.runner_service.ReconciliationResultService") as MockResult, \
          patch("apps.auditlog.services.AuditService.log_event"), \
-         patch("apps.reviews.services.ReviewWorkflowService.create_assignment", return_value=None):
+         patch("apps.cases.services.review_workflow_service.ReviewWorkflowService.create_assignment", return_value=None):
 
         runner = ReconciliationRunnerService(config=config)
 

@@ -332,6 +332,39 @@ CONTRACTS = [
         "domain_tags": ["posting", "erp"],
         "human_review_required_conditions": "when mapping review queues are populated",
     },
+    # ── Supervisor agent ─────────────────────────────────────────────────
+    {
+        "agent_type": AgentType.SUPERVISOR,
+        "purpose": "Full AP lifecycle orchestrator that owns invoice processing from document receipt through extraction, validation, matching, investigation, and final decision",
+        "entry_conditions": "invoice uploaded or extraction approved; valid document_upload_id or invoice_id provided",
+        "success_criteria": "All lifecycle phases (UNDERSTAND, VALIDATE, MATCH, INVESTIGATE, DECIDE) evaluated; submit_recommendation tool called; confidence score and evidence produced",
+        "prohibited_actions": [
+            "auto-closing without verifying all lines against tolerance config",
+            "verifying vendor by name alone without tax ID check",
+            "escalating PO_NOT_FOUND without attempting re-extraction first",
+            "fabricating tool outputs",
+            "bypassing RBAC or tenant restrictions",
+        ],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 3,
+        "tool_failure_confidence_cap": 0.4,
+        "allowed_recommendation_types": [
+            "AUTO_CLOSE",
+            "SEND_TO_AP_REVIEW",
+            "SEND_TO_PROCUREMENT",
+            "SEND_TO_VENDOR_CLARIFICATION",
+            "REPROCESS_EXTRACTION",
+            "ESCALATE_TO_MANAGER",
+        ],
+        "default_fallback_recommendation": "SEND_TO_AP_REVIEW",
+        "output_schema_name": "AgentOutputSchema",
+        "output_schema_version": "v1",
+        "lifecycle_status": "active",
+        "owner_team": "AP-Engineering",
+        "capability_tags": ["orchestration", "extraction", "validation", "matching", "investigation", "decision"],
+        "domain_tags": ["invoice", "reconciliation", "vendor", "case"],
+        "human_review_required_conditions": "when confidence < 0.7 or any critical field has low extraction confidence",
+    },
 ]
 
 # Fields this command manages. Fields NOT in this list are never touched.

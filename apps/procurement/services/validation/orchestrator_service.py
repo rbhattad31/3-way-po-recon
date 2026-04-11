@@ -200,6 +200,7 @@ class ValidationOrchestratorService:
                         "ambiguous": len(ambiguous),
                         "rules_applied": len(rules),
                     },
+                    tenant=tenant,
                 )
 
                 # Create individual result items

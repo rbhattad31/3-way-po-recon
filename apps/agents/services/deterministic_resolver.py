@@ -6,11 +6,12 @@ recommendations and case summaries WITHOUT calling the LLM, saving cost and
 latency while maintaining full auditability via synthetic AgentRun records.
 
 Rule priority (highest first):
-  1. EXTRACTION_LOW_CONFIDENCE → REPROCESS_EXTRACTION
-  2. VENDOR_MISMATCH           → SEND_TO_VENDOR_CLARIFICATION
-  3. GRN / receipt issues      → SEND_TO_PROCUREMENT
-  4. Complex (3+ types + HIGH) → ESCALATE_TO_MANAGER
-  5. All other exceptions      → SEND_TO_AP_REVIEW
+  1. EXTRACTION_LOW_CONFIDENCE   -> REPROCESS_EXTRACTION
+  2. VENDOR_MISMATCH             -> SEND_TO_VENDOR_CLARIFICATION
+  2b. VENDOR_NOT_VERIFIED        -> SEND_TO_AP_REVIEW  (Non-PO path)
+  3. GRN / receipt issues        -> SEND_TO_PROCUREMENT
+  4. Complex (3+ types + HIGH)   -> ESCALATE_TO_MANAGER
+  5. All other exceptions        -> SEND_TO_AP_REVIEW
 
 If a prior agent (e.g. RECONCILIATION_ASSIST) recommended AUTO_CLOSE with
 high confidence, the resolver respects that recommendation.
@@ -265,15 +266,26 @@ class DeterministicResolver:
                 f"for accurate data.{suffix}",
             )
 
-        # Rule 2: Vendor mismatch → vendor clarification
+        # Rule 2: Vendor mismatch -> vendor clarification
         if ExceptionType.VENDOR_MISMATCH in exc_types:
             other = exc_types - {ExceptionType.VENDOR_MISMATCH}
             suffix = f" Additional issues: {sorted(other)}." if other else ""
             return (
                 RecommendationType.SEND_TO_VENDOR_CLARIFICATION,
                 0.95,
-                f"Vendor on invoice does not match PO vendor — "
+                f"Vendor on invoice does not match PO vendor -- "
                 f"requires vendor clarification.{suffix}",
+            )
+
+        # Rule 2b: Vendor not verified (Non-PO) -> AP review
+        if ExceptionType.VENDOR_NOT_VERIFIED in exc_types:
+            other = exc_types - {ExceptionType.VENDOR_NOT_VERIFIED}
+            suffix = f" Additional issues: {sorted(other)}." if other else ""
+            return (
+                RecommendationType.SEND_TO_AP_REVIEW,
+                0.90,
+                f"Vendor on invoice could not be verified (not linked or inactive) "
+                f"-- requires AP review.{suffix}",
             )
 
         # Rule 3: GRN / receipt issues → procurement

@@ -45,6 +45,7 @@ def run_bulk_job_task(self, job_id: int) -> dict:
             user_id=getattr(job, "started_by_id", None),
             session_id=f"bulk-job-{job.pk}",
             metadata={
+                "tenant_id": getattr(job, "tenant_id", None),
                 "task_id": self.request.id,
                 "job_pk": job.pk,
                 "source_type": getattr(job.source_connection, "source_type", None),
@@ -82,6 +83,7 @@ def run_bulk_job_task(self, job_id: int) -> dict:
                 access_granted=True,
                 trace_id=_trace_id or "",
                 _langfuse_trace=_lf_trace,
+                tenant=getattr(job, "tenant", None),
             )
             SystemBulkExtractionIntakeAgent().run(_intake_ctx)
         except Exception:

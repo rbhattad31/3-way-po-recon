@@ -36,7 +36,7 @@ from apps.reconciliation.models import (
     ReconciliationResult,
     ReconciliationRun,
 )
-from apps.reviews.models import (
+from apps.cases.models import (
     ManualReviewAction,
     ReviewAssignment,
     ReviewDecision,

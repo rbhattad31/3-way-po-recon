@@ -394,7 +394,7 @@ class NonPOValidationService:
         )
 
     @staticmethod
-    def _persist_result(case: APCase, result: NonPOValidationResult) -> None:
+    def _persist_result(case: APCase, result: NonPOValidationResult, tenant=None) -> None:
         """Persist validation result as a case artifact."""
         payload = {
             "overall_status": result.overall_status,
@@ -420,6 +420,7 @@ class NonPOValidationService:
                     case=case, artifact_type=ArtifactType.VALIDATION_RESULT
                 ).order_by("-version").values_list("version", flat=True).first() or 0
             ) + 1,
+            tenant=tenant,
         )
 
         # Record decision
@@ -430,6 +431,7 @@ class NonPOValidationService:
             decision_value=result.overall_status,
             rationale=f"Non-PO validation: {result.overall_status} ({len(result.issues)} issues)",
             evidence=payload,
+            tenant=tenant,
         )
 
         # Update case risk score

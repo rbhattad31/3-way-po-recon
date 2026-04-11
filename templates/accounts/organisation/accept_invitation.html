@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Accept Invitation — AP Operations{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-md-6 col-lg-5">
+    <div class="ap-card">
+      <div class="ap-card-header">
+        <i class="bi bi-person-check me-2"></i>Complete Your Registration
+      </div>
+      <div class="ap-card-body">
+        {% if invitation %}
+        <p class="text-muted small mb-3">
+          You have been invited to join <strong>{{ invitation.tenant.name }}</strong>
+          as <strong>{{ invitation.role_code }}</strong>.
+          Fill in your details below to create your account.
+        </p>
+        {% endif %}
+
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          {% if form.non_field_errors %}
+          <div class="alert alert-danger py-2 mb-3">
+            {% for error in form.non_field_errors %}
+              <div class="small">{{ error }}</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          <div class="mb-3">
+            <label class="form-label fw-medium">First Name <span class="text-danger">*</span></label>
+            {{ form.first_name }}
+            {% if form.first_name.errors %}<div class="text-danger small mt-1">{{ form.first_name.errors.0 }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-medium">Last Name <span class="text-danger">*</span></label>
+            {{ form.last_name }}
+            {% if form.last_name.errors %}<div class="text-danger small mt-1">{{ form.last_name.errors.0 }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-medium">Password <span class="text-danger">*</span></label>
+            {{ form.password }}
+            {% if form.password.errors %}<div class="text-danger small mt-1">{{ form.password.errors.0 }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-medium">Confirm Password <span class="text-danger">*</span></label>
+            {{ form.confirm_password }}
+            {% if form.confirm_password.errors %}<div class="text-danger small mt-1">{{ form.confirm_password.errors.0 }}</div>{% endif %}
+          </div>
+
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-check-lg me-1"></i>Create Account
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

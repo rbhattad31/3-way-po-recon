@@ -33,7 +33,7 @@ All raw string score names replaced with constants from `evaluation_constants.py
 | `apps/extraction/bulk_tasks.py` | 1 score call -> `EXTRACTION_BULK_JOB_SUCCESS_RATE` |
 | `apps/extraction/services/approval_service.py` | 5 score calls -> constants |
 | `apps/posting_core/services/posting_pipeline.py` | 2 score calls -> `POSTING_FINAL_CONFIDENCE`, `POSTING_FINAL_REQUIRES_REVIEW`; persist `langfuse_trace_id` on `PostingRun` |
-| `apps/reviews/services.py` | 9 score calls -> constants |
+| `apps/cases/services/review_workflow_service.py` | 9 score calls -> constants |
 | `apps/copilot/services/copilot_service.py` | 1 score call -> `COPILOT_SESSION_LENGTH` |
 
 ### DB Model Changes
@@ -103,10 +103,11 @@ All pipelines now use `derive_session_id()` from `observability_helpers.py`:
 
 | Priority | Pattern | Source |
 |---|---|---|
-| 1 | `invoice-{invoice_id}` | Invoice-centric flows |
-| 2 | `upload-{upload_id}` | Pre-invoice extraction |
-| 3 | `case-{case_id}` | Case-only flows |
-| 4 | `unknown` | No context available |
+| 1 | `case-{case_number}` | Case-anchored flows (AP Case created at upload time) |
+| 2 | `invoice-{invoice_id}` | Invoice-centric flows (fallback when no case_number) |
+| 3 | `upload-{upload_id}` | Pre-invoice extraction (rare fallback) |
+| 4 | `case-{case_id}` | Case-only flows (numeric fallback) |
+| 5 | `None` | No context available |
 
 ### Metadata Builder
 

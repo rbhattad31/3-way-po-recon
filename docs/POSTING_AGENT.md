@@ -4,7 +4,7 @@
 
 The Invoice Posting Agent is a **Phase 1** implementation that transforms approved invoice extractions into ERP-ready posting proposals. It resolves vendor, item, tax, cost-center, and PO references from **Excel-imported ERP master data**, validates the proposal, scores confidence, routes to review queues when needed, and (mock) submits to ERP.
 
-The system follows the same **two-layer architecture** as the extraction system:
+The system follows the same **two-layer architecture** as the extraction system:\n\n> **Multi-Tenant**: All posting models (`InvoicePosting`, `PostingRun`, etc.) carry a `tenant` FK to `CompanyProfile`. The posting pipeline inherits the tenant from the source Invoice. ERP reference data (vendor, item, tax, cost-center tables) is also tenant-scoped. See [MULTI_TENANT.md](MULTI_TENANT.md).", "oldString": "The system follows the same **two-layer architecture** as the extraction system:
 
 | Layer | Django App | Purpose |
 |---|---|---|

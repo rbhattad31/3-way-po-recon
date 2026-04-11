@@ -2,10 +2,23 @@
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied as DRFPermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.cases.api.permissions import CanAssignCase, CanEditCase, CanUseCopilot, CanViewCase
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
+
+from apps.accounts.models import User
+from apps.cases.api.permissions import (
+    CanAssignCase,
+    CanAssignReview,
+    CanEditCase,
+    CanUseCopilot,
+    CanViewCase,
+    CanViewReview,
+    IsReviewActor,
+)
 from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.cases.api.serializers import (
     APCaseArtifactSerializer,
@@ -19,11 +32,18 @@ from apps.cases.api.serializers import (
     CopilotChatInputSerializer,
     ReroutePathSerializer,
     RunStageSerializer,
+    ReviewAssignmentDetailSerializer,
+    ReviewAssignmentListSerializer,
+    ReviewAssignSerializer,
+    ReviewCommentWriteSerializer,
+    ReviewDecisionWriteSerializer,
 )
-from apps.cases.models import APCase
+from apps.cases.models import APCase, ReviewAssignment
+from apps.cases.services.review_workflow_service import ReviewWorkflowService
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 
-class APCaseViewSet(viewsets.ModelViewSet):
+class APCaseViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     """
     API viewset for AP Cases.
 
@@ -31,6 +51,7 @@ class APCaseViewSet(viewsets.ModelViewSet):
     detail: GET /api/v1/cases/{id}/
     """
 
+    queryset = APCase.objects.all()
     permission_classes = [IsAuthenticated, CanViewCase]
     filterset_fields = ["processing_path", "status", "priority", "assigned_to"]
     search_fields = ["case_number", "invoice__invoice_number", "vendor__name"]
@@ -38,12 +59,17 @@ class APCaseViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
+        qs = super().get_queryset()  # mixin handles tenant filter
         qs = CaseSelectors.inbox(
             processing_path=self.request.query_params.get("processing_path", ""),
             status=self.request.query_params.get("status", ""),
             priority=self.request.query_params.get("priority", ""),
             search=self.request.query_params.get("search", ""),
         )
+        # Re-apply tenant filter after inbox rebuilds the queryset
+        tenant = getattr(self.request, "tenant", None)
+        if tenant is not None and not self.request.user.is_superuser:
+            qs = qs.filter(tenant=tenant)
         return CaseSelectors.scope_for_user(qs, self.request.user)
 
     def get_serializer_class(self):
@@ -53,16 +79,16 @@ class APCaseViewSet(viewsets.ModelViewSet):
 
     # --- Custom actions ---
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated, CanViewCase])
     def timeline(self, request, pk=None):
         """GET /api/v1/cases/{id}/timeline/"""
         case = self.get_object()
         from apps.auditlog.timeline_service import CaseTimelineService
 
-        events = CaseTimelineService.get_case_timeline(case.invoice_id)
+        events = CaseTimelineService.get_case_timeline(case.invoice_id, tenant=getattr(request, 'tenant', None))
         return Response({"events": events})
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated, CanViewCase])
     def artifacts(self, request, pk=None):
         """GET /api/v1/cases/{id}/artifacts/"""
         case = self.get_object()
@@ -70,7 +96,7 @@ class APCaseViewSet(viewsets.ModelViewSet):
         serializer = APCaseArtifactSerializer(artifacts, many=True)
         return Response(serializer.data)
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated, CanViewCase])
     def decisions(self, request, pk=None):
         """GET /api/v1/cases/{id}/decisions/"""
         case = self.get_object()
@@ -78,7 +104,7 @@ class APCaseViewSet(viewsets.ModelViewSet):
         serializer = APCaseDecisionSerializer(decisions, many=True)
         return Response(serializer.data)
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated, CanViewCase])
     def stages(self, request, pk=None):
         """GET /api/v1/cases/{id}/stages/"""
         case = self.get_object()
@@ -86,7 +112,7 @@ class APCaseViewSet(viewsets.ModelViewSet):
         serializer = APCaseStageSerializer(stages, many=True)
         return Response(serializer.data)
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated, CanViewCase])
     def summary(self, request, pk=None):
         """GET /api/v1/cases/{id}/summary/"""
         case = self.get_object()
@@ -163,7 +189,7 @@ class APCaseViewSet(viewsets.ModelViewSet):
             "suggested_actions": [],
         })
 
-    @action(detail=True, methods=["get", "post"], url_path="comments")
+    @action(detail=True, methods=["get", "post"], url_path="comments", permission_classes=[IsAuthenticated, CanViewCase])
     def comments(self, request, pk=None):
         """GET/POST /api/v1/cases/{id}/comments/"""
         case = self.get_object()
@@ -171,12 +197,99 @@ class APCaseViewSet(viewsets.ModelViewSet):
             serializer = APCaseCommentSerializer(case.comments.all(), many=True)
             return Response(serializer.data)
 
+        if not getattr(request.user, "has_permission", None) or not request.user.has_permission("cases.add_comment"):
+            raise DRFPermissionDenied("You do not have permission to add case comments.")
+
         serializer = APCaseCommentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(case=case, author=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated, CanViewCase])
     def stats(self, request):
         """GET /api/v1/cases/stats/"""
         return Response(CaseSelectors.stats())
+
+
+# ---------------------------------------------------------------------------
+# Review viewset (merged from apps.reviews)
+# ---------------------------------------------------------------------------
+
+class ReviewAssignmentViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
+    queryset = (
+        ReviewAssignment.objects.select_related(
+            "reconciliation_result",
+            "reconciliation_result__invoice",
+            "assigned_to",
+        )
+        .prefetch_related("comments", "actions")
+        .order_by("priority", "-created_at")
+    )
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ["status", "assigned_to", "priority"]
+    ordering_fields = ["priority", "created_at", "due_date"]
+    ordering = ["priority", "-created_at"]
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return ReviewAssignmentListSerializer
+        return ReviewAssignmentDetailSerializer
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticated(), CanViewReview()]
+        if self.action == "assign_reviewer":
+            return [IsAuthenticated(), CanAssignReview()]
+        if self.action in {"start_review", "decide", "add_comment"}:
+            return [IsAuthenticated(), IsReviewActor()]
+        return [IsAuthenticated()]
+
+    # POST /reviews/{id}/assign/
+    @action(detail=True, methods=["post"], url_path="assign")
+    def assign_reviewer(self, request, pk=None):
+        assignment = self.get_object()
+        ser = ReviewAssignSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user = User.objects.get(pk=ser.validated_data["assigned_to"])
+        ReviewWorkflowService.assign_reviewer(assignment, user)
+        return Response(ReviewAssignmentDetailSerializer(assignment).data)
+
+    # POST /reviews/{id}/start/
+    @action(detail=True, methods=["post"], url_path="start")
+    def start_review(self, request, pk=None):
+        assignment = self.get_object()
+        self.check_object_permissions(request, assignment)
+        ReviewWorkflowService.start_review(assignment, request.user)
+        return Response(ReviewAssignmentDetailSerializer(assignment).data)
+
+    # POST /reviews/{id}/decide/
+    @action(detail=True, methods=["post"], url_path="decide")
+    def decide(self, request, pk=None):
+        assignment = self.get_object()
+        self.check_object_permissions(request, assignment)
+        ser = ReviewDecisionWriteSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        decision_map = {
+            "APPROVED": ReviewWorkflowService.approve,
+            "REJECTED": ReviewWorkflowService.reject,
+            "REPROCESSED": ReviewWorkflowService.request_reprocess,
+        }
+        handler = decision_map[ser.validated_data["decision"]]
+        handler(assignment, request.user, ser.validated_data.get("reason", ""))
+        assignment.refresh_from_db()
+        return Response(ReviewAssignmentDetailSerializer(assignment).data)
+
+    # POST /reviews/{id}/comment/
+    @action(detail=True, methods=["post"], url_path="comment")
+    def add_comment(self, request, pk=None):
+        assignment = self.get_object()
+        self.check_object_permissions(request, assignment)
+        ser = ReviewCommentWriteSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        ReviewWorkflowService.add_comment(
+            assignment, request.user,
+            ser.validated_data["body"],
+            ser.validated_data.get("is_internal", True),
+        )
+        assignment.refresh_from_db()
+        return Response(ReviewAssignmentDetailSerializer(assignment).data)

@@ -1,7 +1,7 @@
 # Reconciliation + Agent Pipeline — Comprehensive Reference
 
 **App paths:** `apps/reconciliation/` + `apps/agents/` + `apps/tools/`
-**Dependencies:** `apps/documents/`, `apps/erp_integration/`, `apps/reviews/`, `apps/auditlog/`, `apps/core/`
+**Dependencies:** `apps/documents/`, `apps/erp_integration/`, `apps/cases/`, `apps/auditlog/`, `apps/core/`
 **Status:** Production-ready -- deterministic engine (2-way + 3-way), LLM agent pipeline (8 LLM + 5 deterministic system agents = 13 total), ERP-backed source resolution, full RBAC enforcement, Langfuse tracing.
 
 ---
@@ -393,7 +393,7 @@ Performs Invoice vs PO matching without GRN verification.
 | Service | File | Responsibility |
 |---|---|---|
 | `HeaderMatchService` | `header_match_service.py` | Vendor, currency, totals, tax comparisons |
-| `LineMatchService` | `line_match_service.py` | Line-by-line quantity, price, amount matching |
+| `LineMatchService` | `line_match_service.py` | Deterministic multi-signal line scorer (11 weighted signals, optional LLM fallback) |
 
 ### `HeaderMatchResult` fields
 
@@ -416,6 +416,7 @@ Performs Invoice vs PO matching without GRN verification.
 | `pairs` | List[LineMatchPair] | One entry per matched or unmatched invoice line |
 | `unmatched_invoice_lines` | List | Invoice lines with no PO match |
 | `unmatched_po_lines` | List | PO lines not referenced by any invoice line |
+| `decisions` | List[LineMatchDecision] | v2: rich per-invoice-line decision with full signal breakdown |
 
 ### `LineMatchPair` fields
 
@@ -427,6 +428,45 @@ Performs Invoice vs PO matching without GRN verification.
 | `qty_comparison` | Optional[FieldComparison] | Quantity diff + tolerance flag |
 | `price_comparison` | Optional[FieldComparison] | Unit price diff + tolerance flag |
 | `amount_comparison` | Optional[FieldComparison] | Line amount diff + tolerance flag |
+| `decision` | Optional[LineMatchDecision] | v2: rich scoring decision with signal breakdown |
+
+### `LineMatchDecision` fields (v2)
+
+| Field | Type | Meaning |
+|---|---|---|
+| `invoice_line` | InvoiceLineItem | The invoice line being matched |
+| `selected_po_line` | Optional[PurchaseOrderLineItem] | Best PO line (None if AMBIGUOUS/UNRESOLVED) |
+| `status` | str | MATCHED / AMBIGUOUS / UNRESOLVED |
+| `match_method` | str | EXACT / DETERMINISTIC / LLM_FALLBACK / NONE |
+| `total_score` | float | Weighted composite score (0.0-1.0) |
+| `confidence_band_val` | str | HIGH / GOOD / MODERATE / LOW / NONE |
+| `candidate_count` | int | Number of PO line candidates scored |
+| `best_score` | float | Top candidate score |
+| `second_best_score` | float | Runner-up score |
+| `top_gap` | float | best - second_best |
+| `is_ambiguous` | bool | Ambiguity flag |
+| `matched_signals` | List[str] | Signals that contributed to match |
+| `rejected_signals` | List[str] | Disqualifiers / contradictions |
+| `explanation` | str | Human-readable scoring explanation |
+| `candidate_scores` | List[LineCandidateScore] | Full per-candidate signal breakdown |
+
+### `LineCandidateScore` fields (v2)
+
+| Signal | Weight | Scoring |
+|---|---|---|
+| `item_code_score` | 0.30 | Exact item_code match (when both sides have it) |
+| `description_exact_score` | 0.20 | Normalised text equality |
+| `description_token_score` | 0.15 | Jaccard token overlap (tiered: >=0.85/0.70/0.55/0.40) |
+| `description_fuzzy_score` | 0.10 | RapidFuzz token_sort_ratio (tiered: >=90/80/70/60) |
+| `quantity_score` | 0.10 | Quantity proximity (tiered: exact/<=2%/<=5%/<=10%) |
+| `unit_price_score` | 0.07 | Unit price proximity (tiered: <=1%/<=3%/<=5%) |
+| `amount_score` | 0.03 | Line amount proximity (tiered: <=1%/<=3%/<=5%) |
+| `uom_score` | 0.02 | UOM equivalence map (~20 groups) |
+| `category_score` | 0.01 | Category compatibility |
+| `service_stock_score` | 0.01 | Service/stock flag compatibility |
+| `line_number_score` | 0.01 | Same line_number alignment |
+
+Additional per-candidate fields: `penalties`, `disqualifiers`, `matched_signals`, `decision_notes`, `matched_tokens`, raw similarity values (`token_similarity_raw`, `fuzzy_similarity_raw`, `qty_variance_pct`, `price_variance_pct`, `amount_variance_pct`).
 
 ---
 
@@ -1131,6 +1171,8 @@ Every guardrail decision (grant or deny) is logged as:
 
 All tools extend `BaseTool` and are registered via the `@register_tool` decorator. The registry is a module-level singleton; tools are loaded at import time.
 
+**Multi-Tenant Scoping:** All tools use `self._scoped(queryset)` on every DB query. The tenant is injected from `AgentContext.tenant` via `BaseAgent._execute_tool()` -> `BaseTool.execute()`. When a tenant is set, `_scoped()` applies `.filter(tenant=self._tenant)` to ensure tools only access data within the correct tenant boundary. See [MULTI_TENANT.md](MULTI_TENANT.md).
+
 ### `BaseTool` interface
 
 Each tool declares:
@@ -1346,6 +1388,20 @@ This allows a successfully recovered PO to produce a `MATCHED` result in the sam
 | `qty_within_tolerance` | BooleanField | |
 | `price_within_tolerance` | BooleanField | |
 | `amount_within_tolerance` | BooleanField | |
+| `match_method` | CharField(20) | EXACT / DETERMINISTIC / LLM_FALLBACK / NONE |
+| `match_confidence` | DecimalField(5,4) | Composite score 0.0000-1.0000 |
+| `confidence_band` | CharField(20) | HIGH / GOOD / MODERATE / LOW / NONE |
+| `description_match_score` | DecimalField(5,4) | Exact description signal score |
+| `token_similarity_score` | DecimalField(5,4) | Jaccard token overlap score |
+| `fuzzy_similarity_score` | DecimalField(5,4) | RapidFuzz fuzzy score |
+| `quantity_match_score` | DecimalField(5,4) | Quantity proximity score |
+| `price_match_score` | DecimalField(5,4) | Price proximity score |
+| `amount_match_score` | DecimalField(5,4) | Amount proximity score |
+| `candidate_count` | PositiveIntegerField | Number of PO lines scored |
+| `is_ambiguous` | BooleanField | Whether ambiguity was detected |
+| `matched_signals` | JSONField | List of signals that contributed |
+| `rejected_signals` | JSONField | List of disqualifiers/contradictions |
+| `line_match_meta` | JSONField | Full decision metadata (top_gap, second_best, matched_tokens, decision_notes) |
 
 ### `ReconciliationException`
 

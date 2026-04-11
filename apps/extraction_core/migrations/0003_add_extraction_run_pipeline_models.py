@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('extraction_core', '0002_entityextractionprofile_extractionruntimesettings'),
-        ('extraction_documents', '0002_extractiondocument_declared_country_code_and_more'),
+        ('documents', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -96,7 +96,7 @@ class Migration(migrations.Migration):
                 ('mandatory_coverage_pct', models.FloatField(blank=True, null=True)),
                 ('field_coverage_pct', models.FloatField(blank=True, null=True)),
                 ('created_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='%(app_label)s_%(class)s_created', to=settings.AUTH_USER_MODEL)),
-                ('document', models.ForeignKey(help_text='Source document being extracted', on_delete=django.db.models.deletion.CASCADE, related_name='extraction_runs', to='extraction_documents.extractiondocument')),
+                ('document_upload', models.ForeignKey(blank=True, help_text='Source document upload (if originating from PO-recon pipeline)', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='extraction_runs', to='documents.documentupload')),
                 ('jurisdiction', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='extraction_runs', to='extraction_core.taxjurisdictionprofile')),
                 ('schema', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='extraction_runs', to='extraction_core.extractionschemadefinition')),
                 ('updated_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='%(app_label)s_%(class)s_updated', to=settings.AUTH_USER_MODEL)),

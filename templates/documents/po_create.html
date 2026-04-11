@@ -5,7 +5,7 @@
 <nav aria-label="breadcrumb">
   <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
     <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
-    <li class="breadcrumb-item"><a href="{% url 'po_documents:po_list' %}" class="text-decoration-none">Purchase Orders</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'po_list' %}" class="text-decoration-none">Purchase Orders</a></li>
     <li class="breadcrumb-item active">Add PO</li>
   </ol>
 </nav>
@@ -43,7 +43,7 @@
           {% if form.po_number.errors %}<div class="text-danger small mt-1">{{ form.po_number.errors.0 }}</div>{% endif %}
         </div>
         <div class="col-md-4">
-          <label class="form-label fw-medium">PO Date</label>
+          <label class="form-label fw-medium">PO Date <span class="text-danger">*</span></label>
           {{ form.po_date }}
         </div>
         <div class="col-md-4">
@@ -51,10 +51,9 @@
           {{ form.status }}
         </div>
       </div>
-
       <div class="row g-3 mt-1">
         <div class="col-md-6">
-          <label class="form-label fw-medium">Vendor</label>
+          <label class="form-label fw-medium">Vendor <span class="text-danger">*</span></label>
           {{ form.vendor }}
           {% if form.vendor.errors %}<div class="text-danger small mt-1">{{ form.vendor.errors.0 }}</div>{% endif %}
         </div>
@@ -62,7 +61,153 @@
           <label class="form-label fw-medium">Currency</label>
           {{ form.currency }}
         </div>
+        <div class="col-md-3">
+          <label class="form-label fw-medium">Country</label>
+          {{ form.country }}
+        </div>
       </div>
+      <div class="row g-3 mt-1">
+        <div class="col-md-4" id="supply-type-wrapper" style="display:none">
+          <label class="form-label fw-medium">Supply Type</label>
+          {{ form.india_supply_type }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Tax Compliance ── #}
+  <div class="ap-card mb-3" id="tax-compliance-card" style="display:none">
+    <div class="ap-card-header">
+      <i class="bi bi-receipt me-2"></i>Tax Compliance
+    </div>
+    <div class="ap-card-body">
+
+      {# India fields #}
+      <div data-taxregion="in" style="display:none">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Buyer GSTIN</label>
+            {{ form.gstin }}
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-medium">Buyer State Code</label>
+            {{ form.state_code }}
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium">Vendor GSTIN</label>
+            {{ form.vendor_gstin }}
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-medium">Vendor State Code</label>
+            {{ form.vendor_state_code }}
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-medium">Place of Supply</label>
+            {{ form.place_of_supply }}
+          </div>
+        </div>
+        <div class="row g-3 mt-1">
+          <div class="col-md-3">
+            <div class="form-check mt-2">
+              {{ form.reverse_charge }}
+              <label class="form-check-label fw-medium" for="{{ form.reverse_charge.id_for_label }}">Reverse Charge Applicable</label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# UAE / SA fields #}
+      <div data-taxregion="vat" style="display:none">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label fw-medium">TRN / VAT Reg No</label>
+            {{ form.gstin }}
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  {# ── Line Items ── #}
+  <div class="ap-card mb-3">
+    <div class="ap-card-header d-flex align-items-center">
+      <i class="bi bi-list-ul me-2"></i>Line Items
+      <button type="button" class="btn btn-sm btn-outline-success ms-auto py-0 px-2" id="add-line-btn">
+        <i class="bi bi-plus-lg me-1"></i>Add Line
+      </button>
+    </div>
+    <div class="ap-card-body p-0">
+      {{ formset.management_form }}
+      {% if formset.non_form_errors %}
+      <div class="alert alert-danger mx-3 mt-2 py-1 small mb-0">{{ formset.non_form_errors }}</div>
+      {% endif %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0" id="po-lines-table" style="min-width:900px">
+          <thead class="table-light border-bottom">
+            <tr>
+              <th class="ps-3" style="width:50px">#</th>
+              <th style="width:100px">Item Code</th>
+              <th style="min-width:160px">Description <span class="text-danger">*</span></th>
+              <th data-taxcol="in" style="width:90px;display:none">HSN/SAC</th>
+              <th style="width:75px" class="text-end pe-2">Qty <span class="text-danger">*</span></th>
+              <th style="width:100px" class="text-end pe-2">Unit Price <span class="text-danger">*</span></th>
+              <th style="width:55px" class="text-center">UOM</th>
+              <th data-taxcol="in" style="width:70px;display:none" class="text-end pe-2">Disc%</th>
+              <th data-taxcol="in-intra" style="width:65px;display:none" class="text-end pe-2">CGST%</th>
+              <th data-taxcol="in-intra" style="width:80px;display:none" class="text-end pe-2">CGST Amt</th>
+              <th data-taxcol="in-intra" style="width:65px;display:none" class="text-end pe-2">SGST%</th>
+              <th data-taxcol="in-intra" style="width:80px;display:none" class="text-end pe-2">SGST Amt</th>
+              <th data-taxcol="in-inter" style="width:65px;display:none" class="text-end pe-2">IGST%</th>
+              <th data-taxcol="in-inter" style="width:80px;display:none" class="text-end pe-2">IGST Amt</th>
+              <th data-taxcol="in-cess" style="width:65px;display:none" class="text-end pe-2">Cess%</th>
+              <th data-taxcol="in-cess" style="width:80px;display:none" class="text-end pe-2">Cess Amt</th>
+              <th data-taxcol="vat" style="width:65px;display:none" class="text-end pe-2">VAT%</th>
+              <th data-taxcol="vat" style="width:80px;display:none" class="text-end pe-2">VAT Amt</th>
+              <th data-taxcol="generic" style="width:90px;display:none" class="text-end pe-2">Tax</th>
+              <th style="width:100px" class="text-end pe-2">Amount</th>
+              <th style="width:40px"></th>
+            </tr>
+          </thead>
+          <tbody id="po-lines-body">
+            {% for lf in formset %}
+            <tr class="po-line-row" data-has-instance="{{ lf.instance.pk|default:'' }}">
+              {% for hf in lf.hidden_fields %}{{ hf }}{% endfor %}
+              {% if lf.errors %}<td colspan="20"><div class="text-danger small px-3 py-1">{% for field, errs in lf.errors.items %}{% for e in errs %}{{ field }}: {{ e }} {% endfor %}{% endfor %}</div></td>{% endif %}
+              <td class="ps-3">{{ lf.line_number }}</td>
+              <td>{{ lf.item_code }}</td>
+              <td>{{ lf.description }}</td>
+              <td data-taxcol="in" style="display:none">{{ lf.hsn_sac_code }}</td>
+              <td>{{ lf.quantity }}</td>
+              <td>{{ lf.unit_price }}</td>
+              <td>{{ lf.unit_of_measure }}</td>
+              <td data-taxcol="in" style="display:none">{{ lf.discount_percent }}</td>
+              <td data-taxcol="in-intra" style="display:none">{{ lf.cgst_rate }}</td>
+              <td data-taxcol="in-intra" style="display:none">{{ lf.cgst_amount }}</td>
+              <td data-taxcol="in-intra" style="display:none">{{ lf.sgst_rate }}</td>
+              <td data-taxcol="in-intra" style="display:none">{{ lf.sgst_amount }}</td>
+              <td data-taxcol="in-inter" style="display:none">{{ lf.igst_rate }}</td>
+              <td data-taxcol="in-inter" style="display:none">{{ lf.igst_amount }}</td>
+              <td data-taxcol="in-cess" style="display:none">{{ lf.cess_rate }}</td>
+              <td data-taxcol="in-cess" style="display:none">{{ lf.cess_amount }}</td>
+              <td data-taxcol="vat" style="display:none">{{ lf.vat_rate }}</td>
+              <td data-taxcol="vat" style="display:none">{{ lf.vat_amount }}</td>
+              <td data-taxcol="generic" style="display:none">{{ lf.tax_amount }}</td>
+              <td>{{ lf.line_amount }}</td>
+              <td class="text-center pe-2">
+                <button type="button" class="btn btn-link text-danger p-0 line-delete-btn" title="Remove line">
+                  <i class="bi bi-trash3"></i>
+                </button>
+                <span class="d-none">{{ lf.DELETE }}</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if not formset.initial_forms and not formset.extra_forms|length %}
+      <p class="text-muted small text-center py-3 mb-0" id="no-lines-msg">No line items yet — click <strong>Add Line</strong> above.</p>
+      {% endif %}
     </div>
   </div>
 
@@ -70,6 +215,7 @@
   <div class="ap-card mb-3">
     <div class="ap-card-header">
       <i class="bi bi-currency-dollar me-2"></i>Amounts
+      <span class="text-muted small ms-2 fw-normal">Auto-filled from line items — click a field to override manually.</span>
     </div>
     <div class="ap-card-body">
       <div class="row g-3">
@@ -115,9 +261,344 @@
     <button type="submit" class="btn btn-primary btn-sm">
       <i class="bi bi-check-lg me-1"></i>Save Purchase Order
     </button>
-    <a href="{% url 'po_documents:po_list' %}" class="btn btn-outline-secondary btn-sm">
+    <a href="{% url 'po_list' %}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-x me-1"></i>Cancel
     </a>
   </div>
+
+  <script>
+  const vendorsMeta = {{ vendors_meta_json|safe }};
+  const initialCountry = "{{ form.instance.country|default:'' }}";
+  </script>
 </form>
+
+{# ── Empty row template used by JS to clone new rows ── #}
+<template id="po-line-empty">
+  {% with lf=formset.empty_form %}
+  <tr class="po-line-row" data-has-instance="">
+    {% for hf in lf.hidden_fields %}{{ hf }}{% endfor %}
+    <td class="ps-3">{{ lf.line_number }}</td>
+    <td>{{ lf.item_code }}</td>
+    <td>{{ lf.description }}</td>
+    <td data-taxcol="in" style="display:none">{{ lf.hsn_sac_code }}</td>
+    <td>{{ lf.quantity }}</td>
+    <td>{{ lf.unit_price }}</td>
+    <td>{{ lf.unit_of_measure }}</td>
+    <td data-taxcol="in" style="display:none">{{ lf.discount_percent }}</td>
+    <td data-taxcol="in-intra" style="display:none">{{ lf.cgst_rate }}</td>
+    <td data-taxcol="in-intra" style="display:none">{{ lf.cgst_amount }}</td>
+    <td data-taxcol="in-intra" style="display:none">{{ lf.sgst_rate }}</td>
+    <td data-taxcol="in-intra" style="display:none">{{ lf.sgst_amount }}</td>
+    <td data-taxcol="in-inter" style="display:none">{{ lf.igst_rate }}</td>
+    <td data-taxcol="in-inter" style="display:none">{{ lf.igst_amount }}</td>
+    <td data-taxcol="in-cess" style="display:none">{{ lf.cess_rate }}</td>
+    <td data-taxcol="in-cess" style="display:none">{{ lf.cess_amount }}</td>
+    <td data-taxcol="vat" style="display:none">{{ lf.vat_rate }}</td>
+    <td data-taxcol="vat" style="display:none">{{ lf.vat_amount }}</td>
+    <td data-taxcol="generic" style="display:none">{{ lf.tax_amount }}</td>
+    <td>{{ lf.line_amount }}</td>
+    <td class="text-center pe-2">
+      <button type="button" class="btn btn-link text-danger p-0 line-delete-btn" title="Remove line">
+        <i class="bi bi-trash3"></i>
+      </button>
+      <span class="d-none">{{ lf.DELETE }}</span>
+    </td>
+  </tr>
+  {% endwith %}
+</template>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  const tbody = document.getElementById('po-lines-body');
+  const mgmt  = document.querySelector('[name="lines-TOTAL_FORMS"]');
+  const tmpl  = document.getElementById('po-line-empty');
+
+  // ── Country / Supply-type helpers ─────────────────────────────────────────
+  const TAX_COLS = ['in', 'in-intra', 'in-inter', 'in-cess', 'vat', 'generic'];
+
+  function showTaxCols(show) {
+    // show = array of taxcol values to make visible; hide the rest
+    document.querySelectorAll('[data-taxcol]').forEach(el => {
+      const col = el.dataset.taxcol;
+      el.style.display = show.includes(col) ? '' : 'none';
+    });
+  }
+
+  function applyCountry(country, supplyType) {
+    const compCard = document.getElementById('tax-compliance-card');
+    const supplyWrapper = document.getElementById('supply-type-wrapper');
+
+    if (country === 'IN') {
+      compCard.style.display = '';
+      supplyWrapper.style.display = '';
+      document.querySelectorAll('[data-taxregion="in"]').forEach(el => el.style.display = '');
+      document.querySelectorAll('[data-taxregion="vat"]').forEach(el => el.style.display = 'none');
+      if (supplyType === 'INTER') {
+        showTaxCols(['in', 'in-inter', 'in-cess']);
+      } else {
+        showTaxCols(['in', 'in-intra', 'in-cess']);
+      }
+    } else if (country === 'AE' || country === 'SA') {
+      compCard.style.display = '';
+      supplyWrapper.style.display = 'none';
+      document.querySelectorAll('[data-taxregion="in"]').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('[data-taxregion="vat"]').forEach(el => el.style.display = '');
+      showTaxCols(['vat']);
+    } else {
+      compCard.style.display = 'none';
+      supplyWrapper.style.display = 'none';
+      showTaxCols(['generic']);
+    }
+  }
+
+  // ── Tax calculation per line ───────────────────────────────────────────────
+  function calcLineTax(row, country, supplyType) {
+    const qty   = parseFloat(row.querySelector('.line-qty')?.value)   || 0;
+    const price = parseFloat(row.querySelector('.line-price')?.value) || 0;
+    const disc  = parseFloat(row.querySelector('.line-discount')?.value) || 0;
+    const taxable = qty * price * (1 - disc / 100);
+
+    let totalTax = 0;
+
+    if (country === 'IN') {
+      const cessRate   = parseFloat(row.querySelector('.line-cess-rate')?.value)  || 0;
+      const cessAmtEl  = row.querySelector('.line-cess-amount');
+      const cessAmt    = taxable * cessRate / 100;
+      if (cessAmtEl) cessAmtEl.value = cessAmt.toFixed(2);
+
+      if (supplyType === 'INTER') {
+        const igstRate  = parseFloat(row.querySelector('.line-igst-rate')?.value) || 0;
+        const igstAmtEl = row.querySelector('.line-igst-amount');
+        const igstAmt   = taxable * igstRate / 100;
+        if (igstAmtEl) igstAmtEl.value = igstAmt.toFixed(2);
+        totalTax = igstAmt + cessAmt;
+      } else {
+        const cgstRate  = parseFloat(row.querySelector('.line-cgst-rate')?.value) || 0;
+        const cgstAmtEl = row.querySelector('.line-cgst-amount');
+        const sgstRateEl = row.querySelector('.line-sgst-rate');
+        const sgstAmtEl  = row.querySelector('.line-sgst-amount');
+        const cgstAmt    = taxable * cgstRate / 100;
+        if (cgstAmtEl) cgstAmtEl.value = cgstAmt.toFixed(2);
+        if (sgstRateEl) sgstRateEl.value = cgstRate.toFixed(2);
+        if (sgstAmtEl)  sgstAmtEl.value  = cgstAmt.toFixed(2);
+        totalTax = cgstAmt + cgstAmt + cessAmt; // cgst + sgst + cess
+      }
+    } else if (country === 'AE' || country === 'SA') {
+      const vatRate  = parseFloat(row.querySelector('.line-vat-rate')?.value) || 0;
+      const vatAmtEl = row.querySelector('.line-vat-amount');
+      const vatAmt   = taxable * vatRate / 100;
+      if (vatAmtEl) vatAmtEl.value = vatAmt.toFixed(2);
+      totalTax = vatAmt;
+    } else {
+      // Generic: use whatever is in tax_amount as-is
+      totalTax = parseFloat(row.querySelector('.line-tax-generic')?.value) || 0;
+    }
+
+    // taxable base = line_amount (before tax)
+    const amtEl = row.querySelector('.line-amount');
+    if (amtEl) amtEl.value = taxable.toFixed(2);
+
+    // Write total tax back to the hidden tax_amount for generic or store inline
+    const taxGenEl = row.querySelector('.line-tax-generic');
+    if (taxGenEl && country !== '' && country !== 'US' && country !== 'GB' && country !== 'SG' && country !== 'OTHER') {
+      taxGenEl.value = totalTax.toFixed(2);
+    }
+
+    return totalTax;
+  }
+
+  // ── Current country/supplyType getters ───────────────────────────────────
+  function currentCountry() {
+    return document.getElementById('id_country')?.value || '';
+  }
+  function currentSupplyType() {
+    return document.getElementById('id_india_supply_type')?.value || 'INTRA';
+  }
+
+  // ── Sync SGST rate = CGST rate ────────────────────────────────────────────
+  function syncSgstRate(row) {
+    const cgstRateEl = row.querySelector('.line-cgst-rate');
+    const sgstRateEl = row.querySelector('.line-sgst-rate');
+    if (cgstRateEl && sgstRateEl) {
+      sgstRateEl.value = cgstRateEl.value;
+    }
+  }
+
+  // ── Add Row ──────────────────────────────────────────────────────────────
+  document.getElementById('add-line-btn').addEventListener('click', () => {
+    const noMsg = document.getElementById('no-lines-msg');
+    if (noMsg) noMsg.remove();
+
+    const idx   = parseInt(mgmt.value, 10);
+    const clone = tmpl.content.cloneNode(true);
+
+    clone.querySelectorAll('[id]').forEach(el => {
+      el.id = el.id.replace(/__prefix__/g, idx);
+    });
+    clone.querySelectorAll('[name]').forEach(el => {
+      el.name = el.name.replace(/__prefix__/g, idx);
+    });
+
+    // Auto-set line number
+    const lineNumIn = clone.querySelector('[name$="-line_number"]');
+    if (lineNumIn) lineNumIn.value = nextLineNumber();
+
+    // Auto-fill default VAT rate for AE/SA
+    const country = currentCountry();
+    if (country === 'AE') {
+      const vatRateIn = clone.querySelector('.line-vat-rate');
+      if (vatRateIn && !vatRateIn.value) vatRateIn.value = '5.00';
+    } else if (country === 'SA') {
+      const vatRateIn = clone.querySelector('.line-vat-rate');
+      if (vatRateIn && !vatRateIn.value) vatRateIn.value = '15.00';
+    }
+
+    tbody.appendChild(clone);
+    mgmt.value = idx + 1;
+    bindDeleteBtns();
+    applyCountry(country, currentSupplyType());
+  });
+
+  // ── Delete / Restore Row ──────────────────────────────────────────────────
+  function bindDeleteBtns() {
+    tbody.querySelectorAll('.line-delete-btn').forEach(btn => {
+      const fresh = btn.cloneNode(true);
+      btn.replaceWith(fresh);
+    });
+    tbody.querySelectorAll('.line-delete-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row    = btn.closest('tr');
+        const delChk = row.querySelector('[name$="-DELETE"]');
+        const hasPk  = row.dataset.hasInstance;
+
+        if (hasPk) {
+          const marking = !delChk.checked;
+          delChk.checked = marking;
+          row.classList.toggle('table-danger', marking);
+          row.classList.toggle('opacity-50',   marking);
+          btn.innerHTML = marking
+            ? '<i class="bi bi-arrow-counterclockwise"></i>'
+            : '<i class="bi bi-trash3"></i>';
+          btn.title = marking ? 'Undo delete' : 'Remove line';
+        } else {
+          row.remove();
+          reindex();
+        }
+        updateTotals();
+      });
+    });
+  }
+
+  // ── Reindex after DOM removal ─────────────────────────────────────────────
+  function reindex() {
+    tbody.querySelectorAll('.po-line-row').forEach((row, idx) => {
+      row.querySelectorAll('[name]').forEach(el => {
+        el.name = el.name.replace(/lines-\d+-/g, `lines-${idx}-`);
+      });
+      row.querySelectorAll('[id]').forEach(el => {
+        el.id = el.id.replace(/id_lines-\d+-/g, `id_lines-${idx}-`);
+      });
+    });
+    mgmt.value = tbody.querySelectorAll('.po-line-row').length;
+  }
+
+  // ── Line input handler ────────────────────────────────────────────────────
+  tbody.addEventListener('input', e => {
+    const row = e.target.closest('tr');
+    if (!row) return;
+    const country    = currentCountry();
+    const supplyType = currentSupplyType();
+
+    if (e.target.matches('.line-cgst-rate')) {
+      syncSgstRate(row);
+    }
+
+    if (e.target.matches('.line-qty, .line-price, .line-discount, .line-cgst-rate, .line-igst-rate, .line-vat-rate, .line-cess-rate')) {
+      calcLineTax(row, country, supplyType);
+    }
+
+    updateTotals();
+  });
+
+  // ── Sync header totals from lines ─────────────────────────────────────────
+  function updateTotals() {
+    let itemVal = 0, taxVal = 0;
+    const country    = currentCountry();
+    const supplyType = currentSupplyType();
+
+    tbody.querySelectorAll('.po-line-row').forEach(row => {
+      if (row.querySelector('[name$="-DELETE"]')?.checked) return;
+      itemVal += parseFloat(row.querySelector('.line-amount')?.value) || 0;
+
+      if (country === 'IN') {
+        if (supplyType === 'INTER') {
+          taxVal += parseFloat(row.querySelector('.line-igst-amount')?.value) || 0;
+        } else {
+          taxVal += parseFloat(row.querySelector('.line-cgst-amount')?.value) || 0;
+          taxVal += parseFloat(row.querySelector('.line-sgst-amount')?.value) || 0;
+        }
+        taxVal += parseFloat(row.querySelector('.line-cess-amount')?.value) || 0;
+      } else if (country === 'AE' || country === 'SA') {
+        taxVal += parseFloat(row.querySelector('.line-vat-amount')?.value) || 0;
+      } else {
+        taxVal += parseFloat(row.querySelector('.line-tax-generic')?.value) || 0;
+      }
+    });
+
+    const totalEl = document.querySelector('[name="total_amount"]');
+    const taxEl   = document.querySelector('[name="tax_amount"]');
+    if (totalEl && !totalEl.dataset.manual) totalEl.value = (itemVal + taxVal).toFixed(2);
+    if (taxEl   && !taxEl.dataset.manual)   taxEl.value   = taxVal.toFixed(2);
+  }
+
+  // Allow manual override by focusing the header amount fields
+  ['total_amount', 'tax_amount'].forEach(n => {
+    document.querySelector(`[name="${n}"]`)
+      ?.addEventListener('focus', function () { this.dataset.manual = '1'; });
+  });
+
+  // ── Vendor auto-fill ──────────────────────────────────────────────────────
+  document.querySelector('[name="vendor"]')?.addEventListener('change', function () {
+    const vendorId = this.value;
+    const meta = vendorsMeta[vendorId];
+    if (!meta) return;
+
+    const countryEl = document.getElementById('id_country');
+    if (countryEl && !countryEl.value && meta.country) {
+      countryEl.value = meta.country;
+    }
+
+    const vendorGstinEl = document.querySelector('[name="vendor_gstin"]');
+    if (vendorGstinEl && meta.tax_id) {
+      vendorGstinEl.value = meta.tax_id;
+    }
+
+    applyCountry(currentCountry(), currentSupplyType());
+  });
+
+  // ── Country / Supply-type change listeners ────────────────────────────────
+  document.getElementById('id_country')?.addEventListener('change', function () {
+    applyCountry(this.value, currentSupplyType());
+  });
+  document.getElementById('id_india_supply_type')?.addEventListener('change', function () {
+    applyCountry(currentCountry(), this.value);
+  });
+
+  // ── Helper ────────────────────────────────────────────────────────────────
+  function nextLineNumber() {
+    const nums = [...tbody.querySelectorAll('[name$="-line_number"]')]
+      .map(el => parseInt(el.value, 10) || 0).filter(v => v > 0);
+    return nums.length ? Math.max(...nums) + 1 : 1;
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  bindDeleteBtns();
+  applyCountry(initialCountry || currentCountry(), currentSupplyType());
+
+})();
+</script>
 {% endblock %}

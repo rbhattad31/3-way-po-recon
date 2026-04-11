@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.core.enums import UserRole
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.documents.models import Invoice
 from apps.vendors.forms import VendorForm
 from apps.vendors.models import Vendor
@@ -31,11 +32,14 @@ def _scope_vendors_for_user(qs, user):
 @login_required
 @permission_required_code("vendors.view")
 def vendor_list(request):
+    tenant = require_tenant(request)
     qs = Vendor.objects.annotate(
         alias_count=Count("alias_mappings"),
         po_count=Count("purchase_orders", distinct=True),
         invoice_count=Count("invoices", distinct=True),
     ).order_by("name")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     qs = _scope_vendors_for_user(qs, request.user)
 
     # Filters
@@ -57,7 +61,10 @@ def vendor_list(request):
         )
 
     # Choices for filters (scoped)
-    scoped_base = _scope_vendors_for_user(Vendor.objects.all(), request.user)
+    vendor_base = Vendor.objects.all()
+    if tenant is not None:
+        vendor_base = vendor_base.filter(tenant=tenant)
+    scoped_base = _scope_vendors_for_user(vendor_base, request.user)
     country_choices = (
         scoped_base.exclude(country="")
         .order_by("country")
@@ -126,7 +133,9 @@ def vendor_create(request):
     if request.method == "POST":
         form = VendorForm(request.POST)
         if form.is_valid():
-            vendor = form.save()
+            vendor = form.save(commit=False)
+            vendor.tenant = getattr(request, 'tenant', None)
+            vendor.save()
             messages.success(request, f"Vendor '{vendor.name}' created successfully.")
             return redirect("vendors:vendor_detail", pk=vendor.pk)
     else:

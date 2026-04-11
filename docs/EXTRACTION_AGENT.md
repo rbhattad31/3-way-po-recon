@@ -247,7 +247,8 @@ User uploads PDF/Image
   └─────────────────────────────────────────┘
          │
          ▼
-  AP Case created immediately after extraction
+  AP Case created at upload time (before extraction)
+  Invoice linked to case after extraction persistence
   (pipeline pauses at EXTRACTION_APPROVAL if
    human approval needed; resumes on approve)
          │
@@ -274,8 +275,7 @@ ExtractionParserService → NormalizationService → ValidationService
 
 ## 3. Extraction Pipeline
 
-**Task**: `process_invoice_upload_task` in `apps/extraction/tasks.py`  
-**Decorator**: `@shared_task(bind=True, max_retries=2, default_retry_delay=30)`
+**Task**: `process_invoice_upload_task` in `apps/extraction/tasks.py`  \n**Decorator**: `@shared_task(bind=True, max_retries=2, default_retry_delay=30)`\n\n> **Tenant propagation**: The task accepts `tenant_id` and resolves it to a `CompanyProfile` instance. All records created during extraction (Invoice, InvoiceLineItem, ExtractionResult, ExtractionApproval, APCase) inherit the tenant from the upload or from the resolved tenant. See [MULTI_TENANT.md](MULTI_TENANT.md).", "oldString": "**Task**: `process_invoice_upload_task` in `apps/extraction/tasks.py`  \n**Decorator**: `@shared_task(bind=True, max_retries=2, default_retry_delay=30)`
 
 > **Execution path**: `ExtractionPipeline` (governed, 11-stage, in `apps/extraction_core`) is the preferred execution path. `ExtractionService` (legacy) remains active for backward compatibility. Step 6 also writes `extraction_run` to `ExtractionResult.extraction_run` FK, linking the UI summary to the authoritative execution record.
 
@@ -415,7 +415,7 @@ extraction.
 
 | Call site | Location | What is emitted |
 |---|---|---|
-| Agent extraction trace | `InvoiceExtractionAgent.run()` | Root trace `"invoice_extraction"` with `user_id` + `session_id=f"invoice-{invoice_id}"` |
+| Agent extraction trace | `InvoiceExtractionAgent.run()` | Root trace `"invoice_extraction"` with `user_id` + `session_id=f"case-{case_number}"` (falls back to `"extraction-upload-{upload_id}"`) |
 | LLM fallback trace | `InvoiceExtractionAdapter._llm_extract()` | Root trace `"llm_extract_fallback"` + `log_generation` with token counts |
 | Extraction approval scores | `ExtractionApprovalService` | `score_trace` calls on auto-approve, human approve, and reject (see below) |
 
@@ -1412,9 +1412,11 @@ AP Case   APPROVE  REJECT  REPROCESS
    (case resumes)   (re-extract)  ExtractionApproval reset to PENDING
                                   ExtractionApprovalRecord history retained
 
-   Note: AP Case is created immediately after extraction (before approval).
-   The case pipeline pauses at EXTRACTION_APPROVAL stage if the invoice
-   needs human approval.  On approve, the existing case resumes from
+   Note: AP Case is created at upload time (before extraction begins).
+   The invoice is linked to the case after extraction persistence via
+   CaseCreationService.link_invoice_to_case().  The case pipeline
+   pauses at EXTRACTION_APPROVAL stage if the invoice needs human
+   approval.  On approve, the existing case resumes from
    PATH_RESOLUTION onward.  On reject, the case remains paused.
 
    ─────── Both records written on every decision ───────
@@ -3080,10 +3082,12 @@ approval-42
 
 ### 22.4 Session attribution
 
-Every standalone extraction trace uses `session_id=f"invoice-{invoice_id}"`.
-This groups all LLM calls for the same invoice across retries and re-runs
-into one Langfuse session. The `user_id` is set to `actor_user_id` (the
-Django `User.pk`) so you can filter traces per reviewer in the Users tab.
+Every extraction trace uses `session_id=f"case-{case_number}"` when a case
+exists (created at upload time), falling back to `"extraction-upload-{upload_id}"`.
+This groups all pipeline stages for the same document -- extraction,
+reconciliation, case processing, and agents -- into one Langfuse session.
+The `user_id` is set to `actor_user_id` (the Django `User.pk`) so you can
+filter traces per reviewer in the Users tab.
 
 ### 22.5 Known SDK quirk (v4)
 

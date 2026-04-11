@@ -17,6 +17,14 @@ from apps.core.models import BaseModel, TimestampMixin
 class AgentDefinition(BaseModel):
     """Registry entry describing an available agent."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     agent_type = models.CharField(max_length=40, choices=AgentType.choices, unique=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, default="")
@@ -101,6 +109,14 @@ class AgentRun(BaseModel):
     """One execution of an agent within an orchestration pipeline."""
 
     agent_definition = models.ForeignKey(AgentDefinition, on_delete=models.SET_NULL, null=True, related_name="runs")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     agent_type = models.CharField(max_length=40, choices=AgentType.choices, db_index=True)
     document_upload = models.ForeignKey(
         "documents.DocumentUpload", on_delete=models.SET_NULL, null=True, blank=True,
@@ -131,6 +147,8 @@ class AgentRun(BaseModel):
     actor_user_id = models.PositiveIntegerField(null=True, blank=True, help_text="User who triggered agent, if user-initiated")
     permission_checked = models.CharField(max_length=100, blank=True, default="")
     cost_estimate = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    actual_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    cost_currency = models.CharField(max_length=3, default="USD")
 
     # RBAC context (populated by guardrails layer)
     actor_primary_role = models.CharField(max_length=50, blank=True, default="")
@@ -159,6 +177,7 @@ class AgentRun(BaseModel):
             models.Index(fields=["status"], name="idx_agentrun_status"),
             models.Index(fields=["reconciliation_result"], name="idx_agentrun_result"),
             models.Index(fields=["document_upload"], name="idx_agentrun_upload"),
+            models.Index(fields=["tenant", "status"], name="idx_agentrun_tenant_status"),
         ]
 
     def __str__(self) -> str:
@@ -186,6 +205,14 @@ class AgentOrchestrationRun(BaseModel):
         "reconciliation.ReconciliationResult",
         on_delete=models.CASCADE,
         related_name="orchestration_runs",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     status = models.CharField(
         max_length=20,
@@ -239,6 +266,14 @@ class AgentStep(TimestampMixin):
     """Ordered substep within an agent run."""
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="steps")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     step_number = models.PositiveIntegerField(default=1)
     action = models.CharField(max_length=200)
     input_data = models.JSONField(null=True, blank=True)
@@ -270,6 +305,14 @@ class AgentMessage(TimestampMixin):
     ]
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="messages")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     content = models.TextField()
     token_count = models.PositiveIntegerField(null=True, blank=True)
@@ -297,6 +340,15 @@ class DecisionLog(TimestampMixin):
     """
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="decisions", null=True, blank=True)
+
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
 
     # Decision identification
     decision_type = models.CharField(max_length=100, blank=True, default="", db_index=True,
@@ -349,6 +401,14 @@ class AgentRecommendation(TimestampMixin):
     """Recommendation produced by an agent (routing, action, etc.)."""
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="recommendations")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     reconciliation_result = models.ForeignKey(
         "reconciliation.ReconciliationResult", on_delete=models.CASCADE, related_name="agent_recommendations"
     )
@@ -365,6 +425,14 @@ class AgentRecommendation(TimestampMixin):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
     )
     accepted_at = models.DateTimeField(null=True, blank=True)
+    overridden_by_decision = models.ForeignKey(
+        "cases.APCaseDecision",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="overridden_recommendations",
+    )
+    override_reason = models.TextField(blank=True, default="")
 
     class Meta:
         db_table = "agents_recommendation"
@@ -394,6 +462,14 @@ class AgentEscalation(TimestampMixin):
     """Escalation produced by an agent when confidence is below threshold."""
 
     agent_run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="escalations")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     reconciliation_result = models.ForeignKey(
         "reconciliation.ReconciliationResult", on_delete=models.CASCADE, related_name="agent_escalations"
     )
@@ -410,3 +486,28 @@ class AgentEscalation(TimestampMixin):
 
     def __str__(self) -> str:
         return f"Escalation ({self.severity}) – AgentRun #{self.agent_run_id}"
+
+
+# ---------------------------------------------------------------------------
+# LLM Cost Rate
+# ---------------------------------------------------------------------------
+
+class LLMCostRate(TimestampMixin, models.Model):
+    """Per-model token pricing used to calculate actual_cost_usd on AgentRun."""
+
+    model_name = models.CharField(max_length=100, help_text="LLM deployment/model name, e.g. gpt-4o")
+    input_cost_per_1k_tokens = models.DecimalField(max_digits=10, decimal_places=6)
+    output_cost_per_1k_tokens = models.DecimalField(max_digits=10, decimal_places=6)
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "agents_llm_cost_rate"
+        unique_together = [("model_name", "effective_from")]
+        ordering = ["-effective_from"]
+        verbose_name = "LLM Cost Rate"
+        verbose_name_plural = "LLM Cost Rates"
+
+    def __str__(self) -> str:
+        return f"{self.model_name} from {self.effective_from}"

@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404, render
 
 from apps.core.prompt_registry import PromptRegistry
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 from apps.agents.models import AgentRun, DecisionLog, AgentRecommendation
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
@@ -256,6 +257,22 @@ _AGENT_CONTRACTS = {
         "skip_conditions": "Skipped only if the entire agent pipeline is skipped (e.g., MATCHED + high confidence).",
         "human_review_required_conditions": "always -- summary is produced for human reviewer",
     },
+    "SUPERVISOR": {
+        "purpose": "Full AP lifecycle orchestrator -- owns the entire invoice processing lifecycle from document receipt to final decision in a single ReAct loop",
+        "entry_conditions": "Invoice exists, reconciliation mode determined, RBAC access granted (agents.run_supervisor)",
+        "success_criteria": "submit_recommendation tool called with valid recommendation type and confidence score",
+        "prohibited_actions": ["Fabricate tool outputs", "Bypass RBAC/tenant restrictions", "Auto-close without checking ALL lines against tolerance"],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 3,
+        "tool_failure_confidence_cap": 0.3,
+        "allowed_recs": ["AUTO_CLOSE", "SEND_TO_AP_REVIEW", "SEND_TO_PROCUREMENT", "SEND_TO_VENDOR_CLARIFICATION", "REPROCESS_EXTRACTION", "ESCALATE_TO_MANAGER"],
+        "default_fallback_rec": "SEND_TO_AP_REVIEW",
+        "is_pipeline": False,
+        "trigger": "Direct invocation via SupervisorAgent(skill_names=[...]).run(ctx). Not dispatched by PolicyEngine.",
+        "dynamic_adds": "Non-linear phase progression: can backtrack from INVESTIGATE to UNDERSTAND/MATCH based on findings.",
+        "skip_conditions": "N/A -- supervisor is invoked directly, not via the orchestrator pipeline.",
+        "human_review_required_conditions": "confidence < 0.6 or critical exceptions found or vendor verification failed",
+    },
 }
 
 # Increment this whenever the reference page template or view data changes.
@@ -271,14 +288,32 @@ _POLICY_ENGINE_RULES = [
         "notes": "Pipeline skipped entirely -- no agents run",
     },
     {
+        "condition": "PARTIAL_MATCH within auto-close band",
+        "mode": "TWO_WAY / THREE_WAY",
+        "agents": [],
+        "notes": "Auto-close band: qty 5%, price 3%, amount 3% -- within band = AUTO_CLOSE, skip agents. Blocked by GRN_NOT_FOUND in 3-way or first-partial invoices (self-comparison always passes).",
+    },
+    {
+        "condition": "NON_PO mode + low extraction confidence",
+        "mode": "NON_PO only",
+        "agents": ["INVOICE_UNDERSTANDING"],
+        "notes": "No PO/GRN retrieval or reconciliation assist in NON_PO mode. Focus on exception analysis + vendor verification.",
+    },
+    {
+        "condition": "NON_PO mode + normal confidence",
+        "mode": "NON_PO only",
+        "agents": ["EXCEPTION_ANALYSIS"],
+        "notes": "Skip PO/GRN agents entirely. Route directly to exception analysis and review.",
+    },
+    {
         "condition": "extraction_conf < 0.70",
-        "mode": "Any",
+        "mode": "TWO_WAY / THREE_WAY",
         "agents": ["INVOICE_UNDERSTANDING"],
         "notes": "May extend plan with RECONCILIATION_ASSIST via _reflect() if own confidence < 0.5",
     },
     {
         "condition": "PO_NOT_FOUND exception",
-        "mode": "Any",
+        "mode": "TWO_WAY / THREE_WAY",
         "agents": ["PO_RETRIEVAL"],
         "notes": "May extend plan with GRN_RETRIEVAL via _reflect() if PO found in THREE_WAY case",
     },
@@ -286,13 +321,13 @@ _POLICY_ENGINE_RULES = [
         "condition": "GRN_NOT_FOUND or GRN_PARTIAL exception",
         "mode": "THREE_WAY only",
         "agents": ["GRN_RETRIEVAL"],
-        "notes": "Suppressed in TWO_WAY and NON_PO modes",
+        "notes": "Suppressed in TWO_WAY and NON_PO modes. GRN_NOT_FOUND also blocks auto-close in rule 1b.",
     },
     {
         "condition": "match_status = PARTIAL_MATCH (outside auto-close band)",
-        "mode": "Any",
+        "mode": "TWO_WAY / THREE_WAY",
         "agents": ["RECONCILIATION_ASSIST"],
-        "notes": "Auto-close band: qty 5%, price 3%, amount 3% -- within band = AUTO_CLOSE rec, no agent",
+        "notes": "First-partial invoices (no prior invoices on PO) always route here -- tolerance self-comparison bypassed.",
     },
     {
         "condition": "Any exceptions present after matching",
@@ -654,55 +689,87 @@ def agent_reference(request):
             "icon": "bi-cloud-arrow-up",
             "color": "secondary",
             "performer": "User / System",
-            "description": "Invoice PDF uploaded via the Documents UI or API. A DocumentUpload record is created and the file is stored.",
+            "description": "Invoice PDF uploaded via the Documents UI or API. A DocumentUpload record is created and the file is stored in Azure Blob Storage.",
         },
         {
             "step": 2,
             "name": "OCR (Azure Document Intelligence)",
             "icon": "bi-eye",
             "color": "info",
-            "performer": "Azure Document Intelligence",
-            "description": "The uploaded PDF is sent to Azure Document Intelligence for optical character recognition. Raw text and layout data are returned.",
+            "performer": "Azure Document Intelligence (PyPDF2 fallback)",
+            "description": "The uploaded PDF is sent to Azure Document Intelligence for OCR. Raw text and layout data are returned. PyPDF2 fallback for text-based PDFs. QR code detection for e-invoices (IN).",
         },
         {
             "step": 3,
-            "name": "Invoice Extraction Agent",
-            "icon": "bi-robot",
-            "color": "primary",
-            "performer": "Invoice Extraction Agent (GPT-4o)",
-            "description": "The OCR text is passed to the Invoice Extraction Agent which uses GPT-4o with response_format=json_object and temperature=0 to extract structured fields (invoice number, date, vendor, line items, totals). Full agent traceability is recorded.",
+            "name": "Category Classification",
+            "icon": "bi-tags",
+            "color": "info",
+            "performer": "System (CategoryClassifier)",
+            "description": "Classify the invoice as goods, service, or travel based on OCR text analysis. Determines which category overlay prompt to apply in step 5.",
         },
         {
             "step": 4,
-            "name": "Parse & Normalize",
-            "icon": "bi-funnel",
-            "color": "success",
-            "performer": "System (extraction_adapter)",
-            "description": "The agent's JSON output is parsed into a structured dict. Dates, amounts, and currency codes are normalized. Line items are mapped to a standard schema.",
+            "name": "Prompt Composition",
+            "icon": "bi-puzzle",
+            "color": "info",
+            "performer": "System (InvoicePromptComposer)",
+            "description": "Modular 3-step prompt assembly: (1) base extraction prompt, (2) category overlay (goods/service/travel), (3) country overlay (India GST / generic VAT). Falls back to monolithic prompt if base is absent.",
         },
         {
             "step": 5,
-            "name": "Validation & Persistence",
-            "icon": "bi-check2-square",
-            "color": "warning",
-            "performer": "System (extraction tasks)",
-            "description": "Extracted data is validated (required fields, amount consistency). An Invoice record and InvoiceLineItems are created in the database. Extraction confidence score is computed.",
+            "name": "LLM Extraction",
+            "icon": "bi-robot",
+            "color": "primary",
+            "performer": "Invoice Extraction Agent (GPT-4o, temp=0)",
+            "description": "The composed prompt + OCR text are sent to GPT-4o with response_format=json_object and temperature=0. Extracts structured fields: invoice number, date, vendor, line items, totals, tax details. Full AgentRun traceability recorded.",
         },
         {
             "step": 6,
-            "name": "AP Case Creation",
-            "icon": "bi-briefcase",
-            "color": "dark",
-            "performer": "System (CaseCreationService)",
-            "description": "An AP Case is created linking the invoice. The case orchestrator begins driving the invoice through its processing path.",
+            "name": "Response Repair",
+            "icon": "bi-wrench",
+            "color": "warning",
+            "performer": "System (ResponseRepairService)",
+            "description": "5 deterministic pre-parser rules fix common LLM JSON issues: strip markdown fences, fix trailing commas, repair truncated JSON, unwrap nested objects, normalize line_items array. 25 dedicated tests.",
         },
         {
             "step": 7,
-            "name": "Invoice Understanding Agent",
-            "icon": "bi-lightbulb",
-            "color": "purple",
-            "performer": "Invoice Understanding Agent (conditional)",
-            "description": f"Only triggered when extraction confidence is below {confidence_threshold}%. Uses tools (invoice_details, vendor_search) to validate and cross-check the extracted data. Runs within the case orchestrator's EXTRACTION stage.",
+            "name": "Parse",
+            "icon": "bi-braces",
+            "color": "success",
+            "performer": "System (ParserService)",
+            "description": "Parse the repaired JSON into structured domain objects. Map raw fields to the Invoice schema. Extract line items into InvoiceLineItem objects.",
+        },
+        {
+            "step": 8,
+            "name": "Normalize",
+            "icon": "bi-funnel",
+            "color": "success",
+            "performer": "System (NormalizationService)",
+            "description": "Normalize dates (dateparser), amounts (Decimal), currency codes (ISO 4217), PO numbers (strip prefixes/whitespace). Standardize vendor names for matching.",
+        },
+        {
+            "step": 9,
+            "name": "Validate",
+            "icon": "bi-check2-square",
+            "color": "warning",
+            "performer": "System (ValidationService)",
+            "description": "Field validation: required fields present, amount consistency (line totals = subtotal + tax = grand total), date reasonability, decision codes generated for each validation outcome.",
+        },
+        {
+            "step": 10,
+            "name": "Duplicate Detection & Persistence",
+            "icon": "bi-files",
+            "color": "warning",
+            "performer": "System (DuplicateDetectionService + PersistenceService)",
+            "description": "Check for duplicate invoice number + vendor + amount within 90-day window. Compute field-level confidence scores. Create Invoice + InvoiceLineItem records. Store extraction_raw_json for audit.",
+        },
+        {
+            "step": 11,
+            "name": "Approval Gate",
+            "icon": "bi-shield-check",
+            "color": "dark",
+            "performer": "System (ApprovalService)",
+            "description": f"Auto-approve if confidence >= {confidence_threshold}% and no critical validation failures. Otherwise route to human review (PENDING_APPROVAL). Credit system tracks extraction quality per vendor.",
         },
     ]
 
@@ -1638,10 +1705,13 @@ def agent_reference(request):
 @permission_required_code("agents.view")
 def agent_runs_list(request):
     """Browsable agent run log with filtering."""
+    tenant = require_tenant(request)
     qs = AgentRun.objects.select_related(
         "reconciliation_result", "reconciliation_result__invoice",
         "agent_definition", "document_upload",
     ).order_by("-created_at")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # ---- Filters ----
     agent_type = request.GET.get("agent_type", "").strip()
@@ -1705,11 +1775,13 @@ def agent_runs_list(request):
             from apps.extraction.models import ExtractionResult
             for ext in (
                 ExtractionResult.objects
-                .filter(document_upload_id__in=upload_ids, invoice__isnull=False)
-                .select_related("invoice")
+                .filter(document_upload_id__in=upload_ids)
+                .select_related("document_upload")
                 .order_by("document_upload_id", "-created_at")
             ):
-                _upload_invoice_map.setdefault(ext.document_upload_id, ext.invoice)
+                _inv = ext.invoice
+                if _inv:
+                    _upload_invoice_map.setdefault(ext.document_upload_id, _inv)
         except Exception:
             pass
     # Pre-load invoice lookups from input_payload for runs without recon_result/upload
@@ -1835,6 +1907,24 @@ def agent_run_detail(request, pk):
             except Exception:
                 pass
 
+    # ── Eval field outcomes ──
+    eval_field_outcomes = []
+    try:
+        from apps.core_eval.models import EvalRun
+        _er = (
+            EvalRun.objects.filter(
+                app_module="agents",
+                entity_type="AgentRun",
+                entity_id=str(run.pk),
+            )
+            .prefetch_related("field_outcomes")
+            .first()
+        )
+        if _er:
+            eval_field_outcomes = list(_er.field_outcomes.all())
+    except Exception:
+        pass
+
     return render(request, "agents/agent_run_detail.html", {
         "run": run,
         "steps": steps,
@@ -1842,4 +1932,85 @@ def agent_run_detail(request, pk):
         "decisions": decisions,
         "recommendations": recommendations,
         "linked_invoice": linked_invoice,
+        "eval_field_outcomes": eval_field_outcomes,
+    })
+
+
+@login_required
+@permission_required_code("eval.manage")
+def agent_run_eval_correct(request, pk):
+    """Record a human ground-truth correction on an EvalFieldOutcome for an agent run.
+
+    POST params:
+        field_outcome_id  -- PK of the EvalFieldOutcome
+        ground_truth      -- correct value
+        new_status        -- CORRECT / INCORRECT / MISSING / EXTRA / SKIPPED
+    """
+    from django.http import JsonResponse
+    from apps.core_eval.models import EvalFieldOutcome
+
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    tenant = require_tenant(request)
+
+    run = get_object_or_404(AgentRun, pk=pk)
+
+    fo_id = request.POST.get("field_outcome_id", "").strip()
+    ground_truth = request.POST.get("ground_truth", "").strip()
+    new_status = request.POST.get("new_status", "").strip().upper()
+
+    if not fo_id:
+        return JsonResponse({"error": "field_outcome_id required"}, status=400)
+
+    valid_statuses = {c.value for c in EvalFieldOutcome.Status}
+    if new_status and new_status not in valid_statuses:
+        return JsonResponse(
+            {"error": "Invalid status. Must be one of: %s" % ", ".join(sorted(valid_statuses))},
+            status=400,
+        )
+
+    try:
+        fo = EvalFieldOutcome.objects.select_related("eval_run").get(pk=int(fo_id))
+    except (EvalFieldOutcome.DoesNotExist, ValueError):
+        return JsonResponse({"error": "EvalFieldOutcome not found"}, status=404)
+
+    # Verify this outcome belongs to this agent run
+    if fo.eval_run.entity_id != str(run.pk) or fo.eval_run.entity_type != "AgentRun":
+        return JsonResponse({"error": "Outcome does not belong to this agent run"}, status=403)
+
+    update_fields = ["updated_at"]
+    if ground_truth:
+        fo.ground_truth_value = ground_truth
+        update_fields.append("ground_truth_value")
+    if new_status:
+        fo.status = new_status
+        update_fields.append("status")
+    fo.save(update_fields=update_fields)
+
+    # Record learning signal
+    try:
+        from apps.core_eval.services.learning_signal_service import LearningSignalService
+        LearningSignalService.record(
+            eval_run=fo.eval_run,
+            signal_type="human_correction",
+            signal_key=fo.field_name,
+            signal_value=ground_truth or new_status,
+            detail_json={
+                "field_outcome_id": fo.pk,
+                "original_predicted": fo.predicted_value,
+                "corrected_status": new_status or fo.status,
+                "corrected_by": request.user.email,
+                "agent_run_id": run.pk,
+            },
+            tenant=tenant,
+        )
+    except Exception:
+        pass
+
+    return JsonResponse({
+        "ok": True,
+        "field_outcome_id": fo.pk,
+        "ground_truth_value": fo.ground_truth_value,
+        "status": fo.status,
     })

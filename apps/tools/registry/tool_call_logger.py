@@ -54,6 +54,7 @@ class ToolCallLogger:
             output_payload=_safe_json(result.data),
             error_message=result.error or "",
             duration_ms=result.duration_ms,
+            tenant=getattr(agent_run, 'tenant', None),
         )
 
         logger.info(

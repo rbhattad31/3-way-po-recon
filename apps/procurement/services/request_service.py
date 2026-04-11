@@ -35,6 +35,7 @@ class ProcurementRequestService:
         created_by=None,
         assigned_to=None,
         attributes: Optional[List[Dict[str, Any]]] = None,
+        tenant=None,
     ) -> ProcurementRequest:
         ctx = TraceContext.get_current()
         with transaction.atomic():
@@ -52,6 +53,7 @@ class ProcurementRequestService:
                 created_by=created_by,
                 assigned_to=assigned_to,
                 trace_id=ctx.trace_id if ctx else "",
+                tenant=tenant,
             )
             if attributes:
                 AttributeService.bulk_set_attributes(request, attributes)

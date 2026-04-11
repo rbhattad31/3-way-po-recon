@@ -48,10 +48,10 @@ class AgentPerformanceDashboardService:
         return result
 
     @staticmethod
-    def _base_runs_qs(filters: Optional[Dict] = None, user=None):
+    def _base_runs_qs(filters: Optional[Dict] = None, user=None, tenant=None):
         """Build a base AgentRun queryset with filters and user scoping."""
         from apps.dashboard.services import DashboardService
-        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user)
+        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user, tenant)
         f = AgentPerformanceDashboardService._parse_filters(filters)
 
         if "date_from" in f:
@@ -68,8 +68,8 @@ class AgentPerformanceDashboardService:
     # 1. Summary KPIs — operational focus
     # ------------------------------------------------------------------
     @staticmethod
-    def get_summary(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_summary(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         total = qs.count()
         completed = qs.filter(status=AgentRunStatus.COMPLETED).count()
         failed = qs.filter(status=AgentRunStatus.FAILED).count()
@@ -102,8 +102,8 @@ class AgentPerformanceDashboardService:
     # 2. Utilization
     # ------------------------------------------------------------------
     @staticmethod
-    def get_utilization(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_utilization(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
 
         by_type = list(
             qs.values("agent_type")
@@ -133,8 +133,8 @@ class AgentPerformanceDashboardService:
     # 3. Reliability — per-agent health matrix
     # ------------------------------------------------------------------
     @staticmethod
-    def get_reliability(filters=None, user=None) -> List[Dict[str, Any]]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_reliability(filters=None, user=None, tenant=None) -> List[Dict[str, Any]]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         rows = (
             qs.values("agent_type")
             .annotate(
@@ -165,8 +165,8 @@ class AgentPerformanceDashboardService:
     # 4. Latency
     # ------------------------------------------------------------------
     @staticmethod
-    def get_latency(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_latency(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
 
         per_agent = list(
             qs.values("agent_type")
@@ -202,8 +202,8 @@ class AgentPerformanceDashboardService:
     # 5. Token & cost metrics
     # ------------------------------------------------------------------
     @staticmethod
-    def get_tokens(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_tokens(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
 
         totals = qs.aggregate(
             total_prompt=Sum("prompt_tokens"),
@@ -237,8 +237,8 @@ class AgentPerformanceDashboardService:
     # 6. Tool usage — operational only (no auth data)
     # ------------------------------------------------------------------
     @staticmethod
-    def get_tool_usage(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_tool_usage(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         run_ids = qs.values_list("id", flat=True)
 
         tool_qs = ToolCall.objects.filter(agent_run_id__in=run_ids)
@@ -280,8 +280,8 @@ class AgentPerformanceDashboardService:
     # 7. Recommendation intelligence — operational
     # ------------------------------------------------------------------
     @staticmethod
-    def get_recommendation_intelligence(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_recommendation_intelligence(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         run_ids = list(qs.values_list("id", flat=True))
 
         rec_qs = AgentRecommendation.objects.filter(agent_run_id__in=run_ids)
@@ -314,8 +314,8 @@ class AgentPerformanceDashboardService:
     # 8. Live feed — operational activity
     # ------------------------------------------------------------------
     @staticmethod
-    def get_live_feed(filters=None, user=None, limit=25) -> List[Dict[str, Any]]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_live_feed(filters=None, user=None, tenant=None, limit=25) -> List[Dict[str, Any]]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         runs = (
             qs.select_related("reconciliation_result__invoice")
             .order_by("-created_at")[:limit]
@@ -350,7 +350,7 @@ class AgentPerformanceDashboardService:
     # 9. Plan comparison -- actual vs deterministic PolicyEngine
     # ------------------------------------------------------------------
     @staticmethod
-    def get_plan_comparison(filters=None, user=None, limit=20) -> dict:
+    def get_plan_comparison(filters=None, user=None, tenant=None, limit=20) -> dict:
         """Compare actual agent runs against what PolicyEngine would have planned.
 
         Re-runs PolicyEngine.plan() on completed reconciliation results and
@@ -362,7 +362,7 @@ class AgentPerformanceDashboardService:
 
         logger = logging.getLogger(__name__)
         try:
-            base_qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+            base_qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
 
             # Distinct result IDs that have at least one completed AgentRun,
             # ordered by most recent run first, limited to <limit> results.

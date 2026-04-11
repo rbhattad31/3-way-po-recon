@@ -106,14 +106,16 @@ class CaseOrchestrator:
         orchestrator.run_from(stage)     # Reprocess from a specific stage
     """
 
-    def __init__(self, case: APCase):
+    def __init__(self, case: APCase, skip_agent_pipeline: bool = False):
         self.case = case
         self._lf_trace = None
         self._lf_trace_id = None
         self._stage_index = 0
+        self._skip_before_stage = None  # set by run_from() to skip earlier stages
+        self._skip_agent_pipeline = skip_agent_pipeline  # skip AgentOrchestrator (copilot mode)
 
     @observed_service("cases.orchestrator.run", audit_event="CASE_PROCESSING_STARTED", entity_type="APCase")
-    def run(self, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
+    def run(self, tenant=None, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
         """Execute the case from its current position through completion."""
         self._lf_trace = lf_trace
         self._lf_trace_id = lf_trace_id
@@ -137,14 +139,24 @@ class CaseOrchestrator:
             # Stage 2b: Extraction approval gate
             # If extraction needs human approval, pause the pipeline here.
             if self.case.status == CaseStatus.EXTRACTION_COMPLETED:
-                self._execute_stage(CaseStageType.EXTRACTION_APPROVAL)
+                if not self._should_skip_stage(CaseStageType.EXTRACTION_APPROVAL):
+                    self._execute_stage(CaseStageType.EXTRACTION_APPROVAL)
 
             # If waiting for human extraction approval, stop the pipeline.
             # The approval_service will resume processing once approved.
             if self.case.status == CaseStatus.PENDING_EXTRACTION_APPROVAL:
                 logger.info(
                     "Case %s paused at extraction approval gate (invoice status=%s)",
-                    self.case.case_number, self.case.invoice.status,
+                    self.case.case_number,
+                    self.case.invoice.status if self.case.invoice else "no_invoice",
+                )
+                return self.case
+
+            # If the case was rejected (e.g. duplicate invoice), stop the pipeline.
+            if CaseStateMachine.is_terminal(self.case.status):
+                logger.info(
+                    "Case %s reached terminal status %s at extraction approval gate",
+                    self.case.case_number, self.case.status,
                 )
                 return self.case
 
@@ -193,6 +205,15 @@ class CaseOrchestrator:
             self.case.status = CaseStatus.FAILED
             self.case.save(update_fields=["status", "updated_at"])
             try:
+                from apps.cases.services.case_activity_service import CaseActivityService
+                CaseActivityService.log(
+                    self.case, "STATUS_CHANGED",
+                    description="Case status changed to FAILED",
+                    metadata={"status": CaseStatus.FAILED},
+                )
+            except Exception:
+                pass
+            try:
                 from apps.core.langfuse_client import score_trace_safe
                 score_trace_safe(self._lf_trace_id, CASE_PROCESSING_SUCCESS, 0.0, comment="orchestration_failed", span=self._lf_trace)
             except Exception:
@@ -217,12 +238,15 @@ class CaseOrchestrator:
         CaseStageType.CASE_SUMMARY: CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS,
     }
 
-    def run_from(self, stage: str, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
+    def run_from(self, stage: str, tenant=None, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
         """Reprocess from a specific stage forward."""
         self._lf_trace = lf_trace
         self._lf_trace_id = lf_trace_id
         self._stage_index = 0
         logger.info("Reprocessing case %s from stage %s", self.case.case_number, stage)
+
+        # Tell run() to skip stages before the target stage
+        self._skip_before_stage = stage
 
         # Mark subsequent stages as skipped
         self.case.stages.filter(
@@ -355,11 +379,44 @@ class CaseOrchestrator:
 
     def _run_common_tail(self):
         """Execute the common tail stages: exception analysis -> routing -> summary."""
+        if self._skip_agent_pipeline:
+            logger.info(
+                "Case %s: skipping EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY "
+                "(skip_agent_pipeline=True) -- supervisor will handle",
+                self.case.case_number,
+            )
+            # Transition to READY_FOR_REVIEW so supervisor can pick it up.
+            # Do NOT run REVIEW_ROUTING or CASE_SUMMARY -- the supervisor
+            # agent will handle review routing and summary generation.
+            CaseStateMachine.transition(
+                self.case, CaseStatus.READY_FOR_REVIEW, PerformedByType.DETERMINISTIC,
+            )
+            return
+
         self._execute_stage(CaseStageType.EXCEPTION_ANALYSIS)
         if not CaseStateMachine.is_terminal(self.case.status):
             self._execute_stage(CaseStageType.REVIEW_ROUTING)
         # Always run case summary so stale data is refreshed, even on auto-close
         self._execute_stage(CaseStageType.CASE_SUMMARY)
+
+    # Ordered list of stages for skip comparison
+    _STAGE_ORDER = [
+        CaseStageType.INTAKE,
+        CaseStageType.EXTRACTION,
+        CaseStageType.EXTRACTION_APPROVAL,
+        CaseStageType.PATH_RESOLUTION,
+    ]
+
+    def _should_skip_stage(self, stage_name: str) -> bool:
+        """Return True if this stage should be skipped during a run_from() reprocess."""
+        if not self._skip_before_stage:
+            return False
+        try:
+            target_idx = self._STAGE_ORDER.index(self._skip_before_stage)
+            current_idx = self._STAGE_ORDER.index(stage_name)
+            return current_idx < target_idx
+        except ValueError:
+            return False
 
     def _execute_stage(self, stage_name: str):
         """Execute a single stage via the StageExecutor, wrapped in a Langfuse span."""
@@ -390,6 +447,7 @@ class CaseOrchestrator:
                 self._lf_trace,
                 name=f"case_stage_{stage_name}",
                 metadata={
+                    "tenant_id": getattr(self.case, "tenant_id", None),
                     "stage_index": self._stage_index,
                     "stage_name": stage_name,
                     "case_id": self.case.pk,
@@ -409,6 +467,17 @@ class CaseOrchestrator:
             stage.completed_at = timezone.now()
             stage.output_payload = output or {}
             stage.save(update_fields=["stage_status", "completed_at", "output_payload", "updated_at"])
+
+            # -- Activity log
+            try:
+                from apps.cases.services.case_activity_service import CaseActivityService
+                CaseActivityService.log(
+                    self.case, "STAGE_COMPLETED",
+                    description=f"Stage '{stage_name}' completed",
+                    metadata={"stage_name": stage_name, "stage_index": self._stage_index},
+                )
+            except Exception:
+                pass
 
             # -- Langfuse: end span with output + observation scores
             try:

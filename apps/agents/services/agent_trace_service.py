@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from apps.agents.models import (
     AgentDefinition,
+    AgentMessage,
     AgentRun,
     AgentStep,
     DecisionLog,
@@ -36,6 +37,8 @@ class AgentTraceService:
         agent_type: str,
         agent_name: str = "",
         input_payload: Optional[Dict[str, Any]] = None,
+        tenant=None,
+        trace_id: str = "",
     ) -> AgentRun:
         """Begin a new agent run and return the persisted AgentRun."""
         agent_def = AgentDefinition.objects.filter(
@@ -49,6 +52,8 @@ class AgentTraceService:
             status=AgentRunStatus.RUNNING,
             input_payload=input_payload,
             started_at=timezone.now(),
+            trace_id=trace_id,
+            tenant=tenant,
         )
         logger.info(
             "Agent run started: run=%s type=%s result=%s",
@@ -64,6 +69,7 @@ class AgentTraceService:
         output: Optional[Dict[str, Any]] = None,
         success: bool = True,
         duration_ms: Optional[int] = None,
+        tenant=None,
     ) -> AgentStep:
         """Record a substep within an agent run."""
         last_step = (
@@ -81,6 +87,7 @@ class AgentTraceService:
             output_data=output,
             success=success,
             duration_ms=duration_ms,
+            tenant=tenant,
         )
         logger.debug(
             "Agent step logged: run=%s step=%s action=%s",
@@ -101,6 +108,13 @@ class AgentTraceService:
         tool_def = ToolDefinition.objects.filter(name=tool_name).first()
         status = ToolCallStatus.SUCCESS if success else ToolCallStatus.FAILED
 
+        # Inherit tenant from parent AgentRun
+        _tenant = None
+        try:
+            _tenant = AgentRun.objects.filter(pk=agent_run_id).values_list("tenant_id", flat=True).first()
+        except Exception:
+            logger.debug("Tenant lookup failed for agent_run_id=%s (non-fatal)", agent_run_id, exc_info=True)
+
         tc = ToolCall.objects.create(
             agent_run_id=agent_run_id,
             tool_definition=tool_def,
@@ -110,6 +124,7 @@ class AgentTraceService:
             output_payload=tool_output,
             error_message="" if success else str(tool_output.get("error", "")) if tool_output else "",
             duration_ms=duration_ms,
+            tenant_id=_tenant,
         )
         logger.debug(
             "Tool call logged: run=%s tool=%s status=%s",
@@ -124,6 +139,7 @@ class AgentTraceService:
         summary: str,
         confidence: Optional[float] = None,
         evidence: Optional[Dict[str, Any]] = None,
+        tenant=None,
     ) -> DecisionLog:
         """Record a key agent decision for audit."""
         decision = DecisionLog.objects.create(
@@ -132,6 +148,7 @@ class AgentTraceService:
             rationale=summary,
             confidence=confidence,
             evidence_refs=evidence,
+            tenant=tenant,
         )
         logger.info(
             "Agent decision logged: run=%s type=%s confidence=%s",
@@ -169,11 +186,14 @@ class AgentTraceService:
     # Read helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def get_trace_for_result(result_id: int) -> Dict[str, Any]:
+    def get_trace_for_result(result_id: int, tenant=None) -> Dict[str, Any]:
         """Return the full agent trace for a reconciliation result."""
         runs = AgentRun.objects.filter(
             reconciliation_result_id=result_id,
-        ).order_by("created_at")
+        )
+        if tenant is not None:
+            runs = runs.filter(tenant=tenant)
+        runs = runs.order_by("created_at")
 
         trace_data: List[Dict[str, Any]] = []
         for run in runs:
@@ -195,6 +215,12 @@ class AgentTraceService:
                     "evidence_refs", "created_at",
                 )
             )
+            messages = list(
+                AgentMessage.objects.filter(agent_run=run).order_by("message_index").values(
+                    "id", "role", "content", "token_count",
+                    "message_index", "created_at",
+                )
+            )
             trace_data.append({
                 "agent_run_id": run.pk,
                 "agent_type": run.agent_type,
@@ -208,6 +234,7 @@ class AgentTraceService:
                 "steps": steps,
                 "tool_calls": tool_calls,
                 "decisions": decisions,
+                "messages": messages,
             })
         return {
             "reconciliation_result_id": result_id,
@@ -215,7 +242,7 @@ class AgentTraceService:
         }
 
     @staticmethod
-    def get_trace_for_invoice(invoice_id: int) -> Dict[str, Any]:
+    def get_trace_for_invoice(invoice_id: int, tenant=None) -> Dict[str, Any]:
         """Return the full agent trace for an invoice across all recon results.
 
         Also includes agent runs that are not linked to a reconciliation result
@@ -235,7 +262,7 @@ class AgentTraceService:
 
         # 1. Agent runs linked to reconciliation results (standard path)
         for result_id in result_ids:
-            trace = AgentTraceService.get_trace_for_result(result_id)
+            trace = AgentTraceService.get_trace_for_result(result_id, tenant=tenant)
             all_traces.append(trace)
             for run_data in trace.get("agent_runs", []):
                 seen_run_ids.add(run_data["agent_run_id"])
@@ -247,6 +274,8 @@ class AgentTraceService:
             reconciliation_result__isnull=True,
             input_payload__invoice_id=invoice_id,
         ).exclude(pk__in=seen_run_ids).order_by("created_at")
+        if tenant is not None:
+            orphan_runs = orphan_runs.filter(tenant=tenant)
 
         # Also find runs linked via APCaseStage.performed_by_agent
         try:
@@ -264,7 +293,7 @@ class AgentTraceService:
                 ).exclude(pk__in=seen_run_ids).order_by("created_at")
                 orphan_runs = orphan_runs | stage_orphans
         except Exception:
-            pass
+            logger.debug("Orphan run detection failed (non-fatal)", exc_info=True)
 
         if orphan_runs.exists():
             orphan_trace_data: List[Dict[str, Any]] = []

@@ -19,6 +19,7 @@
 
 {% block content %}
 <div class="cc-console"
+     data-case-pk="{{ case.pk }}"
      data-decide-url="{% url 'cases:case_decide' case.pk %}"
      data-reprocess-url="{% url 'cases:reprocess_case' case.pk %}"
      data-open-exceptions="{{ open_exceptions_count|default:'0' }}"
@@ -119,10 +120,10 @@
           </button>
           {% endif %}
 
-          {# Reprocess -- available for reviewable states, failed, and escalated #}
+          {# Reprocess -- available for reviewable states, terminal states, and stuck states #}
           {% if can_edit_case %}
-            {% if show_actions or case.status == "FAILED" or case.status == "ESCALATED" or case.status == "REJECTED" %}
-            <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess from intake">
+            {% if show_actions or case.status == "FAILED" or case.status == "ESCALATED" or case.status == "REJECTED" or case.status == "CLOSED" or case.status == "PENDING_EXTRACTION_APPROVAL" %}
+            <button class="btn btn-outline-warning btn-sm" onclick="caseAction('reprocess')" title="Reprocess case">
               <i class="bi bi-arrow-clockwise me-1"></i>Reprocess
             </button>
             {% endif %}
@@ -148,7 +149,7 @@
               <li><hr class="dropdown-divider"></li>
               <li><a class="dropdown-item" href="{% url 'documents:invoice_detail' invoice.pk %}"><i class="bi bi-file-earmark-text me-2"></i>Invoice Detail</a></li>
               {% if po %}
-              <li><a class="dropdown-item" href="{% url 'po_documents:po_detail' po.pk %}"><i class="bi bi-cart-check me-2"></i>PO Detail</a></li>
+              <li><a class="dropdown-item" href="{% url 'po_detail' po.pk %}"><i class="bi bi-cart-check me-2"></i>PO Detail</a></li>
               {% endif %}
             </ul>
           </div>
@@ -253,6 +254,17 @@
               </button>
             </li>
             {% endif %}
+
+            {# Tab 8: Activity Log #}
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-activity" data-bs-toggle="pill"
+                      data-bs-target="#panel-activity" type="button" role="tab">
+                <i class="bi bi-activity me-1"></i>Activity
+                {% if activities %}
+                <span class="badge bg-secondary ms-1">{{ activities|length }}</span>
+                {% endif %}
+              </button>
+            </li>
 
           </ul>
         </div>
@@ -511,98 +523,285 @@
             <div class="tab-pane fade p-3" id="panel-agents" role="tabpanel">
 
               {% if agent_runs %}
-              <div class="accordion" id="agentRunsAccordion">
-                {% for run in agent_runs %}
-                <div class="accordion-item cc-agent-accordion-item">
-                  <h2 class="accordion-header">
-                    <button class="accordion-button collapsed py-2 px-3" type="button"
-                            data-bs-toggle="collapse" data-bs-target="#agentRun{{ run.pk }}"
-                            style="font-size:.82rem;background:transparent">
-                      <span class="d-flex align-items-center gap-2 w-100">
-                        <span class="cc-chip-dot {% if run.status == 'COMPLETED' %}completed{% elif run.status == 'RUNNING' %}running{% elif run.status == 'FAILED' %}failed{% else %}pending{% endif %}"></span>
-                        <a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold text-decoration-none" title="View agent run detail" onclick="event.stopPropagation()">{{ run.agent_definition.name|default:run.agent_type }} <i class="bi bi-box-arrow-up-right" style="font-size:.65rem;opacity:.5"></i></a>
-                        <span class="ms-auto d-flex align-items-center gap-2">
-                          {% if run.confidence %}
-                          <span class="cc-conf-inline">
-                            <span class="cc-conf-bar">
-                              <span class="cc-conf-fill {% if run.confidence >= 0.8 %}high{% elif run.confidence >= 0.5 %}med{% else %}low{% endif %}"
-                                    style="width:{% widthratio run.confidence 1 100 %}%"></span>
-                            </span>
-                            <span>{% widthratio run.confidence 1 100 %}%</span>
-                          </span>
-                          {% endif %}
-                          {% if run.status == "COMPLETED" %}
-                            <span class="badge bg-success">Done</span>
-                          {% elif run.status == "RUNNING" %}
-                            <span class="badge bg-info">Running</span>
-                          {% elif run.status == "FAILED" %}
-                            <span class="badge bg-danger">Failed</span>
-                          {% elif run.status == "SKIPPED" %}
-                            <span class="badge bg-secondary">Skipped</span>
-                          {% else %}
-                            <span class="badge bg-light text-muted">{{ run.status }}</span>
-                          {% endif %}
-                        </span>
+
+              {# ── Pipeline KPI strip ── #}
+              <div class="row g-2 mb-3">
+                <div class="col-6 col-md-3">
+                  <div class="border rounded text-center py-2 px-1" style="font-size:.78rem">
+                    <div class="text-muted">Agents</div>
+                    <div class="fw-bold fs-6">{{ agent_runs|length }}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <div class="border rounded text-center py-2 px-1" style="font-size:.78rem">
+                    <div class="text-muted">LLM Agents</div>
+                    <div class="fw-bold fs-6">
+                      {% with llm_count=0 %}{% for r in agent_runs %}{% if r.total_tokens %}{% with llm_count=llm_count|add:"1" %}{% endwith %}{% endif %}{% endfor %}{{ llm_count }}{% endwith %}
+                    </div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <div class="border rounded text-center py-2 px-1" style="font-size:.78rem">
+                    <div class="text-muted">Total Tokens</div>
+                    <div class="fw-bold fs-6">{{ cost_token_data.total_tokens|default:"0" }}</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <div class="border rounded text-center py-2 px-1" style="font-size:.78rem">
+                    <div class="text-muted">Total Duration</div>
+                    <div class="fw-bold fs-6">{{ cost_token_data.total_duration_ms|default:"0" }}ms</div>
+                  </div>
+                </div>
+              </div>
+
+              {# ── Agent cards ── #}
+              {% for run in agent_runs %}
+              <div class="card mb-3 shadow-sm border-start border-4 {% if run.status == 'COMPLETED' %}border-success{% elif run.status == 'FAILED' %}border-danger{% elif run.status == 'RUNNING' %}border-info{% else %}border-secondary{% endif %}">
+
+                {# ── Card Header ── #}
+                <div class="card-header py-2 px-3 d-flex align-items-center gap-2 flex-wrap" style="background: var(--bs-light)">
+                  {# Status icon #}
+                  {% if run.status == "COMPLETED" %}
+                    <i class="bi bi-check-circle-fill text-success"></i>
+                  {% elif run.status == "RUNNING" %}
+                    <i class="bi bi-arrow-repeat text-info"></i>
+                  {% elif run.status == "FAILED" %}
+                    <i class="bi bi-x-circle-fill text-danger"></i>
+                  {% elif run.status == "SKIPPED" %}
+                    <i class="bi bi-dash-circle text-muted"></i>
+                  {% else %}
+                    <i class="bi bi-hourglass text-secondary"></i>
+                  {% endif %}
+
+                  {# Agent name + type badge #}
+                  <span class="fw-bold" style="font-size:.88rem">{{ run.agent_definition.name|default:run.get_agent_type_display }}</span>
+                  {% if "SYSTEM_" in run.agent_type %}
+                    <span class="badge bg-secondary" style="font-size:.6rem">SYSTEM</span>
+                  {% else %}
+                    <span class="badge bg-primary" style="font-size:.6rem">LLM</span>
+                  {% endif %}
+
+                  {# Link to detail #}
+                  <a href="{% url 'agents:agent_run_detail' run.pk %}" class="text-muted text-decoration-none" title="View full detail" style="font-size:.7rem">
+                    #{{ run.pk }} <i class="bi bi-box-arrow-up-right"></i>
+                  </a>
+
+                  {# Right side: confidence + timing #}
+                  <span class="ms-auto d-flex align-items-center gap-2 flex-wrap">
+                    {% if run.confidence is not None %}
+                    <span class="d-flex align-items-center gap-1" style="font-size:.78rem">
+                      <span style="width:60px;height:6px;border-radius:3px;background:#e0e0e0;display:inline-block;position:relative;overflow:hidden">
+                        <span style="position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:{% if run.confidence >= 0.8 %}#198754{% elif run.confidence >= 0.5 %}#ffc107{% else %}#dc3545{% endif %};width:{% widthratio run.confidence 1 100 %}%"></span>
                       </span>
-                    </button>
-                  </h2>
-                  <div id="agentRun{{ run.pk }}" class="accordion-collapse collapse" data-bs-parent="#agentRunsAccordion">
-                    <div class="accordion-body pt-0 px-3 pb-3">
+                      <span class="fw-semibold {% if run.confidence >= 0.8 %}text-success{% elif run.confidence >= 0.5 %}text-warning{% else %}text-danger{% endif %}">{% widthratio run.confidence 1 100 %}%</span>
+                    </span>
+                    {% endif %}
+                    {% if run.duration_ms %}
+                    <span class="text-muted" style="font-size:.72rem"><i class="bi bi-clock me-1"></i>{{ run.duration_ms }}ms</span>
+                    {% endif %}
+                    {% if run.total_tokens %}
+                    <span class="text-muted" style="font-size:.72rem"><i class="bi bi-lightning-charge me-1"></i>{{ run.total_tokens }} tok</span>
+                    {% endif %}
+                  </span>
+                </div>
 
-                      {# Reasoning #}
-                      {% if run.summarized_reasoning %}
-                      <div class="cc-evidence-box mb-2">{{ run.summarized_reasoning }}</div>
-                      {% endif %}
+                <div class="card-body px-3 py-2">
 
-                      {# Recommendations #}
-                      {% for rec in run.recommendations.all %}
-                      <div class="cc-recommendation mb-2">
-                        <div class="d-flex align-items-center gap-2 mb-1">
-                          <i class="bi bi-lightbulb text-warning"></i>
-                          <span class="fw-semibold" style="font-size:.82rem">{{ rec.get_recommendation_type_display }}</span>
-                          {% if rec.confidence %}
-                          <span class="cc-conf-inline ms-auto">
-                            <span class="cc-conf-bar">
-                              <span class="cc-conf-fill {% if rec.confidence >= 0.8 %}high{% elif rec.confidence >= 0.5 %}med{% else %}low{% endif %}"
-                                    style="width:{% widthratio rec.confidence 1 100 %}%"></span>
-                            </span>
-                            <span>{% widthratio rec.confidence 1 100 %}%</span>
-                          </span>
-                          {% endif %}
-                        </div>
-                        {% if rec.rationale %}
-                        <div class="text-muted" style="font-size:.78rem">{{ rec.rationale|truncatechars:200 }}</div>
-                        {% endif %}
-                      </div>
-                      {% endfor %}
+                  {# ── Reasoning ── #}
+                  {% if run.summarized_reasoning %}
+                  <div class="mb-2">
+                    <div class="text-muted fw-semibold mb-1" style="font-size:.72rem"><i class="bi bi-chat-left-text me-1"></i>Reasoning</div>
+                    <div class="p-2 rounded" style="background:#f8f9fa;font-size:.8rem;white-space:pre-wrap;line-height:1.5">{{ run.summarized_reasoning }}</div>
+                  </div>
+                  {% endif %}
 
-                      {# Tool calls #}
-                      {% if run.tool_calls.count %}
-                      <div class="mt-2">
-                        <div class="fw-semibold mb-1" style="font-size:.72rem;color:var(--bs-secondary)">Tool Calls</div>
-                        {% for tc in run.tool_calls.all %}
-                        <div class="d-flex align-items-center gap-2 py-1 {% if not forloop.last %}border-bottom{% endif %}" style="font-size:.78rem">
-                          <i class="bi bi-tools" style="font-size:.7rem;opacity:.5"></i>
-                          <span class="fw-semibold">{{ tc.tool_name|default:tc.tool_definition.name }}</span>
-                          {% if tc.status == "SUCCESS" %}
-                            <span class="badge bg-success" style="font-size:.6rem">OK</span>
-                          {% elif tc.status == "ERROR" %}
-                            <span class="badge bg-danger" style="font-size:.6rem">Error</span>
-                          {% endif %}
-                          {% if tc.duration_ms %}<span class="text-muted" style="font-size:.65rem">{{ tc.duration_ms }}ms</span>{% endif %}
+                  <div class="row g-2">
+                    {# ── Left column: Steps + Tool Calls ── #}
+                    <div class="col-md-7">
+
+                      {# Steps #}
+                      {% with steps=run.steps.all %}
+                      {% if steps %}
+                      <div class="mb-2">
+                        <div class="text-muted fw-semibold mb-1" style="font-size:.72rem"><i class="bi bi-list-ol me-1"></i>Steps ({{ steps|length }})</div>
+                        {% for step in steps %}
+                        <div class="d-flex align-items-start gap-2 py-1 {% if not forloop.last %}border-bottom{% endif %}" style="font-size:.78rem">
+                          <span class="badge {% if step.success %}bg-success{% else %}bg-danger{% endif %} rounded-pill" style="font-size:.6rem;min-width:20px">{{ step.step_number }}</span>
+                          <div class="flex-grow-1">
+                            <span class="fw-semibold">{{ step.action }}</span>
+                            {% if step.duration_ms %}<span class="text-muted ms-1">({{ step.duration_ms }}ms)</span>{% endif %}
+                            {% if step.output_data %}
+                            <div class="text-muted mt-1" style="font-size:.72rem">
+                              <code style="font-size:.68rem">{{ step.output_data|truncatechars:150 }}</code>
+                            </div>
+                            {% endif %}
+                          </div>
                         </div>
                         {% endfor %}
                       </div>
                       {% endif %}
+                      {% endwith %}
 
-                      {# Trace info (admin/auditor) #}
+                      {# Tool Calls #}
+                      {% with tools=run.tool_calls.all %}
+                      {% if tools %}
+                      <div class="mb-2">
+                        <div class="text-muted fw-semibold mb-1" style="font-size:.72rem"><i class="bi bi-tools me-1"></i>Tool Calls ({{ tools|length }})</div>
+                        {% for tc in tools %}
+                        <div class="d-flex align-items-center gap-2 py-1 {% if not forloop.last %}border-bottom{% endif %}" style="font-size:.78rem">
+                          <i class="bi bi-gear" style="font-size:.7rem;color:var(--bs-secondary)"></i>
+                          <span class="fw-semibold">{{ tc.tool_name }}</span>
+                          {% if tc.status == "SUCCESS" %}
+                            <span class="badge bg-success" style="font-size:.6rem">OK</span>
+                          {% elif tc.status == "ERROR" %}
+                            <span class="badge bg-danger" style="font-size:.6rem">Error</span>
+                          {% else %}
+                            <span class="badge bg-secondary" style="font-size:.6rem">{{ tc.status }}</span>
+                          {% endif %}
+                          {% if tc.duration_ms %}<span class="text-muted" style="font-size:.65rem">{{ tc.duration_ms }}ms</span>{% endif %}
+                        </div>
+                        {% if tc.error_message %}
+                        <div class="text-danger ps-4" style="font-size:.72rem">{{ tc.error_message|truncatechars:200 }}</div>
+                        {% endif %}
+                        {% endfor %}
+                      </div>
+                      {% endif %}
+                      {% endwith %}
+
+                      {# Messages (LLM conversation) #}
+                      {% with msgs=run.messages.all %}
+                      {% if msgs %}
+                      <details class="mb-2">
+                        <summary class="text-muted fw-semibold" style="font-size:.72rem;cursor:pointer">
+                          <i class="bi bi-chat-dots me-1"></i>LLM Messages ({{ msgs|length }})
+                        </summary>
+                        <div class="mt-1 ps-2 border-start border-2" style="font-size:.75rem">
+                          {% for msg in msgs %}
+                          <div class="py-1 {% if not forloop.last %}border-bottom{% endif %}">
+                            <span class="badge {% if msg.role == 'assistant' %}bg-primary{% elif msg.role == 'system' %}bg-dark{% elif msg.role == 'tool' %}bg-info{% else %}bg-secondary{% endif %}" style="font-size:.6rem">{{ msg.role }}</span>
+                            {% if msg.token_count %}<span class="text-muted ms-1" style="font-size:.65rem">{{ msg.token_count }} tok</span>{% endif %}
+                            <div class="text-muted mt-1" style="font-size:.72rem;white-space:pre-wrap;max-height:100px;overflow-y:auto">{{ msg.content|truncatechars:500 }}</div>
+                          </div>
+                          {% endfor %}
+                        </div>
+                      </details>
+                      {% endif %}
+                      {% endwith %}
+
+                      {# Decisions logged by this agent #}
+                      {% with decs=run.decisions.all %}
+                      {% if decs %}
+                      <div class="mb-2">
+                        <div class="text-muted fw-semibold mb-1" style="font-size:.72rem"><i class="bi bi-signpost-split me-1"></i>Decisions ({{ decs|length }})</div>
+                        {% for dec in decs %}
+                        <div class="p-2 mb-1 rounded border" style="font-size:.78rem;background:#fff">
+                          <div class="fw-semibold">{{ dec.decision }}</div>
+                          {% if dec.decision_type %}<span class="badge bg-light text-dark border" style="font-size:.6rem">{{ dec.decision_type }}</span>{% endif %}
+                          {% if dec.deterministic_flag %}<span class="badge bg-info" style="font-size:.6rem">Rule</span>{% endif %}
+                          {% if dec.confidence %}<span class="text-muted ms-1" style="font-size:.68rem">Conf: {% widthratio dec.confidence 1 100 %}%</span>{% endif %}
+                          {% if dec.rationale %}
+                          <div class="text-muted mt-1" style="font-size:.72rem">{{ dec.rationale|truncatechars:200 }}</div>
+                          {% endif %}
+                        </div>
+                        {% endfor %}
+                      </div>
+                      {% endif %}
+                      {% endwith %}
+                    </div>
+
+                    {# ── Right column: Recommendations + Eval ── #}
+                    <div class="col-md-5">
+
+                      {# Recommendations #}
+                      {% for rec in run.recommendations.all %}
+                      <div class="p-2 mb-2 rounded border border-warning" style="background:#fffde7;font-size:.8rem">
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                          <i class="bi bi-lightbulb-fill text-warning"></i>
+                          <span class="fw-bold">{{ rec.get_recommendation_type_display }}</span>
+                        </div>
+                        {% if rec.confidence is not None %}
+                        <div class="d-flex align-items-center gap-1 mb-1">
+                          <span style="width:50px;height:5px;border-radius:3px;background:#e0e0e0;display:inline-block;position:relative;overflow:hidden">
+                            <span style="position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:{% if rec.confidence >= 0.8 %}#198754{% elif rec.confidence >= 0.5 %}#ffc107{% else %}#dc3545{% endif %};width:{% widthratio rec.confidence 1 100 %}%"></span>
+                          </span>
+                          <span style="font-size:.72rem" class="{% if rec.confidence >= 0.8 %}text-success{% elif rec.confidence >= 0.5 %}text-warning{% else %}text-danger{% endif %}">{% widthratio rec.confidence 1 100 %}%</span>
+                        </div>
+                        {% endif %}
+                        {% if rec.reasoning %}
+                        <div class="text-muted" style="font-size:.72rem">{{ rec.reasoning|truncatechars:250 }}</div>
+                        {% endif %}
+                        {% if rec.accepted is not None %}
+                        <div class="mt-1">
+                          {% if rec.accepted %}
+                            <span class="badge bg-success" style="font-size:.6rem"><i class="bi bi-check me-1"></i>Accepted</span>
+                          {% else %}
+                            <span class="badge bg-danger" style="font-size:.6rem"><i class="bi bi-x me-1"></i>Rejected</span>
+                          {% endif %}
+                          {% if rec.accepted_by %}<span class="text-muted" style="font-size:.65rem"> by {{ rec.accepted_by.get_short_name }}</span>{% endif %}
+                        </div>
+                        {% else %}
+                        <div class="mt-1"><span class="badge bg-secondary" style="font-size:.6rem">Pending</span></div>
+                        {% endif %}
+                      </div>
+                      {% endfor %}
+
+                      {# ── Eval Field Outcomes + Human Correction ── #}
+                      {% if run.eval_field_outcomes %}
+                      <div class="p-2 rounded border mb-2" style="background:#f0f4ff;font-size:.78rem">
+                        <div class="fw-semibold mb-2" style="font-size:.72rem"><i class="bi bi-clipboard-data me-1"></i>Eval Outcomes</div>
+                        <table class="table table-sm table-borderless mb-1" style="font-size:.75rem">
+                          <thead>
+                            <tr class="text-muted">
+                              <th style="width:30%">Field</th>
+                              <th>Status</th>
+                              <th>Predicted</th>
+                              <th>Ground Truth</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {% for fo in run.eval_field_outcomes %}
+                            <tr id="eval-row-{{ fo.pk }}">
+                              <td class="fw-semibold">{{ fo.field_name }}</td>
+                              <td>
+                                <span class="badge {% if fo.status == 'CORRECT' %}bg-success{% elif fo.status == 'INCORRECT' %}bg-danger{% elif fo.status == 'MISSING' %}bg-warning text-dark{% elif fo.status == 'EXTRA' %}bg-info{% else %}bg-secondary{% endif %}" style="font-size:.6rem" id="eval-status-badge-{{ fo.pk }}">{{ fo.status }}</span>
+                              </td>
+                              <td><code style="font-size:.68rem">{{ fo.predicted_value|truncatechars:40|default:"--" }}</code></td>
+                              <td>
+                                <span id="eval-gt-display-{{ fo.pk }}">
+                                  {% if fo.ground_truth_value %}
+                                    <code style="font-size:.68rem">{{ fo.ground_truth_value|truncatechars:40 }}</code>
+                                  {% else %}
+                                    <span class="text-muted" style="font-size:.68rem">--</span>
+                                  {% endif %}
+                                </span>
+                              </td>
+                              <td>
+                                {% has_permission "eval.manage" as can_eval %}
+                                {% if can_eval %}
+                                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-1"
+                                        onclick="openCorrectionModal({{ fo.pk }}, '{{ fo.field_name|escapejs }}', '{{ fo.predicted_value|escapejs }}', '{{ fo.ground_truth_value|escapejs }}', '{{ fo.status }}', {{ run.pk }})"
+                                        style="font-size:.6rem" title="Correct this field">
+                                  <i class="bi bi-pencil"></i>
+                                </button>
+                                {% endif %}
+                              </td>
+                            </tr>
+                            {% endfor %}
+                          </tbody>
+                        </table>
+                      </div>
+                      {% endif %}
+
+                      {# Trace info #}
                       {% if show_full_trace %}
-                      <div class="mt-2 p-2 rounded" style="background:var(--bs-light);font-size:.72rem">
-                        <div class="d-flex gap-3 text-muted">
-                          <span><i class="bi bi-layers me-1"></i>Steps: {{ run.steps.count }}</span>
-                          <span><i class="bi bi-tools me-1"></i>Tools: {{ run.tool_calls.count }}</span>
-                          {% if run.recommendations.count %}<span><i class="bi bi-lightbulb me-1"></i>Recs: {{ run.recommendations.count }}</span>{% endif %}
-                          {% if run.duration_seconds %}<span><i class="bi bi-clock me-1"></i>{{ run.duration_seconds|floatformat:1 }}s</span>{% endif %}
+                      <div class="p-2 rounded mb-2" style="background:var(--bs-light);font-size:.70rem">
+                        <div class="fw-semibold mb-1 text-muted"><i class="bi bi-fingerprint me-1"></i>Trace</div>
+                        <div class="d-flex flex-wrap gap-2 text-muted">
+                          {% if run.trace_id %}<span title="Trace ID"><i class="bi bi-hash"></i> {{ run.trace_id|truncatechars:16 }}</span>{% endif %}
+                          {% if run.llm_model_used %}<span><i class="bi bi-cpu"></i> {{ run.llm_model_used }}</span>{% endif %}
+                          {% if run.actor_primary_role %}<span><i class="bi bi-shield"></i> {{ run.actor_primary_role }}</span>{% endif %}
+                          {% if run.invocation_reason %}<span><i class="bi bi-play-circle"></i> {{ run.invocation_reason }}</span>{% endif %}
                         </div>
                       </div>
                       {% endif %}
@@ -610,11 +809,12 @@
                     </div>
                   </div>
                 </div>
-                {% endfor %}
               </div>
+              {% endfor %}
+
               {% else %}
-              <div class="cc-empty-state">
-                <i class="bi bi-robot" style="font-size:2rem;opacity:.3"></i>
+              <div class="text-center py-5 text-muted">
+                <i class="bi bi-robot" style="font-size:2.5rem;opacity:.3"></i>
                 <div class="mt-2">No agent runs recorded for this case</div>
               </div>
               {% endif %}
@@ -967,6 +1167,9 @@
                       <div class="text-center py-3">
                         <i class="bi bi-check-circle-fill text-success" style="font-size:1.5rem"></i>
                         <div class="mt-1 text-muted" style="font-size:.82rem">Case closed</div>
+                        {% if can_edit_case %}
+                        <button class="btn btn-outline-warning btn-sm mt-2" onclick="caseAction('reprocess')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+                        {% endif %}
                       </div>
                       {% elif case.status == "ESCALATED" %}
                       <div class="text-center py-3">
@@ -1116,6 +1319,13 @@
             </div>
             {% endif %}
 
+            {# ============================================================ #}
+            {# TAB 8: ACTIVITY LOG                                          #}
+            {# ============================================================ #}
+            <div class="tab-pane fade p-3" id="panel-activity" role="tabpanel">
+              {% include "cases/partials/_activity_panel.html" %}
+            </div>
+
           </div>{# /tab-content #}
         </div>
       </div>
@@ -1186,6 +1396,69 @@ function caseAction(action) {
                    '<input type="hidden" name="reason" value="' + reason.replace(/"/g, '&quot;') + '">';
   document.body.appendChild(form);
   form.submit();
+}
+
+/* ── Eval Correction Modal ── */
+function openCorrectionModal(foId, fieldName, predicted, groundTruth, status, agentRunPk) {
+  document.getElementById('corrFieldOutcomeId').value = foId;
+  document.getElementById('corrAgentRunPk').value = agentRunPk;
+  document.getElementById('corrFieldName').textContent = fieldName;
+  document.getElementById('corrPredicted').textContent = predicted || '--';
+  document.getElementById('corrGroundTruth').value = groundTruth || '';
+  var sel = document.getElementById('corrStatus');
+  for (var i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === status) { sel.selectedIndex = i; break; }
+  }
+  var modal = new bootstrap.Modal(document.getElementById('evalCorrectionModal'));
+  modal.show();
+}
+
+function submitCorrection() {
+  var foId = document.getElementById('corrFieldOutcomeId').value;
+  var agentRunPk = document.getElementById('corrAgentRunPk').value;
+  var groundTruth = document.getElementById('corrGroundTruth').value.trim();
+  var newStatus = document.getElementById('corrStatus').value;
+  var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+  var casePk = document.querySelector('.cc-console').dataset.casePk;
+
+  var url = '/cases/' + casePk + '/agent/' + agentRunPk + '/eval-correct/';
+  var body = new FormData();
+  body.append('csrfmiddlewaretoken', csrfToken);
+  body.append('field_outcome_id', foId);
+  body.append('ground_truth', groundTruth);
+  body.append('new_status', newStatus);
+
+  fetch(url, { method: 'POST', body: body, credentials: 'same-origin' })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        /* Update row in-place */
+        var row = document.getElementById('eval-row-' + foId);
+        if (row) {
+          var gtCell = document.getElementById('eval-gt-display-' + foId);
+          if (gtCell) {
+            gtCell.innerHTML = data.ground_truth_value
+              ? '<code style="font-size:.68rem">' + data.ground_truth_value + '</code>'
+              : '<span class="text-muted" style="font-size:.68rem">--</span>';
+          }
+          var badge = document.getElementById('eval-status-badge-' + foId);
+          if (badge) {
+            badge.textContent = data.status;
+            badge.className = 'badge ' + (
+              data.status === 'CORRECT' ? 'bg-success' :
+              data.status === 'INCORRECT' ? 'bg-danger' :
+              data.status === 'MISSING' ? 'bg-warning text-dark' :
+              data.status === 'EXTRA' ? 'bg-info' : 'bg-secondary'
+            );
+            badge.style.fontSize = '.6rem';
+          }
+        }
+        bootstrap.Modal.getInstance(document.getElementById('evalCorrectionModal')).hide();
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+      }
+    })
+    .catch(function(err) { alert('Request failed: ' + err); });
 }
 </script>
 {% endblock %}

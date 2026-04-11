@@ -15,9 +15,22 @@ from apps.reconciliation.services.line_match_service import (  # noqa
     LineMatchResult,
     LineMatchPair,
 )
+from apps.reconciliation.services.line_match_types import (  # noqa
+    LineCandidateScore,
+    LineMatchDecision,
+    LLMFallbackResult,
+)
+from apps.reconciliation.services.line_match_llm_fallback import (  # noqa
+    LineMatchLLMFallbackService,
+)
 from apps.reconciliation.services.grn_match_service import (  # noqa
     GRNMatchService,
     GRNMatchResult,
+)
+from apps.reconciliation.services.receipt_availability_service import (  # noqa
+    ReceiptAvailabilityService,
+    ReceiptAvailability,
+    LineReceiptAvailability,
 )
 from apps.reconciliation.services.mode_resolver import (  # noqa
     ReconciliationModeResolver,

@@ -16,6 +16,7 @@ from apps.accounts.models import User
 # Default role definitions
 # ---------------------------------------------------------------------------
 ROLES = [
+    {"code": "SUPER_ADMIN", "name": "Super Admin", "description": "Platform-level super admin -- cross-tenant access and all permissions", "is_system_role": True, "rank": 1},
     {"code": "ADMIN", "name": "Admin", "description": "Full system access", "is_system_role": True, "rank": 10},
     {"code": "AP_PROCESSOR", "name": "AP Processor", "description": "Accounts payable processor – manage invoices, run reconciliation", "is_system_role": True, "rank": 50},
     {"code": "REVIEWER", "name": "Reviewer", "description": "Review reconciliation results and make decisions", "is_system_role": True, "rank": 40},
@@ -71,6 +72,8 @@ PERMISSIONS = [
     {"code": "agents.run_system_bulk_extraction_intake", "name": "Run System Bulk Extraction Intake", "module": "agents", "action": "run_system_bulk_extraction_intake", "description": "Execute deterministic system bulk extraction intake agent"},
     {"code": "agents.run_system_case_intake", "name": "Run System Case Intake", "module": "agents", "action": "run_system_case_intake", "description": "Execute deterministic system case intake agent"},
     {"code": "agents.run_system_posting_preparation", "name": "Run System Posting Preparation", "module": "agents", "action": "run_system_posting_preparation", "description": "Execute deterministic system posting preparation agent"},
+    # Supervisor agent
+    {"code": "agents.run_supervisor", "name": "Run Supervisor Agent", "module": "agents", "action": "run_supervisor", "description": "Execute the supervisor agent for full AP lifecycle orchestration"},
     # Recommendations
     {"code": "recommendations.auto_close", "name": "Accept Auto-Close", "module": "recommendations", "action": "auto_close", "description": "Accept or trigger auto-close recommendations"},
     {"code": "recommendations.route_review", "name": "Route to Review", "module": "recommendations", "action": "route_review", "description": "Accept send-to-review recommendations"},
@@ -111,6 +114,11 @@ PERMISSIONS = [
     # Eval & Learning
     {"code": "eval.view", "name": "View Eval & Learning", "module": "eval", "action": "view", "description": "View eval runs, learning signals, and learning actions"},
     {"code": "eval.manage", "name": "Manage Learning Actions", "module": "eval", "action": "manage", "description": "Approve, reject, and apply learning actions"},
+    # Platform-level (Super Admin only)
+    {"code": "tenants.view", "name": "View Tenants", "module": "tenants", "action": "view", "description": "View all tenant organisations"},
+    {"code": "tenants.manage", "name": "Manage Tenants", "module": "tenants", "action": "manage", "description": "Create, edit, deactivate tenant organisations"},
+    {"code": "tenants.impersonate", "name": "Impersonate Tenant", "module": "tenants", "action": "impersonate", "description": "Switch tenant context via X-Tenant-ID header"},
+    {"code": "platform.settings", "name": "Platform Settings", "module": "platform", "action": "settings", "description": "Manage platform-wide settings and feature flags"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -119,7 +127,8 @@ PERMISSIONS = [
 # ADMIN gets everything (handled in code: admin bypass), but we also
 # explicitly grant all permissions for visibility in the matrix UI.
 ROLE_MATRIX = {
-    "ADMIN": [p["code"] for p in PERMISSIONS],  # everything (incl. eval.view, eval.manage)
+    "SUPER_ADMIN": [p["code"] for p in PERMISSIONS],  # everything including platform-level
+    "ADMIN": [p["code"] for p in PERMISSIONS if p["module"] not in ("tenants", "platform")],  # everything except platform-level
     "AP_PROCESSOR": [
         "invoices.view", "invoices.create", "invoices.edit",
         "invoices.trigger_reconciliation",
@@ -197,9 +206,14 @@ ROLE_MATRIX = {
         "agents.run_system_review_routing", "agents.run_system_case_summary",
         "agents.run_system_bulk_extraction_intake", "agents.run_system_case_intake",
         "agents.run_system_posting_preparation",
+        # Supervisor agent
+        "agents.run_supervisor",
         # Read access for tools
-        "invoices.view", "reconciliation.view",
+        "invoices.view", "invoices.edit", "reconciliation.view",
         "purchase_orders.view", "grns.view", "vendors.view",
+        "cases.view", "cases.create",
+        # Extraction execution (for supervisor tools)
+        "extraction.run", "reconciliation.run",
         # Protected actions agents are allowed to take
         "recommendations.auto_close", "recommendations.route_review",
         "recommendations.escalate", "recommendations.reprocess",
@@ -305,7 +319,7 @@ class Command(BaseCommand):
             )
             if created:
                 synced += 1
-                self.stdout.write(f"  Synced {user.email} → {role.code} (primary)")
+                self.stdout.write(f"  Synced {user.email} -> {role.code} (primary)")
             else:
                 # Ensure it's marked primary if not already
                 UserRole.objects.filter(user=user, role=role).update(is_primary=True)

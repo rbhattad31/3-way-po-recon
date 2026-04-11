@@ -79,6 +79,7 @@ class ExtractionApprovalService:
                 "reviewed_by": None,
                 "reviewed_at": None,
                 "is_touchless": False,
+                "tenant": getattr(invoice, 'tenant', None),
             },
         )
 
@@ -100,10 +101,14 @@ class ExtractionApprovalService:
         extraction_result: Optional[ExtractionResult] = None,
         lf_trace_id: Optional[str] = None,
         lf_span=None,
+        skip_case_processing: bool = False,
     ) -> Optional[ExtractionApproval]:
         """Auto-approve if confidence meets the configured threshold.
 
         Returns the ExtractionApproval if auto-approved, else None.
+        When called from the extraction task, pass skip_case_processing=True
+        because the task dispatches process_case_task separately with the
+        correct skip_agent_pipeline flag.
         """
         enabled = getattr(settings, "EXTRACTION_AUTO_APPROVE_ENABLED", False)
         threshold = getattr(settings, "EXTRACTION_AUTO_APPROVE_THRESHOLD", 1.1)
@@ -127,6 +132,7 @@ class ExtractionApprovalService:
                 "original_values_snapshot": snapshot,
                 "is_touchless": True,
                 "reviewed_by": None,
+                "tenant": getattr(invoice, 'tenant', None),
             },
         )
 
@@ -152,7 +158,8 @@ class ExtractionApprovalService:
             invoice.pk, confidence,
         )
         # ── Create AP Case and trigger case pipeline ──
-        cls._ensure_case_and_process(invoice, user=None)
+        if not skip_case_processing:
+            cls._ensure_case_and_process(invoice, user=None)
 
         # ── core_eval: persist auto-approval learning signal ──
         try:
@@ -196,10 +203,11 @@ class ExtractionApprovalService:
     ) -> ExtractionApproval:
         """Approve an extraction after optional field corrections.
 
-        Concurrency: Locks the ExtractionApproval row via select_for_update()
+        Concurrency: Locks the ExtractionApproval row via select_for_update(nowait=True)
         inside the atomic block.  Only PENDING → APPROVED is allowed.
         Simultaneous approve/reject calls will serialize on the row lock;
-        the second caller will see a non-PENDING status and raise ValueError.
+        the second caller will receive an OperationalError immediately rather than
+        blocking indefinitely, preventing deadlocks under high concurrency.
 
         ``corrections`` format::
 
@@ -211,12 +219,21 @@ class ExtractionApprovalService:
                 ]
             }
         """
-        # Lock the row to prevent concurrent approve/reject/reprocess
-        approval = (
-            ExtractionApproval.objects
-            .select_for_update()
-            .get(pk=approval.pk)
-        )
+        from django.db import OperationalError as DBOperationalError
+        # Lock the row to prevent concurrent approve/reject/reprocess.
+        # nowait=True raises OperationalError immediately if another transaction
+        # holds the lock, preventing indefinite blocking / deadlocks.
+        try:
+            approval = (
+                ExtractionApproval.objects
+                .select_for_update(nowait=True)
+                .get(pk=approval.pk)
+            )
+        except DBOperationalError:
+            raise ValueError(
+                f"Approval {approval.pk} is currently being processed by another request. "
+                "Please retry in a moment."
+            )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
@@ -403,15 +420,21 @@ class ExtractionApprovalService:
     ) -> ExtractionApproval:
         """Reject an extraction — invoice stays in PENDING_APPROVAL.
 
-        Concurrency: Locks the ExtractionApproval row via select_for_update().
+        Concurrency: Locks the ExtractionApproval row via select_for_update(nowait=True).
         Only PENDING → REJECTED is allowed.
         """
-        # Lock the row to prevent concurrent approve/reject/reprocess
-        approval = (
-            ExtractionApproval.objects
-            .select_for_update()
-            .get(pk=approval.pk)
-        )
+        from django.db import OperationalError as DBOperationalError
+        try:
+            approval = (
+                ExtractionApproval.objects
+                .select_for_update(nowait=True)
+                .get(pk=approval.pk)
+            )
+        except DBOperationalError:
+            raise ValueError(
+                f"Approval {approval.pk} is currently being processed by another request. "
+                "Please retry in a moment."
+            )
         if approval.status != ExtractionApprovalStatus.PENDING:
             raise ValueError(f"Approval {approval.pk} is already {approval.status}")
 
@@ -576,6 +599,7 @@ class ExtractionApprovalService:
                 original_value=old_value,
                 corrected_value=new_value_str,
                 corrected_by=user,
+                tenant=getattr(approval, 'tenant', None),
             ))
 
         if len(update_fields) > 1:
@@ -625,6 +649,7 @@ class ExtractionApprovalService:
                     original_value=old_value,
                     corrected_value=new_value_str,
                     corrected_by=user,
+                    tenant=getattr(approval, 'tenant', None),
                 ))
 
             if len(line_update_fields) > 1:
@@ -651,6 +676,11 @@ class ExtractionApprovalService:
             from apps.posting_core.models import VendorAliasMapping
             norm = normalize_string(invoice.raw_vendor_name)
             vendor = Vendor.objects.filter(normalized_name=norm, is_active=True).first()
+            if not vendor:
+                # Fallback: case-insensitive exact name match
+                vendor = Vendor.objects.filter(
+                    name__iexact=invoice.raw_vendor_name.strip(), is_active=True
+                ).first()
             if not vendor:
                 alias = VendorAliasMapping.objects.filter(
                     normalized_alias=norm, is_active=True
@@ -772,14 +802,14 @@ class ExtractionApprovalService:
                     "Resuming case %s from extraction approval gate (invoice %s approved)",
                     case.case_number, invoice.pk,
                 )
-                dispatch_task(process_case_task, case.pk)
+                dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
             elif case:
                 # Case exists but in a different status -- just trigger processing
                 logger.info(
                     "Case %s exists (status=%s), triggering processing for invoice %s",
                     case.case_number, case.status, invoice.pk,
                 )
-                dispatch_task(process_case_task, case.pk)
+                dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
             else:
                 # No case yet -- create one (backward compatibility)
                 uploaded_by = user or (
@@ -791,7 +821,7 @@ class ExtractionApprovalService:
                     uploaded_by=uploaded_by,
                 )
                 logger.info("Created AP Case %s for invoice %s", case.case_number, invoice.pk)
-                dispatch_task(process_case_task, case.pk)
+                dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
         except Exception:
             logger.exception(
                 "Failed to resume/create AP Case for invoice %s", invoice.pk,
@@ -833,6 +863,7 @@ class ExtractionApprovalService:
             from apps.reconciliation.tasks import run_reconciliation_task
             user_id = user.pk if user else None
             run_reconciliation_task.delay(
+                invoice.tenant_id if invoice.tenant_id else None,
                 invoice_ids=[invoice.pk],
                 triggered_by_id=user_id,
             )
@@ -853,6 +884,7 @@ class ExtractionApprovalService:
             user_id = user.pk if user else None
             trigger = "approval" if user else "auto_approval"
             prepare_posting_task.delay(
+                invoice.tenant_id if invoice.tenant_id else None,
                 invoice_id=invoice.pk,
                 user_id=user_id,
                 trigger=trigger,

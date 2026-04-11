@@ -17,7 +17,7 @@
     <small style="color:var(--ap-text-muted)">All purchase order documents</small>
   </div>
   <div class="d-flex align-items-center gap-2">
-  <a href="{% url 'po_documents:po_create' %}" class="btn btn-primary btn-sm">
+  <a href="{% url 'po_create' %}" class="btn btn-primary btn-sm">
     <i class="bi bi-plus-lg me-1"></i>Add PO
   </a>
   <form class="d-inline-flex gap-2" method="get">
@@ -36,7 +36,7 @@
     <input type="text" name="q" class="form-control form-control-sm" style="min-width:200px"
            placeholder="Search PO #, vendor, buyer…" value="{{ request.GET.q|default:'' }}">
     {% if request.GET.status or request.GET.vendor or request.GET.q %}
-      <a href="{% url 'po_documents:po_list' %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">
+      <a href="{% url 'po_list' %}" class="btn btn-outline-secondary btn-sm" title="Clear filters">
         <i class="bi bi-x-circle"></i>
       </a>
     {% endif %}
@@ -56,7 +56,7 @@
       <tbody>
         {% for po in purchase_orders %}
         <tr>
-          <td><a href="{% url 'po_documents:po_detail' po.pk %}" class="text-decoration-none" style="color:var(--ap-primary);font-weight:500">{{ po.po_number }}</a></td>
+          <td><a href="{% url 'po_detail' po.pk %}" class="text-decoration-none" style="color:var(--ap-primary);font-weight:500">{{ po.po_number }}</a></td>
           <td style="font-size:var(--ap-font-size-sm)">{{ po.vendor.name|default:"—" }}</td>
           <td style="font-size:var(--ap-font-size-sm)">{{ po.po_date|date:"d M Y"|default:"—" }}</td>
           <td style="font-size:var(--ap-font-size-sm);font-weight:500">{{ po.currency }} {{ po.total_amount|default:"—" }}</td>

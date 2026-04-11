@@ -5,6 +5,51 @@ from django.shortcuts import redirect
 from django.urls import reverse
 
 
+class TenantMiddleware:
+    """Resolve the current tenant from the authenticated user and attach it to
+    ``request.tenant``.
+
+    Must run after Django's ``AuthenticationMiddleware`` so ``request.user``
+    is already populated.  Superusers bypass tenant scoping unless they
+    explicitly supply an ``X-Tenant-ID`` header (useful for admin tooling).
+    """
+
+    TENANT_EXEMPT_PATHS = [
+        "/admin/",
+        "/accounts/login/",
+        "/accounts/logout/",
+        "/health/",
+    ]
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        request.tenant = self._resolve_tenant(request)
+        response = self.get_response(request)
+        if request.tenant:
+            response["X-Tenant-ID"] = str(request.tenant.pk)
+        return response
+
+    def _resolve_tenant(self, request):
+        from apps.accounts.models import CompanyProfile
+
+        if not hasattr(request, "user") or not request.user.is_authenticated:
+            return None
+
+        if getattr(request.user, "is_platform_admin", False) or request.user.is_superuser:
+            # Platform admin / superuser may pass X-Tenant-ID header to scope a specific tenant
+            tenant_id = request.META.get("HTTP_X_TENANT_ID")
+            if tenant_id:
+                return CompanyProfile.objects.filter(pk=tenant_id).first()
+            return None  # No filter -- sees everything
+
+        if request.user.company_id:
+            return request.user.company
+
+        return None
+
+
 class LoginRequiredMiddleware:
     """Redirect anonymous users to the login page for non-exempt paths."""
 
@@ -12,6 +57,7 @@ class LoginRequiredMiddleware:
         "/admin/",
         "/accounts/login/",
         "/accounts/logout/",
+        "/accounts/invite/",
         "/api/",
         "/health/",
     ]
@@ -78,6 +124,12 @@ class RequestTraceMiddleware:
         user = getattr(request, "user", None)
         if user and getattr(user, "is_authenticated", False):
             ctx = ctx.with_rbac(user)
+
+        # Enrich with tenant if resolved
+        tenant = getattr(request, "tenant", None)
+        if tenant:
+            ctx.tenant_id = str(tenant.pk)
+            ctx.tenant_name = tenant.name
 
         # Store on request + thread-local
         request.trace_context = ctx

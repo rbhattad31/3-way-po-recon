@@ -9,6 +9,10 @@ import sys
 
 
 def pytest_configure(config):
+    # Disable Langfuse during tests -- client reads env vars directly.
+    os.environ.pop("LANGFUSE_PUBLIC_KEY", None)
+    os.environ.pop("LANGFUSE_SECRET_KEY", None)
+    os.environ.pop("LANGFUSE_HOST", None)
     """Switch to SQLite in-memory for test runs.
 
     This hook fires before Django is set up, so we can safely override DATABASES
@@ -40,6 +44,10 @@ def _patch_settings_for_sqlite():
                 "NAME": ":memory:",
             }
         }
+        # Skip migrations -- create tables directly from model state.
+        _apps = getattr(mod, "INSTALLED_APPS", [])
+        mod.MIGRATION_MODULES = {a.split(".")[-1]: None for a in _apps if a.startswith("apps.")}
+        mod.MIGRATION_MODULES["django_celery_results"] = None
         print("\n*** TEST DB OVERRIDE (already loaded): SQLite in-memory ***\n")
         return
 
@@ -68,6 +76,10 @@ def _patch_settings_for_sqlite():
                     "NAME": ":memory:",
                 }
             }
+            # Skip migrations -- create tables directly from model state.
+            _apps = getattr(mod, "INSTALLED_APPS", [])
+            mod.MIGRATION_MODULES = {a.split(".")[-1]: None for a in _apps if a.startswith("apps.")}
+            mod.MIGRATION_MODULES["django_celery_results"] = None
             print("\n*** TEST DB OVERRIDE: SQLite in-memory ***\n")
             return mod
 

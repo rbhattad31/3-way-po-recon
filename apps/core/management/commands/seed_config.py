@@ -19,7 +19,7 @@ from __future__ import annotations
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from apps.accounts.models import User
+from apps.accounts.models import User, CompanyProfile
 from apps.agents.models import AgentDefinition
 from apps.core.enums import (
     AgentType,
@@ -28,6 +28,36 @@ from apps.core.enums import (
 )
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy
 from apps.tools.models import ToolDefinition
+
+
+# ===================================================================
+#  DEFAULT TENANT
+# ===================================================================
+
+def create_default_tenant() -> CompanyProfile:
+    """Get or create the default tenant (CompanyProfile).
+
+    This is the single organisation that owns this platform instance.
+    All seeded config records will be scoped to this tenant.
+    """
+    import django.utils.text as slug_utils
+    tenant, created = CompanyProfile.objects.get_or_create(
+        slug="bradsol",
+        defaults={
+            "name": "Bradsol",
+            "legal_name": "Bradsol Technologies Pvt Ltd",
+            "tax_id": "DEMO-TAX-001",
+            "country": "IN",
+            "state_code": "KA",
+            "currency": "INR",
+            "timezone": "Asia/Kolkata",
+            "is_default": True,
+            "is_active": True,
+            "plan_type": "enterprise",
+            "max_users": 50,
+        },
+    )
+    return tenant
 
 
 # ===================================================================
@@ -75,8 +105,8 @@ USERS_DATA = [
 ]
 
 
-def create_users():
-    """Create or retrieve system users."""
+def create_users(tenant: CompanyProfile):
+    """Create or retrieve system users, all assigned to *tenant*."""
     users = {}
     for data in USERS_DATA:
         email = data["email"]
@@ -89,11 +119,16 @@ def create_users():
                 "is_staff": data.get("is_staff", False),
                 "is_superuser": data.get("is_superuser", False),
                 "department": data.get("department", ""),
+                "company": tenant,
             },
         )
         if created:
             user.set_password("admin123")
             user.save()
+        elif user.company_id != tenant.pk:
+            # Backfill tenant assignment on existing users
+            user.company = tenant
+            user.save(update_fields=["company"])
         key = email.split("@")[0].replace(".", "_")
         users[key] = user
     return users
@@ -103,7 +138,7 @@ def create_users():
 #  AGENT DEFINITIONS
 # ===================================================================
 
-def create_agent_definitions(admin):
+def create_agent_definitions(admin, tenant: CompanyProfile):
     agents = [
         {
             "agent_type": AgentType.INVOICE_EXTRACTION,
@@ -273,6 +308,7 @@ def create_agent_definitions(admin):
                 "enabled": True,
                 "config_json": agent_data["config_json"],
                 "created_by": admin,
+                "tenant": tenant,
             },
         )
         if was_created:
@@ -284,7 +320,7 @@ def create_agent_definitions(admin):
 #  TOOL DEFINITIONS
 # ===================================================================
 
-def create_tool_definitions(admin):
+def create_tool_definitions(admin, tenant: CompanyProfile):
     tools = [
         {
             "name": "po_lookup",
@@ -358,6 +394,7 @@ def create_tool_definitions(admin):
                 "input_schema": tool_data["input_schema"],
                 "enabled": True,
                 "created_by": admin,
+                "tenant": tenant,
             },
         )
         if was_created:
@@ -369,10 +406,10 @@ def create_tool_definitions(admin):
 #  RECONCILIATION CONFIG
 # ===================================================================
 
-def create_recon_config():
+def create_recon_config(tenant: CompanyProfile):
     config, _ = ReconciliationConfig.objects.get_or_create(
         is_default=True,
-        defaults={"name": "Default"},
+        defaults={"name": "Default", "tenant": tenant},
     )
     config.quantity_tolerance_pct = 2.0
     config.price_tolerance_pct = 1.0
@@ -386,6 +423,7 @@ def create_recon_config():
     config.enable_mode_resolver = True
     config.enable_two_way_for_services = True
     config.enable_grn_for_stock_items = True
+    config.partial_invoice_threshold_pct = 95.0
     config.default_reconciliation_mode = ReconciliationMode.THREE_WAY
     config.ap_processor_sees_all_cases = False
     config.save()
@@ -396,7 +434,7 @@ def create_recon_config():
 #  RECONCILIATION POLICIES
 # ===================================================================
 
-def create_policies(admin):
+def create_policies(admin, tenant: CompanyProfile):
     policies = [
         {
             "policy_code": "POL-SVC-VENDOR",
@@ -472,6 +510,7 @@ def create_policies(admin):
                 "notes": pdata["notes"],
                 "is_active": True,
                 "created_by": admin,
+                "tenant": tenant,
             },
         )
         if was_created:
@@ -502,34 +541,42 @@ class Command(BaseCommand):
             "\n=== Seed Config: Users & Platform Configuration ===\n"
         ))
 
-        # 1. Users
+        # 0. Default tenant
+        self.stdout.write("  Creating default tenant...")
+        tenant = create_default_tenant()
+        self.stdout.write(self.style.SUCCESS(
+            f"    [OK] Tenant: '{tenant.name}' (slug={tenant.slug}, pk={tenant.pk})"
+        ))
+
+        # 1. Users (all assigned to the default tenant)
         self.stdout.write("  Creating users...")
-        users = create_users()
+        users = create_users(tenant)
         admin = users["admin"]
         self.stdout.write(self.style.SUCCESS(f"    [OK] {len(users)} users ready"))
 
         # 2. Agent definitions
         self.stdout.write("  Creating agent definitions...")
-        agent_count = create_agent_definitions(admin)
+        agent_count = create_agent_definitions(admin, tenant)
         self.stdout.write(self.style.SUCCESS(f"    [OK] {agent_count} new agent definitions"))
 
         # 3. Tool definitions
         self.stdout.write("  Creating tool definitions...")
-        tool_count = create_tool_definitions(admin)
+        tool_count = create_tool_definitions(admin, tenant)
         self.stdout.write(self.style.SUCCESS(f"    [OK] {tool_count} new tool definitions"))
 
         # 4. Reconciliation config
         self.stdout.write("  Creating reconciliation config...")
-        create_recon_config()
+        create_recon_config(tenant)
         self.stdout.write(self.style.SUCCESS("    [OK] Default config ready"))
 
         # 5. Reconciliation policies
         self.stdout.write("  Creating reconciliation policies...")
-        policy_count = create_policies(admin)
+        policy_count = create_policies(admin, tenant)
         self.stdout.write(self.style.SUCCESS(f"    [OK] {policy_count} new policies"))
 
         # Summary
         self.stdout.write(self.style.MIGRATE_HEADING("\n=== Summary ==="))
+        self.stdout.write(f"  Tenants:            {CompanyProfile.objects.count()}")
         self.stdout.write(f"  Users:              {User.objects.count()}")
         self.stdout.write(f"  Agent Definitions:  {AgentDefinition.objects.count()}")
         self.stdout.write(f"  Tool Definitions:   {ToolDefinition.objects.count()}")

@@ -19,7 +19,7 @@ class EvalRunAdmin(admin.ModelAdmin):
 
 @admin.register(EvalMetric)
 class EvalMetricAdmin(admin.ModelAdmin):
-    list_display = ("id", "eval_run", "metric_name", "metric_value", "string_value", "tenant_id", "created_at")
+    list_display = ("id", "eval_run", "metric_name", "value_type", "raw_value", "tenant_id", "created_at")
     list_filter = ("metric_name", "tenant_id", "created_at")
     search_fields = ("metric_name", "tenant_id")
     readonly_fields = ("created_at", "updated_at")

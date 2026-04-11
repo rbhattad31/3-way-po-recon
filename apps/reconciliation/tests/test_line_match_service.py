@@ -483,17 +483,16 @@ class TestMinimumScoreThreshold:
         assert result.all_lines_matched is False
 
     def test_exactly_at_minimum_score_is_matched(self, svc, invoice, po):
-        """A pair scoring exactly >= 0.30 IS matched.
+        """A pair scoring above the weak threshold IS matched.
 
-        line_number match (+0.20) + qty within tol (+0.20) = 0.40 >= 0.30.
-        Description similarity adds nothing (no description set).
+        Matching description + qty + line_number + partial-invoice price
+        produces a strong score well above the weak threshold (0.40).
         """
-        make_inv_line(invoice, line_number=1, description="",
-                      qty="10.00", price="999.00", amount="9990.00")
-        make_po_line(po, line_number=1, description="",
-                     qty="10.0000", price="1.0000", amount="10.00")
+        make_inv_line(invoice, line_number=1, description="Parts",
+                      qty="10.00", price="50.00", amount="500.00")
+        make_po_line(po, line_number=1, description="Parts",
+                     qty="10.0000", price="100.0000", amount="1000.00")
 
         result = svc.match(invoice, po)
 
-        # line_number bonus (0.20) + qty match (0.20) = 0.40 -> matched
         assert result.pairs[0].matched is True

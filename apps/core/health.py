@@ -69,7 +69,6 @@ def health_ready(request):
             "checks": checks,
             "timings": timings,
             "env": getattr(settings, "APP_ENV", "unknown"),
-            "debug": settings.DEBUG,
         },
         status=status_code,
     )

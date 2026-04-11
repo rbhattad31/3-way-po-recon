@@ -16,6 +16,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.agents.models import (
@@ -66,6 +67,7 @@ class AgentContext:
     # Structured in-process memory shared across all agents in the pipeline.
     memory: Optional[AgentMemory] = None
     _langfuse_trace: Any = None
+    tenant: Any = None
 
 
 @dataclass
@@ -110,8 +112,15 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
     # Public entry-point
     # ------------------------------------------------------------------
-    def run(self, ctx: AgentContext) -> AgentRun:
-        """Execute the full agent loop and return the persisted AgentRun."""
+    def run(self, ctx: AgentContext, progress_callback=None) -> AgentRun:
+        """Execute the full agent loop and return the persisted AgentRun.
+
+        Args:
+            ctx: Agent context with invoice/reconciliation data.
+            progress_callback: Optional callable(dict) for streaming progress
+                events. Events: thinking, tool_start, tool_complete, error.
+        """
+        self._progress_cb = progress_callback
         agent_def = AgentDefinition.objects.filter(
             agent_type=self.agent_type, enabled=True
         ).first()
@@ -134,6 +143,7 @@ class BaseAgent(ABC):
             access_granted=ctx.access_granted,
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
+            tenant=ctx.tenant,
         )
 
         # Stamp the current prompt version on the run for auditability.
@@ -158,6 +168,7 @@ class BaseAgent(ABC):
                     _lf_trace,
                     name=str(self.agent_type),
                     metadata={
+                        "tenant_id": getattr(ctx, "tenant_id", None) or (ctx.tenant.pk if getattr(ctx, "tenant", None) else None),
                         "agent_type": str(self.agent_type),
                         "agent_run_id": agent_run.pk,
                         "invoice_id": ctx.invoice_id,
@@ -171,6 +182,7 @@ class BaseAgent(ABC):
                     },
                 )
             except Exception:
+                logger.debug("Langfuse span start failed for agent %s (non-fatal)", self.agent_type, exc_info=True)
                 _lf_span = None
         self.llm._langfuse_span = _lf_span
         # Resolve the Langfuse prompt object so generations are linked to the
@@ -183,7 +195,7 @@ class BaseAgent(ABC):
             if _prompt_slug:
                 _lf_prompt = get_prompt(slug_to_langfuse_name(_prompt_slug))
         except Exception:
-            pass
+            logger.debug("Langfuse prompt resolve failed for agent %s (non-fatal)", self.agent_type, exc_info=True)
         self.llm._langfuse_prompt = _lf_prompt
         self.llm._langfuse_metadata = {
             "agent_type": str(self.agent_type),
@@ -197,6 +209,7 @@ class BaseAgent(ABC):
             "prompt_version": getattr(agent_run, "prompt_version", ""),
         }
         self._actor_user = self._resolve_actor(ctx)
+        self._agent_context = ctx  # retained for tenant injection into tools
         start = time.monotonic()
         step_counter = 0
         timeout_s = (
@@ -227,6 +240,7 @@ class BaseAgent(ABC):
                         f"{step_counter} steps"
                     )
                 # LLM call (with retry on transient errors)
+                self._fire_progress("thinking", round=round_idx + 1)
                 step_counter += 1
                 response_format = {"type": "json_object"} if self.enforce_json_response else None
                 llm_resp = self._call_llm_with_retry(
@@ -253,6 +267,19 @@ class BaseAgent(ABC):
 
                 # Log assistant message
                 self._save_message(agent_run, "assistant", llm_resp.content or "", len(messages))
+
+                # Fire reasoning event so streaming clients see the LLM's thinking
+                _reasoning_text = (llm_resp.content or "").strip()
+                _planned_tools = []
+                if llm_resp.tool_calls:
+                    _planned_tools = [tc.name for tc in llm_resp.tool_calls]
+                if _reasoning_text or _planned_tools:
+                    self._fire_progress(
+                        "reasoning",
+                        round=round_idx + 1,
+                        text=_reasoning_text[:2000] if _reasoning_text else "",
+                        tools_planned=_planned_tools,
+                    )
 
                 # If no tool calls, we're done
                 if not llm_resp.tool_calls:
@@ -345,7 +372,7 @@ class BaseAgent(ABC):
                                     span=_lf_span,
                                 )
                         except Exception:
-                            pass
+                            logger.debug("Langfuse span/score for agent %s failed (non-fatal)", self.agent_type, exc_info=True)
                     return agent_run
 
                 # Process tool calls — include tool_calls on the assistant msg
@@ -381,8 +408,10 @@ class BaseAgent(ABC):
                                 },
                             )
                         except Exception:
+                            logger.debug("Langfuse tool span start failed (non-fatal)", exc_info=True)
                             _tool_span = None
 
+                    self._fire_progress("tool_start", tool=tc.name, round=round_idx + 1)
                     tool_result = self._execute_tool(tc.name, tc.arguments, agent_run, step_counter, _tool_span)
 
                     if _tool_span is not None:
@@ -407,7 +436,7 @@ class BaseAgent(ABC):
                                 1.0 if tool_result.success else 0.0,
                             )
                         except Exception:
-                            pass
+                            logger.debug("Langfuse tool span finalization failed (non-fatal)", exc_info=True)
 
                     if not tool_result.success:
                         failed_tool_count += 1
@@ -416,6 +445,14 @@ class BaseAgent(ABC):
                     tool_msg = json.dumps(tool_result.data if tool_result.success else {"error": tool_result.error})
                     messages.append({"role": "tool", "content": tool_msg, "tool_call_id": tc.id, "name": tc.name})
                     self._save_message(agent_run, "tool", tool_msg, len(messages), name=tc.name)
+                    self._fire_progress(
+                        "tool_complete",
+                        tool=tc.name,
+                        round=round_idx + 1,
+                        status="SUCCESS" if tool_result.success else "FAILED",
+                        duration_ms=tool_result.duration_ms,
+                        output_summary=self._summarize_tool_output(tool_result),
+                    )
 
             # Exhausted rounds -- use last content
             # Check 1: Catalog tool grounding -- flag if grounding required but no tools called.
@@ -530,9 +567,10 @@ class BaseAgent(ABC):
                             span=_lf_span,
                         )
                 except Exception:
-                    pass
+                    logger.debug("Langfuse score/span finalization failed for agent %s (non-fatal)", self.agent_type, exc_info=True)
 
         except Exception as exc:
+            self._fire_progress("error", message=str(exc)[:200])
             rr_pk = ctx.reconciliation_result.pk if ctx.reconciliation_result else None
             logger.exception("Agent %s failed for result %s", self.agent_type, rr_pk)
             agent_run.status = AgentRunStatus.FAILED
@@ -548,7 +586,7 @@ class BaseAgent(ABC):
                         level="ERROR",
                     )
                 except Exception:
-                    pass
+                    logger.debug("Langfuse error span failed for agent %s (non-fatal)", self.agent_type, exc_info=True)
             agent_run.save()
 
         self.llm._langfuse_span = None
@@ -559,6 +597,85 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _fire_progress(self, event_type: str, **kwargs):
+        """Fire a progress event to the callback if one is set."""
+        cb = getattr(self, "_progress_cb", None)
+        if cb:
+            try:
+                cb({"type": event_type, **kwargs})
+            except Exception:
+                logger.debug("Progress callback failed (non-fatal)", exc_info=True)
+
+    _FIELD_LABELS = {
+        "document_upload_id": "Document",
+        "has_text": "Has text",
+        "char_count": "Characters",
+        "text": "Text extracted",
+        "invoice_id": "Invoice",
+        "invoice_number": "Invoice #",
+        "vendor_name": "Vendor",
+        "vendor_id": "Vendor",
+        "po_number": "PO #",
+        "po_id": "PO",
+        "grn_number": "GRN #",
+        "grn_id": "GRN",
+        "total_amount": "Total",
+        "currency": "Currency",
+        "match_status": "Match",
+        "confidence": "Confidence",
+        "extraction_confidence": "Extraction confidence",
+        "line_count": "Lines",
+        "line_items": "Line items",
+        "exception_count": "Exceptions",
+        "exceptions": "Exceptions",
+        "is_duplicate": "Duplicate",
+        "is_valid": "Valid",
+        "tax_amount": "Tax",
+        "subtotal": "Subtotal",
+        "case_id": "Case",
+        "case_number": "Case #",
+        "assigned_to": "Assigned to",
+        "recommendation": "Recommendation",
+        "recommendation_type": "Recommendation",
+        "found": "Found",
+        "count": "Count",
+        "results": "Results",
+        "error": "Error",
+    }
+
+    @staticmethod
+    def _summarize_tool_output(result: ToolResult) -> str:
+        """Create a human-readable summary of tool output."""
+        if not result.success:
+            return result.error[:400] if result.error else "Failed"
+        if isinstance(result.data, dict):
+            # Try named summary keys first
+            for key in ("summary", "message", "status", "match_status", "result"):
+                if key in result.data:
+                    return str(result.data[key])[:400]
+            # Build a readable string from key-value pairs
+            labels = BaseAgent._FIELD_LABELS
+            parts = []
+            for k, v in list(result.data.items())[:12]:
+                if v is None:
+                    continue
+                label = labels.get(k, k.replace("_", " "))
+                if isinstance(v, bool):
+                    parts.append(f"{label}: {'yes' if v else 'no'}")
+                elif isinstance(v, list):
+                    if len(v) <= 3 and all(isinstance(x, str) for x in v):
+                        parts.append(f"{label}: {', '.join(v)}")
+                    else:
+                        parts.append(f"{label}: {len(v)} items")
+                elif isinstance(v, dict):
+                    parts.append(f"{label}: {len(v)} fields")
+                elif isinstance(v, str) and len(v) > 200:
+                    parts.append(f"{label}: {v[:200]}...")
+                else:
+                    parts.append(f"{label}: {v}")
+            return ", ".join(parts) if parts else "OK"
+        return str(result.data)[:400] if result.data else "OK"
+
     def _init_messages(self, ctx: AgentContext, agent_run: AgentRun) -> List[Dict[str, str]]:
         sys_msg = self.system_prompt
         user_msg = self.build_user_message(ctx)
@@ -603,6 +720,7 @@ class BaseAgent(ABC):
                         input_data=arguments,
                         output_data={"error": result.error, "permission_denied": True},
                         success=False,
+                        tenant=agent_run.tenant,
                     )
                     return result
 
@@ -610,9 +728,13 @@ class BaseAgent(ABC):
             # create child spans under the agent trace.
             if _tool_span is not None:
                 arguments["lf_parent_span"] = _tool_span
+            # Inject tenant from AgentContext so tools scope queries.
+            if hasattr(self, "_agent_context") and getattr(self._agent_context, "tenant", None):
+                arguments["tenant"] = self._agent_context.tenant
             result = tool.execute(**arguments)
             # Remove non-serialisable span before audit persistence.
             arguments.pop("lf_parent_span", None)
+            arguments.pop("tenant", None)
 
         # Audit log
         ToolCallLogger.log(agent_run, tool_name, arguments, result)
@@ -624,6 +746,7 @@ class BaseAgent(ABC):
             output_data=result.data if result.success else {"error": result.error},
             success=result.success,
             duration_ms=result.duration_ms,
+            tenant=agent_run.tenant,
         )
         return result
 
@@ -692,6 +815,7 @@ class BaseAgent(ABC):
         }
         agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
         agent_run.confidence = output.confidence
+        self._calculate_actual_cost(agent_run)
         agent_run.save()
 
         # Persist decisions
@@ -721,7 +845,34 @@ class BaseAgent(ABC):
                 invoice_id=getattr(agent_run, "invoice_id", None),
                 recommendation_type=output.recommendation_type or "",
                 prompt_version=getattr(agent_run, "prompt_version", "") or "",
+                tenant=agent_run.tenant,
             )
+
+    @staticmethod
+    def _calculate_actual_cost(agent_run) -> None:
+        """Look up the LLMCostRate for the model used and calculate actual_cost_usd."""
+        if not agent_run.llm_model_used or not agent_run.prompt_tokens:
+            return
+        try:
+            from apps.agents.models import LLMCostRate
+            from django.utils import timezone as tz
+
+            today = tz.now().date()
+            rate = (
+                LLMCostRate.objects
+                .filter(model_name=agent_run.llm_model_used, effective_from__lte=today)
+                .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today))
+                .order_by("-effective_from")
+                .first()
+            )
+            if rate is None:
+                return
+            from decimal import Decimal
+            prompt_cost = (Decimal(agent_run.prompt_tokens) / Decimal(1000)) * rate.input_cost_per_1k_tokens
+            completion_cost = (Decimal(agent_run.completion_tokens or 0) / Decimal(1000)) * rate.output_cost_per_1k_tokens
+            agent_run.actual_cost_usd = prompt_cost + completion_cost
+        except Exception:
+            logger.debug("Failed to calculate actual cost for AgentRun %s", agent_run.pk, exc_info=True)
 
     @staticmethod
     def _sanitise_text(text: str) -> str:
@@ -917,6 +1068,7 @@ class BaseAgent(ABC):
             role=role,
             content=content,
             message_index=index,
+            tenant=agent_run.tenant,
         )
 
     @staticmethod

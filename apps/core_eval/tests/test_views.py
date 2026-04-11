@@ -10,6 +10,7 @@ from apps.accounts.tests.factories import (
     UserFactory,
     UserRoleFactory,
 )
+from apps.accounts.models import CompanyProfile
 from apps.core_eval.models import EvalRun, LearningAction, LearningSignal
 
 
@@ -18,14 +19,21 @@ from apps.core_eval.models import EvalRun, LearningAction, LearningSignal
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
+def tenant(db):
+    return CompanyProfile.objects.create(
+        name="Test Tenant", slug="test-eval-tenant", is_active=True,
+    )
+
+
+@pytest.fixture()
 def client():
     return Client()
 
 
 @pytest.fixture()
-def user(db):
+def user(db, tenant):
     """Regular user with no eval permissions."""
-    return UserFactory(role="AP_PROCESSOR")
+    return UserFactory(role="AP_PROCESSOR", company=tenant)
 
 
 @pytest.fixture()
@@ -35,9 +43,9 @@ def admin_user(db):
 
 
 @pytest.fixture()
-def eval_viewer(db):
+def eval_viewer(db, tenant):
     """User with eval.view permission via RBAC."""
-    u = UserFactory(role="REVIEWER")
+    u = UserFactory(role="REVIEWER", company=tenant)
     role = RoleFactory(code="EVAL_VIEWER")
     perm = PermissionFactory(code="eval.view", module="eval", action="view")
     RolePermissionFactory(role=role, permission=perm)

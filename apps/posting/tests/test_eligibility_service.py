@@ -7,6 +7,7 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 from apps.core.enums import InvoicePostingStatus, InvoiceStatus, PostingRunStatus
+from apps.extraction.models import ExtractionApproval
 
 
 @pytest.fixture
@@ -65,7 +66,6 @@ class TestEligibilityChecks:
             original_filename="test.pdf",
             file="test.pdf",
         )
-        from apps.extraction.models import ExtractionApproval
         from apps.core.enums import ExtractionApprovalStatus
         ExtractionApproval.objects.create(
             invoice=inv,
@@ -82,7 +82,6 @@ class TestEligibilityChecks:
         from apps.documents.models import Invoice
         from apps.posting.services.eligibility_service import PostingEligibilityService
         from apps.core.enums import ExtractionApprovalStatus
-        from apps.extraction.models import ExtractionApproval
 
         inv = Invoice.objects.create(
             invoice_number="INV-E03",
@@ -106,7 +105,6 @@ class TestEligibilityChecks:
         from apps.documents.models import Invoice
         from apps.posting.services.eligibility_service import PostingEligibilityService
         from apps.core.enums import ExtractionApprovalStatus
-        from apps.extraction.models import ExtractionApproval
 
         inv = Invoice.objects.create(
             invoice_number="INV-E04",
@@ -131,7 +129,6 @@ class TestEligibilityChecks:
         from apps.documents.models import Invoice
         from apps.posting.services.eligibility_service import PostingEligibilityService
         from apps.core.enums import ExtractionApprovalStatus
-        from apps.extraction.models import ExtractionApproval
 
         inv = Invoice.objects.create(
             invoice_number="",
@@ -155,7 +152,6 @@ class TestEligibilityChecks:
         from apps.documents.models import Invoice
         from apps.posting.services.eligibility_service import PostingEligibilityService
         from apps.core.enums import ExtractionApprovalStatus
-        from apps.extraction.models import ExtractionApproval
 
         inv = Invoice.objects.create(
             invoice_number="INV-E06",
@@ -199,7 +195,6 @@ class TestEligibilityChecks:
         from apps.posting.models import InvoicePosting
         from apps.posting.services.eligibility_service import PostingEligibilityService
         from apps.core.enums import ExtractionApprovalStatus
-        from apps.extraction.models import ExtractionApproval
 
         inv = Invoice.objects.create(
             invoice_number="INV-E08",
@@ -228,7 +223,6 @@ class TestEligibilityChecks:
         from apps.posting_core.models import PostingRun
         from apps.posting.services.eligibility_service import PostingEligibilityService
         from apps.core.enums import ExtractionApprovalStatus
-        from apps.extraction.models import ExtractionApproval
 
         inv = Invoice.objects.create(
             invoice_number="INV-E09",

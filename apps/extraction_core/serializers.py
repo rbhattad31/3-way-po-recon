@@ -288,7 +288,7 @@ class ExtractionRequestSerializer(serializers.Serializer):
         required=False,
         default=None,
         allow_null=True,
-        help_text="ExtractionDocument PK to persist results on",
+        help_text="DocumentUpload PK to persist results on",
     )
     enable_llm = serializers.BooleanField(
         required=False,

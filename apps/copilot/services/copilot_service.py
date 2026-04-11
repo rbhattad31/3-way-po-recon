@@ -225,28 +225,39 @@ class APCopilotService:
         return getattr(user, "role", None) == UserRole.REVIEWER
 
     @staticmethod
-    def _scoped_cases(user):
-        """Return APCase queryset scoped to what *user* may see."""
-        from apps.cases.selectors.case_selectors import CaseSelectors
-        return CaseSelectors.scope_for_user(
-            __import__("apps.cases.models", fromlist=["APCase"]).APCase.objects.filter(is_active=True),
-            user,
-        )
+    def _tenant_for(user):
+        """Derive tenant from user. Superusers return None (see all)."""
+        if getattr(user, "is_superuser", False):
+            return None
+        return getattr(user, "company", None)
 
     @staticmethod
-    def _scoped_invoices(user):
+    def _scoped_cases(user, tenant=None):
+        """Return APCase queryset scoped to what *user* may see."""
+        from apps.cases.selectors.case_selectors import CaseSelectors
+        qs = __import__("apps.cases.models", fromlist=["APCase"]).APCase.objects.filter(is_active=True)
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
+        return CaseSelectors.scope_for_user(qs, user)
+
+    @staticmethod
+    def _scoped_invoices(user, tenant=None):
         """Return Invoice queryset scoped to what *user* may see."""
         from apps.documents.models import Invoice
         qs = Invoice.objects.all()
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if APCopilotService._is_scoped_role(user):
             qs = qs.filter(document_upload__uploaded_by=user)
         return qs
 
     @staticmethod
-    def _scoped_recon_results(user):
+    def _scoped_recon_results(user, tenant=None):
         """Return ReconciliationResult queryset scoped to user's invoices."""
         from apps.reconciliation.models import ReconciliationResult
         qs = ReconciliationResult.objects.all()
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if APCopilotService._is_scoped_role(user):
             qs = qs.filter(invoice__document_upload__uploaded_by=user)
         elif APCopilotService._is_reviewer(user):
@@ -254,10 +265,12 @@ class APCopilotService:
         return qs
 
     @staticmethod
-    def _scoped_exceptions(user):
+    def _scoped_exceptions(user, tenant=None):
         """Return ReconciliationException queryset scoped to user's results."""
         from apps.reconciliation.models import ReconciliationException
         qs = ReconciliationException.objects.all()
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if APCopilotService._is_scoped_role(user):
             qs = qs.filter(result__invoice__document_upload__uploaded_by=user)
         elif APCopilotService._is_reviewer(user):
@@ -265,10 +278,12 @@ class APCopilotService:
         return qs
 
     @staticmethod
-    def _scoped_reviews(user):
+    def _scoped_reviews(user, tenant=None):
         """Return ReviewAssignment queryset scoped to user."""
-        from apps.reviews.models import ReviewAssignment
+        from apps.cases.models import ReviewAssignment
         qs = ReviewAssignment.objects.all()
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if APCopilotService._is_scoped_role(user):
             qs = qs.filter(reconciliation_result__invoice__document_upload__uploaded_by=user)
         elif APCopilotService._is_reviewer(user):
@@ -276,10 +291,12 @@ class APCopilotService:
         return qs
 
     @staticmethod
-    def _scoped_vendors(user):
+    def _scoped_vendors(user, tenant=None):
         """Return Vendor queryset scoped to user's invoices."""
         from apps.vendors.models import Vendor
         qs = Vendor.objects.filter(is_active=True)
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if APCopilotService._is_scoped_role(user):
             from apps.documents.models import Invoice
             vendor_ids = (
@@ -292,10 +309,12 @@ class APCopilotService:
         return qs
 
     @staticmethod
-    def _scoped_agent_runs(user):
+    def _scoped_agent_runs(user, tenant=None):
         """Return AgentRun queryset scoped to user's recon results."""
         from apps.agents.models import AgentRun
         qs = AgentRun.objects.all()
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if APCopilotService._is_scoped_role(user):
             qs = qs.filter(reconciliation_result__invoice__document_upload__uploaded_by=user)
         elif APCopilotService._is_reviewer(user):
@@ -305,7 +324,8 @@ class APCopilotService:
     @staticmethod
     def _user_can_access_case(user, case_id: int) -> bool:
         """Return True if user is allowed to access the given case."""
-        return APCopilotService._scoped_cases(user).filter(pk=case_id).exists()
+        _t = APCopilotService._tenant_for(user)
+        return APCopilotService._scoped_cases(user, tenant=_t).filter(pk=case_id).exists()
 
     # ------------------------------------------------------------------
     # Session management
@@ -315,6 +335,7 @@ class APCopilotService:
     def start_session(
         user,
         case_id: Optional[int] = None,
+        tenant=None,
     ) -> CopilotSession:
         """Create or resume a copilot session.
 
@@ -362,6 +383,7 @@ class APCopilotService:
             linked_case_id=case_id,
             linked_invoice=linked_invoice,
             trace_id=uuid.uuid4().hex,
+            tenant=tenant,
         )
 
         # Auto-generate title
@@ -378,6 +400,7 @@ class APCopilotService:
                 user_id=user.pk if user else None,
                 session_id=f"copilot-{session.pk}",
                 metadata={
+                    "tenant_id": getattr(tenant, "pk", None) if tenant else None,
                     "session_id": str(session.pk),
                     "case_id": case_id,
                     "role": primary_role,
@@ -407,7 +430,7 @@ class APCopilotService:
         Searches by case_number, invoice number, vendor name, or PO number.
         Returns at most 15 lightweight results, scoped to user access.
         """
-        qs = APCopilotService._scoped_cases(user).select_related(
+        qs = APCopilotService._scoped_cases(user, tenant=APCopilotService._tenant_for(user)).select_related(
             "invoice", "vendor",
         )
         if query:
@@ -597,6 +620,7 @@ class APCopilotService:
             linked_case_id=session.linked_case_id,
             trace_id=session.trace_id,
             span_id=uuid.uuid4().hex[:16],
+            tenant=session.tenant,
         )
         session.last_message_at = timezone.now()
         session.save(update_fields=["last_message_at"])
@@ -629,6 +653,7 @@ class APCopilotService:
             token_count=response_payload.get("token_count"),
             trace_id=session.trace_id,
             span_id=uuid.uuid4().hex[:16],
+            tenant=session.tenant,
         )
         session.last_message_at = timezone.now()
         session.save(update_fields=["last_message_at"])
@@ -715,7 +740,7 @@ class APCopilotService:
             # Include extraction result ID for console link
             try:
                 from apps.extraction.models import ExtractionResult
-                ext_result = ExtractionResult.objects.filter(invoice=inv).values_list("pk", flat=True).first()
+                ext_result = ExtractionResult.objects.filter(document_upload__invoices=inv).values_list("pk", flat=True).first()
                 if ext_result:
                     ctx["invoice"]["extraction_result_id"] = ext_result
             except Exception:
@@ -1004,6 +1029,7 @@ class APCopilotService:
                 user_id=user.pk if user else None,
                 session_id=f"copilot-{session.pk}",
                 metadata={
+                    "tenant_id": getattr(session, "tenant_id", None),
                     "session_id": str(session.pk),
                     "case_id": session.linked_case_id,
                 },
@@ -1616,11 +1642,12 @@ class APCopilotService:
         """Gather system-wide aggregate data for general queries (scoped to user access)."""
         from django.db.models import Count, Q, Sum
 
+        _t = APCopilotService._tenant_for(user)
         # Use scoped querysets
-        recon_qs = APCopilotService._scoped_recon_results(user)
-        case_qs = APCopilotService._scoped_cases(user)
-        invoice_qs = APCopilotService._scoped_invoices(user)
-        review_qs = APCopilotService._scoped_reviews(user)
+        recon_qs = APCopilotService._scoped_recon_results(user, tenant=_t)
+        case_qs = APCopilotService._scoped_cases(user, tenant=_t)
+        invoice_qs = APCopilotService._scoped_invoices(user, tenant=_t)
+        review_qs = APCopilotService._scoped_reviews(user, tenant=_t)
 
         # Reconciliation breakdown
         match_counts = dict(
@@ -1955,7 +1982,7 @@ class APCopilotService:
 
         from apps.tools.models import ToolCall
 
-        runs = APCopilotService._scoped_agent_runs(user)
+        runs = APCopilotService._scoped_agent_runs(user, tenant=APCopilotService._tenant_for(user))
         total_runs = runs.count()
         status_counts = dict(
             runs.values_list("status").annotate(c=Count("id"))
@@ -2030,7 +2057,7 @@ class APCopilotService:
     def _topic_exceptions(user, role: str) -> Dict[str, Any]:
         from django.db.models import Count
 
-        exc_qs = APCopilotService._scoped_exceptions(user)
+        exc_qs = APCopilotService._scoped_exceptions(user, tenant=APCopilotService._tenant_for(user))
         exc_counts = dict(
             exc_qs.values_list("exception_type")
             .annotate(c=Count("id"))
@@ -2077,7 +2104,7 @@ class APCopilotService:
     def _topic_reviews(user, role: str) -> Dict[str, Any]:
         from django.db.models import Count
 
-        review_qs = APCopilotService._scoped_reviews(user)
+        review_qs = APCopilotService._scoped_reviews(user, tenant=APCopilotService._tenant_for(user))
         status_counts = dict(
             review_qs.values_list("status")
             .annotate(c=Count("id"))
@@ -2130,8 +2157,9 @@ class APCopilotService:
 
         from apps.documents.models import Invoice, PurchaseOrder
 
-        vendor_qs = APCopilotService._scoped_vendors(user)
-        invoice_qs = APCopilotService._scoped_invoices(user)
+        _t = APCopilotService._tenant_for(user)
+        vendor_qs = APCopilotService._scoped_vendors(user, tenant=_t)
+        invoice_qs = APCopilotService._scoped_invoices(user, tenant=_t)
         total_vendors = vendor_qs.count()
         top_by_invoices = list(
             invoice_qs.exclude(vendor__isnull=True)
@@ -2190,7 +2218,7 @@ class APCopilotService:
     def _topic_invoices(user, role: str) -> Dict[str, Any]:
         from django.db.models import Count
 
-        invoice_qs = APCopilotService._scoped_invoices(user)
+        invoice_qs = APCopilotService._scoped_invoices(user, tenant=APCopilotService._tenant_for(user))
         status_counts = dict(
             invoice_qs.values_list("status")
             .annotate(c=Count("id"))
@@ -2227,7 +2255,7 @@ class APCopilotService:
     def _topic_cases(user, role: str) -> Dict[str, Any]:
         from django.db.models import Count
 
-        case_qs = APCopilotService._scoped_cases(user)
+        case_qs = APCopilotService._scoped_cases(user, tenant=APCopilotService._tenant_for(user))
         status_counts = dict(
             case_qs.values_list("status")
             .annotate(c=Count("id"))

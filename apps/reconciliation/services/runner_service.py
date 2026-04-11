@@ -79,7 +79,10 @@ class ReconciliationRunnerService:
         # Sub-services
         self.po_lookup = POLookupService()
         self.mode_resolver = ReconciliationModeResolver(self.config)
-        self.router = ReconciliationExecutionRouter(self.tolerance)
+        self.router = ReconciliationExecutionRouter(
+            self.tolerance,
+            partial_invoice_threshold_pct=getattr(self.config, 'partial_invoice_threshold_pct', 95.0),
+        )
         self.classifier = ClassificationService()
         self.exception_builder = ExceptionBuilderService()
         self.result_service = ReconciliationResultService()
@@ -94,6 +97,7 @@ class ReconciliationRunnerService:
         triggered_by=None,
         lf_trace=None,
         lf_trace_id=None,
+        tenant=None,
     ) -> ReconciliationRun:
         """Execute reconciliation for a set of invoices.
 
@@ -112,6 +116,7 @@ class ReconciliationRunnerService:
             started_at=timezone.now(),
             total_invoices=len(invoices),
             triggered_by=triggered_by,
+            tenant=tenant,
         )
 
         # Langfuse: open a "reconciliation_run" span.
@@ -131,6 +136,7 @@ class ReconciliationRunnerService:
                     lf_trace,
                     "reconciliation_run",
                     metadata={
+                        "tenant_id": getattr(recon_run, "tenant_id", None),
                         "run_pk": recon_run.pk,
                         "total_invoices": len(invoices),
                         "config": self.config.name,
@@ -138,12 +144,30 @@ class ReconciliationRunnerService:
                 )
                 _lf_run_trace_is_mine = True
             else:
+                # Derive session_id from the case linked to the first invoice
+                # so the trace groups under the same "case-AP-..." session.
+                from apps.core.observability_helpers import derive_session_id
+                _single_invoice_id = invoices[0].pk if len(invoices) == 1 else None
+                _run_case_number = None
+                if _single_invoice_id:
+                    try:
+                        from apps.cases.models import APCase
+                        _run_case_number = APCase.objects.filter(
+                            invoice_id=_single_invoice_id, is_active=True,
+                        ).values_list("case_number", flat=True).first()
+                    except Exception:
+                        pass
+                _run_session_id = derive_session_id(
+                    case_number=_run_case_number,
+                    invoice_id=_single_invoice_id,
+                )
                 _lf_run_trace = start_trace_safe(
                     _trace_id,
                     "reconciliation_run",
                     user_id=getattr(triggered_by, "pk", None) if triggered_by else None,
-                    session_id=f"recon-run-{recon_run.pk}",
+                    session_id=_run_session_id,
                     metadata={
+                        "tenant_id": getattr(recon_run, "tenant_id", None),
                         "run_pk": recon_run.pk,
                         "total_invoices": len(invoices),
                         "config": self.config.name,
@@ -265,11 +289,13 @@ class ReconciliationRunnerService:
         )
 
         _tid = lf_trace_id or getattr(run, "trace_id", "") or str(run.pk)
+        _tenant_id = getattr(run, "tenant_id", None)
 
         # ---------------------------------------------------------------
         # 1. PO Lookup
         # ---------------------------------------------------------------
         _lf_po = start_span_safe(lf_trace, "po_lookup", metadata={
+            "tenant_id": _tenant_id,
             "invoice_id": invoice.pk,
             "po_number": invoice.po_number or "",
         })
@@ -374,11 +400,11 @@ class ReconciliationRunnerService:
         _line_ratio = 0.0
         _tolerance_passed = True
         if _lines:
-            _matched_count = len([p for p in (_lines.line_pairs or []) if p.matched])
-            _total_count = max(_lines.total_invoice_lines or 1, 1)
+            _matched_count = len([p for p in (_lines.pairs or []) if p.matched])
+            _total_count = max(len(_lines.pairs) + len(_lines.unmatched_invoice_lines), 1)
             _line_ratio = _matched_count / _total_count
             _tolerance_passed = all(
-                getattr(p, "within_tolerance", True) for p in (_lines.line_pairs or []) if p.matched
+                getattr(p, "within_tolerance", True) for p in (_lines.pairs or []) if p.matched
             )
         _grn_ratio = 0.0
         if _grn and hasattr(_grn, "fully_received"):
@@ -396,6 +422,8 @@ class ReconciliationRunnerService:
             "grn_match_ratio": round(_grn_ratio, 3) if reconciliation_mode == "THREE_WAY" else None,
             "grn_checked": routed.grn_checked,
             "amount_delta": round(_amount_delta, 2),
+            "is_partial_invoice": bool(routed.po_balance and routed.po_balance.is_partial),
+            "prior_invoice_count": routed.po_balance.prior_invoice_count if routed.po_balance else 0,
         }
         end_span_safe(_lf_match, output=_match_meta)
         score_observation_safe(_lf_match, RECON_HEADER_MATCH_RATIO, _header_ratio)
@@ -506,6 +534,7 @@ class ReconciliationRunnerService:
             extraction_confidence=invoice.extraction_confidence,
             confidence_threshold=self.config.extraction_confidence_threshold,
             reconciliation_mode=reconciliation_mode,
+            po_balance=routed.po_balance,
         )
         if exceptions:
             from apps.reconciliation.models import ReconciliationException
@@ -533,7 +562,7 @@ class ReconciliationRunnerService:
         })
         _review_created = False
         if match_status == MatchStatus.REQUIRES_REVIEW:
-            from apps.reviews.services import ReviewWorkflowService
+            from apps.cases.services.review_workflow_service import ReviewWorkflowService
             ReviewWorkflowService.create_assignment(
                 result=result,
                 priority=3 if exceptions else 5,
@@ -577,6 +606,7 @@ class ReconciliationRunnerService:
 
         # Update root trace metadata with eval-ready summary
         _eval_meta = {
+            "tenant_id": _tenant_id,
             "invoice_id": invoice.pk,
             "reconciliation_result_id": result.pk,
             "reconciliation_run_id": run.pk,

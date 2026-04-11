@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from django.db import IntegrityError, transaction
+
 from apps.agents.models import AgentRecommendation, AgentRun, DecisionLog
 from apps.reconciliation.models import ReconciliationResult
 
@@ -23,6 +25,7 @@ class DecisionLogService:
         rationale: str = "",
         confidence: Optional[float] = None,
         evidence: Optional[dict] = None,
+        tenant=None,
     ) -> DecisionLog:
         return DecisionLog.objects.create(
             agent_run=agent_run,
@@ -30,6 +33,7 @@ class DecisionLogService:
             rationale=rationale,
             confidence=confidence,
             evidence_refs=evidence,
+            tenant=tenant,
         )
 
     @staticmethod
@@ -40,6 +44,7 @@ class DecisionLogService:
         confidence: float = 0.0,
         reasoning: str = "",
         evidence: Optional[dict] = None,
+        tenant=None,
     ) -> AgentRecommendation:
         """Create a recommendation record, or return the existing pending one.
 
@@ -53,26 +58,44 @@ class DecisionLogService:
         cycle creates a fresh recommendation) are allowed because the accepted
         filter ensures only the pending record is de-duped.
         """
-        existing = AgentRecommendation.objects.filter(
-            reconciliation_result=reconciliation_result,
-            recommendation_type=recommendation_type,
-            accepted__isnull=True,  # pending only; accepted/rejected recs are not affected
-        ).first()
-        if existing:
-            logger.info(
-                "Idempotent recommendation: result=%s type=%s -- pending rec #%s already exists, skipping create",
-                reconciliation_result.pk, recommendation_type, existing.pk,
-            )
-            return existing
+        # Use select_for_update inside a transaction to prevent a TOCTOU race
+        # where two concurrent pipeline retries both pass the filter check and
+        # then both issue a CREATE, resulting in duplicate pending recommendations.
+        with transaction.atomic():
+            existing = AgentRecommendation.objects.select_for_update().filter(
+                reconciliation_result=reconciliation_result,
+                recommendation_type=recommendation_type,
+                accepted__isnull=True,  # pending only; accepted/rejected recs are not affected
+            ).first()
+            if existing:
+                logger.info(
+                    "Idempotent recommendation: result=%s type=%s -- pending rec #%s already exists, skipping create",
+                    reconciliation_result.pk, recommendation_type, existing.pk,
+                )
+                return existing
 
-        return AgentRecommendation.objects.create(
-            agent_run=agent_run,
-            reconciliation_result=reconciliation_result,
-            recommendation_type=recommendation_type,
-            confidence=confidence,
-            reasoning=reasoning,
-            evidence=evidence,
-        )
+            try:
+                return AgentRecommendation.objects.create(
+                    agent_run=agent_run,
+                    reconciliation_result=reconciliation_result,
+                    recommendation_type=recommendation_type,
+                    confidence=confidence,
+                    reasoning=reasoning,
+                    evidence=evidence,
+                    tenant=tenant,
+                )
+            except IntegrityError:
+                # Lost a race despite the select_for_update (edge case with no unique
+                # constraint). Return whatever is now in the DB.
+                logger.warning(
+                    "IntegrityError creating recommendation for result=%s type=%s — returning existing",
+                    reconciliation_result.pk, recommendation_type,
+                )
+                return AgentRecommendation.objects.filter(
+                    reconciliation_result=reconciliation_result,
+                    recommendation_type=recommendation_type,
+                    accepted__isnull=True,
+                ).first()
 
     # ------------------------------------------------------------------
     # Read

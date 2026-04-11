@@ -23,17 +23,22 @@ class EvalFieldOutcomeService:
         confidence: Optional[float] = None,
         tenant_id: str = "",
         detail_json: Optional[dict] = None,
+        tenant=None,
     ) -> EvalFieldOutcome:
-        return EvalFieldOutcome.objects.create(
+        kwargs = dict(
             eval_run=eval_run,
             field_name=field_name,
             status=status,
             predicted_value=predicted_value,
             ground_truth_value=ground_truth_value,
             confidence=confidence,
-            tenant_id=tenant_id,
             detail_json=detail_json or {},
         )
+        if tenant is not None:
+            kwargs["tenant"] = tenant
+        elif tenant_id:
+            kwargs["tenant_id"] = tenant_id
+        return EvalFieldOutcome.objects.create(**kwargs)
 
     @staticmethod
     def bulk_record(
@@ -41,6 +46,7 @@ class EvalFieldOutcomeService:
         eval_run: Optional[EvalRun] = None,
         outcomes: List[dict],
         tenant_id: str = "",
+        tenant=None,
     ) -> List[EvalFieldOutcome]:
         """Create multiple field outcomes in one batch.
 
@@ -48,19 +54,26 @@ class EvalFieldOutcomeService:
         ``status``.  Optional keys: ``predicted_value``, ``ground_truth_value``,
         ``confidence``, ``detail_json``, ``tenant_id`` (per-row override).
         """
-        objs = [
-            EvalFieldOutcome(
+        _resolved_tenant = tenant
+        _resolved_tenant_id = tenant_id
+        objs = []
+        for o in outcomes:
+            kw = dict(
                 eval_run=eval_run,
                 field_name=o["field_name"],
                 status=o["status"],
                 predicted_value=o.get("predicted_value", ""),
                 ground_truth_value=o.get("ground_truth_value", ""),
                 confidence=o.get("confidence"),
-                tenant_id=o.get("tenant_id", tenant_id),
                 detail_json=o.get("detail_json", {}),
             )
-            for o in outcomes
-        ]
+            row_tenant = o.get("tenant", _resolved_tenant)
+            row_tenant_id = o.get("tenant_id", _resolved_tenant_id)
+            if row_tenant is not None:
+                kw["tenant"] = row_tenant
+            elif row_tenant_id:
+                kw["tenant_id"] = row_tenant_id
+            objs.append(EvalFieldOutcome(**kw))
         return EvalFieldOutcome.objects.bulk_create(objs)
 
     @staticmethod
@@ -69,6 +82,7 @@ class EvalFieldOutcomeService:
         eval_run: EvalRun,
         outcomes: List[dict],
         tenant_id: str = "",
+        tenant=None,
     ) -> List[EvalFieldOutcome]:
         """Delete existing outcomes for *eval_run* then bulk-create new ones.
 
@@ -76,19 +90,26 @@ class EvalFieldOutcomeService:
         without duplicating rows.
         """
         EvalFieldOutcome.objects.filter(eval_run=eval_run).delete()
-        objs = [
-            EvalFieldOutcome(
+        _resolved_tenant = tenant
+        _resolved_tenant_id = tenant_id
+        objs = []
+        for o in outcomes:
+            kw = dict(
                 eval_run=eval_run,
                 field_name=o["field_name"],
                 status=o["status"],
                 predicted_value=o.get("predicted_value", ""),
                 ground_truth_value=o.get("ground_truth_value", ""),
                 confidence=o.get("confidence"),
-                tenant_id=o.get("tenant_id", tenant_id),
                 detail_json=o.get("detail_json", {}),
             )
-            for o in outcomes
-        ]
+            row_tenant = o.get("tenant", _resolved_tenant)
+            row_tenant_id = o.get("tenant_id", _resolved_tenant_id)
+            if row_tenant is not None:
+                kw["tenant"] = row_tenant
+            elif row_tenant_id:
+                kw["tenant_id"] = row_tenant_id
+            objs.append(EvalFieldOutcome(**kw))
         return EvalFieldOutcome.objects.bulk_create(objs)
 
     @staticmethod

@@ -184,16 +184,36 @@ class StageExecutor:
                 "invoice_status": invoice.status,
             }
 
-        # Invalid/duplicate invoices -- still pause, approval or rejection
-        # will be handled by the approval service.
-        CaseStateMachine.transition(
-            case, CaseStatus.PENDING_EXTRACTION_APPROVAL, PerformedByType.SYSTEM
+        if invoice.status == InvoiceStatus.INVALID:
+            # Invalid or duplicate invoice -- reject the case
+            _reason = "duplicate invoice" if invoice.is_duplicate else "invalid extraction"
+            CaseStateMachine.transition(
+                case, CaseStatus.PENDING_EXTRACTION_APPROVAL, PerformedByType.SYSTEM
+            )
+            CaseStateMachine.transition(
+                case, CaseStatus.REJECTED, PerformedByType.SYSTEM
+            )
+            logger.info(
+                "Case %s: invoice %s is %s, rejecting case",
+                case.case_number, invoice.pk, _reason,
+            )
+            return {
+                "approved": False,
+                "rejected": True,
+                "invoice_status": invoice.status,
+                "reason": _reason,
+            }
+
+        # Unexpected status -- pause the pipeline and let a human decide
+        logger.warning(
+            "Case %s: invoice in unexpected status %s, pausing pipeline",
+            case.case_number, invoice.status,
         )
         return {
             "approved": False,
             "paused": True,
             "invoice_status": invoice.status,
-            "note": "Invoice in unexpected status, pausing for review",
+            "reason": f"unexpected invoice status: {invoice.status}",
         }
 
     @staticmethod
@@ -348,13 +368,13 @@ class StageExecutor:
             case.reconciliation_result = result
             case.save(update_fields=["reconciliation_result", "updated_at"])
 
-            # Always advance to exception analysis — the full pipeline
-            # (exception analysis -> review routing -> case summary) runs
-            # for all results, including MATCHED. Auto-close decisions are
-            # made by the exception analysis stage, not here.
-            CaseStateMachine.transition(
-                case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
-            )
+        # Always advance to exception analysis — the full pipeline
+        # (exception analysis -> review routing -> case summary) runs
+        # for all results, including MATCHED and ERROR.  Auto-close decisions
+        # are made by the exception analysis stage, not here.
+        CaseStateMachine.transition(
+            case, CaseStatus.EXCEPTION_ANALYSIS_IN_PROGRESS, PerformedByType.DETERMINISTIC
+        )
 
         return {
             "run_id": run.id,
@@ -455,7 +475,7 @@ class StageExecutor:
         # Map failed validation checks to ReconciliationException records
         # so the agent pipeline can reason over them.
         _CHECK_TO_EXCEPTION = {
-            "vendor": (ExceptionType.VENDOR_MISMATCH, ExceptionSeverity.HIGH),
+            "vendor": (ExceptionType.VENDOR_NOT_VERIFIED, ExceptionSeverity.HIGH),
             "duplicate": (ExceptionType.DUPLICATE_INVOICE, ExceptionSeverity.HIGH),
             "mandatory_fields": (ExceptionType.MISSING_MANDATORY_FIELDS, ExceptionSeverity.HIGH),
             "tax": (ExceptionType.TAX_MISMATCH, ExceptionSeverity.MEDIUM),
@@ -570,8 +590,11 @@ class StageExecutor:
             from apps.agents.services.orchestrator import AgentOrchestrator
 
             orchestrator = AgentOrchestrator()
-            orch_result = orchestrator.execute(case.reconciliation_result)
-            # Note: request_user omitted — stage executor runs inside Celery
+            orch_result = orchestrator.execute(
+                case.reconciliation_result,
+                tenant=getattr(case, "tenant", None),
+            )
+            # Note: request_user omitted -- stage executor runs inside Celery
             # or system context, so the orchestrator resolves to system-agent.
 
             # Handle auto-close: when the orchestrator skips agents because

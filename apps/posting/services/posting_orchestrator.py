@@ -34,6 +34,7 @@ class PostingOrchestrator:
         cls,
         invoice_id: int,
         *,
+        tenant=None,
         user=None,
         trigger: str = "system",
     ) -> InvoicePosting:
@@ -68,6 +69,7 @@ class PostingOrchestrator:
             defaults={
                 "status": InvoicePostingStatus.MAPPING_IN_PROGRESS,
                 "created_by": user,
+                "tenant": getattr(invoice, "tenant", None),
             },
         )
 
@@ -170,6 +172,7 @@ class PostingOrchestrator:
                     actor_roles_snapshot=["SYSTEM_AGENT"],
                     permission_source="system",
                     access_granted=True,
+                    tenant=getattr(invoice, "tenant", None),
                 )
                 SystemPostingPreparationAgent().run(_posting_ctx)
             except Exception:

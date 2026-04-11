@@ -57,6 +57,7 @@ The **3-Way PO Reconciliation Platform** is an enterprise Django application tha
 | **ERP Integration Layer** | Connector framework (Dynamics, Zoho, Salesforce, Custom) with cache, resolver, and fallback chain |
 | **Procurement Intelligence** | Product recommendation, should-cost benchmarking, and 6-dimension validation for procurement requests |
 | **Multi-Country Extraction** | Jurisdiction-aware extraction platform with credit system, OCR cost tracking, and country pack governance |
+| **Multi-Tenant Architecture** | Shared-database row-level tenant isolation via CompanyProfile FK; TenantMiddleware, TenantQuerysetMixin, BaseTool._scoped(); platform admin cross-tenant access |
 
 ### Business Flow Summary
 
@@ -104,10 +105,10 @@ ReconciliationRunnerService
 ├── ReconciliationExecutionRouter
 │   ├── TwoWayMatchService
 │   │   ├── HeaderMatchService → ToleranceEngine
-│   │   └── LineMatchService → ToleranceEngine
+│   │   └── LineMatchService (v2 multi-signal scorer) → ToleranceEngine
 │   └── ThreeWayMatchService
 │       ├── HeaderMatchService → ToleranceEngine
-│       ├── LineMatchService → ToleranceEngine
+│       ├── LineMatchService (v2 multi-signal scorer) → ToleranceEngine
 │       ├── GRNLookupService (via ERPResolutionService)
 │       └── GRNMatchService
 ├── ClassificationService
@@ -277,15 +278,16 @@ Additional mixins:
 
 | Model | Fields | Notes |
 |---|---|---|
-| **User** | email (login), first_name, last_name, role (legacy), is_active, is_staff, department | Custom model; RBAC helpers: `get_primary_role()`, `get_all_roles()`, `has_permission()`, `get_effective_permissions()`, `clear_permission_cache()`, `sync_legacy_role_field()` |
-| **Role** | code, name, description, is_system_role, is_active, rank | 6 system roles seeded; supports custom roles |
-| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 40 permissions across 14 modules |
+| **CompanyProfile** | name, legal_name, country, currency, industry, size_category, website, logo | Tenant entity; related: CompanyAlias, CompanyTaxID |
+| **User** | email (login), first_name, last_name, role (legacy), company (FK CompanyProfile), is_platform_admin, is_active, is_staff, department | Custom model; `company` = tenant FK; `is_platform_admin` = cross-tenant platform admin flag; RBAC helpers: `get_primary_role()`, `get_all_roles()`, `has_permission()`, `get_effective_permissions()`, `clear_permission_cache()`, `sync_legacy_role_field()` |
+| **Role** | code, name, description, is_system_role, is_active, rank | 10 system roles seeded (incl. SUPER_ADMIN rank 1, PROCUREMENT rank 45); supports custom roles |
+| **Permission** | code (e.g. `invoices.view`), name, module, action, is_active | 65 permissions across 18 modules (incl. tenants.*, platform.settings, eval.*, procurement.*) |
 | **RolePermission** | role FK, permission FK, is_allowed | Many-to-many with explicit allow flag; unique_together |
 | **UserRole** | user FK, role FK, is_primary, assigned_by, expires_at, is_active | Multi-role with expiry; `is_expired`/`is_effective` properties |
 | **UserPermissionOverride** | user FK, permission FK, override_type (ALLOW/DENY), reason, assigned_by, expires_at | Per-user overrides with audit trail |
 | **MenuConfig** | label, icon_class, url_name, required_permission, parent FK, order, is_separator | Dynamic menu items (future use) |
 
-**Permission Resolution Order**: Admin bypass → User DENY overrides → User ALLOW overrides → Role permissions
+**Permission Resolution Order**: Platform Admin bypass (`is_platform_admin`) -> Admin bypass -> User DENY overrides -> User ALLOW overrides -> Role permissions
 
 Legacy roles: `ADMIN`, `AP_PROCESSOR`, `REVIEWER`, `FINANCE_MANAGER`, `AUDITOR` — synced to new RBAC UserRole table
 
@@ -334,7 +336,7 @@ UPLOADED -> EXTRACTION_IN_PROGRESS -> EXTRACTED -> VALIDATED -> PENDING_APPROVAL
 | **ReconciliationPolicy** | policy_code, reconciliation_mode, vendor, invoice_type, item_category, business_unit, location_code, is_service/stock_invoice, priority, effective_from/to | Mode resolution rules; lower priority = higher precedence |
 | **ReconciliationRun** | status, started_at, completed_at, total_invoices, matched/partial/unmatched/error/review counts, triggered_by, reconciliation_mode | FK: config |
 | **ReconciliationResult** | match_status, requires_review, vendor_match, currency_match, po_total_match, total_amount_difference, grn_available, grn_fully_received, extraction/deterministic confidence, reconciliation_mode, mode_resolution_reason, summary | FK: run, invoice, purchase_order |
-| **ReconciliationResultLine** | qty_invoice/po/received, qty_difference/within_tolerance, price_invoice/po, price_difference/within_tolerance, amount_invoice/po, amount_difference/within_tolerance, tax_invoice/po/difference, description_similarity | FK: result, invoice_line, po_line |
+| **ReconciliationResultLine** | qty_invoice/po/received, qty_difference/within_tolerance, price_invoice/po, price_difference/within_tolerance, amount_invoice/po, amount_difference/within_tolerance, tax_invoice/po/difference, description_similarity, **match_method** (EXACT/DETERMINISTIC/LLM_FALLBACK/NONE), **match_confidence** (0-1 Decimal), **confidence_band** (HIGH/GOOD/MODERATE/LOW/NONE), **description_match_score**, **token_similarity_score**, **fuzzy_similarity_score**, **quantity_match_score**, **price_match_score**, **amount_match_score** (all Decimal 5,4), **candidate_count**, **is_ambiguous** (bool), **matched_signals** (JSON list), **rejected_signals** (JSON list), **line_match_meta** (JSON dict) | FK: result, invoice_line, po_line |
 | **ReconciliationException** | exception_type, severity, message, details (JSON), applies_to_mode, resolved, resolved_by, resolved_at | FK: result |
 
 #### Match Status Values
@@ -364,7 +366,7 @@ PENDING -> RUNNING -> COMPLETED | FAILED | SKIPPED
 
 | Model | Key Fields | Notes |
 |---|---|---|
-| **APCase** | case_number (AP-YYMMDD-NNNN), status, processing_path, priority, risk_score, extraction_confidence, requires_human_review, assigned_to, source_channel | FK: invoice, vendor, purchase_order, reconciliation_result, review_assignment |
+| **APCase** | case_number (AP-YYMMDD-NNNN), status, processing_path, priority, risk_score, extraction_confidence, requires_human_review, assigned_to, source_channel | FK: document_upload (set at upload), invoice (nullable, linked after extraction), vendor, purchase_order, reconciliation_result, review_assignment |
 | **APCaseStage** | stage_name, status, performed_by_type, performed_by_agent, retry_count, input/output_payload, started/completed_at | FK: case |
 | **APCaseArtifact** | artifact_type, linked_object_type/id, payload (JSON), version | FK: case, stage |
 | **APCaseDecision** | decision_type, decision_source, confidence, rationale, evidence (JSON) | FK: case, stage |
@@ -382,7 +384,7 @@ NEW → INTAKE_IN_PROGRESS → EXTRACTION_IN_PROGRESS → PATH_RESOLUTION_IN_PRO
     → IN_REVIEW → CLOSED | REJECTED | ESCALATED | FAILED
 ```
 
-### 5.9 Reviews (`apps/reviews/models.py`)
+### 5.9 Reviews (`apps/cases/models.py` -- merged from `apps/reviews`)
 
 | Model | Key Fields | Notes |
 |---|---|---|
@@ -406,8 +408,6 @@ PENDING → ASSIGNED → IN_REVIEW → APPROVED | REJECTED | REPROCESSED
 | **IntegrationLog** | integrations | Integration call audit log |
 | **ProcessingLog** | auditlog | Operational logging |
 | **AuditEvent** | auditlog | State change/governance events (38+ types) |
-| **FileProcessingStatus** | auditlog | File upload lifecycle tracking |
-| **GeneratedReport** | reports | Report generation tracking |
 
 ### 5.11 ERP Integration (`apps/erp_integration/models.py`)
 
@@ -506,6 +506,9 @@ AgentRun ──< AgentStep, AgentMessage, DecisionLog
 ReviewAssignment ──< ReviewComment, ManualReviewAction
                  ── ReviewDecision (1:1)
 
+> **Note:** Review models were merged from `apps/reviews` into `apps/cases`.
+> The `reviews` entry in INSTALLED_APPS is a migrations-only stub.
+
 ToolDefinition ──< ToolCall ── AgentRun
 ```
 
@@ -531,7 +534,7 @@ Core app enums live in `apps/core/enums.py` (25 classes). ERP-specific enums liv
 | `ReconciliationModeApplicability` | TWO_WAY, THREE_WAY, BOTH |
 | `ReconciliationRunStatus` | PENDING, RUNNING, COMPLETED, FAILED, PARTIAL |
 | `MatchStatus` | MATCHED, PARTIAL_MATCH, UNMATCHED, ERROR, REQUIRES_REVIEW |
-| `ExceptionType` | PO_NOT_FOUND, VENDOR_MISMATCH, ITEM_MISMATCH, QTY_MISMATCH, PRICE_MISMATCH, TAX_MISMATCH, AMOUNT_MISMATCH, DUPLICATE_INVOICE, EXTRACTION_LOW_CONFIDENCE, CURRENCY_MISMATCH, LOCATION_MISMATCH, GRN_NOT_FOUND, RECEIPT_SHORTAGE, INVOICE_QTY_EXCEEDS_RECEIVED, OVER_RECEIPT, MULTI_GRN_PARTIAL_RECEIPT, RECEIPT_LOCATION_MISMATCH, DELAYED_RECEIPT |
+| `ExceptionType` | PO_NOT_FOUND, VENDOR_MISMATCH, ITEM_MISMATCH, QTY_MISMATCH, PRICE_MISMATCH, TAX_MISMATCH, AMOUNT_MISMATCH, DUPLICATE_INVOICE, EXTRACTION_LOW_CONFIDENCE, CURRENCY_MISMATCH, LOCATION_MISMATCH, GRN_NOT_FOUND, RECEIPT_SHORTAGE, INVOICE_QTY_EXCEEDS_RECEIVED, OVER_RECEIPT, MULTI_GRN_PARTIAL_RECEIPT, RECEIPT_LOCATION_MISMATCH, DELAYED_RECEIPT, **NO_CONFIDENT_PO_LINE_MATCH**, **MULTIPLE_PO_LINE_CANDIDATES**, **LINE_DESCRIPTION_AMBIGUOUS**, **LINE_MATCH_LOW_CONFIDENCE** |
 | `ExceptionSeverity` | LOW, MEDIUM, HIGH, CRITICAL |
 
 ### Agents
@@ -758,15 +761,27 @@ Compares Invoice ↔ PO:
    - Currency: exact match
    - Total amount: within tolerance (default 1%)
 
-2. **Line Match** (`LineMatchService`)
-   - Composite scoring algorithm per line pair:
-     - Line number bonus: 0.20 (if same position)
-     - Description similarity: 0–0.30 (fuzzy match threshold: 70%)
-     - Quantity comparison: 0–0.20
-     - Price comparison: 0–0.20
-     - Amount comparison: 0–0.20
-   - Minimum score to match: 0.30
-   - Best-match assignment (greedy)
+2. **Line Match** (`LineMatchService` -- v2 deterministic multi-signal scorer)
+   - 11 weighted signals per candidate pair (total weight: 1.00):
+     - Item code exact match: 0.30 (when both sides have item_code)
+     - Description exact (normalised): 0.20
+     - Description token overlap (Jaccard): 0-0.15 (tiered: >=0.85/0.70/0.55/0.40)
+     - Description fuzzy (RapidFuzz token_sort_ratio): 0-0.10 (tiered: >=90/80/70/60)
+     - Quantity proximity: 0-0.10 (tiered: exact/<=2%/<=5%/<=10%)
+     - Unit price proximity: 0-0.07 (tiered: <=1%/<=3%/<=5%)
+     - Line amount proximity: 0-0.03 (tiered: <=1%/<=3%/<=5%)
+     - UOM compatibility: 0-0.02 (equivalence map with ~20 UOM groups)
+     - Category compatibility: 0-0.01
+     - Service/stock compatibility: 0-0.01
+     - Line number alignment: 0.01 (same position)
+   - 4 penalty types: service/stock contradiction (-0.10), severe qty contradiction (-0.08), severe price contradiction (-0.08), description contradiction (-0.05)
+   - 5 confidence bands: HIGH (>=0.85), GOOD (>=0.75), MODERATE (>=0.62), LOW (>=0.50), NONE (<0.50)
+   - Classification: MATCHED (strong: score>=0.75+gap>=0.10, moderate: score>=0.62+gap>=0.08), AMBIGUOUS (gap too small, multiple close candidates, single candidate in LOW band), UNRESOLVED (score<0.50 or contradiction+score<0.75)
+   - Ambiguity detection: gap < 0.08, or >=2 candidates within 0.05 of best, or no item_code + multiple candidates >= 0.50
+   - Optional LLM fallback: invoked only for AMBIGUOUS/UNRESOLVED lines when configured
+   - Best-match assignment (greedy, PO line deduplication via used_po_lines set)
+   - Rich `LineMatchDecision` per invoice line with full signal breakdown, matched tokens, and reviewer-facing explanation
+   - Backward compatible: still produces `LineMatchPair` with `FieldComparison` for downstream services
 
 ### 8.5 Three-Way Match Service
 
@@ -1097,14 +1112,18 @@ The case management system (`apps/cases/`) provides a structured AP case lifecyc
 ### 10.2 Case Creation
 
 `CaseCreationService`:
-- Creates APCase **immediately after extraction** (not after approval)
+- Creates APCase **immediately after upload** (before extraction begins) via `create_from_document_upload()`
+- At upload time, `invoice` is null; `document_upload` FK is set
 - Generates case number: `AP-YYMMDD-NNNN`
+- After extraction persists the Invoice, `link_invoice_to_case()` attaches it and updates vendor, priority, invoice_type, extraction_confidence
+- Backward-compatible `create_from_upload(invoice)` checks for pre-created upload-based cases first, links the invoice, and returns the existing case
 - Infers invoice type (PO_BACKED or UNKNOWN based on po_number)
 - Assesses priority: HIGH (≥$50K), MEDIUM (≥$10K), LOW
 - Creates initial INTAKE stage
 - Case pipeline runs through INTAKE → EXTRACTION → EXTRACTION_APPROVAL, then **pauses** at `PENDING_EXTRACTION_APPROVAL` if human approval is needed
 - On extraction approval, `ExtractionApprovalService` resumes the existing case from PATH_RESOLUTION onward
 - For auto-approved invoices, the pipeline continues without pausing
+- The `case_number` is used as Langfuse session_id (`case-{case_number}`) across all pipelines for unified trace linking
 
 ### 10.3 Processing Paths
 
@@ -1506,7 +1525,7 @@ All APIs are under `/api/v1/` using Django REST Framework.
 | `runs/` | GET | List agent runs |
 | `runs/{id}/` | GET | Run detail with steps, messages, decisions |
 
-### 14.4 Reviews API (`/api/v1/reviews/`)
+### 14.4 Reviews API (`/api/v1/reviews/` -- served from `apps/cases`)
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -2077,21 +2096,24 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 #### Permission Resolution Order
 
 ```
-1. Admin bypass → all permissions granted
-2. User DENY overrides → explicitly blocked
-3. User ALLOW overrides → explicitly granted
-4. Role permissions → union of all active role permissions
-5. Legacy fallback → uses User.role field if no UserRole entries exist
+0. Platform Admin bypass (is_platform_admin=True) -> all permissions granted
+1. Tenant Admin bypass (ADMIN role) -> all non-platform permissions granted
+2. User DENY overrides -> explicitly blocked
+3. User ALLOW overrides -> explicitly granted
+4. Role permissions -> union of all active role permissions
+5. Legacy fallback -> uses User.role field if no UserRole entries exist
 ```
 
 #### Seeded Roles & Permission Matrix
 
 | Role | Rank | Key Permissions |
 |---|---|---|
-| **ADMIN** | 10 | All 40 permissions |
+| **SUPER_ADMIN** | 1 | All 65 permissions including tenants.view/manage/impersonate, platform.settings. Cross-tenant access via `is_platform_admin=True`. |
+| **ADMIN** | 10 | All non-platform permissions (tenant-scoped) |
 | **FINANCE_MANAGER** | 20 | invoices.view, reconciliation.view/override, cases.view/assign/escalate/add_comment, reviews.view/assign/decide, governance.view, agents.view/orchestrate, users.manage, roles.manage, purchase_orders.view, grns.view, vendors.view, recommendations.auto_close/route_review/escalate/reprocess/route_procurement/vendor_clarification |
 | **AUDITOR** | 30 | *.view (read-only across all modules), governance.view, vendors.view, purchase_orders.view, grns.view |
 | **REVIEWER** | 40 | invoices.view, reconciliation.view, cases.view/add_comment, reviews.view/decide, agents.view/use_copilot, governance.view, purchase_orders.view, grns.view, vendors.view, recommendations.route_review |
+| **PROCUREMENT** | 45 | procurement.view/create/edit/approve, vendors.view, purchase_orders.view |
 | **AP_PROCESSOR** | 50 | invoices.view/create/edit/trigger_reconciliation, reconciliation.view/run, reviews.view, cases.view/edit/add_comment, agents.view/use_copilot, purchase_orders.view*, grns.view*, vendors.view* |
 | **SYSTEM_AGENT** | 100 | agents.orchestrate + all agents.run_* + purchase_orders.view, grns.view, vendors.view, invoices.view, reconciliation.view + recommendations.auto_close/route_review/escalate/reprocess + cases.escalate |
 
@@ -2099,7 +2121,7 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 
 *\*\* SYSTEM_AGENT: Dedicated service account (`system-agent@internal`) for autonomous agent operations. `is_system_role=True`, rank 100. Used by `AgentGuardrailsService.resolve_actor()` when no human user context is available.*
 
-#### Permission Codes (40 total, 14 modules)
+#### Permission Codes (65 total, 18 modules)
 
 | Module | Permissions |
 |---|---|
@@ -2117,6 +2139,10 @@ The platform implements a full enterprise RBAC (Role-Based Access Control) syste
 | grns | `view` |
 | recommendations | `auto_close`, `route_review`, `escalate`, `reprocess`, `route_procurement`, `vendor_clarification` |
 | extraction | `reprocess` |
+| tenants | `view`, `manage`, `impersonate` |
+| platform | `settings` |
+| eval | `view`, `manage` |
+| procurement | `view`, `create`, `edit`, `approve` |
 
 #### Data Scoping (AP_PROCESSOR)
 
@@ -2228,9 +2254,42 @@ Full Bootstrap 5 management screens at `/accounts/admin-console/`:
 
 Sidebar navigation shows Admin Console links only to users with `users.manage` or `roles.manage` permissions.
 
-### 20.9 Soft Delete
+### 20.9 Multi-Tenant Isolation
 
-Business entities use `SoftDeleteMixin` (is_active flag) — never hard-delete. This ensures auditability and data integrity.
+The platform uses **shared-database, shared-schema** multi-tenancy with row-level isolation. The tenant entity is `CompanyProfile` (`apps/accounts/models.py`).
+
+#### Tenant Resolution
+
+| Layer | Mechanism |
+|---|---|
+| **TenantMiddleware** (`apps/core/middleware.py`) | Sets `request.tenant` from `user.company`; platform admins (`is_platform_admin`) bypass (tenant=None, cross-tenant) |
+| **TenantQuerysetMixin** (`apps/core/tenant_utils.py`) | Filters `get_queryset()` by `request.tenant` on all DRF ViewSets and template CBVs |
+| **require_tenant()** | FBV helper; returns tenant or raises PermissionDenied |
+| **scoped_queryset()** | Service-layer helper: `scoped_queryset(Model, tenant)` |
+| **BaseTool._scoped()** | Agent tool helper: filters tool queries by tenant from AgentContext |
+| **assert_tenant_access()** | Detail-view guard: verifies object belongs to correct tenant |
+
+#### Tenant-Scoped Models (28+)
+
+All business models have a `tenant` FK to `CompanyProfile`. This includes: Invoice, PurchaseOrder, GoodsReceiptNote, Vendor, ReconciliationRun, ReconciliationResult, AgentOrchestrationRun, AgentRun, ReviewAssignment, APCase, DocumentUpload, ExtractionResult, InvoicePosting, PostingRun, EvalRun, AuditEvent, ERPConnection, CopilotSession, ProcurementRequest, and more.
+
+#### Platform Admin
+
+Users with `is_platform_admin=True` and the `SUPER_ADMIN` role (rank 1) operate cross-tenant. They see all data, bypass all permission checks, and hold 4 exclusive permissions: `tenants.view`, `tenants.manage`, `tenants.impersonate`, `platform.settings`.
+
+#### Celery Task Tenant Propagation
+
+All tenant-aware tasks accept `tenant_id` as a parameter and resolve it to a `CompanyProfile` instance. Task entity fetches are guarded with `filter(tenant=tenant)` when a tenant is provided.
+
+#### Agent Tool Tenant Scoping
+
+The agent pipeline threads `tenant` from the source entity through `AgentContext` -> `BaseAgent._execute_tool()` -> `BaseTool._scoped(queryset)`, ensuring all agent DB queries respect tenant boundaries.
+
+> For full details, see [MULTI_TENANT.md](MULTI_TENANT.md).
+
+### 20.10 Soft Delete
+
+Business entities use `SoftDeleteMixin` (is_active flag) -- never hard-delete. This ensures auditability and data integrity.
 
 ---
 
@@ -2377,7 +2436,8 @@ celery -A config worker -l info
 - Observability: TraceContext, structured JSON logging, MetricsService, RequestTraceMiddleware, @observed_service/@observed_action/@observed_task decorators; Langfuse integration (fail-silent tracing, scores, prompt management); ERP-specific Langfuse tracing helpers (`langfuse_helpers.py` -- metadata sanitisation, per-stage span wrappers, 19 ERP scores)
 - DRF APIs with filtering, search, pagination; vendor UI (list + detail)
 - RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own invoices
-- Enterprise RBAC: Role, Permission, RolePermission, UserRole (with scope_json), UserPermissionOverride; RBAC engine, middleware, template tags, DRF classes, CBV mixins, admin console (8 screens), API, seed (6 roles incl. SYSTEM_AGENT, 40 permissions)
+- Enterprise RBAC: Role, Permission, RolePermission, UserRole (with scope_json), UserPermissionOverride; RBAC engine, middleware, template tags, DRF classes, CBV mixins, admin console (8 screens), API, seed (10 roles incl. SUPER_ADMIN and SYSTEM_AGENT, 65 permissions)
+- **Multi-Tenant Architecture**: Shared-database row-level isolation via `CompanyProfile` tenant FK on 28+ models; `TenantMiddleware` sets `request.tenant`; `TenantQuerysetMixin` on all ViewSets and template views; `require_tenant()` / `scoped_queryset()` for FBVs and services; `BaseTool._scoped()` for agent tools; Celery tasks accept `tenant_id`; platform admin (`is_platform_admin` + SUPER_ADMIN role rank 1) bypasses tenant scoping. See [MULTI_TENANT.md](MULTI_TENANT.md).
 - Prompt registry with 18 defaults; pushed to Langfuse via `push_prompts_to_langfuse`
 - Seed data (4 commands): config, rbac, prompts, ap_data (30+ scenarios, 6-stage pipeline)
 - **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` bridges extraction/approval into eval layer (predicted = LLM value, ground truth = empty until human approval confirms/corrects); `ReconciliationEvalAdapter` bridges reconciliation engine + review workflow into eval layer (predicted = match result, ground truth = review decision); `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation. See [EVAL_LEARNING.md](EVAL_LEARNING.md).

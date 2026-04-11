@@ -14,9 +14,9 @@ from django.views.generic import ListView, DetailView, TemplateView
 
 from apps.accounts.forms import (
     UserCreateForm, UserProfileForm, UserRoleAssignForm,
-    UserPermissionOverrideForm, RoleForm,
+    UserPermissionOverrideForm, RoleForm, CompanyProfileForm,
 )
-from apps.accounts.models import User
+from apps.accounts.models import User, CompanyProfile, CompanyAlias, CompanyTaxID
 from apps.accounts.rbac_models import (
     Role, Permission, RolePermission, UserRole, UserPermissionOverride,
 )
@@ -72,7 +72,11 @@ class UserListView(PermissionRequiredMixin, ListView):
     required_permission = "users.manage"
 
     def get_queryset(self):
-        qs = User.objects.all().order_by("email")
+        qs = User.objects.select_related("company").all().order_by("email")
+        # Tenant scoping: non-superusers see only their own company's users
+        tenant = getattr(self.request, "tenant", None)
+        if tenant is not None:
+            qs = qs.filter(company=tenant)
         q = self.request.GET.get("q", "").strip()
         if q:
             qs = qs.filter(
@@ -95,9 +99,12 @@ class UserListView(PermissionRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["roles"] = Role.objects.filter(is_active=True).order_by("rank")
+        dept_qs = User.objects.exclude(department="")
+        tenant = getattr(self.request, "tenant", None)
+        if tenant is not None:
+            dept_qs = dept_qs.filter(company=tenant)
         ctx["departments"] = (
-            User.objects.exclude(department="")
-            .values_list("department", flat=True)
+            dept_qs.values_list("department", flat=True)
             .distinct()
             .order_by("department")
         )
@@ -124,7 +131,10 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
         form = UserCreateForm(request.POST)
         if form.is_valid():
             with transaction.atomic():
-                user = form.save()
+                user = form.save(commit=False)
+                if not user.company:
+                    user.company = getattr(request, 'tenant', None)
+                user.save()
                 # Assign initial role if selected
                 initial_role = form.cleaned_data.get("initial_role")
                 if initial_role:
@@ -632,3 +642,289 @@ class RolePermissionMatrixView(PermissionRequiredMixin, TemplateView):
 
         messages.success(request, f"Matrix updated: {len(to_add)} granted, {len(to_remove)} revoked.")
         return redirect("accounts:role_matrix")
+
+
+# ============================================================================
+# Company Profile Management
+# ============================================================================
+
+class CompanyProfileListView(PermissionRequiredMixin, ListView):
+    """List all company profiles with inline create."""
+
+    model = CompanyProfile
+    template_name = "accounts/company_profile_list.html"
+    context_object_name = "profiles"
+    required_permission = "users.manage"
+
+    def get_queryset(self):
+        return (
+            CompanyProfile.objects
+            .filter(is_active=True)
+            .prefetch_related("aliases", "tax_ids", "users")
+            .order_by("-is_default", "name")
+        )
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["form"] = CompanyProfileForm(initial={"is_active": True})
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        data = request.POST.copy()
+        data.setdefault("is_active", "on")  # new profiles are always active
+        form = CompanyProfileForm(data)
+        if form.is_valid():
+            profile = form.save()
+            messages.success(request, f"Company profile '{profile.name}' created.")
+            return redirect("accounts:company_detail", pk=profile.pk)
+        # Show form errors
+        self.object_list = self.get_queryset()
+        ctx = self.get_context_data()
+        ctx["form"] = form
+        return self.render_to_response(ctx)
+
+
+class CompanyProfileDetailView(PermissionRequiredMixin, DetailView):
+    """Edit company profile with aliases and tax IDs."""
+
+    model = CompanyProfile
+    template_name = "accounts/company_profile_detail.html"
+    context_object_name = "profile"
+    required_permission = "users.manage"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["form"] = CompanyProfileForm(instance=self.object)
+        ctx["aliases"] = self.object.aliases.all()
+        ctx["tax_ids"] = self.object.tax_ids.all()
+        ctx["users"] = self.object.users.filter(is_active=True)
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        action = request.POST.get("action", "")
+
+        if action == "update_profile":
+            form = CompanyProfileForm(request.POST, instance=self.object)
+            if form.is_valid():
+                form.save()
+                messages.success(request, "Company profile updated.")
+            else:
+                messages.error(request, "Please correct the errors below.")
+                ctx = self.get_context_data()
+                ctx["form"] = form
+                return self.render_to_response(ctx)
+
+        elif action == "add_alias":
+            alias_name = request.POST.get("alias_name", "").strip()
+            if alias_name:
+                CompanyAlias.objects.get_or_create(
+                    company=self.object,
+                    normalized_alias=alias_name.strip().lower(),
+                    defaults={"alias_name": alias_name},
+                )
+                messages.success(request, f"Alias '{alias_name}' added.")
+
+        elif action == "remove_alias":
+            alias_id = request.POST.get("alias_id")
+            CompanyAlias.objects.filter(pk=alias_id, company=self.object).delete()
+            messages.success(request, "Alias removed.")
+
+        elif action == "add_tax_id":
+            tax_id_val = request.POST.get("tax_id_value", "").strip()
+            label = request.POST.get("tax_id_label", "").strip()
+            state = request.POST.get("tax_id_state", "").strip()
+            if tax_id_val:
+                CompanyTaxID.objects.get_or_create(
+                    company=self.object,
+                    tax_id=tax_id_val,
+                    defaults={"label": label, "state_code": state},
+                )
+                messages.success(request, f"Tax ID '{tax_id_val}' added.")
+
+        elif action == "remove_tax_id":
+            tid = request.POST.get("tax_id_pk")
+            CompanyTaxID.objects.filter(pk=tid, company=self.object).delete()
+            messages.success(request, "Tax ID removed.")
+
+        return redirect("accounts:company_detail", pk=self.object.pk)
+
+
+# ============================================================================
+# Tenant / Organisation Self-Service
+# ============================================================================
+
+class TenantProfileView(PermissionRequiredMixin, TemplateView):
+    """Allow a tenant admin to view and edit their own organisation profile."""
+
+    template_name = "accounts/organisation/profile.html"
+    required_permission = "organisation.manage"
+
+    def get(self, request, *args, **kwargs):
+        from apps.accounts.forms import TenantProfileForm
+        tenant = request.tenant
+        if not tenant:
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied("No organisation context.")
+        form = TenantProfileForm(instance=tenant)
+        return self.render_to_response({"form": form, "tenant": tenant})
+
+    def post(self, request, *args, **kwargs):
+        from apps.accounts.forms import TenantProfileForm
+        tenant = request.tenant
+        form = TenantProfileForm(request.POST, instance=tenant)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Organisation profile updated.")
+            return redirect("accounts:organisation_profile")
+        return self.render_to_response({"form": form, "tenant": tenant})
+
+
+class TenantUserListView(PermissionRequiredMixin, ListView):
+    """List all users belonging to the current tenant."""
+
+    template_name = "accounts/organisation/user_list.html"
+    context_object_name = "users"
+    paginate_by = 25
+    required_permission = "organisation.manage"
+
+    def get_queryset(self):
+        tenant = self.request.tenant
+        if not tenant:
+            return User.objects.none()
+        return User.objects.filter(company=tenant).order_by("email")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["tenant"] = self.request.tenant
+        return ctx
+
+
+class InviteUserView(PermissionRequiredMixin, TemplateView):
+    """Send an invitation email to a new user."""
+
+    template_name = "accounts/organisation/invite.html"
+    required_permission = "organisation.manage"
+
+    def get(self, request, *args, **kwargs):
+        from apps.accounts.forms import InviteUserForm
+        return self.render_to_response({"form": InviteUserForm(), "tenant": request.tenant})
+
+    def post(self, request, *args, **kwargs):
+        import secrets
+        from django.utils import timezone as tz
+        from datetime import timedelta
+        from apps.accounts.forms import InviteUserForm
+        from apps.accounts.models import TenantInvitation
+
+        tenant = request.tenant
+        form = InviteUserForm(request.POST)
+        if form.is_valid():
+            email = form.cleaned_data["email"]
+            role_code = form.cleaned_data["role_code"]
+            # Upsert invitation (re-invite resets token)
+            invitation, _ = TenantInvitation.objects.update_or_create(
+                tenant=tenant,
+                email=email,
+                defaults={
+                    "invited_by": request.user,
+                    "role_code": role_code,
+                    "token": secrets.token_urlsafe(64),
+                    "accepted": False,
+                    "accepted_at": None,
+                    "expires_at": tz.now() + timedelta(hours=72),
+                },
+            )
+            messages.success(
+                request,
+                f"Invitation created for {email}. "
+                f"Share this link: /accounts/invite/{invitation.token}/",
+            )
+            return redirect("accounts:invite_user")
+        return self.render_to_response({"form": form, "tenant": tenant})
+
+
+class AcceptInvitationView(TemplateView):
+    """Allow an invited user to complete registration via token link."""
+
+    template_name = "accounts/organisation/accept_invitation.html"
+
+    def _get_invitation(self, token):
+        from apps.accounts.models import TenantInvitation
+        try:
+            inv = TenantInvitation.objects.select_related("tenant").get(token=token)
+        except TenantInvitation.DoesNotExist:
+            return None
+        return inv if inv.is_usable else None
+
+    def get(self, request, token, *args, **kwargs):
+        from apps.accounts.forms import AcceptInvitationForm
+        invitation = self._get_invitation(token)
+        if not invitation:
+            messages.error(request, "This invitation link is invalid or has expired.")
+            return redirect("accounts:login")
+        form = AcceptInvitationForm()
+        return self.render_to_response({"form": form, "invitation": invitation})
+
+    def post(self, request, token, *args, **kwargs):
+        from django.utils import timezone as tz
+        from apps.accounts.forms import AcceptInvitationForm
+
+        invitation = self._get_invitation(token)
+        if not invitation:
+            messages.error(request, "This invitation link is invalid or has expired.")
+            return redirect("accounts:login")
+
+        form = AcceptInvitationForm(request.POST)
+        if form.is_valid():
+            user = User(
+                email=invitation.email,
+                first_name=form.cleaned_data["first_name"],
+                last_name=form.cleaned_data["last_name"],
+                company=invitation.tenant,
+                role=invitation.role_code,
+                is_active=True,
+            )
+            user.set_password(form.cleaned_data["password"])
+            user.save()
+            # Mark invitation as accepted
+            invitation.accepted = True
+            invitation.accepted_at = tz.now()
+            invitation.save(update_fields=["accepted", "accepted_at"])
+            messages.success(request, "Account created! You can now log in.")
+            return redirect("accounts:login")
+
+        return self.render_to_response({"form": form, "invitation": invitation})
+
+
+class TenantSettingsView(PermissionRequiredMixin, TemplateView):
+    """Edit operational tenant settings (plan_type, max_users, timezone)."""
+
+    template_name = "accounts/organisation/settings.html"
+    required_permission = "organisation.manage"
+
+    def get(self, request, *args, **kwargs):
+        tenant = request.tenant
+        if not tenant:
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied("No organisation context.")
+        return self.render_to_response({
+            "tenant": tenant,
+            "plan_choices": tenant._meta.get_field("plan_type").choices,
+        })
+
+    def post(self, request, *args, **kwargs):
+        tenant = request.tenant
+        plan_type = request.POST.get("plan_type", tenant.plan_type)
+        max_users_raw = request.POST.get("max_users", str(tenant.max_users))
+        timezone_val = request.POST.get("timezone", tenant.timezone)
+        try:
+            max_users = int(max_users_raw)
+        except (ValueError, TypeError):
+            max_users = tenant.max_users
+        tenant.plan_type = plan_type
+        tenant.max_users = max_users
+        tenant.timezone = timezone_val
+        tenant.save(update_fields=["plan_type", "max_users", "timezone", "updated_at"])
+        messages.success(request, "Organisation settings saved.")
+        return redirect("accounts:organisation_settings")

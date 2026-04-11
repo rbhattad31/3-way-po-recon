@@ -67,7 +67,13 @@ class BaseTool(ABC):
         )
 
     def execute(self, **kwargs) -> ToolResult:
-        """Execute with timing and error handling."""
+        """Execute with timing and error handling.
+
+        The ``tenant`` kwarg is extracted and stored on ``self._tenant``
+        so subclass ``run()`` methods can apply tenant-scoped queries.
+        It is removed from kwargs before forwarding to ``run()``.
+        """
+        self._tenant = kwargs.pop("tenant", None)
         start = time.monotonic()
         try:
             result = self.run(**kwargs)
@@ -77,11 +83,22 @@ class BaseTool(ABC):
             duration = int((time.monotonic() - start) * 1000)
             logger.exception("Tool %s failed", self.name)
             return ToolResult(success=False, error=str(exc), duration_ms=duration)
+        finally:
+            self._tenant = None
 
     @abstractmethod
     def run(self, **kwargs) -> ToolResult:
         """Implement the actual tool logic. Must return a ToolResult."""
         ...
+
+    # ------------------------------------------------------------------
+    # Tenant scoping helper
+    # ------------------------------------------------------------------
+    def _scoped(self, queryset):
+        """Apply tenant filter to a queryset if a tenant was provided."""
+        if self._tenant is not None:
+            return queryset.filter(tenant=self._tenant)
+        return queryset
 
 
 # ---------------------------------------------------------------------------

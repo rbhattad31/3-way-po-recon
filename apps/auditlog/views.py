@@ -20,6 +20,7 @@ from apps.auditlog.serializers import (
 from apps.auditlog.services import AuditService
 from apps.auditlog.timeline_service import CaseTimelineService
 from apps.core.enums import UserRole
+from apps.core.tenant_utils import get_tenant_or_none
 from rest_framework.permissions import IsAuthenticated
 
 
@@ -35,7 +36,14 @@ def _is_governance_viewer(user):
 @permission_classes([IsAuthenticated])
 def invoice_audit_history(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/audit-history — full audit trail."""
-    events = AuditService.fetch_invoice_history(invoice_id)
+    tenant = get_tenant_or_none(request)
+    from apps.documents.models import Invoice
+    qs = Invoice.objects.filter(pk=invoice_id)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    if not qs.exists():
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    events = AuditService.fetch_invoice_history(invoice_id, tenant=tenant)
     serializer = AuditEventSerializer(events, many=True)
     return Response(serializer.data)
 
@@ -44,7 +52,14 @@ def invoice_audit_history(request, invoice_id: int):
 @permission_classes([IsAuthenticated])
 def invoice_agent_trace(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/agent-trace — agent runs, steps, tools, decisions."""
-    trace = AgentTraceService.get_trace_for_invoice(invoice_id)
+    tenant = get_tenant_or_none(request)
+    from apps.documents.models import Invoice
+    qs = Invoice.objects.filter(pk=invoice_id)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    if not qs.exists():
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    trace = AgentTraceService.get_trace_for_invoice(invoice_id, tenant=tenant)
     serializer = AgentTraceResponseSerializer(trace)
     return Response(serializer.data)
 
@@ -53,7 +68,14 @@ def invoice_agent_trace(request, invoice_id: int):
 @permission_classes([IsAuthenticated])
 def invoice_recommendations(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/recommendations — agent recommendations."""
-    recs = RecommendationService.get_recommendations_for_invoice(invoice_id)
+    tenant = get_tenant_or_none(request)
+    from apps.documents.models import Invoice
+    qs = Invoice.objects.filter(pk=invoice_id)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    if not qs.exists():
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    recs = RecommendationService.get_recommendations_for_invoice(invoice_id, tenant=tenant)
     serializer = RecommendationSerializer(recs, many=True)
     return Response(serializer.data)
 
@@ -62,7 +84,14 @@ def invoice_recommendations(request, invoice_id: int):
 @permission_classes([IsAuthenticated])
 def invoice_timeline(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/timeline — combined decision timeline."""
-    timeline = CaseTimelineService.get_case_timeline(invoice_id)
+    tenant = get_tenant_or_none(request)
+    from apps.documents.models import Invoice
+    qs = Invoice.objects.filter(pk=invoice_id)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    if not qs.exists():
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    timeline = CaseTimelineService.get_case_timeline(invoice_id, tenant=tenant)
     serializer = TimelineEventSerializer(timeline, many=True)
     return Response(serializer.data)
 
@@ -76,7 +105,14 @@ def invoice_timeline(request, invoice_id: int):
 @permission_classes([IsAuthenticated])
 def invoice_access_history(request, invoice_id: int):
     """GET /api/v1/governance/invoices/{id}/access-history — permission-checked events."""
-    events = AuditService.fetch_access_history(entity_type="Invoice", entity_id=invoice_id)
+    tenant = get_tenant_or_none(request)
+    from apps.documents.models import Invoice
+    qs = Invoice.objects.filter(pk=invoice_id)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    if not qs.exists():
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    events = AuditService.fetch_access_history(entity_type="Invoice", entity_id=invoice_id, tenant=tenant)
     serializer = AccessHistorySerializer(events, many=True)
     return Response(serializer.data)
 
@@ -85,7 +121,14 @@ def invoice_access_history(request, invoice_id: int):
 @permission_classes([IsAuthenticated])
 def case_stage_timeline(request, case_id: int):
     """GET /api/v1/governance/cases/{id}/stage-timeline — stage execution timeline."""
-    stages = CaseTimelineService.get_stage_timeline(case_id)
+    tenant = get_tenant_or_none(request)
+    from apps.cases.models import APCase
+    qs = APCase.objects.filter(pk=case_id)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    if not qs.exists():
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    stages = CaseTimelineService.get_stage_timeline(case_id, tenant=tenant)
     serializer = StageTimelineSerializer(stages, many=True)
     return Response(serializer.data)
 
@@ -97,7 +140,7 @@ def permission_denials(request):
     if not _is_governance_viewer(request.user):
         return Response({"detail": "Permission denied."}, status=403)
     limit = min(int(request.query_params.get("limit", 50)), 200)
-    events = AuditService.fetch_permission_denials(limit=limit)
+    events = AuditService.fetch_permission_denials(limit=limit, tenant=getattr(request, 'tenant', None))
     serializer = AccessHistorySerializer(events, many=True)
     return Response(serializer.data)
 
@@ -109,7 +152,7 @@ def rbac_activity(request):
     if not _is_governance_viewer(request.user):
         return Response({"detail": "Permission denied."}, status=403)
     limit = min(int(request.query_params.get("limit", 50)), 200)
-    events = AuditService.fetch_rbac_activity(limit=limit)
+    events = AuditService.fetch_rbac_activity(limit=limit, tenant=getattr(request, 'tenant', None))
     serializer = RBACActivitySerializer(events, many=True)
     return Response(serializer.data)
 
@@ -123,8 +166,13 @@ def agent_performance_summary(request):
     """GET /api/v1/governance/agent-performance — aggregate agent stats."""
     from django.db.models.functions import Coalesce
 
+    tenant = getattr(request, "tenant", None)
+    run_qs = AgentRun.objects.all()
+    if tenant is not None:
+        run_qs = run_qs.filter(tenant=tenant)
+
     runs = (
-        AgentRun.objects
+        run_qs
         .values("agent_type")
         .annotate(
             total_runs=Count("id"),
@@ -140,10 +188,12 @@ def agent_performance_summary(request):
     # Add recommendation counts
     result = []
     for row in runs:
-        rec_count = AgentRecommendation.objects.filter(
+        rec_qs = AgentRecommendation.objects.filter(
             agent_run__agent_type=row["agent_type"],
-        ).count()
-        row["total_recommendations"] = rec_count
+        )
+        if tenant is not None:
+            rec_qs = rec_qs.filter(tenant=tenant)
+        row["total_recommendations"] = rec_qs.count()
         result.append(row)
 
     serializer = AgentPerformanceSummarySerializer(result, many=True)

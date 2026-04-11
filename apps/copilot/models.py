@@ -21,6 +21,14 @@ class CopilotSession(TimestampMixin):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     title = models.CharField(max_length=300, blank=True, default="")
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -87,6 +95,14 @@ class CopilotMessage(TimestampMixin):
         on_delete=models.CASCADE,
         related_name="messages",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     message_type = models.CharField(
         max_length=20,
         choices=CopilotMessageType.choices,
@@ -142,6 +158,14 @@ class CopilotSessionArtifact(TimestampMixin):
         CopilotSession,
         on_delete=models.CASCADE,
         related_name="artifacts",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     artifact_type = models.CharField(
         max_length=30,

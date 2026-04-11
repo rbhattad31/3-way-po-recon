@@ -428,7 +428,7 @@ Complete flow for one invoice extraction with a field correction:
 | No auto-apply | All `LearningAction` proposals require human approval. The engine never modifies prompts, thresholds, or normalization rules on its own. |
 | Dedup via `target_description` tag | Uses `[dedup_key:...]` text tag instead of JSONField `__contains` for SQLite compatibility in tests. |
 | Cooldown period | Prevents re-proposing the same action immediately after rejection. Default 3 days. |
-| Tenant isolation | `tenant_id` field on all models enables future multi-tenant deployments. |
+| Tenant isolation | `tenant_id` FK on all models provides row-level multi-tenant isolation via `CompanyProfile`. See [MULTI_TENANT.md](MULTI_TENANT.md). |
 
 ---
 

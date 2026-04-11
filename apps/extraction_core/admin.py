@@ -182,7 +182,7 @@ class ExtractionRunAdmin(admin.ModelAdmin):
     UI-facing summary — this model is the runtime source of truth."""
     list_display = [
         "id",
-        "document",
+        "document_upload",
         "status",
         "country_code",
         "regime_code",
@@ -200,7 +200,7 @@ class ExtractionRunAdmin(admin.ModelAdmin):
         "extraction_method",
     ]
     search_fields = ["country_code", "schema_code", "error_message"]
-    raw_id_fields = ["document", "jurisdiction", "schema"]
+    raw_id_fields = ["document_upload", "jurisdiction", "schema"]
     readonly_fields = ["created_at", "updated_at", "started_at", "completed_at"]
     date_hierarchy = "created_at"
 

@@ -51,7 +51,7 @@ class POLookupTool(BaseTool):
 
         # If vendor_id given without po_number, list POs for that vendor
         if vendor_id and not po_number:
-            pos = PurchaseOrder.objects.filter(vendor_id=vendor_id, status="OPEN")[:10]
+            pos = self._scoped(PurchaseOrder.objects.filter(vendor_id=vendor_id, status="OPEN"))[:10]
             if not pos:
                 return ToolResult(success=True, data={
                     "found": False, "vendor_id": vendor_id,
@@ -77,15 +77,15 @@ class POLookupTool(BaseTool):
         if resolution_result is not None:
             return resolution_result
 
-        # Direct DB lookup (legacy path — only reached if resolver import fails)
-        po = PurchaseOrder.objects.filter(po_number=po_number).first()
+        # Direct DB lookup (legacy path -- only reached if resolver import fails)
+        po = self._scoped(PurchaseOrder.objects.filter(po_number=po_number)).first()
         if not po:
             norm = normalize_po_number(po_number)
-            po = PurchaseOrder.objects.filter(normalized_po_number=norm).first()
+            po = self._scoped(PurchaseOrder.objects.filter(normalized_po_number=norm)).first()
 
         # Fallback: contains match (e.g., "2601001" matches "PO-MCD-2601001")
         if not po:
-            candidates = PurchaseOrder.objects.filter(po_number__icontains=po_number)
+            candidates = self._scoped(PurchaseOrder.objects.filter(po_number__icontains=po_number))
             if vendor_id:
                 candidates = candidates.filter(vendor_id=vendor_id)
             po = candidates.first()
@@ -182,8 +182,8 @@ class GRNLookupTool(BaseTool):
         if resolution_result is not None:
             return resolution_result
 
-        # Direct DB lookup (legacy path — only reached if resolver import fails)
-        po = PurchaseOrder.objects.filter(po_number=po_number).first()
+        # Direct DB lookup (legacy path -- only reached if resolver import fails)
+        po = self._scoped(PurchaseOrder.objects.filter(po_number=po_number)).first()
         if not po:
             return ToolResult(success=True, data={"found": False, "po_number": po_number})
 
@@ -283,9 +283,9 @@ class VendorSearchTool(BaseTool):
         results = []
 
         # Name / code search
-        vendors = Vendor.objects.filter(
+        vendors = self._scoped(Vendor.objects.filter(
             is_active=True,
-        ).filter(
+        )).filter(
             models_q_name_code(query, norm)
         )[:10]
         for v in vendors:
@@ -297,9 +297,9 @@ class VendorSearchTool(BaseTool):
             })
 
         # Alias search
-        aliases = VendorAliasMapping.objects.filter(
+        aliases = self._scoped(VendorAliasMapping.objects.filter(
             normalized_alias=norm, is_active=True,
-        ).select_related("vendor")[:5]
+        )).select_related("vendor")[:5]
         seen = {r["vendor_id"] for r in results}
         for a in aliases:
             if a.vendor and a.vendor_id not in seen:
@@ -355,7 +355,9 @@ class InvoiceDetailsTool(BaseTool):
         from apps.documents.models import Invoice
 
         try:
-            inv = Invoice.objects.select_related("vendor", "document_upload").get(pk=invoice_id)
+            inv = self._scoped(
+                Invoice.objects.select_related("vendor", "document_upload")
+            ).get(pk=invoice_id)
         except Invoice.DoesNotExist:
             return ToolResult(success=False, error=f"Invoice {invoice_id} not found")
 
@@ -443,9 +445,9 @@ class ExceptionListTool(BaseTool):
     def run(self, *, reconciliation_result_id: int = 0, **kwargs) -> ToolResult:
         from apps.reconciliation.models import ReconciliationException
 
-        excs = ReconciliationException.objects.filter(
+        excs = self._scoped(ReconciliationException.objects.filter(
             result_id=reconciliation_result_id,
-        ).values(
+        )).values(
             "id", "exception_type", "severity", "message", "resolved",
         )
         return ToolResult(success=True, data={
@@ -486,8 +488,8 @@ class ReconciliationSummaryTool(BaseTool):
         from apps.reconciliation.models import ReconciliationResult
 
         try:
-            r = ReconciliationResult.objects.select_related(
-                "invoice", "purchase_order"
+            r = self._scoped(
+                ReconciliationResult.objects.select_related("invoice", "purchase_order")
             ).get(pk=reconciliation_result_id)
         except ReconciliationResult.DoesNotExist:
             return ToolResult(success=False, error=f"Result {reconciliation_result_id} not found")

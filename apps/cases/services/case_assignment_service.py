@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class CaseAssignmentService:
 
     @staticmethod
-    def assign_for_review(case: APCase, user=None, role=None, queue=None, priority_hours=48) -> APCaseAssignment:
+    def assign_for_review(case: APCase, user=None, role=None, queue=None, priority_hours=48, tenant=None) -> APCaseAssignment:
         """Create a review assignment for a case."""
         assignment = APCaseAssignment.objects.create(
             case=case,
@@ -25,6 +25,7 @@ class CaseAssignmentService:
             queue_name=queue or "default",
             due_at=timezone.now() + timezone.timedelta(hours=priority_hours),
             status=AssignmentStatus.ASSIGNED if user else AssignmentStatus.PENDING,
+            tenant=tenant,
         )
 
         case.assigned_to = user
@@ -36,7 +37,7 @@ class CaseAssignmentService:
         return assignment
 
     @staticmethod
-    def escalate(case: APCase, reason: str, to_role: str = UserRole.FINANCE_MANAGER) -> APCaseAssignment:
+    def escalate(case: APCase, reason: str, to_role: str = UserRole.FINANCE_MANAGER, tenant=None) -> APCaseAssignment:
         """Escalate a case to a higher role."""
         # Mark existing assignments as escalated
         case.assignments.filter(
@@ -51,6 +52,7 @@ class CaseAssignmentService:
             escalation_level=1,
             due_at=timezone.now() + timezone.timedelta(hours=24),
             status=AssignmentStatus.PENDING,
+            tenant=tenant,
         )
 
         case.assigned_role = to_role

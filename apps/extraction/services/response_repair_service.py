@@ -56,6 +56,7 @@ _EXCLUDED_REFERENCE_LABELS: list[str] = [
     r"e[-\s]?way\s+bill\s+no\.?",
     r"acknowledgement\s+no\.?",
     r"pnr",
+    r"cart\s+ref(?:erence)?\.?\s*no\.?",  # Travel agency booking reference
     # Travel agency internal IDs that appear after print-copy labels
     r"original\s*/\s*duplicate\s+for\s+recipient",
     r"iata\s+approved\s+agency",

@@ -346,17 +346,29 @@ def _resolve_permission_source(user, permission_code: str) -> str:
     if _is_admin(user):
         return "ADMIN_BYPASS"
 
-    # Check user-level overrides
-    if hasattr(user, "get_permission_overrides"):
-        try:
-            overrides = user.get_permission_overrides()
-            if permission_code in overrides:
-                otype = overrides[permission_code]
-                if otype == "DENY":
-                    return "USER_OVERRIDE_DENY"
-                return "USER_OVERRIDE_ALLOW"
-        except Exception:
-            pass
+    # Check user-level overrides by querying UserPermissionOverride directly.
+    try:
+        from apps.accounts.rbac_models import UserPermissionOverride
+        from django.utils import timezone as _tz
+        from django.db.models import Q as _Q
+        _now = _tz.now()
+        override_type = (
+            UserPermissionOverride.objects
+            .filter(
+                user=user,
+                permission__code=permission_code,
+                is_active=True,
+            )
+            .filter(_Q(expires_at__isnull=True) | _Q(expires_at__gt=_now))
+            .values_list("override_type", flat=True)
+            .first()
+        )
+        if override_type == "DENY":
+            return "USER_OVERRIDE_DENY"
+        if override_type == "ALLOW":
+            return "USER_OVERRIDE_ALLOW"
+    except Exception:
+        pass
 
     # Check role-level
     from apps.core.permissions import _has_permission_code
@@ -418,6 +430,7 @@ def _write_processing_log(
             agent_run_id=ctx.agent_run_id,
             user_id=ctx.actor_user_id,
             trace_id=ctx.trace_id or "",
+            tenant_id=ctx.tenant_id,
         )
     except Exception:
         logger.debug("Failed to write ProcessingLog (non-critical)", exc_info=True)
@@ -444,6 +457,7 @@ def _write_audit_event(
             event_type=event_type,
             event_description=description[:2000],
             performed_by_id=ctx.actor_user_id,
+            tenant_id=ctx.tenant_id,
             metadata_json={
                 **ctx.as_audit_dict(),
                 "duration_ms": duration_ms,

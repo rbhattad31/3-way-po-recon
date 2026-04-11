@@ -1,0 +1,103 @@
+{# -- Activity Timeline Panel -- #}
+{# Context: activities (queryset of APCaseActivity, ordered -created_at) #}
+
+{% if activities %}
+<div class="d-flex align-items-center gap-2 mb-3">
+  <span class="text-muted" style="font-size:.78rem">
+    {{ activities|length }} event{{ activities|length|pluralize }}
+  </span>
+  <div class="ms-auto d-flex gap-1">
+    <button class="btn btn-sm btn-light cc-activity-filter active" data-filter="all"
+            style="font-size:.72rem;padding:.15rem .5rem">All</button>
+    <button class="btn btn-sm btn-light cc-activity-filter" data-filter="case"
+            style="font-size:.72rem;padding:.15rem .5rem">Case</button>
+    <button class="btn btn-sm btn-light cc-activity-filter" data-filter="review"
+            style="font-size:.72rem;padding:.15rem .5rem">Review</button>
+    <button class="btn btn-sm btn-light cc-activity-filter" data-filter="stage"
+            style="font-size:.72rem;padding:.15rem .5rem">Pipeline</button>
+  </div>
+</div>
+
+<div class="cc-activity-list" style="max-height:520px;overflow-y:auto">
+  {% for a in activities %}
+  <div class="cc-activity-item d-flex align-items-start gap-2 mb-2 p-2 rounded"
+       data-activity-type="{{ a.activity_type }}"
+       data-activity-group="{% if 'REVIEW' in a.activity_type %}review{% elif 'STAGE' in a.activity_type %}stage{% elif 'STATUS' in a.activity_type %}case{% else %}case{% endif %}"
+       style="background:var(--ap-bg-subtle, #f8f9fa);font-size:.82rem">
+
+    {# Icon #}
+    <div class="flex-shrink-0 mt-1">
+      {% if a.activity_type == "CASE_CREATED" %}
+        <i class="bi bi-plus-circle-fill text-success"></i>
+      {% elif a.activity_type == "INVOICE_LINKED" %}
+        <i class="bi bi-link-45deg text-primary"></i>
+      {% elif a.activity_type == "STAGE_COMPLETED" %}
+        <i class="bi bi-check-circle text-info"></i>
+      {% elif a.activity_type == "REVIEW_ASSIGNED" %}
+        <i class="bi bi-person-plus text-warning"></i>
+      {% elif a.activity_type == "REVIEW_APPROVED" %}
+        <i class="bi bi-check2-circle text-success"></i>
+      {% elif a.activity_type == "REVIEW_REJECTED" %}
+        <i class="bi bi-x-circle text-danger"></i>
+      {% elif a.activity_type == "REVIEW_REPROCESSED" %}
+        <i class="bi bi-arrow-clockwise text-warning"></i>
+      {% elif a.activity_type == "STATUS_CHANGED" %}
+        <i class="bi bi-arrow-left-right text-secondary"></i>
+      {% else %}
+        <i class="bi bi-dot text-muted"></i>
+      {% endif %}
+    </div>
+
+    {# Content #}
+    <div class="flex-grow-1">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <span class="fw-semibold">{{ a.activity_type|title }}</span>
+          {% if a.actor %}
+          <span class="text-muted ms-1" style="font-size:.72rem">by {{ a.actor.get_short_name|default:a.actor.email }}</span>
+          {% endif %}
+        </div>
+        <small class="text-muted text-nowrap ms-2">{{ a.created_at|timesince }} ago</small>
+      </div>
+      {% if a.description %}
+      <div class="text-muted mt-1" style="font-size:.78rem">{{ a.description|truncatechars:200 }}</div>
+      {% endif %}
+      {% if a.metadata %}
+      <div class="mt-1 d-flex flex-wrap gap-1">
+        {% for key, val in a.metadata.items %}
+        <span class="badge bg-light text-dark border" style="font-size:.65rem">{{ key }}: {{ val|truncatechars:40 }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+(function() {
+  var btns = document.querySelectorAll('.cc-activity-filter');
+  if (!btns.length) return;
+  btns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      btns.forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      var filter = btn.dataset.filter;
+      document.querySelectorAll('.cc-activity-item').forEach(function(item) {
+        if (filter === 'all' || item.dataset.activityGroup === filter) {
+          item.style.display = '';
+        } else {
+          item.style.display = 'none';
+        }
+      });
+    });
+  });
+})();
+</script>
+
+{% else %}
+<div class="cc-empty-state">
+  <i class="bi bi-activity" style="font-size:2rem;opacity:.3"></i>
+  <div class="mt-2">No activity recorded yet</div>
+</div>
+{% endif %}

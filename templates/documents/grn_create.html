@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Add GRN – AP Operations{% endblock %}
+{% block title %}Add GRN -- AP Operations{% endblock %}
 
 {% block breadcrumb %}
 <nav aria-label="breadcrumb">
   <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-xs)">
     <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}" class="text-decoration-none">Dashboard</a></li>
-    <li class="breadcrumb-item"><a href="{% url 'grn_documents:grn_list' %}" class="text-decoration-none">Goods Receipt Notes</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'grn_list' %}" class="text-decoration-none">Goods Receipt Notes</a></li>
     <li class="breadcrumb-item active">Add GRN</li>
   </ol>
 </nav>
@@ -30,7 +30,7 @@
   </div>
   {% endif %}
 
-  {# ── GRN Header ── #}
+  {# -- GRN Header -- #}
   <div class="ap-card mb-3">
     <div class="ap-card-header">
       <i class="bi bi-box-seam me-2"></i>Receipt Details
@@ -43,7 +43,7 @@
           {% if form.grn_number.errors %}<div class="text-danger small mt-1">{{ form.grn_number.errors.0 }}</div>{% endif %}
         </div>
         <div class="col-md-4">
-          <label class="form-label fw-medium">Receipt Date</label>
+          <label class="form-label fw-medium">Receipt Date <span class="text-danger">*</span></label>
           {{ form.receipt_date }}
         </div>
         <div class="col-md-4">
@@ -61,8 +61,9 @@
         </div>
         <div class="col-md-6">
           <label class="form-label fw-medium">Vendor</label>
-          {{ form.vendor }}
-          <small class="text-muted">Auto-resolved from PO if left blank</small>
+          <input type="text" id="vendor_display" class="form-control bg-light" readonly
+                 placeholder="Auto-populated from PO" value="">
+          <small class="text-muted">Automatically set from the selected Purchase Order</small>
         </div>
       </div>
 
@@ -79,13 +80,149 @@
     </div>
   </div>
 
+  {# -- Line Items (populated from PO) -- #}
+  <div class="ap-card mb-3" id="line-items-card" style="display:none">
+    <div class="ap-card-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-list-ul me-2"></i>Line Items</span>
+      <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="btn-fill-all"
+              style="font-size:.75rem" title="Set all quantities to PO quantity">
+        <i class="bi bi-arrow-repeat me-1"></i>Fill All
+      </button>
+    </div>
+    <div class="ap-card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr>
+              <th style="width:40px">#</th>
+              <th style="width:100px">Item Code</th>
+              <th>Description</th>
+              <th style="width:80px" class="text-end">PO Qty</th>
+              <th style="width:60px">UoM</th>
+              <th style="width:90px" class="text-end">Unit Price</th>
+              <th style="width:120px" class="text-center">Qty Received</th>
+            </tr>
+          </thead>
+          <tbody id="line-items-body">
+          </tbody>
+        </table>
+      </div>
+      <div class="px-3 py-2 border-top bg-light" style="font-size:.78rem">
+        <i class="bi bi-info-circle text-muted me-1"></i>
+        <span class="text-muted">Enter quantities received. Leave blank or 0 for items not in this delivery (partial GRN).</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="no-po-hint" class="alert alert-info py-2 mb-3" style="font-size:.82rem">
+    <i class="bi bi-info-circle me-1"></i>
+    Select a Purchase Order above to load line items for receipt.
+  </div>
+
   <div class="d-flex gap-2">
-    <button type="submit" class="btn btn-primary btn-sm">
+    <button type="submit" class="btn btn-primary btn-sm" id="btn-save" disabled>
       <i class="bi bi-check-lg me-1"></i>Save GRN
     </button>
-    <a href="{% url 'grn_documents:grn_list' %}" class="btn btn-outline-secondary btn-sm">
+    <a href="{% url 'grn_list' %}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-x me-1"></i>Cancel
     </a>
   </div>
 </form>
+
+<script>
+(function() {
+  var poSelect = document.getElementById('id_purchase_order');
+  var vendorDisplay = document.getElementById('vendor_display');
+  var lineItemsCard = document.getElementById('line-items-card');
+  var lineItemsBody = document.getElementById('line-items-body');
+  var noPOHint = document.getElementById('no-po-hint');
+  var btnSave = document.getElementById('btn-save');
+  var btnFillAll = document.getElementById('btn-fill-all');
+
+  function escHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+  }
+
+  function loadPODetails(poId) {
+    if (!poId) {
+      vendorDisplay.value = '';
+      lineItemsCard.style.display = 'none';
+      noPOHint.style.display = '';
+      lineItemsBody.innerHTML = '';
+      btnSave.disabled = true;
+      return;
+    }
+
+    fetch('/api/v1/documents/purchase-orders/' + poId + '/', {
+      headers: { 'Accept': 'application/json' },
+      credentials: 'same-origin',
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      // Set vendor (read-only)
+      vendorDisplay.value = data.vendor_name || '';
+
+      // Populate line items
+      var lines = data.line_items || [];
+      if (lines.length === 0) {
+        lineItemsBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No line items on this PO</td></tr>';
+        lineItemsCard.style.display = '';
+        noPOHint.style.display = 'none';
+        btnSave.disabled = false;
+        return;
+      }
+
+      var html = '';
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var poQty = parseFloat(line.quantity) || 0;
+        html += '<tr>'
+          + '<td class="text-muted">' + escHtml(String(line.line_number)) + '</td>'
+          + '<td><code style="font-size:.78rem">' + escHtml(line.item_code || '-') + '</code></td>'
+          + '<td>' + escHtml(line.description || '') + '</td>'
+          + '<td class="text-end fw-medium">' + poQty.toFixed(2) + '</td>'
+          + '<td>' + escHtml(line.unit_of_measure || 'EA') + '</td>'
+          + '<td class="text-end">' + (parseFloat(line.unit_price) || 0).toFixed(2) + '</td>'
+          + '<td class="text-center">'
+          +   '<input type="number" name="qty_' + line.id + '"'
+          +   ' class="form-control form-control-sm text-end qty-input"'
+          +   ' style="width:100px;display:inline-block" step="0.01" min="0"'
+          +   ' max="' + poQty.toFixed(2) + '"'
+          +   ' data-po-qty="' + poQty.toFixed(2) + '"'
+          +   ' placeholder="0">'
+          + '</td>'
+          + '</tr>';
+      }
+      lineItemsBody.innerHTML = html;
+      lineItemsCard.style.display = '';
+      noPOHint.style.display = 'none';
+      btnSave.disabled = false;
+    })
+    .catch(function() {
+      vendorDisplay.value = 'Error loading PO';
+      lineItemsCard.style.display = 'none';
+      noPOHint.style.display = '';
+    });
+  }
+
+  poSelect.addEventListener('change', function() {
+    loadPODetails(this.value);
+  });
+
+  // Fill All: set all qty inputs to PO qty
+  btnFillAll.addEventListener('click', function() {
+    var inputs = document.querySelectorAll('.qty-input');
+    for (var i = 0; i < inputs.length; i++) {
+      inputs[i].value = inputs[i].dataset.poQty || '0';
+    }
+  });
+
+  // On page load, if PO already selected (e.g. form re-render after error)
+  if (poSelect.value) {
+    loadPODetails(poSelect.value);
+  }
+})();
+</script>
 {% endblock %}

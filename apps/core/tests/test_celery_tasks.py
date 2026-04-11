@@ -56,7 +56,7 @@ class TestRunReconciliationTask:
         mock_rr_mgr.filter.return_value = mock_qs
 
         from apps.reconciliation.tasks import run_reconciliation_task
-        result = run_reconciliation_task.apply(args=(None, None, None)).get()
+        result = run_reconciliation_task.apply(kwargs=dict(tenant_id=None, invoice_ids=None, config_id=None, triggered_by_id=None)).get()
         assert result["status"] == "ok"
         assert result["run_id"] == 1
         assert "matched" in result
@@ -66,7 +66,7 @@ class TestRunReconciliationTask:
     def test_no_invoices_returns_error(self, mock_run):
         """RCT-02: Empty invoice list returns error dict."""
         from apps.reconciliation.tasks import run_reconciliation_task
-        result = run_reconciliation_task.apply(args=([999999], None, None)).get()
+        result = run_reconciliation_task.apply(kwargs=dict(invoice_ids=[999999], config_id=None, triggered_by_id=None)).get()
         assert result["status"] == "error"
         mock_run.assert_not_called()
 
@@ -81,7 +81,7 @@ class TestRunAgentPipelineTask:
     def test_missing_result_returns_error(self):
         """APT-01: Non-existent ReconciliationResult returns error."""
         from apps.agents.tasks import run_agent_pipeline_task
-        result = run_agent_pipeline_task.apply(args=(999999,)).get()
+        result = run_agent_pipeline_task.apply(kwargs=dict(reconciliation_result_id=999999)).get()
         assert "error" in result
         assert "not found" in result["error"]
 
@@ -113,7 +113,7 @@ class TestRunAgentPipelineTask:
         )
 
         from apps.agents.tasks import run_agent_pipeline_task
-        result = run_agent_pipeline_task.apply(args=(rr.pk,)).get()
+        result = run_agent_pipeline_task.apply(kwargs=dict(reconciliation_result_id=rr.pk)).get()
         assert result["reconciliation_result_id"] == rr.pk
         assert result["agents_executed"] == ["DISCREPANCY_ANALYSIS"]
         assert result["skipped"] is False

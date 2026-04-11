@@ -12,6 +12,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.core.decorators import observed_action
 from apps.core.enums import InvoicePostingStatus
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.posting.models import InvoicePosting
 from apps.posting.services.posting_action_service import PostingActionService
 from apps.posting_core.models import (
@@ -30,11 +31,14 @@ logger = logging.getLogger(__name__)
 @observed_action("posting.view_workbench", permission="invoices.view", entity_type="InvoicePosting")
 def posting_workbench(request):
     """Posting workbench — list of all invoice postings."""
+    tenant = require_tenant(request)
     qs = (
         InvoicePosting.objects
         .select_related("invoice", "reviewed_by")
         .order_by("-created_at")
     )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # Filters
     status_filter = request.GET.get("status", "")
@@ -53,14 +57,17 @@ def posting_workbench(request):
     page = paginator.get_page(request.GET.get("page"))
 
     # KPI stats
-    total = InvoicePosting.objects.count()
-    review_required = InvoicePosting.objects.filter(
+    kpi_base = InvoicePosting.objects.all()
+    if tenant is not None:
+        kpi_base = kpi_base.filter(tenant=tenant)
+    total = kpi_base.count()
+    review_required = kpi_base.filter(
         status=InvoicePostingStatus.MAPPING_REVIEW_REQUIRED,
     ).count()
-    ready = InvoicePosting.objects.filter(
+    ready = kpi_base.filter(
         status=InvoicePostingStatus.READY_TO_SUBMIT,
     ).count()
-    posted = InvoicePosting.objects.filter(
+    posted = kpi_base.filter(
         status=InvoicePostingStatus.POSTED,
     ).count()
 
@@ -217,11 +224,16 @@ def posting_retry(request, pk):
 @observed_action("posting.view_imports", permission="invoices.view", entity_type="ERPReferenceImportBatch")
 def reference_import_list(request):
     """List ERP reference import batches."""
+    from apps.core.tenant_utils import get_tenant_or_none
+    tenant = get_tenant_or_none(request)
+
     qs = (
         ERPReferenceImportBatch.objects
         .select_related("imported_by")
         .order_by("-created_at")
     )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     batch_type = request.GET.get("batch_type", "")
     if batch_type:

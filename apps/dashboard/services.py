@@ -13,7 +13,7 @@ from apps.agents.models import AgentRun, AgentRecommendation, AgentEscalation, D
 from apps.core.enums import AgentRunStatus, AgentType, MatchStatus, RecommendationType, ReviewStatus, ToolCallStatus, UserRole
 from apps.documents.models import GoodsReceiptNote, Invoice, PurchaseOrder
 from apps.reconciliation.models import ReconciliationException, ReconciliationResult
-from apps.reviews.models import ReviewAssignment
+from apps.cases.models import ReviewAssignment
 from apps.tools.models import ToolCall
 from apps.vendors.models import Vendor
 
@@ -25,8 +25,10 @@ class DashboardService:
     # Scoping helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _scope_invoices(qs, user=None):
-        """Restrict invoice queryset based on user role."""
+    def _scope_invoices(qs, user=None, tenant=None):
+        """Restrict invoice queryset based on user role and tenant."""
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if user is None:
             return qs
         user_role = getattr(user, "role", None)
@@ -46,8 +48,10 @@ class DashboardService:
         return qs
 
     @staticmethod
-    def _scope_recon_results(qs, user=None):
-        """Restrict reconciliation results based on user role."""
+    def _scope_recon_results(qs, user=None, tenant=None):
+        """Restrict reconciliation results based on user role and tenant."""
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if user is None:
             return qs
         user_role = getattr(user, "role", None)
@@ -67,8 +71,10 @@ class DashboardService:
         return qs
 
     @staticmethod
-    def _scope_exceptions(qs, user=None):
-        """Restrict exceptions based on user role."""
+    def _scope_exceptions(qs, user=None, tenant=None):
+        """Restrict exceptions based on user role and tenant."""
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if user is None:
             return qs
         user_role = getattr(user, "role", None)
@@ -88,8 +94,10 @@ class DashboardService:
         return qs
 
     @staticmethod
-    def _scope_reviews(qs, user=None):
-        """Restrict review assignments based on user role."""
+    def _scope_reviews(qs, user=None, tenant=None):
+        """Restrict review assignments based on user role and tenant."""
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if user is None:
             return qs
         user_role = getattr(user, "role", None)
@@ -112,13 +120,13 @@ class DashboardService:
     # Public methods
     # ------------------------------------------------------------------
     @staticmethod
-    def get_summary(user=None) -> Dict[str, Any]:
-        invoice_qs = DashboardService._scope_invoices(Invoice.objects.all(), user)
-        recon_qs = DashboardService._scope_recon_results(ReconciliationResult.objects.all(), user)
-        exception_qs = DashboardService._scope_exceptions(ReconciliationException.objects.filter(resolved=False), user)
+    def get_summary(user=None, tenant=None) -> Dict[str, Any]:
+        invoice_qs = DashboardService._scope_invoices(Invoice.objects.all(), user, tenant)
+        recon_qs = DashboardService._scope_recon_results(ReconciliationResult.objects.all(), user, tenant)
+        exception_qs = DashboardService._scope_exceptions(ReconciliationException.objects.filter(resolved=False), user, tenant)
         review_qs = DashboardService._scope_reviews(ReviewAssignment.objects.filter(
             status__in=[ReviewStatus.PENDING, ReviewStatus.ASSIGNED, ReviewStatus.IN_REVIEW]
-        ), user)
+        ), user, tenant)
 
         total_results = recon_qs.count()
         matched = recon_qs.filter(match_status=MatchStatus.MATCHED).count()
@@ -136,9 +144,9 @@ class DashboardService:
 
         return {
             "total_invoices": invoice_qs.count(),
-            "total_pos": PurchaseOrder.objects.count(),
-            "total_grns": GoodsReceiptNote.objects.count(),
-            "total_vendors": Vendor.objects.filter(is_active=True).count(),
+            "total_pos": PurchaseOrder.objects.filter(tenant=tenant).count() if tenant else PurchaseOrder.objects.count(),
+            "total_grns": GoodsReceiptNote.objects.filter(tenant=tenant).count() if tenant else GoodsReceiptNote.objects.count(),
+            "total_vendors": Vendor.objects.filter(is_active=True, tenant=tenant).count() if tenant else Vendor.objects.filter(is_active=True).count(),
             "pending_reviews": review_qs.count(),
             "open_exceptions": exception_qs.count(),
             "matched_pct": round((matched / total_results * 100) if total_results else 0, 1),
@@ -149,8 +157,8 @@ class DashboardService:
         }
 
     @staticmethod
-    def get_match_status_breakdown(user=None) -> List[Dict[str, Any]]:
-        qs = DashboardService._scope_recon_results(ReconciliationResult.objects.all(), user)
+    def get_match_status_breakdown(user=None, tenant=None) -> List[Dict[str, Any]]:
+        qs = DashboardService._scope_recon_results(ReconciliationResult.objects.all(), user, tenant)
         total = qs.count() or 1
         rows = (
             qs.values("match_status")
@@ -167,9 +175,9 @@ class DashboardService:
         ]
 
     @staticmethod
-    def get_exception_breakdown(user=None) -> List[Dict[str, Any]]:
+    def get_exception_breakdown(user=None, tenant=None) -> List[Dict[str, Any]]:
         qs = DashboardService._scope_exceptions(
-            ReconciliationException.objects.filter(resolved=False), user
+            ReconciliationException.objects.filter(resolved=False), user, tenant
         )
         return list(
             qs.values("exception_type")
@@ -178,9 +186,9 @@ class DashboardService:
         )
 
     @staticmethod
-    def get_mode_breakdown(user=None) -> List[Dict[str, Any]]:
+    def get_mode_breakdown(user=None, tenant=None) -> List[Dict[str, Any]]:
         """Breakdown of reconciliation results by mode (2-Way vs 3-Way)."""
-        qs = DashboardService._scope_recon_results(ReconciliationResult.objects.all(), user)
+        qs = DashboardService._scope_recon_results(ReconciliationResult.objects.all(), user, tenant)
         total = qs.count() or 1
         rows = (
             qs.values("reconciliation_mode")
@@ -209,8 +217,10 @@ class DashboardService:
         ]
 
     @staticmethod
-    def _scope_agent_runs(qs, user=None):
-        """Restrict agent runs based on user role."""
+    def _scope_agent_runs(qs, user=None, tenant=None):
+        """Restrict agent runs based on user role and tenant."""
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         if user is None:
             return qs
         user_role = getattr(user, "role", None)
@@ -232,8 +242,8 @@ class DashboardService:
         return qs
 
     @staticmethod
-    def get_agent_performance(user=None) -> List[Dict[str, Any]]:
-        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user)
+    def get_agent_performance(user=None, tenant=None) -> List[Dict[str, Any]]:
+        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user, tenant)
         return list(
             qs.values("agent_type")
             .annotate(
@@ -247,16 +257,16 @@ class DashboardService:
         )
 
     @staticmethod
-    def get_daily_volume(days: int = 30, user=None) -> List[Dict[str, Any]]:
+    def get_daily_volume(days: int = 30, user=None, tenant=None) -> List[Dict[str, Any]]:
         since = timezone.now() - timedelta(days=days)
         inv_qs = DashboardService._scope_invoices(
-            Invoice.objects.filter(created_at__gte=since), user
+            Invoice.objects.filter(created_at__gte=since), user, tenant
         )
         recon_qs = DashboardService._scope_recon_results(
-            ReconciliationResult.objects.filter(created_at__gte=since), user
+            ReconciliationResult.objects.filter(created_at__gte=since), user, tenant
         )
         exc_qs = DashboardService._scope_exceptions(
-            ReconciliationException.objects.filter(created_at__gte=since), user
+            ReconciliationException.objects.filter(created_at__gte=since), user, tenant
         )
         invoices = dict(
             inv_qs
@@ -291,10 +301,10 @@ class DashboardService:
         ]
 
     @staticmethod
-    def get_recent_activity(limit: int = 20, user=None) -> List[Dict[str, Any]]:
+    def get_recent_activity(limit: int = 20, user=None, tenant=None) -> List[Dict[str, Any]]:
         activities: List[Dict[str, Any]] = []
 
-        inv_qs = DashboardService._scope_invoices(Invoice.objects.all(), user)
+        inv_qs = DashboardService._scope_invoices(Invoice.objects.all(), user, tenant)
         for inv in inv_qs.order_by("-created_at")[:limit]:
             activities.append({
                 "id": inv.pk,
@@ -304,7 +314,7 @@ class DashboardService:
                 "timestamp": inv.created_at,
             })
 
-        recon_qs = DashboardService._scope_recon_results(ReconciliationResult.objects.all(), user)
+        recon_qs = DashboardService._scope_recon_results(ReconciliationResult.objects.all(), user, tenant)
         for r in recon_qs.order_by("-created_at")[:limit]:
             activities.append({
                 "id": r.pk,
@@ -314,7 +324,7 @@ class DashboardService:
                 "timestamp": r.created_at,
             })
 
-        review_qs = DashboardService._scope_reviews(ReviewAssignment.objects.all(), user)
+        review_qs = DashboardService._scope_reviews(ReviewAssignment.objects.all(), user, tenant)
         for ra in review_qs.order_by("-created_at")[:limit]:
             activities.append({
                 "id": ra.pk,
@@ -373,9 +383,9 @@ class AgentPerformanceDashboardService:
         return result
 
     @staticmethod
-    def _base_runs_qs(filters: Optional[Dict] = None, user=None):
+    def _base_runs_qs(filters: Optional[Dict] = None, user=None, tenant=None):
         """Build a base queryset for AgentRun with common filters applied."""
-        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user)
+        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user, tenant)
         f = AgentPerformanceDashboardService._parse_filters(filters)
 
         if "date_from" in f:
@@ -394,8 +404,8 @@ class AgentPerformanceDashboardService:
     # 1. Summary KPIs
     # ------------------------------------------------------------------
     @staticmethod
-    def get_summary(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_summary(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         today = timezone.now().date()
         today_qs = qs.filter(created_at__date=today)
 
@@ -416,10 +426,13 @@ class AgentPerformanceDashboardService:
 
         # Access denied events today
         from apps.auditlog.models import AuditEvent
-        denied_today = AuditEvent.objects.filter(
+        denied_qs = AuditEvent.objects.filter(
             created_at__date=today,
             access_granted=False,
-        ).count()
+        )
+        if tenant is not None:
+            denied_qs = denied_qs.filter(tenant=tenant)
+        denied_today = denied_qs.count()
 
         # Governed runs % — runs with trace_id AND (recommendation OR decision log)
         runs_with_trace = today_qs.exclude(trace_id="").count()
@@ -448,8 +461,8 @@ class AgentPerformanceDashboardService:
     # 2. Utilization
     # ------------------------------------------------------------------
     @staticmethod
-    def get_utilization(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_utilization(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
 
         by_type = list(
             qs.values("agent_type")
@@ -473,8 +486,8 @@ class AgentPerformanceDashboardService:
     # 3. Success metrics
     # ------------------------------------------------------------------
     @staticmethod
-    def get_success_metrics(filters=None, user=None) -> List[Dict[str, Any]]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_success_metrics(filters=None, user=None, tenant=None) -> List[Dict[str, Any]]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         rows = (
             qs.values("agent_type")
             .annotate(
@@ -511,8 +524,8 @@ class AgentPerformanceDashboardService:
     # 4. Latency metrics
     # ------------------------------------------------------------------
     @staticmethod
-    def get_latency_metrics(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_latency_metrics(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
 
         per_agent = list(
             qs.values("agent_type")
@@ -545,8 +558,8 @@ class AgentPerformanceDashboardService:
     # 5. Token & cost metrics
     # ------------------------------------------------------------------
     @staticmethod
-    def get_token_metrics(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_token_metrics(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
 
         totals = qs.aggregate(
             total_prompt=Sum("prompt_tokens"),
@@ -581,8 +594,8 @@ class AgentPerformanceDashboardService:
     # 6. Tool metrics
     # ------------------------------------------------------------------
     @staticmethod
-    def get_tool_metrics(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_tool_metrics(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         run_ids = qs.values_list("id", flat=True)
 
         tool_qs = ToolCall.objects.filter(agent_run_id__in=run_ids)
@@ -617,8 +630,8 @@ class AgentPerformanceDashboardService:
     # 7. Recommendation metrics
     # ------------------------------------------------------------------
     @staticmethod
-    def get_recommendation_metrics(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_recommendation_metrics(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         run_ids = qs.values_list("id", flat=True)
 
         rec_qs = AgentRecommendation.objects.filter(agent_run_id__in=list(run_ids))
@@ -649,8 +662,8 @@ class AgentPerformanceDashboardService:
     # 8. Live feed
     # ------------------------------------------------------------------
     @staticmethod
-    def get_live_feed(filters=None, user=None, limit=25) -> List[Dict[str, Any]]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_live_feed(filters=None, user=None, tenant=None, limit=25) -> List[Dict[str, Any]]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         runs = (
             qs.select_related("reconciliation_result__invoice")
             .order_by("-created_at")[:limit]
@@ -681,8 +694,8 @@ class AgentPerformanceDashboardService:
     # 9. Escalation metrics
     # ------------------------------------------------------------------
     @staticmethod
-    def get_escalation_metrics(filters=None, user=None) -> List[Dict[str, Any]]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_escalation_metrics(filters=None, user=None, tenant=None) -> List[Dict[str, Any]]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         run_ids = qs.values_list("id", flat=True)
         return list(
             AgentEscalation.objects.filter(agent_run_id__in=run_ids)
@@ -699,8 +712,8 @@ class AgentPerformanceDashboardService:
     # 10. Failure metrics
     # ------------------------------------------------------------------
     @staticmethod
-    def get_failure_metrics(filters=None, user=None) -> Dict[str, Any]:
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+    def get_failure_metrics(filters=None, user=None, tenant=None) -> Dict[str, Any]:
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         failed = qs.filter(status=AgentRunStatus.FAILED)
 
         # Categorize failures heuristically from error_message
@@ -739,17 +752,19 @@ class AgentPerformanceDashboardService:
     # 11. Governance metrics (ADMIN / AUDITOR only)
     # ------------------------------------------------------------------
     @staticmethod
-    def get_governance_metrics(filters=None, user=None) -> Optional[Dict[str, Any]]:
+    def get_governance_metrics(filters=None, user=None, tenant=None) -> Optional[Dict[str, Any]]:
         if not AgentPerformanceDashboardService._can_see_governance(user):
             return None
 
-        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user)
+        qs = AgentPerformanceDashboardService._base_runs_qs(filters, user, tenant)
         total = qs.count() or 1
 
         from apps.auditlog.models import AuditEvent
 
         f = AgentPerformanceDashboardService._parse_filters(filters)
         audit_qs = AuditEvent.objects.all()
+        if tenant is not None:
+            audit_qs = audit_qs.filter(tenant=tenant)
         if "date_from" in f:
             audit_qs = audit_qs.filter(created_at__date__gte=f["date_from"])
         if "date_to" in f:
@@ -810,8 +825,8 @@ class AgentPerformanceDashboardService:
     # 12. Trace detail (single run)
     # ------------------------------------------------------------------
     @staticmethod
-    def get_trace_detail(run_id, user=None) -> Optional[Dict[str, Any]]:
-        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user)
+    def get_trace_detail(run_id, user=None, tenant=None) -> Optional[Dict[str, Any]]:
+        qs = DashboardService._scope_agent_runs(AgentRun.objects.all(), user, tenant)
         try:
             run = qs.select_related(
                 "reconciliation_result__invoice",
@@ -850,7 +865,7 @@ class AgentPerformanceDashboardService:
                 "prompt_version": run.prompt_version,
                 "actor_user_id": run.actor_user_id,
                 "permission_checked": run.permission_checked,
-                "cost_estimate": float(run.cost_estimate or 0),
+                "cost_estimate": float(run.actual_cost_usd or run.cost_estimate or 0),
                 "llm_model_used": run.llm_model_used,
                 "prompt_tokens": run.prompt_tokens,
                 "completion_tokens": run.completion_tokens,
@@ -859,7 +874,7 @@ class AgentPerformanceDashboardService:
         elif is_ext:
             data.update({
                 "trace_id": run.trace_id,
-                "cost_estimate": float(run.cost_estimate or 0),
+                "cost_estimate": float(run.actual_cost_usd or run.cost_estimate or 0),
                 "total_tokens": run.total_tokens,
             })
 

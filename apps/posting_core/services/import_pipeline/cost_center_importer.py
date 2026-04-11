@@ -48,6 +48,7 @@ class CostCenterImporter:
 
             valid_records.append(ERPCostCenterReference(
                 batch=batch,
+                tenant=batch.tenant,
                 cost_center_code=cc_code,
                 cost_center_name=str(row.get("cost_center_name", "")).strip(),
                 department=str(row.get("department", "")).strip(),

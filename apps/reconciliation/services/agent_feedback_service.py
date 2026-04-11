@@ -148,7 +148,7 @@ class AgentFeedbackService:
 
         # 6. Auto-create review if needed
         if new_status == MatchStatus.REQUIRES_REVIEW:
-            from apps.reviews.services import ReviewWorkflowService
+            from apps.cases.services.review_workflow_service import ReviewWorkflowService
             ReviewWorkflowService.create_assignment(
                 result=result,
                 priority=3 if exceptions else 5,

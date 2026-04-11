@@ -139,6 +139,7 @@ class RecoveryLaneService:
         actor_user_id: Optional[int] = None,
         document_upload_id: Optional[int] = None,
         trace_id: str = "",
+        tenant: Any = None,
     ) -> RecoveryResult:
         """Invoke InvoiceUnderstandingAgent for bounded recovery.
 
@@ -167,6 +168,7 @@ class RecoveryLaneService:
                 actor_user_id=actor_user_id,
                 document_upload_id=document_upload_id,
                 trace_id=trace_id,
+                tenant=tenant,
             )
         except Exception as exc:
             logger.exception(
@@ -192,6 +194,7 @@ class RecoveryLaneService:
         actor_user_id: Optional[int],
         document_upload_id: Optional[int] = None,
         trace_id: str = "",
+        tenant: Any = None,
     ) -> RecoveryResult:
         from apps.agents.services.agent_classes import InvoiceUnderstandingAgent
         from apps.agents.services.base_agent import AgentContext
@@ -251,6 +254,7 @@ class RecoveryLaneService:
             access_granted=True,
             document_upload_id=document_upload_id,
             trace_id=trace_id,
+            tenant=tenant,
         )
 
         agent = InvoiceUnderstandingAgent()

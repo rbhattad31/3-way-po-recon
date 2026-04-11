@@ -5,7 +5,7 @@ ExtractionRun or ExtractionResult fields for execution metadata.
 
 Resolution order:
   1. Direct FK: extraction_result.extraction_run
-  2. Governed lookup: document_upload_id → ExtractionDocument → ExtractionRun
+  2. Governed lookup: document_upload_id -> ExtractionRun
   3. Legacy fallback: no governed data available
 """
 from __future__ import annotations

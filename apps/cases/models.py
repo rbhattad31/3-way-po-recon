@@ -24,6 +24,8 @@ from apps.core.enums import (
     PerformedByType,
     ProcessingPath,
     ReconciliationMode,
+    ReviewActionType,
+    ReviewStatus,
     SourceChannel,
     StageStatus,
     UserRole,
@@ -46,11 +48,29 @@ class APCase(BaseModel, SoftDeleteMixin):
         help_text="Auto-generated case identifier, e.g. AP-000123",
     )
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+
     # --- Linked documents ---
+    document_upload = models.ForeignKey(
+        "documents.DocumentUpload",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ap_cases",
+        help_text="Link to the original upload; set at case creation (before extraction).",
+    )
     invoice = models.OneToOneField(
         "documents.Invoice",
+        null=True, blank=True,
         on_delete=models.PROTECT,
         related_name="ap_case",
+        help_text="Linked after extraction persistence; null for pre-extraction cases.",
     )
     vendor = models.ForeignKey(
         "vendors.Vendor",
@@ -71,7 +91,7 @@ class APCase(BaseModel, SoftDeleteMixin):
         related_name="ap_cases",
     )
     review_assignment = models.ForeignKey(
-        "reviews.ReviewAssignment",
+        "cases.ReviewAssignment",
         null=True, blank=True,
         on_delete=models.SET_NULL,
         related_name="ap_cases",
@@ -154,6 +174,7 @@ class APCase(BaseModel, SoftDeleteMixin):
             models.Index(fields=["status", "processing_path"]),
             models.Index(fields=["priority", "-created_at"]),
             models.Index(fields=["assigned_to", "status"]),
+            models.Index(fields=["tenant", "status"], name="idx_apcase_tenant_status"),
         ]
 
     def __str__(self):
@@ -170,6 +191,14 @@ class APCaseStage(TimestampMixin):
 
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="stages",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     stage_name = models.CharField(
         max_length=50, choices=CaseStageType.choices,
@@ -225,6 +254,14 @@ class APCaseArtifact(TimestampMixin):
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="artifacts",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     artifact_type = models.CharField(
         max_length=50, choices=ArtifactType.choices,
     )
@@ -260,6 +297,14 @@ class APCaseDecision(TimestampMixin):
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="decisions",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     decision_type = models.CharField(
         max_length=50, choices=DecisionType.choices,
     )
@@ -286,6 +331,14 @@ class APCaseAssignment(TimestampMixin):
 
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="assignments",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     assignment_type = models.CharField(
         max_length=30, choices=AssignmentType.choices,
@@ -327,6 +380,14 @@ class APCaseSummary(TimestampMixin):
     case = models.OneToOneField(
         APCase, on_delete=models.CASCADE, related_name="summary",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     latest_summary = models.TextField(blank=True, default="")
     reviewer_summary = models.TextField(blank=True, default="")
     finance_summary = models.TextField(blank=True, default="")
@@ -349,6 +410,14 @@ class APCaseComment(TimestampMixin):
 
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="comments",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -377,6 +446,14 @@ class APCaseActivity(TimestampMixin):
     case = models.ForeignKey(
         APCase, on_delete=models.CASCADE, related_name="activities",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     activity_type = models.CharField(max_length=100)
     description = models.TextField(blank=True, default="")
     actor = models.ForeignKey(
@@ -393,3 +470,144 @@ class APCaseActivity(TimestampMixin):
 
     def __str__(self):
         return f"{self.case.case_number} / {self.activity_type}"
+
+
+# ---------------------------------------------------------------------------
+# Review workflow models (merged from apps.reviews)
+# ---------------------------------------------------------------------------
+
+class ReviewAssignment(BaseModel):
+    """Links a reconciliation result to a reviewer."""
+
+    reconciliation_result = models.ForeignKey(
+        "reconciliation.ReconciliationResult", on_delete=models.CASCADE, related_name="review_assignments"
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="review_assignments"
+    )
+    status = models.CharField(max_length=20, choices=ReviewStatus.choices, default=ReviewStatus.PENDING, db_index=True)
+    priority = models.PositiveSmallIntegerField(default=5, help_text="1=highest, 10=lowest")
+    due_date = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+
+    # Reviewer-facing exception summary (populated by ExceptionAnalysisAgent after assignment)
+    reviewer_summary = models.TextField(blank=True, default="")
+    reviewer_risk_level = models.CharField(
+        max_length=10, blank=True, default="",
+        choices=[("LOW", "Low"), ("MEDIUM", "Medium"), ("HIGH", "High")],
+    )
+    reviewer_confidence = models.FloatField(null=True, blank=True)
+    reviewer_recommendation = models.CharField(max_length=30, blank=True, default="")
+    reviewer_suggested_actions = models.JSONField(default=list)
+    reviewer_summary_generated_at = models.DateTimeField(null=True, blank=True)
+
+    # Feedback after reviewer acts
+    reviewer_agreed_with_agent = models.BooleanField(null=True, blank=True)
+
+    class Meta:
+        db_table = "reviews_assignment"
+        ordering = ["priority", "-created_at"]
+        verbose_name = "Review Assignment"
+        verbose_name_plural = "Review Assignments"
+        indexes = [
+            models.Index(fields=["status"], name="idx_revassign_status"),
+            models.Index(fields=["assigned_to"], name="idx_revassign_user"),
+            models.Index(fields=["priority"], name="idx_revassign_priority"),
+            models.Index(fields=["tenant", "status"], name="idx_revassign_tenant_status"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Review #{self.pk} -- Result {self.reconciliation_result_id} -- {self.status}"
+
+
+class ReviewComment(TimestampMixin):
+    """Reviewer comment on a review assignment."""
+
+    assignment = models.ForeignKey(ReviewAssignment, on_delete=models.CASCADE, related_name="comments")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    body = models.TextField()
+    is_internal = models.BooleanField(default=True, help_text="Internal vs. visible to vendor")
+
+    class Meta:
+        db_table = "reviews_comment"
+        ordering = ["created_at"]
+        verbose_name = "Review Comment"
+        verbose_name_plural = "Review Comments"
+
+    def __str__(self) -> str:
+        return f"Comment by {self.author} on Review #{self.assignment_id}"
+
+
+class ManualReviewAction(TimestampMixin):
+    """Every discrete action taken on a review (correct field, approve, etc.)."""
+
+    assignment = models.ForeignKey(ReviewAssignment, on_delete=models.CASCADE, related_name="actions")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+    performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    action_type = models.CharField(max_length=30, choices=ReviewActionType.choices, db_index=True)
+    field_name = models.CharField(max_length=100, blank=True, default="", help_text="Field corrected, if applicable")
+    old_value = models.TextField(blank=True, default="")
+    new_value = models.TextField(blank=True, default="")
+    reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "reviews_action"
+        ordering = ["-created_at"]
+        verbose_name = "Manual Review Action"
+        verbose_name_plural = "Manual Review Actions"
+        indexes = [
+            models.Index(fields=["action_type"], name="idx_revaction_type"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.action_type} by {self.performed_by} on Review #{self.assignment_id}"
+
+
+class ReviewDecision(TimestampMixin):
+    """Final decision on a review assignment."""
+
+    assignment = models.OneToOneField(ReviewAssignment, on_delete=models.CASCADE, related_name="decision")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    decision = models.CharField(max_length=20, choices=ReviewStatus.choices)
+    reason = models.TextField(blank=True, default="")
+    decided_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "reviews_decision"
+        ordering = ["-decided_at"]
+        verbose_name = "Review Decision"
+        verbose_name_plural = "Review Decisions"
+
+    def __str__(self) -> str:
+        return f"Decision {self.decision} on Review #{self.assignment_id}"

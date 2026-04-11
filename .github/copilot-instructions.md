@@ -2,7 +2,9 @@
 
 ## Project Context
 
-This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with **17 Django apps** (added: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`, `core_eval`).
+This is a Django 4.2+ enterprise application for **3-way Purchase Order reconciliation** (Invoice vs PO vs GRN). It uses MySQL, Celery+Redis, OpenAI/Azure OpenAI, and Bootstrap 5 templates. The codebase lives under `apps/` with **17 Django apps** (added: `posting`, `posting_core`, `erp_integration`, `extraction_core`, `procurement`, `core_eval`). Note: `apps/reviews` was merged into `apps/cases` -- the `reviews` entry in INSTALLED_APPS is a migrations-only stub.
+
+The platform uses **shared-database multi-tenancy** with row-level isolation via `CompanyProfile` as the tenant entity. Every business model has a `tenant` FK to `CompanyProfile`. See [MULTI_TENANT.md](../docs/MULTI_TENANT.md) for full details.
 
 **Read [PROJECT.md](../PROJECT.md) for full architecture, models, services, and data flow.**
 
@@ -19,7 +21,8 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 - **Constants** live in `apps/core/constants.py`.
 - **Utility functions** (normalization, parsing, tolerance checks) live in `apps/core/utils.py`.
 - **Permissions** are RBAC-backed classes in `apps/core/permissions.py`; RBAC models in `apps/accounts/rbac_models.py`; template tags in `apps/core/templatetags/rbac_tags.py`.
-- Custom **User model** uses email login (not username): `AUTH_USER_MODEL = "accounts.User"`.
+- Custom **User model** uses email login (not username): `AUTH_USER_MODEL = "accounts.User"`. `User.company` FK to `CompanyProfile` (tenant). `User.is_platform_admin` flag for cross-tenant platform admin access.
+- **Multi-Tenant Isolation**: `TenantMiddleware` sets `request.tenant` from `user.company`; `TenantQuerysetMixin` on all ViewSets/CBVs; `require_tenant()` for FBVs; `scoped_queryset()` for services; `BaseTool._scoped()` for agent tools. Platform admins (`is_platform_admin=True`) bypass tenant scoping. See `apps/core/tenant_utils.py`.
 - **Settings** are in `config/settings.py`; environment-specific values come from env vars or `.env`.
 
 ### Services Pattern
@@ -180,17 +183,23 @@ This is a Django 4.2+ enterprise application for **3-way Purchase Order reconcil
 
 ```
 User (accounts)
-  ├── has legacy role field: ADMIN | AP_PROCESSOR | REVIEWER | FINANCE_MANAGER | AUDITOR
+  ├── has legacy role field: ADMIN | AP_PROCESSOR | REVIEWER | FINANCE_MANAGER | AUDITOR | SUPER_ADMIN
+  ├── company FK -> CompanyProfile (tenant)
+  ├── is_platform_admin BooleanField (cross-tenant platform admin)
   ├── ──< UserRole ──> Role (RBAC multi-role with expiry)
   ├── ──< UserPermissionOverride ──> Permission (ALLOW/DENY per-user)
   └── referenced by: Invoice.created_by, ReviewAssignment.assigned_to, etc.
 
+CompanyProfile (accounts) -- TENANT ENTITY
+  ├── name, legal_name, country, currency, industry, website
+  ├── ──< CompanyAlias, CompanyTaxID
+  └── referenced by: all business models via `tenant` FK
+
 Role (accounts) ──< RolePermission ──> Permission (accounts)
-  └── has: code, name, rank, is_system_role, is_active
+  └── has: code, name, rank, is_system_role, is_active; 10 system roles (incl. SUPER_ADMIN rank 1)
 
 Permission (accounts)
-  └── has: code (e.g. invoices.view), module, action, is_active
-
+  └── has: code (e.g. invoices.view), module, action, is_active; 65 permissions across 18 modules (incl. tenants.*, platform.settings, eval.*, procurement.*)
 Vendor (vendors) ──< VendorAlias
 
 DocumentUpload (documents)
@@ -218,13 +227,12 @@ AgentRun ── linked to ReconciliationResult
 AgentRun ── RBAC fields: actor_primary_role, actor_roles_snapshot_json, permission_source, access_granted
 ToolCall (tools) ── linked to AgentRun + ToolDefinition
 
-ReviewAssignment (reviews) ──< ReviewComment, ManualReviewAction
+ReviewAssignment (cases) ──< ReviewComment, ManualReviewAction
 ReviewAssignment ── ReviewDecision (OneToOne)
 ReviewAssignment ── linked to ReconciliationResult
 
-ProcessingLog, AuditEvent, FileProcessingStatus (auditlog)
+ProcessingLog, AuditEvent (auditlog)
 IntegrationConfig ──< IntegrationLog (integrations)
-GeneratedReport (reports)
 
 ERPConnection (erp_integration)
 ERPReferenceCacheRecord (erp_integration) — TTL cache for ERP lookups
@@ -260,7 +268,7 @@ UPLOADED -> EXTRACTION_IN_PROGRESS -> EXTRACTED -> VALIDATED -> PENDING_APPROVAL
                                    \-> INVALID                 /-> (auto-approve)                    \-> FAILED
                                                                \-> INVALID (rejected)
 ```
-- **AP Case created immediately** after extraction persistence (not after approval). Case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if invoice needs human approval.
+- **AP Case created immediately after upload** (before extraction begins), giving a stable `case_number` for Langfuse session_id tracing across all downstream pipelines. Invoice is linked to the case after extraction persistence via `CaseCreationService.link_invoice_to_case()`. Case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if invoice needs human approval.
 - **PENDING_APPROVAL**: Human-in-the-loop gate. All valid extractions require human approval before reconciliation.
 - Auto-approval: When `EXTRACTION_AUTO_APPROVE_ENABLED=true` and confidence >= `EXTRACTION_AUTO_APPROVE_THRESHOLD`, the system auto-approves and skips human review. Case pipeline continues without pausing.
 - On manual approval: `ExtractionApprovalService` resumes the existing case from PATH_RESOLUTION onward (does not create a new case).
@@ -386,10 +394,12 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **RBAC Audit**: `RBACEventService` logs 9 event types (ROLE_ASSIGNED, ROLE_REMOVED, ROLE_PERMISSION_CHANGED, USER_PERMISSION_OVERRIDE, USER_ACTIVATED, USER_DEACTIVATED, ROLE_CREATED, ROLE_UPDATED, PRIMARY_ROLE_CHANGED)
 - **RBAC Admin Console**: 8 Bootstrap 5 UI screens — User list/create/detail, Role list/create/detail, Permission catalog, Role-Permission matrix
 - **RBAC API**: `/api/v1/accounts/` — UserViewSet (CRUD + roles/overrides), RoleViewSet (CRUD + clone), PermissionViewSet, RolePermissionMatrixView
-- **RBAC Seed**: `python manage.py seed_rbac --sync-users` — 6 roles (incl. SYSTEM_AGENT), 40 permissions, full matrix, legacy user sync
+- **RBAC Seed**: `python manage.py seed_rbac --sync-users` -- 10 roles (incl. SUPER_ADMIN, SYSTEM_AGENT, PROCUREMENT), 65 permissions, full matrix, legacy user sync
+- **Multi-Tenant Architecture**: Shared-database row-level isolation via `CompanyProfile` tenant FK on 28+ models; `TenantMiddleware` sets `request.tenant`; `TenantQuerysetMixin` on all ViewSets/CBVs; `require_tenant()` for FBVs; `scoped_queryset()` for services; `BaseTool._scoped()` for agent tools; Celery tasks accept `tenant_id`; platform admin (`is_platform_admin` + SUPER_ADMIN role rank 1) bypasses tenant scoping. See [MULTI_TENANT.md](../docs/MULTI_TENANT.md).
 - Extraction pipeline (two-agent architecture: InvoiceExtractionAgent always + InvoiceUnderstandingAgent for low confidence; 8 service classes in 7 files + Celery task; Azure Document Intelligence OCR + Azure OpenAI GPT-4o)
-- Extraction approval gate: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI; configurable auto-approval (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`). AP Case created immediately after extraction; case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if human approval needed; approval resumes existing case.
-- Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy → heuristic → default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
+- Extraction approval gate: `ExtractionApproval` + `ExtractionFieldCorrection` models; `ExtractionApprovalService` (approve/reject/auto-approve); touchless-rate analytics; approval queue UI; configurable auto-approval (`EXTRACTION_AUTO_APPROVE_ENABLED`, `EXTRACTION_AUTO_APPROVE_THRESHOLD`). AP Case created at upload time (before extraction); invoice linked to case after extraction persistence; case pipeline pauses at `PENDING_EXTRACTION_APPROVAL` if human approval needed; approval resumes existing case.
+- Reconciliation engine (14 services + Celery tasks); configurable 2-way/3-way matching with mode resolver (policy -> heuristic -> default); tiered tolerance (strict: 2%/1%/1%, auto-close: 5%/3%/3%)
+- **LineMatchService v2** (deterministic multi-signal scorer): 11 weighted signals (item_code 0.30, desc_exact 0.20, token_sim 0.15, fuzzy 0.10, qty 0.10, price 0.07, amount 0.03, uom 0.02, category 0.01, service_stock 0.01, line_number 0.01); 4 penalty types; 5 confidence bands (HIGH/GOOD/MODERATE/LOW/NONE); classification into MATCHED/AMBIGUOUS/UNRESOLVED; optional LLM fallback for unresolved/ambiguous lines only; rich `LineMatchDecision` + `LineCandidateScore` per line; backward compatible `LineMatchPair`/`LineMatchResult` output. Helper modules: `line_match_helpers.py` (text normalization, similarity, numeric proximity, UOM equivalence), `line_match_types.py` (dataclasses + constants), `line_match_llm_fallback.py` (extension point). 14 new fields on `ReconciliationResultLine` (match_method, match_confidence, confidence_band, per-signal scores, candidate_count, is_ambiguous, matched/rejected_signals JSON, line_match_meta JSON). 4 new `ExceptionType` values: NO_CONFIDENT_PO_LINE_MATCH, MULTIPLE_PO_LINE_CANDIDATES, LINE_DESCRIPTION_AMBIGUOUS, LINE_MATCH_LOW_CONFIDENCE.
 - `ReconciliationModeResolver` — 3-tier mode cascade: (1) ReconciliationPolicy lookup, (2) heuristic (item flags + service keywords), (3) config default
 - `TwoWayMatchService` (Invoice vs PO only), `ThreeWayMatchService` (Invoice vs PO vs GRN), `ReconciliationExecutionRouter`
 - `ReconciliationPolicy` model: vendor, item_category, location_code, business_unit, is_service_invoice, is_stock_invoice, priority-ordered matching
@@ -418,7 +428,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - RBAC data scoping: AP_PROCESSOR sees only POs/GRNs/Vendors linked to their own uploaded invoices (via `_scope_pos_for_user`, `_scope_grns_for_user`, `_scope_vendors_for_user`)
 - Sidebar navigation gated by RBAC `{% has_permission %}` tags for POs, GRNs, Vendors, Governance, Admin Console
 - Admin panel registration
-- Audit logging & governance: ProcessingLog, AuditEvent (~38 event types, 20+ RBAC/trace fields), FileProcessingStatus, CaseTimelineService (8 event categories with RBAC badges, status changes, field corrections, duration tracking), governance views (audit event list with RBAC columns + invoice governance dashboard with access history tab)
+- Audit logging & governance: ProcessingLog, AuditEvent (~38 event types, 20+ RBAC/trace fields), CaseTimelineService (8 event categories with RBAC badges, status changes, field corrections, duration tracking), governance views (audit event list with RBAC columns + invoice governance dashboard with access history tab)
 - Observability infrastructure: TraceContext (distributed tracing), structured JSON logging with PII redaction, in-process MetricsService, RequestTraceMiddleware
 - Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
 - Enhanced governance API: 9 endpoints (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance)
@@ -434,14 +444,14 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **Evaluation & Learning Framework** (`apps/core_eval/`): 5 domain-agnostic models (EvalRun, EvalMetric, EvalFieldOutcome, LearningSignal, LearningAction); 6 service classes; deterministic `LearningEngine` with 5 threshold rules; `ExtractionEvalAdapter` wired into extraction task + approval service (predicted = LLM value, ground truth = empty until human approval confirms/corrects); `ReconciliationEvalAdapter` wired into reconciliation runner + review service (predicted = match result, ground truth = review decision); `run_learning_engine` management command; RBAC permissions (`eval.view`, `eval.manage`); 6 audit event types (`LEARNING_ENGINE_RUN`, `LEARNING_ACTION_PROPOSED/APPROVED/REJECTED/APPLIED/FAILED`); 5 browsable UI views at `/eval/` with sidebar navigation; 120 tests (22 unit + 13 e2e + 29 RBAC view + 35 extraction adapter/integration + 21 recon adapter). See [EVAL_LEARNING.md](../docs/EVAL_LEARNING.md).
 
 ### ⬜ Not yet implemented (next steps)
-- **Tests**: Need additional unit tests for services, integration tests for API endpoints, and factory classes for all models. Existing: reconciliation (73), extraction (282+), extraction_core (50+), eval & learning (120).
+- **Tests**: Need additional unit tests for services, integration tests for API endpoints, and factory classes for all models. Existing: reconciliation (73 + 88 line-match v2), extraction (282+), extraction_core (50+), eval & learning (120).
 - **Extraction refinement**: Tune LLM extraction prompts, add support for multi-page invoices, handle edge-case layouts.
 - **Real ERP submission**: `PostingActionService.submit_posting()` is Phase 1 mock — replace with live ERP connector call (SAP BAPI, Oracle REST, etc.).
 - **Auto-submit**: Auto-advance touchless postings (`is_touchless=True`, confidence ≥ threshold) directly to `SUBMISSION_IN_PROGRESS` without human approval.
 - **Feedback learning**: Train `VendorAliasMapping` / `ItemAliasMapping` from accepted field corrections. `LearningEngine` proposes actions; auto-apply not yet implemented.
 - **Scheduled ERP reference re-import**: Celery Beat task to pull fresh master data from shared drive/ERP.
 - **LLM-assisted item mapping**: Use GPT for fuzzy item description matching in `PostingMappingEngine._resolve_item()`.
-- **Report export services**: GeneratedReport model exists but full CSV/Excel export logic not built (CSV export exists for case console only).
+- **Report export services**: Full CSV/Excel export logic not yet built (CSV export exists for case console only).
 - **Celery Beat schedules**: No periodic tasks configured yet.
 - **Email notifications**: No notification system for review assignments.
 - **Docker / deployment**: No Dockerfile or docker-compose.
@@ -480,6 +490,10 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/reconciliation/template_views.py` | Start reconciliation view + agent pipeline wiring |
 | `apps/reconciliation/services/runner_service.py` | Core 3-way matching orchestration + auto-ReviewAssignment |
 | `apps/reconciliation/services/tolerance_engine.py` | Tiered tolerance comparison (strict + auto-close bands) |
+| `apps/reconciliation/services/line_match_service.py` | Deterministic multi-signal line scorer (v2: 11 signals, ambiguity detection, LLM fallback hook) |
+| `apps/reconciliation/services/line_match_types.py` | Scorer dataclasses (`LineCandidateScore`, `LineMatchDecision`, `LLMFallbackResult`) + threshold constants |
+| `apps/reconciliation/services/line_match_helpers.py` | Text normalization, token/fuzzy similarity, numeric proximity, UOM equivalence helpers |
+| `apps/reconciliation/services/line_match_llm_fallback.py` | LLM fallback extension point (no-op base; subclass to wire actual LLM) |
 | `apps/reconciliation/services/agent_feedback_service.py` | Agent PO/GRN re-reconciliation loop |
 | `apps/agents/services/orchestrator.py` | Agent pipeline orchestration |
 | `apps/agents/services/base_agent.py` | Base agent with ReAct loop |
@@ -494,7 +508,7 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 | `apps/core/decorators.py` | `@observed_service`, `@observed_action`, `@observed_task` decorators |
 | `apps/extraction/tasks.py` | Extraction pipeline task |
 | `apps/extraction/services/approval_service.py` | Extraction approval gate (approve/reject/auto-approve, field correction tracking, touchless analytics) |
-| `apps/reviews/services.py` | Review workflow lifecycle |
+| `apps/cases/services/review_workflow_service.py` | Review workflow lifecycle |
 | `apps/agents/services/recommendation_service.py` | Agent recommendation lifecycle (create, query, accept) |
 | `apps/agents/services/agent_trace_service.py` | Unified agent governance tracing |
 | `apps/agents/services/policy_engine.py` | Agent plan + auto-close band logic |
@@ -547,7 +561,7 @@ from apps.core.langfuse_client import (
 
 | Context | Trace ID pattern |
 |---|---|
-| Extraction pipeline (task) | `uuid4().hex` (generated per task run; session_id=`"extraction-upload-{upload_id}"`) |
+| Extraction pipeline (task) | `uuid4().hex` (generated per task run; session_id=`"case-{case_number}"` when case exists, fallback `"extraction-upload-{upload_id}"`) |
 | Agent pipeline / extraction | `trace_ctx.trace_id` (from `TraceContext`) |
 | Reconciliation run | `run.trace_id` if set, else `str(run.pk)` |
 | Posting run | `posting_run.trace_id` if set, else `str(posting_run.pk)` |
@@ -743,7 +757,7 @@ except Exception:
 | ~~`apps/copilot/services/copilot_service.py` -- `answer_question()`~~ | ~~Span `"copilot_answer"` with `metadata={"topic": topic, "session_id": ...}`; score `copilot_session_length` on session archive~~ **Done (2026-03-31)** |
 | ~~`apps/cases/tasks.py` -- `process_case_task`, `reprocess_case_from_stage_task`~~ | ~~Root trace `"case_task"` per task invocation~~ **Done** -- **Enriched**: session_id, invoice_id, case_number, vendor metadata; lf_trace passed to CaseOrchestrator; case_processing_success + case_reprocessed scores |
 | ~~`apps/cases/orchestrators/case_orchestrator.py`~~ | ~~Per-stage spans in case pipeline~~ **Done** -- **Enriched**: per-stage Langfuse spans with stage_index, processing_path, case_status_before; stage-specific observation scores; 4 trace-level scores (case_stages_executed, case_closed, case_terminal, case_path_resolved, case_match_status, case_auto_closed, case_routed_to_review) |
-| ~~`apps/reviews/services.py`~~ | ~~Review workflow spans and scores~~ **Done** -- **Enriched**: create_assignment trace with match_status, exception_count, session_id; record_action spans + review_fields_corrected_count score; add_comment spans; _finalise enriched with 5 decision scores (review_approved, review_rejected, review_reprocess_requested, review_had_corrections, review_fields_corrected_count) |
+| ~~`apps/cases/services/review_workflow_service.py`~~ | ~~Review workflow spans and scores~~ **Done** -- **Enriched**: create_assignment trace with match_status, exception_count, session_id; record_action spans + review_fields_corrected_count score; add_comment spans; _finalise enriched with 5 decision scores (review_approved, review_rejected, review_reprocess_requested, review_had_corrections, review_fields_corrected_count). Moved from `apps/reviews/services.py` during reviews-to-cases merge. |
 | ~~`apps/posting_core/services/posting_mapping_engine.py`~~ | ~~Pass the `mapping` stage span via `lf_parent_span` to `ERPResolutionService.resolve_vendor/resolve_item` calls so ERP spans appear nested under the `mapping` span in Langfuse~~ **Done (2026-03-31)** |
 | ~~`apps/extraction/tasks.py` -- `process_invoice_upload_task`~~ | ~~Root trace `"extraction_pipeline"` with 12 per-stage spans + 10 trace-level scores + per-observation scores.~~ **Done** |
 

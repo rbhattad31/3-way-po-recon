@@ -1,0 +1,100 @@
+{# Invoice detail tab -- full invoice data + line items #}
+
+<div class="tab-panel-inner">
+  {% if ctx.invoice %}
+  <div class="row g-3">
+    {# Invoice Header Details #}
+    <div class="col-lg-6">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-receipt text-primary me-2"></i>Invoice Header
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv"><span class="case-kv-k">Invoice Number</span><span class="case-kv-v fw-semibold">{{ ctx.invoice.invoice_number|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Amount</span><span class="case-kv-v fw-semibold">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.amount|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Invoice Date</span><span class="case-kv-v">{{ ctx.invoice.invoice_date|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Status</span><span class="case-kv-v">{{ ctx.invoice.status|default:"-" }}</span></div>
+          {% if ctx.invoice.extraction_confidence %}
+          <div class="case-kv">
+            <span class="case-kv-k">Extraction Confidence</span>
+            <span class="case-kv-v">
+              <div class="progress" style="width:100px;height:6px;display:inline-flex;vertical-align:middle;">
+                <div class="progress-bar {% if ctx.invoice.extraction_confidence >= 0.8 %}bg-success{% elif ctx.invoice.extraction_confidence >= 0.5 %}bg-warning{% else %}bg-danger{% endif %}" style="width:{% widthratio ctx.invoice.extraction_confidence 1 100 %}%"></div>
+              </div>
+              <span class="small text-muted ms-1">{% widthratio ctx.invoice.extraction_confidence 1 100 %}%</span>
+            </span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# Vendor on invoice #}
+    <div class="col-lg-6">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-building text-success me-2"></i>Vendor Details
+        </div>
+        <div class="case-card-body">
+          {% if ctx.vendor %}
+          <div class="case-kv"><span class="case-kv-k">Name</span><span class="case-kv-v fw-semibold">{{ ctx.vendor.name }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Code</span><span class="case-kv-v">{{ ctx.vendor.vendor_code|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Tax ID</span><span class="case-kv-v">{{ ctx.vendor.tax_id|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Address</span><span class="case-kv-v">{{ ctx.vendor.address|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Contact</span><span class="case-kv-v">{{ ctx.vendor.contact_email|default:"-" }}</span></div>
+          {% else %}
+          <p class="text-muted small mb-0">No vendor data available.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# Line items table #}
+    <div class="col-12">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-list-ul text-primary me-2"></i>Invoice Line Items
+        </div>
+        <div class="case-card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 case-table" id="invoiceLineItemsTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Description</th>
+                  <th>Item Code</th>
+                  <th class="text-end">Qty</th>
+                  <th>UOM</th>
+                  <th class="text-end">Unit Price</th>
+                  <th class="text-end">Amount</th>
+                </tr>
+              </thead>
+              <tbody id="invoiceLineItems">
+                <tr>
+                  <td colspan="7" class="text-center text-muted py-3">
+                    <i class="bi bi-hourglass-split me-1"></i>Loading line items...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# Document link #}
+    {% if ctx.invoice.id %}
+    <div class="col-12">
+      <a href="{% url 'documents:invoice_detail' ctx.invoice.id %}" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-box-arrow-up-right me-1"></i>Open Full Invoice Detail
+      </a>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="tab-panel-empty">
+    <i class="bi bi-receipt text-muted" style="font-size:2rem;"></i>
+    <p class="text-muted mt-2">No invoice data available for this case.</p>
+  </div>
+  {% endif %}
+</div>

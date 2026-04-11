@@ -150,6 +150,8 @@ def request_list(request):
         latest_recommended_option=latest_recommendation_sq,
         latest_confidence_score=latest_confidence_sq,
     )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # Filters
     status_filter = request.GET.get("status")
@@ -171,8 +173,11 @@ def request_list(request):
     page = paginator.get_page(request.GET.get("page"))
 
     # Distinct domain codes for filter dropdown
+    domains_qs = ProcurementRequest.objects.all()
+    if tenant is not None:
+        domains_qs = domains_qs.filter(tenant=tenant)
     domains = (
-        ProcurementRequest.objects.values_list("domain_code", flat=True)
+        domains_qs.values_list("domain_code", flat=True)
         .distinct()
         .order_by("domain_code")
     )
@@ -2118,7 +2123,7 @@ def trigger_validation(request, pk):
         run_type=AnalysisRunType.VALIDATION,
         triggered_by=request.user,
     )
-    run_validation_task.delay(run.pk)
+    run_validation_task.delay(request.tenant.pk if request.tenant else None, run.pk)
     messages.success(request, f"Validation queued (Run {run.run_id}).")
     return redirect("procurement:request_workspace", pk=pk)
 

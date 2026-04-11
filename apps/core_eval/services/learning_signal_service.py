@@ -28,15 +28,15 @@ class LearningSignalService:
         new_value: str = "",
         payload_json: Optional[dict] = None,
         eval_run: Optional[EvalRun] = None,
+        tenant=None,
     ) -> LearningSignal:
-        return LearningSignal.objects.create(
+        kwargs = dict(
             app_module=app_module,
             signal_type=signal_type,
             entity_type=entity_type,
             entity_id=str(entity_id) if entity_id else "",
             aggregation_key=aggregation_key,
             confidence=confidence,
-            tenant_id=tenant_id,
             actor=actor,
             field_name=field_name,
             old_value=old_value,
@@ -44,6 +44,11 @@ class LearningSignalService:
             payload_json=payload_json or {},
             eval_run=eval_run,
         )
+        if tenant is not None:
+            kwargs["tenant"] = tenant
+        elif tenant_id:
+            kwargs["tenant_id"] = tenant_id
+        return LearningSignal.objects.create(**kwargs)
 
     @staticmethod
     def list_by_entity(

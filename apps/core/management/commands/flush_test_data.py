@@ -50,12 +50,10 @@ class Command(BaseCommand):
 
     def _flush(self):
         # --- Audit / Observability ---
-        from apps.auditlog.models import AuditEvent, ProcessingLog, FileProcessingStatus
+        from apps.auditlog.models import AuditEvent, ProcessingLog
 
         count = ProcessingLog.objects.all().delete()[0]
         self.stdout.write(f"  ProcessingLog: {count}")
-        count = FileProcessingStatus.objects.all().delete()[0]
-        self.stdout.write(f"  FileProcessingStatus: {count}")
         count = AuditEvent.objects.all().delete()[0]
         self.stdout.write(f"  AuditEvent: {count}")
 
@@ -73,7 +71,7 @@ class Command(BaseCommand):
             self.stdout.write(f"  {model.__name__}: {count}")
 
         # --- Reviews ---
-        from apps.reviews.models import (
+        from apps.cases.models import (
             ReviewAssignment, ReviewComment, ReviewDecision, ManualReviewAction,
         )
 
@@ -118,20 +116,16 @@ class Command(BaseCommand):
             self.stdout.write(f"  {model.__name__}: {count}")
 
         # --- Extraction ---
-        from apps.extraction.models import ExtractionResult
+        from apps.extraction.models import (
+            ExtractionApproval, ExtractionFieldCorrection, ExtractionResult,
+        )
 
+        count = ExtractionFieldCorrection.objects.all().delete()[0]
+        self.stdout.write(f"  ExtractionFieldCorrection: {count}")
+        count = ExtractionApproval.objects.all().delete()[0]
+        self.stdout.write(f"  ExtractionApproval: {count}")
         count = ExtractionResult.objects.all().delete()[0]
         self.stdout.write(f"  ExtractionResult: {count}")
-
-        # Extraction approvals
-        try:
-            from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection
-            count = ExtractionFieldCorrection.objects.all().delete()[0]
-            self.stdout.write(f"  ExtractionFieldCorrection: {count}")
-            count = ExtractionApproval.objects.all().delete()[0]
-            self.stdout.write(f"  ExtractionApproval: {count}")
-        except ImportError:
-            pass
 
         # Credit accounts: delete transactions, reset balances to seed default
         try:
@@ -201,7 +195,7 @@ class Command(BaseCommand):
 
         # --- Reset auto-increment IDs ---
         self._reset_auto_increments(flushed_models=[
-            ProcessingLog, FileProcessingStatus, AuditEvent,
+            ProcessingLog, AuditEvent,
             APCaseActivity, APCaseComment, APCaseSummary,
             APCaseAssignment, APCaseArtifact, APCaseDecision, APCaseStage,
             APCase,
@@ -211,7 +205,7 @@ class Command(BaseCommand):
             ToolCall,
             ReconciliationException, ReconciliationResultLine,
             ReconciliationResult, ReconciliationRun,
-            ExtractionResult,
+            ExtractionFieldCorrection, ExtractionApproval, ExtractionResult,
             CopilotSessionArtifact, CopilotMessage, CopilotSession,
             GRNLineItem, GoodsReceiptNote,
             InvoiceLineItem, Invoice,
@@ -225,11 +219,6 @@ class Command(BaseCommand):
         """Reset AUTO_INCREMENT to 1 for all flushed tables."""
         # Conditionally add models that may not be importable
         try:
-            from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection
-            flushed_models.extend([ExtractionFieldCorrection, ExtractionApproval])
-        except ImportError:
-            pass
-        try:
             from apps.extraction.bulk_models import BulkExtractionItem, BulkExtractionJob
             flushed_models.extend([BulkExtractionItem, BulkExtractionJob])
         except ImportError:
@@ -240,7 +229,11 @@ class Command(BaseCommand):
             for model in flushed_models:
                 table = model._meta.db_table
                 try:
-                    cursor.execute(f"ALTER TABLE `{table}` AUTO_INCREMENT = 1")
+                    # Table name cannot be parameterised in MySQL; validate it
+                    # against Django's known table registry before interpolating.
+                    if not table.replace("_", "").isalnum():
+                        raise ValueError(f"Refusing to reset unsafe table name: {table!r}")
+                    cursor.execute("ALTER TABLE `%s` AUTO_INCREMENT = 1" % table)  # nosec B608 – validated above
                     reset_count += 1
                 except Exception as exc:
                     self.stdout.write(

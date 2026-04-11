@@ -33,8 +33,9 @@ from apps.core.enums import (
 )
 from apps.core.decorators import observed_action
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.documents.models import DocumentUpload, Invoice, InvoiceLineItem
-from apps.extraction.models import ExtractionResult
+from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection, ExtractionResult
 
 logger = logging.getLogger(__name__)
 
@@ -76,22 +77,25 @@ MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
 @observed_action("extraction.view_workbench", permission="invoices.view", entity_type="ExtractionResult")
 def extraction_workbench(request):
     """Main workbench page: recent extractions + upload form."""
+    tenant = require_tenant(request)
     qs = (
         ExtractionResult.objects
         .select_related(
-            "document_upload", "invoice", "invoice__vendor",
+            "document_upload",
             "extraction_run",  # avoid N+1 in get_execution_context()
         )
         .order_by("-created_at")
     )
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     qs = _scope_extractions_for_user(qs, request.user)
 
     q = request.GET.get("q", "").strip()
     if q:
         from django.db.models import Q
         qs = qs.filter(
-            Q(invoice__invoice_number__icontains=q)
-            | Q(invoice__raw_vendor_name__icontains=q)
+            Q(document_upload__invoices__invoice_number__icontains=q)
+            | Q(document_upload__invoices__raw_vendor_name__icontains=q)
             | Q(document_upload__original_filename__icontains=q)
         )
 
@@ -103,11 +107,11 @@ def extraction_workbench(request):
 
     confidence_filter = request.GET.get("confidence")
     if confidence_filter == "high":
-        qs = qs.filter(confidence__gte=0.8)
+        qs = qs.filter(extraction_run__overall_confidence__gte=0.8)
     elif confidence_filter == "medium":
-        qs = qs.filter(confidence__gte=0.5, confidence__lt=0.8)
+        qs = qs.filter(extraction_run__overall_confidence__gte=0.5, extraction_run__overall_confidence__lt=0.8)
     elif confidence_filter == "low":
-        qs = qs.filter(confidence__lt=0.5, confidence__isnull=False)
+        qs = qs.filter(extraction_run__overall_confidence__lt=0.5, extraction_run__overall_confidence__isnull=False)
 
     # KPI stats (scoped to user visibility, cached 60s)
     from django.db.models import Avg, Count, Q as Qf
@@ -117,7 +121,10 @@ def extraction_workbench(request):
         stats = cached["stats"]
         stats_cached_at = cached["cached_at"]
     else:
-        all_results = _scope_extractions_for_user(ExtractionResult.objects.all(), request.user)
+        all_results_qs = ExtractionResult.objects.all()
+        if tenant is not None:
+            all_results_qs = all_results_qs.filter(tenant=tenant)
+        all_results = _scope_extractions_for_user(all_results_qs, request.user)
         total = all_results.count()
         success = all_results.filter(success=True).count()
         failed = all_results.filter(success=False).count()
@@ -127,14 +134,18 @@ def extraction_workbench(request):
             "failed": failed,
             "success_rate": round(success / total * 100, 1) if total else 0,
             "low_confidence": all_results.filter(
-                success=True, confidence__lt=0.5, confidence__isnull=False
+                success=True,
+                extraction_run__overall_confidence__lt=0.5,
+                extraction_run__overall_confidence__isnull=False,
             ).count(),
             "avg_confidence": all_results.filter(
-                success=True, confidence__isnull=False
-            ).aggregate(avg=Avg("confidence"))["avg"] or 0,
+                success=True,
+                extraction_run__overall_confidence__isnull=False,
+            ).aggregate(avg=Avg("extraction_run__overall_confidence"))["avg"] or 0,
             "avg_duration": all_results.filter(
-                success=True, duration_ms__isnull=False
-            ).aggregate(avg=Avg("duration_ms"))["avg"] or 0,
+                success=True,
+                extraction_run__duration_ms__isnull=False,
+            ).aggregate(avg=Avg("extraction_run__duration_ms"))["avg"] or 0,
         }
         from django.utils import timezone as _tz
         stats_cached_at = _tz.now()
@@ -144,7 +155,6 @@ def extraction_workbench(request):
     page_obj = paginator.get_page(request.GET.get("page"))
 
     # Pre-load approval status for each result's invoice
-    from apps.extraction.models import ExtractionApproval
     invoice_ids = [r.invoice_id for r in page_obj if r.invoice_id]
     approval_map = {}
     if invoice_ids:
@@ -180,6 +190,8 @@ def extraction_workbench(request):
         )
         .order_by("-created_at")
     )
+    if tenant:
+        approval_qs = approval_qs.filter(tenant=tenant)
     # AP_PROCESSOR sees only approvals for invoices they uploaded
     if getattr(request.user, "role", None) == UserRole.AP_PROCESSOR:
         approval_qs = approval_qs.filter(
@@ -223,6 +235,8 @@ def extraction_workbench(request):
         ])
         .order_by("-created_at")
     )
+    if tenant:
+        pending_uploads_qs = pending_uploads_qs.filter(tenant=tenant)
     if getattr(request.user, "role", None) == UserRole.AP_PROCESSOR:
         pending_uploads_qs = pending_uploads_qs.filter(uploaded_by=request.user)
     pending_uploads = list(pending_uploads_qs[:50])
@@ -234,6 +248,8 @@ def extraction_workbench(request):
         .filter(processing_state=FileProcessingState.FAILED)
         .order_by("-updated_at")
     )
+    if tenant:
+        failed_uploads_qs = failed_uploads_qs.filter(tenant=tenant)
     if getattr(request.user, "role", None) == UserRole.AP_PROCESSOR:
         failed_uploads_qs = failed_uploads_qs.filter(uploaded_by=request.user)
     failed_uploads_paginator = Paginator(failed_uploads_qs, 20)
@@ -323,6 +339,7 @@ def extraction_upload(request):
             document_type=DocumentType.INVOICE,
             processing_state=FileProcessingState.PROCESSING,
             uploaded_by=request.user,
+            tenant=getattr(request, 'tenant', None),
         )
     except Exception as exc:
         # Refund the reserved credit — setup failed before processing
@@ -336,12 +353,33 @@ def extraction_upload(request):
     # Try blob upload first — required for async Celery path
     _try_blob_upload(doc_upload, uploaded_file)
 
+    # ── Create AP Case immediately after upload (before extraction) ──
+    # This ensures case_id is available as Langfuse session_id for all traces.
+    case_id = None
+    case_number = None
+    try:
+        from apps.cases.services.case_creation_service import CaseCreationService
+        case = CaseCreationService.create_from_document_upload(
+            upload=doc_upload,
+            uploaded_by=request.user,
+            tenant=getattr(request, 'tenant', None),
+        )
+        case_id = case.pk
+        case_number = case.case_number
+    except Exception as case_exc:
+        logger.warning("Pre-extraction case creation failed (non-fatal): %s", case_exc)
+
     # If blob upload succeeded, dispatch via Celery task (async on server)
     # Credit consume/refund happens inside the Celery task
     if doc_upload.blob_path:
         from apps.extraction.tasks import process_invoice_upload_task
         from apps.core.utils import dispatch_task
-        dispatch_task(process_invoice_upload_task, upload_id=doc_upload.pk)
+        dispatch_task(
+            process_invoice_upload_task,
+            upload_id=doc_upload.pk,
+            case_id=case_id,
+            case_number=case_number,
+        )
         _invalidate_extraction_caches(request.user)
         messages.success(
             request,
@@ -681,7 +719,6 @@ def extraction_rerun(request, pk):
 
     # ── Guard: prevent reprocess if approval is already finalized ──
     if ext.invoice_id:
-        from apps.extraction.models import ExtractionApproval
         from apps.core.enums import ExtractionApprovalStatus
         finalized = ExtractionApproval.objects.filter(
             invoice_id=ext.invoice_id,
@@ -835,6 +872,7 @@ def extraction_ajax_filter(request):
             "filename": r.document_upload.original_filename if r.document_upload else "—",
             "invoice_number": inv.invoice_number if inv else "",
             "vendor": (inv.vendor.name if inv and inv.vendor else inv.raw_vendor_name if inv else ""),
+            "vendor_linked": bool(inv and inv.vendor_id),
             "currency": inv.currency if inv else "",
             "total_amount": str(inv.total_amount) if inv and inv.total_amount else "",
             "confidence": round(r.confidence * 100) if r.confidence is not None else None,
@@ -960,13 +998,12 @@ EDITABLE_LINE_FIELDS = {
 def extraction_edit_values(request, pk):
     """Accept corrected values for a low-confidence extraction result."""
     ext = get_object_or_404(
-        ExtractionResult.objects.select_related("invoice"),
+        ExtractionResult.objects.select_related("document_upload", "extraction_run"),
         pk=pk,
     )
-    if not ext.invoice:
-        return JsonResponse({"ok": False, "error": "No invoice linked to this extraction."}, status=400)
-
     invoice = ext.invoice
+    if not invoice:
+        return JsonResponse({"ok": False, "error": "No invoice linked to this extraction."}, status=400)
 
     try:
         payload = json.loads(request.body)
@@ -974,8 +1011,6 @@ def extraction_edit_values(request, pk):
         return JsonResponse({"ok": False, "error": "Invalid JSON payload."}, status=400)
 
     # Fetch linked approval (if any) for field-correction tracking
-    from apps.extraction.models import ExtractionApproval
-    from apps.extraction.models import ExtractionFieldCorrection
 
     approval = ExtractionApproval.objects.filter(invoice=invoice).first()
     correction_records = []
@@ -1160,7 +1195,6 @@ def extraction_approval_queue(request):
 @observed_action("extraction.view_approval_detail", permission="invoices.view", entity_type="ExtractionApproval")
 def extraction_approval_detail(request, pk):
     """Detail view for reviewing a single extraction before approval."""
-    from apps.extraction.models import ExtractionApproval
 
     approval = get_object_or_404(
         ExtractionApproval.objects.select_related(
@@ -1225,10 +1259,14 @@ def extraction_approval_detail(request, pk):
 )
 def extraction_approve(request, pk):
     """Approve an extraction, optionally with field corrections."""
-    from apps.extraction.models import ExtractionApproval
     from apps.extraction.services.approval_service import ExtractionApprovalService
 
     approval = get_object_or_404(ExtractionApproval, pk=pk)
+    # Cross-tenant guard
+    tenant = getattr(request, 'tenant', None)
+    if tenant is not None and getattr(approval.invoice, 'tenant_id', None) != tenant.pk:
+        from django.http import Http404
+        raise Http404
 
     try:
         payload = json.loads(request.body) if request.body else {}
@@ -1266,10 +1304,14 @@ def extraction_approve(request, pk):
 )
 def extraction_reject(request, pk):
     """Reject an extraction."""
-    from apps.extraction.models import ExtractionApproval
     from apps.extraction.services.approval_service import ExtractionApprovalService
 
     approval = get_object_or_404(ExtractionApproval, pk=pk)
+    # Cross-tenant guard
+    tenant = getattr(request, 'tenant', None)
+    if tenant is not None and getattr(approval.invoice, 'tenant_id', None) != tenant.pk:
+        from django.http import Http404
+        raise Http404
 
     try:
         payload = json.loads(request.body) if request.body else {}
@@ -1318,7 +1360,7 @@ def extraction_console(request, pk):
     ext = get_object_or_404(
         ExtractionResult.objects.select_related(
             "document_upload", "document_upload__uploaded_by",
-            "invoice", "invoice__vendor",
+            "extraction_run",
         ),
         pk=pk,
     )
@@ -1855,7 +1897,6 @@ def extraction_console(request, pk):
     # Approval state
     approval = None
     if invoice:
-        from apps.extraction.models import ExtractionApproval
         approval = ExtractionApproval.objects.filter(invoice=invoice).first()
         # Auto-create PENDING approval if missing for a validated invoice
         if not approval and invoice.status in (InvoiceStatus.VALIDATED, InvoiceStatus.EXTRACTED):
@@ -1868,9 +1909,8 @@ def extraction_console(request, pk):
     # Permissions context
     duplicate_blocks_approval = False
     if invoice and invoice.is_duplicate and invoice.duplicate_of_id:
-        from apps.extraction.models import ExtractionApproval as _EA
         from apps.core.enums import ExtractionApprovalStatus as _EAS
-        duplicate_blocks_approval = _EA.objects.filter(
+        duplicate_blocks_approval = ExtractionApproval.objects.filter(
             invoice_id=invoice.duplicate_of_id,
             status__in=[_EAS.APPROVED, _EAS.AUTO_APPROVED],
         ).exists()
@@ -1937,7 +1977,6 @@ def extraction_console(request, pk):
 
     # ── Also include ExtractionFieldCorrection records (from Edit Values / Approval) ──
     if approval:
-        from apps.extraction.models import ExtractionFieldCorrection
         field_corrections = (
             ExtractionFieldCorrection.objects
             .filter(approval=approval)

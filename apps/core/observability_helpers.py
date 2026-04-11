@@ -48,6 +48,7 @@ _MAX_LARGE_TEXT_LEN = 300
 
 def derive_session_id(
     *,
+    case_number: Optional[str] = None,
     invoice_id: Optional[int] = None,
     document_upload_id: Optional[int] = None,
     case_id: Optional[int] = None,
@@ -55,11 +56,14 @@ def derive_session_id(
     """Derive a standardised Langfuse session_id.
 
     Convention (in priority order):
-    1. ``invoice-{invoice_id}`` when invoice_id is available
-    2. ``upload-{document_upload_id}`` for extraction pre-invoice
-    3. ``case-{case_id}`` for case-first flows
-    4. None if nothing is available
+    1. ``case-{case_number}`` when case_number is available (earliest anchor)
+    2. ``invoice-{invoice_id}`` when invoice_id is available
+    3. ``upload-{document_upload_id}`` for extraction pre-invoice
+    4. ``case-{case_id}`` for case-first flows (numeric fallback)
+    5. None if nothing is available
     """
+    if case_number:
+        return f"case-{case_number}"
     if invoice_id:
         return f"invoice-{invoice_id}"
     if document_upload_id:
@@ -75,6 +79,7 @@ def derive_session_id(
 
 def build_observability_context(
     *,
+    tenant_id: Optional[int] = None,
     invoice_id: Optional[int] = None,
     document_upload_id: Optional[int] = None,
     extraction_result_id: Optional[int] = None,
@@ -100,6 +105,7 @@ def build_observability_context(
     Filters out None/empty values so the dict stays minimal.
     """
     raw = {
+        "tenant_id": tenant_id,
         "invoice_id": invoice_id,
         "document_upload_id": document_upload_id,
         "extraction_result_id": extraction_result_id,
@@ -242,7 +248,7 @@ def score_latency(
         _comment = comment or f"{int(latency_ms)}ms (threshold={int(threshold_ms)}ms)"
         score_observation_safe(observation, _name, _val, comment=_comment)
     except Exception:
-        pass
+        logger.debug("Langfuse latency score failed (non-fatal)", exc_info=True)
 
 
 # =====================================================================

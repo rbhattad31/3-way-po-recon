@@ -15,5 +15,6 @@ urlpatterns = [
     path("<int:pk>/comment/", template_views.case_add_comment, name="case_add_comment"),
     path("<int:pk>/assign/", template_views.case_assign, name="case_assign"),
     path("<int:pk>/reprocess/", template_views.reprocess_case, name="reprocess_case"),
+    path("<int:case_pk>/agent/<int:agent_run_pk>/eval-correct/", template_views.submit_eval_correction, name="submit_eval_correction"),
     path("create-for-invoice/<int:invoice_pk>/", template_views.create_case_for_invoice, name="create_case_for_invoice"),
 ]

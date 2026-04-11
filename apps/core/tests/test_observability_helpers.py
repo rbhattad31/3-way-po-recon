@@ -36,15 +36,19 @@ from apps.core.observability_helpers import (
 # ---- derive_session_id -------------------------------------------------------
 
 class TestDeriveSessionId:
-    def test_invoice_id_takes_priority(self):
+    def test_case_number_takes_top_priority(self):
+        result = derive_session_id(case_number="AP-260407-0001", invoice_id=42, document_upload_id=10, case_id=5)
+        assert result == "case-AP-260407-0001"
+
+    def test_invoice_id_second_priority(self):
         result = derive_session_id(invoice_id=42, document_upload_id=10, case_id=5)
         assert result == "invoice-42"
 
-    def test_upload_id_second_priority(self):
+    def test_upload_id_third_priority(self):
         result = derive_session_id(document_upload_id=10, case_id=5)
         assert result == "upload-10"
 
-    def test_case_id_third_priority(self):
+    def test_case_id_fourth_priority(self):
         result = derive_session_id(case_id=5)
         assert result == "case-5"
 
@@ -56,6 +60,10 @@ class TestDeriveSessionId:
         """invoice_id=0 is falsy, so should fall through."""
         result = derive_session_id(invoice_id=0, case_id=3)
         assert result == "case-3"
+
+    def test_case_number_empty_string_falls_through(self):
+        result = derive_session_id(case_number="", invoice_id=42)
+        assert result == "invoice-42"
 
 
 # ---- build_observability_context ---------------------------------------------

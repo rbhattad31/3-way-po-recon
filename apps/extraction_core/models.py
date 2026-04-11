@@ -392,12 +392,28 @@ class ExtractionRun(BaseModel):
     the resolved jurisdiction, schema, prompt, and confidence metrics.
     """
 
-    document = models.ForeignKey(
-        "extraction_documents.ExtractionDocument",
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
         on_delete=models.CASCADE,
-        related_name="extraction_runs",
-        help_text="Source document being extracted",
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
+    document_upload = models.ForeignKey(
+        "documents.DocumentUpload",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="extraction_runs",
+        help_text="Source document upload (if originating from PO-recon pipeline)",
+    )
+    file_name = models.CharField(max_length=512, blank=True, default="")
+    file_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    page_count = models.PositiveIntegerField(null=True, blank=True)
+    jurisdiction_signals_json = models.JSONField(default=list, blank=True)
+    jurisdiction_warning = models.CharField(max_length=500, blank=True, default="")
+    classification_confidence = models.FloatField(null=True, blank=True)
     status = models.CharField(
         max_length=30,
         choices=ExtractionRunStatus.choices,
@@ -522,6 +538,25 @@ class ExtractionRun(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Extraction OCR Text — Large OCR payload split out of ExtractionRun
+# ---------------------------------------------------------------------------
+
+
+class ExtractionOCRText(models.Model):
+    extraction_run = models.OneToOneField(
+        ExtractionRun, on_delete=models.CASCADE, related_name="ocr_text_record"
+    )
+    ocr_text = models.TextField(blank=True, default="")
+    ocr_char_count = models.PositiveIntegerField(default=0)
+    ocr_page_count = models.PositiveSmallIntegerField(default=0)
+    ocr_duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "extraction_core_ocr_text"
+
+
+# ---------------------------------------------------------------------------
 # Extraction Field Value — Per-field extraction result
 # ---------------------------------------------------------------------------
 
@@ -531,6 +566,14 @@ class ExtractionFieldValue(TimestampMixin):
     Per-field extraction result with confidence and correction tracking.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     extraction_run = models.ForeignKey(
         ExtractionRun,
         on_delete=models.CASCADE,
@@ -607,6 +650,14 @@ class ExtractionLineItem(TimestampMixin):
     Structured line-item record extracted from a document.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     extraction_run = models.ForeignKey(
         ExtractionRun,
         on_delete=models.CASCADE,
@@ -646,6 +697,14 @@ class ExtractionEvidence(TimestampMixin):
     in the document and how it was extracted.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     extraction_run = models.ForeignKey(
         ExtractionRun,
         on_delete=models.CASCADE,
@@ -698,6 +757,14 @@ class ExtractionIssue(TimestampMixin):
     An issue found during extraction or validation.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     extraction_run = models.ForeignKey(
         ExtractionRun,
         on_delete=models.CASCADE,
@@ -751,6 +818,14 @@ class ExtractionApprovalRecord(BaseModel):
     which are recorded here only and do not change business approval state.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     extraction_run = models.OneToOneField(
         ExtractionRun,
         on_delete=models.CASCADE,
@@ -791,6 +866,14 @@ class ExtractionCorrection(BaseModel):
     Audit trail for field corrections during approval.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     extraction_run = models.ForeignKey(
         ExtractionRun,
         on_delete=models.CASCADE,

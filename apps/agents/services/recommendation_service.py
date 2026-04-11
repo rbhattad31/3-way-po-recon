@@ -25,6 +25,7 @@ class RecommendationService:
         confidence: float,
         evidence: Optional[Dict[str, Any]] = None,
         recommended_action: str = "",
+        tenant=None,
     ) -> AgentRecommendation:
         """Record a new agent recommendation.
 
@@ -48,6 +49,7 @@ class RecommendationService:
             reasoning=summary,
             evidence=evidence,
             recommended_action=recommended_action,
+            tenant=tenant,
         )
         logger.info(
             "Recommendation created: type=%s confidence=%.2f invoice=%s agent=%s",
@@ -56,12 +58,15 @@ class RecommendationService:
         return rec
 
     @staticmethod
-    def get_recommendations_for_invoice(invoice_id: int) -> List[Dict[str, Any]]:
+    def get_recommendations_for_invoice(invoice_id: int, tenant=None) -> List[Dict[str, Any]]:
         """Return all recommendations for an invoice, highest-confidence first."""
+        qs = AgentRecommendation.objects.filter(
+            invoice_id=invoice_id,
+        )
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
         return list(
-            AgentRecommendation.objects.filter(
-                invoice_id=invoice_id,
-            ).select_related("agent_run").values(
+            qs.select_related("agent_run").values(
                 "id", "agent_run__agent_type", "recommendation_type",
                 "confidence", "reasoning", "evidence", "recommended_action",
                 "accepted", "accepted_by__email", "accepted_at", "created_at",
@@ -136,5 +141,29 @@ class RecommendationService:
         logger.info(
             "Recommendation %s %s by %s",
             recommendation_id, "accepted" if accepted else "rejected", user,
+        )
+        return rec
+
+    @staticmethod
+    def mark_recommendation_overridden(
+        rec_id: int,
+        decision,
+        reason: str,
+        user=None,
+    ) -> AgentRecommendation:
+        """Mark a recommendation as overridden by a human case decision."""
+        rec = AgentRecommendation.objects.get(pk=rec_id)
+        rec.accepted = False
+        rec.accepted_by = user
+        rec.accepted_at = timezone.now()
+        rec.overridden_by_decision = decision
+        rec.override_reason = reason
+        rec.save(update_fields=[
+            "accepted", "accepted_by", "accepted_at",
+            "overridden_by_decision", "override_reason", "updated_at",
+        ])
+        logger.info(
+            "Recommendation %s overridden by decision %s: %s",
+            rec_id, getattr(decision, "pk", None), reason[:80],
         )
         return rec

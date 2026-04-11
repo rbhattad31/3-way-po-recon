@@ -33,7 +33,12 @@ logger = logging.getLogger(__name__)
 @observed_action("erp.view_connections", permission="users.manage", entity_type="ERPConnection")
 def erp_connection_list(request):
     """List all ERP connections with filters."""
+    from apps.core.tenant_utils import get_tenant_or_none
+    tenant = get_tenant_or_none(request)
+
     qs = ERPConnection.objects.order_by("-is_default", "name")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     search = request.GET.get("q", "").strip()
     if search:
@@ -51,10 +56,16 @@ def erp_connection_list(request):
     page = paginator.get_page(request.GET.get("page"))
 
     # Quick stats
-    total = ERPConnection.objects.count()
-    active = ERPConnection.objects.filter(status=ERPConnectionStatus.ACTIVE).count()
-    default_conn = ERPConnection.objects.filter(is_default=True).first()
-    cache_count = ERPReferenceCacheRecord.objects.count()
+    stats_base = ERPConnection.objects.all()
+    if tenant is not None:
+        stats_base = stats_base.filter(tenant=tenant)
+    total = stats_base.count()
+    active = stats_base.filter(status=ERPConnectionStatus.ACTIVE).count()
+    default_conn = stats_base.filter(is_default=True).first()
+    cache_base = ERPReferenceCacheRecord.objects.all()
+    if tenant is not None:
+        cache_base = cache_base.filter(tenant=tenant)
+    cache_count = cache_base.count()
 
     return render(request, "erp_integration/connection_list.html", {
         "page_obj": page,
@@ -221,7 +232,7 @@ def erp_connection_test_ajax(request):
         "api_key_env": data.get("api_key_env", ""),
         "connection_string_env": data.get("connection_string_env", ""),
         "database_name": data.get("database_name", ""),
-        "tenant_id": data.get("tenant_id", ""),
+        "tenant_id": data.get("erp_tenant_id", "") or data.get("tenant_id", ""),
         "client_id_env": data.get("client_id_env", ""),
         "client_secret_env": data.get("client_secret_env", ""),
         # Builder fields for SQL Server (password sent as plaintext for
@@ -263,6 +274,7 @@ def erp_reference_data(request):
     Each tab shows the live contents of the corresponding posting_core reference table
     so operators can verify what master data the posting mapping engine will resolve against.
     """
+    from apps.core.tenant_utils import get_tenant_or_none
     from apps.posting_core.models import (
         ERPCostCenterReference,
         ERPItemReference,
@@ -272,6 +284,13 @@ def erp_reference_data(request):
         ERPVendorReference,
     )
 
+    tenant = get_tenant_or_none(request)
+
+    def _scope(qs):
+        if tenant is not None:
+            return qs.filter(tenant=tenant)
+        return qs
+
     VALID_TABS = ("vendors", "items", "tax", "cost_centers", "po_refs")
     active_tab = request.GET.get("tab", "vendors")
     if active_tab not in VALID_TABS:
@@ -279,18 +298,18 @@ def erp_reference_data(request):
     search = request.GET.get("q", "").strip()
 
     # KPI counts (active/open records only)
-    vendor_count = ERPVendorReference.objects.filter(is_active=True).count()
-    item_count = ERPItemReference.objects.filter(is_active=True).count()
-    tax_count = ERPTaxCodeReference.objects.filter(is_active=True).count()
-    cost_center_count = ERPCostCenterReference.objects.filter(is_active=True).count()
-    po_ref_count = ERPPOReference.objects.filter(is_open=True).count()
-    last_batch = ERPReferenceImportBatch.objects.order_by("-created_at").first()
-    total_batches = ERPReferenceImportBatch.objects.count()
+    vendor_count = _scope(ERPVendorReference.objects.filter(is_active=True)).count()
+    item_count = _scope(ERPItemReference.objects.filter(is_active=True)).count()
+    tax_count = _scope(ERPTaxCodeReference.objects.filter(is_active=True)).count()
+    cost_center_count = _scope(ERPCostCenterReference.objects.filter(is_active=True)).count()
+    po_ref_count = _scope(ERPPOReference.objects.filter(is_open=True)).count()
+    last_batch = _scope(ERPReferenceImportBatch.objects.all()).order_by("-created_at").first()
+    total_batches = _scope(ERPReferenceImportBatch.objects.all()).count()
 
     # Build paginated queryset for the active tab
     page_obj = None
     if active_tab == "vendors":
-        qs = ERPVendorReference.objects.select_related("batch").order_by("vendor_code")
+        qs = _scope(ERPVendorReference.objects.select_related("batch")).order_by("vendor_code")
         if search:
             qs = qs.filter(
                 Q(vendor_code__icontains=search)
@@ -300,7 +319,7 @@ def erp_reference_data(request):
         page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
 
     elif active_tab == "items":
-        qs = ERPItemReference.objects.select_related("batch").order_by("item_code")
+        qs = _scope(ERPItemReference.objects.select_related("batch")).order_by("item_code")
         if search:
             qs = qs.filter(
                 Q(item_code__icontains=search)
@@ -310,7 +329,7 @@ def erp_reference_data(request):
         page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
 
     elif active_tab == "tax":
-        qs = ERPTaxCodeReference.objects.select_related("batch").order_by("tax_code")
+        qs = _scope(ERPTaxCodeReference.objects.select_related("batch")).order_by("tax_code")
         if search:
             qs = qs.filter(
                 Q(tax_code__icontains=search)
@@ -320,7 +339,7 @@ def erp_reference_data(request):
         page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
 
     elif active_tab == "cost_centers":
-        qs = ERPCostCenterReference.objects.select_related("batch").order_by("cost_center_code")
+        qs = _scope(ERPCostCenterReference.objects.select_related("batch")).order_by("cost_center_code")
         if search:
             qs = qs.filter(
                 Q(cost_center_code__icontains=search)
@@ -331,7 +350,7 @@ def erp_reference_data(request):
         page_obj = Paginator(qs, 30).get_page(request.GET.get("page"))
 
     elif active_tab == "po_refs":
-        qs = ERPPOReference.objects.select_related("batch").order_by("po_number", "po_line_number")
+        qs = _scope(ERPPOReference.objects.select_related("batch")).order_by("po_number", "po_line_number")
         if search:
             qs = qs.filter(
                 Q(po_number__icontains=search)

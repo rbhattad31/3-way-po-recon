@@ -11,6 +11,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from apps.core.constants import ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE_MB
 from apps.core.enums import DocumentType, FileProcessingState, PrefillStatus, SourceDocumentType
 from apps.core.permissions import HasPermissionCode, _has_permission_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 
 def _perm(code):
@@ -58,7 +59,7 @@ from apps.procurement.serializers import (
 )
 
 
-class ProcurementRequestViewSet(viewsets.ModelViewSet):
+class ProcurementRequestViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     """CRUD + actions for ProcurementRequest."""
 
     queryset = ProcurementRequest.objects.select_related("created_by", "assigned_to")
@@ -146,7 +147,7 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
             triggered_by=request.user,
         )
         # Fire Celery task
-        run_analysis_task.delay(run.pk)
+        run_analysis_task.delay(request.tenant.pk if request.tenant else None, run.pk)
 
         return Response(AnalysisRunSerializer(run).data, status=status.HTTP_201_CREATED)
 
@@ -188,7 +189,7 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
             run_type=AnalysisRunType.VALIDATION,
             triggered_by=request.user,
         )
-        run_validation_task.delay(run.pk, agent_enabled=agent_enabled)
+        run_validation_task.delay(request.tenant.pk if request.tenant else None, run.pk, agent_enabled=agent_enabled)
 
         return Response(
             {"run_id": str(run.run_id), "status": "queued", "message": "Validation run queued."},
@@ -278,7 +279,7 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
         )
 
         # Trigger async prefill
-        run_request_prefill_task.delay(proc_request.pk)
+        run_request_prefill_task.delay(request.tenant.pk if request.tenant else None, proc_request.pk)
 
         return Response(
             {
@@ -324,7 +325,7 @@ class ProcurementRequestViewSet(viewsets.ModelViewSet):
         )
 
 
-class SupplierQuotationViewSet(viewsets.ModelViewSet):
+class SupplierQuotationViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     """CRUD for SupplierQuotation."""
 
     queryset = SupplierQuotation.objects.select_related("request", "created_by")
@@ -416,7 +417,7 @@ class SupplierQuotationViewSet(viewsets.ModelViewSet):
         )
 
         # Trigger async prefill
-        run_quotation_prefill_task.delay(quotation.pk)
+        run_quotation_prefill_task.delay(request.tenant.pk if request.tenant else None, quotation.pk)
 
         return Response(
             {

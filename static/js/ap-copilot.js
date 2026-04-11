@@ -1,1181 +1,1418 @@
 /**
- * AP Copilot Workspace — Client-side logic
- * Handles chat interaction, session management, and structured response rendering.
+ * AP Copilot -- Unified Controller
+ * Handles both plain chat mode and case workspace mode from a single file.
+ * Mode is determined by the presence of CFG.hasCaseWorkspace flag.
  */
 (function () {
   'use strict';
 
   // ── Configuration ──
-  const configEl = document.getElementById('copilotConfig');
-  if (!configEl) return;
-  const CONFIG = JSON.parse(configEl.textContent);
+  var cfgEl = document.getElementById('copilotConfig');
+  if (!cfgEl) return;
+  var CFG = JSON.parse(cfgEl.textContent);
 
-  // ── DOM References ──
-  const chatMessages = document.getElementById('chatMessages');
-  const chatInput    = document.getElementById('chatInput');
-  const chatForm     = document.getElementById('chatForm');
-  const btnSend      = document.getElementById('btnSend');
-  const welcomeState = document.getElementById('welcomeState');
-  const contextPanel = document.getElementById('copilotContext');
-  const sidebar      = document.getElementById('copilotSidebar');
+  // Detect mode
+  var IS_CASE = !!CFG.hasCaseWorkspace;
 
-  let currentSessionId = CONFIG.sessionId;
-  let currentCaseId    = CONFIG.caseId;
-  let isSending        = false;
-  let pendingFile      = null; // File object selected for upload
+  // ── State ──
+  var sessionId = CFG.sessionId;
+  var caseId = CFG.caseId;
+  var isSending = false;
+  var supervisorRunning = false;
 
-  // ── Initialisation ──
+  // ── DOM (shared) ──
+  var chatMessages  = document.getElementById('chatMessages');
+  var chatInput     = document.getElementById('chatInput');
+  var chatForm      = document.getElementById('chatForm');
+  var btnSend       = document.getElementById('btnSend') || document.getElementById('chatSend');
+  var welcomeState  = document.getElementById('welcomeState') || document.getElementById('chatWelcome');
+  var quickQuestions = document.getElementById('quickQuestions');
+  var btnAttachFile = document.getElementById('btnAttachFile');
+  var invoiceFileInput = document.getElementById('invoiceFileInput');
+
+  // ── DOM (plain chat mode) ──
+  var sidebar        = document.getElementById('copilotSidebar');
+  var topbarTitle    = document.getElementById('topbarTitle');
+  var btnCollapse    = document.getElementById('btnCollapseSidebar');
+  var btnExpand      = document.getElementById('btnExpandSidebar');
+  var btnNewChat     = document.getElementById('btnNewChat');
+  var sidebarSearch  = document.getElementById('sidebarSearch');
+
+  // Case search modal (plain chat mode)
+  var btnLinkCase        = document.getElementById('btnLinkCase');
+  var caseSearchBg       = document.getElementById('caseSearchBackdrop');
+  var caseSearchInput    = document.getElementById('caseSearchInput');
+  var caseSearchResults  = document.getElementById('caseSearchResults');
+  var btnCloseCaseSearch = document.getElementById('btnCloseCaseSearch');
+
+  // ── Init ──
   function init() {
-    if (chatForm)  chatForm.addEventListener('submit', onSubmit);
+    // Chat form
+    if (chatForm) chatForm.addEventListener('submit', onChatSubmit);
     if (chatInput) {
       chatInput.addEventListener('input', onInputChange);
-      chatInput.addEventListener('keydown', onKeyDown);
-    }
-
-    const btnNew = document.getElementById('btnNewConversation');
-    if (btnNew) btnNew.addEventListener('click', function(e) {
-      e.preventDefault();
-      window.location.href = CONFIG.urls.workspaceBase;
-    });
-
-    const mainSidebar = document.getElementById('sidebar');
-    const btnToggleMainMenu = document.getElementById('btnToggleMainMenu');
-    if (btnToggleMainMenu && mainSidebar) {
-      btnToggleMainMenu.addEventListener('click', () => mainSidebar.classList.toggle('show'));
-      // Close main menu when clicking outside
-      document.addEventListener('click', (e) => {
-        if (mainSidebar.classList.contains('show') &&
-            !mainSidebar.contains(e.target) &&
-            !btnToggleMainMenu.contains(e.target)) {
-          mainSidebar.classList.remove('show');
+      chatInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          if (chatInput.value.trim()) chatForm.dispatchEvent(new Event('submit'));
         }
       });
     }
 
-    const btnToggleCtx = document.getElementById('btnToggleContext');
-    if (btnToggleCtx) btnToggleCtx.addEventListener('click', () => contextPanel.classList.toggle('collapsed'));
+    // Upload attach button
+    if (btnAttachFile) btnAttachFile.addEventListener('click', function () { invoiceFileInput.click(); });
+    if (invoiceFileInput) invoiceFileInput.addEventListener('change', onFileSelected);
 
-    const btnCloseCtx = document.getElementById('btnCloseContext');
-    if (btnCloseCtx) btnCloseCtx.addEventListener('click', () => contextPanel.classList.add('collapsed'));
-
-    const searchInput = document.getElementById('sidebarSearch');
-    if (searchInput) searchInput.addEventListener('input', onSidebarSearch);
-
-    // Upload button & file input
-    const btnUpload = document.getElementById('btnUpload');
-    const fileInput = document.getElementById('fileInput');
-    if (btnUpload && fileInput) {
-      btnUpload.addEventListener('click', () => fileInput.click());
-      fileInput.addEventListener('change', onFileSelected);
+    if (IS_CASE) {
+      initCaseMode();
+    } else {
+      initChatMode();
     }
-    const btnRemoveFile = document.getElementById('btnRemoveFile');
-    if (btnRemoveFile) btnRemoveFile.addEventListener('click', clearPendingFile);
 
-    scrollChatToBottom();
-    if (currentCaseId && !contextPanel.classList.contains('collapsed')) {
-      loadCaseContext(currentCaseId);
-    }
+    if (chatInput) chatInput.focus();
+    scrollToBottom();
   }
 
-  // ── Input Handling ──
-  function onInputChange() {
-    btnSend.disabled = !chatInput.value.trim() && !pendingFile;
-    chatInput.style.height = 'auto';
-    chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
-  }
+  // ── Plain chat mode init ──
+  function initChatMode() {
+    if (btnCollapse) btnCollapse.addEventListener('click', toggleSidebar);
+    if (btnExpand)   btnExpand.addEventListener('click', toggleSidebar);
+    if (btnNewChat)  btnNewChat.addEventListener('click', startNewChat);
+    if (sidebarSearch) sidebarSearch.addEventListener('input', filterSessions);
 
-  function onKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (chatInput.value.trim()) chatForm.dispatchEvent(new Event('submit'));
+    // Case search modal
+    if (btnLinkCase) btnLinkCase.addEventListener('click', openCaseSearch);
+    if (btnCloseCaseSearch) btnCloseCaseSearch.addEventListener('click', closeCaseSearch);
+    if (caseSearchBg) caseSearchBg.addEventListener('click', function (e) {
+      if (e.target === caseSearchBg) closeCaseSearch();
+    });
+    if (caseSearchInput) {
+      var searchTimer = null;
+      caseSearchInput.addEventListener('input', function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(performCaseSearch, 300);
+      });
     }
   }
 
-  // ── Session Management ──
-  async function startSession(caseId) {
-    const body = {};
-    const cid = typeof caseId === 'number' ? caseId : currentCaseId;
-    if (cid) body.case_id = cid;
+  // ── Case workspace init ──
+  function initCaseMode() {
+    // Lazy-load tab data when tab is shown
+    var tabEls = document.querySelectorAll('[data-bs-toggle="tab"]');
+    tabEls.forEach(function (tab) {
+      tab.addEventListener('shown.bs.tab', onTabShown);
+    });
 
-    try {
-      const res = await apiFetch(CONFIG.urls.sessionStart, { method: 'POST', body });
-      if (res && res.id) {
-        window.location.href = CONFIG.urls.sessionBase + res.id + '/';
+    // Pre-load data for tabs
+    loadLineItems();
+
+    // Auto-run supervisor agent if flagged
+    if (CFG.autoRunSupervisor) {
+      if (CFG.invoiceId) {
+        setTimeout(function () { runSupervisor('Analyze this newly uploaded invoice'); }, 500);
+      } else {
+        waitForInvoiceThenRunSupervisor();
       }
-    } catch (err) {
-      console.error('Failed to start session:', err);
     }
   }
 
-  // ── Chat ──
+  // ==================================================================
+  // SIDEBAR (plain chat mode)
+  // ==================================================================
+  function toggleSidebar() {
+    sidebar.classList.toggle('collapsed');
+    if (sidebar.classList.contains('collapsed')) {
+      btnExpand.classList.remove('d-none');
+    } else {
+      btnExpand.classList.add('d-none');
+    }
+  }
+
+  function filterSessions() {
+    var q = sidebarSearch.value.toLowerCase().trim();
+    var items = sidebar.querySelectorAll('.copilot-session-item');
+    items.forEach(function (item) {
+      var title = item.querySelector('.copilot-session-title');
+      var text = (title ? title.textContent : '').toLowerCase();
+      item.style.display = text.indexOf(q) !== -1 || !q ? '' : 'none';
+    });
+  }
+
+  function startNewChat() {
+    window.location.href = CFG.urls.hubBase;
+  }
+
+  // ==================================================================
+  // SESSION
+  // ==================================================================
   async function ensureSession() {
-    // If we already have a valid session, return it
-    if (currentSessionId) {
-      console.log('[copilot] ensureSession: reusing', currentSessionId);
-      return currentSessionId;
-    }
-    var body = {};
-    if (currentCaseId) body.case_id = currentCaseId;
-    console.log('[copilot] ensureSession: creating new session...');
+    if (sessionId) return sessionId;
     try {
-      var session = await apiFetch(CONFIG.urls.sessionStart, { method: 'POST', body: body });
-      if (!session || !session.id) {
-        console.error('[copilot] ensureSession: no id in response', session);
-        return null;
+      var body = {};
+      if (caseId) body.case_id = caseId;
+      var res = await apiFetch(CFG.urls.sessionStart, {
+        method: 'POST',
+        body: body,
+      });
+      if (res && res.id) {
+        sessionId = res.id;
+        if (!IS_CASE) {
+          var newUrl = CFG.urls.sessionBase + sessionId + '/';
+          window.history.replaceState({}, '', newUrl);
+        }
+        return sessionId;
       }
-      currentSessionId = session.id;
-      console.log('[copilot] ensureSession: created', currentSessionId);
-      loadRecentConversations();
-      return currentSessionId;
     } catch (err) {
-      console.error('[copilot] ensureSession: failed', err);
-      return null;
+      console.error('[copilot] ensureSession failed', err);
     }
+    return null;
   }
 
-  async function onSubmit(e) {
+  // ==================================================================
+  // CHAT
+  // ==================================================================
+  function onInputChange() {
+    btnSend.disabled = !chatInput.value.trim();
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+  }
+
+  async function onChatSubmit(e) {
     e.preventDefault();
     var text = chatInput.value.trim();
-    if ((!text && !pendingFile) || isSending) return;
+    if (!text || isSending) return;
 
-    // If a file is pending, handle upload flow instead of chat
-    if (pendingFile) {
-      await handleUpload(text);
+    // Check for supervisor trigger (plain chat mode)
+    if (!IS_CASE && (
+        text.toLowerCase().indexOf('run supervisor') !== -1 ||
+        text.toLowerCase().indexOf('supervisor agent') !== -1)) {
+      chatInput.value = '';
+      chatInput.style.height = 'auto';
+      btnSend.disabled = true;
+      runSupervisor(text);
       return;
     }
 
-    // Ensure we have a session
     var sid = await ensureSession();
     if (!sid) return;
 
-    // Hide welcome state
-    if (welcomeState) welcomeState.style.display = 'none';
-
-    // Render user message
-    renderUserMessage(text);
+    hideWelcome();
+    appendMessage('user', text);
     chatInput.value = '';
     chatInput.style.height = 'auto';
     btnSend.disabled = true;
-
-    // Show thinking indicator
-    var thinkingEl = showThinking();
     isSending = true;
 
-    try {
-      var res = await sendMessage(sid, text);
-      removeThinking(thinkingEl);
-      if (res && res.response) {
-        renderAssistantMessage(res.response);
-      } else {
-        renderSystemMessage('No response received. The case may not be linked to this session.');
-      }
-    } catch (err) {
-      // If session was deleted (404), recreate and retry once
-      if (err && err.message && err.message.indexOf('404') !== -1) {
-        console.warn('Session expired, creating a new one...');
-        currentSessionId = null;
-        try {
-          var newSid = await ensureSession();
-          if (newSid) {
-            var retryRes = await sendMessage(newSid, text);
-            removeThinking(thinkingEl);
-            if (retryRes && retryRes.response) {
-              renderAssistantMessage(retryRes.response);
-            } else {
-              renderSystemMessage('No response received. The case may not be linked to this session.');
-            }
-            isSending = false;
-            return;
-          }
-        } catch (retryErr) {
-          console.error('Retry after session recreation failed:', retryErr);
-        }
-      }
-      removeThinking(thinkingEl);
-      var errDetail = (err && err.message) ? err.message : 'Unknown error';
-      renderSystemMessage('Something went wrong: ' + errDetail);
-      console.error('Chat error:', err);
-    } finally {
-      isSending = false;
-    }
-  }
-
-  async function sendMessage(sessionId, message) {
-    console.log('[copilot] sendMessage: session_id=', sessionId, 'case_id=', currentCaseId);
-    return apiFetch(CONFIG.urls.chat, {
-      method: 'POST',
-      body: { session_id: sessionId, message: message, case_id: currentCaseId },
-    });
-  }
-
-  // ── File Upload Handling ──
-  function onFileSelected(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/tiff'];
-    if (!allowed.includes(file.type)) {
-      renderSystemMessage('Unsupported file type. Please upload a PDF, PNG, JPG, or TIFF.');
-      e.target.value = '';
-      return;
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      renderSystemMessage('File too large. Maximum size is 20 MB.');
-      e.target.value = '';
-      return;
-    }
-
-    pendingFile = file;
-    const preview = document.getElementById('filePreview');
-    const nameEl = document.getElementById('filePreviewName');
-    const sizeEl = document.getElementById('filePreviewSize');
-    if (preview && nameEl && sizeEl) {
-      nameEl.textContent = file.name;
-      sizeEl.textContent = formatBytes(file.size);
-      preview.classList.remove('d-none');
-    }
-    btnSend.disabled = false;
-  }
-
-  function clearPendingFile() {
-    pendingFile = null;
-    const preview = document.getElementById('filePreview');
-    if (preview) preview.classList.add('d-none');
-    const fileInput = document.getElementById('fileInput');
-    if (fileInput) fileInput.value = '';
-    onInputChange();
-  }
-
-  function formatBytes(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-  }
-
-  async function handleUpload(optionalText) {
-    if (!pendingFile || isSending) return;
-    isSending = true;
-
-    // Hide welcome state
-    if (welcomeState) welcomeState.style.display = 'none';
-
-    // Ensure we have a session
-    var sid = await ensureSession();
-    if (!sid) { isSending = false; return; }
-
-    // Show user message with file attachment
-    const userText = optionalText
-      ? 'Upload: ' + pendingFile.name + ' -- ' + optionalText
-      : 'Upload: ' + pendingFile.name;
-    renderUserMessage(userText);
-
-    chatInput.value = '';
-    chatInput.style.height = 'auto';
-    btnSend.disabled = true;
-
-    // Create the progress message container
-    const progressEl = createProgressMessage();
-    const file = pendingFile;
-    clearPendingFile();
+    var thinkingEl = appendThinking();
 
     try {
-      // POST the file -- returns immediately with upload_id
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(CONFIG.urls.upload, {
+      var res = await apiFetch(CFG.urls.chat, {
         method: 'POST',
-        headers: { 'X-CSRFToken': CONFIG.csrfToken },
-        credentials: 'same-origin',
-        body: formData,
+        body: { session_id: sid, message: text, case_id: caseId },
       });
-
-      if (!response.ok) {
-        let errMsg = 'Upload failed (HTTP ' + response.status + ')';
-        try {
-          const errData = await response.json();
-          if (errData.error) errMsg = errData.error;
-        } catch (_) {}
-        updateThinkingLog(progressEl, [
-          { label: 'Upload failed: ' + errMsg, done: true, failed: true }
-        ], true);
-        finalizeThinking(progressEl, [{ label: errMsg, done: true, failed: true }]);
-        isSending = false;
-        return;
+      removeEl(thinkingEl);
+      if (res && res.response) {
+        appendRichResponse(res.response);
+      } else {
+        appendMessage('system', 'No response received.');
       }
-
-      const data = await response.json();
-      const uploadId = data.upload_id;
-
-      // Start polling for progressive status
-      updateThinkingLog(progressEl, [{ label: 'Document received', done: true }], false);
-      await pollUploadStatus(uploadId, progressEl);
-
     } catch (err) {
-      updateThinkingLog(progressEl, [
-        { label: 'Upload failed. Please try again.', done: true, failed: true }
-      ], true);
-      finalizeThinking(progressEl, [{ label: 'Upload failed', done: true, failed: true }]);
-      console.error('Upload error:', err);
+      removeEl(thinkingEl);
+      appendMessage('system', 'Error: ' + ((err && err.message) || 'Unknown'));
     } finally {
       isSending = false;
     }
   }
 
-  // ── ChatGPT-style Thinking UI ──
-
-  async function pollUploadStatus(uploadId, thinkingEl) {
-    const statusUrl = CONFIG.urls.upload + uploadId + '/status/';
-    const seenLabels = new Set(['Document received']);
-    let accumulated = [{ label: 'Document received', done: true }];
-
-    for (let i = 0; i < 300; i++) { // max ~4 min at 800ms
-      await sleep(800);
-
-      try {
-        const res = await apiFetch(statusUrl);
-        if (!res || !res.steps) continue;
-
-        // Merge response steps into accumulated list
-        const newLabels = new Set(res.steps.map(function(s) { return s.label; }));
-
-        // Mark disappeared active steps as done
-        for (let j = 0; j < accumulated.length; j++) {
-          var st = accumulated[j];
-          if (!st.done && !st.failed && !newLabels.has(st.label)) {
-            st.done = true;
-          }
-        }
-
-        // Add or update steps from response
-        for (let j = 0; j < res.steps.length; j++) {
-          var step = res.steps[j];
-          if (seenLabels.has(step.label)) {
-            var existing = accumulated.find(function(s) { return s.label === step.label; });
-            if (existing) {
-              existing.done = step.done;
-              existing.failed = step.failed;
-            }
-          } else {
-            seenLabels.add(step.label);
-            accumulated.push({ label: step.label, done: step.done, failed: !!step.failed });
-          }
-        }
-
-        updateThinkingLog(thinkingEl, accumulated, res.completed);
-
-        if (res.completed) {
-          // Mark all remaining active steps as done
-          accumulated.forEach(function(s) { if (!s.failed) s.done = true; });
-          updateThinkingLog(thinkingEl, accumulated, true);
-          finalizeThinking(thinkingEl, accumulated);
-
-          // Link case to session if available
-          if (res.case_id) {
-            currentCaseId = res.case_id;
-            var badge = document.getElementById('caseBadge');
-            if (badge) {
-              badge.textContent = 'Case ' + (res.case_number || '#' + res.case_id);
-              badge.classList.remove('d-none');
-            }
-            var label = document.getElementById('linkCaseLabel');
-            if (label) label.textContent = 'Change Case';
-
-            // Ensure a valid session exists before linking
-            console.log('[copilot] link_case: case_id=', res.case_id, 'currentSessionId=', currentSessionId);
-            try {
-              var sid = await ensureSession();
-              console.log('[copilot] link_case: ensureSession returned', sid);
-              if (sid) {
-                await apiFetch('/api/v1/copilot/session/' + sid + '/', {
-                  method: 'PATCH',
-                  body: { action: 'link_case', case_id: res.case_id },
-                });
-                console.log('[copilot] link_case: success');
-              }
-            } catch (linkErr) {
-              console.error('[copilot] link_case: failed', linkErr);
-              // If session expired mid-upload, recreate and retry link
-              if (linkErr && linkErr.message && linkErr.message.indexOf('404') !== -1) {
-                currentSessionId = null;
-                try {
-                  var newSid = await ensureSession();
-                  if (newSid) {
-                    await apiFetch('/api/v1/copilot/session/' + newSid + '/', {
-                      method: 'PATCH',
-                      body: { action: 'link_case', case_id: res.case_id },
-                    });
-                  }
-                } catch (_) {}
-              }
-            }
-            loadCaseContext(res.case_id);
-            if (contextPanel) contextPanel.classList.remove('collapsed');
-          }
-
-          // Refresh sidebar to show the new session
-          loadRecentConversations();
-          renderUploadFollowUps(thinkingEl, res);
-          return;
-        }
-      } catch (err) {
-        console.warn('Status poll failed:', err);
-      }
+  // Quick send from chips (both modes)
+  window.chipSend = function (text) {
+    if (chatInput) {
+      chatInput.value = text;
+      chatForm.dispatchEvent(new Event('submit'));
     }
-    // Timed out
-    accumulated.push({ label: 'Processing is taking longer than expected. Refresh to check status.', done: true });
-    updateThinkingLog(thinkingEl, accumulated, false);
+  };
+
+  // Quick send that also switches to chat tab (case mode)
+  window.chatSendQuick = function (text) {
+    if (chatInput) {
+      chatInput.value = text;
+      chatForm.dispatchEvent(new Event('submit'));
+    }
+    var chatTab = document.getElementById('tab-chat');
+    if (chatTab && !chatTab.classList.contains('active')) {
+      new bootstrap.Tab(chatTab).show();
+    }
+  };
+
+  // ==================================================================
+  // MESSAGE RENDERING
+  // ==================================================================
+  function hideWelcome() {
+    if (welcomeState) welcomeState.style.display = 'none';
+    // Reveal the persistent quick-question chips once welcome disappears
+    if (quickQuestions) quickQuestions.classList.remove('d-none');
   }
 
-  function sleep(ms) { return new Promise(function(r) { return setTimeout(r, ms); }); }
+  function appendMessage(type, text) {
+    hideWelcome();
 
-  function createProgressMessage() {
-    const html =
-      '<div class="copilot-msg copilot-msg-assistant">' +
-        '<div class="copilot-msg-avatar copilot-msg-avatar-ai"><i class="bi bi-stars"></i></div>' +
-        '<div class="copilot-msg-body">' +
-          '<div class="copilot-thinking-block" data-start-time="' + Date.now() + '">' +
-            '<div class="copilot-thinking-header">' +
-              '<span class="copilot-thinking-icon"><i class="bi bi-stars"></i></span>' +
-              '<span class="copilot-thinking-title">Analyzing your invoice...</span>' +
-              '<span class="copilot-thinking-timer"></span>' +
-              '<span class="copilot-thinking-toggle"><i class="bi bi-chevron-down"></i></span>' +
-            '</div>' +
-            '<div class="copilot-thinking-log"></div>' +
-          '</div>' +
-          '<div class="copilot-progress-followups"></div>' +
-        '</div>' +
-      '</div>';
-    chatMessages.insertAdjacentHTML('beforeend', html);
-    scrollChatToBottom();
+    var row = document.createElement('div');
+    row.className = 'copilot-msg';
+    if (type === 'user') row.className += ' copilot-msg-user';
+    if (type === 'system') row.className += ' copilot-msg-system';
 
-    const el = chatMessages.lastElementChild;
-    const block = el.querySelector('.copilot-thinking-block');
-    const timerEl = block.querySelector('.copilot-thinking-timer');
-    const hdr = block.querySelector('.copilot-thinking-header');
-    const startTime = Date.now();
+    var avatar = document.createElement('div');
+    avatar.className = 'copilot-msg-avatar';
+    if (type === 'user') {
+      avatar.className += ' copilot-msg-avatar-user';
+      avatar.innerHTML = '<i class="bi bi-person-fill"></i>';
+    } else {
+      avatar.className += ' copilot-msg-avatar-ai';
+      avatar.innerHTML = '<i class="bi bi-stars"></i>';
+    }
 
-    // Elapsed timer
-    const timerInterval = setInterval(function() {
-      var elapsed = Math.round((Date.now() - startTime) / 1000);
-      timerEl.textContent = elapsed + 's';
-    }, 1000);
-    block._timerInterval = timerInterval;
-    block._startTime = startTime;
+    var body = document.createElement('div');
+    body.className = 'copilot-msg-body';
 
-    // Toggle collapse on header click
-    hdr.addEventListener('click', function() {
-      block.classList.toggle('collapsed');
-    });
+    var role = document.createElement('div');
+    role.className = 'copilot-msg-role';
+    role.textContent = type === 'user' ? 'You' : 'AP Copilot';
 
-    return el;
+    var msgText = document.createElement('div');
+    msgText.className = 'copilot-msg-text';
+    msgText.textContent = text;
+
+    body.appendChild(role);
+    body.appendChild(msgText);
+    row.appendChild(avatar);
+    row.appendChild(body);
+    chatMessages.appendChild(row);
+    scrollToBottom();
   }
 
-  function updateThinkingLog(el, steps, completed) {
-    const block = el.querySelector('.copilot-thinking-block');
-    if (!block) return;
-    const log = block.querySelector('.copilot-thinking-log');
-    const titleEl = block.querySelector('.copilot-thinking-title');
-    if (!log) return;
+  function appendThinking() {
+    var row = document.createElement('div');
+    row.className = 'copilot-thinking';
 
-    const existingSteps = log.querySelectorAll('.copilot-thinking-step');
-    const existingCount = existingSteps.length;
+    var avatar = document.createElement('div');
+    avatar.className = 'copilot-msg-avatar copilot-msg-avatar-ai';
+    avatar.innerHTML = '<i class="bi bi-stars"></i>';
 
-    // Update existing steps (mark done/failed)
-    for (let i = 0; i < Math.min(existingCount, steps.length); i++) {
-      var stepEl = existingSteps[i];
-      var s = steps[i];
-      if (s.done && stepEl.classList.contains('step-current')) {
-        stepEl.classList.remove('step-current');
-        stepEl.classList.add('step-done');
-        var dot = stepEl.querySelector('.copilot-td');
-        if (dot) dot.innerHTML = '<i class="bi bi-check2"></i>';
-        var txt = stepEl.querySelector('.copilot-step-text');
-        if (txt) txt.classList.remove('copilot-shimmer');
-      }
-      if (s.failed && !stepEl.classList.contains('step-failed')) {
-        stepEl.classList.remove('step-current', 'step-done');
-        stepEl.classList.add('step-failed');
-        var dot2 = stepEl.querySelector('.copilot-td');
-        if (dot2) dot2.innerHTML = '<i class="bi bi-x-circle-fill"></i>';
-      }
-    }
+    var content = document.createElement('div');
+    content.className = 'copilot-thinking-content';
+    content.innerHTML = '<div class="copilot-thinking-dots"><span></span><span></span><span></span></div> <span>Thinking...</span>';
 
-    // Append new steps
-    var added = false;
-    for (let i = existingCount; i < steps.length; i++) {
-      var step = steps[i];
-      var div = document.createElement('div');
-      var cls = step.failed ? 'step-failed' : step.done ? 'step-done' : 'step-current';
-      div.className = 'copilot-thinking-step ' + cls;
-
-      var dotHtml, textCls;
-      if (step.failed) {
-        dotHtml = '<i class="bi bi-x-circle-fill"></i>';
-        textCls = '';
-      } else if (step.done) {
-        dotHtml = '<i class="bi bi-check2"></i>';
-        textCls = '';
-      } else {
-        dotHtml = '<span class="copilot-pulse-dot"></span>';
-        textCls = ' copilot-shimmer';
-      }
-
-      div.innerHTML = '<span class="copilot-td">' + dotHtml + '</span>' +
-                      '<span class="copilot-step-text' + textCls + '">' + escapeHtml(step.label) + '</span>';
-      log.appendChild(div);
-      added = true;
-    }
-
-    // Update header title with current action
-    if (!completed) {
-      var activeStep = null;
-      for (let i = steps.length - 1; i >= 0; i--) {
-        if (!steps[i].done && !steps[i].failed) { activeStep = steps[i]; break; }
-      }
-      if (activeStep) {
-        titleEl.textContent = activeStep.label;
-      }
-    }
-
-    if (added) scrollChatToBottom();
+    row.appendChild(avatar);
+    row.appendChild(content);
+    chatMessages.appendChild(row);
+    scrollToBottom();
+    return row;
   }
 
-  function finalizeThinking(el, steps) {
-    const block = el.querySelector('.copilot-thinking-block');
-    if (!block) return;
-
-    // Stop timer
-    if (block._timerInterval) clearInterval(block._timerInterval);
-    var elapsed = Math.round((Date.now() - (block._startTime || Date.now())) / 1000);
-    var stepCount = steps.filter(function(s) { return s.done; }).length;
-
-    var titleEl = block.querySelector('.copilot-thinking-title');
-    var timerEl = block.querySelector('.copilot-thinking-timer');
-
-    titleEl.textContent = 'Analyzed in ' + elapsed + 's';
-    timerEl.textContent = stepCount + ' steps';
-
-    block.classList.add('done');
-
-    // Collapse after a brief pause
-    setTimeout(function() {
-      block.classList.add('collapsed');
-    }, 1200);
-  }
-
-  function renderUploadFollowUps(thinkingEl, data) {
-    const container = thinkingEl.querySelector('.copilot-progress-followups');
-    if (!container) return;
-
-    const prompts = [];
-    if (data.case_id) {
-      prompts.push('Show me the case summary');
-      prompts.push('What exceptions were found?');
-    }
-    if (data.invoice_status === 'PENDING_APPROVAL') {
-      prompts.push('What fields need review?');
-    }
-    if (data.match_status && data.match_status !== 'MATCHED') {
-      prompts.push('Why is it a ' + data.match_status.replace(/_/g, ' ').toLowerCase() + '?');
-    }
-    if (prompts.length) {
-      container.innerHTML = renderFollowUpPrompts(prompts);
-    }
-    scrollChatToBottom();
-  }
-
-  // ── Rendering ──
-  function renderUserMessage(text) {
-    const html = `
-      <div class="copilot-msg copilot-msg-user">
-        <div class="copilot-msg-avatar"><i class="bi bi-person-fill"></i></div>
-        <div class="copilot-msg-body">
-          <div class="copilot-msg-content">${escapeHtml(text)}</div>
-          <div class="copilot-msg-time text-muted small">Just now</div>
-        </div>
-      </div>`;
-    chatMessages.insertAdjacentHTML('beforeend', html);
-    scrollChatToBottom();
-  }
-
-  function renderAssistantMessage(payload) {
-    const parts = [];
-
-    // Summary
-    const summary = payload.summary || 'No response generated.';
-    parts.push(`<div class="copilot-msg-content">${formatMarkdown(summary)}</div>`);
-
-    // Collect detail sub-sections
-    const detailParts = [];
-
-    // Evidence cards
-    if (payload.evidence && payload.evidence.length) {
-      detailParts.push(renderEvidenceCards(payload.evidence));
-    }
-
-    // Consulted agents
-    if (payload.consulted_agents && payload.consulted_agents.length) {
-      const chips = payload.consulted_agents.map(a => `<span class="copilot-agent-chip">${escapeHtml(a)}</span>`).join('');
-      detailParts.push(`
-        <div class="copilot-detail-sub">
-          <div class="copilot-detail-sub-label"><i class="bi bi-robot me-1"></i>Consulted Agents (${payload.consulted_agents.length})</div>
-          <div class="copilot-agent-chips">${chips}</div>
-        </div>`);
-    }
-
-    // Recommendation
-    if (payload.recommendation) {
-      const rec = payload.recommendation;
-      const conf = rec.confidence != null ? `${Math.round(rec.confidence * 100)}%` : '';
-      detailParts.push(`
-        <div class="copilot-detail-sub copilot-recommendation-block">
-          <div class="copilot-detail-sub-label"><i class="bi bi-lightbulb me-1"></i>Recommendation ${conf ? `(${conf})` : ''}</div>
-          <div class="small copilot-recommendation-text">${escapeHtml(rec.text || '')}</div>
-          <div class="copilot-recommendation-readonly">Read-only guidance — no action taken</div>
-        </div>`);
-    }
-
-    // Governance
-    if (payload.governance && payload.governance.permitted) {
-      detailParts.push(renderGovernanceBlock(payload.governance));
-    }
-
-    // Wrap all detail sections in one master collapsible panel
-    if (detailParts.length) {
-      parts.push(`
-        <div class="copilot-details-panel mt-3">
-          <button type="button" class="copilot-details-toggle" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('show')">
-            <i class="bi bi-chevron-right"></i>Details
-          </button>
-          <div class="copilot-details-body">
-            ${detailParts.join('\n')}
-          </div>
-        </div>`);
-    }
-
-    // Follow-up prompts
-    if (payload.follow_up_prompts && payload.follow_up_prompts.length) {
-      parts.push(renderFollowUpPrompts(payload.follow_up_prompts));
-    }
-
-    const html = `
-      <div class="copilot-msg copilot-msg-assistant">
-        <div class="copilot-msg-avatar copilot-msg-avatar-ai"><i class="bi bi-stars"></i></div>
-        <div class="copilot-msg-body">
-          ${parts.join('\n')}
-          <div class="copilot-msg-time text-muted small">Just now</div>
-        </div>
-      </div>`;
-    chatMessages.insertAdjacentHTML('beforeend', html);
-    scrollChatToBottom();
-  }
-
-  function renderEvidenceCards(evidence) {
-    const cards = evidence.map(ev => {
-      const details = ev.data ? Object.entries(ev.data)
-        .filter(([, v]) => v != null)
-        .map(([k, v]) => `<div class="copilot-evidence-detail"><strong>${escapeHtml(k)}:</strong> ${escapeHtml(String(v))}</div>`)
-        .join('') : '';
-      return `
-        <div class="copilot-evidence-card copilot-evidence-${escapeHtml(ev.type || '')}">
-          <div class="copilot-evidence-label">${escapeHtml(ev.label || '')}</div>
-          <div class="copilot-evidence-type badge bg-secondary-subtle text-secondary-emphasis">${escapeHtml(ev.type || '')}</div>
-          ${details}
-        </div>`;
-    }).join('');
-
-    return `
-      <div class="copilot-detail-sub">
-        <div class="copilot-detail-sub-label"><i class="bi bi-card-list me-1"></i>Evidence (${evidence.length})</div>
-        <div class="copilot-evidence-cards">${cards}</div>
-      </div>`;
-  }
-
-  function renderGovernanceBlock(gov) {
-    if (!gov.events || !gov.events.length) return '';
-    const rows = gov.events.slice(0, 8).map(e => `
-      <div class="copilot-governance-row">
-        <span>${escapeHtml(e.event_type || '')}</span>
-        <span class="text-muted">${escapeHtml(e.actor_primary_role || '')}</span>
-        <span>${e.access_granted === true ? '✓' : e.access_granted === false ? '✗' : '—'}</span>
-      </div>`).join('');
-
-    return `
-      <div class="copilot-detail-sub copilot-governance-block">
-        <div class="copilot-detail-sub-label"><i class="bi bi-shield-lock me-1"></i>Governance Trace (${gov.events.length})</div>
-        ${rows}
-      </div>`;
-  }
-
-  function renderFollowUpPrompts(prompts) {
-    const chips = prompts.map(p =>
-      `<button type="button" class="copilot-followup-chip" onclick="useSuggestion(this)">${escapeHtml(p)}</button>`
-    ).join('');
-    return `<div class="copilot-followups">${chips}</div>`;
-  }
-
-  function renderSystemMessage(text) {
-    const html = `
-      <div class="copilot-msg copilot-msg-system">
-        <div class="copilot-msg-content text-muted small text-center">${escapeHtml(text)}</div>
-      </div>`;
-    chatMessages.insertAdjacentHTML('beforeend', html);
-    scrollChatToBottom();
-  }
-
-  function showThinking() {
-    const html = `
-      <div class="copilot-msg copilot-msg-assistant copilot-thinking-container">
-        <div class="copilot-msg-avatar copilot-msg-avatar-ai"><i class="bi bi-stars"></i></div>
-        <div class="copilot-thinking">
-          <div class="copilot-thinking-dots"><span></span><span></span><span></span></div>
-          <span>Analysing…</span>
-        </div>
-      </div>`;
-    chatMessages.insertAdjacentHTML('beforeend', html);
-    scrollChatToBottom();
-    return chatMessages.querySelector('.copilot-thinking-container:last-child');
-  }
-
-  function removeThinking(el) {
+  function removeEl(el) {
     if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
-  // ── Case Context Panel ──
-  async function loadCaseContext(caseId) {
-    if (!caseId) return;
-    const url = `/api/v1/copilot/case/${caseId}/context/`;
-    try {
-      const data = await apiFetch(url);
-      if (data && !data.error) {
-        renderCaseContextPanel(data);
-        contextPanel.classList.remove('collapsed');
-      }
-    } catch (err) {
-      console.error('Failed to load case context:', err);
-    }
+  function scrollToBottom() {
+    if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
-  function renderCaseContextPanel(ctx) {
-    const inner = contextPanel.querySelector('.copilot-context-inner') || contextPanel;
-    if (!ctx.case) return;
+  // ==================================================================
+  // PROGRESS MESSAGE (shared helper for upload + supervisor)
+  // ==================================================================
+  function appendProgressMessage(icon, title) {
+    hideWelcome();
+    var row = document.createElement('div');
+    row.className = 'copilot-msg copilot-msg-progress';
 
-    let html = `
-      <div class="copilot-context-header">
-        <h6 class="mb-0"><i class="bi bi-briefcase me-2"></i>Case Context</h6>
-        <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('copilotContext').classList.add('collapsed')">
-          <i class="bi bi-x-lg"></i>
-        </button>
-      </div>`;
+    var avatar = document.createElement('div');
+    avatar.className = 'copilot-msg-avatar copilot-msg-avatar-ai';
+    avatar.innerHTML = '<i class="bi bi-' + icon + '"></i>';
 
-    // Case summary
-    // Case summary with link to case console
-    const caseLink = ctx.case.id
-      ? `<a href="/cases/${ctx.case.id}/" target="_blank" class="text-decoration-none">${escapeHtml(ctx.case.case_number)} <i class="bi bi-box-arrow-up-right small"></i></a>`
-      : escapeHtml(ctx.case.case_number);
-    html += buildCtxCard('Case Summary', [
-      ['Case', caseLink],
-      ['Status', `<span class="badge bg-primary-subtle text-primary-emphasis">${escapeHtml(ctx.case.status)}</span>`],
-      ['Priority', ctx.case.priority],
-      ['Path', ctx.case.processing_path],
-    ]);
+    var body = document.createElement('div');
+    body.className = 'copilot-msg-body';
 
-    if (ctx.invoice) {
-      const invUrl = ctx.invoice.extraction_result_id
-        ? `/extraction/console/${ctx.invoice.extraction_result_id}/`
-        : null;
-      const invLink = invUrl
-        ? `<a href="${invUrl}" target="_blank" class="text-decoration-none">${escapeHtml(ctx.invoice.invoice_number)} <i class="bi bi-box-arrow-up-right small"></i></a>`
-        : escapeHtml(ctx.invoice.invoice_number);
-      html += buildCtxCard('<i class="bi bi-file-earmark-text me-1"></i>Invoice', [
-        ['Number', invLink],
-        ['Amount', `${ctx.invoice.currency || ''} ${ctx.invoice.amount || 'N/A'}`],
-      ]);
+    var role = document.createElement('div');
+    role.className = 'copilot-msg-role';
+    role.textContent = title;
+
+    var stepsContainer = document.createElement('div');
+    stepsContainer.className = 'copilot-progress-steps';
+
+    body.appendChild(role);
+    body.appendChild(stepsContainer);
+    row.appendChild(avatar);
+    row.appendChild(body);
+    chatMessages.appendChild(row);
+    scrollToBottom();
+    return { row: row, stepsContainer: stepsContainer };
+  }
+
+  function updateProgressSteps(container, steps) {
+    container.innerHTML = steps.map(function (s) {
+      var cls = s.failed ? 'failed' : (s.done ? 'done' : 'pending');
+      var icon = s.failed
+        ? '<i class="bi bi-x-circle-fill"></i>'
+        : (s.done
+          ? '<i class="bi bi-check-circle-fill"></i>'
+          : '<div class="spinner-border spinner-border-sm text-primary"></div>');
+      return '<div class="copilot-progress-step ' + cls + '">'
+        + '<span class="step-icon">' + icon + '</span>'
+        + '<span>' + esc(s.label) + '</span>'
+        + '</div>';
+    }).join('');
+  }
+
+  // ==================================================================
+  // STREAMING SUPERVISOR STEPS (case mode rich display)
+  // ==================================================================
+  var TOOL_LABELS = {
+    get_ocr_text: 'Read document text',
+    classify_document: 'Classify document',
+    extract_invoice_fields: 'Extract invoice fields',
+    validate_extraction: 'Validate extracted data',
+    repair_extraction: 'Repair extraction issues',
+    check_duplicate: 'Check for duplicates',
+    verify_vendor: 'Verify vendor',
+    verify_tax_computation: 'Verify tax computation',
+    vendor_search: 'Search vendor directory',
+    po_lookup: 'Look up purchase order',
+    grn_lookup: 'Look up goods receipt',
+    run_header_match: 'Match header fields',
+    run_line_match: 'Match line items',
+    run_grn_match: 'Match goods receipt',
+    re_extract_field: 'Re-extract field',
+    invoke_po_retrieval_agent: 'Retrieve purchase order',
+    invoke_grn_retrieval_agent: 'Retrieve goods receipt',
+    get_vendor_history: 'Check vendor history',
+    get_case_history: 'Review case history',
+    get_tolerance_config: 'Check tolerance settings',
+    persist_invoice: 'Save invoice data',
+    create_case: 'Create AP case',
+    submit_recommendation: 'Submit recommendation',
+    assign_reviewer: 'Assign reviewer',
+    generate_case_summary: 'Generate case summary',
+    invoice_details: 'Get invoice details',
+    exception_list: 'Get exception list',
+    reconciliation_summary: 'Get reconciliation summary'
+  };
+
+  function updateStreamingSteps(container, steps) {
+    var html = '';
+    for (var i = 0; i < steps.length; i++) {
+      var s = steps[i];
+      if (s.kind === 'round') {
+        var roundIcon = s.active
+          ? '<div class="spinner-border spinner-border-sm text-primary"></div>'
+          : '<i class="bi bi-lightbulb-fill"></i>';
+        html += '<div class="sv-step sv-round' + (s.active ? ' active' : '') + '">'
+          + '<span class="step-icon">' + roundIcon + '</span>'
+          + '<span>Round ' + s.round + (s.active ? ' -- Thinking...' : '') + '</span>'
+          + '</div>';
+      } else if (s.kind === 'reasoning') {
+        html += '<div class="sv-step sv-reasoning">'
+          + '<span class="step-icon"><i class="bi bi-chat-left-text-fill"></i></span>'
+          + '<div class="sv-reasoning-body">';
+        if (s.tools_planned && s.tools_planned.length) {
+          var toolNames = s.tools_planned.map(function (t) {
+            return TOOL_LABELS[t] || t.replace(/_/g, ' ');
+          });
+          html += '<div class="sv-reasoning-plan"><strong>Plan:</strong> ' + esc(toolNames.join(', ')) + '</div>';
+        }
+        if (s.text) {
+          html += '<div class="sv-reasoning-text">' + esc(s.text) + '</div>';
+        }
+        html += '</div></div>';
+      } else if (s.kind === 'tool') {
+        var toolLabel = TOOL_LABELS[s.tool] || (s.tool || '').replace(/_/g, ' ');
+        var cls = 'running';
+        var icon = '<div class="spinner-border spinner-border-sm text-primary"></div>';
+        if (s.status === 'done') {
+          cls = 'done';
+          icon = '<i class="bi bi-check-circle-fill"></i>';
+        } else if (s.status === 'failed') {
+          cls = 'failed';
+          icon = '<i class="bi bi-x-circle-fill"></i>';
+        }
+        var dur = s.duration_ms != null ? ' (' + (s.duration_ms / 1000).toFixed(1) + 's)' : '';
+        var hasDetail = s.output_summary && s.status !== 'running';
+        html += '<div class="sv-step sv-tool ' + cls + '">'
+          + '<span class="step-icon">' + icon + '</span>'
+          + '<span class="sv-tool-label">' + esc(toolLabel) + dur + '</span>';
+        if (hasDetail) {
+          html += '<button class="sv-detail-toggle" onclick="this.parentElement.classList.toggle(\'expanded\')" title="Show details">'
+            + '<i class="bi bi-chevron-down"></i></button>'
+            + '<div class="sv-detail">'
+            + '<span class="sv-detail-text">' + esc(s.output_summary) + '</span>'
+            + '</div>';
+        }
+        html += '</div>';
+      } else if (s.kind === 'complete') {
+        html += '<div class="sv-step sv-complete">'
+          + '<span class="step-icon"><i class="bi bi-check-circle-fill"></i></span>'
+          + '<span>Analysis complete</span>'
+          + '</div>';
+      } else if (s.kind === 'error') {
+        html += '<div class="sv-step sv-error">'
+          + '<span class="step-icon"><i class="bi bi-exclamation-triangle-fill"></i></span>'
+          + '<span>Error: ' + esc(s.message) + '</span>'
+          + '</div>';
+      }
     }
+    container.innerHTML = html;
+  }
 
-    if (ctx.reconciliation) {
-      html += buildCtxCard('<i class="bi bi-check2-square me-1"></i>Reconciliation', [
-        ['Match', ctx.reconciliation.match_status],
-        ['Mode', ctx.reconciliation.reconciliation_mode],
-      ]);
-    }
+  // ==================================================================
+  // SUPERVISOR SUMMARY CARD (case mode)
+  // ==================================================================
+  function appendSummaryCard(s, evtConfidence, evtRec) {
+    hideWelcome();
 
-    if (ctx.exceptions && ctx.exceptions.length) {
-      const excHtml = ctx.exceptions.map(e =>
-        `<div class="copilot-exception-item">
-          <span class="badge bg-warning text-dark">${escapeHtml(e.severity)}</span>
-          <span class="small">${escapeHtml(e.exception_type)}</span>
-        </div>`
-      ).join('');
-      html += `<div class="copilot-ctx-card">
-        <div class="copilot-ctx-card-title"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions (${ctx.exceptions.length})</div>
-        ${excHtml}
-      </div>`;
-    }
+    var confidence = s.confidence || (evtConfidence ? Math.round(evtConfidence * 100) : 0);
+    var rec = s.recommendation || (evtRec || '').replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    var severity = s.recommendation_severity || 'warning';
+    var findings = s.findings || [];
+    var issues = s.issues || [];
+    var toolsOk = s.tools_ok || 0;
+    var toolsFailed = s.tools_failed || 0;
+    var analysisText = s.analysis_text || '';
 
-    // Actions card
-    var sc = ctx.case.status_code || '';
-    var reviewable = ['READY_FOR_REVIEW','IN_REVIEW','REVIEW_COMPLETED','READY_FOR_APPROVAL','APPROVAL_IN_PROGRESS'].indexOf(sc) !== -1;
-    var retryable  = ['FAILED','ESCALATED','REJECTED'].indexOf(sc) !== -1;
-    var closed     = sc === 'CLOSED';
+    var sevColor = { success: '#16a34a', warning: '#d97706', danger: '#dc2626' };
+    var sevBg    = { success: '#f0fdf4', warning: '#fffbeb', danger: '#fef2f2' };
+    var sevBorder= { success: '#bbf7d0', warning: '#fde68a', danger: '#fecaca' };
+    var sevIcon  = { success: 'check-circle-fill', warning: 'exclamation-triangle-fill', danger: 'x-circle-fill' };
 
-    html += '<div class="copilot-ctx-card"><div class="copilot-ctx-card-title"><i class="bi bi-hand-index-thumb me-1"></i>Actions</div><div class="d-grid gap-2">';
-    if (reviewable) {
-      html += '<button class="btn btn-success btn-sm" onclick="copilotCaseAction(\'approve\')"><i class="bi bi-check-circle me-1"></i>Approve</button>';
-      html += '<button class="btn btn-danger btn-sm" onclick="copilotCaseAction(\'reject\')"><i class="bi bi-x-circle me-1"></i>Reject</button>';
-      html += '<button class="btn btn-outline-warning btn-sm" onclick="copilotCaseAction(\'reprocess\')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>';
-      html += '<button class="btn btn-outline-danger btn-sm" onclick="copilotCaseAction(\'escalate\')"><i class="bi bi-exclamation-triangle me-1"></i>Escalate</button>';
-    } else if (retryable) {
-      html += '<button class="btn btn-outline-warning btn-sm" onclick="copilotCaseAction(\'reprocess\')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>';
-    } else if (closed) {
-      html += '<span class="text-muted small text-center"><i class="bi bi-check-circle-fill text-success me-1"></i>Case closed</span>';
-    } else {
-      html += '<span class="text-muted small text-center"><i class="bi bi-hourglass-split me-1"></i>Processing...</span>';
-    }
-    html += '<hr class="my-1">';
-    html += '<a href="/cases/' + ctx.case.id + '/" class="btn btn-sm btn-outline-primary"><i class="bi bi-display me-1"></i>Open Case Console</a>';
-    if (ctx.invoice && ctx.invoice.id) {
-      html += '<a href="/documents/invoices/' + ctx.invoice.id + '/" class="btn btn-sm btn-outline-secondary"><i class="bi bi-file-earmark-text me-1"></i>Invoice Detail</a>';
-    }
+    var color  = sevColor[severity]  || sevColor.warning;
+    var bg     = sevBg[severity]     || sevBg.warning;
+    var border = sevBorder[severity] || sevBorder.warning;
+    var ic     = sevIcon[severity]   || sevIcon.warning;
+
+    var confColor = '#dc2626';
+    if (confidence >= 80) confColor = '#16a34a';
+    else if (confidence >= 50) confColor = '#d97706';
+
+    var html = '<div class="sv-summary-card" style="border-color:' + border + '">';
+    html += '<div class="sv-summary-header" style="background:' + bg + ';border-color:' + border + '">';
+    html += '<div class="sv-summary-rec">';
+    html += '<i class="bi bi-' + ic + '" style="color:' + color + ';font-size:1.1rem"></i>';
+    html += '<div><div class="sv-summary-rec-label">Recommendation</div>';
+    html += '<div class="sv-summary-rec-value" style="color:' + color + '">' + esc(rec) + '</div></div>';
+    html += '</div>';
+    html += '<div class="sv-summary-confidence">';
+    html += '<svg class="sv-conf-ring" viewBox="0 0 36 36">';
+    html += '<path class="sv-conf-ring-bg" d="M18 2.0845a15.9155 15.9155 0 0 1 0 31.831a15.9155 15.9155 0 0 1 0-31.831" />';
+    html += '<path class="sv-conf-ring-fg" stroke="' + confColor + '" stroke-dasharray="' + confidence + ', 100" d="M18 2.0845a15.9155 15.9155 0 0 1 0 31.831a15.9155 15.9155 0 0 1 0-31.831" />';
+    html += '</svg>';
+    html += '<span class="sv-conf-pct" style="color:' + confColor + '">' + confidence + '%</span>';
     html += '</div></div>';
 
-    inner.innerHTML = html;
-  }
-
-  function buildCtxCard(title, rows) {
-    const rowsHtml = rows.map(([label, val]) =>
-      `<div class="copilot-ctx-row">
-        <span class="copilot-ctx-label">${escapeHtml(label)}</span>
-        <span>${typeof val === 'string' && val.includes('<') ? val : escapeHtml(String(val || 'N/A'))}</span>
-      </div>`
-    ).join('');
-    return `<div class="copilot-ctx-card">
-      <div class="copilot-ctx-card-title">${title}</div>
-      ${rowsHtml}
-    </div>`;
-  }
-
-  // ── Sidebar Search ──
-  function onSidebarSearch(e) {
-    const q = e.target.value.toLowerCase();
-    document.querySelectorAll('.copilot-conv-item').forEach(el => {
-      const text = el.textContent.toLowerCase();
-      el.style.display = text.includes(q) ? '' : 'none';
-    });
-  }
-
-  // ── Sidebar Conversations (reload) ──
-  async function loadRecentConversations() {
-    try {
-      const sessions = await apiFetch(CONFIG.urls.sessions);
-      if (!sessions) return;
-      const list = document.getElementById('recentList');
-      const pinned = document.getElementById('pinnedList');
-      if (!list) return;
-
-      let recentHtml = '';
-      let pinnedHtml = '';
-      sessions.forEach(s => {
-        const isActive = currentSessionId && String(s.id) === String(currentSessionId);
-        const item = `
-          <a href="${CONFIG.urls.sessionBase}${s.id}/"
-             class="copilot-conv-item ${isActive ? 'active' : ''}"
-             data-session-id="${s.id}">
-            <div class="copilot-conv-title">${escapeHtml(s.title || 'Untitled')}</div>
-            <div class="copilot-conv-meta">
-              ${s.case_number ? `<span class="badge bg-info-subtle text-info-emphasis">${escapeHtml(s.case_number)}</span>` : ''}
-            </div>
-          </a>`;
-        if (s.is_pinned) pinnedHtml += item;
-        else recentHtml += item;
-      });
-
-      list.innerHTML = recentHtml || '<div class="text-muted small p-3">No conversations yet.</div>';
-      if (pinned) {
-        pinned.innerHTML = pinnedHtml ? `<div class="copilot-sidebar-label">Pinned</div><div class="copilot-sidebar-list">${pinnedHtml}</div>` : '';
+    if (findings.length) {
+      html += '<div class="sv-summary-section">';
+      html += '<div class="sv-summary-section-title"><i class="bi bi-search"></i> Findings</div>';
+      html += '<div class="sv-summary-findings">';
+      for (var i = 0; i < findings.length; i++) {
+        var f = findings[i];
+        var fBadge = '';
+        if (f.severity === 'success') fBadge = ' sv-finding-success';
+        else if (f.severity === 'danger') fBadge = ' sv-finding-danger';
+        html += '<div class="sv-finding' + fBadge + '">';
+        html += '<span class="sv-finding-label">' + esc(f.label) + '</span>';
+        html += '<span class="sv-finding-value">' + esc(f.value) + '</span>';
+        html += '</div>';
       }
+      html += '</div></div>';
+    }
+
+    if (issues.length) {
+      html += '<div class="sv-summary-section">';
+      html += '<div class="sv-summary-section-title sv-issues-title"><i class="bi bi-exclamation-circle"></i> Issues</div>';
+      html += '<ul class="sv-summary-issues">';
+      for (var j = 0; j < issues.length; j++) {
+        html += '<li>' + esc(issues[j]) + '</li>';
+      }
+      html += '</ul></div>';
+    }
+
+    html += '<div class="sv-summary-footer">';
+    html += '<span class="sv-summary-tools"><i class="bi bi-gear"></i> ' + (toolsOk + toolsFailed) + ' tools executed';
+    if (toolsFailed > 0) html += ', <span class="text-danger">' + toolsFailed + ' failed</span>';
+    html += '</span></div>';
+
+    if (analysisText && analysisText.length > 10) {
+      html += '<div class="sv-summary-analysis">' + esc(analysisText) + '</div>';
+    }
+
+    html += '</div>';
+
+    var row = document.createElement('div');
+    row.className = 'copilot-msg';
+
+    var avatar = document.createElement('div');
+    avatar.className = 'copilot-msg-avatar copilot-msg-avatar-ai';
+    avatar.innerHTML = '<i class="bi bi-stars"></i>';
+
+    var body = document.createElement('div');
+    body.className = 'copilot-msg-body';
+    body.innerHTML = html;
+
+    row.appendChild(avatar);
+    row.appendChild(body);
+    chatMessages.appendChild(row);
+    scrollToBottom();
+  }
+
+  // ==================================================================
+  // INVOICE UPLOAD (in chat)
+  // ==================================================================
+  function onFileSelected() {
+    if (invoiceFileInput.files.length) handleFileUpload(invoiceFileInput.files[0]);
+    invoiceFileInput.value = '';
+  }
+
+  async function handleFileUpload(file) {
+    var allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/tiff'];
+    if (allowed.indexOf(file.type) === -1) {
+      appendMessage('system', 'Unsupported file type. Upload PDF, PNG, JPG, or TIFF.');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      appendMessage('system', 'File too large. Maximum size is 20 MB.');
+      return;
+    }
+
+    // Switch to chat tab if in case mode and not on chat tab
+    if (IS_CASE) {
+      var chatTab = document.getElementById('tab-chat');
+      if (chatTab && !chatTab.classList.contains('active')) {
+        new bootstrap.Tab(chatTab).show();
+      }
+    }
+
+    appendMessage('user', 'Uploaded invoice: ' + file.name);
+
+    var prog = appendProgressMessage('cloud-arrow-up', 'Processing Invoice');
+    updateProgressSteps(prog.stepsContainer, [{ label: 'Uploading document...', done: false }]);
+
+    var formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      var res = await fetch(CFG.urls.invoiceUpload, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CFG.csrfToken },
+        credentials: 'same-origin',
+        body: formData,
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        updateProgressSteps(prog.stepsContainer, [
+          { label: 'Upload failed: ' + (data.error || 'Unknown error'), done: true, failed: true },
+        ]);
+        return;
+      }
+      updateProgressSteps(prog.stepsContainer, [{ label: 'Document received', done: true }]);
+      pollUploadStatus(data.upload_id, prog.stepsContainer);
     } catch (err) {
-      console.error('Failed to load conversations:', err);
+      updateProgressSteps(prog.stepsContainer, [
+        { label: 'Upload error: ' + ((err && err.message) || 'Network error'), done: true, failed: true },
+      ]);
     }
   }
 
-  // ── Suggestions ──
-  async function loadSuggestions() {
-    try {
-      const data = await apiFetch(CONFIG.urls.suggestions);
-      if (data && data.suggestions) {
-        const container = document.getElementById('suggestedPrompts');
-        if (container) {
-          container.innerHTML = data.suggestions.map(p =>
-            `<button type="button" class="copilot-suggestion-chip" onclick="useSuggestion(this)">
-              <i class="bi bi-chat-dots me-1"></i>${escapeHtml(p)}
-            </button>`
-          ).join('');
+  function pollUploadStatus(uploadId, stepsContainer) {
+    var url = CFG.urls.uploadStatus.replace('{id}', uploadId);
+    var redirected = false;
+    var interval = setInterval(async function () {
+      try {
+        var data = await apiFetch(url, { method: 'GET' });
+        if (data.steps) {
+          updateProgressSteps(stepsContainer, data.steps);
+          scrollToBottom();
         }
+        if (!redirected && data.case_id) {
+          redirected = true;
+          clearInterval(interval);
+          var steps = data.steps || [];
+          steps.push({ label: 'Opening case workspace...', done: true });
+          updateProgressSteps(stepsContainer, steps);
+          setTimeout(function () {
+            window.location.href = CFG.urls.caseBase + data.case_id + '/?auto_run=1';
+          }, 600);
+          return;
+        }
+        if (data.completed) {
+          clearInterval(interval);
+          if (data.error) {
+            var steps = data.steps || [];
+            steps.push({ label: data.error, done: true, failed: true });
+            updateProgressSteps(stepsContainer, steps);
+          }
+        }
+      } catch (err) {
+        clearInterval(interval);
+        updateProgressSteps(stepsContainer, [
+          { label: 'Status check failed', done: true, failed: true },
+        ]);
       }
-    } catch (err) {
-      console.error('Failed to load suggestions:', err);
+    }, 2000);
+  }
+
+  // ==================================================================
+  // WAIT FOR INVOICE (case mode -- poll until invoice is linked)
+  // ==================================================================
+  function waitForInvoiceThenRunSupervisor() {
+    var attempts = 0;
+    var maxAttempts = 90;
+    hideWelcome();
+    appendMessage('system', 'Waiting for extraction to complete before running analysis...');
+
+    var pollInterval = setInterval(async function () {
+      attempts++;
+      try {
+        var ctx = await apiFetch(CFG.urls.caseContext, { method: 'GET' });
+        if (ctx && ctx.invoice && ctx.invoice.id) {
+          clearInterval(pollInterval);
+          CFG.invoiceId = ctx.invoice.id;
+          if (ctx.reconciliation && ctx.reconciliation.id) {
+            CFG.reconciliationResultId = ctx.reconciliation.id;
+          }
+          runSupervisor('Analyze this newly uploaded invoice');
+          return;
+        }
+      } catch (err) {
+        console.warn('[copilot] polling case context failed', err);
+      }
+      if (attempts >= maxAttempts) {
+        clearInterval(pollInterval);
+        appendMessage('system', 'Extraction is taking longer than expected. Refresh the page and try again.');
+      }
+    }, 2000);
+  }
+
+  // ==================================================================
+  // SUPERVISOR AGENT
+  // ==================================================================
+  async function runSupervisor(promptText) {
+    if (supervisorRunning) return;
+    supervisorRunning = true;
+
+    // Switch to chat tab if in case mode and not on chat tab
+    if (IS_CASE) {
+      var chatTab = document.getElementById('tab-chat');
+      if (chatTab && !chatTab.classList.contains('active')) {
+        new bootstrap.Tab(chatTab).show();
+      }
     }
-  }
 
-  // ── Pin / Archive ──
-  async function togglePin(sessionId) {
-    const url = `/api/v1/copilot/session/${sessionId}/`;
-    await apiFetch(url, { method: 'PATCH', body: { action: 'pin' } });
-    loadRecentConversations();
-  }
+    var sid = await ensureSession();
+    if (!sid && !IS_CASE) { supervisorRunning = false; return; }
 
-  // ── Helpers ──
-  function scrollChatToBottom() {
-    if (chatMessages) {
-      requestAnimationFrame(() => {
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+    hideWelcome();
+    if (promptText) appendMessage('user', promptText);
+
+    var prog = appendProgressMessage('cpu', 'Supervisor Agent');
+    var steps = [];
+    var currentRound = 0;
+
+    function renderSteps() {
+      if (IS_CASE) {
+        updateStreamingSteps(prog.stepsContainer, steps);
+      } else {
+        // Plain chat mode: simpler progress steps
+        var simpleSteps = steps.filter(function (s) { return s.kind === 'tool' || s.kind === 'complete' || s.kind === 'error'; });
+        updateProgressSteps(prog.stepsContainer, simpleSteps.map(function (s) {
+          if (s.kind === 'complete') return { label: 'Analysis complete', done: true };
+          if (s.kind === 'error') return { label: s.message || 'Error', done: true, failed: true };
+          var lbl = TOOL_LABELS[s.tool] || (s.tool || '').replace(/_/g, ' ');
+          return {
+            label: lbl,
+            done: s.status === 'done' || s.status === 'failed',
+            failed: s.status === 'failed',
+          };
+        }));
+      }
+      scrollToBottom();
+    }
+
+    function handleEvent(evt) {
+      if (evt.type === 'thinking') {
+        currentRound = evt.round || currentRound + 1;
+        steps.push({ kind: 'round', round: currentRound, active: true });
+        renderSteps();
+      } else if (evt.type === 'reasoning') {
+        for (var r = steps.length - 1; r >= 0; r--) {
+          if (steps[r].kind === 'round' && steps[r].round === (evt.round || currentRound)) {
+            steps[r].active = false;
+            break;
+          }
+        }
+        steps.push({
+          kind: 'reasoning', round: evt.round || currentRound,
+          text: evt.text || '', tools_planned: evt.tools_planned || [],
+        });
+        renderSteps();
+      } else if (evt.type === 'tool_start') {
+        steps.push({
+          kind: 'tool', tool: evt.tool, round: evt.round || currentRound,
+          status: 'running', duration_ms: null, output_summary: '',
+        });
+        renderSteps();
+      } else if (evt.type === 'tool_complete') {
+        for (var i = steps.length - 1; i >= 0; i--) {
+          if (steps[i].kind === 'tool' && steps[i].tool === evt.tool && steps[i].status === 'running') {
+            steps[i].status = evt.status === 'SUCCESS' ? 'done' : 'failed';
+            steps[i].duration_ms = evt.duration_ms;
+            steps[i].output_summary = evt.output_summary || '';
+            break;
+          }
+        }
+        for (var j = steps.length - 1; j >= 0; j--) {
+          if (steps[j].kind === 'round' && steps[j].round === (evt.round || currentRound)) {
+            steps[j].active = false;
+            break;
+          }
+        }
+        renderSteps();
+      } else if (evt.type === 'complete') {
+        steps.push({ kind: 'complete' });
+        renderSteps();
+        var s = evt.summary || {};
+        if (typeof s === 'string') {
+          appendMessage('assistant', s || 'Supervisor analysis completed.');
+        } else if (IS_CASE) {
+          appendSummaryCard(s, evt.confidence, evt.recommendation);
+        } else {
+          var summary = '';
+          if (evt.recommendation) summary += 'Recommendation: ' + evt.recommendation;
+          if (evt.confidence) summary += '\nConfidence: ' + Math.round(evt.confidence * 100) + '%';
+          if (s.analysis_text) summary += '\n\n' + s.analysis_text;
+          if (!summary) summary = 'Supervisor analysis completed.';
+          appendMessage('assistant', summary);
+        }
+      } else if (evt.type === 'error') {
+        steps.push({ kind: 'error', message: evt.message || 'Unknown error' });
+        renderSteps();
+      }
+    }
+
+    // Try SSE streaming first (if the URL is available)
+    if (CFG.urls.supervisorRunStream) {
+      try {
+        var response = await fetch(CFG.urls.supervisorRunStream, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CFG.csrfToken,
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            invoice_id: CFG.invoiceId || null,
+            reconciliation_result_id: CFG.reconciliationResultId || null,
+            case_id: caseId,
+          }),
+        });
+
+        if (!response.ok) {
+          var errText = 'Server error ' + response.status;
+          try { errText = (await response.json()).error || errText; } catch (_) {}
+          throw new Error(errText);
+        }
+
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+
+        while (true) {
+          var chunk = await reader.read();
+          if (chunk.done) break;
+          buffer += decoder.decode(chunk.value, { stream: true });
+
+          var parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (var p = 0; p < parts.length; p++) {
+            var line = parts[p].trim();
+            if (line.indexOf('data: ') === 0) {
+              try {
+                var evt = JSON.parse(line.substring(6));
+                handleEvent(evt);
+              } catch (_parseErr) {}
+            }
+          }
+        }
+
+        supervisorRunning = false;
+        return;
+      } catch (streamErr) {
+        // Fall through to non-streaming endpoint
+        console.warn('[copilot] SSE stream failed, using fallback', streamErr);
+      }
+    }
+
+    // Fallback: non-streaming supervisor
+    try {
+      var res = await apiFetch(CFG.urls.supervisorRun, {
+        method: 'POST',
+        body: {
+          invoice_id: CFG.invoiceId || null,
+          reconciliation_result_id: CFG.reconciliationResultId || null,
+          case_id: caseId,
+        },
       });
+      if (res && !res.error) {
+        steps = [];
+        if (res.tool_calls && res.tool_calls.length) {
+          for (var tc = 0; tc < res.tool_calls.length; tc++) {
+            var call = res.tool_calls[tc];
+            steps.push({
+              kind: 'tool', tool: call.tool_name,
+              status: call.status === 'SUCCESS' ? 'done' : 'failed',
+              duration_ms: call.duration_ms, output_summary: '',
+            });
+          }
+        }
+        steps.push({ kind: 'complete' });
+        renderSteps();
+
+        if (IS_CASE && res.summary && typeof res.summary === 'object') {
+          appendSummaryCard(res.summary, res.confidence, res.recommendation);
+        } else {
+          var summary = '';
+          if (res.recommendation) summary += 'Recommendation: ' + res.recommendation;
+          if (res.confidence) summary += '\nConfidence: ' + Math.round(res.confidence * 100) + '%';
+          if (res.summary) summary += '\n\n' + (typeof res.summary === 'string' ? res.summary : res.summary.analysis_text || '');
+          if (!summary) summary = 'Supervisor analysis completed.';
+          appendMessage('assistant', summary);
+        }
+      } else {
+        steps.push({ kind: 'error', message: (res && res.error) || 'Unknown error' });
+        renderSteps();
+      }
+    } catch (fallbackErr) {
+      steps.push({ kind: 'error', message: fallbackErr.message || 'Connection failed' });
+      renderSteps();
+    } finally {
+      supervisorRunning = false;
     }
   }
 
-  function setCurrentCaseScope(caseId) {
-    currentCaseId = caseId;
-    if (caseId) loadCaseContext(caseId);
-  }
+  window.runSupervisor = runSupervisor;
 
-  async function apiFetch(url, options = {}) {
-    const fetchOptions = {
-      method: options.method || 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': CONFIG.csrfToken,
-      },
-      credentials: 'same-origin',
-    };
-    if (options.body) {
-      fetchOptions.body = JSON.stringify(options.body);
-    }
-    const response = await fetch(url, fetchOptions);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.json();
-  }
-
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
-
-  function formatMarkdown(text) {
-    // Minimal markdown: bold, italic, line breaks
-    return escapeHtml(text)
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/\n\n/g, '</p><p>')
-      .replace(/\n/g, '<br>');
-  }
-
-  // ── Case Search Modal ──
-  const caseSearchBackdrop = document.getElementById('caseSearchBackdrop');
-  const caseSearchInput    = document.getElementById('caseSearchInput');
-  const caseSearchResults  = document.getElementById('caseSearchResults');
-  let searchDebounce = null;
-
+  // ==================================================================
+  // CASE SEARCH MODAL (plain chat mode)
+  // ==================================================================
   function openCaseSearch() {
-    if (!caseSearchBackdrop) return;
-    caseSearchBackdrop.classList.remove('d-none');
-    setTimeout(() => { if (caseSearchInput) caseSearchInput.focus(); }, 100);
+    if (caseSearchBg) {
+      caseSearchBg.classList.remove('d-none');
+      if (caseSearchInput) caseSearchInput.focus();
+    }
   }
 
   function closeCaseSearch() {
-    if (!caseSearchBackdrop) return;
-    caseSearchBackdrop.classList.add('d-none');
+    if (caseSearchBg) caseSearchBg.classList.add('d-none');
     if (caseSearchInput) caseSearchInput.value = '';
     if (caseSearchResults) {
       caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><i class="bi bi-briefcase"></i><p class="mb-0">Type to search for a case</p></div>';
     }
   }
 
-  async function searchCases(query) {
-    if (!query.trim()) {
+  async function performCaseSearch() {
+    var q = caseSearchInput.value.trim();
+    if (!q || q.length < 2) {
       caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><i class="bi bi-briefcase"></i><p class="mb-0">Type to search for a case</p></div>';
       return;
     }
-    caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><div class="spinner-border spinner-border-sm text-primary"></div><p class="mb-0">Searching…</p></div>';
     try {
-      const data = await apiFetch(CONFIG.urls.caseSearch + '?q=' + encodeURIComponent(query));
-      if (!data || !data.results || !data.results.length) {
-        caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><i class="bi bi-inbox"></i><p class="mb-0">No cases found</p></div>';
-        return;
+      var data = await apiFetch(CFG.urls.caseSearch + '?q=' + encodeURIComponent(q), { method: 'GET' });
+      if (data && data.results && data.results.length) {
+        caseSearchResults.innerHTML = data.results.map(function (c) {
+          return '<div class="copilot-case-result-item" onclick="selectCase(' + c.id + ', \'' + esc(c.case_number) + '\')">'
+            + '<div><span class="badge bg-primary-subtle text-primary-emphasis">' + esc(c.case_number) + '</span></div>'
+            + '<div class="flex-1 small">'
+            + (c.invoice_number ? esc(c.invoice_number) + ' - ' : '')
+            + (c.vendor_name ? esc(c.vendor_name) : '')
+            + '</div>'
+            + '<div><span class="badge bg-secondary-subtle text-secondary-emphasis">' + esc(c.status || '') + '</span></div>'
+            + '</div>';
+        }).join('');
+      } else {
+        caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><p class="mb-0 text-muted">No cases found</p></div>';
       }
-      const html = data.results.map(c => `
-        <button type="button" class="copilot-case-result" data-case-id="${c.id}">
-          <div class="copilot-case-result-main">
-            <strong>${escapeHtml(c.case_number)}</strong>
-            <span class="badge bg-${c.status === 'CLOSED' ? 'secondary' : c.status === 'ESCALATED' ? 'danger' : 'primary'}-subtle copilot-case-result-status">${escapeHtml(c.status)}</span>
-          </div>
-          <div class="copilot-case-result-meta">
-            ${c.invoice_number ? '<span><i class="bi bi-receipt me-1"></i>' + escapeHtml(c.invoice_number) + '</span>' : ''}
-            ${c.vendor_name ? '<span><i class="bi bi-building me-1"></i>' + escapeHtml(c.vendor_name) + '</span>' : ''}
-            ${c.priority ? '<span class="text-muted">' + escapeHtml(c.priority) + '</span>' : ''}
-          </div>
-        </button>
-      `).join('');
-      caseSearchResults.innerHTML = html;
-
-      // Attach click handlers
-      caseSearchResults.querySelectorAll('.copilot-case-result').forEach(btn => {
-        btn.addEventListener('click', () => linkCase(parseInt(btn.dataset.caseId, 10)));
-      });
     } catch (err) {
       caseSearchResults.innerHTML = '<div class="copilot-case-search-empty"><p class="mb-0 text-danger">Search failed</p></div>';
-      console.error('Case search error:', err);
     }
   }
 
-  async function linkCase(caseId) {
-    if (!currentSessionId) {
-      // No session yet — start one with this case
-      const body = { case_id: caseId };
-      try {
-        const session = await apiFetch(CONFIG.urls.sessionStart, { method: 'POST', body });
-        if (session && session.id) {
-          window.location.href = CONFIG.urls.sessionBase + session.id + '/';
-        }
-      } catch (err) {
-        console.error('Failed to start session with case:', err);
+  window.selectCase = function (id, number) {
+    window.location.href = CFG.urls.caseBase + id + '/';
+  };
+
+  // ==================================================================
+  // TAB LAZY LOADING (case mode)
+  // ==================================================================
+  var loadedTabs = {};
+
+  function onTabShown(e) {
+    var target = e.target.getAttribute('data-bs-target');
+    if (!target) return;
+    if (target === '#panel-timeline' && !loadedTabs.timeline) {
+      loadTimeline();
+      loadedTabs.timeline = true;
+    }
+    if (target === '#panel-governance' && !loadedTabs.governance) {
+      loadGovernance();
+      loadedTabs.governance = true;
+    }
+    if (target === '#panel-matching' && !loadedTabs.matching) {
+      loadMatchingData();
+      loadedTabs.matching = true;
+    }
+    if (target === '#panel-po-grn' && !loadedTabs.pogrn) {
+      loadPOGRNData();
+      loadedTabs.pogrn = true;
+    }
+  }
+
+  // ==================================================================
+  // DATA LOADERS (case mode)
+  // ==================================================================
+  async function loadLineItems() {
+    if (!CFG.invoiceId) return;
+    try {
+      var data = await apiFetch(CFG.urls.caseEvidence, { method: 'GET' });
+      if (data && data.evidence) {
+        populateInvoiceLines(data.evidence);
+        populatePOLines(data.evidence);
+        populateGRNLines(data.evidence);
       }
+    } catch (err) {
+      console.error('[copilot] loadLineItems failed', err);
+    }
+  }
+
+  function populateInvoiceLines(evidence) {
+    var tbody = document.getElementById('invoiceLineItems');
+    if (!tbody) return;
+    var lines = [];
+    evidence.forEach(function (e) {
+      if (e.type === 'invoice' && e.details && e.details.line_items) lines = e.details.line_items;
+    });
+    if (!lines.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No line items found.</td></tr>';
       return;
     }
-    const url = `/api/v1/copilot/session/${currentSessionId}/`;
-    try {
-      const res = await apiFetch(url, { method: 'PATCH', body: { action: 'link_case', case_id: caseId } });
-      if (res && res.linked) {
-        currentCaseId = res.case_id;
-        // Update header
-        const badge = document.getElementById('caseBadge');
-        if (badge) { badge.textContent = 'Case #' + res.case_id; badge.classList.remove('d-none'); }
-        const title = document.getElementById('chatTitle');
-        if (title && res.title) title.textContent = res.title;
-        const label = document.getElementById('linkCaseLabel');
-        if (label) label.textContent = 'Change Case';
-        // Load context
-        loadCaseContext(caseId);
-        if (contextPanel) contextPanel.classList.remove('collapsed');
-        closeCaseSearch();
-        loadRecentConversations();
-      }
-    } catch (err) {
-      console.error('Failed to link case:', err);
-    }
+    tbody.innerHTML = lines.map(function (li, i) {
+      return '<tr>'
+        + '<td>' + (li.line_number || (i + 1)) + '</td>'
+        + '<td>' + esc(li.description || '-') + '</td>'
+        + '<td>' + esc(li.item_code || '-') + '</td>'
+        + '<td class="text-end">' + (li.quantity != null ? li.quantity : '-') + '</td>'
+        + '<td>' + esc(li.uom || '-') + '</td>'
+        + '<td class="text-end">' + (li.unit_price != null ? li.unit_price : '-') + '</td>'
+        + '<td class="text-end">' + (li.amount != null ? li.amount : '-') + '</td>'
+        + '</tr>';
+    }).join('');
   }
 
-  async function unlinkCase() {
-    if (!currentSessionId) return;
-    const url = `/api/v1/copilot/session/${currentSessionId}/`;
-    try {
-      const res = await apiFetch(url, { method: 'PATCH', body: { action: 'unlink_case' } });
-      if (res && res.unlinked) {
-        currentCaseId = null;
-        const badge = document.getElementById('caseBadge');
-        if (badge) badge.classList.add('d-none');
-        const label = document.getElementById('linkCaseLabel');
-        if (label) label.textContent = 'Link Case';
-        if (contextPanel) contextPanel.classList.add('collapsed');
-        closeCaseSearch();
-        loadRecentConversations();
-      }
-    } catch (err) {
-      console.error('Failed to unlink case:', err);
+  function populatePOLines(evidence) {
+    var tbody = document.getElementById('poLineItems');
+    if (!tbody) return;
+    var lines = [];
+    evidence.forEach(function (e) {
+      if (e.type === 'purchase_order' && e.details && e.details.line_items) lines = e.details.line_items;
+    });
+    if (!lines.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No PO line items found.</td></tr>';
+      return;
     }
+    tbody.innerHTML = lines.map(function (li, i) {
+      return '<tr>'
+        + '<td>' + (li.line_number || (i + 1)) + '</td>'
+        + '<td>' + esc(li.description || '-') + '</td>'
+        + '<td>' + esc(li.item_code || '-') + '</td>'
+        + '<td class="text-end">' + (li.quantity != null ? li.quantity : '-') + '</td>'
+        + '<td>' + esc(li.uom || '-') + '</td>'
+        + '<td class="text-end">' + (li.unit_price != null ? li.unit_price : '-') + '</td>'
+        + '<td class="text-end">' + (li.amount != null ? li.amount : '-') + '</td>'
+        + '</tr>';
+    }).join('');
   }
 
-  // Wire up case search UI
-  (function initCaseSearch() {
-    const btnLink = document.getElementById('btnLinkCase');
-    if (btnLink) btnLink.addEventListener('click', openCaseSearch);
-    const btnClose = document.getElementById('btnCloseCaseSearch');
-    if (btnClose) btnClose.addEventListener('click', closeCaseSearch);
-    if (caseSearchBackdrop) {
-      caseSearchBackdrop.addEventListener('click', (e) => {
-        if (e.target === caseSearchBackdrop) closeCaseSearch();
-      });
+  function populateGRNLines(evidence) {
+    var tbody = document.getElementById('grnLineItems');
+    if (!tbody) return;
+    var lines = [];
+    evidence.forEach(function (e) {
+      if (e.type === 'grn' && e.details && e.details.line_items) lines = e.details.line_items;
+    });
+    if (!lines.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No GRN data found.</td></tr>';
+      return;
     }
-    if (caseSearchInput) {
-      caseSearchInput.addEventListener('input', () => {
-        clearTimeout(searchDebounce);
-        searchDebounce = setTimeout(() => searchCases(caseSearchInput.value), 300);
-      });
-    }
-    const btnUnlink = document.getElementById('btnUnlinkCase');
-    if (btnUnlink) btnUnlink.addEventListener('click', unlinkCase);
-  })();
+    tbody.innerHTML = lines.map(function (li, i) {
+      return '<tr>'
+        + '<td>' + esc(li.grn_number || '-') + '</td>'
+        + '<td>' + esc(li.date || '-') + '</td>'
+        + '<td>' + esc(li.description || '-') + '</td>'
+        + '<td>' + esc(li.item_code || '-') + '</td>'
+        + '<td class="text-end">' + (li.quantity_received != null ? li.quantity_received : '-') + '</td>'
+        + '<td>' + esc(li.uom || '-') + '</td>'
+        + '</tr>';
+    }).join('');
+  }
 
-  // ── Global functions (called from onclick in templates) ──
-  window.useSuggestion = function(btn) {
-    const text = btn.textContent.trim();
-    if (chatInput && text && !isSending) {
-      chatInput.value = text;
-      chatInput.dispatchEvent(new Event('input'));
-      // Use requestSubmit to properly trigger the submit event listener,
-      // with fallback for older browsers.
-      if (chatForm) {
-        if (chatForm.requestSubmit) {
-          chatForm.requestSubmit();
-        } else {
-          chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
-        }
+  window.loadTimeline = async function () {
+    var el = document.getElementById('timelineContent');
+    if (!el) return;
+    el.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></div>';
+    try {
+      var data = await apiFetch(CFG.urls.caseTimeline, { method: 'GET' });
+      if (data && data.entries && data.entries.length) {
+        el.innerHTML = data.entries.map(function (entry) {
+          var iconClass = 'bg-secondary-subtle text-secondary';
+          if (entry.category === 'agent_run') iconClass = 'bg-primary-subtle text-primary';
+          if (entry.category === 'decision') iconClass = 'bg-warning-subtle text-warning';
+          if (entry.category === 'review') iconClass = 'bg-info-subtle text-info';
+          return '<div class="timeline-entry">'
+            + '<div class="timeline-icon ' + iconClass + '"><i class="bi bi-circle-fill"></i></div>'
+            + '<div class="timeline-content">'
+            + '<div class="fw-medium">' + esc(entry.title || entry.event_type || 'Event') + '</div>'
+            + '<div class="small text-muted">' + esc(entry.description || '') + '</div>'
+            + '<div class="timeline-time">' + esc(entry.timestamp || '') + '</div>'
+            + '</div></div>';
+        }).join('');
+      } else {
+        el.innerHTML = '<p class="text-muted text-center py-3">No timeline entries yet.</p>';
       }
+    } catch (err) {
+      el.innerHTML = '<p class="text-danger small">Failed to load timeline.</p>';
     }
   };
 
-  window.togglePin = togglePin;
-  window.startSession = startSession;
-  window.loadCaseContext = loadCaseContext;
-  window.setCurrentCaseScope = setCurrentCaseScope;
-  window.loadRecentConversations = loadRecentConversations;
-  window.loadSuggestions = loadSuggestions;
-
-  // ── Case action from context panel ──
-  window.copilotCaseAction = function (action) {
-    if (!currentCaseId) { alert('No case linked.'); return; }
-
-    if (action === 'approve') {
-      if (!confirm('Approve this case?')) return;
-    } else if (action === 'reject') {
-      var reason = prompt('Rejection reason:');
-      if (reason === null) return;
-    } else if (action === 'escalate') {
-      var reason = prompt('Escalation reason (optional):');
-      if (reason === null) return;
-    } else if (action === 'reprocess') {
-      if (!confirm('Reprocess this case from intake?')) return;
-    }
-
-    var decisionMap = {approve: 'APPROVED', reject: 'REJECTED', reprocess: 'REPROCESSED', escalate: 'ESCALATED'};
-    var decision = decisionMap[action] || action.toUpperCase();
-    var formData = new FormData();
-    formData.append('csrfmiddlewaretoken', CONFIG.csrfToken);
-    formData.append('decision', decision);
-    if (typeof reason === 'string') formData.append('reason', reason);
-
-    var decideUrl = '/cases/' + currentCaseId + '/decide/';
-    fetch(decideUrl, { method: 'POST', body: formData, credentials: 'same-origin' })
-      .then(function (resp) {
-        if (resp.redirected) {
-          // Successful -- reload to reflect new status
-          window.location.reload();
-          return;
+  window.loadGovernance = async function () {
+    var el = document.getElementById('governanceContent');
+    if (!el) return;
+    el.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></div>';
+    try {
+      var data = await apiFetch(CFG.urls.caseGovernance, { method: 'GET' });
+      if (data && data.entries && data.entries.length) {
+        el.innerHTML = data.entries.map(function (entry) {
+          return '<div class="gov-entry">'
+            + '<span class="gov-label">' + esc(entry.event_type || entry.label || 'Event') + '</span>'
+            + '<span class="gov-value">' + esc(entry.detail || entry.description || '') + '</span>'
+            + '</div>';
+        }).join('');
+      } else if (data && typeof data === 'object') {
+        var html = '';
+        for (var key in data) {
+          if (data.hasOwnProperty(key) && key !== 'error') {
+            html += '<div class="gov-entry"><span class="gov-label">' + esc(key) + '</span><span class="gov-value">' + esc(String(data[key])) + '</span></div>';
+          }
         }
-        if (!resp.ok) throw new Error('Action failed: ' + resp.status);
-        window.location.reload();
-      })
-      .catch(function (err) {
-        alert('Action failed: ' + err.message);
-      });
+        el.innerHTML = html || '<p class="text-muted text-center py-3">No governance data.</p>';
+      } else {
+        el.innerHTML = '<p class="text-muted text-center py-3">No governance data available.</p>';
+      }
+    } catch (err) {
+      el.innerHTML = '<p class="text-danger small">Failed to load governance data.</p>';
+    }
   };
 
-  // ── Boot ──
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
+  async function loadMatchingData() {
+    if (!CFG.reconciliationResultId) return;
+    try {
+      var data = await apiFetch(CFG.urls.caseEvidence, { method: 'GET' });
+      if (data) {
+        populateHeaderComparison(data);
+        populateLineMatching(data);
+      }
+    } catch (err) {
+      console.error('[copilot] loadMatchingData failed', err);
+    }
   }
+
+  function populateHeaderComparison(data) {
+    var tbody = document.getElementById('headerComparison');
+    if (!tbody) return;
+    var evidence = data.evidence || [];
+    var invData = null, poData = null;
+    evidence.forEach(function (e) {
+      if (e.type === 'invoice') invData = e.details || {};
+      if (e.type === 'purchase_order') poData = e.details || {};
+    });
+    if (!invData || !poData) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Comparison data not available.</td></tr>';
+      return;
+    }
+    var fields = [
+      { label: 'Total Amount', inv: invData.total_amount, po: poData.total_amount },
+      { label: 'Vendor', inv: invData.vendor_name, po: poData.vendor_name },
+      { label: 'Currency', inv: invData.currency, po: poData.currency },
+    ];
+    tbody.innerHTML = fields.map(function (f) {
+      var invVal = f.inv != null ? String(f.inv) : '-';
+      var poVal = f.po != null ? String(f.po) : '-';
+      var match = invVal === poVal;
+      var variance = '-';
+      if (!isNaN(parseFloat(invVal)) && !isNaN(parseFloat(poVal))) {
+        var diff = parseFloat(invVal) - parseFloat(poVal);
+        variance = diff === 0 ? '0' : (diff > 0 ? '+' : '') + diff.toFixed(2);
+      }
+      return '<tr>'
+        + '<td class="fw-medium">' + esc(f.label) + '</td>'
+        + '<td>' + esc(invVal) + '</td>'
+        + '<td>' + esc(poVal) + '</td>'
+        + '<td>' + esc(variance) + '</td>'
+        + '<td><span class="badge ' + (match ? 'bg-success-subtle text-success-emphasis' : 'bg-warning-subtle text-warning-emphasis') + '">'
+        + (match ? 'Match' : 'Mismatch') + '</span></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function populateLineMatching(data) {
+    var tbody = document.getElementById('lineMatching');
+    var countEl = document.getElementById('lineMatchCount');
+    if (!tbody) return;
+    var evidence = data.evidence || [];
+    var lineMatches = [];
+    evidence.forEach(function (e) {
+      if (e.type === 'decision' && e.details && e.details.line_matches) lineMatches = e.details.line_matches;
+    });
+    if (countEl) countEl.textContent = lineMatches.length + ' lines';
+    if (!lineMatches.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">No line matching data available.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = lineMatches.map(function (m) {
+      var confBadge = 'bg-secondary';
+      if (m.confidence >= 0.8) confBadge = 'bg-success';
+      else if (m.confidence >= 0.5) confBadge = 'bg-warning text-dark';
+      else confBadge = 'bg-danger';
+      return '<tr>'
+        + '<td>' + (m.inv_line || '-') + '</td>'
+        + '<td>' + (m.po_line || '-') + '</td>'
+        + '<td>' + esc(m.description || '-') + '</td>'
+        + '<td class="text-end">' + (m.inv_qty != null ? m.inv_qty : '-') + '</td>'
+        + '<td class="text-end">' + (m.po_qty != null ? m.po_qty : '-') + '</td>'
+        + '<td class="text-end">' + (m.inv_price != null ? m.inv_price : '-') + '</td>'
+        + '<td class="text-end">' + (m.po_price != null ? m.po_price : '-') + '</td>'
+        + '<td><span class="badge ' + confBadge + '">' + Math.round((m.confidence || 0) * 100) + '%</span></td>'
+        + '<td><span class="badge ' + (m.matched ? 'bg-success-subtle text-success-emphasis' : 'bg-danger-subtle text-danger-emphasis') + '">'
+        + (m.matched ? 'Matched' : 'Unmatched') + '</span></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  async function loadPOGRNData() {
+    if (!CFG.invoiceId) return;
+    loadLineItems();
+  }
+
+  // ==================================================================
+  // CASE ACTIONS (case mode)
+  // ==================================================================
+  window.caseAction = async function (action) {
+    if (!confirm('Are you sure you want to ' + action.replace('_', ' ') + ' this case?')) return;
+    try {
+      var res = await apiFetch(CFG.urls.caseAction, {
+        method: 'POST',
+        body: { action: action },
+      });
+      if (res && res.success) {
+        appendMessage('system', 'Action "' + action + '" completed successfully.');
+        setTimeout(function () { window.location.reload(); }, 1500);
+      } else {
+        appendMessage('system', 'Action failed: ' + (res.error || 'Unknown error'));
+      }
+    } catch (err) {
+      appendMessage('system', 'Action failed: ' + ((err && err.message) || 'Unknown'));
+    }
+  };
+
+  window.downloadInvoice = function (invoiceId) {
+    window.open('/api/v1/documents/invoices/' + invoiceId + '/download/', '_blank');
+  };
+
+  window.exportReport = function () {
+    appendMessage('system', 'Export functionality coming soon.');
+  };
+
+  // ==================================================================
+  // RICH RESPONSE RENDERING
+  // ==================================================================
+  function miniMarkdown(text) {
+    if (!text) return '';
+    var lines = String(text).split('\n');
+    var html = '';
+    var inList = false;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!line.trim()) { if (inList) { html += '</ul>'; inList = false; } continue; }
+      if (/^\s*[-*]\s+/.test(line)) {
+        if (!inList) { html += '<ul class="chat-md-list">'; inList = true; }
+        html += '<li>' + mdInline(line.replace(/^\s*[-*]\s+/, '')) + '</li>';
+        continue;
+      }
+      if (inList) { html += '</ul>'; inList = false; }
+      if (/^###\s+/.test(line)) { html += '<div class="chat-md-h3">' + mdInline(line.replace(/^###\s+/, '')) + '</div>'; continue; }
+      if (/^##\s+/.test(line)) { html += '<div class="chat-md-h2">' + mdInline(line.replace(/^##\s+/, '')) + '</div>'; continue; }
+      html += '<div class="chat-md-p">' + mdInline(line) + '</div>';
+    }
+    if (inList) html += '</ul>';
+    return html;
+  }
+
+  function mdInline(text) {
+    var s = esc(text);
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/`(.+?)`/g, '<code>$1</code>');
+    return s;
+  }
+
+  function appendRichResponse(response) {
+    hideWelcome();
+
+    if (typeof response === 'string') {
+      appendRichMessage(response, [], []);
+      return;
+    }
+
+    var summary = response.summary || response.answer || response.text || '';
+    var evidence = response.evidence || [];
+    var followUps = response.follow_up_prompts || [];
+
+    if (!summary && !evidence.length) {
+      appendMessage('assistant', JSON.stringify(response));
+      return;
+    }
+
+    appendRichMessage(summary, evidence, followUps);
+  }
+
+  function appendRichMessage(summary, evidence, followUps) {
+    var row = document.createElement('div');
+    row.className = 'copilot-msg';
+
+    var avatar = document.createElement('div');
+    avatar.className = 'copilot-msg-avatar copilot-msg-avatar-ai';
+    avatar.innerHTML = '<i class="bi bi-stars"></i>';
+
+    var body = document.createElement('div');
+    body.className = 'copilot-msg-body';
+
+    var role = document.createElement('div');
+    role.className = 'copilot-msg-role';
+    role.textContent = 'AP Copilot';
+
+    var html = '<div class="chat-rich-response">';
+
+    if (summary) {
+      html += '<div class="chat-rich-summary">' + miniMarkdown(summary) + '</div>';
+    }
+
+    if (evidence.length) {
+      html += '<div class="chat-evidence-grid">';
+      for (var i = 0; i < evidence.length; i++) {
+        var ev = evidence[i];
+        var evType = ev.type || 'info';
+        var evLabel = ev.label || evType;
+        var evData = ev.data || {};
+
+        var evIcon = 'info-circle'; var evColor = '#64748b';
+        if (evType === 'invoice') { evIcon = 'receipt'; evColor = '#2563eb'; }
+        else if (evType === 'exception') { evIcon = 'exclamation-triangle-fill'; evColor = '#dc2626'; }
+        else if (evType === 'decision') { evIcon = 'signpost-split'; evColor = '#7c3aed'; }
+        else if (evType === 'match') { evIcon = 'check2-circle'; evColor = '#16a34a'; }
+        else if (evType === 'vendor') { evIcon = 'building'; evColor = '#0891b2'; }
+        else if (evType === 'po') { evIcon = 'file-earmark-text'; evColor = '#d97706'; }
+
+        html += '<div class="chat-evidence-card" style="border-left-color:' + evColor + '">';
+        html += '<div class="chat-ev-header">';
+        html += '<i class="bi bi-' + evIcon + '" style="color:' + evColor + '"></i>';
+        html += '<span class="chat-ev-label">' + esc(evLabel) + '</span>';
+        if (evData.severity) {
+          var sevCls = evData.severity === 'HIGH' ? 'danger' : (evData.severity === 'MEDIUM' ? 'warning' : 'secondary');
+          html += '<span class="badge bg-' + sevCls + ' chat-ev-badge">' + esc(evData.severity) + '</span>';
+        }
+        html += '</div>';
+
+        html += '<div class="chat-ev-body">';
+        var dataKeys = Object.keys(evData);
+        for (var j = 0; j < dataKeys.length; j++) {
+          var k = dataKeys[j];
+          if (k === 'severity') continue;
+          var v = evData[k];
+          if (v === null || v === undefined || v === '') continue;
+          var displayVal = v;
+          if (typeof v === 'number' && k.indexOf('confidence') >= 0) {
+            displayVal = Math.round(v * 100) + '%';
+          }
+          var kLabel = k.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+          html += '<div class="chat-ev-field">';
+          html += '<span class="chat-ev-key">' + esc(kLabel) + '</span>';
+          html += '<span class="chat-ev-val">' + esc(String(displayVal)) + '</span>';
+          html += '</div>';
+        }
+        html += '</div></div>';
+      }
+      html += '</div>';
+    }
+
+    if (followUps.length) {
+      html += '<div class="chat-followup-row">';
+      for (var f = 0; f < followUps.length; f++) {
+        var chipFunc = IS_CASE ? 'chatSendQuick' : 'chipSend';
+        html += '<button class="chat-followup-chip" onclick="' + chipFunc + '(\'' + esc(followUps[f]).replace(/'/g, "\\'") + '\')"><i class="bi bi-arrow-return-right me-1"></i>' + esc(followUps[f]) + '</button>';
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+
+    var msgText = document.createElement('div');
+    msgText.className = 'copilot-msg-text';
+    msgText.innerHTML = html;
+
+    body.appendChild(role);
+    body.appendChild(msgText);
+    row.appendChild(avatar);
+    row.appendChild(body);
+    chatMessages.appendChild(row);
+    scrollToBottom();
+  }
+
+  // ==================================================================
+  // UTILS
+  // ==================================================================
+  function esc(str) {
+    if (!str) return '';
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(String(str)));
+    return div.innerHTML;
+  }
+
+  async function apiFetch(url, opts) {
+    opts = opts || {};
+    var fetchOpts = {
+      method: opts.method || 'GET',
+      headers: {
+        'X-CSRFToken': CFG.csrfToken,
+      },
+      credentials: 'same-origin',
+    };
+    if (opts.body) {
+      fetchOpts.headers['Content-Type'] = 'application/json';
+      fetchOpts.body = JSON.stringify(opts.body);
+    }
+    var response = await fetch(url, fetchOpts);
+    if (!response.ok) {
+      var errText = '';
+      try { errText = (await response.json()).error || response.statusText; } catch (_) { errText = response.statusText; }
+      throw new Error(response.status + ': ' + errText);
+    }
+    return response.json();
+  }
+
+  // ── Kickoff ──
+  init();
 })();

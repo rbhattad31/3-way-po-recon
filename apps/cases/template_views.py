@@ -5,6 +5,7 @@ import logging
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 
@@ -12,8 +13,17 @@ from apps.cases.models import APCase
 from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import CasePriority, CaseStatus, MatchStatus, ProcessingPath, ReconciliationMode, UserRole
 from apps.core.permissions import permission_required_code, _has_permission_code
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
 logger = logging.getLogger(__name__)
+
+
+def _scoped_case_queryset(request):
+    tenant = require_tenant(request)
+    qs = CaseSelectors.scope_for_user(APCase.objects.filter(is_active=True), request.user)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return qs
 
 
 def _build_fallback_summary(case, decisions, validation_issues):
@@ -252,6 +262,7 @@ def _build_copilot_context(case, invoice, po, grns, stages, decisions,
 @login_required
 def case_inbox(request):
     """AP Cases inbox — main listing of all cases with filters."""
+    tenant = require_tenant(request)
     vendor_id = request.GET.get("vendor", "")
     assigned_to_id = request.GET.get("assigned_to", "")
     qs = CaseSelectors.inbox(
@@ -270,6 +281,8 @@ def case_inbox(request):
     # Handle "unassigned" filter
     if assigned_to_id == "unassigned":
         qs = qs.filter(assigned_to__isnull=True)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     qs = CaseSelectors.scope_for_user(qs, request.user)
 
     paginator = Paginator(qs, 25)
@@ -280,6 +293,8 @@ def case_inbox(request):
     # Build vendor choices scoped for user
     from apps.vendors.models import Vendor
     vendor_qs = Vendor.objects.filter(is_active=True).order_by("name")
+    if tenant is not None:
+        vendor_qs = vendor_qs.filter(tenant=tenant)
     from apps.vendors.template_views import _scope_vendors_for_user
     vendor_qs = _scope_vendors_for_user(vendor_qs, request.user)
     vendor_choices = list(vendor_qs.values_list("id", "name"))
@@ -324,7 +339,7 @@ def case_inbox(request):
     # ----- Pending invoices: approved / READY_FOR_RECON but no active case -----
     from apps.documents.models import Invoice
     from apps.core.enums import InvoiceStatus
-    pending_invoices = (
+    pending_invoices_qs = (
         Invoice.objects.filter(
             status=InvoiceStatus.READY_FOR_RECON,
         )
@@ -332,8 +347,11 @@ def case_inbox(request):
             pk__in=APCase.objects.filter(is_active=True).values_list("invoice_id", flat=True)
         )
         .select_related("document_upload__uploaded_by", "vendor")
-        .order_by("-created_at")[:50]
+        .order_by("-created_at")
     )
+    if tenant is not None:
+        pending_invoices_qs = pending_invoices_qs.filter(tenant=tenant)
+    pending_invoices = pending_invoices_qs[:50]
 
     return render(request, "cases/case_inbox.html", {
         "cases": page_obj,
@@ -418,7 +436,7 @@ def create_case_for_invoice(request, invoice_pk):
     from apps.cases.tasks import process_case_task
     from apps.core.utils import dispatch_task
     try:
-        dispatch_task(process_case_task, case_id=case.pk)
+        dispatch_task(process_case_task, getattr(case, 'tenant_id', None), case.pk)
         messages.success(request, f"Case {case.case_number} created and processing started.")
     except Exception as exc:
         messages.warning(request, f"Case {case.case_number} created but processing failed to start: {exc}")
@@ -429,6 +447,7 @@ def create_case_for_invoice(request, invoice_pk):
 @login_required
 def case_agent_view(request, pk):
     """Agentic case view — ChatGPT-style conversation feed for case investigation."""
+    tenant = require_tenant(request)
     base_qs = APCase.objects.select_related(
         "invoice", "invoice__vendor", "invoice__document_upload",
         "vendor", "purchase_order", "reconciliation_result",
@@ -437,6 +456,8 @@ def case_agent_view(request, pk):
         "stages", "artifacts", "decisions",
         "assignments", "comments", "activities",
     ).filter(is_active=True)
+    if tenant is not None:
+        base_qs = base_qs.filter(tenant=tenant)
     base_qs = CaseSelectors.scope_for_user(base_qs, request.user)
     case = get_object_or_404(base_qs, pk=pk)
 
@@ -462,9 +483,17 @@ def case_agent_view(request, pk):
     if recon_result:
         exceptions = list(recon_result.exceptions.all().order_by("-severity", "exception_type"))
 
-    # Non-PO validation issues
+    # Non-PO validation issues — skip when reconciliation exceptions already
+    # exist for this case because _create_non_po_recon_result() converts
+    # failed validation checks into ReconciliationException records.
+    # Showing both would double-count.
     validation_issues = []
-    validation_artifact = case.artifacts.filter(artifact_type="VALIDATION_RESULT").order_by("-version", "-created_at").first()
+    validation_artifact = (
+        case.artifacts.filter(artifact_type="VALIDATION_RESULT")
+        .order_by("-version", "-created_at")
+        .first()
+        if not exceptions else None
+    )
     if validation_artifact and isinstance(validation_artifact.payload, dict):
         checks = validation_artifact.payload.get("checks", {})
         if isinstance(checks, dict):
@@ -494,6 +523,9 @@ def case_agent_view(request, pk):
     agent_run_q = Q()
     if recon_result:
         agent_run_q |= Q(reconciliation_result=recon_result)
+    # Include extraction agent runs linked via document_upload
+    if invoice.document_upload_id:
+        agent_run_q |= Q(document_upload_id=invoice.document_upload_id)
     # Include orphaned runs (e.g. PO_RETRIEVAL before reconciliation)
     agent_run_q |= Q(reconciliation_result__isnull=True, input_payload__invoice_id=invoice.pk)
     # Include runs linked via case stages
@@ -504,13 +536,40 @@ def case_agent_view(request, pk):
     if stage_run_ids:
         agent_run_q |= Q(pk__in=stage_run_ids)
 
+    agent_run_qs = AgentRun.objects.filter(agent_run_q)
+    if tenant is not None:
+        agent_run_qs = agent_run_qs.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
     agent_runs = list(
-        AgentRun.objects.filter(agent_run_q)
+        agent_run_qs
         .select_related("agent_definition")
-        .prefetch_related("steps", "tool_calls", "decisions", "recommendations")
+        .prefetch_related(
+            "steps", "tool_calls", "decisions", "recommendations",
+            "messages",
+        )
         .distinct()
         .order_by("created_at")
     )
+
+    # ── Attach eval field outcomes per agent run ──
+    _agent_run_ids = [r.pk for r in agent_runs]
+    _eval_field_map: dict = {}  # agent_run_pk -> list[EvalFieldOutcome]
+    if _agent_run_ids:
+        try:
+            from apps.core_eval.models import EvalRun, EvalFieldOutcome
+            _eval_runs = list(
+                EvalRun.objects.filter(
+                    app_module="agents",
+                    entity_type="AgentRun",
+                    entity_id__in=[str(pk) for pk in _agent_run_ids],
+                ).prefetch_related("field_outcomes")
+            )
+            for er in _eval_runs:
+                _eval_field_map[int(er.entity_id)] = list(er.field_outcomes.all())
+        except Exception:
+            pass  # fail-silent
+
+    for run in agent_runs:
+        run.eval_field_outcomes = _eval_field_map.get(run.pk, [])
 
     # Summary
     summary = getattr(case, "summary", None)
@@ -521,7 +580,7 @@ def case_agent_view(request, pk):
 
     # Timeline (from audit/governance service)
     from apps.auditlog.timeline_service import CaseTimelineService
-    timeline = CaseTimelineService.get_case_timeline(invoice.pk)
+    timeline = CaseTimelineService.get_case_timeline(invoice.pk, tenant=getattr(request, 'tenant', None))
 
     # Role-based trace visibility
     from apps.core.enums import UserRole
@@ -545,15 +604,6 @@ def case_agent_view(request, pk):
             .filter(status__in=["PENDING", "ASSIGNED", "IN_REVIEW"])
             .first()
         )
-        # Auto-create assignment if case needs review but none exists
-        if not review_assignment and case.status in ("READY_FOR_REVIEW", "IN_REVIEW"):
-            from apps.reviews.models import ReviewAssignment
-            review_assignment = ReviewAssignment.objects.create(
-                reconciliation_result=recon_result,
-                assigned_to=request.user,
-                status="IN_REVIEW",
-                priority=5,
-            )
         # Fall back to the most recent completed/decided assignment for history
         if not review_assignment:
             review_assignment = (
@@ -626,12 +676,14 @@ def case_agent_view(request, pk):
                 prompt_tk=Sum("prompt_tokens"),
                 completion_tk=Sum("completion_tokens"),
                 total_tk=Sum("total_tokens"),
+                dur_ms=Sum("duration_ms"),
             )
             prompt_tk = totals["prompt_tk"] or 0
             completion_tk = totals["completion_tk"] or 0
             total_tk = totals["total_tk"] or 0
+            total_duration_ms = totals["dur_ms"] or 0
 
-            if total_tk > 0:
+            if total_tk > 0 or total_duration_ms > 0:
                 llm_cost = Decimal(str(prompt_tk * 5 / 1_000_000 + completion_tk * 15 / 1_000_000))
                 total_cost = llm_cost.quantize(Decimal("0.000001"))
                 latest_run = agent_runs[-1]  # ordered by created_at ASC
@@ -639,6 +691,7 @@ def case_agent_view(request, pk):
                     "prompt_tokens": prompt_tk,
                     "completion_tokens": completion_tk,
                     "total_tokens": total_tk,
+                    "total_duration_ms": total_duration_ms,
                     "llm_cost": llm_cost.quantize(Decimal("0.000001")),
                     "cost_estimate": total_cost,
                     "llm_model": getattr(latest_run, "llm_model_used", None) or "gpt-4o",
@@ -665,7 +718,7 @@ def case_agent_view(request, pk):
                         "confidence": _cr.confidence,
                     })
         except Exception:
-            pass
+            logger.debug("Cost run history build failed for case context (non-fatal)", exc_info=True)
 
     # Reconciliation match status
     recon_match_status = None
@@ -705,6 +758,7 @@ def case_agent_view(request, pk):
         "recon_mode": recon_mode,
         "copilot_context_json": json.dumps(copilot_context, default=str),
         "reviewers": reviewers,
+        "activities": list(case.activities.select_related("actor").order_by("-created_at")),
     })
 
 
@@ -723,14 +777,12 @@ def case_decide(request, pk):
     # Permission gate: reprocess/escalate needs cases.edit, approve/reject needs reviews.decide
     if decision in ("REPROCESSED", "ESCALATED"):
         if not _has_permission_code(request.user, "cases.edit"):
-            from django.core.exceptions import PermissionDenied
             raise PermissionDenied
     else:
         if not _has_permission_code(request.user, "reviews.decide"):
-            from django.core.exceptions import PermissionDenied
             raise PermissionDenied
 
-    scoped_qs = CaseSelectors.scope_for_user(APCase.objects.filter(is_active=True), request.user)
+    scoped_qs = _scoped_case_queryset(request)
     case = get_object_or_404(scoped_qs, pk=pk)
 
     # Block approval if there are open exceptions or failed validations
@@ -775,7 +827,7 @@ def case_decide(request, pk):
             .first()
         )
         if assignment:
-            from apps.reviews.services import ReviewWorkflowService
+            from apps.cases.services.review_workflow_service import ReviewWorkflowService
             reason = request.POST.get("reason", "")
             if decision == "APPROVED":
                 ReviewWorkflowService.approve(assignment, request.user, reason)
@@ -789,7 +841,7 @@ def case_decide(request, pk):
         from apps.cases.tasks import reprocess_case_from_stage_task
         from apps.core.utils import dispatch_task
         try:
-            dispatch_task(reprocess_case_from_stage_task, case_id=case.pk, stage="INTAKE")
+            dispatch_task(reprocess_case_from_stage_task, case_id=case.pk, stage="PATH_RESOLUTION")
             messages.success(request, f"Case {case.case_number} submitted for reprocessing.")
         except Exception as exc:
             messages.error(request, f"Reprocessing failed: {exc}")
@@ -870,7 +922,7 @@ def case_add_comment(request, pk):
     if request.method != "POST":
         return redirect("cases:case_agent_view", pk=pk)
 
-    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    case = get_object_or_404(_scoped_case_queryset(request), pk=pk)
     body = request.POST.get("body", "").strip()
     if not body:
         messages.warning(request, "Comment cannot be empty.")
@@ -889,7 +941,7 @@ def case_add_comment(request, pk):
             assignment = recon_result.review_assignments.order_by("-created_at").first()
 
     if assignment:
-        from apps.reviews.services import ReviewWorkflowService
+        from apps.cases.services.review_workflow_service import ReviewWorkflowService
         ReviewWorkflowService.add_comment(assignment, request.user, body)
     else:
         # For Non-PO cases without review assignment, store as case comment
@@ -898,6 +950,7 @@ def case_add_comment(request, pk):
             case=case,
             author=request.user,
             body=body,
+            tenant=getattr(case, 'tenant', None),
         )
 
     messages.success(request, "Comment added.")
@@ -930,7 +983,7 @@ def case_assign(request, pk):
     if request.method != "POST":
         return redirect("cases:case_agent_view", pk=pk)
 
-    case = get_object_or_404(APCase, pk=pk, is_active=True)
+    case = get_object_or_404(_scoped_case_queryset(request), pk=pk)
     assignee_id = request.POST.get("assigned_to", "").strip()
     previous_assignee = case.assigned_to
 
@@ -968,3 +1021,282 @@ def case_assign(request, pk):
     )
 
     return redirect("cases:case_agent_view", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Review template views (merged from apps.reviews)
+# ---------------------------------------------------------------------------
+
+def _scope_reviews_for_ap_processor(user, qs):
+    """Filter review assignments so AP_PROCESSOR only sees own invoices."""
+    if getattr(user, "role", None) != UserRole.AP_PROCESSOR:
+        return qs
+    from apps.reconciliation.models import ReconciliationConfig
+    config = ReconciliationConfig.objects.filter(is_default=True).first()
+    if config and config.ap_processor_sees_all_cases:
+        return qs
+    return qs.filter(
+        reconciliation_result__invoice__document_upload__uploaded_by=user
+    )
+
+
+def _scoped_review_queryset(request):
+    from apps.cases.models import ReviewAssignment
+
+    tenant = require_tenant(request)
+    qs = ReviewAssignment.objects.all()
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
+    return _scope_reviews_for_ap_processor(request.user, qs)
+
+
+@login_required
+def review_assignment_list(request):
+    from apps.cases.models import ReviewAssignment
+    from apps.core.enums import ReviewStatus
+    from apps.reconciliation.models import ReconciliationResult
+
+    qs = (
+        _scoped_review_queryset(request)
+        .select_related("reconciliation_result", "reconciliation_result__invoice", "assigned_to")
+        .order_by("priority", "-created_at")
+    )
+    tenant = require_tenant(request)
+    status_filter = request.GET.get("status")
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    paginator = Paginator(qs, 25)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    # Results that need review but have no assignment yet
+    assigned_result_ids = _scoped_review_queryset(request).values_list("reconciliation_result_id", flat=True)
+    unassigned_qs = ReconciliationResult.objects.filter(match_status=MatchStatus.REQUIRES_REVIEW)
+    if tenant is not None:
+        unassigned_qs = unassigned_qs.filter(tenant=tenant)
+    unassigned_results = (
+        unassigned_qs
+        .exclude(pk__in=assigned_result_ids)
+        .select_related("invoice", "invoice__vendor", "purchase_order")
+        .order_by("-created_at")
+    )
+
+    return render(request, "reviews/assignment_list.html", {
+        "assignments": page_obj,
+        "page_obj": page_obj,
+        "review_status_choices": ReviewStatus.choices,
+        "unassigned_results": unassigned_results,
+    })
+
+
+@login_required
+@permission_required_code("reviews.assign")
+def review_create_assignments(request):
+    """Create review assignments for selected reconciliation results."""
+    from apps.cases.models import ReviewAssignment
+    from apps.cases.services.review_workflow_service import ReviewWorkflowService
+    from apps.reconciliation.models import ReconciliationResult
+
+    if request.method != "POST":
+        return redirect("reviews:assignment_list")
+
+    result_ids = request.POST.getlist("result_ids")
+    if not result_ids:
+        messages.warning(request, "No results selected.")
+        return redirect("reviews:assignment_list")
+
+    tenant = require_tenant(request)
+    results = ReconciliationResult.objects.filter(pk__in=[int(i) for i in result_ids])
+    if tenant is not None:
+        results = results.filter(tenant=tenant)
+    count = 0
+    for result in results:
+        if not ReviewAssignment.objects.filter(reconciliation_result=result).exists():
+            ReviewWorkflowService.create_assignment(result=result)
+            count += 1
+
+    messages.success(request, f"Created {count} review assignment(s).")
+    return redirect("reviews:assignment_list")
+
+
+@login_required
+def review_assignment_detail(request, pk):
+    from apps.cases.models import ReviewAssignment
+
+    assignment = get_object_or_404(
+        _scoped_review_queryset(request).select_related(
+            "reconciliation_result",
+            "reconciliation_result__invoice",
+            "reconciliation_result__invoice__vendor",
+            "assigned_to",
+        ).prefetch_related("comments__author", "actions__performed_by"),
+        pk=pk,
+    )
+    try:
+        decision = assignment.decision
+    except ReviewAssignment.decision.RelatedObjectDoesNotExist:
+        decision = None
+
+    return render(request, "reviews/assignment_detail.html", {
+        "assignment": assignment,
+        "comments": assignment.comments.all(),
+        "actions": assignment.actions.all(),
+    })
+
+
+@login_required
+@permission_required_code("reviews.decide")
+def review_decide(request, pk):
+    from apps.cases.models import ReviewAssignment
+    from apps.cases.services.review_workflow_service import ReviewWorkflowService
+
+    if request.method != "POST":
+        return redirect("reviews:assignment_detail", pk=pk)
+    assignment = get_object_or_404(_scoped_review_queryset(request), pk=pk)
+    decision = request.POST.get("decision")
+    reason = request.POST.get("reason", "")
+    decision_map = {
+        "APPROVED": ReviewWorkflowService.approve,
+        "REJECTED": ReviewWorkflowService.reject,
+        "REPROCESSED": ReviewWorkflowService.request_reprocess,
+    }
+    handler = decision_map.get(decision)
+    if handler:
+        handler(assignment, request.user, reason)
+
+    # Update AP Case status if one exists
+    from apps.cases.models import APCase
+    ap_case = APCase.objects.filter(
+        reconciliation_result=assignment.reconciliation_result, is_active=True
+    ).first()
+    if ap_case:
+        old_status = ap_case.status
+        if decision == "APPROVED":
+            ap_case.status = "CLOSED"
+            ap_case.save(update_fields=["status", "updated_at"])
+        elif decision == "REJECTED":
+            ap_case.status = "REJECTED"
+            ap_case.save(update_fields=["status", "updated_at"])
+
+        # Audit: case status change
+        if ap_case.status != old_status:
+            from apps.auditlog.services import AuditService
+            from apps.core.enums import AuditEventType
+            event_map = {"CLOSED": AuditEventType.CASE_CLOSED, "REJECTED": AuditEventType.CASE_REJECTED}
+            AuditService.log_event(
+                entity_type="APCase",
+                entity_id=ap_case.pk,
+                event_type=event_map.get(ap_case.status, decision),
+                description=f"Case {ap_case.case_number} {old_status} -> {ap_case.status} via review decision",
+                user=request.user,
+                case_id=ap_case.pk,
+                invoice_id=ap_case.invoice_id,
+                status_before=old_status,
+                status_after=ap_case.status,
+                metadata={"review_assignment_id": assignment.pk, "decision": decision, "reason": reason[:300]},
+            )
+
+        return redirect("cases:case_agent_view", pk=ap_case.pk)
+
+    return redirect("reviews:assignment_detail", pk=pk)
+
+
+@login_required
+@permission_required_code("reviews.decide")
+def review_add_comment(request, pk):
+    from apps.cases.models import ReviewAssignment
+    from apps.cases.services.review_workflow_service import ReviewWorkflowService
+
+    if request.method != "POST":
+        return redirect("reviews:assignment_detail", pk=pk)
+    assignment = get_object_or_404(_scoped_review_queryset(request), pk=pk)
+    body = request.POST.get("body", "").strip()
+    if body:
+        ReviewWorkflowService.add_comment(assignment, request.user, body)
+    return redirect("reviews:assignment_detail", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Agent eval field correction (from Case Agent tab)
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("eval.manage")
+def submit_eval_correction(request, case_pk, agent_run_pk):
+    """Record a human ground-truth correction on an agent eval field outcome.
+
+    POST params:
+        field_outcome_id  -- PK of the EvalFieldOutcome to correct
+        ground_truth      -- the correct value
+        new_status        -- CORRECT / INCORRECT / MISSING / EXTRA / SKIPPED
+    """
+    from django.http import JsonResponse
+    from apps.core_eval.models import EvalFieldOutcome
+
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    tenant = require_tenant(request)
+    scoped_qs = _scoped_case_queryset(request)
+    case = get_object_or_404(scoped_qs, pk=case_pk)
+
+    fo_id = request.POST.get("field_outcome_id", "").strip()
+    ground_truth = request.POST.get("ground_truth", "").strip()
+    new_status = request.POST.get("new_status", "").strip().upper()
+
+    if not fo_id:
+        return JsonResponse({"error": "field_outcome_id required"}, status=400)
+
+    valid_statuses = {c.value for c in EvalFieldOutcome.Status}
+    if new_status and new_status not in valid_statuses:
+        return JsonResponse(
+            {"error": "Invalid status. Must be one of: %s" % ", ".join(sorted(valid_statuses))},
+            status=400,
+        )
+
+    try:
+        fo = EvalFieldOutcome.objects.select_related("eval_run").get(pk=int(fo_id))
+    except (EvalFieldOutcome.DoesNotExist, ValueError):
+        return JsonResponse({"error": "EvalFieldOutcome not found"}, status=404)
+
+    # Verify this outcome belongs to agent runs for this case
+    from apps.agents.models import AgentRun
+    if not AgentRun.objects.filter(pk=agent_run_pk).exists():
+        return JsonResponse({"error": "Agent run not found"}, status=404)
+
+    # Update the field outcome
+    update_fields = ["updated_at"]
+    if ground_truth:
+        fo.ground_truth_value = ground_truth
+        update_fields.append("ground_truth_value")
+    if new_status:
+        fo.status = new_status
+        update_fields.append("status")
+    fo.save(update_fields=update_fields)
+
+    # Record a learning signal for this correction
+    try:
+        from apps.core_eval.services.learning_signal_service import LearningSignalService
+        LearningSignalService.record(
+            eval_run=fo.eval_run,
+            signal_type="human_correction",
+            signal_key=fo.field_name,
+            signal_value=ground_truth or new_status,
+            detail_json={
+                "field_outcome_id": fo.pk,
+                "original_predicted": fo.predicted_value,
+                "corrected_status": new_status or fo.status,
+                "corrected_by": request.user.email,
+                "agent_run_id": agent_run_pk,
+                "case_id": case.pk,
+            },
+            tenant=tenant,
+        )
+    except Exception:
+        logger.debug("Learning signal for eval correction failed (non-fatal)", exc_info=True)
+
+    return JsonResponse({
+        "ok": True,
+        "field_outcome_id": fo.pk,
+        "ground_truth_value": fo.ground_truth_value,
+        "status": fo.status,
+    })

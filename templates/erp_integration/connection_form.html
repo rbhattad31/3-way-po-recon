@@ -178,7 +178,7 @@
           <div class="row g-3">
             <div class="col-md-6">
               <label class="form-label fw-semibold">Tenant / Org ID</label>
-              {{ form.tenant_id }}
+              {{ form.erp_tenant_id }}
               <small class="text-muted">Azure AD tenant ID, Zoho org ID, etc.</small>
             </div>
             <div class="col-md-6">&nbsp;</div>
@@ -344,7 +344,7 @@
     'id_connector_type', 'id_base_url', 'id_auth_type', 'id_api_key_env',
     'id_connection_string_env', 'id_database_name',
     'id_db_host', 'id_db_port', 'id_db_username', 'id_db_password', 'id_db_driver', 'id_db_trust_cert',
-    'id_tenant_id', 'id_client_id_env', 'id_client_secret_env',
+    'id_erp_tenant_id', 'id_client_id_env', 'id_client_secret_env',
     'id_metadata_json'
   ];
   watchFields.forEach(function(fid) {
@@ -378,7 +378,7 @@
       db_password: val('id_db_password'),
       db_driver: val('id_db_driver'),
       db_trust_cert: chk('id_db_trust_cert'),
-      tenant_id: val('id_tenant_id'),
+      tenant_id: val('id_erp_tenant_id'),
       client_id_env: val('id_client_id_env'),
       client_secret_env: val('id_client_secret_env'),
       metadata_json: val('id_metadata_json')

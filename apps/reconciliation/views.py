@@ -7,6 +7,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.permissions import IsAdminOrReadOnly
+from apps.core.tenant_utils import TenantQuerysetMixin
 from apps.reconciliation.models import (
     ReconciliationConfig,
     ReconciliationPolicy,
@@ -29,7 +30,7 @@ class ReconciliationConfigViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrReadOnly]
 
 
-class ReconciliationRunViewSet(viewsets.ReadOnlyModelViewSet):
+class ReconciliationRunViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = ReconciliationRun.objects.select_related("triggered_by").order_by("-created_at")
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
@@ -61,7 +62,7 @@ class ReconciliationRunViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
 
-class ReconciliationResultViewSet(viewsets.ReadOnlyModelViewSet):
+class ReconciliationResultViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = (
         ReconciliationResult.objects.select_related(
             "invoice", "invoice__vendor", "purchase_order", "run",

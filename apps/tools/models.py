@@ -8,6 +8,14 @@ from apps.core.models import BaseModel, TimestampMixin
 class ToolDefinition(BaseModel):
     """Registry entry for an available tool that agents can invoke."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     name = models.CharField(max_length=100, unique=True, db_index=True)
     description = models.TextField(blank=True, default="")
     input_schema = models.JSONField(null=True, blank=True, help_text="JSON Schema for tool input")
@@ -30,6 +38,14 @@ class ToolCall(TimestampMixin):
 
     agent_run = models.ForeignKey(
         "agents.AgentRun", on_delete=models.CASCADE, related_name="tool_calls"
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     tool_definition = models.ForeignKey(
         ToolDefinition, on_delete=models.SET_NULL, null=True, blank=True, related_name="calls"

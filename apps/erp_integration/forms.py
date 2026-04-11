@@ -58,7 +58,7 @@ class ERPConnectionForm(forms.ModelForm):
             "db_driver",
             "db_trust_cert",
             # -- OAuth (DYNAMICS, ZOHO, SALESFORCE) --
-            "tenant_id",
+            "erp_tenant_id",
             "client_id_env",
             "client_secret_env",
             # -- Advanced --
@@ -89,7 +89,7 @@ class ERPConnectionForm(forms.ModelForm):
             ),
             "db_trust_cert": forms.CheckboxInput(attrs={"class": "form-check-input"}),
             # OAuth
-            "tenant_id": forms.TextInput(attrs={"class": _FC, "placeholder": "your-tenant-id"}),
+            "erp_tenant_id": forms.TextInput(attrs={"class": _FC, "placeholder": "your-tenant-id"}),
             "client_id_env": forms.TextInput(attrs={"class": _FC, "placeholder": "ERP_CLIENT_ID"}),
             "client_secret_env": forms.TextInput(attrs={"class": _FC, "placeholder": "ERP_CLIENT_SECRET"}),
             # Advanced
@@ -107,7 +107,7 @@ class ERPConnectionForm(forms.ModelForm):
             "base_url", "auth_type", "api_key_env",
             "connection_string_env", "database_name",
             "db_host", "db_port", "db_username", "db_driver", "db_trust_cert",
-            "tenant_id", "client_id_env", "client_secret_env",
+            "erp_tenant_id", "client_id_env", "client_secret_env",
         ]:
             self.fields[field_name].required = False
 

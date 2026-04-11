@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.tenant_utils import TenantQuerysetMixin
 from apps.posting.models import InvoicePosting
 from apps.posting.serializers import (
     InvoicePostingDetailSerializer,
@@ -17,7 +18,7 @@ from apps.posting.services.posting_action_service import PostingActionService
 from apps.posting.tasks import prepare_posting_task
 
 
-class InvoicePostingViewSet(viewsets.ReadOnlyModelViewSet):
+class InvoicePostingViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only ViewSet for InvoicePosting records with approve/reject/submit/retry actions."""
 
     queryset = InvoicePosting.objects.select_related(
@@ -103,6 +104,7 @@ class PostingPrepareView(APIView):
         trigger = ser.validated_data.get("trigger", "manual")
 
         prepare_posting_task.delay(
+            request.tenant.pk if request.tenant else None,
             invoice_id=invoice_id,
             user_id=request.user.pk,
             trigger=trigger,

@@ -36,6 +36,7 @@ from apps.extraction_core.models import (
     ExtractionFieldValue,
     ExtractionIssue,
     ExtractionLineItem,
+    ExtractionOCRText,
     ExtractionRun,
     ExtractionRuntimeSettings,
     ExtractionSchemaDefinition,
@@ -89,6 +90,7 @@ class ExtractionPipeline:
         vendor_id: int | None = None,
         enable_llm: bool = False,
         user=None,
+        tenant=None,
     ) -> ExtractionRun:
         """
         Execute the full governed extraction pipeline.
@@ -96,7 +98,7 @@ class ExtractionPipeline:
         Parameters
         ----------
         extraction_document_id
-            FK to ExtractionDocument.
+            FK to DocumentUpload.
         ocr_text
             Raw OCR text to extract from.
         document_type
@@ -117,10 +119,21 @@ class ExtractionPipeline:
 
         # ── Create ExtractionRun record ──────────────────────────────
         run = ExtractionRun.objects.create(
-            document_id=extraction_document_id,
+            document_upload_id=extraction_document_id,
             status=ExtractionRunStatus.PENDING,
             started_at=started_at,
             created_by=user,
+            tenant=tenant,
+        )
+
+        # ── Persist OCR text in separate table ──────────────────────
+        ExtractionOCRText.objects.update_or_create(
+            extraction_run=run,
+            defaults={
+                "ocr_text": ocr_text,
+                "ocr_char_count": len(ocr_text),
+                "ocr_page_count": ocr_text.count("\f") + 1 if ocr_text else 0,
+            },
         )
 
         ExtractionAuditService.log_extraction_started(
@@ -487,7 +500,7 @@ class ExtractionPipeline:
         # Meta
         output.meta = MetaBlock(
             extraction_run_id=run.pk,
-            document_id=run.document_id,
+            document_id=run.document_upload_id,
             document_type=schema.document_type,
             extraction_method=legacy_result.extraction_method,
             schema_code=schema.name,

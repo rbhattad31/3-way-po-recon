@@ -119,7 +119,7 @@ class BaseExtractionService:
             3. Fallback schema resolution if primary schema missing
             4. Extract header, line-item, and tax fields
             5. Compute confidence
-            6. Persist jurisdiction metadata on ExtractionDocument (if provided)
+            6. Persist jurisdiction metadata on ExtractionRun (if provided)
 
         Args:
             ocr_text:                Raw OCR text to extract from.
@@ -127,7 +127,7 @@ class BaseExtractionService:
             declared_regime_code:    Document-level regime override (Tier 1).
             vendor_id:               Vendor PK for entity profile lookup (Tier 2).
             document_type:           Document type (default INVOICE).
-            extraction_document_id:  Optional ExtractionDocument PK to persist
+            extraction_document_id:  Optional DocumentUpload PK to persist
                                      jurisdiction metadata on.
         """
         start = timezone.now()
@@ -170,7 +170,7 @@ class BaseExtractionService:
 
         output.schema = schema
 
-        # 4 — Persist jurisdiction metadata on ExtractionDocument
+        # 4 -- Persist jurisdiction metadata on ExtractionRun
         cls._persist_jurisdiction_metadata(extraction_document_id, resolution, schema)
 
         # 5 — Load field definitions (via FieldRegistryService — cached + indexed)
@@ -381,42 +381,10 @@ class BaseExtractionService:
     ) -> None:
         """
         Persist the jurisdiction resolution metadata on an
-        ExtractionDocument record.
+        ExtractionRun record.
 
-        This is a fire-and-forget helper — errors are logged but
-        do not interrupt the extraction pipeline.
+        NOTE: ExtractionDocument was removed. Metadata is now persisted
+        directly on ExtractionRun by ExtractionPipeline.  This method is
+        retained as a no-op for callers outside the governed pipeline.
         """
-        if not extraction_document_id:
-            return
-
-        try:
-            from apps.extraction_documents.models import ExtractionDocument
-
-            update_fields = {
-                "jurisdiction_source": str(resolution.source) if resolution.source else "",
-                "jurisdiction_resolution_mode": str(resolution.resolution_mode) if resolution.resolution_mode else "",
-                "jurisdiction_warning": resolution.warning_message,
-                "jurisdiction_confidence": resolution.confidence if resolution.resolved else None,
-            }
-            if resolution.jurisdiction:
-                update_fields["resolved_jurisdiction"] = resolution.jurisdiction
-            if schema:
-                update_fields["resolved_schema"] = schema
-            if resolution.detection_result:
-                update_fields["jurisdiction_signals_json"] = {
-                    "tiers_evaluated": resolution.tiers_evaluated,
-                    "detection": resolution.detection_result.to_dict(),
-                }
-            elif resolution.tiers_evaluated:
-                update_fields["jurisdiction_signals_json"] = {
-                    "tiers_evaluated": resolution.tiers_evaluated,
-                }
-
-            ExtractionDocument.objects.filter(
-                pk=extraction_document_id,
-            ).update(**update_fields)
-        except Exception:
-            logger.exception(
-                "Failed to persist jurisdiction metadata on ExtractionDocument %s",
-                extraction_document_id,
-            )
+        return

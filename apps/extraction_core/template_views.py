@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 from django.contrib import messages
 from django.http import JsonResponse
@@ -84,7 +87,7 @@ def cc_runtime_settings(request):
                     if isinstance(meta, BooleanField):
                         data[field] = False
                 except Exception:
-                    pass
+                    logger.debug("Boolean field default for '%s' could not be resolved (non-fatal)", field, exc_info=True)
 
         # Parse types
         for f in ["confidence_threshold_for_detection", "auto_approval_threshold",

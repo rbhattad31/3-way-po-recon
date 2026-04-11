@@ -115,6 +115,7 @@ class DeterministicSystemAgent(BaseAgent):
             access_granted=ctx.access_granted,
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
+            tenant=ctx.tenant,
         )
 
         # Langfuse span
@@ -287,6 +288,7 @@ class DeterministicSystemAgent(BaseAgent):
                 span_id=getattr(agent_run, "span_id", "") or "",
                 invoice_id=_invoice_id,
                 recommendation_type=output.recommendation_type or "",
+                tenant=agent_run.tenant,
             )
 
     def _emit_audit_event(

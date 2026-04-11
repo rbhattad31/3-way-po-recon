@@ -127,8 +127,8 @@ class TestAuthorizeTool:
         assert AgentGuardrailsService.authorize_tool(user, "some_new_tool_xyz") is True
 
     def test_tool_permission_map_has_six_entries(self):
-        """Sanity check: exactly 6 tools are mapped."""
-        assert len(TOOL_PERMISSIONS) == 6
+        """Sanity check: at least the 6 original + 24 supervisor tools are mapped."""
+        assert len(TOOL_PERMISSIONS) >= 30
 
 
 # ─── authorize_recommendation ────────────────────────────────────────────────

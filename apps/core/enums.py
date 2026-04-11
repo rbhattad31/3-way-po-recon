@@ -90,6 +90,8 @@ class AgentType(models.TextChoices):
     SYSTEM_BULK_EXTRACTION_INTAKE = "SYSTEM_BULK_EXTRACTION_INTAKE", "System Bulk Extraction Intake"
     SYSTEM_CASE_INTAKE = "SYSTEM_CASE_INTAKE", "System Case Intake"
     SYSTEM_POSTING_PREPARATION = "SYSTEM_POSTING_PREPARATION", "System Posting Preparation"
+    # Supervisor agent -- full lifecycle orchestrator
+    SUPERVISOR = "SUPERVISOR", "Supervisor"
 
 
 class ToolCallStatus(models.TextChoices):
@@ -121,6 +123,13 @@ class ExceptionType(models.TextChoices):
     MISSING_MANDATORY_FIELDS = "MISSING_MANDATORY_FIELDS", "Missing Mandatory Fields"
     CURRENCY_MISMATCH = "CURRENCY_MISMATCH", "Currency Mismatch"
     LOCATION_MISMATCH = "LOCATION_MISMATCH", "Location Mismatch"
+    GSTIN_MISMATCH = "GSTIN_MISMATCH", "GSTIN / Tax ID Mismatch"
+    SUPPLY_TYPE_MISMATCH = "SUPPLY_TYPE_MISMATCH", "Supply Type Mismatch (Intra/Inter)"
+    TAX_RATE_MISMATCH = "TAX_RATE_MISMATCH", "Tax Rate Mismatch"
+    COUNTRY_MISMATCH = "COUNTRY_MISMATCH", "Country Mismatch"
+    PARTIAL_INVOICE = "PARTIAL_INVOICE", "Partial Invoice"
+    # NON_PO-specific
+    VENDOR_NOT_VERIFIED = "VENDOR_NOT_VERIFIED", "Vendor Not Verified"
     # THREE_WAY-specific (receipt/GRN related)
     GRN_NOT_FOUND = "GRN_NOT_FOUND", "GRN Not Found"
     RECEIPT_SHORTAGE = "RECEIPT_SHORTAGE", "Receipt Shortage"
@@ -129,9 +138,16 @@ class ExceptionType(models.TextChoices):
     MULTI_GRN_PARTIAL_RECEIPT = "MULTI_GRN_PARTIAL_RECEIPT", "Multi-GRN Partial Receipt"
     RECEIPT_LOCATION_MISMATCH = "RECEIPT_LOCATION_MISMATCH", "Receipt Location Mismatch"
     DELAYED_RECEIPT = "DELAYED_RECEIPT", "Delayed Receipt"
+    INVOICE_QTY_EXCEEDS_AVAILABLE = "INVOICE_QTY_EXCEEDS_AVAILABLE", "Invoice Qty Exceeds Available Receipt"
+    # Line-match quality (deterministic scorer)
+    NO_CONFIDENT_PO_LINE_MATCH = "NO_CONFIDENT_PO_LINE_MATCH", "No Confident PO Line Match"
+    MULTIPLE_PO_LINE_CANDIDATES = "MULTIPLE_PO_LINE_CANDIDATES", "Multiple PO Line Candidates"
+    LINE_DESCRIPTION_AMBIGUOUS = "LINE_DESCRIPTION_AMBIGUOUS", "Line Description Ambiguous"
+    LINE_MATCH_LOW_CONFIDENCE = "LINE_MATCH_LOW_CONFIDENCE", "Line Match Low Confidence"
 
 
 class UserRole(models.TextChoices):
+    SUPER_ADMIN = "SUPER_ADMIN", "Super Admin"
     ADMIN = "ADMIN", "Admin"
     AP_PROCESSOR = "AP_PROCESSOR", "AP Processor"
     REVIEWER = "REVIEWER", "Reviewer"

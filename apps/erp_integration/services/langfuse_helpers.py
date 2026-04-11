@@ -446,6 +446,7 @@ def trace_erp_submission(
     connector_name: str = "",
     invoice_id: Optional[int] = None,
     posting_run_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
     submission_mode: str = "sync",
     extra_metadata: Optional[Dict[str, Any]] = None,
 ):
@@ -459,6 +460,7 @@ def trace_erp_submission(
     start = time.monotonic()
 
     meta = {
+        "tenant_id": tenant_id,
         "submission_type": submission_type,
         "connector_name": connector_name,
         "invoice_id": invoice_id,

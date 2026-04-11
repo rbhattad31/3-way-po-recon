@@ -336,6 +336,7 @@ class InvoiceExtractionAgent(BaseAgent):
             access_granted=ctx.access_granted,
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
+            tenant=ctx.tenant,
         )
 
         import time as _time
@@ -360,7 +361,7 @@ class InvoiceExtractionAgent(BaseAgent):
                     invoice_id=ctx.invoice_id or None,
                     user_id=ctx.actor_user_id or None,
                     session_id=f"invoice-{ctx.invoice_id}" if ctx.invoice_id else None,
-                    metadata={"agent_run_id": agent_run.pk},
+                    metadata={"tenant_id": getattr(ctx, "tenant_id", None) or (ctx.tenant.pk if getattr(ctx, "tenant", None) else None), "agent_run_id": agent_run.pk},
                 )
                 _own_trace = True
             _lf_span = start_span(
@@ -891,6 +892,13 @@ AGENT_CLASS_REGISTRY: Dict[str, type] = {
     AgentType.CASE_SUMMARY: CaseSummaryAgent,
     AgentType.RECONCILIATION_ASSIST: ReconciliationAssistAgent,
 }
+
+# Register SupervisorAgent (lazy to avoid heavy imports at module load)
+try:
+    from apps.agents.services.supervisor_agent import SupervisorAgent
+    AGENT_CLASS_REGISTRY[AgentType.SUPERVISOR] = SupervisorAgent
+except Exception:  # pragma: no cover
+    pass
 
 # Merge system agent classes (done at import time)
 try:

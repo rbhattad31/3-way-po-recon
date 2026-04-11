@@ -249,6 +249,7 @@ class RecommendationService:
                     constraints_json=final.get("constraints"),
                     compliance_status=compliance_status,
                     output_payload_json=final,
+                    tenant=tenant,
                 )
 
                 if compliance_data:
@@ -258,6 +259,7 @@ class RecommendationService:
                         rules_checked_json=compliance_data.get("rules_checked"),
                         violations_json=compliance_data.get("violations"),
                         recommendations_json=compliance_data.get("recommendations"),
+                        tenant=tenant,
                     )
 
                 # Save step-by-step thought log on the run record for full traceability

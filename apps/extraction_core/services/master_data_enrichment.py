@@ -102,6 +102,10 @@ class EnrichmentResult:
         default_factory=lambda: MasterDataMatch(match_type="NOT_FOUND"),
     )
     po_lookup: POLookupResult = field(default_factory=POLookupResult)
+    #: True when the extracted vendor was detected as the user's own company
+    self_company_detected: bool = False
+    #: Original vendor name before self-company swap (empty if no swap)
+    original_vendor_name: str = ""
     #: Confidence adjustments applied (field_key → delta)
     confidence_adjustments: dict[str, float] = field(default_factory=dict)
     #: Enrichment warnings
@@ -241,6 +245,28 @@ class MasterDataEnrichmentService:
                     getattr(po_field, "normalized_value", "")
                     or getattr(po_field, "raw_value", "")
                 )
+
+        # ── 0. Self-company detection ─────────────────────────────────
+        # If the LLM accidentally picked OUR company (the buyer) as the
+        # vendor, detect and swap vendor <-> buyer.
+        try:
+            swapped = cls._detect_and_swap_self_company(
+                supplier_name, supplier_tax_id, buyer_name,
+            )
+            if swapped:
+                result.self_company_detected = True
+                result.original_vendor_name = supplier_name
+                result.warnings.append(
+                    f"Self-company detected as vendor ('{supplier_name}'). "
+                    f"Swapped with buyer ('{buyer_name}')."
+                )
+                logger.warning(
+                    "Self-company swap: vendor='%s' -> '%s'",
+                    supplier_name, buyer_name,
+                )
+                supplier_name, buyer_name = swapped
+        except Exception:
+            logger.exception("Self-company detection failed")
 
         # ── 1. Vendor matching ────────────────────────────────────────
         try:
@@ -611,6 +637,87 @@ class MasterDataEnrichmentService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Self-company detection
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _detect_and_swap_self_company(
+        cls,
+        supplier_name: str,
+        supplier_tax_id: str,
+        buyer_name: str,
+    ) -> tuple[str, str] | None:
+        """Check if the extracted vendor is actually the user's own company.
+
+        Returns ``(new_supplier_name, new_buyer_name)`` if a swap is
+        needed, or ``None`` if no match.  The caller should replace
+        ``supplier_name`` and ``buyer_name`` with the returned values
+        before proceeding to vendor matching.
+        """
+        from apps.accounts.models import CompanyProfile, CompanyAlias, CompanyTaxID
+
+        profiles = CompanyProfile.objects.filter(is_active=True)
+        if not profiles.exists():
+            return None  # No company profiles configured -- skip
+
+        # Build lookup sets once
+        all_names: set[str] = set()
+        all_tax_ids: set[str] = set()
+
+        for profile in profiles:
+            if profile.name:
+                all_names.add(cls._normalize_name(profile.name))
+            if profile.legal_name:
+                all_names.add(cls._normalize_name(profile.legal_name))
+            if profile.tax_id:
+                all_tax_ids.add(profile.tax_id.strip().upper())
+
+        # Add all aliases
+        for alias in CompanyAlias.objects.filter(company__is_active=True):
+            if alias.normalized_alias:
+                all_names.add(alias.normalized_alias)
+
+        # Add all additional tax IDs
+        for tid in CompanyTaxID.objects.filter(company__is_active=True):
+            if tid.tax_id:
+                all_tax_ids.add(tid.tax_id.strip().upper())
+
+        # Check if extracted vendor matches our company
+        is_self = False
+
+        # 1. Tax ID match (strongest signal)
+        if supplier_tax_id:
+            if supplier_tax_id.strip().upper() in all_tax_ids:
+                is_self = True
+                logger.info(
+                    "Self-company detected via tax ID: %s", supplier_tax_id,
+                )
+
+        # 2. Name match
+        if not is_self and supplier_name:
+            norm_supplier = cls._normalize_name(supplier_name)
+            if norm_supplier and norm_supplier in all_names:
+                is_self = True
+                logger.info(
+                    "Self-company detected via name: '%s'", supplier_name,
+                )
+
+        if not is_self:
+            return None
+
+        # Swap: the real vendor is in the buyer field
+        if buyer_name:
+            return buyer_name, supplier_name
+        else:
+            # No buyer_name to swap with -- just flag it
+            logger.warning(
+                "Self-company detected but no buyer_name to swap with. "
+                "Vendor '%s' may be incorrectly identified.",
+                supplier_name,
+            )
+            return None
 
     @classmethod
     def _normalize_name(cls, name: str) -> str:

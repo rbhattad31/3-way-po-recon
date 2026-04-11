@@ -4,11 +4,12 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.permissions import IsAdminOrReadOnly
+from apps.core.tenant_utils import TenantQuerysetMixin
 from apps.vendors.models import Vendor
 from apps.vendors.serializers import VendorDetailSerializer, VendorListSerializer
 
 
-class VendorViewSet(viewsets.ModelViewSet):
+class VendorViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     queryset = Vendor.objects.filter(is_active=True)
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -21,3 +22,6 @@ class VendorViewSet(viewsets.ModelViewSet):
         if self.action == "list":
             return VendorListSerializer
         return VendorDetailSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=getattr(self.request, 'tenant', None))

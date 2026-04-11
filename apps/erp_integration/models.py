@@ -20,6 +20,14 @@ class ERPConnection(BaseModel):
     auth_config_json stores secret *references* (env var names), never raw secrets.
     """
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     name = models.CharField(max_length=200, unique=True)
     connector_type = models.CharField(
         max_length=20,
@@ -91,9 +99,9 @@ class ERPConnection(BaseModel):
     )
 
     # ── OAuth fields (DYNAMICS, ZOHO, SALESFORCE) ──
-    tenant_id = models.CharField(
+    erp_tenant_id = models.CharField(
         max_length=200, blank=True, default="",
-        help_text="Tenant / Org ID for cloud ERP",
+        help_text="Tenant / Org ID for cloud ERP (e.g. Azure AD tenant ID)",
     )
     client_id_env = models.CharField(
         max_length=200, blank=True, default="",
@@ -118,6 +126,14 @@ class ERPReferenceCacheRecord(TimestampMixin):
     """Optional TTL-based cache for ERP reference lookups."""
 
     cache_key = models.CharField(max_length=255, unique=True, db_index=True)
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     resolution_type = models.CharField(
         max_length=30,
         choices=ERPResolutionType.choices,
@@ -144,6 +160,14 @@ class ERPReferenceCacheRecord(TimestampMixin):
 class ERPResolutionLog(BaseModel):
     """Audit log for every ERP lookup resolution attempt."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     resolution_type = models.CharField(
         max_length=30,
         choices=ERPResolutionType.choices,
@@ -209,6 +233,14 @@ class ERPResolutionLog(BaseModel):
 class ERPSubmissionLog(BaseModel):
     """Audit log for every ERP submission attempt (create/park invoice)."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     submission_type = models.CharField(
         max_length=30,
         choices=ERPSubmissionType.choices,

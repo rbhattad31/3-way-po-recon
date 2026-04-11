@@ -57,6 +57,7 @@ class POImporter:
             description = str(row.get("description", "")).strip()
             valid_records.append(ERPPOReference(
                 batch=batch,
+                tenant=batch.tenant,
                 po_number=po_number,
                 po_line_number=po_line,
                 vendor_code=str(row.get("vendor_code", "")).strip(),

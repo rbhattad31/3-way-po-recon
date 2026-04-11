@@ -49,12 +49,22 @@ class BulkExtractionService:
         cls,
         source_connection: BulkSourceConnection,
         started_by,
+        tenant=None,
     ) -> BulkExtractionJob:
-        """Create a new QUEUED bulk extraction job."""
+        """Create a new QUEUED bulk extraction job.
+
+        Args:
+            source_connection: The BulkSourceConnection to scan.
+            started_by: The User who triggered the job.
+            tenant: The CompanyProfile (tenant) that owns this job.
+                    Defaults to None for backward compatibility;
+                    callers should pass ``request.tenant`` when available.
+        """
         job = BulkExtractionJob.objects.create(
             source_connection=source_connection,
             started_by=started_by,
             status=BulkJobStatus.QUEUED,
+            tenant=tenant,
         )
         cls._audit_job(job, AuditEventType.BULK_JOB_CREATED)
         return job
@@ -163,7 +173,7 @@ class BulkExtractionService:
                 _lf_item_span = start_span(
                     lf_parent,
                     name="bulk_item_extraction",
-                    metadata={"file_name": item.source_name, "item_pk": item.pk},
+                    metadata={"tenant_id": getattr(job, "tenant_id", None), "file_name": item.source_name, "item_pk": item.pk},
                 )
         except Exception:
             pass

@@ -19,6 +19,14 @@ from apps.core.models import BaseModel, TimestampMixin
 class ReconciliationConfig(BaseModel):
     """Run-time configuration for tolerance thresholds and feature flags."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     name = models.CharField(max_length=100, unique=True)
     quantity_tolerance_pct = models.FloatField(default=2.0)
     price_tolerance_pct = models.FloatField(default=1.0)
@@ -45,6 +53,13 @@ class ReconciliationConfig(BaseModel):
     )
     enable_two_way_for_services = models.BooleanField(
         default=True, help_text="Auto-select 2-way mode for service invoices",
+    )
+    partial_invoice_threshold_pct = models.FloatField(
+        default=95.0,
+        help_text=(
+            "When an invoice total is below this percentage of the PO total "
+            "and no prior invoices exist, treat it as a partial/milestone invoice."
+        ),
     )
 
     # Access control
@@ -74,6 +89,14 @@ class ReconciliationPolicy(BaseModel):
     """
 
     policy_code = models.CharField(max_length=50, unique=True, db_index=True)
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     policy_name = models.CharField(max_length=200)
     reconciliation_mode = models.CharField(
         max_length=20, choices=ReconciliationMode.choices,
@@ -121,6 +144,14 @@ class ReconciliationPolicy(BaseModel):
 class ReconciliationRun(BaseModel):
     """One execution of the reconciliation engine (may cover 1+ invoices)."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     status = models.CharField(
         max_length=20, choices=ReconciliationRunStatus.choices, default=ReconciliationRunStatus.PENDING, db_index=True
     )
@@ -171,6 +202,7 @@ class ReconciliationRun(BaseModel):
         verbose_name_plural = "Reconciliation Runs"
         indexes = [
             models.Index(fields=["status"], name="idx_recon_run_status"),
+            models.Index(fields=["tenant", "status"], name="idx_recon_run_tenant_status"),
         ]
 
     def __str__(self) -> str:
@@ -184,6 +216,14 @@ class ReconciliationResult(BaseModel):
     """Header-level reconciliation outcome for one invoice."""
 
     run = models.ForeignKey(ReconciliationRun, on_delete=models.CASCADE, related_name="results")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     invoice = models.ForeignKey(
         "documents.Invoice", on_delete=models.CASCADE, related_name="recon_results"
     )
@@ -263,6 +303,7 @@ class ReconciliationResult(BaseModel):
             models.Index(fields=["match_status"], name="idx_recon_result_status"),
             models.Index(fields=["requires_review"], name="idx_recon_result_review"),
             models.Index(fields=["run", "invoice"], name="idx_recon_result_run_inv"),
+            models.Index(fields=["tenant", "match_status"], name="idx_recon_result_tenant_status"),
             models.Index(fields=["reconciliation_mode"], name="idx_recon_result_mode"),
         ]
 
@@ -277,6 +318,14 @@ class ReconciliationResultLine(TimestampMixin):
     """Line-level comparison result."""
 
     result = models.ForeignKey(ReconciliationResult, on_delete=models.CASCADE, related_name="line_results")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     invoice_line = models.ForeignKey(
         "documents.InvoiceLineItem", on_delete=models.SET_NULL, null=True, blank=True
     )
@@ -307,6 +356,68 @@ class ReconciliationResultLine(TimestampMixin):
 
     description_similarity = models.FloatField(null=True, blank=True, help_text="0-100 fuzzy score")
 
+    # --- Line match v2 fields (deterministic scorer) ---
+    match_method = models.CharField(
+        max_length=30, blank=True, default="",
+        help_text="EXACT / DETERMINISTIC / LLM_FALLBACK / NONE",
+    )
+    match_confidence = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+        help_text="Composite score 0.0000..1.0000 from deterministic scorer",
+    )
+    confidence_band = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="HIGH / GOOD / MODERATE / LOW / NONE",
+    )
+    description_match_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    token_similarity_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    fuzzy_similarity_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    quantity_match_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    price_match_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    amount_match_score = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+    )
+    candidate_count = models.PositiveIntegerField(null=True, blank=True)
+    is_ambiguous = models.BooleanField(default=False)
+    matched_signals = models.JSONField(default=list, blank=True)
+    rejected_signals = models.JSONField(default=list, blank=True)
+    line_match_meta = models.JSONField(
+        default=dict, blank=True,
+        help_text="Detailed scorer metadata: top_gap, second_best_score, etc.",
+    )
+
+    # --- Receipt availability fields (partial-invoice 3-way matching) ---
+    cumulative_received_qty = models.DecimalField(
+        max_digits=18, decimal_places=4, null=True, blank=True,
+        help_text="Total GRN-received qty for the matched PO line (across all GRNs)",
+    )
+    previously_consumed_qty = models.DecimalField(
+        max_digits=18, decimal_places=4, null=True, blank=True,
+        help_text="Sum of qty_invoice from prior reconciliation result lines paired to the same PO line",
+    )
+    available_qty = models.DecimalField(
+        max_digits=18, decimal_places=4, null=True, blank=True,
+        help_text="cumulative_received_qty - previously_consumed_qty (available for this invoice)",
+    )
+    contributing_grn_line_ids = models.JSONField(
+        default=list, blank=True,
+        help_text="GRN line item PKs that contribute to cumulative_received_qty",
+    )
+    invoiced_exceeds_available = models.BooleanField(
+        default=False,
+        help_text="True when qty_invoice > available_qty (overbilling against available receipt)",
+    )
+
     class Meta:
         db_table = "reconciliation_result_line"
         ordering = ["result", "id"]
@@ -328,6 +439,14 @@ class ReconciliationException(TimestampMixin):
     """Structured exception raised during reconciliation."""
 
     result = models.ForeignKey(ReconciliationResult, on_delete=models.CASCADE, related_name="exceptions")
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     result_line = models.ForeignKey(
         ReconciliationResultLine, on_delete=models.SET_NULL, null=True, blank=True, related_name="exceptions"
     )

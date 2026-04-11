@@ -69,7 +69,7 @@
         {% if can_view_pos %}
         <li>
           <a class="dropdown-item {% if request.resolver_match.url_name == 'po_list' or request.resolver_match.url_name == 'po_detail' %}active{% endif %}"
-             href="{% url 'po_documents:po_list' %}">
+             href="{% url 'po_list' %}">
             <i class="bi bi-cart-check me-2 opacity-75"></i>Purchase Orders
           </a>
         </li>
@@ -78,7 +78,7 @@
         {% if can_view_grns %}
         <li>
           <a class="dropdown-item {% if request.resolver_match.url_name == 'grn_list' or request.resolver_match.url_name == 'grn_detail' %}active{% endif %}"
-             href="{% url 'grn_documents:grn_list' %}">
+             href="{% url 'grn_list' %}">
             <i class="bi bi-box-seam me-2 opacity-75"></i>GRNs
           </a>
         </li>
@@ -139,7 +139,7 @@
             {% has_permission "agents.use_copilot" as can_use_copilot %}
             {% if can_use_copilot %}
             <a class="dropdown-item {% if request.resolver_match.app_name == 'copilot' %}active{% endif %}"
-               href="{% url 'copilot:workspace' %}">
+               href="{% url 'copilot:case_hub' %}">
               <i class="bi bi-stars me-2 opacity-75"></i>AP Copilot
             </a>
             {% endif %}
@@ -234,6 +234,12 @@
         <a class="dropdown-item {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_detail' %}active{% endif %}"
            href="{% url 'accounts:user_list' %}">
           <i class="bi bi-people me-2 opacity-75"></i>Users
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item {% if request.resolver_match.url_name == 'company_list' or request.resolver_match.url_name == 'company_detail' %}active{% endif %}"
+           href="{% url 'accounts:company_list' %}">
+          <i class="bi bi-building me-2 opacity-75"></i>Company Profiles
         </a>
       </li>
       {% endif %}

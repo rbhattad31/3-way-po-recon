@@ -310,7 +310,7 @@ class GovernanceDashboardService:
             "prompt_version": run.prompt_version or "",
             "actor_user_id": run.actor_user_id,
             "permission_checked": run.permission_checked or "",
-            "cost_estimate": float(run.cost_estimate or 0),
+            "cost_estimate": float(run.actual_cost_usd or run.cost_estimate or 0),
             "llm_model_used": run.llm_model_used or "",
             "prompt_tokens": run.prompt_tokens or 0,
             "completion_tokens": run.completion_tokens or 0,

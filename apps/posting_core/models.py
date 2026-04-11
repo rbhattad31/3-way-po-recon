@@ -43,6 +43,14 @@ class PostingRun(BaseModel):
         on_delete=models.CASCADE,
         related_name="posting_runs",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     extraction_run = models.ForeignKey(
         "extraction_core.ExtractionRun",
         on_delete=models.SET_NULL,
@@ -129,6 +137,14 @@ class PostingFieldValue(TimestampMixin):
         on_delete=models.CASCADE,
         related_name="field_values",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     field_code = models.CharField(max_length=100)
     category = models.CharField(
         max_length=20,
@@ -163,6 +179,14 @@ class PostingLineItem(TimestampMixin):
         PostingRun,
         on_delete=models.CASCADE,
         related_name="line_items",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     line_index = models.PositiveIntegerField()
     invoice_line_item = models.ForeignKey(
@@ -214,6 +238,14 @@ class PostingIssue(TimestampMixin):
         on_delete=models.CASCADE,
         related_name="issues",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     severity = models.CharField(
         max_length=10,
         choices=PostingIssueSeverity.choices,
@@ -241,6 +273,14 @@ class PostingEvidence(TimestampMixin):
         PostingRun,
         on_delete=models.CASCADE,
         related_name="evidence",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     field_code = models.CharField(max_length=100)
     source_type = models.CharField(
@@ -279,6 +319,14 @@ class PostingApprovalRecord(TimestampMixin):
         on_delete=models.CASCADE,
         related_name="approval_record",
     )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     action = models.CharField(
         max_length=20,
         choices=PostingApprovalAction.choices,
@@ -310,6 +358,14 @@ class PostingApprovalRecord(TimestampMixin):
 class ERPReferenceImportBatch(BaseModel):
     """Represents one imported Excel reference batch."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     batch_type = models.CharField(
         max_length=20,
         choices=ERPReferenceBatchType.choices,
@@ -356,6 +412,14 @@ class ERPReferenceImportBatch(BaseModel):
 class ERPVendorReference(TimestampMixin):
     """Normalized vendor reference imported from ERP Excel export."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     batch = models.ForeignKey(
         ERPReferenceImportBatch,
         on_delete=models.CASCADE,
@@ -388,6 +452,14 @@ class ERPVendorReference(TimestampMixin):
 class ERPItemReference(TimestampMixin):
     """Normalized item/service reference imported from ERP Excel export."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     batch = models.ForeignKey(
         ERPReferenceImportBatch,
         on_delete=models.CASCADE,
@@ -420,6 +492,14 @@ class ERPItemReference(TimestampMixin):
 class ERPTaxCodeReference(TimestampMixin):
     """Normalized tax code reference imported from ERP Excel export."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     batch = models.ForeignKey(
         ERPReferenceImportBatch,
         on_delete=models.CASCADE,
@@ -445,6 +525,14 @@ class ERPTaxCodeReference(TimestampMixin):
 class ERPCostCenterReference(TimestampMixin):
     """Normalized cost center reference imported from ERP Excel export."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     batch = models.ForeignKey(
         ERPReferenceImportBatch,
         on_delete=models.CASCADE,
@@ -470,6 +558,14 @@ class ERPCostCenterReference(TimestampMixin):
 class ERPPOReference(TimestampMixin):
     """Normalized open PO reference imported from ERP Excel export."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     batch = models.ForeignKey(
         ERPReferenceImportBatch,
         on_delete=models.CASCADE,
@@ -510,6 +606,14 @@ class ERPPOReference(TimestampMixin):
 class VendorAliasMapping(BaseModel):
     """Canonical vendor alias table used by extraction, reconciliation, posting, and ERP layers."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     alias_text = models.CharField(max_length=500)
     normalized_alias = models.CharField(max_length=500, db_index=True)
     # FK to Django Vendor master (used by extraction/reconciliation to resolve invoice.vendor)
@@ -552,6 +656,14 @@ class VendorAliasMapping(BaseModel):
 class ItemAliasMapping(BaseModel):
     """Business-owned alias mapping for item/service matching."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     alias_text = models.CharField(max_length=500)
     normalized_alias = models.CharField(max_length=500, db_index=True)
     item_reference = models.ForeignKey(
@@ -585,6 +697,14 @@ class ItemAliasMapping(BaseModel):
 class PostingRule(BaseModel):
     """Configurable mapping/blocking rules for posting."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
     name = models.CharField(max_length=200)
     rule_type = models.CharField(
         max_length=20,

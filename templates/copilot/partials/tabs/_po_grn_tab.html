@@ -1,0 +1,94 @@
+{# PO & GRN tab -- purchase order and goods receipt details #}
+
+<div class="tab-panel-inner">
+  <div class="row g-3">
+
+    {# ── Purchase Order ── #}
+    {% if ctx.purchase_order %}
+    <div class="col-lg-6">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-cart-check text-success me-2"></i>Purchase Order
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv"><span class="case-kv-k">PO Number</span><span class="case-kv-v fw-semibold">{{ ctx.purchase_order.po_number }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Total Amount</span><span class="case-kv-v">{{ ctx.purchase_order.total_amount|default:"-" }}</span></div>
+        </div>
+      </div>
+    </div>
+
+    {# PO line items #}
+    <div class="col-12">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-list-check text-success me-2"></i>PO Line Items
+        </div>
+        <div class="case-card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 case-table" id="poLineItemsTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Description</th>
+                  <th>Item Code</th>
+                  <th class="text-end">Qty</th>
+                  <th>UOM</th>
+                  <th class="text-end">Unit Price</th>
+                  <th class="text-end">Amount</th>
+                </tr>
+              </thead>
+              <tbody id="poLineItems">
+                <tr>
+                  <td colspan="7" class="text-center text-muted py-3">
+                    <i class="bi bi-hourglass-split me-1"></i>Loading PO lines...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="col-lg-6">
+      <div class="tab-panel-empty">
+        <i class="bi bi-cart-x text-muted" style="font-size:2rem;"></i>
+        <p class="text-muted mt-2">No purchase order linked to this case.</p>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Goods Receipt Notes ── #}
+    <div class="col-12">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-box-seam text-info me-2"></i>Goods Receipt Notes (GRN)
+        </div>
+        <div class="case-card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 case-table" id="grnTable">
+              <thead>
+                <tr>
+                  <th>GRN Number</th>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Item Code</th>
+                  <th class="text-end">Qty Received</th>
+                  <th>UOM</th>
+                </tr>
+              </thead>
+              <tbody id="grnLineItems">
+                <tr>
+                  <td colspan="6" class="text-center text-muted py-3">
+                    <i class="bi bi-hourglass-split me-1"></i>Loading GRN data...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>

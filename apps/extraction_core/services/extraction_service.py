@@ -9,7 +9,7 @@ Orchestrates the full extraction flow:
     4. Run deterministic field extraction against OCR text
     5. (Optional) LLM extraction for unresolved / low-confidence fields
     6. Merge results and compute metrics
-    7. Persist jurisdiction metadata + field results on ExtractionDocument
+    7. Persist jurisdiction metadata + field results on ExtractionRun
 
 This is the **primary entry point** for document extraction.
 It does NOT call JurisdictionResolverService directly — all jurisdiction
@@ -379,7 +379,7 @@ class ExtractionService:
             declared_country_code:   Document-level country override.
             declared_regime_code:    Document-level regime override.
             vendor_id:               Vendor PK for entity profile lookup.
-            extraction_document_id:  ExtractionDocument PK for persistence.
+            extraction_document_id:  DocumentUpload PK for persistence.
             enable_llm:              If True, run LLM extraction for
                                      unresolved / low-confidence fields.
 
@@ -1262,114 +1262,15 @@ class ExtractionService:
         result: ExtractionExecutionResult,
     ) -> None:
         """
-        Persist jurisdiction + extraction metadata on ExtractionDocument.
+        Persist jurisdiction + extraction metadata on ExtractionRun.
 
-        Fire-and-forget — errors are logged, not raised.
+        Fire-and-forget -- errors are logged, not raised.
+
+        NOTE: ExtractionDocument was removed. Metadata is now persisted
+        directly on ExtractionRun by ExtractionPipeline.  This method is
+        retained as a no-op for callers outside the governed pipeline.
         """
-        if not extraction_document_id:
-            return
-
-        try:
-            from apps.extraction_documents.models import ExtractionDocument
-
-            updates: dict = {
-                "jurisdiction_source": (
-                    str(resolution.source) if resolution.source else ""
-                ),
-                "jurisdiction_resolution_mode": (
-                    str(resolution.resolution_mode)
-                    if resolution.resolution_mode
-                    else ""
-                ),
-                "jurisdiction_warning": resolution.warning_message,
-                "jurisdiction_confidence": (
-                    resolution.confidence if resolution.resolved else None
-                ),
-            }
-
-            if resolution.jurisdiction:
-                updates["resolved_jurisdiction"] = resolution.jurisdiction
-            if schema:
-                updates["resolved_schema"] = schema
-            if result.page_info:
-                updates["page_count"] = result.page_info.get("page_count", 0)
-
-            # Document intelligence metadata
-            intel = result.document_intelligence
-            if intel and hasattr(intel, "to_dict"):
-                updates["classified_document_type"] = (
-                    intel.classification.document_type
-                )
-                updates["classification_confidence"] = (
-                    intel.classification.confidence
-                )
-
-            if result.resolved:
-                updates["extraction_confidence"] = result.overall_confidence
-                updates["extraction_method"] = result.extraction_method
-                updates["extracted_data_json"] = {
-                    "header_fields": {
-                        k: v.raw_value for k, v in result.header_fields.items() if v.extracted
-                    },
-                    "tax_fields": {
-                        k: v.raw_value for k, v in result.tax_fields.items() if v.extracted
-                    },
-                    "line_items": [
-                        {
-                            k: v.raw_value
-                            for k, v in item.items()
-                            if v.extracted
-                        }
-                        for item in result.line_items
-                    ],
-                    "confidence_breakdown": result.confidence.to_dict(),
-                }
-                if result.review_routing and hasattr(result.review_routing, "to_dict"):
-                    updates["extracted_data_json"]["review_routing"] = (
-                        result.review_routing.to_dict()
-                    )
-                if result.page_info:
-                    updates["extracted_data_json"]["page_info"] = (
-                        result.page_info
-                    )
-                if result.line_item_meta:
-                    updates["extracted_data_json"]["line_item_meta"] = (
-                        result.line_item_meta
-                    )
-                if intel and hasattr(intel, "to_dict"):
-                    updates["extracted_data_json"]["document_intelligence"] = (
-                        intel.to_dict()
-                    )
-                if result.enrichment and hasattr(result.enrichment, "to_dict"):
-                    updates["extracted_data_json"]["enrichment"] = (
-                        result.enrichment.to_dict()
-                    )
-                updates["validation_warnings_json"] = result.warnings
-                updates["status"] = "COMPLETED"
-            elif result.errors:
-                updates["status"] = "FAILED"
-                updates["error_message"] = "; ".join(result.errors)
-
-            # Jurisdiction signals
-            if resolution.detection_result:
-                updates["jurisdiction_signals_json"] = {
-                    "tiers_evaluated": resolution.tiers_evaluated,
-                    "detection": resolution.detection_result.to_dict(),
-                }
-            elif resolution.tiers_evaluated:
-                updates["jurisdiction_signals_json"] = {
-                    "tiers_evaluated": resolution.tiers_evaluated,
-                }
-
-            ExtractionDocument.objects.filter(
-                pk=extraction_document_id,
-            ).update(**updates)
-
-        except Exception:
-            logger.exception(
-                "Failed to persist metadata on ExtractionDocument %s",
-                extraction_document_id,
-            )
+        return
 
     @classmethod
     def _persist_field_results(
@@ -1378,128 +1279,13 @@ class ExtractionService:
         result: ExtractionExecutionResult,
     ) -> None:
         """
-        Persist per-field extraction results as ExtractionFieldResult rows.
+        Persist per-field extraction results as ExtractionFieldValue rows.
 
-        Persists header/tax fields and line-item fields (with line_item_index).
-        Only persists fields that were actually extracted.
-        Fire-and-forget — errors are logged, not raised.
+        NOTE: ExtractionDocument/ExtractionFieldResult were removed.
+        Field results are now persisted on ExtractionFieldValue by
+        ExtractionPipeline.  This method is retained as a no-op.
         """
-        if not extraction_document_id or not result.resolved:
-            return
-
-        try:
-            from apps.extraction_configs.models import TaxFieldDefinition
-            from apps.extraction_documents.models import (
-                ExtractionDocument,
-                ExtractionFieldResult,
-            )
-
-            doc = ExtractionDocument.objects.filter(
-                pk=extraction_document_id,
-            ).first()
-            if not doc:
-                return
-
-            # Collect all field keys (header + tax + line items)
-            all_keys: set[str] = set()
-            for fr in list(result.header_fields.values()) + list(
-                result.tax_fields.values()
-            ):
-                if fr.extracted:
-                    all_keys.add(fr.field_key)
-            for item in result.line_items:
-                for fr in item.values():
-                    if fr.extracted:
-                        all_keys.add(fr.field_key)
-
-            fd_map = {
-                fd.field_key: fd
-                for fd in TaxFieldDefinition.objects.filter(
-                    field_key__in=list(all_keys), is_active=True,
-                )
-            }
-
-            records = []
-
-            # Header + tax fields
-            for fr in list(result.header_fields.values()) + list(
-                result.tax_fields.values()
-            ):
-                if not fr.extracted:
-                    continue
-                fd = fd_map.get(fr.field_key)
-                if not fd:
-                    continue
-                records.append(
-                    ExtractionFieldResult(
-                        document=doc,
-                        field_definition=fd,
-                        field_key=fr.field_key,
-                        raw_value=fr.raw_value,
-                        normalized_value=fr.normalized_value,
-                        confidence=fr.confidence,
-                        extraction_method=fr.method,
-                        source_text_snippet=(
-                            fr.evidence.source_snippet
-                            if fr.evidence
-                            else fr.source_snippet
-                        ),
-                        page_number=(
-                            fr.evidence.page_number
-                            if fr.evidence
-                            else None
-                        ),
-                    )
-                )
-
-            # Line-item fields
-            for li_idx, item in enumerate(result.line_items):
-                for fr in item.values():
-                    if not fr.extracted:
-                        continue
-                    fd = fd_map.get(fr.field_key)
-                    if not fd:
-                        continue
-                    records.append(
-                        ExtractionFieldResult(
-                            document=doc,
-                            field_definition=fd,
-                            field_key=fr.field_key,
-                            raw_value=fr.raw_value,
-                            normalized_value=fr.normalized_value,
-                            confidence=fr.confidence,
-                            extraction_method=fr.method,
-                            source_text_snippet=(
-                                fr.evidence.source_snippet
-                                if fr.evidence
-                                else fr.source_snippet
-                            ),
-                            page_number=(
-                                fr.evidence.page_number
-                                if fr.evidence
-                                else None
-                            ),
-                            line_item_index=li_idx,
-                        )
-                    )
-
-            if records:
-                # Clear previous results for this document before inserting
-                ExtractionFieldResult.objects.filter(document=doc).delete()
-                ExtractionFieldResult.objects.bulk_create(records)
-                logger.info(
-                    "Persisted %d field results (%d line-item) for "
-                    "ExtractionDocument %s",
-                    len(records),
-                    sum(1 for r in records if r.line_item_index is not None),
-                    extraction_document_id,
-                )
-
-        except Exception:
-            logger.exception(
-                "Failed to persist field results for ExtractionDocument %s",
-                extraction_document_id,
-            )
+        return
 
     # ------------------------------------------------------------------
     # Helpers

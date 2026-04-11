@@ -35,6 +35,7 @@ class CaseSummaryService:
                 "latest_summary": summary_text,
                 "recommendation": recommendation,
                 "generated_by_agent_run": agent_run,
+                "tenant": getattr(case, 'tenant', None),
             },
         )
         return summary

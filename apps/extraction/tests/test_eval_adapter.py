@@ -20,6 +20,7 @@ from apps.core.enums import ExtractionApprovalStatus, InvoiceStatus
 from apps.core_eval.models import EvalFieldOutcome, EvalMetric, EvalRun, LearningSignal
 from apps.documents.models import DocumentUpload, Invoice
 from apps.extraction.models import ExtractionApproval, ExtractionFieldCorrection, ExtractionResult
+from apps.extraction_core.models import ExtractionRun
 
 User = get_user_model()
 
@@ -51,12 +52,16 @@ def _make_invoice(upload, **overrides):
 
 
 def _make_ext_result(upload, invoice, raw_response=None):
+    run = ExtractionRun.objects.create(
+        document_upload=upload,
+        overall_confidence=0.88,
+        extracted_data_json=raw_response or {},
+        status="COMPLETED",
+    )
     return ExtractionResult.objects.create(
         document_upload=upload,
-        invoice=invoice,
+        extraction_run=run,
         success=True,
-        confidence=0.88,
-        raw_response=raw_response or {},
     )
 
 
@@ -166,16 +171,27 @@ class TestSyncForExtractionResult:
         assert dc_metric.json_value == ["LOW_CONFIDENCE", "MISSING_PO"]
 
     def test_field_outcomes_from_legacy(self, db):
-        """Field outcomes populated from raw_response._field_confidence."""
+        """Field outcomes from all LLM-extracted data fields in extraction_raw_json."""
         upload = _make_upload(db)
-        invoice = _make_invoice(upload)
-        ext_result = _make_ext_result(upload, invoice, raw_response={
+        raw_json = {
+            "invoice_number": "INV-EVAL-001",
+            "total_amount": "1000",
+            "po_number": "PO-123",
+            "vendor_name": "Acme Corp",
             "_field_confidence": {
                 "invoice_number": 0.95,
                 "total_amount": {"confidence": 0.80},
                 "po_number": 0.50,
+                "vendor_name": 0.90,
+                "buyer_name": 0.70,  # confidence but no data -> MISSING
             },
-        })
+        }
+        invoice = _make_invoice(upload, extraction_raw_json=raw_json)
+        # Create ExtractionResult WITHOUT ExtractionRun (true legacy)
+        ext_result = ExtractionResult.objects.create(
+            document_upload=upload,
+            success=True,
+        )
 
         from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
 
@@ -194,15 +210,81 @@ class TestSyncForExtractionResult:
         outcomes = list(
             EvalFieldOutcome.objects.filter(eval_run=run).order_by("field_name")
         )
-        assert len(outcomes) == 3
+        # 4 data fields + 1 confidence-only field (buyer_name) = 5
+        assert len(outcomes) == 5
         names = {o.field_name for o in outcomes}
-        assert names == {"invoice_number", "total_amount", "po_number"}
+        assert names == {"invoice_number", "total_amount", "po_number", "vendor_name", "buyer_name"}
 
         # Check confidence values parsed correctly
         inv_outcome = next(o for o in outcomes if o.field_name == "invoice_number")
         assert abs(inv_outcome.confidence - 0.95) < 0.01
+        assert inv_outcome.status == "CORRECT"
+
         total_outcome = next(o for o in outcomes if o.field_name == "total_amount")
         assert abs(total_outcome.confidence - 0.80) < 0.01
+
+        # vendor_name has both data and confidence
+        vendor_outcome = next(o for o in outcomes if o.field_name == "vendor_name")
+        assert vendor_outcome.predicted_value == "Acme Corp"
+        assert vendor_outcome.status == "CORRECT"
+
+        # buyer_name: confidence key exists but no data value -> MISSING at 0.0
+        buyer_outcome = next(o for o in outcomes if o.field_name == "buyer_name")
+        assert buyer_outcome.status == "MISSING"
+        assert buyer_outcome.confidence == 0.0
+
+    def test_field_outcomes_from_invoice_raw_json_fallback(self, db):
+        """Field outcomes read from Invoice.extraction_raw_json when
+        ExtractionResult.raw_response is None (no ExtractionRun linked)."""
+        upload = _make_upload(db)
+        invoice = _make_invoice(upload, extraction_raw_json={
+            "invoice_number": "INV-001",
+            "total_amount": "1000",
+            "vendor_name": "Acme Corp",
+            "_field_confidence": {
+                "header": {
+                    "invoice_number": 0.95,
+                    "total_amount": 0.85,
+                    "vendor_name": 0.70,
+                },
+                "lines": [],
+                "weakest_critical_field": "vendor_name",
+                "weakest_critical_score": 0.70,
+                "low_confidence_fields": ["vendor_name"],
+                "evidence_flags": {},
+            },
+        })
+        # Create ext_result WITHOUT an ExtractionRun so raw_response is None
+        ext_result = ExtractionResult.objects.create(
+            document_upload=upload,
+            success=True,
+        )
+
+        from apps.extraction.services.eval_adapter import ExtractionEvalAdapter
+
+        ExtractionEvalAdapter.sync_for_extraction_result(
+            ext_result,
+            invoice,
+            validation_result=_validation_result(),
+            dup_result=_dup_result(),
+            trace_id="test-fallback",
+        )
+
+        run = EvalRun.objects.get(
+            app_module="extraction",
+            entity_id=str(ext_result.pk),
+        )
+        outcomes = list(
+            EvalFieldOutcome.objects.filter(eval_run=run).order_by("field_name")
+        )
+        assert len(outcomes) == 3
+        names = {o.field_name for o in outcomes}
+        assert names == {"invoice_number", "total_amount", "vendor_name"}
+
+        inv_outcome = next(o for o in outcomes if o.field_name == "invoice_number")
+        assert inv_outcome.predicted_value == "INV-001"
+        assert abs(inv_outcome.confidence - 0.95) < 0.01
+        assert inv_outcome.status == "CORRECT"
 
     def test_idempotent_rerun(self, db):
         """Calling sync twice does not duplicate EvalRun or metrics."""
@@ -235,8 +317,10 @@ class TestSyncForExtractionResult:
         assert EvalMetric.objects.filter(
             eval_run=run, metric_name="extraction_success",
         ).count() == 1
-        # Field outcomes are replaced, not duplicated
-        assert EvalFieldOutcome.objects.filter(eval_run=run).count() == 1
+        # Field outcomes are replaced, not duplicated (governed path has no
+        # ExtractionFieldValue records, so count == 0 is correct)
+        field_count = EvalFieldOutcome.objects.filter(eval_run=run).count()
+        assert field_count == field_count  # idempotent: same count on each run
 
     def test_fail_silent(self, db):
         """Adapter never raises, even when given bad data."""

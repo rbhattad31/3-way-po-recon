@@ -3,6 +3,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
 
 from apps.accounts.models import User
+from apps.accounts.models import CompanyProfile, CompanyAlias, CompanyTaxID
 from apps.accounts.rbac_models import (
     Role, Permission, RolePermission, UserRole, UserPermissionOverride, MenuConfig,
 )
@@ -10,8 +11,8 @@ from apps.accounts.rbac_models import (
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ("email", "first_name", "last_name", "role_badge", "department", "is_active", "is_staff", "created_at")
-    list_filter = ("role", "is_active", "is_staff", "department")
+    list_display = ("email", "first_name", "last_name", "role_badge", "company", "department", "is_active", "is_staff", "created_at")
+    list_filter = ("role", "is_active", "is_staff", "company", "department")
     search_fields = ("email", "first_name", "last_name", "department")
     ordering = ("email",)
     list_per_page = 25
@@ -19,7 +20,7 @@ class UserAdmin(BaseUserAdmin):
     readonly_fields = ("created_at", "updated_at", "last_login")
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Personal info", {"fields": ("first_name", "last_name", "department")}),
+        ("Personal info", {"fields": ("first_name", "last_name", "department", "company")}),
         ("Role", {"fields": ("role",)}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Timestamps", {"fields": ("last_login", "created_at", "updated_at"), "classes": ("collapse",)}),
@@ -114,3 +115,29 @@ class MenuConfigAdmin(admin.ModelAdmin):
     list_display = ("label", "url_name", "required_permission", "order", "is_active", "is_separator")
     list_filter = ("is_active", "is_separator")
     ordering = ("order",)
+
+
+# ---------------------------------------------------------------------------
+# Company Profile
+# ---------------------------------------------------------------------------
+
+class CompanyAliasInline(admin.TabularInline):
+    model = CompanyAlias
+    extra = 1
+
+
+class CompanyTaxIDInline(admin.TabularInline):
+    model = CompanyTaxID
+    extra = 1
+
+
+@admin.register(CompanyProfile)
+class CompanyProfileAdmin(admin.ModelAdmin):
+    list_display = ("name", "tax_id", "country", "is_default", "is_active", "user_count")
+    list_filter = ("is_default", "is_active", "country")
+    search_fields = ("name", "legal_name", "tax_id")
+    inlines = [CompanyAliasInline, CompanyTaxIDInline]
+
+    @admin.display(description="Users")
+    def user_count(self, obj):
+        return obj.users.count()

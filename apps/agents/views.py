@@ -6,6 +6,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 
 from apps.core.permissions import IsAdminOrReadOnly
+from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 from apps.agents.models import AgentDefinition, AgentRun
 from apps.agents.serializers import (
     AgentDefinitionSerializer,
@@ -22,7 +23,7 @@ class AgentDefinitionViewSet(viewsets.ModelViewSet):
     filterset_fields = ["agent_type", "enabled"]
 
 
-class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
+class AgentRunViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     queryset = (
         AgentRun.objects.select_related(
             "agent_definition", "reconciliation_result",
@@ -38,7 +39,7 @@ class AgentRunViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset()  # mixin handles tenant filter
         from apps.core.enums import UserRole
         user = self.request.user
         user_role = getattr(user, "role", None)
