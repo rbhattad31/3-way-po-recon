@@ -110,6 +110,15 @@ class PolicyEngine:
 
         agents: List[str] = []
 
+        # Exception types that trigger a dedicated compliance review.
+        _COMPLIANCE_TYPES = {
+            ExceptionType.DUPLICATE_INVOICE,
+            ExceptionType.TAX_MISMATCH,
+            ExceptionType.VENDOR_MISMATCH,
+            ExceptionType.MISSING_MANDATORY_FIELDS,
+        }
+        has_compliance_exceptions = bool(_COMPLIANCE_TYPES & exc_types)
+
         # ------------------------------------------------------------------
         # NON_PO mode: no PO/GRN retrieval or reconciliation assist.
         # Focus on exception analysis, vendor verification, and routing.
@@ -123,6 +132,11 @@ class PolicyEngine:
             # are persisted as exceptions by the case pipeline).
             if exc_types:
                 agents.append(AgentType.EXCEPTION_ANALYSIS)
+
+            # Compliance review for NON_PO invoices that carry compliance risk
+            # (these have no PO anchor so policy violations are higher risk).
+            if has_compliance_exceptions and AgentType.COMPLIANCE_AGENT not in agents:
+                agents.append(AgentType.COMPLIANCE_AGENT)
 
             # Route and summarise
             agents.append(AgentType.REVIEW_ROUTING)
@@ -160,6 +174,10 @@ class PolicyEngine:
         # Always include exception analysis if we have exceptions
         if exc_types and AgentType.EXCEPTION_ANALYSIS not in agents:
             agents.append(AgentType.EXCEPTION_ANALYSIS)
+
+        # Rule 7: Compliance review after exception analysis for compliance-sensitive exceptions.
+        if has_compliance_exceptions and AgentType.COMPLIANCE_AGENT not in agents:
+            agents.append(AgentType.COMPLIANCE_AGENT)
 
         # Always route and summarise
         if agents:  # Only if we're running any agents

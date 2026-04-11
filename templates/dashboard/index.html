@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load rbac_tags %}
 {% block title %}Dashboard – AP Operations{% endblock %}
 
 {% block extra_css %}
@@ -69,6 +70,56 @@
     </div>
   </div>
 </div>
+
+{# LANDMARK GROUP PROCUREMENT QUICK VIEW #}
+{% has_permission "procurement.view" as dash_can_view_proc %}
+{% if dash_can_view_proc %}
+<div class="ap-card mb-3" style="border-left:4px solid #d4a017;">
+  <div class="ap-card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <span>
+      <i class="bi bi-building-fill-gear me-1" style="color:#d4a017"></i>
+      <strong>Landmark Group — Procurement</strong>
+      <span class="badge bg-warning text-dark ms-2" style="font-size:.63rem">HVAC &amp; Facilities</span>
+    </span>
+    <div class="d-flex gap-2">
+      <a href="{% url 'procurement:hvac_create' %}" class="btn btn-sm btn-warning text-dark fw-semibold">
+        <i class="bi bi-wind me-1"></i>New HVAC Request
+      </a>
+      <a href="{% url 'procurement:procurement_dashboard' %}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-speedometer2 me-1"></i>Proc Dashboard
+      </a>
+    </div>
+  </div>
+  <div class="ap-card-body">
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <div class="text-center p-2 rounded" style="background:var(--ap-surface);border:1px solid var(--ap-border)">
+          <div class="fw-bold fs-4" style="color:#d4a017">{{ proc_summary.total_requests|default:"0" }}</div>
+          <div class="text-muted" style="font-size:.72rem">Total Requests</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-center p-2 rounded" style="background:var(--ap-surface);border:1px solid var(--ap-border)">
+          <div class="fw-bold fs-4 text-warning">{{ proc_summary.pending_approval|default:"0" }}</div>
+          <div class="text-muted" style="font-size:.72rem">Review Required</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-center p-2 rounded" style="background:var(--ap-surface);border:1px solid var(--ap-border)">
+          <div class="fw-bold fs-4 text-info">{{ proc_summary.hvac_requests|default:"0" }}</div>
+          <div class="text-muted" style="font-size:.72rem">HVAC Requests</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-center p-2 rounded" style="background:var(--ap-surface);border:1px solid var(--ap-border)">
+          <div class="fw-bold fs-4 text-success">{{ proc_summary.ready_requests|default:"0" }}</div>
+          <div class="text-muted" style="font-size:.72rem">Ready for Quoting</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {# CHARTS ROW 1 — Match Status + Daily Volume #}
 <div class="row g-3 mb-3">
@@ -234,3 +285,4 @@ flowchart LR
   }
 }());
 </script>
+{% endblock %}

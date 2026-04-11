@@ -38,6 +38,7 @@ AGENT_PERMISSIONS: Dict[str, str] = {
     "GRN_RETRIEVAL": "agents.run_grn_retrieval",
     "RECONCILIATION_ASSIST": "agents.run_reconciliation_assist",
     "EXCEPTION_ANALYSIS": "agents.run_exception_analysis",
+    "COMPLIANCE_AGENT": "agents.run_compliance",
     "REVIEW_ROUTING": "agents.run_review_routing",
     "CASE_SUMMARY": "agents.run_case_summary",
     # Deterministic system agents

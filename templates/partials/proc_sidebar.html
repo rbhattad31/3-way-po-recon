@@ -1,0 +1,139 @@
+{% load rbac_tags %}
+
+<div id="procSidebar">
+
+{% has_permission "procurement.view" as can_view_procurement %}
+{% if can_view_procurement %}
+
+<div class="proc-nav-section-label">Procurement</div>
+
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'home' %}active{% endif %}"
+   href="{% url 'procurement:home' %}">
+  <i class="bi bi-house {% if request.resolver_match.url_name != 'home' %}inactive{% endif %}"></i>
+  Home
+</a>
+
+{% has_permission "procurement.view_results" as can_view_results %}
+{% if can_view_results %}
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'procurement_dashboard' %}active{% endif %}"
+   href="{% url 'procurement:procurement_dashboard' %}">
+  <i class="bi bi-bar-chart-line {% if request.resolver_match.url_name != 'procurement_dashboard' %}inactive{% endif %}"></i>
+  Dashboard
+</a>
+{% endif %}
+
+<div class="proc-nav-divider"></div>
+
+<!-- HVAC Requests -->
+<a class="proc-nav-link"
+   data-bs-toggle="collapse"
+   href="#hvacMenu"
+   role="button"
+   aria-expanded="{% if request.resolver_match.url_name in 'request_list configurations stores_management' %}true{% else %}false{% endif %}">
+   
+  <i class="bi bi-tools"></i>
+  HVAC Requests
+</a>
+
+<div class="collapse {% if request.resolver_match.url_name in 'request_list configurations stores_management' %}show{% endif %}" 
+     id="hvacMenu"
+     data-bs-parent="#procSidebar"  style="padding: 15px; gap: 10px; display: flex; flex-direction: column; gap: 15px;">
+
+  <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'request_list' %}active{% endif %}"
+     href="{% url 'procurement:request_list' %}" style=" text-decoration: none;">
+    <i class="bi bi-list-task me-2"></i>
+    All Requests
+  </a>
+
+  <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'stores_management' %}active{% endif %}"
+     href="{% url 'procurement:stores_management' %}" style=" text-decoration: none;">
+    <i class="bi bi-shop me-2"></i>
+    Stores Management
+  </a>
+
+  <a class="proc-nav-sublink" href="javascript:void(0);" style=" text-decoration: none;">
+    <i class="bi bi-graph-up me-2"></i>
+    Reports
+  </a>
+
+  <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'configurations' %}active{% endif %}"
+     href="{% url 'procurement:configurations' %}" style=" text-decoration: none;">
+    <i class="bi bi-gear me-2"></i>
+    Configurations
+  </a>
+
+</div>
+
+<!-- Benchmarking Requests -->
+<a class="proc-nav-link"
+   data-bs-toggle="collapse"
+   href="#costMenu"
+   role="button"
+   aria-expanded="{% if request.resolver_match.app_name == 'benchmarking' %}true{% else %}false{% endif %}">
+  <i class="bi bi-boxes"></i>
+  Bench Marking Requests
+</a>
+
+<div class="collapse {% if request.resolver_match.app_name == 'benchmarking' %}show{% endif %}"
+     id="costMenu"
+     data-bs-parent="#procSidebar" style="padding: 15px; gap: 10px; display: flex; flex-direction: column; gap: 15px;">
+
+  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name in 'request_list request_create request_detail request_reprocess request_export' %}active{% endif %}"
+     href="{% url 'benchmarking:request_list' %}"
+     style=" text-decoration: none;">
+    <i class="bi bi-list-columns me-2"></i>
+    All Requests
+  </a>
+  <!-- <br> -->
+
+  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'quotation_list' %}active{% endif %}"
+     href="{% url 'benchmarking:quotation_list' %}" style="text-decoration: none;">
+    <i class="bi bi-currency-dollar me-2"></i>
+    Quotations
+  </a>
+  <!-- <br> -->
+
+  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'reports' %}active{% endif %}"
+     href="{% url 'benchmarking:reports' %}" style="text-decoration: none;">
+    <i class="bi bi-bar-chart me-2"></i>
+    Reports
+  </a>
+  <!-- <br> -->
+
+  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'configurations' %}active{% endif %}"
+     href="{% url 'benchmarking:configurations' %}" style="text-decoration: none;">
+    <i class="bi bi-sliders me-2"></i>
+    Configurations
+  </a>
+
+</div>
+
+<div class="proc-nav-divider"></div>
+
+{% endif %}
+
+
+{% has_permission "invoices.view" as can_view_cmd %}
+{% if can_view_cmd %}
+
+<div class="proc-nav-section-label">AP Operations</div>
+
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'index' %}active{% endif %}"
+   href="{% url 'dashboard:index' %}">
+  <i class="bi bi-cpu {% if request.resolver_match.url_name != 'index' %}inactive{% endif %}"></i>
+  Command Center
+</a>
+
+<div class="proc-nav-divider"></div>
+
+{% endif %}
+
+
+<!-- Always Visible -->
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'agent_reference' %}active{% endif %}"
+   href="{% url 'agents:agent_reference' %}">
+  <i class="bi bi-journal-code {% if request.resolver_match.url_name != 'agent_reference' %}inactive{% endif %}"></i>
+  Platform Reference
+</a>
+
+</div>

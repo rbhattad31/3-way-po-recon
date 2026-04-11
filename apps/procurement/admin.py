@@ -5,6 +5,7 @@ from apps.procurement.models import (
     BenchmarkResult,
     BenchmarkResultLine,
     ComplianceResult,
+    HVACStoreProfile,
     ProcurementRequest,
     ProcurementRequestAttribute,
     QuotationLineItem,
@@ -15,6 +16,14 @@ from apps.procurement.models import (
     ValidationRule,
     ValidationRuleSet,
 )
+
+
+@admin.register(HVACStoreProfile)
+class HVACStoreProfileAdmin(admin.ModelAdmin):
+    list_display = ("store_id", "brand", "country", "city", "store_type", "area_sqft", "budget_level", "updated_at")
+    list_filter = ("country", "store_type", "budget_level", "created_at")
+    search_fields = ("store_id", "brand", "city")
+    readonly_fields = ("created_at", "updated_at")
 
 
 class ProcurementRequestAttributeInline(admin.TabularInline):

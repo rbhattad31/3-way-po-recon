@@ -1,4 +1,10 @@
-"""BenchmarkService — orchestrates should-cost benchmarking flow."""
+"""BenchmarkService -- orchestrates should-cost benchmarking flow.
+
+Phase 1 agentic bridge: BenchmarkAgent calls now route through
+ProcurementAgentOrchestrator so every LLM call has standard audit, trace,
+and execution records. Variance computation and risk classification remain
+deterministic and are unchanged.
+"""
 from __future__ import annotations
 
 import logging
@@ -24,6 +30,7 @@ from apps.procurement.models import (
     QuotationLineItem,
     SupplierQuotation,
 )
+from apps.procurement.runtime import ProcurementAgentMemory, ProcurementAgentOrchestrator
 from apps.procurement.services.analysis_run_service import AnalysisRunService
 from apps.procurement.services.request_service import ProcurementRequestService
 
@@ -31,10 +38,10 @@ logger = logging.getLogger(__name__)
 
 # Variance thresholds for risk classification
 RISK_THRESHOLDS = {
-    "low": Decimal("5.0"),       # ≤5% → LOW
-    "medium": Decimal("15.0"),   # ≤15% → MEDIUM
-    "high": Decimal("30.0"),     # ≤30% → HIGH
-    # >30% → CRITICAL
+    "low": Decimal("5.0"),       # <=5% -> LOW
+    "medium": Decimal("15.0"),   # <=15% -> MEDIUM
+    "high": Decimal("30.0"),     # <=30% -> HIGH
+    # >30% -> CRITICAL
 }
 
 
@@ -43,6 +50,8 @@ class BenchmarkService:
 
     Steps:
       1. Resolve benchmark references per line item
+         - Deterministic source checked first (Phase 2: catalogue DB lookup)
+         - AI fallback via ProcurementAgentOrchestrator if no deterministic data
       2. Compute variance
       3. Classify risk
       4. Persist BenchmarkResult + lines
@@ -57,9 +66,12 @@ class BenchmarkService:
         quotation: SupplierQuotation,
         *,
         use_ai: bool = True,
-        tenant=None,
+        request_user: Any = None,
     ) -> BenchmarkResult:
         AnalysisRunService.start_run(run)
+
+        # Shared memory for this run -- benchmark agents write findings here
+        memory = ProcurementAgentMemory()
 
         try:
             line_items = list(quotation.line_items.all())
@@ -69,7 +81,13 @@ class BenchmarkService:
             # Step 1 & 2: Resolve benchmarks and compute variance
             line_results = []
             for item in line_items:
-                benchmark_data = BenchmarkService._resolve_benchmark(item, use_ai=use_ai)
+                benchmark_data = BenchmarkService._resolve_benchmark(
+                    item,
+                    run=run,
+                    memory=memory,
+                    use_ai=use_ai,
+                    request_user=request_user,
+                )
                 variance = BenchmarkService._compute_variance(item, benchmark_data)
                 line_results.append({
                     "item": item,
@@ -147,25 +165,102 @@ class BenchmarkService:
             )
             raise
 
+    # ------------------------------------------------------------------
+    # Phase 1: AI routing through the orchestrator bridge
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _resolve_benchmark(
         item: QuotationLineItem,
         *,
+        run: Optional[AnalysisRun] = None,
+        memory: Optional[ProcurementAgentMemory] = None,
         use_ai: bool = False,
+        request_user: Any = None,
     ) -> Dict[str, Any]:
         """Resolve benchmark price range for a line item.
 
-        In production, this would query a benchmark database or invoke an AI agent.
-        For now, returns a placeholder that can be extended per domain.
+        Priority:
+        1. Deterministic catalogue lookup (Phase 2: implement DB/ERP lookup here)
+        2. AI estimate via ProcurementAgentOrchestrator (when use_ai=True)
+        3. Fallback: no benchmark data
+
+        Phase 1: deterministic source is a stub. AI path is routed through
+        ProcurementAgentOrchestrator to gain standard audit + trace records.
         """
-        if use_ai:
+        # Phase 2 extension point: add deterministic catalogue lookup here
+        # e.g.: result = BenchmarkCatalogueService.lookup(item)
+        # if result: return result
+
+        if use_ai and run is not None:
             try:
                 from apps.procurement.agents.benchmark_agent import BenchmarkAgent
-                return BenchmarkAgent.resolve_benchmark_for_item(item)
-            except Exception:
-                logger.warning("AI benchmark resolution failed for line %s, using fallback", item.pk)
 
-        # Fallback: no benchmark data available
+                orchestrator = ProcurementAgentOrchestrator()
+
+                def _agent_fn(ctx):
+                    return BenchmarkAgent.resolve_benchmark_for_item(item)
+
+                orch_result = orchestrator.run(
+                    run=run,
+                    agent_type=f"benchmark_item_{item.pk}",
+                    agent_fn=_agent_fn,
+                    memory=memory,
+                    extra_context={"line_item_pk": item.pk, "description": item.description},
+                    request_user=request_user,
+                )
+
+                if orch_result.status == "completed" and orch_result.output:
+                    bm = orch_result.output
+                    # Store in memory for cross-agent visibility
+                    if memory:
+                        memory.benchmark_findings[item.description[:80]] = bm
+                    return bm
+
+            except Exception:
+                logger.warning(
+                    "BenchmarkService: AI benchmark resolution failed for line %s (non-blocking), using fallback.",
+                    item.pk,
+                    exc_info=True,
+                )
+
+        # Fallback: web search for indicative pricing
+        geography = ""
+        try:
+            if run is not None:
+                req = getattr(run, "request", None)
+                if req is not None:
+                    geography = (
+                        getattr(req, "geography_country", "")
+                        or str(getattr(req, "location", "") or "")
+                    )
+        except Exception:
+            pass
+
+        try:
+            from apps.procurement.services.web_search_service import WebSearchService
+            ws_result = WebSearchService.search_benchmark(
+                description=item.description or "",
+                geography=geography or "UAE",
+                uom=str(item.uom or "") if hasattr(item, "uom") else "",
+                currency=str(item.currency or "AED") if hasattr(item, "currency") else "AED",
+            )
+            if ws_result.get("avg") is not None:
+                logger.info(
+                    "BenchmarkService: web search found indicative pricing for line %s "
+                    "(avg=%s, source=WEB_SEARCH).",
+                    item.pk,
+                    ws_result["avg"],
+                )
+                return ws_result
+        except Exception:
+            logger.warning(
+                "BenchmarkService: web search fallback failed for line %s (non-blocking).",
+                item.pk,
+                exc_info=True,
+            )
+
+        # No benchmark data available from any source
         return {
             "min": None,
             "avg": None,

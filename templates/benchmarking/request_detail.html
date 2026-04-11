@@ -1,0 +1,335 @@
+{% extends "procurement/proc_base.html" %}
+{% block title %}{{ bench_request.title }} | Benchmarking{% endblock %}
+
+{% block extra_head %}
+<style>
+  .variance-within { color:#059669; font-weight:600; }
+  .variance-moderate { color:#d97706; font-weight:600; }
+  .variance-high { color:#dc2626; font-weight:600; }
+  .variance-review { color:#6b7280; }
+  .stat-card { border-radius:10px;background:#fff;border:1px solid #e5e7eb;padding:1rem 1.2rem; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:home' %}" class="text-decoration-none">Home</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'benchmarking:request_list' %}" class="text-decoration-none">Benchmarking Requests</a></li>
+    <li class="breadcrumb-item active">{{ bench_request.title|truncatechars:40 }}</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+
+{# Title row #}
+<div class="d-flex align-items-start justify-content-between mb-3">
+  <div>
+    <h1 class="fs-5 fw-bold mb-0" style="color:#111827;">{{ bench_request.title }}</h1>
+    <div class="mt-1 d-flex gap-2 flex-wrap" style="font-size:.78rem;">
+      <span class="badge bg-light text-dark border">{{ bench_request.geography }}</span>
+      <span class="badge bg-light text-dark border">{{ bench_request.scope_type }}</span>
+      {% if bench_request.store_type %}<span class="badge bg-light text-dark border">{{ bench_request.store_type }}</span>{% endif %}
+      <span class="badge bg-{{ bench_request.get_status_badge_class }}">{{ bench_request.status }}</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if bench_request.status == 'COMPLETED' %}
+    <a href="{% url 'benchmarking:request_export' bench_request.pk %}"
+       class="btn btn-sm btn-outline-success">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </a>
+    {% endif %}
+    <form method="post" action="{% url 'benchmarking:request_reprocess' bench_request.pk %}"
+          class="d-inline" onsubmit="return confirm('Re-run the benchmark analysis?');">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-repeat me-1"></i>Reprocess
+      </button>
+    </form>
+    <form method="post" action="{% url 'benchmarking:request_live_enrich' bench_request.pk %}"
+          class="d-inline" id="liveEnrichForm"
+          onsubmit="return confirm('Fetch live market pricing from Perplexity AI? This will update all benchmark rates with real market data.');">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-outline-primary" id="liveEnrichBtn">
+        <i class="bi bi-globe2 me-1"></i>Live Pricing
+        <span class="badge bg-primary ms-1" style="font-size:.6rem;">AI</span>
+      </button>
+    </form>
+  </div>
+</div>
+
+{% if bench_request.status == 'FAILED' %}
+<div class="alert alert-danger py-2 px-3 mb-3" style="font-size:.82rem;">
+  <i class="bi bi-exclamation-triangle me-1"></i>
+  Analysis failed: {{ bench_request.error_message }}
+</div>
+{% endif %}
+
+{% if result and result.live_enriched_at %}
+<div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-start gap-2" style="font-size:.82rem;border-left:3px solid #0d6efd;">
+  <i class="bi bi-globe2 mt-1 text-primary flex-shrink-0"></i>
+  <div>
+    <strong>Live pricing active</strong> -- last enriched {{ result.live_enriched_at|date:"N j, Y, P" }}.
+    {% with meta=result.live_enrichment_json %}
+    {{ meta.enriched_items }} of {{ meta.total_items }} lines have live market rates
+    (avg confidence {{ meta.avg_confidence|floatformat:2 }}).
+    {% if meta.unique_citations %}
+    <span class="ms-1">Sources:
+      {% for url in meta.unique_citations|slice:":3" %}
+        <a href="{{ url }}" target="_blank" rel="noopener" class="ms-1" style="font-size:.75rem;">{{ forloop.counter }}</a>
+      {% endfor %}
+    </span>
+    {% endif %}
+    {% endwith %}
+  </div>
+</div>
+{% endif %}
+
+{% if bench_request.status == 'PENDING' or bench_request.status == 'PROCESSING' %}
+<div class="alert alert-warning py-2 px-3 mb-3" style="font-size:.82rem;">
+  <i class="bi bi-hourglass-split me-1"></i>
+  Analysis is in progress. Refresh to see results.
+</div>
+{% endif %}
+
+{% if result %}
+{# ---- COMMERCIAL SUMMARY ---- #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="stat-card shadow-sm">
+      <div style="font-size:.7rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Total Quoted</div>
+      <div class="fs-5 fw-bold mt-1" style="color:#111827;">
+        AED {% if result.total_quoted %}{{ result.total_quoted|floatformat:0 }}{% else %}--{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card shadow-sm">
+      <div style="font-size:.7rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Benchmark Mid</div>
+      <div class="fs-5 fw-bold mt-1" style="color:#111827;">
+        AED {% if result.total_benchmark_mid %}{{ result.total_benchmark_mid|floatformat:0 }}{% else %}--{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card shadow-sm">
+      <div style="font-size:.7rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Overall Deviation</div>
+      <div class="fs-5 fw-bold mt-1
+        {% if result.overall_status == 'WITHIN_RANGE' %}text-success
+        {% elif result.overall_status == 'MODERATE' %}text-warning
+        {% elif result.overall_status == 'HIGH' %}text-danger
+        {% else %}text-secondary{% endif %}">
+        {% if result.overall_deviation_pct is not None %}{{ result.overall_deviation_pct|floatformat:1 }}%{% else %}N/A{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card shadow-sm">
+      <div style="font-size:.7rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Overall Status</div>
+      <div class="mt-1">
+        <span class="badge fs-6 bg-{% if result.overall_status == 'WITHIN_RANGE' %}success{% elif result.overall_status == 'MODERATE' %}warning text-dark{% elif result.overall_status == 'HIGH' %}danger{% else %}secondary{% endif %}">
+          {{ result.overall_status|cut:"_" }}
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Line count row #}
+<div class="row g-2 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="d-flex align-items-center gap-2 p-2 rounded border"
+         style="background:#f0fdf4;border-color:#86efac!important;">
+      <i class="bi bi-check-circle text-success"></i>
+      <div>
+        <div class="fw-bold" style="color:#059669;">{{ result.lines_within_range }}</div>
+        <div style="font-size:.72rem;color:#059669;">Within Range</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="d-flex align-items-center gap-2 p-2 rounded border"
+         style="background:#fffbeb;border-color:#fcd34d!important;">
+      <i class="bi bi-exclamation-circle text-warning"></i>
+      <div>
+        <div class="fw-bold" style="color:#d97706;">{{ result.lines_moderate }}</div>
+        <div style="font-size:.72rem;color:#d97706;">Moderate</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="d-flex align-items-center gap-2 p-2 rounded border"
+         style="background:#fef2f2;border-color:#fca5a5!important;">
+      <i class="bi bi-x-circle text-danger"></i>
+      <div>
+        <div class="fw-bold" style="color:#dc2626;">{{ result.lines_high }}</div>
+        <div style="font-size:.72rem;color:#dc2626;">High Variance</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="d-flex align-items-center gap-2 p-2 rounded border"
+         style="background:#f9fafb;border-color:#d1d5db!important;">
+      <i class="bi bi-question-circle text-secondary"></i>
+      <div>
+        <div class="fw-bold" style="color:#6b7280;">{{ result.lines_needs_review }}</div>
+        <div style="font-size:.72rem;color:#6b7280;">Needs Review</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Per-category summary #}
+{% if category_summary %}
+<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;">
+  <div class="card-header bg-white border-bottom py-2 px-3">
+    <span class="fw-bold" style="font-size:.9rem;color:#111827;">By Category</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0" style="font-size:.8rem;">
+      <thead style="background:#f9fafb;">
+        <tr>
+          <th class="px-3 py-2" style="color:#6b7280;">Category</th>
+          <th class="py-2" style="color:#6b7280;">Quoted (AED)</th>
+          <th class="py-2" style="color:#6b7280;">Benchmark Mid (AED)</th>
+          <th class="py-2" style="color:#6b7280;">Deviation</th>
+          <th class="py-2" style="color:#6b7280;">Lines</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cat, dat in category_summary.items %}
+        <tr>
+          <td class="px-3 py-2 fw-600">{{ cat }}</td>
+          <td class="py-2">{{ dat.quoted|floatformat:0 }}</td>
+          <td class="py-2">{% if dat.benchmark_mid %}{{ dat.benchmark_mid|floatformat:0 }}{% else %}<span class="text-muted">--</span>{% endif %}</td>
+          <td class="py-2">
+            {% if dat.deviation_pct is not None %}
+              <span class="{% if dat.status == 'WITHIN_RANGE' %}variance-within{% elif dat.status == 'MODERATE' %}variance-moderate{% elif dat.status == 'HIGH' %}variance-high{% else %}variance-review{% endif %}">
+                {{ dat.deviation_pct|floatformat:1 }}%
+              </span>
+            {% else %}
+              <span class="text-muted">--</span>
+            {% endif %}
+          </td>
+          <td class="py-2">{{ dat.count }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# Negotiation notes #}
+{% if negotiation_notes %}
+<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;border-left:4px solid #1665D8!important;">
+  <div class="card-header bg-white border-bottom py-2 px-3">
+    <span class="fw-bold" style="font-size:.9rem;color:#111827;">
+      <i class="bi bi-chat-quote me-1 text-primary"></i>Negotiation Talking Points
+    </span>
+  </div>
+  <div class="card-body p-3">
+    <ul class="mb-0 ps-3" style="font-size:.82rem;color:#374151;line-height:1.8;">
+      {% for note in negotiation_notes %}
+        <li>{{ note }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+{% endif %}{# end if result #}
+
+{# ---- LINE ITEMS TABLE ---- #}
+<div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
+  <div class="card-header bg-white border-bottom d-flex align-items-center justify-content-between py-2 px-3">
+    <span class="fw-bold" style="font-size:.9rem;color:#111827;">Line-wise Analysis</span>
+    <form method="get" class="d-flex gap-2 align-items-center">
+      <select name="category" class="form-select form-select-sm" style="font-size:.77rem;width:auto;">
+        <option value="">All Categories</option>
+        {% for val, label in category_choices %}<option value="{{ val }}" {% if cat_filter == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <select name="variance" class="form-select form-select-sm" style="font-size:.77rem;width:auto;">
+        <option value="">All Statuses</option>
+        {% for val, label in variance_choices %}<option value="{{ val }}" {% if var_filter == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+      <a href="{% url 'benchmarking:request_detail' bench_request.pk %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0" style="font-size:.79rem;">
+      <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+        <tr>
+          <th class="px-3 py-2 fw-600" style="color:#6b7280;">#</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Description</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Category</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">UOM</th>
+          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Qty</th>
+          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Quoted Rate</th>
+          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Bench Min</th>
+          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Bench Mid</th>
+          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Bench Max</th>
+          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Variance</th>
+          <th class="py-2 fw-600" style="color:#6b7280;">Status</th>
+          <th class="py-2 fw-600 text-center" style="color:#6b7280;">Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in line_items %}
+        <tr title="{{ item.variance_note }}">
+          <td class="px-3 py-1 text-muted">{{ item.line_number }}</td>
+          <td class="py-1" style="max-width:260px;">
+            <span title="{{ item.description }}">{{ item.description|truncatechars:80 }}</span>
+          </td>
+          <td class="py-1">
+            <span class="badge bg-light text-dark border" style="font-size:.7rem;">{{ item.category }}</span>
+          </td>
+          <td class="py-1 text-muted">{{ item.uom|default:"--" }}</td>
+          <td class="py-1 text-end">{% if item.quantity %}{{ item.quantity|floatformat:2 }}{% else %}--{% endif %}</td>
+          <td class="py-1 text-end fw-600">{% if item.quoted_unit_rate %}{{ item.quoted_unit_rate|floatformat:2 }}{% else %}--{% endif %}</td>
+          <td class="py-1 text-end text-muted">{% if item.benchmark_min %}{{ item.benchmark_min|floatformat:2 }}{% else %}--{% endif %}</td>
+          <td class="py-1 text-end">{% if item.benchmark_mid %}<strong>{{ item.benchmark_mid|floatformat:2 }}</strong>{% else %}--{% endif %}</td>
+          <td class="py-1 text-end text-muted">{% if item.benchmark_max %}{{ item.benchmark_max|floatformat:2 }}{% else %}--{% endif %}</td>
+          <td class="py-1 text-end
+            {% if item.variance_status == 'WITHIN_RANGE' %}variance-within
+            {% elif item.variance_status == 'MODERATE' %}variance-moderate
+            {% elif item.variance_status == 'HIGH' %}variance-high
+            {% else %}variance-review{% endif %}">
+            {{ item.get_variance_display }}
+          </td>
+          <td class="py-1">
+            <span class="badge bg-{{ item.get_variance_badge_class }}" style="font-size:.7rem;">
+              {{ item.variance_status|cut:"_" }}
+            </span>
+          </td>
+          <td class="py-1 text-center">
+            {% if item.benchmark_source == 'PERPLEXITY_LIVE' %}
+              <span class="badge" style="background:#7c3aed;font-size:.65rem;" title="Live market data from Perplexity AI">
+                <i class="bi bi-globe2"></i> LIVE
+              </span>
+            {% elif item.benchmark_source == 'CORRIDOR_DB' %}
+              <span class="badge bg-secondary" style="font-size:.65rem;" title="Internal corridor database">
+                <i class="bi bi-database"></i> DB
+              </span>
+            {% else %}
+              <span class="text-muted" style="font-size:.7rem;">--</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="12" class="text-center py-4 text-muted">
+            <i class="bi bi-table d-block mb-1 fs-4"></i>
+            No line items found{% if cat_filter or var_filter %} matching filters{% endif %}.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,380 @@
+{% load static %}
+{# HVAC Product Reference Catalogue Tab                                       #}
+{# Included by request_workspace.html when domain_code == "HVAC"              #}
+{# Context variables expected:                                                 #}
+{#   hvac_catalogue     -- list of product dicts from catalogue.py             #}
+{#   hvac_type_groups   -- list of group dicts from catalogue.py               #}
+{#   hvac_brands        -- sorted list of brand strings                        #}
+
+<div class="hvac-ref-wrapper">
+
+  <!-- ================================================================
+       LANDMARK GROUP HEADER BANNER
+       ================================================================ -->
+  <div class="landmark-ref-header rounded-3 p-3 mb-4 d-flex align-items-center gap-3"
+       style="background: linear-gradient(135deg,#003366 0%,#0055a5 60%,#0077cc 100%);">
+    <div class="ref-logo-circle d-flex align-items-center justify-content-center rounded-circle"
+         style="width:52px;height:52px;background:rgba(255,255,255,.15);flex-shrink:0;">
+      <i class="bi bi-hexagon-fill fs-4 text-warning"></i>
+    </div>
+    <div>
+      <div class="fw-bold text-white fs-6">Landmark Group — HVAC Product Reference Catalogue</div>
+      <div class="text-white-50 small">
+        GCC Market Rates 2025 &bull; AED Pricing &bull;
+        <span class="badge bg-success bg-opacity-75 ms-1">
+          <i class="bi bi-patch-check-fill me-1"></i>Landmark Approved
+        </span>
+        markers indicate pre-vetted products
+      </div>
+    </div>
+    <div class="ms-auto text-end d-none d-md-block">
+      <div class="text-white-50 small">Products in Catalogue</div>
+      <div class="fw-bold text-white fs-5">{{ hvac_catalogue|length }}</div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       FILTER BAR
+       ================================================================ -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body py-3">
+      <div class="row g-3 align-items-end">
+
+        <div class="col-12 col-md-4">
+          <label class="form-label small fw-semibold text-muted mb-1">Search by keyword</label>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text bg-white border-end-0">
+              <i class="bi bi-search text-muted"></i>
+            </span>
+            <input type="text" id="refSearchInput" class="form-control border-start-0 ps-0"
+                   placeholder="e.g. Daikin, cassette, VRF, 2TR...">
+          </div>
+        </div>
+
+        <div class="col-6 col-md-2">
+          <label class="form-label small fw-semibold text-muted mb-1">Product Type</label>
+          <select id="refTypeFilter" class="form-select form-select-sm">
+            <option value="">All Types</option>
+            {% for grp in hvac_type_groups %}
+            <option value="{{ grp.group_code }}">{{ grp.group_label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-6 col-md-2">
+          <label class="form-label small fw-semibold text-muted mb-1">Brand</label>
+          <select id="refBrandFilter" class="form-select form-select-sm">
+            <option value="">All Brands</option>
+            {% for br in hvac_brands %}
+            <option value="{{ br }}">{{ br }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-6 col-md-2">
+          <label class="form-label small fw-semibold text-muted mb-1">Max Capacity</label>
+          <select id="refCapacityFilter" class="form-select form-select-sm">
+            <option value="">Any Capacity</option>
+            <option value="5">Up to 5 TR</option>
+            <option value="15">Up to 15 TR</option>
+            <option value="30">Up to 30 TR</option>
+            <option value="100">Up to 100 TR</option>
+            <option value="9999">Above 100 TR</option>
+          </select>
+        </div>
+
+        <div class="col-6 col-md-2">
+          <div class="form-check form-switch mt-2 pt-1">
+            <input class="form-check-input" type="checkbox" id="refApprovedOnly">
+            <label class="form-check-label small fw-semibold text-success" for="refApprovedOnly">
+              <i class="bi bi-patch-check-fill me-1"></i>Landmark Approved only
+            </label>
+          </div>
+        </div>
+
+      </div><!-- row -->
+    </div><!-- card-body -->
+  </div><!-- card -->
+
+  <!-- ================================================================
+       PRODUCT TYPE GROUP CARDS (quick-click filter chips)
+       ================================================================ -->
+  <div class="d-flex flex-wrap gap-2 mb-4" id="typeGroupChips">
+    <button class="btn btn-sm btn-primary ref-chip active" data-type="">
+      <i class="bi bi-grid-fill me-1"></i>All
+    </button>
+    {% for grp in hvac_type_groups %}
+    <button class="btn btn-sm btn-outline-primary ref-chip" data-type="{{ grp.group_code }}"
+            title="{{ grp.description }}">
+      <i class="bi {{ grp.icon }} me-1"></i>{{ grp.group_label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <!-- ================================================================
+       PRODUCT TABLE
+       ================================================================ -->
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white border-bottom d-flex align-items-center justify-content-between py-2">
+      <span class="fw-semibold text-dark">
+        <i class="bi bi-table me-2 text-primary"></i>Product Catalogue
+      </span>
+      <span class="text-muted small" id="refResultCount">{{ hvac_catalogue|length }} products</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover table-sm align-middle mb-0" id="hvacRefTable">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3" style="width:22%">Product Code</th>
+            <th style="width:18%">Type</th>
+            <th style="width:13%">Brand</th>
+            <th style="width:15%">Model</th>
+            <th style="width:8%" class="text-center">Cap (TR)</th>
+            <th style="width:10%" class="text-center">Refrigerant</th>
+            <th style="width:14%" class="text-end">Market Range (AED)</th>
+          </tr>
+        </thead>
+        <tbody id="refTableBody">
+          {% for p in hvac_catalogue %}
+          <tr class="ref-product-row"
+              data-type="{{ p.type_group }}"
+              data-brand="{{ p.brand }}"
+              data-capacity="{{ p.capacity_tr|default:'0' }}"
+              data-search="{{ p.product_code|lower }} {{ p.brand|lower }} {{ p.model|lower }} {{ p.tags|join:' '|lower }}"
+              style="cursor:pointer;"
+              onclick="selectRefProduct(this)"
+              title="{{ p.notes }}">
+
+            <td class="ps-3">
+              <span class="font-monospace fw-semibold text-primary small">{{ p.product_code }}</span>
+              {% if p.notes %}
+              <i class="bi bi-info-circle text-muted ms-1" style="font-size:.7rem;"
+                 data-bs-toggle="tooltip" data-bs-title="{{ p.notes }}"></i>
+              {% endif %}
+            </td>
+
+            <td>
+              {% for grp in hvac_type_groups %}{% if grp.group_code == p.type_group %}
+              <span class="badge rounded-pill" style="background:#e8f0fe;color:#3367d6;font-weight:600;">
+                {{ grp.group_label }}
+              </span>
+              {% endif %}{% endfor %}
+            </td>
+
+            <td class="fw-semibold small">{{ p.brand }}</td>
+            <td class="text-muted small font-monospace">{{ p.model }}</td>
+
+            <td class="text-center">
+              {% if p.capacity_tr %}
+              <span class="badge bg-secondary bg-opacity-10 text-dark fw-semibold">
+                {{ p.capacity_tr }} TR
+              </span>
+              {% else %}
+              <span class="text-muted">--</span>
+              {% endif %}
+            </td>
+
+            <td class="text-center small">
+              <span class="badge rounded-pill
+                {% if p.refrigerant == 'R32' %}bg-success bg-opacity-10 text-success
+                {% elif p.refrigerant == 'Chilled Water' %}bg-info bg-opacity-10 text-info
+                {% elif p.refrigerant == 'N/A' %}bg-light text-muted
+                {% else %}bg-warning bg-opacity-10 text-warning-emphasis{% endif %}">
+                {{ p.refrigerant }}
+              </span>
+            </td>
+
+            <td class="text-end pe-3">
+              <div class="small">
+                <span class="text-muted">{{ p.installed_min_aed|default:'' }}</span>
+                <span class="text-muted mx-1">--</span>
+                <span class="fw-semibold text-dark">{{ p.installed_avg_aed|default:'' }}</span>
+                <span class="text-muted mx-1">--</span>
+                <span class="text-muted">{{ p.installed_max_aed|default:'' }}</span>
+              </div>
+              <div class="text-muted" style="font-size:.68rem;">supply+install AED</div>
+            </td>
+
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="text-muted text-center py-4">No products loaded.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div><!-- table-responsive -->
+    <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between py-2">
+      <span class="text-muted small fst-italic">
+        Rates are indicative installed (supply + labour) market prices in AED. Actual quotes may vary by quantity, site, and supplier margin.
+      </span>
+      <span class="badge bg-primary bg-opacity-10 text-primary small" id="refFooterCount"></span>
+    </div>
+  </div><!-- card -->
+
+  <!-- ================================================================
+       SELECTED PRODUCT DETAILS PANEL (appears on row click)
+       ================================================================ -->
+  <div id="refProductDetailPanel" class="card border-primary shadow mt-4 d-none">
+    <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between py-2">
+      <span class="fw-semibold"><i class="bi bi-pin-angle-fill me-2"></i>Selected Product Details</span>
+      <button class="btn btn-sm btn-outline-light py-0 px-2" onclick="closeRefPanel()">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <div class="card-body row g-3" id="refDetailContent"></div>
+    <div class="card-footer bg-light d-flex gap-2 justify-content-end">
+      <button class="btn btn-sm btn-outline-secondary" onclick="closeRefPanel()">Close</button>
+      <button class="btn btn-sm btn-success" id="refCopyCodeBtn" onclick="copyRefProductCode()">
+        <i class="bi bi-clipboard me-1"></i>Copy Product Code
+      </button>
+    </div>
+  </div>
+
+</div><!-- hvac-ref-wrapper -->
+
+{% comment %} ================================================================
+              Inline JS for the Reference Tab
+================================================================ {% endcomment %}
+<script>
+(function() {
+  "use strict";
+
+  // Initialise Bootstrap tooltips for info icons
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+    new bootstrap.Tooltip(el);
+  });
+
+  /* ---- filter engine ---- */
+  function applyFilters() {
+    var keyword = (document.getElementById("refSearchInput").value || "").trim().toLowerCase();
+    var typeVal  = document.getElementById("refTypeFilter").value;
+    var brandVal = document.getElementById("refBrandFilter").value;
+    var capMax   = parseFloat(document.getElementById("refCapacityFilter").value) || 0;
+    var approvedOnly = document.getElementById("refApprovedOnly").checked;
+
+    var rows = document.querySelectorAll("#refTableBody .ref-product-row");
+    var visible = 0;
+
+    rows.forEach(function(row) {
+      var matchKeyword  = !keyword || row.dataset.search.indexOf(keyword) !== -1;
+      var matchType     = !typeVal || row.dataset.type === typeVal;
+      var matchBrand    = !brandVal || row.dataset.brand === brandVal;
+      var rowCap        = parseFloat(row.dataset.capacity) || 0;
+      var matchCap      = !capMax || rowCap <= capMax;
+      var show = matchKeyword && matchType && matchBrand && matchCap;
+      row.style.display = show ? "" : "none";
+      if (show) visible++;
+    });
+
+    var countEl = document.getElementById("refResultCount");
+    var footEl  = document.getElementById("refFooterCount");
+    if (countEl) countEl.textContent = visible + " product" + (visible !== 1 ? "s" : "");
+    if (footEl)  footEl.textContent  = visible + " shown";
+  }
+
+  document.getElementById("refSearchInput").addEventListener("input", applyFilters);
+  document.getElementById("refTypeFilter").addEventListener("change", applyFilters);
+  document.getElementById("refBrandFilter").addEventListener("change", applyFilters);
+  document.getElementById("refCapacityFilter").addEventListener("change", applyFilters);
+  document.getElementById("refApprovedOnly").addEventListener("change", applyFilters);
+
+  /* ---- chip buttons ---- */
+  document.querySelectorAll(".ref-chip").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      document.querySelectorAll(".ref-chip").forEach(function(b) {
+        b.classList.remove("active", "btn-primary");
+        b.classList.add("btn-outline-primary");
+      });
+      btn.classList.add("active", "btn-primary");
+      btn.classList.remove("btn-outline-primary");
+      document.getElementById("refTypeFilter").value = btn.dataset.type;
+      applyFilters();
+    });
+  });
+
+  // expose initial count
+  document.getElementById("refFooterCount").textContent = "{{ hvac_catalogue|length }} total";
+
+  /* ---- keep product data from Python for the detail panel ---- */
+  window._hvacRefData = {};
+
+  /* Build a quick lookup indexed by product code (product_code is the row's first cell text) */
+  document.querySelectorAll("#refTableBody .ref-product-row").forEach(function(row) {
+    var code = (row.querySelector(".font-monospace.text-primary") || {textContent:""}).textContent.trim();
+    if (code) window._hvacRefData[code] = row;
+  });
+
+})();
+
+/* ---- row click -> detail panel ---- */
+function selectRefProduct(row) {
+  var code      = (row.querySelector(".font-monospace.text-primary") || {textContent:""}).textContent.trim();
+  var cells     = row.querySelectorAll("td");
+  var typeLabel = cells[1] ? cells[1].textContent.trim() : "";
+  var brand     = cells[2] ? cells[2].textContent.trim() : "";
+  var model     = cells[3] ? cells[3].textContent.trim() : "";
+  var cap       = cells[4] ? cells[4].textContent.trim() : "";
+  var refrig    = cells[5] ? cells[5].textContent.trim() : "";
+  var range     = cells[6] ? cells[6].innerText.replace(/\s+/g, " ").trim() : "";
+
+  var html =
+    "<div class='col-12 col-md-4'>" +
+      "<div class='mb-1 text-muted small fw-semibold'>Product Code</div>" +
+      "<div class='font-monospace fw-bold fs-6 text-primary'>" + code + "</div>" +
+    "</div>" +
+    "<div class='col-6 col-md-4'>" +
+      "<div class='mb-1 text-muted small fw-semibold'>Type</div>" +
+      "<div>" + typeLabel + "</div>" +
+    "</div>" +
+    "<div class='col-6 col-md-4'>" +
+      "<div class='mb-1 text-muted small fw-semibold'>Brand / Model</div>" +
+      "<div class='fw-semibold'>" + brand + "</div>" +
+      "<div class='text-muted small font-monospace'>" + model + "</div>" +
+    "</div>" +
+    "<div class='col-6 col-md-3'>" +
+      "<div class='mb-1 text-muted small fw-semibold'>Capacity</div>" +
+      "<div class='fw-semibold'>" + cap + "</div>" +
+    "</div>" +
+    "<div class='col-6 col-md-3'>" +
+      "<div class='mb-1 text-muted small fw-semibold'>Refrigerant</div>" +
+      "<div>" + refrig + "</div>" +
+    "</div>" +
+    "<div class='col-12 col-md-6'>" +
+      "<div class='mb-1 text-muted small fw-semibold'>Installed Market Range (AED)</div>" +
+      "<div class='fw-semibold text-dark'>" + range + "</div>" +
+      "<div class='text-muted' style='font-size:.72rem;'>min -- avg -- max (supply + installation)</div>" +
+    "</div>";
+
+  document.getElementById("refDetailContent").innerHTML = html;
+  document.getElementById("refCopyCodeBtn").dataset.code = code;
+  document.getElementById("refProductDetailPanel").classList.remove("d-none");
+  document.getElementById("refProductDetailPanel").scrollIntoView({behavior:"smooth", block:"nearest"});
+
+  // Highlight selected row
+  document.querySelectorAll(".ref-product-row").forEach(function(r) {
+    r.classList.remove("table-active");
+  });
+  row.classList.add("table-active");
+}
+
+function closeRefPanel() {
+  document.getElementById("refProductDetailPanel").classList.add("d-none");
+  document.querySelectorAll(".ref-product-row").forEach(function(r) {
+    r.classList.remove("table-active");
+  });
+}
+
+function copyRefProductCode() {
+  var code = document.getElementById("refCopyCodeBtn").dataset.code || "";
+  if (!code) return;
+  navigator.clipboard.writeText(code).then(function() {
+    var btn = document.getElementById("refCopyCodeBtn");
+    var orig = btn.innerHTML;
+    btn.innerHTML = "<i class='bi bi-check-lg me-1'></i>Copied!";
+    btn.classList.replace("btn-success", "btn-outline-success");
+    setTimeout(function() {
+      btn.innerHTML = orig;
+      btn.classList.replace("btn-outline-success", "btn-success");
+    }, 2000);
+  });
+}
+</script>

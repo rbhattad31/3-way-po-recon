@@ -1,0 +1,490 @@
+{% extends "procurement/proc_base.html" %}
+{% load static %}
+
+{% block title %}HVAC Procurement Intelligence — Landmark Group{% endblock %}
+
+
+
+{% block extra_css %}
+<!-- SweetAlert2 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+<link rel="stylesheet" href="{% static 'css/procurement/home.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="hvac-home">
+<div class="hvac-hero-bg">
+<div class="container py-0">
+
+  <!-- ══════════════════════════════════════════════
+       HERO
+  ══════════════════════════════════════════════ -->
+  <section class="hero-section">
+    <div class="row align-items-center g-4">
+      <div class="col-lg-7">
+        <div class="hero-platform-chip">
+          <span class="dot"></span>
+          Landmark Group &mdash; GCC HVAC Intelligence Platform
+        </div>
+        <h1 class="hero-title mb-3">
+          AI-Powered<br>
+          <span class="accent-violet">HVAC Procurement</span><br>
+          <span class="accent-sky">Intelligence</span>
+        </h1>
+        <p class="hero-subtitle mb-4">
+          Submit your store parameters and let the AI engine instantly recommend
+          the optimal HVAC system, benchmark live quotations against GCC market rates,
+          and generate a governance-ready procurement report.
+        </p>
+        <div class="d-flex flex-wrap gap-3">
+          <a href="{% url 'procurement:hvac_create' %}" class="btn btn-ai-primary px-4">
+            <i class="bi bi-plus-circle me-2"></i>New HVAC Request
+          </a>
+          <a href="{% url 'procurement:request_list' %}" class="btn btn-ai-outline px-4">
+            <i class="bi bi-list-ul me-2"></i>View All Requests
+          </a>
+        </div>
+        <!-- Trust badges -->
+        <div class="d-flex flex-wrap gap-2 mt-4">
+          <span style="font-size:.75rem;color:#64748b;font-weight:500;">
+            <i class="bi bi-shield-check me-1" style="color:#059669;"></i>ASHRAE 90.1 Compliant
+          </span>
+          <span style="font-size:.75rem;color:#64748b;font-weight:500;">
+            &bull; <i class="bi bi-thermometer me-1" style="color:#e11d48;"></i>Ambient 48&deg;C Rated
+          </span>
+          <span style="font-size:.75rem;color:#64748b;font-weight:500;">
+            &bull; <i class="bi bi-currency-exchange me-1" style="color:#d97706;"></i>Live AED Benchmarks
+          </span>
+          <span style="font-size:.75rem;color:#64748b;font-weight:500;">
+            &bull; <i class="bi bi-cpu me-1" style="color:#6366f1;"></i>Azure OpenAI GPT-4o
+          </span>
+        </div>
+      </div>
+      <div class="col-lg-5 d-flex justify-content-center">
+        <!-- Animated icon cluster -->
+        <div class="hero-icon-stack">
+          <div class="hic-ring hic-ring-1"></div>
+          <div class="hic-ring hic-ring-2"></div>
+          <div class="hic-center"><img src="{% static 'images/procurement-robot.png' %}" alt="AI Procurement Agent" style="width:52px;height:52px;object-fit:contain;"></div>
+          <div class="hic-orbit hic-orbit-1"><i class="bi bi-cpu"></i></div>
+          <div class="hic-orbit hic-orbit-2"><i class="bi bi-graph-up"></i></div>
+          <div class="hic-orbit hic-orbit-3"><i class="bi bi-receipt"></i></div>
+          <div class="hic-orbit hic-orbit-4"><i class="bi bi-robot"></i></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       STATS STRIP
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="stats-strip">
+      <div class="row g-0">
+        <div class="col-6 col-md-3 stat-item">
+          <div class="stat-value">6</div>
+          <div class="stat-label"><i class="bi bi-robot me-1"></i>HVAC AI Agents</div>
+        </div>
+        <div class="col-6 col-md-3 stat-item">
+          <div class="stat-value sky">25+</div>
+          <div class="stat-label"><i class="bi bi-sliders me-1"></i>Store Parameters</div>
+        </div>
+        <div class="col-6 col-md-3 stat-item">
+          <div class="stat-value teal">9</div>
+          <div class="stat-label"><i class="bi bi-diagram-3 me-1"></i>Rule Conditions</div>
+        </div>
+        <div class="col-6 col-md-3 stat-item">
+          <div class="stat-value green">100%</div>
+          <div class="stat-label"><i class="bi bi-geo-alt me-1"></i>GCC Calibrated</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /container -->
+</div><!-- /hvac-hero-bg -->
+
+<div class="container">
+
+  <!-- ══════════════════════════════════════════════
+       SUPPORTED BRANDS / VENDORS
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="vendor-strip">
+      <div class="d-flex flex-wrap align-items-center gap-3">
+        <span class="section-eyebrow mb-0 me-2" style="letter-spacing:.04em;">Supported Brands</span>
+        {% if brands_list %}
+          {% for brand in brands_list %}
+          <span class="vendor-badge">
+            <i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>{{ brand }}
+          </span>
+          {% endfor %}
+        {% else %}
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Daikin</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Carrier</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>York</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Trane</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Mitsubishi</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>LG</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Gree</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Samsung</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Hitachi</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Voltas</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>ACPRO</span>
+          <span class="vendor-badge"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:.75rem;"></i>Petra</span>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       PLATFORM FEATURES
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="text-center mb-4">
+      <p class="section-eyebrow">What This Platform Does</p>
+      <h2 class="section-title">End-to-End HVAC Procurement Intelligence</h2>
+      <p class="section-sub mx-auto mt-2" style="max-width:560px;">
+        From request intake to recommendation to governance — every step is AI-assisted,
+        rule-validated, and fully auditable.
+      </p>
+    </div>
+    <div class="row g-4">
+      <!-- Feature 1 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-indigo"><i class="bi bi-buildings"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">Site Parameter Intake</h6>
+              <p class="mb-0 small" style="color:#475569;">25+ parameters capture your exact facility requirements.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Conditioned area, zones, floors</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Ambient temp, humidity, dust levels</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Chilled water, existing infra</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Auto cooling-load estimate (TR)</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 2 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-violet"><i class="bi bi-robot"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">6-Agent AI Pipeline</h6>
+              <p class="mb-0 small" style="color:#475569;">Specialised agents cover every procurement decision layer.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>HVAC Recommendation Agent</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Quotation Benchmark Agent</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Energy Efficiency Agent</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Specification Validation Agent</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 3 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-sky"><i class="bi bi-graph-up-arrow"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">GCC Market Benchmarking</h6>
+              <p class="mb-0 small" style="color:#475569;">Live AED benchmarks calibrated for GCC climate and market rates.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>AED/TR price benchmarking</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Overpricing &amp; anomaly detection</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>UAE, KSA, Oman, Qatar, Kuwait</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>2025 market data calibration</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 4 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-teal"><i class="bi bi-diagram-3"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">Rule Engine (9 Conditions)</h6>
+              <p class="mb-0 small" style="color:#475569;">Deterministic rules layered under the LLM for consistent outcomes.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>GCC extreme heat override</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>VRF vs chilled water routing</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Outdoor unit constraint logic</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>ASHRAE &amp; DEWA compliance</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 5 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-amber"><i class="bi bi-file-earmark-text"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">Quotation Extraction</h6>
+              <p class="mb-0 small" style="color:#475569;">Upload any vendor PDF — AI maps it to the schema automatically.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Azure Document Intelligence OCR</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>GPT-4o field extraction</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Pre-fill review &amp; correction</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Confidence scoring per field</li>
+          </ul>
+        </div>
+      </div>
+      <!-- Feature 6 -->
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-4">
+          <div class="d-flex align-items-start gap-3 mb-3">
+            <div class="feature-icon fi-rose"><i class="bi bi-shield-check"></i></div>
+            <div>
+              <h6 class="mb-1 fw-700" style="color:#1e3a8a;font-weight:700;">Governance &amp; Audit Trail</h6>
+              <p class="mb-0 small" style="color:#475569;">Every decision is logged, traceable, and exportable.</p>
+            </div>
+          </div>
+          <ul class="list-unstyled feature-list mb-0 ps-1">
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Full agent reasoning trace</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>RBAC-controlled access</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>JSON &amp; PDF export</li>
+            <li class="d-flex gap-2"><i class="bi bi-dot fs-5"></i>Langfuse observability</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       HOW IT WORKS
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="text-center mb-4">
+      <p class="section-eyebrow">How It Works</p>
+      <h2 class="section-title">6 Intelligent Stages</h2>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-1">1</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Intake</h6>
+          <p class="small mb-0" style="color:#64748b;">Submit store details and upload quotation PDF.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-2">2</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Extract</h6>
+          <p class="small mb-0" style="color:#64748b;">OCR + GPT-4o maps the PDF into structured schema.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-3">3</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Validate</h6>
+          <p class="small mb-0" style="color:#64748b;">Rule engine enforces 9 GCC-specific conditions.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-4">4</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Recommend</h6>
+          <p class="small mb-0" style="color:#64748b;">AI selects optimal HVAC type with confidence score.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2 position-relative">
+        <div class="workflow-card">
+          <div class="workflow-num wn-5">5</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Benchmark</h6>
+          <p class="small mb-0" style="color:#64748b;">Price vs GCC market rates &mdash; flags overpricing.</p>
+        </div>
+        <span class="workflow-connector"><i class="bi bi-arrow-right"></i></span>
+      </div>
+      <div class="col-md-4 col-lg-2">
+        <div class="workflow-card">
+          <div class="workflow-num wn-6">6</div>
+          <h6 class="fw-bold mb-1" style="color:#1e3a8a;font-size:.88rem;">Report</h6>
+          <p class="small mb-0" style="color:#64748b;">Governance-ready PDF &amp; JSON output with full trace.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       GCC COVERAGE MAP (text-based)
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="feature-card p-4">
+      <div class="row align-items-center g-4">
+        <div class="col-lg-5">
+          <p class="section-eyebrow">Coverage</p>
+          <h2 class="section-title mb-2">GCC Region Calibrated</h2>
+          <p class="section-sub">
+            Every recommendation accounts for extreme GCC climate conditions, local regulatory
+            codes (DEWA, Kahramaa, SEC), and 2025 AED market pricing from all six states.
+          </p>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            {% for country in gcc_countries %}
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));">
+              <i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>{{ country }}
+            </span>
+            {% empty %}
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>UAE</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Saudi Arabia</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Oman</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Qatar</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Kuwait</span>
+            <span class="vendor-badge" style="background:linear-gradient(90deg,rgba(14,165,233,.10),rgba(99,102,241,.08));"><i class="bi bi-geo-fill" style="color:#0ea5e9;font-size:.72rem;"></i>Bahrain</span>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="col-lg-7">
+          <div class="row g-3">
+            <div class="col-6">
+              <div class="p-3 rounded-3" style="background:linear-gradient(135deg,rgba(239,68,68,.06),rgba(239,68,68,.02));border:1px solid rgba(239,68,68,.15);">
+                <div class="fw-bold mb-1" style="color:#dc2626;font-size:.9rem;"><i class="bi bi-thermometer-high me-1"></i>Extreme Heat</div>
+                <div class="small" style="color:#64748b;">Up to 48&deg;C ambient temp. Systems must deliver full capacity with high EER ratings.</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="p-3 rounded-3" style="background:linear-gradient(135deg,rgba(14,165,233,.06),rgba(14,165,233,.02));border:1px solid rgba(14,165,233,.15);">
+                <div class="fw-bold mb-1" style="color:#0284c7;font-size:.9rem;"><i class="bi bi-droplet me-1"></i>High Humidity</div>
+                <div class="small" style="color:#64748b;">Coastal sites need enhanced dehumidification and corrosion-resistant coatings.</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="p-3 rounded-3" style="background:linear-gradient(135deg,rgba(245,158,11,.07),rgba(245,158,11,.02));border:1px solid rgba(245,158,11,.15);">
+                <div class="fw-bold mb-1" style="color:#d97706;font-size:.9rem;"><i class="bi bi-cloud-haze2 me-1"></i>Sand &amp; Dust</div>
+                <div class="small" style="color:#64748b;">Outdoor units need dust filters and washable coil protection for desert climates.</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="p-3 rounded-3" style="background:linear-gradient(135deg,rgba(124,58,237,.07),rgba(124,58,237,.02));border:1px solid rgba(124,58,237,.15);">
+                <div class="fw-bold mb-1" style="color:#7c3aed;font-size:.9rem;"><i class="bi bi-lightning me-1"></i>Power Tariffs</div>
+                <div class="small" style="color:#64748b;">EER-optimised selection for UAE, KSA, and Qatar power tariff structures.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════
+       RECENT REQUESTS (if any)
+  ══════════════════════════════════════════════ -->
+  {% if recent_requests %}
+  <section class="mb-5">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <p class="section-eyebrow mb-0">Activity</p>
+        <h2 class="section-title" style="font-size:1.25rem;">Recent HVAC Requests</h2>
+      </div>
+      <a href="{% url 'procurement:request_list' %}" class="btn btn-ai-outline btn-sm px-3">
+        View All <i class="bi bi-arrow-right ms-1"></i>
+      </a>
+    </div>
+    <div class="row g-3">
+      {% for req in recent_requests %}
+      <div class="col-md-6 col-lg-4">
+        <div class="feature-card p-3">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <span class="badge rounded-pill"
+              style="background:{% if req.status == 'APPROVED' %}linear-gradient(90deg,#059669,#047857){% elif req.status == 'PENDING' %}linear-gradient(90deg,#d97706,#b45309){% else %}linear-gradient(90deg,#4f46e5,#7c3aed){% endif %};font-size:.68rem;">
+              {{ req.get_status_display }}
+            </span>
+            <span class="small" style="color:#94a3b8;font-size:.72rem;">{{ req.created_at|date:"d M Y" }}</span>
+          </div>
+          <div class="fw-600 mb-1" style="color:#1e3a8a;font-size:.88rem;font-weight:600;">{{ req.title|truncatechars:55 }}</div>
+          <div class="small" style="color:#64748b;">
+            <i class="bi bi-geo-alt me-1"></i>{{ req.geography_city|default:"—" }}, {{ req.geography_country|default:"—" }}
+            {% if req.priority %}
+            &nbsp;&bull;&nbsp;<span style="color:{% if req.priority == 'HIGH' %}#e11d48{% elif req.priority == 'CRITICAL' %}#dc2626{% else %}#6366f1{% endif %};">
+              {{ req.get_priority_display }}
+            </span>
+            {% endif %}
+          </div>
+          <a href="{% url 'procurement:request_workspace' req.pk %}"
+             class="btn btn-sm w-100 mt-2"
+             style="background:rgba(238,242,255,.8);color:#4f46e5;border:1px solid rgba(99,102,241,.20);border-radius:8px;font-size:.8rem;font-weight:600;">
+            Open Workspace <i class="bi bi-arrow-right ms-1"></i>
+          </a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ══════════════════════════════════════════════
+       CTA
+  ══════════════════════════════════════════════ -->
+  <section class="mb-5">
+    <div class="cta-section text-center position-relative" style="z-index:1;">
+      <div class="position-relative" style="z-index:2;">
+        <div class="mb-3">
+          <span style="background:rgba(255,255,255,.18);border-radius:999px;padding:.3rem .9rem;font-size:.72rem;font-weight:700;color:#fff;letter-spacing:.05em;text-transform:uppercase;border:1px solid rgba(255,255,255,.35);">
+            <i class="bi bi-stars me-1"></i>Ready to Analyse Your Site
+          </span>
+        </div>
+        <h2 class="fw-800 text-white mb-2" style="font-size:clamp(1.4rem,3vw,2.2rem);font-weight:800;">
+          Submit Your HVAC Requirements Today
+        </h2>
+        <p class="text-white mb-4" style="opacity:.85;max-width:520px;margin:auto;font-size:.95rem;">
+          Get an AI-generated system recommendation with full GCC market benchmarking
+          in under 2 minutes.
+        </p>
+        <div class="d-flex flex-wrap gap-3 justify-content-center">
+          <a href="{% url 'procurement:hvac_create' %}" class="btn btn-cta-white">
+            <i class="bi bi-plus-circle me-2"></i>Create New Request
+          </a>
+          <a href="{% url 'procurement:request_list' %}" class="btn btn-cta-ghost">
+            <i class="bi bi-list-ul me-2"></i>View All Requests
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /container -->
+</div><!-- /hvac-home -->
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+// Show welcome toast on first visit (session-based)
+document.addEventListener('DOMContentLoaded', function() {
+  if (!sessionStorage.getItem('hvac_home_welcomed')) {
+    sessionStorage.setItem('hvac_home_welcomed', '1');
+    setTimeout(function() {
+      const Toast = Swal.mixin({
+        toast: true,
+        position: 'bottom-end',
+        showConfirmButton: false,
+        timer: 4500,
+        timerProgressBar: true,
+        background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)',
+        color: '#1e3a8a',
+      });
+      Toast.fire({
+        icon: 'success',
+        iconColor: '#6366f1',
+        title: '<strong style="color:#1e3a8a;">HVAC Intelligence Platform</strong>',
+        html: '<span style="font-size:.82rem;color:#475569;">GCC-calibrated recommendations ready. Submit your first request.</span>'
+      });
+    }, 800);
+  }
+});
+</script>
+{% endblock %}

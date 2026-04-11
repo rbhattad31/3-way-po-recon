@@ -81,6 +81,7 @@ class AgentType(models.TextChoices):
     GRN_RETRIEVAL = "GRN_RETRIEVAL", "GRN Retrieval"
     RECONCILIATION_ASSIST = "RECONCILIATION_ASSIST", "Reconciliation Assist"
     EXCEPTION_ANALYSIS = "EXCEPTION_ANALYSIS", "Exception Analysis"
+    COMPLIANCE_AGENT = "COMPLIANCE_AGENT", "Compliance Agent"
     REVIEW_ROUTING = "REVIEW_ROUTING", "Review Routing"
     CASE_SUMMARY = "CASE_SUMMARY", "Case Summary"
     # Deterministic system agents
@@ -936,3 +937,51 @@ class PostingRuleType(models.TextChoices):
 class PostingApprovalAction(models.TextChoices):
     APPROVED = "APPROVED", "Approved"
     REJECTED = "REJECTED", "Rejected"
+
+# =============================================================================
+# RoomWise Pre-Procurement Recommender Enums
+# =============================================================================
+
+class RoomUsageType(models.TextChoices):
+    DATA_CENTER = "DATA_CENTER", "Data Centre"
+    OFFICE = "OFFICE", "Office"
+    WAREHOUSE = "WAREHOUSE", "Warehouse"
+    RETAIL = "RETAIL", "Retail"
+    LAB = "LAB", "Lab"
+    MEDICAL = "MEDICAL", "Medical"
+    OTHER = "OTHER", "Other"
+
+
+class HVACSystemType(models.TextChoices):
+    VRF = "VRF", "VRF System"
+    SPLIT_AC = "SPLIT_AC", "Split AC"
+    PACKAGED_DX = "PACKAGED_DX", "Packaged DX Unit"
+    FCU = "FCU", "Fan Coil Unit"
+    CHILLER = "CHILLER", "Chiller"
+    CASSETTE = "CASSETTE", "Cassette Split"
+
+
+class ExternalSourceClass(models.TextChoices):
+    OEM_OFFICIAL = "OEM_OFFICIAL", "OEM Official"
+    OEM_REGIONAL = "OEM_REGIONAL", "OEM Regional"
+    AUTHORIZED_DISTRIBUTOR = "AUTHORIZED_DISTRIBUTOR", "Authorized Distributor"
+    TECHNICAL_DATASHEET = "TECHNICAL_DATASHEET", "Technical Datasheet"
+    STANDARD_REGULATORY = "STANDARD_REGULATORY", "Standard / Regulatory"
+    LANDLORD_GUIDE = "LANDLORD_GUIDE", "Landlord Guide"
+    INTERNAL_HISTORICAL = "INTERNAL_HISTORICAL", "Internal Historical"
+
+
+class POStatus(models.TextChoices):
+    DRAFT = "DRAFT", "Draft"
+    ISSUED = "ISSUED", "Issued"
+    ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged"
+    IN_TRANSIT = "IN_TRANSIT", "In Transit"
+    DELIVERED = "DELIVERED", "Delivered"
+    CANCELLED = "CANCELLED", "Cancelled"
+    DELAYED = "DELAYED", "Delayed"
+
+
+class RecommendationMethod(models.TextChoices):
+    DETERMINISTIC = "DETERMINISTIC", "Deterministic"
+    ML_MODEL = "ML_MODEL", "ML Model"
+    MANUAL_OVERRIDE = "MANUAL_OVERRIDE", "Manual Override"

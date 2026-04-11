@@ -277,7 +277,7 @@ _AGENT_CONTRACTS = {
 
 # Increment this whenever the reference page template or view data changes.
 # Passed into the template so the browser sees a new ETag / detects staleness.
-_PAGE_VERSION = 5
+_PAGE_VERSION = 4
 
 # PolicyEngine dispatch rules -- shown as a table in the reference page
 _POLICY_ENGINE_RULES = [
@@ -1125,292 +1125,506 @@ def agent_reference(request):
         {"type": "DUPLICATE_INVOICE", "label": "Duplicate Invoice Check", "db_model": "Invoice (local)", "fallback": "DuplicateInvoiceDBFallbackAdapter"},
     ]
 
-    # ---- Supervisor Agent ----
-    supervisor_skills = []
-    supervisor_tool_list = []
-    supervisor_phases = [
+    # ---- Procurement Agents (HVAC domain -- separate from core reconciliation agents) ----
+    procurement_agents = [
         {
-            "name": "UNDERSTAND",
-            "skill": "invoice_extraction",
-            "icon": "bi-eye",
-            "color": "info",
-            "description": "Extract structured data from the invoice document via OCR, classification, and field extraction.",
-            "tools": ["get_ocr_text", "classify_document", "extract_invoice_fields", "re_extract_field"],
+            "name": "PerplexityMarketResearchAnalystAgent",
+            "module": "apps/procurement/agents/Perplexity_Market_Research_Analyst_Agent.py",
+            "flow": "Flow A",
+            "flow_color": "primary",
+            "icon": "bi-search-heart",
+            "model": "Perplexity sonar-pro (live web search)",
+            "entry_point": "agent.run(proc_request, generated_by=user)",
+            "type": "LLM + Live Web Search",
+            "type_color": "primary",
+            "description": (
+                "Primary market intelligence agent. Queries the Perplexity API (sonar-pro model) "
+                "to find real, purchasable HVAC products with specifications, pricing, and verified "
+                "purchase URLs. Returns structured product suggestions with source citations."
+            ),
+            "inputs": "ProcurementRequest (system_code, title, description, country, city, currency)",
+            "outputs": "system_code, system_name, rephrased_query, ai_summary, market_context, suggestions (list), perplexity_citations (list)",
+            "fallback": "FallbackWebscraperAgent (auto-triggered on any Perplexity failure or empty result)",
+            "requires_key": "PERPLEXITY_API_KEY",
+            "key_rules": [
+                "Every suggestion must be a REAL product from live Perplexity web search",
+                "citation_url must come EXACTLY from Perplexity citations[] array -- never invented",
+                "5 to 7 suggestions from DIFFERENT manufacturers per run",
+                "Purchase intent: buyer clicks link and lands on exact product detail page",
+            ],
         },
         {
-            "name": "VALIDATE",
-            "skill": "ap_validation",
-            "icon": "bi-check2-square",
-            "color": "warning",
-            "description": "Validate extraction quality, detect duplicates, verify vendor identity by tax ID, and check tax computation.",
-            "tools": ["validate_extraction", "repair_extraction", "check_duplicate", "verify_vendor", "verify_tax_computation"],
+            "name": "FallbackWebscraperAgent",
+            "module": "apps/procurement/agents/Fallback_Webscraper_Agent.py",
+            "flow": "Flow A",
+            "flow_color": "warning",
+            "icon": "bi-globe2",
+            "model": "Azure OpenAI GPT-4o + Playwright (headless Chromium)",
+            "entry_point": "agent.run(proc_request, generated_by=user)",
+            "type": "LLM + Headless Browser Scraping",
+            "type_color": "warning",
+            "description": (
+                "Automatic fallback when Perplexity API is unavailable or fails. Step 1: "
+                "Azure OpenAI suggests 6 specific commercial/vendor URLs to visit. Step 2: "
+                "Playwright headless Chromium scrapes each page (30s timeout, 6000 char cap). "
+                "Step 3: Azure OpenAI parses scraped text into the same product suggestion dict "
+                "as PerplexityMarketResearchAnalystAgent. Returns identical output shape."
+            ),
+            "inputs": "ProcurementRequest (same as Perplexity agent)",
+            "outputs": "Same dict as PerplexityMarketResearchAnalystAgent (system_code, suggestions, perplexity_citations)",
+            "fallback": "None -- this is the final fallback. Returns partial results if scraping fails.",
+            "requires_key": "AZURE_OPENAI_API_KEY + playwright installed (playwright install chromium)",
+            "key_rules": [
+                "playwright install chromium required -- pip install playwright && playwright install chromium",
+                "Scraped page text capped at 6000 chars per site (Azure OAI cost control)",
+                "GPT-4o selects 6 specific LISTING page URLs (not homepages)",
+                "Scraped URLs stored in perplexity_citations for auditability",
+            ],
         },
         {
-            "name": "MATCH",
-            "skill": "ap_3way_matching",
-            "icon": "bi-arrow-left-right",
+            "name": "AzureDIExtractorAgent",
+            "module": "apps/procurement/agents/Azure_Document_Intelligence_Extractor_Agent.py",
+            "flow": "Both",
+            "flow_color": "info",
+            "icon": "bi-file-earmark-medical",
+            "model": "Azure Document Intelligence prebuilt-layout + Azure OpenAI GPT-4o (ReAct)",
+            "entry_point": "AzureDIExtractorAgent.extract(file_path=...) or .extract(file_bytes=..., mime_type=...)",
+            "type": "Deterministic + ReAct Tool-Calling",
+            "type_color": "info",
+            "description": (
+                "Universal document extractor. Treats Azure DI as an OpenAI TOOL: LLM is invoked "
+                "first with a ToolSpec for extract_document_text. When the model issues that tool "
+                "call, the agent runs the real DI API and returns OCR text + tables + key-value "
+                "pairs back to the LLM as a tool role message. LLM synthesises final structured "
+                "JSON. Works for ANY document type: invoice, quotation, PO, GRN, contract, "
+                "proforma, delivery note, HVAC request form."
+            ),
+            "inputs": "file_path (str) OR file_bytes (bytes) + mime_type",
+            "outputs": "success, doc_type, confidence, header (dict), line_items (list), commercial_terms, raw_ocr_text, tables, key_value_pairs, engine, duration_ms, error",
+            "fallback": "Returns engine='error' with structured error dict -- never raises",
+            "requires_key": "AZURE_DI_ENDPOINT + AZURE_DI_KEY + AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY + AZURE_OPENAI_DEPLOYMENT",
+            "key_rules": [
+                "Supported formats: PDF, JPEG, JPG, PNG, BMP, TIFF, HEIF, DOCX, XLSX, PPTX",
+                "Doc type hints registry drives LLM extraction schema per document type",
+                "ReAct loop: LLM calls extract_document_text tool -> DI runs -> LLM synthesises",
+                "HVAC request form support: extracts 20+ HVAC-specific fields incl. area_sqft, ambient_temp_max",
+            ],
+        },
+        {
+            "name": "HVACRecommendationAgent",
+            "module": "apps/procurement/agents/hvac_recommendation_agent.py",
+            "flow": "Flow A",
+            "flow_color": "success",
+            "icon": "bi-buildings",
+            "model": "Azure OpenAI GPT-4o",
+            "entry_point": "agent.recommend(attrs, no_match_context, procurement_request_pk) OR agent.explain(attrs, rule_result)",
+            "type": "LLM Reasoning (dual entry points)",
+            "type_color": "success",
+            "description": (
+                "AI-powered HVAC recommendation engine with two distinct paths. recommend(): "
+                "full AI system selection called when HVACRulesEngine returns confident=False "
+                "(no matching rule). Uses project attributes, available DB system types, similar "
+                "store profiles, and market intelligence data. explain(): lightweight tradeoff "
+                "commentary after a DB rule matched -- produces procurement-facing reasoning."
+            ),
+            "inputs": "attrs (dict of store parameters), no_match_context (why rules failed), rule_result (for explain path)",
+            "outputs": "system_type_code, system_name, capacity_band, confidence, reasoning, top_drivers, constraints, alternate_option, standards",
+            "fallback": "Returns structured fallback dict with is_fallback=True if LLM call fails",
+            "requires_key": "AZURE_OPENAI_API_KEY (via LLMClient)",
+            "key_rules": [
+                "GCC-specific: UAE/KSA/Qatar/Kuwait/Bahrain/Oman climate and standards context",
+                "recommend() path: full AI reasoning with 20+ years HVAC expertise prompt",
+                "explain() path: 3-5 sentence trade-off narrative for display in workspace UI",
+                "Falls back gracefully if LLM unavailable -- never crashes Flow A",
+            ],
+        },
+        {
+            "name": "ComplianceAgent",
+            "module": "apps/procurement/agents/compliance_agent.py",
+            "flow": "Flow A",
+            "flow_color": "danger",
+            "icon": "bi-shield-check",
+            "model": "Azure OpenAI GPT-4o",
+            "entry_point": "ComplianceAgent.check(request, context)",
+            "type": "LLM Compliance Check",
+            "type_color": "danger",
+            "description": (
+                "AI-augmented compliance checking. Invoked when rule-based ComplianceService "
+                "needs extended analysis (domain-specific regulations, complex constraint sets). "
+                "Validates recommended HVAC system against geography-specific standards."
+            ),
+            "inputs": "ProcurementRequest (domain_code, geography_country), context dict (recommendation result)",
+            "outputs": "status (PASS/FAIL/PARTIAL/NOT_CHECKED), rules_checked (list), violations (list), recommendations (list)",
+            "fallback": "Returns NOT_CHECKED status with error note if LLM unavailable",
+            "requires_key": "AZURE_OPENAI_API_KEY (via LLMClient)",
+            "key_rules": [
+                "ASHRAE 55/62.1/90.1, ISO 16813/50001, UAE MoIAT, SASO, CIBSE applied",
+                "Invoked only for augmented analysis -- standard checks use ComplianceService",
+                "Returns NOT_CHECKED on error -- never blocks Flow A pipeline",
+            ],
+        },
+        {
+            "name": "RequestExtractionAgent",
+            "module": "apps/procurement/agents/request_extraction_agent.py",
+            "flow": "Both",
+            "flow_color": "secondary",
+            "icon": "bi-file-earmark-code",
+            "model": "Azure OpenAI GPT-4o",
+            "entry_point": "RequestExtractionAgent.extract(ocr_text, source_document_type, domain_hint)",
+            "type": "Lightweight LLM Extraction",
+            "type_color": "secondary",
+            "description": (
+                "Lightweight agent for extracting structured procurement request data from OCR "
+                "text (RFQ, requirement note, BOQ, specification, scope document). Uses simple "
+                "prompt -> response pattern (no tool-calling loop). Called by "
+                "RequestDocumentPrefillService when semantic extraction is needed."
+            ),
+            "inputs": "ocr_text (str), source_document_type (optional hint), domain_hint (HVAC/IT/...)",
+            "outputs": "confidence, document_type_detected, title, description, domain_code, schema_code, request_type, geography_country, geography_city, currency, attributes (list), scope_categories, compliance_hints",
+            "fallback": "Returns low-confidence result with extracted partial data -- never raises",
+            "requires_key": "AZURE_OPENAI_API_KEY (via LLMClient)",
+            "key_rules": [
+                "Confidence per-field: 0.0 = guess, 1.0 = explicitly stated in document",
+                "Detects domain from terminology: HVAC / IT / FACILITIES / ELECTRICAL etc.",
+                "No tool-calling loop -- single prompt/response for speed",
+            ],
+        },
+        {
+            "name": "ReasonSummaryAgent",
+            "module": "apps/procurement/agents/reason_summary_agent.py",
+            "flow": "Flow A",
+            "flow_color": "info",
+            "icon": "bi-journal-richtext",
+            "model": "Azure OpenAI GPT-4o (LLM parts) + deterministic (structured tables)",
+            "entry_point": "ReasonSummaryAgent.generate(recommendation_result)",
+            "type": "Hybrid LLM + Deterministic",
+            "type_color": "info",
+            "description": (
+                "Transforms a persisted RecommendationResult into richly-structured explanation "
+                "for the workspace UI. LLM generates headline, reasoning_summary, and top_drivers "
+                "for natural context-aware explanations. All structured tables (rules, conditions, "
+                "alternatives, constraints) are built deterministically from stored payload for "
+                "accuracy. Falls back gracefully to deterministic text if LLM is unavailable."
+            ),
+            "inputs": "RecommendationResult instance (with output_payload_json and reasoning_details_json)",
+            "outputs": "headline, system_name, system_code, reasoning_summary, confidence_pct, compliance_status, capacity_guidance, human_validation, alternate_option, top_drivers, rules_table, conditions_table, alternatives_table, constraints, assumptions, thought_steps, standards",
+            "fallback": "Full deterministic fallback -- page always renders even without LLM",
+            "requires_key": "AZURE_OPENAI_API_KEY (optional -- deterministic fallback on failure)",
+            "key_rules": [
+                "Structured tables (rules, conditions, alternatives) are ALWAYS deterministic",
+                "LLM only generates headline, reasoning_summary, top_drivers (3 narrative fields)",
+                "Page always renders -- LLM failure activates deterministic fallback transparently",
+            ],
+        },
+        {
+            "name": "RFQGeneratorAgent",
+            "module": "apps/procurement/agents/RFQ_Generator_Agent.py",
+            "flow": "Flow A",
+            "flow_color": "success",
+            "icon": "bi-file-earmark-spreadsheet",
+            "model": "Deterministic (no LLM) + openpyxl + reportlab",
+            "entry_point": "RFQGeneratorAgent.run(proc_request, selection_mode, generated_by, save_record=True)",
+            "type": "Deterministic Document Generator",
+            "type_color": "success",
+            "description": (
+                "Generates RFQ (Request for Quotation) documents as Excel + PDF for a HVAC "
+                "procurement request. When selection_mode='RECOMMENDED', fetches the latest "
+                "RecommendationResult and uses its system_type_code. When selection_mode is a "
+                "system code (e.g. 'VRF'), uses that directly. Scope rows come from DB "
+                "HVACServiceScope table with hardcoded fallback. Blob-uploads both files."
+            ),
+            "inputs": "proc_request, selection_mode ('RECOMMENDED' or system code), qty_overrides (dict), generated_by (User), save_record (bool)",
+            "outputs": "RFQResult dataclass: xlsx_bytes, pdf_bytes, rfq_ref, filename_xlsx, filename_pdf, system_code, system_label, selection_basis, confidence_pct, scope_rows, rfq_record, error",
+            "fallback": "Returns partial RFQResult with error field -- never raises exception",
+            "requires_key": "AZURE_BLOB_ACCOUNT_NAME + AZURE_BLOB_ACCOUNT_KEY (for upload) + openpyxl (Excel) + reportlab (PDF optional)",
+            "key_rules": [
+                "Uploads both XLSX and PDF to Azure Blob Storage (BlobStorageService)",
+                "Persists GeneratedRFQ record when save_record=True",
+                "scope_rows from HVACServiceScope DB table -- fallback to hardcoded defaults",
+                "PDF generation is optional -- fails silently if reportlab not installed",
+            ],
+        },
+    ]
+
+    # ---- Benchmarking Agents ----
+    benchmarking_agents = [
+        {
+            "name": "BenchmarkDocumentExtractorAgent",
+            "module": "apps/benchmarking/services/document_extractor_agent.py",
+            "flow": "Flow B",
+            "flow_color": "warning",
+            "icon": "bi-file-earmark-bar-graph",
+            "model": "Azure DI + Azure OpenAI GPT-4o (batch classification)",
+            "entry_point": "BenchmarkDocumentExtractorAgent().run(quotation_pk, bench_request_pk)",
+            "type": "Deterministic 5-Stage Pipeline",
+            "type_color": "warning",
+            "description": (
+                "Strictly-scoped deterministic pipeline agent for BenchmarkQuotation processing. "
+                "No ReAct loop -- each stage is independently try/except'd so one failure does "
+                "not abort the rest. Falls back to keyword ClassificationService when OpenAI "
+                "unavailable. Reads CategoryMaster table at runtime -- no hardcoded categories."
+            ),
+            "inputs": "quotation_pk (BenchmarkQuotation PK), bench_request_pk (BenchmarkRequest PK)",
+            "outputs": "success, line_items (list of BenchmarkLineItem PKs), engine (azure_di | pdfplumber_fallback), stages (dict of per-stage outcomes), error",
+            "fallback": "Each stage has independent fallback. AzureDI -> pdfplumber. OpenAI -> keyword ClassificationService.",
+            "requires_key": "AZURE_DI_ENDPOINT + AZURE_DI_KEY + AZURE_OPENAI_API_KEY + AZURE_BLOB_ACCOUNT_NAME",
+            "pipeline_stages": [
+                {"num": 1, "name": "Azure Blob Upload", "color": "secondary", "detail": "Upload PDF to Azure Blob Storage (fail-silent -- quotation is still processed if upload fails). Container: AZURE_BLOB_CONTAINER_NAME, prefix: benchmarking/quotations/<year>/<month>/"},
+                {"num": 2, "name": "Azure DI Extraction", "color": "primary", "detail": "Extract text + tables using AzureDIExtractionService. Falls back to pdfplumber-based ExtractionService if DI credentials missing, SDK not installed, or API call fails. engine field records which path was used."},
+                {"num": 3, "name": "OpenAI Line Classification", "color": "success", "detail": "Batch-classify every extracted line item into CategoryMaster categories using Azure OpenAI GPT-4o. Single API call with all lines. classification_source set to 'AI'. Falls back to keyword ClassificationService if OpenAI unavailable."},
+                {"num": 4, "name": "Variance Threshold Application", "color": "warning", "detail": "Apply VarianceThresholdConfig per line item to compute acceptable variance bands. Reads WITHIN_RANGE_MAX (5%), MODERATE_MAX (15%), and HIGH (>15%) thresholds."},
+                {"num": 5, "name": "DB Persistence", "color": "danger", "detail": "Persist BenchmarkLineItem records with classification_source='AI', confidence scores, and variance bands. Linked to BenchmarkQuotation."},
+            ],
+        },
+    ]
+
+    # ---- Market Intelligence Fallback Chain ----
+    market_intelligence_chain = [
+        {
+            "step": 1,
+            "name": "Perplexity Live Web Search",
+            "icon": "bi-search-heart",
             "color": "primary",
-            "description": "Run deterministic header, line, and GRN matching against PO data using configurable tolerance thresholds.",
-            "tools": ["po_lookup", "run_header_match", "run_line_match", "grn_lookup", "run_grn_match", "get_tolerance_config"],
-        },
-        {
-            "name": "INVESTIGATE",
-            "skill": "ap_investigation",
-            "icon": "bi-search",
-            "color": "danger",
-            "description": "Recover from matching failures via re-extraction, PO/GRN retrieval delegation, vendor history, and case history.",
-            "tools": ["re_extract_field", "invoke_po_retrieval_agent", "invoke_grn_retrieval_agent", "get_vendor_history", "get_case_history", "invoice_details"],
-        },
-        {
-            "name": "DECIDE",
-            "skill": "ap_review_routing",
-            "icon": "bi-signpost-split",
-            "color": "success",
-            "description": "Persist results, create cases, submit recommendation, route to review queues, auto-close, or escalate.",
-            "tools": ["persist_invoice", "create_case", "submit_recommendation", "assign_reviewer", "generate_case_summary", "auto_close_case", "escalate_case", "exception_list", "reconciliation_summary"],
-        },
-    ]
-
-    try:
-        from apps.agents.skills.base import SkillRegistry
-        from apps.agents.services.supervisor_agent import SUPERVISOR_MAX_TOOL_ROUNDS, _ensure_skills_loaded
-        _ensure_skills_loaded()
-        for skill_name in ["invoice_extraction", "ap_validation", "ap_3way_matching", "ap_investigation", "ap_review_routing"]:
-            skill = SkillRegistry.get(skill_name)
-            if skill:
-                supervisor_skills.append({
-                    "name": skill.name,
-                    "description": skill.description,
-                    "tools": skill.tools,
-                    "tool_count": len(skill.tools),
-                    "decision_hints": skill.decision_hints,
-                    "prompt_extension": skill.prompt_extension,
-                })
-        supervisor_tool_list = SkillRegistry.all_tools(
-            ["invoice_extraction", "ap_validation", "ap_3way_matching", "ap_investigation", "ap_review_routing"]
-        )
-    except Exception:
-        SUPERVISOR_MAX_TOOL_ROUNDS = 15
-
-    supervisor_erp_routable = ["po_lookup", "grn_lookup", "vendor_search", "verify_vendor", "check_duplicate"]
-
-    supervisor_decision_rules = [
-        {"rule": "Must call submit_recommendation", "enforcement": "Code (interpret_response)", "icon": "bi-exclamation-triangle", "color": "danger"},
-        {"rule": "Never auto-close without checking ALL lines against tolerance", "enforcement": "Prompt instruction", "icon": "bi-x-octagon", "color": "danger"},
-        {"rule": "Verify vendor by tax ID, not name alone", "enforcement": "Prompt + verify_vendor tool", "icon": "bi-person-check", "color": "warning"},
-        {"rule": "Attempt re-extraction before PO_NOT_FOUND escalation", "enforcement": "Prompt instruction", "icon": "bi-arrow-repeat", "color": "info"},
-        {"rule": "Never hardcode tolerance values", "enforcement": "Prompt + get_tolerance_config tool", "icon": "bi-sliders", "color": "primary"},
-        {"rule": "No fabricated tool outputs", "enforcement": "Prompt instruction", "icon": "bi-shield-check", "color": "secondary"},
-        {"rule": "Max 15 tool rounds per session", "enforcement": "Code (MAX_TOOL_ROUNDS patch)", "icon": "bi-speedometer2", "color": "dark"},
-    ]
-
-    supervisor_confidence_routing = [
-        {"threshold": ">= 0.9", "condition": "All lines match within tolerance", "recommendation": "AUTO_CLOSE", "color": "success"},
-        {"threshold": ">= 0.6", "condition": "Some deviations exist", "recommendation": "SEND_TO_AP_REVIEW", "color": "warning"},
-        {"threshold": "< 0.6", "condition": "Critical exceptions found", "recommendation": "ESCALATE_TO_MANAGER", "color": "danger"},
-    ]
-
-    # ---- Langfuse Evaluation Score Catalog ----
-    langfuse_score_domains = [
-        {
-            "domain": "Extraction",
-            "icon": "bi-file-earmark-text",
-            "color": "primary",
-            "count": 21,
-            "examples": [
-                "extraction_success", "extraction_confidence", "extraction_is_valid",
-                "extraction_is_duplicate", "response_was_repaired", "qr_detected",
-                "decision_code_count", "weakest_critical_field_score", "ocr_char_count",
-                "extraction_auto_approve_confidence", "extraction_approval_decision",
-                "extraction_corrections_count", "bulk_job_success_rate",
+            "key": "PERPLEXITY_API_KEY",
+            "agent": "PerplexityMarketResearchAnalystAgent",
+            "model": "sonar-pro",
+            "description": (
+                "Primary path. Calls Perplexity API with sonar-pro model. Agent enforces strict "
+                "citation rules: every product URL must come EXACTLY from Perplexity citations[] "
+                "array. Returns 5-7 product suggestions with manufacturer, model, price, and "
+                "verified purchase/enquiry URLs."
+            ),
+            "triggers_fallback_on": [
+                "PERPLEXITY_API_KEY not set or empty",
+                "Any exception (network error, bad JSON, 4xx / 5xx HTTP)",
+                "Result with zero suggestions (blank or empty info returned)",
             ],
         },
         {
-            "domain": "Reconciliation",
-            "icon": "bi-arrow-left-right",
-            "color": "info",
-            "count": 37,
-            "examples": [
-                "recon_final_success", "recon_final_status_matched", "recon_po_found",
-                "recon_grn_found", "recon_auto_close_eligible", "recon_exception_count_final",
-                "recon_header_match_ratio", "recon_line_match_ratio", "recon_grn_match_ratio",
-                "recon_po_lookup_authoritative", "recon_match_status_correct",
-                "recon_auto_close_correct", "recon_review_outcome",
-            ],
-        },
-        {
-            "domain": "Agents",
-            "icon": "bi-robot",
-            "color": "success",
-            "count": 12,
-            "examples": [
-                "agent_pipeline_final_confidence", "agent_pipeline_recommendation_present",
-                "agent_pipeline_auto_close_candidate", "agent_confidence",
-                "agent_tool_success_rate", "tool_call_success",
-                "agent_feedback_triggered_rerun", "agent_feedback_improved_outcome",
-            ],
-        },
-        {
-            "domain": "Case / Review",
-            "icon": "bi-briefcase",
+            "step": 2,
+            "name": "Fallback Playwright Web Scraper",
+            "icon": "bi-globe2",
             "color": "warning",
-            "count": 20,
-            "examples": [
-                "case_processing_success", "case_closed", "case_auto_closed",
-                "case_stages_executed", "case_routed_to_review",
-                "review_approved", "review_rejected", "review_had_corrections",
-                "review_fields_corrected_count", "case_non_po_risk_score",
+            "key": "AZURE_OPENAI_API_KEY + Playwright (pip install playwright && playwright install chromium)",
+            "agent": "FallbackWebscraperAgent",
+            "model": "Azure OpenAI GPT-4o site selection + Playwright Chromium scraping",
+            "description": (
+                "Automatic fallback managed by MarketIntelligenceService.generate_auto(). "
+                "Step 1: GPT-4o selects 6 specific LISTING page URLs. "
+                "Step 2: Playwright visits each URL (30s timeout, 6000 char page cap). "
+                "Step 3: GPT-4o parses scraped text into same product dict shape. "
+                "Returns identical output format to Perplexity agent."
+            ),
+            "triggers_fallback_on": [
+                "Playwright not installed",
+                "Playwright fails to navigate all URLs",
+                "GPT-4o unable to parse scraped content",
             ],
         },
         {
-            "domain": "Posting",
-            "icon": "bi-send",
-            "color": "dark",
-            "count": 17,
-            "examples": [
-                "posting_confidence", "posting_touchless", "posting_ready_to_submit",
-                "posting_vendor_mapping_success", "posting_item_mapping_success_rate",
-                "posting_validation_error_count", "posting_payload_build_success",
-            ],
-        },
-        {
-            "domain": "ERP",
-            "icon": "bi-cloud",
+            "step": 3,
+            "name": "No Market Data (Partial Result)",
+            "icon": "bi-exclamation-triangle",
             "color": "secondary",
-            "count": 23,
-            "examples": [
-                "erp_resolution_success", "erp_resolution_fresh", "erp_cache_hit",
-                "erp_live_lookup_success", "erp_live_lookup_timeout",
-                "erp_db_fallback_used", "erp_submission_success",
-                "erp_duplicate_found", "erp_retry_success",
-            ],
-        },
-        {
-            "domain": "Cross-Cutting / Decision Quality",
-            "icon": "bi-intersect",
-            "color": "danger",
-            "count": 13,
-            "examples": [
-                "latency_ok", "fallback_used", "rbac_guardrail", "rbac_data_scope",
-                "copilot_session_length", "decision_confidence_alignment",
-                "review_required_correctly_triggered", "stale_data_accepted",
-            ],
-        },
-        {
-            "domain": "Supervisor Agent",
-            "icon": "bi-diagram-3",
-            "color": "purple",
-            "count": 6,
-            "examples": [
-                "supervisor_confidence", "supervisor_recommendation_present",
-                "supervisor_tools_used_count", "supervisor_recovery_used",
-                "supervisor_auto_close_candidate",
-            ],
-        },
-        {
-            "domain": "System Agents",
-            "icon": "bi-gear",
-            "color": "secondary",
-            "count": 7,
-            "examples": [
-                "system_agent_success", "system_agent_decision_count",
-                "system_review_routing_success", "system_case_summary_success",
-                "system_bulk_intake_success", "system_posting_preparation_success",
-            ],
+            "key": "None required",
+            "agent": "None -- MarketIntelligenceService records error",
+            "model": "N/A",
+            "description": (
+                "If both Perplexity and Playwright fallback fail, MarketIntelligenceService "
+                "records a failed status on the AnalysisRun. The UI shows an error banner "
+                "directing the user to retry. The procurement request remains in PENDING state."
+            ),
+            "triggers_fallback_on": [],
         },
     ]
 
-    langfuse_latency_thresholds = [
-        {"operation": "OCR (Document Intelligence)", "threshold_ms": 30000, "threshold_label": "30s"},
-        {"operation": "LLM Generation", "threshold_ms": 20000, "threshold_label": "20s"},
-        {"operation": "Agent Tool Call", "threshold_ms": 10000, "threshold_label": "10s"},
-        {"operation": "ERP API Call", "threshold_ms": 5000, "threshold_label": "5s"},
-        {"operation": "Reconciliation Sub-Stage", "threshold_ms": 5000, "threshold_label": "5s"},
-        {"operation": "Posting Sub-Stage", "threshold_ms": 5000, "threshold_label": "5s"},
-        {"operation": "Database Query / Fallback", "threshold_ms": 2000, "threshold_label": "2s"},
-    ]
-
-    langfuse_root_traces = [
-        "extraction_pipeline", "reconciliation_pipeline", "agent_pipeline",
-        "case_pipeline", "posting_pipeline", "erp_submission_pipeline",
-        "review_workflow", "copilot_session", "supervisor_pipeline",
-        "system_agent", "system_bulk_intake", "system_case_intake",
-        "system_posting_preparation",
-    ]
-
-    # ---- Celery Task Inventory ----
-    celery_tasks = [
-        {
-            "task": "extraction.tasks.run_extraction_task",
-            "trigger": "On-demand (document upload)",
-            "max_retries": "3",
-            "retry_delay": "60s",
-            "acks_late": "No",
-            "description": "11-stage extraction pipeline: OCR, classify, compose, LLM, repair, parse, normalize, validate, duplicate, persist, approve.",
-        },
-        {
-            "task": "reconciliation.tasks.run_reconciliation_task",
-            "trigger": "On-demand (post-extraction approval)",
-            "max_retries": "5",
-            "retry_delay": "60s",
-            "acks_late": "No",
-            "description": "Batch reconciliation run: mode resolution, PO/GRN lookup, header/line/GRN matching, tolerance, classification, exception building.",
-        },
-        {
-            "task": "reconciliation.tasks.reconcile_single_invoice_task",
-            "trigger": "On-demand (convenience wrapper)",
-            "max_retries": "5",
-            "retry_delay": "60s",
-            "acks_late": "No",
-            "description": "Single-invoice convenience wrapper around run_reconciliation_task.",
-        },
-        {
-            "task": "agents.tasks.run_agent_pipeline_task",
-            "trigger": "Auto-chained from reconciliation (non-MATCHED results)",
-            "max_retries": "1",
-            "retry_delay": "30s",
-            "acks_late": "No",
-            "description": "Agent orchestrator pipeline: PolicyEngine plan, execute agents in sequence, feedback loop for PO recovery.",
-        },
-        {
-            "task": "cases.tasks.process_case_task",
-            "trigger": "On-demand (case creation)",
-            "max_retries": "3",
-            "retry_delay": "30s",
-            "acks_late": "Yes",
-            "description": "Case orchestrator: drives the APCase through its processing path stages via CaseOrchestrator.run().",
-        },
-        {
-            "task": "cases.tasks.reprocess_case_from_stage_task",
-            "trigger": "On-demand (reprocessing request)",
-            "max_retries": "2",
-            "retry_delay": "10s",
-            "acks_late": "Yes",
-            "description": "Resume case processing from a specific stage (e.g., after human review or extraction correction).",
-        },
-        {
-            "task": "core_eval.tasks.process_approved_learning_actions",
-            "trigger": "Celery Beat (every 30 min)",
-            "max_retries": "1",
-            "retry_delay": "—",
-            "acks_late": "No",
-            "description": "Process approved LearningAction records from the core_eval framework. Only scheduled Beat task.",
-        },
-    ]
-
-    celery_task_chain = {
-        "description": "reconciliation_task -> (auto-chain) -> run_agent_pipeline_task for non-MATCHED results",
-        "actor_propagation": "actor_user_id passed through all Celery task signatures via .as_celery_headers()",
+    # ---- Market Intelligence Service (facade / compatibility wrapper) ----
+    market_intelligence_service_info = {
+        "class": "MarketIntelligenceService",
+        "module": "apps/procurement/services/market_intelligence_service.py",
+        "role": "Compatibility facade -- all logic delegates to PerplexityMarketResearchAnalystAgent",
+        "methods": [
+            {"name": "generate_auto(proc_request, generated_by)", "description": "Primary entry point. Tries Perplexity first, auto-falls back to FallbackWebscraperAgent on any failure. Called by views, Celery tasks, and management commands."},
+            {"name": "generate_with_perplexity(proc_request, generated_by)", "description": "Force Perplexity path only (no automatic fallback). Raises ValueError or HTTPError on failure -- used when caller explicitly wants Perplexity or nothing."},
+            {"name": "get_attrs_block(proc_request)", "description": "Returns formatted attribute block string for use in Perplexity prompt (delegates to PerplexityMarketResearchAnalystAgent)."},
+            {"name": "get_rec_context(proc_request)", "description": "Returns (system_code, system_name) tuple from latest RecommendationResult for the request."},
+        ],
+        "important_note": "All real logic lives in PerplexityMarketResearchAnalystAgent and FallbackWebscraperAgent. This service exists solely for import compatibility -- callers do not need to change their import statements.",
     }
 
-    # ---- Review Action Types ----
-    review_action_types = [
-        {"action": "APPROVE", "icon": "bi-check-circle", "color": "success", "description": "Accept the reconciliation result as-is. Invoice proceeds to posting."},
-        {"action": "APPROVE_WITH_FIXES", "icon": "bi-pencil-square", "color": "primary", "description": "Accept with field corrections. Reviewer-corrected values are persisted and a LearningSignal is emitted."},
-        {"action": "REJECT", "icon": "bi-x-circle", "color": "danger", "description": "Reject the invoice. Case moves to REJECTED terminal state."},
-        {"action": "NEEDS_INFO", "icon": "bi-question-circle", "color": "warning", "description": "Request additional information. Case remains in IN_REVIEW, pending vendor clarification."},
-        {"action": "ESCALATE", "icon": "bi-arrow-up-circle", "color": "dark", "description": "Escalate to Finance Manager. Case moves to ESCALATED state with priority bump."},
+    # ---- Azure DI Intelligence (two distinct use cases) ----
+    azure_di_use_cases = [
+        {
+            "use_case": "Invoice Extraction Pipeline (Core Platform)",
+            "service": "apps/extraction/services/ (ExtractionAdapter + InvoicePromptComposer)",
+            "icon": "bi-file-earmark-text",
+            "color": "primary",
+            "description": "Extracts structured invoice fields from uploaded PDFs for AP reconciliation. OCR text sent to InvoiceExtractionAgent (GPT-4o) with modular prompt composition.",
+            "model": "Azure Document Intelligence prebuilt-layout -> GPT-4o (Invoice Extraction Agent)",
+            "fallback": "No DI fallback -- required. Fails gracefully with EXTRACTION_FAILED status.",
+            "output": "Invoice, InvoiceLineItem DB records + ExtractionResult with confidence score",
+            "settings": "AZURE_DI_ENDPOINT, AZURE_DI_KEY",
+            "char_limit": "60,000 chars OCR text limit",
+        },
+        {
+            "use_case": "Quotation Extraction -- Benchmarking (Flow B)",
+            "service": "apps/benchmarking/services/azure_di_extraction_service.py (AzureDIExtractionService)",
+            "icon": "bi-file-earmark-bar-graph",
+            "color": "success",
+            "description": "Extracts text + tables from uploaded quotation PDFs for should-cost benchmarking. Returns structured line items with UOM, qty, unit rate, total.",
+            "model": "Azure Document Intelligence prebuilt-layout (Heuristic table parsing -> line items)",
+            "fallback": "pdfplumber-based ExtractionService -- activated when DI credentials missing, SDK not installed, or API call fails. engine field records 'azure_di' or 'pdfplumber_fallback'.",
+            "output": "text (str), tables (list), line_items (list of parsed line item dicts), raw_json, error, engine",
+            "settings": "AZURE_DI_ENDPOINT, AZURE_DI_KEY",
+            "char_limit": "No explicit limit -- full document processed",
+        },
+        {
+            "use_case": "Universal Document Extractor (Procurement Flow A/B)",
+            "service": "apps/procurement/agents/Azure_Document_Intelligence_Extractor_Agent.py (AzureDIExtractorAgent)",
+            "icon": "bi-file-earmark-medical",
+            "color": "info",
+            "description": "Universal ReAct-style agent treating Azure DI as an OpenAI tool. Supports invoice, quotation, PO, GRN, contract, proforma, HVAC request form, and any other doc type.",
+            "model": "Azure DI prebuilt-layout (as tool) + GPT-4o (synthesis via tool-calling ReAct loop)",
+            "fallback": "Returns engine='error' with structured error dict on any failure -- never raises.",
+            "output": "success, doc_type, confidence, header, line_items, commercial_terms, raw_ocr_text, tables, key_value_pairs, engine, duration_ms, error",
+            "settings": "AZURE_DI_ENDPOINT, AZURE_DI_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT",
+            "char_limit": "No explicit limit -- full document processed",
+        },
     ]
+
+    # ---- Azure Blob Storage ----
+    azure_blob_info = {
+        "class": "BlobStorageService",
+        "module": "apps.benchmarking.services.blob_storage_service",
+        "container": "finance-agents",
+        "account": "bradblob.blob.core.windows.net",
+        "prefix": "benchmarking/quotations/<year>/<month>/",
+        "auth": "AZURE_BLOB_CONNECTION_STRING (parsed for AccountName + AccountKey). Set AZURE_BLOB_CONTAINER_NAME for container override.",
+        "failsafe_description": "Fully fail-silent -- ImportError (SDK missing) and ValueError (not configured) both return ('', ''). No exception ever propagates to the main pipeline.",
+        "methods": [
+            {
+                "name": "upload_quotation(source, filename, request_ref)",
+                "description": "Upload a quotation PDF. source can be a file path (str), raw bytes, or file-like object. Builds blob path as benchmarking/quotations/<year>/<month>/<ref>_<ts>_<filename>.",
+                "returns": "(blob_name, blob_url) -- both empty on failure",
+            },
+            {
+                "name": "delete_blob(blob_name)",
+                "description": "Delete a blob by its full path. No-op if blob_name is empty. Deletes all snapshots.",
+                "returns": "bool -- True if deleted, False on any failure",
+            },
+            {
+                "name": "get_sas_url(blob_name, expiry_hours=24)",
+                "description": "Generate a time-limited read-only SAS URL for a stored blob. Default expiry is 24 hours.",
+                "returns": "str -- SAS URL, empty on failure",
+            },
+        ],
+        # IMPORTANT: must be a list -- iterating a string yields individual characters in Django templates
+        "also_used_by": [
+            "RFQGeneratorAgent -- uploads XLSX + PDF to rfq/<safe_title>/ when save_record=True (apps.documents.blob_service.upload_to_blob)",
+            "DocumentUpload pipeline -- stores uploaded invoices/documents at input/<YYYY>/<MM>/<id>_<filename> (apps.documents.blob_service)",
+            "BulkExtractionService -- same input/ path pattern for bulk-uploaded document sets",
+        ],
+        "blob_folders": [
+            {
+                "folder": "input/<YYYY>/<MM>/<upload_id>_<filename>",
+                "service": "apps.documents.blob_service",
+                "used_by": "All uploaded documents (invoices, quotations, HVAC forms). Set on DocumentUpload.blob_name + blob_url.",
+                "color": "primary",
+            },
+            {
+                "folder": "processed/<YYYY>/<MM>/<upload_id>_<filename>",
+                "service": "apps.documents.blob_service",
+                "used_by": "Documents moved after successful extraction and processing.",
+                "color": "success",
+            },
+            {
+                "folder": "exception/<YYYY>/<MM>/<upload_id>_<filename>",
+                "service": "apps.documents.blob_service",
+                "used_by": "Documents that failed extraction or processing (quarantined).",
+                "color": "danger",
+            },
+            {
+                "folder": "benchmarking/quotations/<YYYY>/<MM>/<ref>_<ts>_<filename>",
+                "service": "apps.benchmarking.services.blob_storage_service.BlobStorageService",
+                "used_by": "Quotation PDFs uploaded via benchmarking flow. Stored on BenchmarkQuotation.blob_name + blob_url.",
+                "color": "warning",
+            },
+            {
+                "folder": "rfq/<safe_title>/RFQ-<pk>-<YYYYMMDD>_<safe_title>.xlsx|.pdf",
+                "service": "apps.procurement.agents.RFQ_Generator_Agent.RFQGeneratorAgent",
+                "used_by": "Auto-generated RFQ documents (Excel + PDF). Stored on GeneratedRFQ.xlsx_blob_path + pdf_blob_path.",
+                "color": "info",
+            },
+        ],
+    }
+
+    # ---- Benchmarking Pipeline Stages (BenchmarkDocumentExtractorAgent) ----
+    benchmarking_pipeline_stages = [
+        {
+            "number": 1,
+            "code": "BLOB_UPLOAD",
+            "label": "Azure Blob Upload",
+            "icon": "bi-cloud-arrow-up",
+            "color": "secondary",
+            "description": "Upload quotation PDF to Azure Blob Storage (fail-silent). Container: AZURE_BLOB_CONTAINER_NAME. Path: benchmarking/quotations/<year>/<month>/. Returns (blob_name, blob_url) -- both empty if credentials missing or upload fails.",
+            "class": "BlobStorageService",
+            "fallback": "Fail-silent: pipeline continues without blob reference",
+        },
+        {
+            "number": 2,
+            "code": "AZURE_DI_EXTRACT",
+            "label": "Azure DI Extraction",
+            "icon": "bi-eye",
+            "color": "primary",
+            "description": "Azure Document Intelligence prebuilt-layout call to extract text + tables from the PDF. Heuristic table row parser identifies UOM / qty / unit rate / total line items. Returns raw_json for auditability.",
+            "class": "AzureDIExtractionService",
+            "fallback": "pdfplumber-based ExtractionService: activated when DI credentials missing, SDK not installed, or API call fails. engine field stores 'azure_di' or 'pdfplumber_fallback'.",
+        },
+        {
+            "number": 3,
+            "code": "AI_CLASSIFICATION",
+            "label": "OpenAI Batch Classification",
+            "icon": "bi-tags",
+            "color": "success",
+            "description": "Single Azure OpenAI GPT-4o call classifying ALL extracted line items into CategoryMaster categories (EQUIPMENT, CONTROLS, DUCTING, INSULATION, ACCESSORIES, INSTALLATION, T&C, etc.). Returns line_number, category, confidence per item. classification_source set to 'AI'.",
+            "class": "BenchmarkDocumentExtractorAgent (internal)",
+            "fallback": "Keyword ClassificationService: rule-based category matching when OpenAI unavailable or classification_source set to 'KEYWORD'.",
+        },
+        {
+            "number": 4,
+            "code": "VARIANCE_THRESHOLD",
+            "label": "Variance Threshold Application",
+            "icon": "bi-calculator",
+            "color": "warning",
+            "description": "Apply VarianceThresholdConfig per line item. WITHIN_RANGE: |variance%| < 5%. MODERATE: 5% to <15%. HIGH: >= 15%. NEEDS_REVIEW: no benchmark available. Thresholds configurable via DB VarianceThresholdConfig records.",
+            "class": "BenchmarkDocumentExtractorAgent (internal) + VarianceThresholdConfig model",
+            "fallback": "Hardcoded constants if no DB config found: WITHIN_RANGE_MAX=5, MODERATE_MAX=15.",
+        },
+        {
+            "number": 5,
+            "code": "DB_PERSIST",
+            "label": "DB Persistence",
+            "icon": "bi-database-fill-up",
+            "color": "danger",
+            "description": "Persist BenchmarkLineItem records with classification_source='AI', category, confidence scores, unit_rate, total, and computed variance bands. All linked to the parent BenchmarkQuotation.",
+            "class": "BenchmarkLineItem model (apps/benchmarking/models.py)",
+            "fallback": "Transaction rolls back on integrity error -- logs error but does not crash caller.",
+        },
+    ]
+
+    # ---- Web Search Service (last-resort benchmark fallback) ----
+    web_search_info = {
+        "service": "apps/procurement/services/web_search_service.py (WebSearchService)",
+        "purpose": "Last-resort fallback for benchmark price lookup when no internal DB data is available for a line item",
+        "resolution_chain": [
+            {"step": 1, "source": "DuckDuckGo Instant Answer API", "color": "success", "detail": "Free API, no key required. Queries DDG for product + price. Extracts AED/USD/SAR price patterns from text."},
+            {"step": 2, "source": "Bing Search Scrape", "color": "warning", "detail": "Lightweight Bing results page scrape (no API key). Falls back if DDG returns no price data."},
+            {"step": 3, "source": "No Data", "color": "secondary", "detail": "If both sources return no price, line is marked source='NO_DATA'. Confidence 0.0."},
+        ],
+        "confidence_cap": "0.35 -- all web-sourced prices marked source='WEB_SEARCH'",
+        "http_backend": "requests library if installed, else urllib fallback",
+        "note": "Prices from web search are INDICATIVE ESTIMATES only and require manual validation before use in negotiations.",
+    }
 
     response = render(request, "agents/reference.html", {
         "page_version": _PAGE_VERSION,
@@ -1463,25 +1677,20 @@ def agent_reference(request):
         "erp_connector_info": erp_connector_info,
         "erp_resolution_chain": erp_resolution_chain,
         "erp_resolution_types_info": erp_resolution_types_info,
-        # Supervisor Agent
-        "supervisor_phases": supervisor_phases,
-        "supervisor_skills": supervisor_skills,
-        "supervisor_tool_list": supervisor_tool_list,
-        "supervisor_tool_count": len(supervisor_tool_list),
-        "supervisor_max_tool_rounds": SUPERVISOR_MAX_TOOL_ROUNDS,
-        "supervisor_erp_routable": supervisor_erp_routable,
-        "supervisor_decision_rules": supervisor_decision_rules,
-        "supervisor_confidence_routing": supervisor_confidence_routing,
-        # Langfuse Evaluation Score Catalog
-        "langfuse_score_domains": langfuse_score_domains,
-        "langfuse_total_scores": sum(d["count"] for d in langfuse_score_domains),
-        "langfuse_latency_thresholds": langfuse_latency_thresholds,
-        "langfuse_root_traces": langfuse_root_traces,
-        # Celery Tasks
-        "celery_tasks": celery_tasks,
-        "celery_task_chain": celery_task_chain,
-        # Review Actions
-        "review_action_types": review_action_types,
+        # Procurement Agents
+        "procurement_agents": procurement_agents,
+        # Benchmarking Agents + Pipeline
+        "benchmarking_agents": benchmarking_agents,
+        "benchmarking_pipeline_stages": benchmarking_pipeline_stages,
+        # Market Intelligence (Perplexity + Fallback)
+        "market_intelligence_chain": market_intelligence_chain,
+        "market_intelligence_service_info": market_intelligence_service_info,
+        # Azure DI Intelligence
+        "azure_di_use_cases": azure_di_use_cases,
+        # Azure Blob Storage
+        "azure_blob_info": azure_blob_info,
+        # Web Search Service
+        "web_search_info": web_search_info,
     })
     response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response["Pragma"] = "no-cache"

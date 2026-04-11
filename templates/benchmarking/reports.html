@@ -1,0 +1,160 @@
+{% extends "procurement/proc_base.html" %}
+{% block title %}Reports | Benchmarking{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:home' %}" class="text-decoration-none">Home</a></li>
+    <li class="breadcrumb-item active">Benchmarking Reports</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <h1 class="fs-5 fw-bold mb-0" style="color:#111827;">Benchmarking Reports</h1>
+  <p class="mb-0 mt-1" style="font-size:.82rem;color:#6b7280;">Aggregated analysis across all completed requests</p>
+</div>
+
+{# KPI row #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-4">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Total Requests</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#111827;">{{ total_requests }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-4">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#059669;text-transform:uppercase;">Completed</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#059669;">{{ completed_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-4">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-body py-3 px-3">
+        <div style="font-size:.72rem;font-weight:600;color:#dc2626;text-transform:uppercase;">High Variance</div>
+        <div class="fs-3 fw-bold mt-1" style="color:#dc2626;">{{ high_variance_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  {# Geography breakdown #}
+  <div class="col-12 col-md-6">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-header bg-white border-bottom py-2 px-3">
+        <span class="fw-bold" style="font-size:.88rem;color:#111827;">By Geography</span>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0" style="font-size:.82rem;">
+          <thead style="background:#f9fafb;">
+            <tr><th class="px-3 py-2" style="color:#6b7280;">Geography</th><th class="py-2 text-end pe-3" style="color:#6b7280;">Requests</th></tr>
+          </thead>
+          <tbody>
+            {% for row in geo_breakdown %}
+            <tr>
+              <td class="px-3 py-2"><span class="badge bg-light text-dark border">{{ row.geography }}</span></td>
+              <td class="py-2 text-end pe-3 fw-600">{{ row.count }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="2" class="text-center py-3 text-muted">No data</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# Scope breakdown #}
+  <div class="col-12 col-md-6">
+    <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+      <div class="card-header bg-white border-bottom py-2 px-3">
+        <span class="fw-bold" style="font-size:.88rem;color:#111827;">By Scope Type</span>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0" style="font-size:.82rem;">
+          <thead style="background:#f9fafb;">
+            <tr><th class="px-3 py-2" style="color:#6b7280;">Scope</th><th class="py-2 text-end pe-3" style="color:#6b7280;">Requests</th></tr>
+          </thead>
+          <tbody>
+            {% for row in scope_breakdown %}
+            <tr>
+              <td class="px-3 py-2 fw-600" style="color:#374151;">{{ row.scope_type }}</td>
+              <td class="py-2 text-end pe-3 fw-600">{{ row.count }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="2" class="text-center py-3 text-muted">No data</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Recent completed requests #}
+<div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
+  <div class="card-header bg-white border-bottom py-2 px-3">
+    <span class="fw-bold" style="font-size:.88rem;color:#111827;">Recent Completed Requests</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0" style="font-size:.81rem;">
+      <thead style="background:#f9fafb;">
+        <tr>
+          <th class="px-3 py-2" style="color:#6b7280;">Title</th>
+          <th class="py-2" style="color:#6b7280;">Geography</th>
+          <th class="py-2" style="color:#6b7280;">Scope</th>
+          <th class="py-2 text-end" style="color:#6b7280;">Quoted (AED)</th>
+          <th class="py-2 text-end" style="color:#6b7280;">Deviation</th>
+          <th class="py-2" style="color:#6b7280;">Status</th>
+          <th class="py-2" style="color:#6b7280;">Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for req in recent_requests %}
+        <tr>
+          <td class="px-3 py-2">
+            <a href="{% url 'benchmarking:request_detail' req.pk %}"
+               class="text-decoration-none fw-600" style="color:#1665D8;">
+              {{ req.title|truncatechars:40 }}
+            </a>
+          </td>
+          <td class="py-2"><span class="badge bg-light text-dark border">{{ req.geography }}</span></td>
+          <td class="py-2 text-muted" style="font-size:.77rem;">{{ req.scope_type }}</td>
+          <td class="py-2 text-end">
+            {% if req.result and req.result.total_quoted %}{{ req.result.total_quoted|floatformat:0 }}{% else %}--{% endif %}
+          </td>
+          <td class="py-2 text-end fw-600
+            {% if req.result %}
+              {% if req.result.overall_status == 'WITHIN_RANGE' %}text-success
+              {% elif req.result.overall_status == 'MODERATE' %}text-warning
+              {% elif req.result.overall_status == 'HIGH' %}text-danger
+              {% else %}text-secondary{% endif %}
+            {% endif %}">
+            {% if req.result and req.result.overall_deviation_pct is not None %}{{ req.result.overall_deviation_pct|floatformat:1 }}%{% else %}--{% endif %}
+          </td>
+          <td class="py-2">
+            {% if req.result %}
+              <span class="badge bg-{% if req.result.overall_status == 'WITHIN_RANGE' %}success{% elif req.result.overall_status == 'MODERATE' %}warning text-dark{% elif req.result.overall_status == 'HIGH' %}danger{% else %}secondary{% endif %}" style="font-size:.7rem;">
+                {{ req.result.overall_status|cut:"_" }}
+              </span>
+            {% endif %}
+          </td>
+          <td class="py-2 text-muted">{{ req.updated_at|date:"d M Y" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="text-center py-4 text-muted">No completed requests yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

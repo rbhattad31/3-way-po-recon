@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "procurement/proc_base.html" %}
 {% load static %}
 
 {% block title %}New Procurement Request{% endblock %}
@@ -14,28 +14,51 @@
 {% endblock %}
 
 {% block content %}
+
+{# Landmark Group Header (kept, but made text more readable) #}
+<div class="mb-3 p-3 rounded d-flex align-items-center gap-3" style="
+  background:linear-gradient(135deg,#161d2c 0%,#121c2b 60%,#0c2436 100%);
+  color:#e6e6e6;
+  border:1px solid rgba(255,255,255,0.1);
+">
+  <div style="font-size:2rem;line-height:1;">&#127977;</div>
+  <div>
+    <div class="fw-bold" style="font-size:1.05rem;letter-spacing:.04em">LANDMARK GROUP</div>
+    <div style="font-size:.75rem;letter-spacing:.08em;color:#ffd700">MAX FASHION &nbsp;&#124;&nbsp; HOME CENTRE &nbsp;&#124;&nbsp; SPLASH &nbsp;&#124;&nbsp; CENTREPOINT &nbsp;&#124;&nbsp; SHOEMART &nbsp;&#124;&nbsp; BABYSHOP</div>
+    <div style="font-size:.68rem;color:rgba(255,255,255,.7);margin-top:.15rem">UAE &nbsp;&#183;&nbsp; KSA &nbsp;&#183;&nbsp; Oman &nbsp;&#183;&nbsp; Qatar &nbsp;&#183;&nbsp; Kuwait &nbsp;&#183;&nbsp; Bahrain &nbsp;&#124;&nbsp; Procurement Request Portal</div>
+  </div>
+  <div class="ms-auto d-flex gap-2">
+    <a href="{% url 'procurement:hvac_create' %}" class="btn btn-sm btn-warning text-dark fw-semibold">
+      <img src="{% static 'images/procurement-robot.png' %}" alt="" style="width:15px;height:15px;object-fit:contain;margin-right:.3rem;">HVAC Request
+    </a>
+    <a href="{% url 'procurement:request_list' %}" class="btn btn-sm btn-outline-light">
+      <i class="bi bi-list me-1"></i>All Requests
+    </a>
+  </div>
+</div>
+
 <div class="row justify-content-center">
   <div class="col-lg-9">
 
-    {# ── Entry Mode Selector ──────────────────────────────── #}
+    {# Entry Mode Selector #}
     <div class="card mb-3">
       <div class="card-body py-2">
         <div class="btn-group w-100" role="group" aria-label="Entry mode">
           <input type="radio" class="btn-check" name="entry_mode" id="mode_manual" value="manual" checked>
-          <label class="btn btn-outline-primary" for="mode_manual">
+          <label class="btn btn-outline-primary btn-sm" for="mode_manual">
             <i class="bi bi-pencil-square me-1"></i>Manual Entry
           </label>
           <input type="radio" class="btn-check" name="entry_mode" id="mode_upload" value="upload">
-          <label class="btn btn-outline-primary" for="mode_upload">
-            <i class="bi bi-file-earmark-pdf me-1"></i>Upload RFQ PDF &amp; Prefill
+          <label class="btn btn-outline-primary btn-sm" for="mode_upload">
+            <i class="bi bi-file-earmark-pdf me-1"></i>Upload RFQ PDF & Prefill
           </label>
         </div>
       </div>
     </div>
 
-    {# ── Upload + Prefill Panel ──────────────────────────── #}
+    {# Upload & Prefill Panel #}
     <div id="upload-panel" class="card mb-3" style="display:none;">
-      <div class="card-header bg-light">
+      <div class="card-header bg-body-tertiary">
         <h5 class="mb-0"><i class="bi bi-cloud-upload me-2"></i>Upload RFQ / Requirement Document</h5>
       </div>
       <div class="card-body">
@@ -44,12 +67,19 @@
           <div class="row mb-3">
             <div class="col-md-6">
               <label class="form-label">Document File <span class="text-danger">*</span></label>
-              <input type="file" name="file" id="prefill-file" class="form-control" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif" required>
+              <input
+                type="file"
+                name="file"
+                id="prefill-file"
+                class="form-control"
+                accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif"
+                required
+              >
               <div class="form-text">Supported: PDF, PNG, JPG, TIFF (max 25 MB)</div>
             </div>
             <div class="col-md-3">
               <label class="form-label">Document Type</label>
-              <select name="source_document_type" class="form-select">
+              <select name="source_document_type" class="form-select form-select-sm">
                 <option value="RFQ">RFQ</option>
                 <option value="REQUIREMENT_NOTE">Requirement Note</option>
                 <option value="SPECIFICATION">Specification</option>
@@ -58,12 +88,22 @@
               </select>
             </div>
             <div class="col-md-3">
-              <label class="form-label">Domain Hint</label>
-              <input type="text" name="domain_code" class="form-control" placeholder="e.g. HVAC, IT">
+              <label class="form-label">Domain</label>
+              <select name="domain_code" class="form-select form-select-sm">
+                <option value="">-- Select Domain --</option>
+                <option value="HVAC">HVAC & Cooling</option>
+                <option value="IT">IT & Technology</option>
+                <option value="FACILITIES">Facilities & Maintenance</option>
+                <option value="RETAIL_OPS">Retail Operations</option>
+                <option value="SECURITY">Security Systems</option>
+                <option value="CIVIL">Civil & Construction</option>
+                <option value="FIRE_SAFETY">Fire Safety</option>
+                <option value="OTHER">Other</option>
+              </select>
             </div>
           </div>
-          <button type="submit" class="btn btn-primary" id="btn-extract">
-            <i class="bi bi-cpu me-1"></i>Upload &amp; Extract
+          <button type="submit" class="btn btn-primary btn-sm" id="btn-extract">
+            <i class="bi bi-cpu me-1"></i>Upload & Extract
           </button>
         </form>
 
@@ -83,7 +123,7 @@
       </div>
     </div>
 
-    {# ── Main Form (Manual + Prefill Review) ─────────────── #}
+    {# Main Form (Manual + Prefill Review) #}
     <div class="card" id="main-form-card">
       <div class="card-header">
         <h5 class="mb-0">
@@ -105,17 +145,29 @@
             <div class="col-md-8">
               <label class="form-label">Title <span class="text-danger">*</span></label>
               <div class="input-group">
-                <input type="text" name="title" id="field-title" class="form-control" required placeholder="e.g. Data Center Cooling System">
-                <span class="input-group-text confidence-indicator" id="conf-title" style="display:none;" title="Extraction confidence">
+                <input
+                  type="text"
+                  name="title"
+                  id="field-title"
+                  class="form-control"
+                  required
+                  placeholder="e.g. Data Center Cooling System"
+                >
+                <span
+                  class="input-group-text confidence-indicator"
+                  id="conf-title"
+                  style="display:none;"
+                  title="Extraction confidence"
+                >
                   <i class="bi bi-robot"></i> <small></small>
                 </span>
               </div>
             </div>
             <div class="col-md-4">
               <label class="form-label">Priority</label>
-              <select name="priority" class="form-select">
+              <select name="priority" class="form-select form-select-sm">
                 {% for val, label in priority_choices %}
-                <option value="{{ val }}" {% if val == "MEDIUM" %}selected{% endif %}>{{ label }}</option>
+                  <option value="{{ val }}" {% if val == "MEDIUM" %}selected{% endif %}>{{ label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -124,8 +176,19 @@
           <div class="mb-3">
             <label class="form-label">Description</label>
             <div class="input-group">
-              <textarea name="description" id="field-description" class="form-control" rows="3" placeholder="Describe the procurement need…"></textarea>
-              <span class="input-group-text confidence-indicator" id="conf-description" style="display:none;" title="Extraction confidence">
+              <textarea
+                name="description"
+                id="field-description"
+                class="form-control"
+                rows="3"
+                placeholder="Describe the procurement need…"
+              ></textarea>
+              <span
+                class="input-group-text confidence-indicator"
+                id="conf-description"
+                style="display:none;"
+                title="Extraction confidence"
+              >
                 <i class="bi bi-robot"></i> <small></small>
               </span>
             </div>
@@ -135,21 +198,52 @@
             <div class="col-md-4">
               <label class="form-label">Domain Code <span class="text-danger">*</span></label>
               <div class="input-group">
-                <input type="text" name="domain_code" id="field-domain_code" class="form-control" required placeholder="e.g. HVAC, IT, FACILITIES">
-                <span class="input-group-text confidence-indicator" id="conf-domain_code" style="display:none;" title="Extraction confidence">
+                <select
+                  name="domain_code"
+                  id="field-domain_code"
+                  class="form-select"
+                  required
+                >
+                  <option value="">-- Select Domain --</option>
+                  <option value="HVAC">HVAC & Cooling</option>
+                  <option value="IT">IT & Technology</option>
+                  <option value="FACILITIES">Facilities & Maintenance</option>
+                  <option value="RETAIL_OPS">Retail Operations</option>
+                  <option value="SECURITY">Security Systems</option>
+                  <option value="CIVIL">Civil & Construction</option>
+                  <option value="FIRE_SAFETY">Fire Safety</option>
+                  <option value="OTHER">Other</option>
+                </select>
+                <span
+                  class="input-group-text confidence-indicator"
+                  id="conf-domain_code"
+                  style="display:none;"
+                  title="Extraction confidence"
+                >
                   <i class="bi bi-robot"></i> <small></small>
                 </span>
               </div>
             </div>
             <div class="col-md-4">
               <label class="form-label">Schema Code</label>
-              <input type="text" name="schema_code" id="field-schema_code" class="form-control" placeholder="Optional schema identifier">
+              <input
+                type="text"
+                name="schema_code"
+                id="field-schema_code"
+                class="form-control"
+                placeholder="Optional schema identifier"
+              >
             </div>
             <div class="col-md-4">
               <label class="form-label">Request Type <span class="text-danger">*</span></label>
-              <select name="request_type" id="field-request_type" class="form-select" required>
+              <select
+                name="request_type"
+                id="field-request_type"
+                class="form-select"
+                required
+              >
                 {% for val, label in type_choices %}
-                <option value="{{ val }}">{{ label }}</option>
+                  <option value="{{ val }}">{{ label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -159,8 +253,25 @@
             <div class="col-md-4">
               <label class="form-label">Country</label>
               <div class="input-group">
-                <input type="text" name="geography_country" id="field-geography_country" class="form-control" placeholder="e.g. USA">
-                <span class="input-group-text confidence-indicator" id="conf-geography_country" style="display:none;" title="Extraction confidence">
+                <select
+                  name="geography_country"
+                  id="field-geography_country"
+                  class="form-select"
+                >
+                  <option value="">-- Select Country --</option>
+                  <option value="UAE">UAE - United Arab Emirates</option>
+                  <option value="KSA">KSA - Saudi Arabia</option>
+                  <option value="OMN">Oman</option>
+                  <option value="QAT">Qatar</option>
+                  <option value="KWT">Kuwait</option>
+                  <option value="BHR">Bahrain</option>
+                </select>
+                <span
+                  class="input-group-text confidence-indicator"
+                  id="conf-geography_country"
+                  style="display:none;"
+                  title="Extraction confidence"
+                >
                   <i class="bi bi-robot"></i> <small></small>
                 </span>
               </div>
@@ -168,8 +279,19 @@
             <div class="col-md-4">
               <label class="form-label">City</label>
               <div class="input-group">
-                <input type="text" name="geography_city" id="field-geography_city" class="form-control" placeholder="e.g. Dallas">
-                <span class="input-group-text confidence-indicator" id="conf-geography_city" style="display:none;" title="Extraction confidence">
+                <input
+                  type="text"
+                  name="geography_city"
+                  id="field-geography_city"
+                  class="form-control"
+                  placeholder="e.g. Dallas"
+                >
+                <span
+                  class="input-group-text confidence-indicator"
+                  id="conf-geography_city"
+                  style="display:none;"
+                  title="Extraction confidence"
+                >
                   <i class="bi bi-robot"></i> <small></small>
                 </span>
               </div>
@@ -177,8 +299,20 @@
             <div class="col-md-4">
               <label class="form-label">Currency</label>
               <div class="input-group">
-                <input type="text" name="currency" id="field-currency" class="form-control" value="USD" maxlength="3">
-                <span class="input-group-text confidence-indicator" id="conf-currency" style="display:none;" title="Extraction confidence">
+                <input
+                  type="text"
+                  name="currency"
+                  id="field-currency"
+                  class="form-control"
+                  value="USD"
+                  maxlength="3"
+                >
+                <span
+                  class="input-group-text confidence-indicator"
+                  id="conf-currency"
+                  style="display:none;"
+                  title="Extraction confidence"
+                >
                   <i class="bi bi-robot"></i> <small></small>
                 </span>
               </div>
@@ -186,15 +320,25 @@
           </div>
 
           {# Dynamic Attributes #}
-          <hr>
+          <hr class="my-3">
           <h6 class="mb-3"><i class="bi bi-list-ul me-1"></i>Requirements / Attributes</h6>
           <div id="attributes-container">
             <div class="row g-2 mb-2 attribute-row">
               <div class="col-md-3">
-                <input type="text" name="attr_code[]" class="form-control form-control-sm" placeholder="Attribute code">
+                <input
+                  type="text"
+                  name="attr_code[]"
+                  class="form-control form-control-sm"
+                  placeholder="Attribute code"
+                >
               </div>
               <div class="col-md-3">
-                <input type="text" name="attr_label[]" class="form-control form-control-sm" placeholder="Label">
+                <input
+                  type="text"
+                  name="attr_label[]"
+                  class="form-control form-control-sm"
+                  placeholder="Label"
+                >
               </div>
               <div class="col-md-2">
                 <select name="attr_type[]" class="form-select form-select-sm">
@@ -206,22 +350,39 @@
                 </select>
               </div>
               <div class="col-md-3">
-                <input type="text" name="attr_value[]" class="form-control form-control-sm" placeholder="Value">
+                <input
+                  type="text"
+                  name="attr_value[]"
+                  class="form-control form-control-sm"
+                  placeholder="Value"
+                >
               </div>
               <div class="col-md-1">
-                <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('.attribute-row').remove()">
+                <button
+                  type="button"
+                  class="btn btn-outline-danger btn-sm"
+                  onclick="this.closest('.attribute-row').remove()"
+                >
                   <i class="bi bi-x"></i>
                 </button>
               </div>
             </div>
           </div>
-          <button type="button" class="btn btn-outline-secondary btn-sm mb-4" onclick="addAttributeRow()">
+          <button
+            type="button"
+            class="btn btn-outline-secondary btn-sm mb-4"
+            onclick="addAttributeRow()"
+          >
             <i class="bi bi-plus me-1"></i>Add Attribute
           </button>
 
           <div class="d-flex justify-content-end gap-2">
-            <a href="{% url 'procurement:request_list' %}" class="btn btn-outline-secondary">Cancel</a>
-            <button type="submit" class="btn btn-primary" id="btn-submit">
+            <a href="{% url 'procurement:request_list' %}" class="btn btn-outline-secondary btn-sm">Cancel</a>
+            <button
+              type="submit"
+              class="btn btn-primary btn-sm"
+              id="btn-submit"
+            >
               <i class="bi bi-check-lg me-1"></i>Create Request
             </button>
           </div>
@@ -272,6 +433,7 @@ function addAttributeRow(code, label, type, value, confidence) {
   container.appendChild(row);
 }
 
+
 // ── Confidence badge helper ──
 function showConfidence(fieldId, confidence) {
   var el = document.getElementById('conf-' + fieldId);
@@ -279,9 +441,15 @@ function showConfidence(fieldId, confidence) {
   el.style.display = '';
   var pct = (confidence * 100).toFixed(0);
   el.querySelector('small').textContent = pct + '%';
-  el.className = 'input-group-text confidence-indicator ' +
-    (confidence >= 0.7 ? 'text-success' : (confidence >= 0.4 ? 'text-warning' : 'text-danger'));
+  if (confidence >= 0.7) {
+    el.className = 'input-group-text confidence-indicator text-success';
+  } else if (confidence >= 0.4) {
+    el.className = 'input-group-text confidence-indicator text-warning';
+  } else {
+    el.className = 'input-group-text confidence-indicator text-danger';
+  }
 }
+
 
 // ── Upload & Extract ──
 document.getElementById('prefill-upload-form').addEventListener('submit', function(e) {
@@ -317,6 +485,7 @@ document.getElementById('prefill-upload-form').addEventListener('submit', functi
   });
 });
 
+
 function pollPrefill(requestId, attempt) {
   if (attempt >= 60) {
     document.getElementById('extraction-error').textContent = 'Extraction timed out. Please check the request workspace.';
@@ -348,6 +517,7 @@ function pollPrefill(requestId, attempt) {
   }, 2000);
 }
 
+
 function populatePrefillData(payload, requestId) {
   document.getElementById('prefill_request_id').value = requestId;
   document.getElementById('form-title').textContent = 'Review Extracted Data';
@@ -366,8 +536,11 @@ function populatePrefillData(payload, requestId) {
     if (field) {
       field.value = info.value || '';
       showConfidence(key, info.confidence || 0);
-      if (info.confidence < 0.4) field.classList.add('border-danger');
-      else if (info.confidence < 0.7) field.classList.add('border-warning');
+      if (info.confidence < 0.4) {
+        field.classList.add('border-danger');
+      } else if (info.confidence < 0.7) {
+        field.classList.add('border-warning');
+      }
     }
   }
 
@@ -393,6 +566,7 @@ function populatePrefillData(payload, requestId) {
   // Scroll to form
   document.getElementById('main-form-card').scrollIntoView({ behavior: 'smooth' });
 }
+
 
 // ── Intercept form submit for prefill confirm ──
 document.getElementById('main-form').addEventListener('submit', function(e) {

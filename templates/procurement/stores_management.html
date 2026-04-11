@@ -1,0 +1,916 @@
+{% extends "procurement/proc_base.html" %}
+{% load static %}
+
+{% block title %}Stores Management - LMG Procurement{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ---- KPI Cards ---- */
+.sm-kpi-row { display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1.5rem; }
+.sm-kpi-card {
+  flex:1; min-width:160px;
+  background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+  padding:1rem 1.25rem; display:flex; align-items:center; gap:.9rem;
+}
+.sm-kpi-card .sm-kpi-icon {
+  width:42px; height:42px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.2rem; flex-shrink:0;
+}
+.sm-kpi-card .sm-kpi-label { font-size:.72rem; color:#6b7280; font-weight:500; text-transform:uppercase; letter-spacing:.05em; }
+.sm-kpi-card .sm-kpi-value { font-size:1.7rem; font-weight:700; color:#111827; line-height:1; }
+.sm-kpi-card.total  .sm-kpi-icon { background:#eff6ff; color:#1665D8; }
+.sm-kpi-card.active .sm-kpi-icon { background:#f0fdf4; color:#16a34a; }
+.sm-kpi-card.inactive .sm-kpi-icon { background:#fff7ed; color:#d97706; }
+
+/* ---- Toolbar ---- */
+.sm-toolbar {
+  background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+  padding:.8rem 1rem; display:flex; flex-wrap:wrap; align-items:center;
+  gap:.6rem; margin-bottom:1rem;
+}
+.sm-toolbar .sm-search-wrap { flex:1; min-width:180px; position:relative; }
+.sm-toolbar .sm-search-wrap input {
+  width:100%; padding:.42rem .75rem .42rem 2.1rem;
+  border:1px solid #d1d5db; border-radius:7px;
+  font-size:.82rem; color:#374151;
+  background:#f9fafb;
+}
+.sm-toolbar .sm-search-wrap input:focus { outline:none; border-color:#1665D8; background:#fff; }
+.sm-toolbar .sm-search-icon {
+  position:absolute; left:.6rem; top:50%; transform:translateY(-50%);
+  color:#9ca3af; font-size:.85rem;
+}
+.sm-filter-select {
+  padding:.42rem .7rem; border:1px solid #d1d5db; border-radius:7px;
+  font-size:.82rem; color:#374151; background:#f9fafb; cursor:pointer;
+}
+.sm-filter-select:focus { outline:none; border-color:#1665D8; }
+.sm-btn-new {
+  background:#1665D8; color:#fff; border:none; border-radius:7px;
+  padding:.42rem 1rem; font-size:.82rem; font-weight:600;
+  display:flex; align-items:center; gap:.4rem; cursor:pointer;
+  transition:background .15s;
+}
+.sm-btn-new:hover { background:#1255b8; }
+
+/* ---- Table ---- */
+.sm-table-wrap {
+  background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+  overflow:hidden;
+}
+.sm-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+.sm-table thead th {
+  background:#f9fafb; padding:.65rem .9rem;
+  text-align:left; font-weight:600; color:#374151;
+  border-bottom:1px solid #e5e7eb; white-space:nowrap;
+}
+.sm-table tbody tr { border-bottom:1px solid #f3f4f6; transition:background .1s; }
+.sm-table tbody tr:last-child { border-bottom:none; }
+.sm-table tbody tr:hover { background:#f9fafb; }
+.sm-table td { padding:.65rem .9rem; color:#374151; vertical-align:middle; }
+.sm-table td.store-id-cell { font-weight:600; color:#1665D8; font-size:.85rem; }
+.sm-badge {
+  display:inline-flex; align-items:center; gap:.25rem;
+  padding:.2rem .55rem; border-radius:20px;
+  font-size:.72rem; font-weight:600;
+}
+.sm-badge.active  { background:#dcfce7; color:#15803d; }
+.sm-badge.inactive { background:#fef3c7; color:#92400e; }
+.sm-action-btn {
+  padding:.25rem .5rem; border-radius:6px; border:none; cursor:pointer;
+  font-size:.78rem; font-weight:500; transition:background .15s;
+}
+.sm-action-btn.edit   { background:#eff6ff; color:#1665D8; }
+.sm-action-btn.edit:hover   { background:#dbeafe; }
+.sm-action-btn.delete { background:#fef2f2; color:#dc2626; }
+.sm-action-btn.delete:hover { background:#fee2e2; }
+.sm-empty-row td { text-align:center; color:#9ca3af; padding:3rem 1rem; }
+
+/* ---- Pagination ---- */
+.sm-pagination { display:flex; justify-content:space-between; align-items:center; padding:.75rem 1rem; border-top:1px solid #f3f4f6; flex-wrap:wrap; gap:.5rem; }
+.sm-pagination .sm-page-info { font-size:.78rem; color:#6b7280; }
+.sm-pagination .page-link { font-size:.8rem; color:#1665D8; border-color:#e5e7eb; }
+.sm-pagination .page-item.active .page-link { background:#1665D8; border-color:#1665D8; }
+
+/* ---- Modals ---- */
+.sm-modal-sec-label {
+  font-size:.7rem; font-weight:700; color:#9ca3af;
+  text-transform:uppercase; letter-spacing:.07em;
+  margin-top:1rem; margin-bottom:.4rem;
+}
+.sm-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:.7rem; }
+@media(max-width:576px) { .sm-form-grid { grid-template-columns:1fr; } }
+.sm-form-grid.full { grid-template-columns:1fr; }
+.form-label-sm { font-size:.78rem; font-weight:500; color:#374151; margin-bottom:.2rem; }
+.form-control-sm-x {
+  width:100%; padding:.38rem .65rem; border:1px solid #d1d5db;
+  border-radius:6px; font-size:.82rem; color:#374151;
+}
+.form-control-sm-x:focus { outline:none; border-color:#1665D8; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{# ── Hero ── #}
+<div class="cfg-hero mb-4">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-3" style="position:relative;z-index:1;">
+    <div class="d-flex align-items-center gap-3">
+      <div class="cfg-hero-icon"><i class="bi bi-shop"></i></div>
+      <div>
+        <h4 class="cfg-hero-title">Stores Management</h4>
+        <div class="cfg-hero-sub">View, create and manage all HVAC store profiles used for request autofill</div>
+        <div class="d-flex flex-wrap gap-2 mt-2">
+          <span class="cfg-hero-badge"><i class="bi bi-database me-1"></i>Live DB Sync</span>
+          <span class="cfg-hero-badge"><i class="bi bi-shield-check me-1"></i>RBAC Secured</span>
+        </div>
+      </div>
+    </div>
+    <button class="sm-btn-new" onclick="openCreateModal()">
+      <i class="bi bi-plus-lg"></i> New Store
+    </button>
+  </div>
+</div>
+
+{# ── KPI Cards ── #}
+<div class="sm-kpi-row">
+  <div class="sm-kpi-card total">
+    <div class="sm-kpi-icon"><i class="bi bi-shop"></i></div>
+    <div>
+      <div class="sm-kpi-label">Total Stores</div>
+      <div class="sm-kpi-value">{{ total_stores }}</div>
+    </div>
+  </div>
+  <div class="sm-kpi-card active">
+    <div class="sm-kpi-icon"><i class="bi bi-check-circle"></i></div>
+    <div>
+      <div class="sm-kpi-label">Active</div>
+      <div class="sm-kpi-value">{{ active_stores }}</div>
+    </div>
+  </div>
+  <div class="sm-kpi-card inactive">
+    <div class="sm-kpi-icon"><i class="bi bi-pause-circle"></i></div>
+    <div>
+      <div class="sm-kpi-label">Inactive</div>
+      <div class="sm-kpi-value">{{ inactive_stores }}</div>
+    </div>
+  </div>
+</div>
+
+{# ── Toolbar ── #}
+<form method="get" id="filterForm">
+  <div class="sm-toolbar">
+    <div class="sm-search-wrap">
+      <i class="bi bi-search sm-search-icon"></i>
+      <input type="text" name="q" value="{{ query }}" placeholder="Search store ID, brand, city, country..." id="searchInput">
+    </div>
+    <select name="country" class="sm-filter-select" onchange="document.getElementById('filterForm').submit()">
+      <option value="">All Countries</option>
+      {% for c in countries %}<option value="{{ c }}" {% if c == country_filter %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select>
+    <select name="store_type" class="sm-filter-select" onchange="document.getElementById('filterForm').submit()">
+      <option value="">All Types</option>
+      {% for t in store_types %}<option value="{{ t }}" {% if t == store_type_filter %}selected{% endif %}>{{ t }}</option>{% endfor %}
+    </select>
+    <select name="status" class="sm-filter-select" onchange="document.getElementById('filterForm').submit()">
+      <option value="">All Status</option>
+      <option value="active"   {% if status_filter == 'active'   %}selected{% endif %}>Active</option>
+      <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive</option>
+    </select>
+    <button type="submit" class="sm-btn-new" style="background:#374151;">
+      <i class="bi bi-funnel"></i> Filter
+    </button>
+    {% if query or country_filter or store_type_filter or status_filter %}
+    <a href="{% url 'procurement:stores_management' %}" class="sm-btn-new" style="background:#6b7280;text-decoration:none;">
+      <i class="bi bi-x-lg"></i> Clear
+    </a>
+    {% endif %}
+  </div>
+</form>
+
+{# ── Table ── #}
+<div class="sm-table-wrap">
+  <table class="sm-table">
+    <thead>
+      <tr>
+        <th>Store ID</th>
+        <th>Brand</th>
+        <th>Country</th>
+        <th>City</th>
+        <th>Type</th>
+        <th>Format</th>
+        <th>Area (sqft)</th>
+        <th>Budget</th>
+        <th>Status</th>
+        <th style="text-align:right;">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="storeTableBody">
+      {% for store in page_obj %}
+      <tr id="store-row-{{ store.pk }}">
+        <td class="store-id-cell">{{ store.store_id }}</td>
+        <td>{{ store.brand|default:"-" }}</td>
+        <td>{{ store.country|default:"-" }}</td>
+        <td>{{ store.city|default:"-" }}</td>
+        <td>{{ store.store_type|default:"-" }}</td>
+        <td>{{ store.store_format|default:"-" }}</td>
+        <td>{% if store.area_sqft %}{{ store.area_sqft|floatformat:0 }}{% else %}-{% endif %}</td>
+        <td>{{ store.budget_level|default:"-" }}</td>
+        <td>
+          {% if store.is_active %}
+            <span class="sm-badge active"><i class="bi bi-check-circle-fill"></i> Active</span>
+          {% else %}
+            <span class="sm-badge inactive"><i class="bi bi-pause-circle-fill"></i> Inactive</span>
+          {% endif %}
+        </td>
+        <td style="text-align:right;">
+          <button class="sm-action-btn edit" onclick="openEditModal({{ store.pk }})">
+            <i class="bi bi-pencil me-1"></i>Edit
+          </button>
+          <button class="sm-action-btn delete ms-1" onclick="confirmDelete({{ store.pk }}, '{{ store.store_id|escapejs }}')">
+            <i class="bi bi-trash me-1"></i>Delete
+          </button>
+        </td>
+      </tr>
+      {% empty %}
+      <tr class="sm-empty-row">
+        <td colspan="10">
+          <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:.5rem;color:#d1d5db;"></i>
+          No stores found.{% if query or country_filter or store_type_filter or status_filter %} Try clearing the filters.{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {# Pagination #}
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="sm-pagination">
+    <div class="sm-page-info">
+      Showing {{ page_obj.start_index }}&ndash;{{ page_obj.end_index }} of {{ page_obj.paginator.count }} stores
+    </div>
+    <nav>
+      <ul class="pagination pagination-sm mb-0">
+        {% if page_obj.has_previous %}
+        <li class="page-item">
+          <a class="page-link" href="?q={{ query }}&country={{ country_filter }}&store_type={{ store_type_filter }}&status={{ status_filter }}&page={{ page_obj.previous_page_number }}">&laquo;</a>
+        </li>
+        {% endif %}
+        {% for num in page_obj.paginator.page_range %}
+          {% if num == page_obj.number %}
+          <li class="page-item active"><a class="page-link" href="#">{{ num }}</a></li>
+          {% elif num >= page_obj.number|add:"-2" and num <= page_obj.number|add:"2" %}
+          <li class="page-item">
+            <a class="page-link" href="?q={{ query }}&country={{ country_filter }}&store_type={{ store_type_filter }}&status={{ status_filter }}&page={{ num }}">{{ num }}</a>
+          </li>
+          {% endif %}
+        {% endfor %}
+        {% if page_obj.has_next %}
+        <li class="page-item">
+          <a class="page-link" href="?q={{ query }}&country={{ country_filter }}&store_type={{ store_type_filter }}&status={{ status_filter }}&page={{ page_obj.next_page_number }}">&raquo;</a>
+        </li>
+        {% endif %}
+      </ul>
+    </nav>
+  </div>
+  {% endif %}
+</div>
+
+
+<div class="modal fade" id="createStoreModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;background:#f9fafb;border-radius:14px 14px 0 0;">
+        <div class="d-flex align-items-center gap-2">
+          <div style="width:32px;height:32px;border-radius:8px;background:#eff6ff;display:flex;align-items:center;justify-content:center;">
+            <i class="bi bi-shop text-primary"></i>
+          </div>
+          <div>
+            <h6 class="mb-0" style="font-weight:700;color:#111827;font-size:.92rem;">New Store Profile</h6>
+            <div style="font-size:.72rem;color:#6b7280;">All fields are optional except Store ID</div>
+          </div>
+        </div>
+        <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body py-3 px-4">
+        <div id="createAlert" class="alert alert-danger py-2 px-3 d-none" style="font-size:.8rem;"></div>
+
+        <div class="sm-modal-sec-label">Identity</div>
+        <div class="sm-form-grid">
+          <div>
+            <label class="form-label-sm">Store ID <span class="text-danger">*</span></label>
+            <input type="text" id="c_store_id" class="form-control-sm-x" placeholder="e.g. LMG-IN-MUM-001" required>
+          </div>
+          <div>
+            <label class="form-label-sm">Brand</label>
+            <input type="text" id="c_brand" class="form-control-sm-x" placeholder="e.g. LMG Retail">
+          </div>
+          <div>
+            <label class="form-label-sm">Country</label>
+            <select id="c_country" class="form-control-sm-x" onchange="onCountryCChange()">
+              <option value="">-- Select --</option>
+              <option value="UAE">UAE</option>
+              <option value="KSA">Saudi Arabia (KSA)</option>
+              <option value="QATAR">Qatar</option>
+              <option value="OMAN">Oman</option>
+              <option value="KUWAIT">Kuwait</option>
+              <option value="BAHRAIN">Bahrain</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">City</label>
+            <select id="c_city" class="form-control-sm-x">
+              <option value="">-- Select Country First --</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Store Type</label>
+            <select id="c_store_type" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option value="MALL">Mall</option>
+              <option value="STANDALONE">Standalone</option>
+              <option value="WAREHOUSE">Warehouse</option>
+              <option value="OFFICE">Office</option>
+              <option value="DATA_CENTER">Data Center</option>
+              <option value="RESTAURANT">Restaurant / F&amp;B</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Store Format</label>
+            <select id="c_store_format" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option value="RETAIL">Retail</option>
+              <option value="HYPERMARKET">Hypermarket</option>
+              <option value="FURNITURE">Furniture</option>
+              <option value="ELECTRONICS">Electronics</option>
+              <option value="FOOD_BEVERAGE">Food &amp; Beverage</option>
+              <option value="FASHION_RETAIL">Fashion Retail</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sm-modal-sec-label">Physical Parameters</div>
+        <div class="sm-form-grid">
+          <div>
+            <label class="form-label-sm">Area (sq ft)</label>
+            <input type="number" id="c_area_sqft" class="form-control-sm-x" placeholder="e.g. 25000">
+          </div>
+          <div>
+            <label class="form-label-sm">Ceiling Height (ft)</label>
+            <input type="number" id="c_ceiling_height_ft" class="form-control-sm-x" placeholder="e.g. 14">
+          </div>
+          <div>
+            <label class="form-label-sm">Operating Hours</label>
+            <input type="text" id="c_operating_hours" class="form-control-sm-x" placeholder="e.g. 09:00 - 22:00">
+          </div>
+          <div>
+            <label class="form-label-sm">Footfall Category</label>
+            <select id="c_footfall_category" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option><option>Very High</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sm-modal-sec-label">Environmental Conditions</div>
+        <div class="sm-form-grid">
+          <div>
+            <label class="form-label-sm">Ambient Temp Max (C)</label>
+            <input type="number" id="c_ambient_temp_max" class="form-control-sm-x" placeholder="e.g. 38">
+          </div>
+          <div>
+            <label class="form-label-sm">Humidity Level</label>
+            <select id="c_humidity_level" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option><option>Very High</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Dust Exposure</label>
+            <select id="c_dust_exposure" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Heat Load Category</label>
+            <select id="c_heat_load_category" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Fresh Air Requirement</label>
+            <select id="c_fresh_air_requirement" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Existing HVAC Type</label>
+            <input type="text" id="c_existing_hvac_type" class="form-control-sm-x" placeholder="e.g. Split, Central AHU">
+          </div>
+        </div>
+
+        <div class="sm-modal-sec-label">Procurement Profile</div>
+        <div class="sm-form-grid">
+          <div>
+            <label class="form-label-sm">Budget Level</label>
+            <select id="c_budget_level" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Economy</option><option>Standard</option><option>Premium</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Energy Efficiency Priority</label>
+            <select id="c_energy_efficiency_priority" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sm-modal-sec-label">Constraints</div>
+        <textarea id="c_landlord_constraints" class="form-control-sm-x" rows="2"
+          placeholder="Landlord / building constraints (optional)"></textarea>
+
+        <div class="mt-2 d-flex align-items-center gap-2">
+          <input type="checkbox" id="c_is_active" checked style="width:15px;height:15px;">
+          <label for="c_is_active" class="form-label-sm mb-0">Active (visible for autofill)</label>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light px-3" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="sm-btn-new px-4" onclick="submitCreateStore()" id="createSubmitBtn">
+          <i class="bi bi-plus-circle me-1"></i> Create Store
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div class="modal fade" id="editStoreModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;background:#f9fafb;border-radius:14px 14px 0 0;">
+        <div class="d-flex align-items-center gap-2">
+          <div style="width:32px;height:32px;border-radius:8px;background:#eff6ff;display:flex;align-items:center;justify-content:center;">
+            <i class="bi bi-pencil text-primary"></i>
+          </div>
+          <div>
+            <h6 class="mb-0" style="font-weight:700;color:#111827;font-size:.92rem;">Edit Store Profile</h6>
+            <div id="editStoreIdLabel" style="font-size:.72rem;color:#6b7280;"></div>
+          </div>
+        </div>
+        <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body py-3 px-4">
+        <div id="editAlert" class="alert alert-danger py-2 px-3 d-none" style="font-size:.8rem;"></div>
+        <input type="hidden" id="e_pk">
+
+        <div class="sm-modal-sec-label">Identity</div>
+        <div class="sm-form-grid">
+          <div>
+            <label class="form-label-sm">Store ID</label>
+            <input type="text" id="e_store_id" class="form-control-sm-x" style="background:#f9fafb;" readonly>
+          </div>
+          <div>
+            <label class="form-label-sm">Brand</label>
+            <input type="text" id="e_brand" class="form-control-sm-x">
+          </div>
+          <div>
+            <label class="form-label-sm">Country</label>
+            <select id="e_country" class="form-control-sm-x" onchange="onCountryEChange()">
+              <option value="">-- Select --</option>
+              <option value="UAE">UAE</option>
+              <option value="KSA">Saudi Arabia (KSA)</option>
+              <option value="QATAR">Qatar</option>
+              <option value="OMAN">Oman</option>
+              <option value="KUWAIT">Kuwait</option>
+              <option value="BAHRAIN">Bahrain</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">City</label>
+            <select id="e_city" class="form-control-sm-x">
+              <option value="">-- Select Country First --</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Store Type</label>
+            <select id="e_store_type" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option value="MALL">Mall</option>
+              <option value="STANDALONE">Standalone</option>
+              <option value="WAREHOUSE">Warehouse</option>
+              <option value="OFFICE">Office</option>
+              <option value="DATA_CENTER">Data Center</option>
+              <option value="RESTAURANT">Restaurant / F&amp;B</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Store Format</label>
+            <select id="e_store_format" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option value="RETAIL">Retail</option>
+              <option value="HYPERMARKET">Hypermarket</option>
+              <option value="FURNITURE">Furniture</option>
+              <option value="ELECTRONICS">Electronics</option>
+              <option value="FOOD_BEVERAGE">Food &amp; Beverage</option>
+              <option value="FASHION_RETAIL">Fashion Retail</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sm-modal-sec-label">Physical Parameters</div>
+        <div class="sm-form-grid">
+          <div>
+            <label class="form-label-sm">Area (sq ft)</label>
+            <input type="number" id="e_area_sqft" class="form-control-sm-x">
+          </div>
+          <div>
+            <label class="form-label-sm">Ceiling Height (ft)</label>
+            <input type="number" id="e_ceiling_height_ft" class="form-control-sm-x">
+          </div>
+          <div>
+            <label class="form-label-sm">Operating Hours</label>
+            <input type="text" id="e_operating_hours" class="form-control-sm-x">
+          </div>
+          <div>
+            <label class="form-label-sm">Footfall Category</label>
+            <select id="e_footfall_category" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option><option>Very High</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sm-modal-sec-label">Environmental Conditions</div>
+        <div class="sm-form-grid">
+          <div>
+            <label class="form-label-sm">Ambient Temp Max (C)</label>
+            <input type="number" id="e_ambient_temp_max" class="form-control-sm-x">
+          </div>
+          <div>
+            <label class="form-label-sm">Humidity Level</label>
+            <select id="e_humidity_level" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option><option>Very High</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Dust Exposure</label>
+            <select id="e_dust_exposure" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Heat Load Category</label>
+            <select id="e_heat_load_category" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Fresh Air Requirement</label>
+            <select id="e_fresh_air_requirement" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Existing HVAC Type</label>
+            <input type="text" id="e_existing_hvac_type" class="form-control-sm-x">
+          </div>
+        </div>
+
+        <div class="sm-modal-sec-label">Procurement Profile</div>
+        <div class="sm-form-grid">
+          <div>
+            <label class="form-label-sm">Budget Level</label>
+            <select id="e_budget_level" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Economy</option><option>Standard</option><option>Premium</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label-sm">Energy Efficiency Priority</label>
+            <select id="e_energy_efficiency_priority" class="form-control-sm-x">
+              <option value="">-- Select --</option>
+              <option>Low</option><option>Medium</option><option>High</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sm-modal-sec-label">Constraints</div>
+        <textarea id="e_landlord_constraints" class="form-control-sm-x" rows="2"></textarea>
+
+        <div class="mt-2 d-flex align-items-center gap-2">
+          <input type="checkbox" id="e_is_active" style="width:15px;height:15px;">
+          <label for="e_is_active" class="form-label-sm mb-0">Active</label>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light px-3" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="sm-btn-new px-4" onclick="submitUpdateStore()" id="editSubmitBtn"
+                style="background:#059669;">
+          <i class="bi bi-check-circle me-1"></i> Save Changes
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div class="modal fade" id="deleteStoreModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content" style="border-radius:14px;border:1px solid #e5e7eb;">
+      <div class="modal-header" style="border-bottom:1px solid #f3f4f6;background:#fff7f7;border-radius:14px 14px 0 0;">
+        <h6 class="mb-0" style="font-weight:700;color:#dc2626;font-size:.9rem;">
+          <i class="bi bi-exclamation-triangle me-2"></i>Delete Store
+        </h6>
+        <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="font-size:.83rem;color:#374151;">
+        <p class="mb-1">Are you sure you want to delete store:</p>
+        <p class="mb-0" style="font-weight:700;color:#dc2626;" id="deleteStoreLabel"></p>
+        <p class="mt-2 mb-0" style="font-size:.76rem;color:#9ca3af;">This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f3f4f6;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-light px-3" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-danger px-3" onclick="submitDeleteStore()" id="deleteConfirmBtn">
+          <i class="bi bi-trash me-1"></i> Delete
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_head %}
+<script>
+const STORES_CREATE_URL = "{% url 'procurement:api_store_management_create' %}";
+const STORES_DETAIL_BASE = "{% url 'procurement:api_store_management_detail' pk=0 %}".replace("/0/", "/");
+const CSRF_TOKEN = "{{ csrf_token }}";
+
+// Shared country -> cities map (same as request_create_hvac.html)
+const COUNTRY_CITIES = {
+  'UAE':    ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain', 'Al Ain'],
+  'KSA':    ['Riyadh', 'Jeddah', 'Dammam', 'Mecca', 'Medina', 'Al Khobar', 'Tabuk', 'Abha', 'Jubail'],
+  'QATAR':  ['Doha', 'Lusail', 'Al Wakrah', 'Al Khor', 'Al Rayyan', 'Dukhan'],
+  'OMAN':   ['Muscat', 'Salalah', 'Sohar', 'Nizwa', 'Sur', 'Ibri'],
+  'KUWAIT': ['Kuwait City', 'Hawalli', 'Ahmadi', 'Salmiya', 'Jahra', 'Farwaniya'],
+  'BAHRAIN':['Manama', 'Muharraq', 'Riffa', 'Hamad Town', 'Isa Town', 'Sitra']
+};
+
+function _populateCities(countrySelId, citySelId, selectedCity) {
+  var country = document.getElementById(countrySelId).value;
+  var citySelect = document.getElementById(citySelId);
+  citySelect.innerHTML = '';
+  if (!country || !COUNTRY_CITIES[country]) {
+    citySelect.innerHTML = '<option value="">-- Select Country First --</option>';
+    return;
+  }
+  var ph = document.createElement('option');
+  ph.value = ''; ph.textContent = '-- Select City --';
+  citySelect.appendChild(ph);
+  COUNTRY_CITIES[country].forEach(function(c) {
+    var opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    if (selectedCity && c === selectedCity) opt.selected = true;
+    citySelect.appendChild(opt);
+  });
+}
+
+function onCountryCChange() { _populateCities('c_country', 'c_city', null); }
+function onCountryEChange() { _populateCities('e_country', 'e_city', null); }
+
+let _deleteTargetPk = null;
+let _createModal, _editModal, _deleteModal;
+
+document.addEventListener("DOMContentLoaded", function () {
+  _createModal = new bootstrap.Modal(document.getElementById("createStoreModal"));
+  _editModal   = new bootstrap.Modal(document.getElementById("editStoreModal"));
+  _deleteModal = new bootstrap.Modal(document.getElementById("deleteStoreModal"));
+
+  // Live search on Enter
+  document.getElementById("searchInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") document.getElementById("filterForm").submit();
+  });
+});
+
+// ---- Helpers ----
+function csrfFormData(obj) {
+  const fd = new FormData();
+  fd.append("csrfmiddlewaretoken", CSRF_TOKEN);
+  for (const [k, v] of Object.entries(obj)) { if (v !== null && v !== undefined) fd.append(k, v); }
+  return fd;
+}
+
+function setSelectVal(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  for (const opt of el.options) { if (opt.value === val) { el.value = val; return; } }
+  // If not found, add dynamic option
+  if (val) { const o = new Option(val, val); el.add(o); el.value = val; }
+}
+
+// ---- CREATE ----
+function openCreateModal() {
+  // Clear fields
+  ["c_store_id","c_brand","c_country","c_city","c_area_sqft","c_ceiling_height_ft",
+   "c_operating_hours","c_ambient_temp_max","c_existing_hvac_type","c_landlord_constraints"
+  ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  ["c_store_type","c_store_format","c_footfall_category","c_humidity_level",
+   "c_dust_exposure","c_heat_load_category","c_fresh_air_requirement",
+   "c_budget_level","c_energy_efficiency_priority"
+  ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  document.getElementById("c_is_active").checked = true;
+  document.getElementById("createAlert").classList.add("d-none");
+  document.getElementById("createSubmitBtn").disabled = false;
+  onCountryCChange(); // reset city dropdown
+  _createModal.show();
+}
+
+function submitCreateStore() {
+  const storeId = document.getElementById("c_store_id").value.trim();
+  if (!storeId) {
+    showAlert("createAlert", "Store ID is required.");
+    return;
+  }
+  const btn = document.getElementById("createSubmitBtn");
+  btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Saving...';
+
+  const payload = {
+    store_id: storeId,
+    f_brand: document.getElementById("c_brand").value,
+    f_country: document.getElementById("c_country").value,
+    f_city: document.getElementById("c_city").value,
+    f_store_type: document.getElementById("c_store_type").value,
+    f_store_format: document.getElementById("c_store_format").value,
+    f_area_sqft: document.getElementById("c_area_sqft").value,
+    f_ceiling_height_ft: document.getElementById("c_ceiling_height_ft").value,
+    f_operating_hours: document.getElementById("c_operating_hours").value,
+    f_footfall_category: document.getElementById("c_footfall_category").value,
+    f_ambient_temp_max: document.getElementById("c_ambient_temp_max").value,
+    f_humidity_level: document.getElementById("c_humidity_level").value,
+    f_dust_exposure: document.getElementById("c_dust_exposure").value,
+    f_heat_load_category: document.getElementById("c_heat_load_category").value,
+    f_fresh_air_requirement: document.getElementById("c_fresh_air_requirement").value,
+    f_existing_hvac_type: document.getElementById("c_existing_hvac_type").value,
+    f_budget_level: document.getElementById("c_budget_level").value,
+    f_energy_efficiency_priority: document.getElementById("c_energy_efficiency_priority").value,
+    f_landlord_constraints: document.getElementById("c_landlord_constraints").value,
+    is_active: document.getElementById("c_is_active").checked ? "true" : "false",
+  };
+
+  fetch(STORES_CREATE_URL, { method: "POST", body: csrfFormData(payload) })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        _createModal.hide();
+        window.location.reload();
+      } else {
+        showAlert("createAlert", data.error || "Failed to create store.");
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Create Store';
+      }
+    })
+    .catch(() => {
+      showAlert("createAlert", "Network error.");
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Create Store';
+    });
+}
+
+// ---- EDIT ----
+function openEditModal(pk) {
+  document.getElementById("editAlert").classList.add("d-none");
+  document.getElementById("editSubmitBtn").disabled = false;
+  document.getElementById("editStoreIdLabel").textContent = "Loading...";
+
+  fetch(STORES_DETAIL_BASE + pk + "/")
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById("e_pk").value = d.pk;
+      document.getElementById("e_store_id").value = d.store_id;
+      document.getElementById("editStoreIdLabel").textContent = "Store: " + d.store_id;
+      document.getElementById("e_brand").value = d.brand || "";
+      setSelectVal("e_country", d.country || "");
+      _populateCities('e_country', 'e_city', d.city || ""); // populate cities and pre-select saved city
+      setSelectVal("e_store_type", d.store_type || "");
+      setSelectVal("e_store_format", d.store_format || "");
+      document.getElementById("e_area_sqft").value = d.area_sqft || "";
+      document.getElementById("e_ceiling_height_ft").value = d.ceiling_height_ft || "";
+      document.getElementById("e_operating_hours").value = d.operating_hours || "";
+      setSelectVal("e_footfall_category", d.footfall_category || "");
+      document.getElementById("e_ambient_temp_max").value = d.ambient_temp_max || "";
+      setSelectVal("e_humidity_level", d.humidity_level || "");
+      setSelectVal("e_dust_exposure", d.dust_exposure || "");
+      setSelectVal("e_heat_load_category", d.heat_load_category || "");
+      setSelectVal("e_fresh_air_requirement", d.fresh_air_requirement || "");
+      document.getElementById("e_existing_hvac_type").value = d.existing_hvac_type || "";
+      setSelectVal("e_budget_level", d.budget_level || "");
+      setSelectVal("e_energy_efficiency_priority", d.energy_efficiency_priority || "");
+      document.getElementById("e_landlord_constraints").value = d.landlord_constraints || "";
+      document.getElementById("e_is_active").checked = d.is_active;
+      _editModal.show();
+    })
+    .catch(() => { alert("Failed to load store profile."); });
+}
+
+function submitUpdateStore() {
+  const pk = document.getElementById("e_pk").value;
+  const btn = document.getElementById("editSubmitBtn");
+  btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Saving...';
+
+  const payload = {
+    f_brand: document.getElementById("e_brand").value,
+    f_country: document.getElementById("e_country").value,
+    f_city: document.getElementById("e_city").value,
+    f_store_type: document.getElementById("e_store_type").value,
+    f_store_format: document.getElementById("e_store_format").value,
+    f_area_sqft: document.getElementById("e_area_sqft").value,
+    f_ceiling_height_ft: document.getElementById("e_ceiling_height_ft").value,
+    f_operating_hours: document.getElementById("e_operating_hours").value,
+    f_footfall_category: document.getElementById("e_footfall_category").value,
+    f_ambient_temp_max: document.getElementById("e_ambient_temp_max").value,
+    f_humidity_level: document.getElementById("e_humidity_level").value,
+    f_dust_exposure: document.getElementById("e_dust_exposure").value,
+    f_heat_load_category: document.getElementById("e_heat_load_category").value,
+    f_fresh_air_requirement: document.getElementById("e_fresh_air_requirement").value,
+    f_existing_hvac_type: document.getElementById("e_existing_hvac_type").value,
+    f_budget_level: document.getElementById("e_budget_level").value,
+    f_energy_efficiency_priority: document.getElementById("e_energy_efficiency_priority").value,
+    f_landlord_constraints: document.getElementById("e_landlord_constraints").value,
+    is_active: document.getElementById("e_is_active").checked ? "true" : "false",
+  };
+
+  fetch(STORES_DETAIL_BASE + pk + "/", { method: "POST", body: csrfFormData(payload) })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        _editModal.hide();
+        window.location.reload();
+      } else {
+        showAlert("editAlert", data.error || "Failed to update store.");
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i> Save Changes';
+      }
+    })
+    .catch(() => {
+      showAlert("editAlert", "Network error.");
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-circle me-1"></i> Save Changes';
+    });
+}
+
+// ---- DELETE ----
+function confirmDelete(pk, storeId) {
+  _deleteTargetPk = pk;
+  document.getElementById("deleteStoreLabel").textContent = storeId;
+  document.getElementById("deleteConfirmBtn").disabled = false;
+  _deleteModal.show();
+}
+
+function submitDeleteStore() {
+  if (!_deleteTargetPk) return;
+  const btn = document.getElementById("deleteConfirmBtn");
+  btn.disabled = true; btn.textContent = "Deleting...";
+
+  const fd = new FormData();
+  fd.append("csrfmiddlewaretoken", CSRF_TOKEN);
+  fd.append("_action", "DELETE");
+
+  fetch(STORES_DETAIL_BASE + _deleteTargetPk + "/", { method: "POST", body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        _deleteModal.hide();
+        const row = document.getElementById("store-row-" + _deleteTargetPk);
+        if (row) row.remove();
+        _deleteTargetPk = null;
+      } else {
+        alert(data.error || "Failed to delete.");
+        btn.disabled = false; btn.innerHTML = '<i class="bi bi-trash me-1"></i> Delete';
+      }
+    })
+    .catch(() => { alert("Network error."); btn.disabled = false; });
+}
+
+// ---- Alert helper ----
+function showAlert(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.classList.remove("d-none");
+}
+</script>
+{% endblock %}

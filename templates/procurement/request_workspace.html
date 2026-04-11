@@ -1,361 +1,2010 @@
-{% extends "base.html" %}
+﻿{% extends "procurement/proc_base.html" %}
 {% load static %}
 
-{% block title %}{{ proc_request.title }} — Workspace{% endblock %}
+{% block title %}{{ proc_request.title }} -- HVAC Intelligence{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/procurement/workspace.css' %}">
+<style>
+/* ---- Reasoning Summary accordion overrides ---- */
+.rs-accordion .accordion-button {
+  font-size: .83rem;
+  font-weight: 600;
+  padding: .55rem .9rem;
+  background: #f8fafc;
+  color: #1e293b;
+  border-radius: 6px !important;
+}
+.rs-accordion .accordion-button:not(.collapsed) {
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: none;
+}
+.rs-accordion .accordion-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px !important;
+  margin-bottom: .45rem;
+  overflow: hidden;
+}
+.rs-accordion .accordion-body {
+  padding: .75rem 1rem;
+  font-size: .82rem;
+}
+.rs-table { font-size: .8rem; }
+.rs-table th { background: #f1f5f9; font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+.rs-badge-primary { font-size: .7rem; padding: .2em .55em; }
+/* Citation cards */
+.citation-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: .75rem 1rem;
+  margin-bottom: .6rem;
+  background: #fafafa;
+  transition: box-shadow .15s;
+}
+.citation-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); border-color: #bfdbfe; }
+.citation-source { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.citation-snippet { font-size: .8rem; color: #475569; margin: .3rem 0 .3rem; }
+.citation-url { font-size: .75rem; color: #2563eb; word-break: break-all; }
+/* Recommendation summary table */
+.rec-summary-table td, .rec-summary-table th { vertical-align: middle; font-size: .82rem; }
+.rec-summary-table th { font-size: .73rem; text-transform: uppercase; letter-spacing: .04em; color: #64748b; background: #f8fafc; }
+.driver-chip {
+  display: inline-block;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  border-radius: 20px;
+  padding: .2em .75em;
+  font-size: .75rem;
+  font-weight: 600;
+  margin: .15rem .15rem;
+}
+/* ---- RFQ Download Cards ---- */
+.rfq-dl-card {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .45rem .85rem .45rem .55rem;
+  border-radius: 10px;
+  border: 1.5px solid #e2e8f0;
+  background: #fff;
+  color: #1e293b;
+  font-size: .82rem;
+  font-weight: 600;
+  transition: box-shadow .15s, transform .12s, border-color .15s;
+  cursor: pointer;
+  min-width: 130px;
+}
+.rfq-dl-card:hover {
+  box-shadow: 0 4px 14px rgba(0,0,0,.1);
+  transform: translateY(-1px);
+  color: #1e293b;
+}
+.rfq-dl-excel { border-color: #c6e6c6; }
+.rfq-dl-excel:hover { border-color: #1D6F42; background: #f0faf2; }
+.rfq-dl-pdf   { border-color: #fac8c8; }
+.rfq-dl-pdf:hover   { border-color: #E53935; background: #fff5f5; }
+.rfq-dl-icon { flex-shrink: 0; line-height: 1; }
+.rfq-dl-label { flex: 1; line-height: 1.25; }
+.rfq-dl-label small { font-size: .7rem; font-weight: 400; color: #64748b; }
+.rfq-dl-arrow { font-size: .85rem; color: #94a3b8; margin-left: .2rem; }
+.rfq-dl-excel:hover .rfq-dl-arrow { color: #1D6F42; }
+.rfq-dl-pdf:hover   .rfq-dl-arrow { color: #E53935; }
+
+/* ---- Market Intelligence (External tab) ---- */
+.mi-section-label {
+  font-size:.72rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.07em; color:#6b7280; margin-bottom:.6rem;
+  display:flex; align-items:center; gap:.4rem;
+}
+.mi-section-label::after { content:""; flex:1; height:1px; background:#e5e7eb; }
+#ws-mi-suggestions-table { font-size:.8rem; }
+#ws-mi-suggestions-table thead th {
+  font-size:.68rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.05em; color:#6b7280; background:#f9fafb;
+  border-bottom:2px solid #e5e7eb; white-space:nowrap;
+}
+.fit-circle {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:42px; height:42px; border-radius:50%; font-size:.8rem; font-weight:700; border:3px solid;
+}
+.fit-green { border-color:#22c55e; color:#15803d; background:#f0fdf4; }
+.fit-amber { border-color:#f59e0b; color:#92400e; background:#fffbeb; }
+.fit-red   { border-color:#ef4444; color:#991b1b; background:#fef2f2; }
+.benefit-chip {
+  display:inline-block; background:#eff6ff; color:#1e40af;
+  border:1px solid #bfdbfe; border-radius:12px;
+  padding:.15rem .55rem; font-size:.67rem; font-weight:500; margin:.1rem .1rem 0 0;
+}
+.mi-placeholder {
+  background:#fff; border:1.5px dashed #d1d5db; border-radius:12px;
+  padding:3rem; text-align:center; color:#9ca3af;
+}
+.mi-query-banner {
+  background:linear-gradient(135deg,#eff6ff,#e0f2fe); border:1px solid #bae6fd;
+  border-radius:10px; padding:.9rem 1.2rem; margin-bottom:1.25rem;
+}
+.mi-attr-row { display:flex; justify-content:space-between; align-items:baseline; padding:.18rem 0; border-bottom:1px dashed #f0f0f0; font-size:.76rem; }
+.mi-attr-label { color:#6b7280; }
+.mi-attr-val { color:#111827; font-weight:500; text-align:right; max-width:55%; }
+[data-bs-toggle="collapse"] .mi-chevron { transition:transform .22s ease; }
+[data-bs-toggle="collapse"][aria-expanded="true"] .mi-chevron { transform:rotate(180deg); }
+</style>
+{% endblock %}
 
 {% block breadcrumb %}
-<nav aria-label="breadcrumb" class="mb-3">
-  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
-    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Home</a></li>
-    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}">Procurement</a></li>
-    <li class="breadcrumb-item active">{{ proc_request.title|truncatechars:40 }}</li>
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb mb-0" style="font-size:.78rem">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:procurement_dashboard' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}" class="text-decoration-none">HVAC Requests</a></li>
+    <li class="breadcrumb-item active">{{ proc_request.title|truncatechars:45 }}</li>
+    
   </ol>
 </nav>
 {% endblock %}
 
 {% block content %}
 
-{# ── Request Summary ── #}
-<div class="card mb-4">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <h5 class="mb-0"><i class="bi bi-cart4 me-2"></i>{{ proc_request.title }}</h5>
-    <div class="d-flex gap-2">
+{# -- Request Header -- #}
+<div class="ws-header mb-4">
+  <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+    <div class="d-flex align-items-center gap-3">
+      <div class="ws-icon">
+        <i class="bi bi-snow2"></i>
+      </div>
+      <div>
+        <h5 class="mb-1 fw-bold text-dark">{{ proc_request.title }}</h5>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          {% if proc_request.status == "DRAFT" %}
+            <span class="badge bg-secondary">Draft</span>
+          {% elif proc_request.status == "READY" %}
+            <span class="badge bg-info text-dark">Ready</span>
+          {% elif proc_request.status == "PROCESSING" %}
+            <span class="badge bg-primary">Processing</span>
+          {% elif proc_request.status == "COMPLETED" %}
+            <span class="badge bg-success">Completed</span>
+          {% elif proc_request.status == "REVIEW_REQUIRED" %}
+            <span class="badge bg-warning text-dark">Review Required</span>
+          {% elif proc_request.status == "FAILED" %}
+            <span class="badge bg-danger">Failed</span>
+          {% endif %}
+          {% if proc_request.priority == "CRITICAL" %}
+            <span class="priority-dot text-danger"><i class="bi bi-circle-fill me-1"></i>CRITICAL</span>
+          {% elif proc_request.priority == "HIGH" %}
+            <span class="priority-dot text-warning"><i class="bi bi-circle-fill me-1"></i>HIGH</span>
+          {% elif proc_request.priority == "MEDIUM" %}
+            <span class="priority-dot text-info"><i class="bi bi-circle-fill me-1"></i>MEDIUM</span>
+          {% else %}
+            <span class="priority-dot text-muted"><i class="bi bi-circle-fill me-1"></i>LOW</span>
+          {% endif %}
+          {% if proc_request.geography_country %}
+          <span class="text-muted small"><i class="bi bi-geo-alt me-1"></i>{{ proc_request.geography_country }}</span>
+          {% endif %}
+          <span class="text-muted small"><i class="bi bi-calendar3 me-1"></i>{{ proc_request.created_at|date:"d M Y" }}</span>
+        </div>
+      </div>
+    </div>
+    {% if recommendation %}
+<div class="px-3 py-2 rounded-3 ">
+
+ 
+  
+
+  <div style="
+    position: relative;
+    display: inline-block;
+    padding: 2px; 
+    border-radius: 10px;
+    background: linear-gradient(270deg, #00f5ff, #ff00ff, #00ff85, #00f5ff);
+    background-size: 600% 600%;
+    animation: borderGlow 5s linear infinite;
+    font-size: 0.9rem;
+    color: yellow;
+    font-weight: 600;
+">
+  <div style="
+      background: #111827; 
+      border-radius: 8px; 
+      padding: 6px 10px;
+      position: relative;
+      z-index: 1;
+  ">
+    {% if reason_summary %}
+      {{ reason_summary.system_name }}
+    {% else %}
+      {{ recommendation.recommended_option|truncatechars:50 }}
+    {% endif %}
+  </div>
+</div>
+
+
+
+
+<!-- Keyframes for animation -->
+<style>
+@keyframes borderGlow {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+</style>
+
+</div>
+{% endif %}
+    <div class="d-flex gap-2 flex-wrap">
       {% if proc_request.status == "DRAFT" %}
       <form method="post" action="{% url 'procurement:mark_ready' pk=proc_request.pk %}">
         {% csrf_token %}
-        <button type="submit" class="btn btn-outline-success btn-sm"><i class="bi bi-check-circle me-1"></i>Mark Ready</button>
+        <button type="submit" class="btn btn-sm btn-outline-success fw-semibold">
+          <i class="bi bi-check-circle me-1"></i>Mark Ready
+        </button>
       </form>
       {% endif %}
-      {% if proc_request.status == "READY" or proc_request.status == "COMPLETED" or proc_request.status == "REVIEW_REQUIRED" %}
-      <form method="post" action="{% url 'procurement:trigger_analysis' pk=proc_request.pk %}" class="d-flex gap-1">
-        {% csrf_token %}
-        <select name="run_type" class="form-select form-select-sm" style="width:auto">
-          <option value="RECOMMENDATION">Recommendation</option>
-          <option value="BENCHMARK">Benchmark</option>
-          <option value="VALIDATION">Validation</option>
-        </select>
-        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-play-fill me-1"></i>Run Analysis</button>
-      </form>
-      {% endif %}
+      
     </div>
   </div>
-  <div class="card-body">
-    <div class="row">
-      <div class="col-md-8">
-        <p class="text-muted mb-2">{{ proc_request.description|default:"No description" }}</p>
-      </div>
-      <div class="col-md-4">
-        <table class="table table-sm table-borderless mb-0" style="font-size:var(--ap-font-size-sm)">
-          <tr><td class="text-muted">Status</td><td>
-            {% if proc_request.status == "DRAFT" %}<span class="badge bg-secondary">Draft</span>
-            {% elif proc_request.status == "READY" %}<span class="badge bg-info text-dark">Ready</span>
-            {% elif proc_request.status == "PROCESSING" %}<span class="badge bg-primary">Processing</span>
-            {% elif proc_request.status == "COMPLETED" %}<span class="badge bg-success">Completed</span>
-            {% elif proc_request.status == "REVIEW_REQUIRED" %}<span class="badge bg-warning text-dark">Review Required</span>
-            {% elif proc_request.status == "FAILED" %}<span class="badge bg-danger">Failed</span>
-            {% endif %}
-          </td></tr>
-          <tr><td class="text-muted">Type</td><td>{{ proc_request.get_request_type_display }}</td></tr>
-          <tr><td class="text-muted">Domain</td><td><span class="badge bg-secondary">{{ proc_request.domain_code }}</span></td></tr>
-          <tr><td class="text-muted">Priority</td><td>{{ proc_request.priority }}</td></tr>
-          <tr><td class="text-muted">Geography</td><td>{{ proc_request.geography_city }}{% if proc_request.geography_city and proc_request.geography_country %}, {% endif %}{{ proc_request.geography_country }}</td></tr>
-          <tr><td class="text-muted">Currency</td><td>{{ proc_request.currency }}</td></tr>
-          <tr><td class="text-muted">Created</td><td>{{ proc_request.created_at|date:"M d, Y H:i" }}</td></tr>
-          {% if proc_request.created_by %}<tr><td class="text-muted">By</td><td>{{ proc_request.created_by.email }}</td></tr>{% endif %}
-          {% if proc_request.prefill_status and proc_request.prefill_status != "NOT_STARTED" %}
-          <tr><td class="text-muted">Prefill</td><td>
-            {% if proc_request.prefill_status == "COMPLETED" or proc_request.prefill_status == "REVIEW_PENDING" %}<span class="badge bg-success"><i class="bi bi-magic me-1"></i>{{ proc_request.prefill_status }}</span>
-            {% elif proc_request.prefill_status == "IN_PROGRESS" %}<span class="badge bg-primary"><i class="bi bi-hourglass-split me-1"></i>In Progress</span>
-            {% elif proc_request.prefill_status == "FAILED" %}<span class="badge bg-danger">Failed</span>
-            {% endif %}
-            {% if proc_request.prefill_confidence %}<small class="text-muted ms-1">{{ proc_request.prefill_confidence|floatformat:0 }}%</small>{% endif %}
-          </td></tr>
-          {% if proc_request.source_document_type %}<tr><td class="text-muted">Source Doc</td><td>{{ proc_request.source_document_type }}</td></tr>{% endif %}
-          {% endif %}
-          {% if proc_request.trace_id %}<tr><td class="text-muted">Trace</td><td><code style="font-size:0.7rem">{{ proc_request.trace_id|truncatechars:16 }}</code></td></tr>{% endif %}
-        </table>
-      </div>
-    </div>
-  </div>
+  {% if proc_request.description %}
+  <div class="mt-3 pt-3 border-top text-muted small">{{ proc_request.description }}</div>
+  {% endif %}
 </div>
 
-<div class="row">
-  {# ── Left Column ── #}
-  <div class="col-lg-8">
+{# -- Tabs -- #}
+<ul class="nav ws-tabs mb-0" id="requestTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="internal-tab" data-bs-toggle="tab" data-bs-target="#internal" type="button" role="tab">
+      <i class="bi bi-robot me-1 text-primary"></i>Internal Product Recommendations
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="external-tab" data-bs-toggle="tab" data-bs-target="#external" type="button" role="tab">
+      <i class="bi bi-stars me-1 text-warning"></i>External Suggestions
+    </button>
+  </li>
+  <!-- <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="RFQ-tab" data-bs-toggle="tab" data-bs-target="#RFQ" type="button" role="tab">
+      <i class="bi bi-robot me-1 text-primary"></i>Create RFQ Document
+    </button>
+  </li> -->
+</ul>
 
-    {# Attributes #}
-    <div class="card mb-4">
-      <div class="card-header"><h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Attributes</h6></div>
-      <div class="card-body p-0">
-        {% if attributes %}
-        <table class="table table-sm table-hover mb-0" style="font-size:var(--ap-font-size-sm)">
-          <thead class="table-light"><tr><th>Code</th><th>Label</th><th>Type</th><th>Value</th></tr></thead>
-          <tbody>
-          {% for attr in attributes %}
-          <tr>
-            <td><code>{{ attr.attribute_code }}</code></td>
-            <td>{{ attr.attribute_label }}</td>
-            <td><span class="badge bg-light text-dark">{{ attr.data_type }}</span></td>
-            <td>{% if attr.value_number is not None %}{{ attr.value_number }}{% elif attr.value_json %}{{ attr.value_json }}{% else %}{{ attr.value_text|truncatechars:60 }}{% endif %}</td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <p class="text-muted text-center py-3 mb-0">No attributes defined.</p>
-        {% endif %}
-      </div>
-    </div>
+<div class="tab-content" id="requestTabsContent">
 
-    {# Validation Summary #}
-    {% include "procurement/partials/validation_summary.html" %}
+  <div class="tab-pane fade show active pt-3" id="internal" role="tabpanel">
 
-    {# Recommendation Result #}
-    {% if recommendation %}
-    <div class="card mb-4 border-info">
-      <div class="card-header bg-info bg-opacity-10"><h6 class="mb-0"><i class="bi bi-lightbulb me-2"></i>Recommendation</h6></div>
-      <div class="card-body">
-        <h6>{{ recommendation.recommended_option }}</h6>
-        <p class="text-muted">{{ recommendation.reasoning_summary }}</p>
-        <div class="d-flex gap-3">
-          <span class="badge bg-primary">Confidence: {% widthratio recommendation.confidence_score 1 100 %}%</span>
-          <span class="badge {% if recommendation.compliance_status == 'PASS' %}bg-success{% elif recommendation.compliance_status == 'FAIL' %}bg-danger{% else %}bg-secondary{% endif %}">
-            Compliance: {{ recommendation.compliance_status }}
-          </span>
-        </div>
-      </div>
-    </div>
-    {% endif %}
-
-    {# Benchmark Results #}
-    {% if benchmarks %}
-    <div class="card mb-4 border-warning">
-      <div class="card-header bg-warning bg-opacity-10"><h6 class="mb-0"><i class="bi bi-bar-chart me-2"></i>Benchmark Results</h6></div>
-      <div class="card-body p-0">
-        {% for bm in benchmarks %}
-        <div class="p-3 {% if not forloop.last %}border-bottom{% endif %}">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <strong>{{ bm.quotation.vendor_name }}</strong>
-            <span class="badge {% if bm.risk_level == 'LOW' %}bg-success{% elif bm.risk_level == 'MEDIUM' %}bg-warning text-dark{% elif bm.risk_level == 'HIGH' %}bg-danger{% else %}bg-dark{% endif %}">
-              {{ bm.risk_level }} Risk
-            </span>
-          </div>
-          <div class="row text-center" style="font-size:var(--ap-font-size-sm)">
-            <div class="col-4">
-              <div class="text-muted">Quoted</div>
-              <div class="fw-bold">{{ bm.total_quoted_amount|floatformat:2 }}</div>
-            </div>
-            <div class="col-4">
-              <div class="text-muted">Benchmark</div>
-              <div class="fw-bold">{{ bm.total_benchmark_amount|floatformat:2 }}</div>
-            </div>
-            <div class="col-4">
-              <div class="text-muted">Variance</div>
-              <div class="fw-bold {% if bm.variance_pct > 15 %}text-danger{% elif bm.variance_pct > 5 %}text-warning{% else %}text-success{% endif %}">{{ bm.variance_pct|floatformat:1 }}%</div>
-            </div>
-          </div>
-          {% if bm.lines.all %}
-          <table class="table table-sm mt-3 mb-0" style="font-size:0.75rem">
-            <thead class="table-light"><tr><th>#</th><th>Item</th><th>Quoted</th><th>Avg</th><th>Var%</th><th>Status</th></tr></thead>
-            <tbody>
-            {% for line in bm.lines.all %}
-            <tr>
-              <td>{{ line.quotation_line.line_number }}</td>
-              <td>{{ line.quotation_line.description|truncatechars:40 }}</td>
-              <td>{{ line.quoted_value|floatformat:2 }}</td>
-              <td>{% if line.benchmark_avg is not None %}{{ line.benchmark_avg|floatformat:2 }}{% else %}—{% endif %}</td>
-              <td>{% if line.variance_pct is not None %}{{ line.variance_pct|floatformat:1 }}%{% else %}—{% endif %}</td>
-              <td>
-                {% if line.variance_status == "WITHIN_RANGE" %}<span class="badge bg-success">OK</span>
-                {% elif line.variance_status == "ABOVE_BENCHMARK" %}<span class="badge bg-warning text-dark">Above</span>
-                {% elif line.variance_status == "SIGNIFICANTLY_ABOVE" %}<span class="badge bg-danger">High</span>
-                {% elif line.variance_status == "BELOW_BENCHMARK" %}<span class="badge bg-info text-dark">Below</span>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-          {% endif %}
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
-
-    {# Compliance Insights #}
-    {% if compliance %}
-    <div class="card mb-4">
-      <div class="card-header"><h6 class="mb-0"><i class="bi bi-shield-check me-2"></i>Compliance</h6></div>
-      <div class="card-body">
-        <span class="badge {% if compliance.compliance_status == 'PASS' %}bg-success{% elif compliance.compliance_status == 'FAIL' %}bg-danger{% else %}bg-warning text-dark{% endif %} mb-2">
-          {{ compliance.compliance_status }}
-        </span>
-        {% if compliance.violations_json %}
-        <h6 class="mt-2">Violations</h6>
-        <ul class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
-          {% for v in compliance.violations_json %}
-          <li class="list-group-item py-1"><i class="bi bi-exclamation-triangle text-danger me-1"></i>{{ v.detail }}</li>
-          {% endfor %}
-        </ul>
-        {% endif %}
-      </div>
-    </div>
-    {% endif %}
-
-  </div>
-
-  {# ── Right Column ── #}
-  <div class="col-lg-4">
-
-    {# Quotations #}
-    <div class="card mb-4">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <h6 class="mb-0"><i class="bi bi-file-earmark-text me-2"></i>Quotations</h6>
-        <button class="btn btn-outline-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#quotation-form">
-          <i class="bi bi-plus"></i>
+    {# ---- RFQ Documents Panel (always visible) ---- #}
+    <div class="ws-card mb-3">
+      <div class="ws-card-title d-flex align-items-center gap-2">
+        <span><i class="bi bi-file-earmark-text text-primary me-1"></i>RFQ Documents</span>
+        <button type="button" class="btn btn-sm {% if rfq_record %}btn-outline-success{% else %}btn-success{% endif %} ms-auto"
+                data-bs-toggle="modal" data-bs-target="#rfqModal" id="rfqMainTriggerBtn">
+          <i class="bi bi-{% if rfq_record %}arrow-clockwise{% else %}cloud-upload{% endif %} me-1"></i>
+          {% if rfq_record %}Re-generate RFQ{% else %}Generate RFQ{% endif %}
         </button>
       </div>
-      <div class="collapse" id="quotation-form">
-        <div class="card-body border-bottom">
-          {# Manual entry #}
-          <form method="post" action="{% url 'procurement:upload_quotation' pk=proc_request.pk %}">
-            {% csrf_token %}
-            <div class="mb-2">
-              <input type="text" name="vendor_name" class="form-control form-control-sm" placeholder="Vendor name" required>
-            </div>
-            <div class="row g-2 mb-2">
-              <div class="col-6"><input type="text" name="quotation_number" class="form-control form-control-sm" placeholder="Quote #"></div>
-              <div class="col-6"><input type="number" step="0.01" name="total_amount" class="form-control form-control-sm" placeholder="Amount"></div>
-            </div>
-            <button type="submit" class="btn btn-primary btn-sm w-100">Add Quotation</button>
-          </form>
-          <hr class="my-2">
-          {# PDF Upload prefill #}
-          <form id="quotation-prefill-form" enctype="multipart/form-data">
-            {% csrf_token %}
-            <input type="hidden" name="request_id" value="{{ proc_request.pk }}">
-            <div class="mb-2">
-              <input type="file" name="file" class="form-control form-control-sm" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif" required>
-            </div>
-            <div class="mb-2">
-              <input type="text" name="vendor_name" class="form-control form-control-sm" placeholder="Vendor name (optional)">
-            </div>
-            <button type="submit" class="btn btn-outline-primary btn-sm w-100" id="btn-quotation-extract">
-              <i class="bi bi-file-earmark-pdf me-1"></i>Upload PDF &amp; Extract
-            </button>
-            <div id="quotation-extract-progress" class="mt-2" style="display:none;">
-              <div class="d-flex align-items-center gap-1"><div class="spinner-border spinner-border-sm text-primary"></div><small>Extracting…</small></div>
-            </div>
-            <div id="quotation-extract-error" class="text-danger small mt-1" style="display:none;"></div>
-          </form>
+      {% if rfq_record %}
+      <div class="d-flex flex-wrap align-items-center gap-3 py-1">
+        <div>
+          <span class="text-muted" style="font-size:.8rem;">
+            <i class="bi bi-clock me-1"></i>Last generated:
+            <strong>{{ rfq_record.created_at|date:"d M Y, H:i" }}</strong>
+            &mdash; <code class="text-primary">{{ rfq_record.rfq_ref }}</code>
+            &mdash; {{ rfq_record.system_label|default:rfq_record.system_code }}
+          </span>
         </div>
-      </div>
-      <div class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
-        {% for q in quotations %}
-        <div class="list-group-item">
-          <div class="d-flex justify-content-between">
-            <strong>{{ q.vendor_name }}</strong>
-            <span class="badge {% if q.extraction_status == 'COMPLETED' %}bg-success{% elif q.extraction_status == 'FAILED' %}bg-danger{% else %}bg-secondary{% endif %}">{{ q.extraction_status }}</span>
-          </div>
-          {% if q.total_amount %}<small class="text-muted">{{ q.currency }} {{ q.total_amount|floatformat:2 }}</small>{% endif %}
-          {% if q.quotation_number %}<small class="text-muted d-block">#{{ q.quotation_number }}</small>{% endif %}
-          {% if q.prefill_status and q.prefill_status != "NOT_STARTED" %}
-          <small class="d-block mt-1">
-            {% if q.prefill_status == "REVIEW_PENDING" %}<a href="{% url 'procurement:quotation_prefill_review' pk=q.pk %}" class="badge bg-warning text-dark"><i class="bi bi-magic me-1"></i>Review Prefill</a>
-            {% elif q.prefill_status == "IN_PROGRESS" %}<span class="badge bg-primary"><i class="bi bi-hourglass-split me-1"></i>Extracting…</span>
-            {% elif q.prefill_status == "COMPLETED" %}<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Prefilled</span>
-            {% elif q.prefill_status == "FAILED" %}<span class="badge bg-danger">Prefill Failed</span>
-            {% endif %}
-          </small>
-          {% endif %}
-        </div>
-        {% empty %}
-        <div class="list-group-item text-muted text-center py-3">No quotations yet.</div>
-        {% endfor %}
-      </div>
-    </div>
-
-    {# Analysis Runs #}
-    <div class="card mb-4">
-      <div class="card-header"><h6 class="mb-0"><i class="bi bi-arrow-repeat me-2"></i>Analysis Runs</h6></div>
-      <div class="list-group list-group-flush" style="font-size:var(--ap-font-size-sm)">
-        {% for run in runs %}
-        <a href="{% url 'procurement:run_detail' pk=run.pk %}" class="list-group-item list-group-item-action">
-          <div class="d-flex justify-content-between">
-            <span>
-              {% if run.run_type == "RECOMMENDATION" %}<i class="bi bi-lightbulb text-info me-1"></i>
-              {% elif run.run_type == "VALIDATION" %}<i class="bi bi-check2-square text-primary me-1"></i>
-              {% else %}<i class="bi bi-bar-chart text-warning me-1"></i>{% endif %}
-              {{ run.run_type }}
+        <div class="d-flex gap-2 ms-auto flex-wrap align-items-center">
+          {# ---- Excel Download Card ---- #}
+          <a href="{% url 'procurement:generate_rfq' pk=proc_request.pk %}?action=download&rfq_id={{ rfq_record.pk }}&format=xlsx"
+             class="rfq-dl-card rfq-dl-excel text-decoration-none"
+             title="Download Excel RFQ">
+            <span class="rfq-dl-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 48 48">
+                <rect width="48" height="48" rx="6" fill="#1D6F42"/>
+                <path d="M10 10h18l10 10v18H10z" fill="#fff" opacity=".15"/>
+                <path d="M27 10v10h11" fill="none" stroke="#fff" stroke-width="1.5" opacity=".6"/>
+                <text x="50%" y="68%" dominant-baseline="middle" text-anchor="middle"
+                      font-family="Arial,sans-serif" font-weight="bold" font-size="13" fill="#fff">XLS</text>
+              </svg>
             </span>
-            <span class="badge {% if run.status == 'COMPLETED' %}bg-success{% elif run.status == 'FAILED' %}bg-danger{% elif run.status == 'RUNNING' %}bg-primary{% else %}bg-secondary{% endif %}">{{ run.status }}</span>
-          </div>
-          <small class="text-muted">{{ run.created_at|date:"M d, H:i" }}{% if run.confidence_score %} · {{ run.confidence_score|floatformat:0 }}% conf{% endif %}</small>
-        </a>
-        {% empty %}
-        <div class="list-group-item text-muted text-center py-3">No runs yet.</div>
-        {% endfor %}
-      </div>
-    </div>
-
-    {# Activity Timeline #}
-    <div class="card mb-4">
-      <div class="card-header"><h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Activity</h6></div>
-      <div class="list-group list-group-flush" style="font-size:0.75rem">
-        {% for event in audit_events %}
-        <div class="list-group-item py-2">
-          <div class="d-flex justify-content-between">
-            <span class="fw-medium">{{ event.event_type }}</span>
-            <small class="text-muted">{{ event.created_at|date:"M d, H:i" }}</small>
-          </div>
-          <small class="text-muted">{{ event.description|truncatechars:80 }}</small>
+            <span class="rfq-dl-label">Excel<br><small>Download</small></span>
+            <span class="rfq-dl-arrow"><i class="bi bi-download"></i></span>
+          </a>
+          {# ---- PDF Download Card ---- #}
+          <a href="{% url 'procurement:generate_rfq' pk=proc_request.pk %}?action=download&rfq_id={{ rfq_record.pk }}&format=pdf"
+             class="rfq-dl-card rfq-dl-pdf text-decoration-none"
+             title="Download PDF RFQ">
+            <span class="rfq-dl-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 48 48">
+                <rect width="48" height="48" rx="6" fill="#E53935"/>
+                <path d="M10 10h18l10 10v18H10z" fill="#fff" opacity=".15"/>
+                <path d="M27 10v10h11" fill="none" stroke="#fff" stroke-width="1.5" opacity=".6"/>
+                <text x="50%" y="68%" dominant-baseline="middle" text-anchor="middle"
+                      font-family="Arial,sans-serif" font-weight="bold" font-size="13" fill="#fff">PDF</text>
+              </svg>
+            </span>
+            <span class="rfq-dl-label">PDF<br><small>Download</small></span>
+            <span class="rfq-dl-arrow"><i class="bi bi-download"></i></span>
+          </a>
         </div>
-        {% empty %}
-        <div class="list-group-item text-muted text-center py-3">No activity yet.</div>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0 py-1" style="font-size:.85rem;">
+        <i class="bi bi-info-circle me-1"></i>No RFQ generated yet. Click <strong>Generate RFQ</strong> to create both Excel and PDF files.
+      </p>
+      {% endif %}
+    </div>
+
+    {% if recommendation %}
+
+    {# ---- 1. Recommendation Summary Table ---- #}
+    <div class="ws-card">
+      <div class="ws-card-title d-flex align-items-center gap-2">
+        <span><i class="bi bi-stars text-warning me-1"></i>Recommended System</span>
+        <button type="button" class="btn btn-sm btn-outline-primary ms-auto"
+                data-bs-toggle="modal" data-bs-target="#rfqModal">
+          <i class="bi bi-file-earmark-spreadsheet me-1"></i>{% if rfq_record %}Re-generate RFQ{% else %}Generate RFQ{% endif %}
+        </button>
+      </div>
+      <div class="table-responsive mb-0">
+        <table class="table table-bordered rec-summary-table mb-0">
+          <thead>
+            <tr>
+              <th>System</th>
+              <th>Rule ID</th>
+              <th>System Code</th>
+              <th>Confidence</th>
+              <th>Compliance</th>
+              <th>Cooling Capacity</th>
+            
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="fw-semibold text-success">
+                {% if reason_summary %}{{ reason_summary.system_name }}{% else %}{{ recommendation.recommended_option|truncatechars:60 }}{% endif %}
+              </td>
+              <td>
+                {% if reason_summary and reason_summary.rule_code %}
+                  <span class="badge bg-primary" style="font-size:.8rem;letter-spacing:.03em;">{{ reason_summary.rule_code }}</span>
+                  
+                {% elif reason_summary and reason_summary.ai_generated %}
+                  <span class="badge" style="background:linear-gradient(135deg,#4f46e5,#0ea5e9);font-size:.75rem;">
+                    <i class="bi bi-stars me-1"></i>AI Suggested
+                  </span>
+                {% elif reason_summary %}
+                  <span class="badge bg-secondary" style="font-size:.75rem;">
+                    <i class="bi bi-cpu me-1"></i>Heuristic
+                  </span>
+                {% else %}
+                  <span class="text-muted">--</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if reason_summary and reason_summary.system_code %}
+                  <code class="text-primary">{{ reason_summary.system_code }}</code>
+                {% else %}<span class="text-muted">--</span>{% endif %}
+              </td>
+              <td>
+                {% if recommendation.confidence_score %}
+                <div class="d-flex align-items-center gap-2">
+                  <div class="conf-bar-wrap" style="width:80px;">
+                    <div class="conf-bar" style="width:{% widthratio recommendation.confidence_score 1 100 %}%;"></div>
+                  </div>
+                  <span class="fw-bold text-success small">{% widthratio recommendation.confidence_score 1 100 %}%</span>
+                </div>
+                {% else %}<span class="text-muted">--</span>{% endif %}
+              </td>
+              <td>
+                {% with cs=recommendation.compliance_status %}
+                  {% if cs == "PASS" or cs == "COMPLIANT" %}
+                    <span class="badge bg-success">PASS</span>
+                  {% elif cs == "FAIL" or cs == "NON_COMPLIANT" %}
+                    <span class="badge bg-danger">FAIL</span>
+                  {% elif cs %}
+                    <span class="badge bg-warning text-dark">{{ cs }}</span>
+                  {% else %}
+                    <span class="text-muted small">Not checked</span>
+                  {% endif %}
+                {% endwith %}
+              </td>
+              <td class="text-dark small">
+                {% if reason_summary and reason_summary.capacity_guidance %}
+                  {{ reason_summary.capacity_guidance }}
+                {% else %}<span class="text-muted">--</span>{% endif %}
+              </td>
+              
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {% if reason_summary and reason_summary.top_drivers %}
+      <div class="mt-3 pt-2 border-top">
+        <div class="text-muted small fw-semibold mb-2 text-uppercase" style="letter-spacing:.05em;font-size:.7rem;">Top Decision Drivers</div>
+        <div>
+          {% for driver in reason_summary.top_drivers %}
+            <span class="driver-chip"><i class="bi bi-check2 me-1"></i>{{ driver }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ---- 2. Reasoning Summary Accordion ---- #}
+    {% if reason_summary %}
+    <div class="ws-card">
+      <div class="ws-card-title d-flex align-items-center flex-wrap gap-2">
+        <span>
+          <i class="bi bi-diagram-3 text-primary"></i>Reasoning Summary
+          {% if reason_summary.ai_generated %}
+            <span class="badge ms-2" style="background:linear-gradient(135deg,#4f46e5,#0ea5e9);font-size:.65rem;vertical-align:middle;">
+              <i class="bi bi-stars me-1"></i>AI Generated
+            </span>
+          {% else %}
+            <span class="badge bg-secondary ms-2" style="font-size:.65rem;vertical-align:middle;">
+              <i class="bi bi-cpu me-1"></i>Deterministic
+            </span>
+          {% endif %}
+          <span class="text-muted fw-normal small ms-2" style="font-size:.75rem;">Click any panel to expand</span>
+        </span>
+        <form method="post" action="{% url 'procurement:regenerate_reason_summary' pk=proc_request.pk %}" class="ms-auto d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-sm btn-outline-secondary" style="font-size:.75rem;"
+                  onclick="return confirm('This will re-call the AI and regenerate the full reasoning summary. Continue?');"
+                  title="Clear cached summary and re-generate via LLM">
+            <i class="bi bi-arrow-clockwise me-1"></i>Regenerate
+          </button>
+        </form>
+      </div>
+
+      <div class="accordion rs-accordion" id="rsAccordion">
+
+        {# Panel A: Why This Was Selected #}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-why">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-why" aria-expanded="true" aria-controls="rsPanel-why">
+              <i class="bi bi-lightbulb me-2 text-warning"></i>Why This System Was Selected
+            </button>
+          </h2>
+          <div id="rsPanel-why" class="accordion-collapse collapse show" aria-labelledby="rsHead-why" data-bs-parent="#rsAccordion" style="padding: 25px; gap: 10px;">
+            <div class="accordion-body">
+              {% if reason_summary.headline %}
+              <p class="fw-semibold text-dark mb-2" style="font-size:.85rem;">{{ reason_summary.headline }}</p>
+              {% endif %}
+              {% if reason_summary.reasoning_summary %}
+              <p class="text-secondary mb-0" style="line-height:1.55;">{{ reason_summary.reasoning_summary }}</p>
+              {% endif %}
+              {% if reason_summary.standards %}
+              <div class="mt-3 pt-2 border-top">
+                <div class="text-muted small fw-semibold mb-1">Applicable Standards</div>
+                {% for std in reason_summary.standards %}
+                  <span class="badge bg-light text-dark border me-1 mb-1" style="font-size:.72rem;">{{ std }}</span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        {# Panel B: Rules Engine Analysis #}
+        {% if reason_summary.rules_table %}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-rules">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-rules" aria-expanded="false" aria-controls="rsPanel-rules">
+              <i class="bi bi-gear-wide-connected me-2 text-info"></i>Rules Engine Analysis
+              <span class="badge bg-info ms-2" style="font-size:.65rem;">{{ reason_summary.rules_table|length }} rule{% if reason_summary.rules_table|length != 1 %}s{% endif %} fired</span>
+            </button>
+          </h2>
+          <div id="rsPanel-rules" class="accordion-collapse collapse" aria-labelledby="rsHead-rules" data-bs-parent="#rsAccordion">
+            <div class="accordion-body p-0">
+              <div class="table-responsive">
+                <table class="table table-sm rs-table mb-0">
+                  <thead>
+                    <tr>
+                      <th style="width:32%;">Rule Code</th>
+                      <th>Description</th>
+                      <th style="width:22%;">Role</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for rule in reason_summary.rules_table %}
+                    <tr>
+                      <td>
+                        <code style="font-size:.72rem;color:#0369a1;">{{ rule.code }}</code>
+                      </td>
+                      <td class="text-secondary">{{ rule.description }}</td>
+                      <td>
+                        <span class="badge {{ rule.badge_class }} rs-badge-primary">{{ rule.role }}</span>
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Panel C: Matched Input Conditions #}
+        {% if reason_summary.conditions_table %}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-cond">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-cond" aria-expanded="false" aria-controls="rsPanel-cond">
+              <i class="bi bi-sliders me-2 text-purple" style="color:#7c3aed;"></i>Matched Input Conditions
+              <span class="badge bg-secondary ms-2" style="font-size:.65rem;">{{ reason_summary.conditions_table|length }} factor{% if reason_summary.conditions_table|length != 1 %}s{% endif %}</span>
+            </button>
+          </h2>
+          <div id="rsPanel-cond" class="accordion-collapse collapse" aria-labelledby="rsHead-cond" data-bs-parent="#rsAccordion">
+            <div class="accordion-body p-0">
+              <div class="table-responsive">
+                <table class="table table-sm rs-table mb-0">
+                  <thead>
+                    <tr>
+                      <th style="width:24%;">Input Factor</th>
+                      <th style="width:18%;">Your Value</th>
+                      <th style="width:20%;">Rule Condition</th>
+                      <th>Impact on Decision</th>
+                      <th style="width:8%;text-align:center;">Key?</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for cond in reason_summary.conditions_table %}
+                    <tr {% if cond.is_key %}class="table-light fw-semibold"{% elif cond.is_any %}style="opacity:.75;"{% endif %}>
+                      <td>
+                        {{ cond.factor }}
+                        {% if cond.derived %}
+                          <span class="badge bg-light text-secondary border ms-1" style="font-size:.62rem;">derived</span>
+                        {% endif %}
+                      </td>
+                      <td class="{{ cond.highlight }}">{{ cond.value }}</td>
+                      <td>
+                        {% if cond.rule_filter == "Any" or cond.rule_filter == "" %}
+                          <span class="text-muted fst-italic" style="font-size:.82rem;">Any (wildcard)</span>
+                        {% elif cond.rule_filter == "N/A" or cond.rule_filter is None %}
+                          <span class="text-muted" style="font-size:.82rem;">--</span>
+                        {% else %}
+                          <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25"
+                                style="font-size:.78rem;">{{ cond.rule_filter }}</span>
+                        {% endif %}
+                      </td>
+                      <td class="text-secondary">{{ cond.impact }}</td>
+                      <td style="text-align:center;">
+                        {% if cond.is_key %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<span class="text-muted">--</span>{% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Panel D: Alternatives Considered #}
+        {% if reason_summary.alternate_option or reason_summary.alternatives_table %}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-alt">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-alt" aria-expanded="false" aria-controls="rsPanel-alt">
+              <i class="bi bi-arrow-left-right me-2 text-warning"></i>Alternatives Considered
+            </button>
+          </h2>
+          <div id="rsPanel-alt" class="accordion-collapse collapse" aria-labelledby="rsHead-alt" data-bs-parent="#rsAccordion">
+            <div class="accordion-body p-0">
+              <div class="table-responsive">
+                <table class="table table-sm rs-table mb-0">
+                  <thead><tr><th style="width:38%;">Alternate System</th><th>Why Not Selected</th></tr></thead>
+                  <tbody>
+                    {% for alt in reason_summary.alternatives_table %}
+                    <tr>
+                      <td class="fw-semibold text-secondary">{{ alt.system }}</td>
+                      <td class="{{ alt.reason_class }}">{{ alt.reason_rejected }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                      <td colspan="2">
+                        {% if reason_summary.alternate_option %}
+                          <span class="text-secondary">{{ reason_summary.alternate_option }}</span>
+                        {% else %}
+                          <span class="text-muted">No alternatives recorded.</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Panel E: Constraints & Assumptions #}
+        {% if reason_summary.constraints or reason_summary.assumptions %}
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="rsHead-const">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-const" aria-expanded="false" aria-controls="rsPanel-const">
+              <i class="bi bi-exclamation-triangle me-2 text-orange" style="color:#ea580c;"></i>Constraints &amp; Assumptions
+            </button>
+          </h2>
+          <div id="rsPanel-const" class="accordion-collapse collapse" aria-labelledby="rsHead-const" data-bs-parent="#rsAccordion">
+            <div class="accordion-body">
+              <div class="row g-3">
+                {% if reason_summary.constraints.landlord %}
+                <div class="col-sm-6">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-building me-1 text-info"></i>Landlord / Site</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.constraints.landlord %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% if reason_summary.constraints.environmental %}
+                <div class="col-sm-6">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-thermometer-half me-1 text-danger"></i>Environmental</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.constraints.environmental %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% if reason_summary.constraints.operational %}
+                <div class="col-sm-6">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-tools me-1 text-warning"></i>Operational</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.constraints.operational %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% if reason_summary.constraints.budget %}
+                <div class="col-sm-6">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-cash-stack me-1 text-success"></i>Budget</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.constraints.budget %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+                {% if reason_summary.assumptions %}
+                <div class="col-12">
+                  <div class="fw-semibold text-dark mb-1 small"><i class="bi bi-info-circle me-1 text-muted"></i>Assumptions</div>
+                  <ul class="mb-0 ps-3">
+                    {% for item in reason_summary.assumptions %}
+                      <li class="text-secondary small">{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+      </div>{# end accordion #}
+    </div>
+    {% endif %}{# end reason_summary #}
+
+    {% else %}{# no recommendation #}
+    <div class="ws-card text-center py-4">
+      <i class="bi bi-robot fs-2 mb-2 d-block text-muted"></i>
+      <div class="text-muted small">No AI recommendation generated yet.</div>
+      <div class="text-muted" style="font-size:.75rem;margin-top:.3rem;">Run a Recommendation analysis to get AI-powered product suggestions.</div>
+    </div>
+    {% endif %}
+
+    {% if attributes %}
+    <div class="ws-card">
+      <div class="ws-card-title"><i class="bi bi-sliders"></i>Request Attributes</div>
+      <div class="d-flex flex-wrap">
+        {% for attr in attributes %}
+        <div class="attr-tag">
+          <span class="text-primary fw-semibold">{{ attr.attribute_label }}</span>
+          <span class="text-dark">{{ attr.value_text|default:attr.value_number|default:"--" }}</span>
+        </div>
         {% endfor %}
       </div>
     </div>
+    {% endif %}
 
+    {# ---- Service Scope Panel ---- #}
+    {% if matched_service_scope or all_service_scopes or recommendation %}
+    <div class="ws-card">
+      <div class="ws-card-title d-flex align-items-center gap-2">
+        <span><i class="bi bi-tools text-success me-1"></i>Installation Service Scope</span>
+        {% if matched_service_scope %}
+          <span class="badge bg-success ms-auto" style="font-size:.7rem;">
+            <i class="bi bi-check-circle me-1"></i>Matched: {{ matched_service_scope.display_name|default:matched_service_scope.system_type }}
+          </span>
+        {% elif recommendation %}
+          <span class="badge bg-warning text-dark ms-auto" style="font-size:.7rem;">
+            <i class="bi bi-exclamation-circle me-1"></i>{{ recommendation.recommended_option|truncatechars:40 }}
+          </span>
+        {% else %}
+          <span class="text-muted fw-normal small ms-auto" style="font-size:.75rem;">All Active Service Scopes</span>
+        {% endif %}
+      </div>
+
+      {% if matched_service_scope %}
+      {# -- Single matched scope -- nice card layout #}
+      <div class="rounded-3 p-3 mb-2" style="background:#f0fdf4;border:1px solid #bbf7d0;">
+        <div class="fw-semibold text-success mb-3" style="font-size:.9rem;">
+          <i class="bi bi-snow2 me-1"></i>{{ matched_service_scope.display_name|default:matched_service_scope.system_type }}
+        </div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="rounded-2 p-2 h-100" style="background:#fff;border:1px solid #e2e8f0;">
+              <div class="text-uppercase fw-bold mb-1" style="font-size:.68rem;letter-spacing:.05em;color:#15803d;">
+                <i class="bi bi-box-seam me-1"></i>Equipment Scope
+              </div>
+              <div class="text-secondary" style="font-size:.82rem;line-height:1.5;">{{ matched_service_scope.equipment_scope }}</div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="rounded-2 p-2 h-100" style="background:#fff;border:1px solid #e2e8f0;">
+              <div class="text-uppercase fw-bold mb-1" style="font-size:.68rem;letter-spacing:.05em;color:#0369a1;">
+                <i class="bi bi-hammer me-1"></i>Installation Services
+              </div>
+              <div class="text-secondary" style="font-size:.82rem;line-height:1.5;">{{ matched_service_scope.installation_services }}</div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="rounded-2 p-2 h-100" style="background:#fff;border:1px solid #e2e8f0;">
+              <div class="text-uppercase fw-bold mb-1" style="font-size:.68rem;letter-spacing:.05em;color:#7c3aed;">
+                <i class="bi bi-pipe me-1"></i>Piping / Ducting
+              </div>
+              <div class="text-secondary" style="font-size:.82rem;line-height:1.5;">{{ matched_service_scope.piping_ducting }}</div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="rounded-2 p-2 h-100" style="background:#fff;border:1px solid #e2e8f0;">
+              <div class="text-uppercase fw-bold mb-1" style="font-size:.68rem;letter-spacing:.05em;color:#b45309;">
+                <i class="bi bi-lightning-charge me-1"></i>Electrical Works
+              </div>
+              <div class="text-secondary" style="font-size:.82rem;line-height:1.5;">{{ matched_service_scope.electrical_works }}</div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="rounded-2 p-2 h-100" style="background:#fff;border:1px solid #e2e8f0;">
+              <div class="text-uppercase fw-bold mb-1" style="font-size:.68rem;letter-spacing:.05em;color:#0f766e;">
+                <i class="bi bi-sliders2 me-1"></i>Controls / Accessories
+              </div>
+              <div class="text-secondary" style="font-size:.82rem;line-height:1.5;">{{ matched_service_scope.controls_accessories }}</div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="rounded-2 p-2 h-100" style="background:#fff;border:1px solid #e2e8f0;">
+              <div class="text-uppercase fw-bold mb-1" style="font-size:.68rem;letter-spacing:.05em;color:#be185d;">
+                <i class="bi bi-clipboard2-check me-1"></i>Testing &amp; Commissioning
+              </div>
+              <div class="text-secondary" style="font-size:.82rem;line-height:1.5;">{{ matched_service_scope.testing_commissioning }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% elif recommendation %}
+      {# -- Recommendation exists but no matching service scope in DB -- #}
+      <div class="rounded-3 p-3" style="background:#fffbeb;border:1px solid #fde68a;">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <i class="bi bi-exclamation-triangle text-warning"></i>
+          <span class="fw-semibold text-warning-emphasis" style="font-size:.85rem;">No service scope configured for this system type</span>
+        </div>
+        <div class="text-secondary" style="font-size:.8rem;">
+          The recommended system <strong>{{ recommendation.recommended_option|truncatechars:60 }}</strong>
+          does not have a matching Installation Service Scope record in the database.
+          Please add a <code>HVACServiceScope</code> entry for this system type in the admin console.
+        </div>
+      </div>
+
+      {% elif all_service_scopes %}
+      {# -- No recommendation: show all scopes as reference -- #}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0" style="font-size:.8rem;">
+          <thead style="background:#f1f5f9;">
+            <tr>
+              <th style="width:14%;font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">System</th>
+              <th style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">Equipment Scope</th>
+              <th style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">Installation Services</th>
+              <th style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">Piping / Ducting</th>
+              <th style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">Electrical Works</th>
+              <th style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">Controls / Accessories</th>
+              <th style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">Testing &amp; Commissioning</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for scope in all_service_scopes %}
+            <tr>
+              <td class="fw-semibold text-success" style="white-space:nowrap;">{{ scope.display_name|default:scope.system_type }}</td>
+              <td class="text-secondary">{{ scope.equipment_scope }}</td>
+              <td class="text-secondary">{{ scope.installation_services }}</td>
+              <td class="text-secondary">{{ scope.piping_ducting }}</td>
+              <td class="text-secondary">{{ scope.electrical_works }}</td>
+              <td class="text-secondary">{{ scope.controls_accessories }}</td>
+              <td class="text-secondary">{{ scope.testing_commissioning }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    
+
+  </div>{# /end #internal tab-pane #}
+
+  {# ======== EXTERNAL tab-pane: AI Market Intelligence (embedded inline) ======== #}
+  <div class="tab-pane fade pt-3" id="external" role="tabpanel">
+
+    {# Header row #}
+    <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+      <div>
+        <h5 class="mb-0 fw-bold" style="font-size:1.05rem; color:#111827;">
+          <i class="bi bi-stars text-warning me-2"></i>AI Market Intelligence
+        </h5>
+        <div class="text-muted" style="font-size:.78rem; margin-top:.15rem;">
+          Live HVAC product suggestions, pricing &amp; market fit &mdash;
+          <strong>{{ proc_request.title|truncatechars:55 }}</strong>
+        </div>
+      </div>
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        {% if mi_record %}
+        <span class="badge bg-light text-secondary border" style="font-size:.72rem;">
+          <i class="bi bi-clock me-1"></i>Last run: {{ mi_record.created_at|date:"d M Y H:i" }}
+          &middot; {{ mi_record.suggestion_count }} suggestion{{ mi_record.suggestion_count|pluralize }}
+        </span>
+        {% endif %}
+        <button class="btn btn-sm btn-primary fw-semibold" id="ws-mi-btn-refresh">
+          <i class="bi bi-arrow-clockwise me-1"></i>{% if mi_record %}Refresh{% else %}Generate{% endif %}
+        </button>
+      </div>
+    </div>
+
+    <div class="row g-4">
+      {# ---- LEFT sidebar ---- #}
+      <div class="col-lg-3">
+
+        {# Request context card #}
+        <div class="card border-0 shadow-sm mb-3" style="border-radius:10px;">
+          <div class="card-header bg-white border-0 p-3 pb-2 d-flex align-items-center justify-content-between"
+               role="button" data-bs-toggle="collapse" data-bs-target="#ws-mi-req-collapse"
+               aria-expanded="false" aria-controls="ws-mi-req-collapse"
+               style="cursor:pointer; border-radius:10px;">
+            <div class="mi-section-label mb-0" style="margin-bottom:0 !important;">
+              <i class="bi bi-file-earmark-text"></i>Request
+            </div>
+            <i class="bi bi-chevron-down mi-chevron" style="font-size:.75rem; color:#9ca3af;"></i>
+          </div>
+          <div id="ws-mi-req-collapse" class="collapse">
+            <div class="card-body p-3 pt-1">
+              <div class="fw-semibold mb-1" style="font-size:.85rem; color:#111827;">{{ proc_request.title }}</div>
+              <div class="text-muted mb-2" style="font-size:.75rem;">
+                <i class="bi bi-geo-alt me-1"></i>{{ proc_request.geography_country|default:"UAE" }}
+                {% if proc_request.geography_city %}&nbsp;/&nbsp;{{ proc_request.geography_city }}{% endif %}
+                &nbsp;&middot;&nbsp;
+                <span class="badge bg-light text-secondary border py-0 px-1">{{ proc_request.priority }}</span>
+              </div>
+              {% if proc_request.description %}
+              <div class="text-muted" style="font-size:.76rem; line-height:1.5;">{{ proc_request.description|truncatechars:140 }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        {# Technical specs #}
+        {% if attributes %}
+        <div class="card border-0 shadow-sm" style="border-radius:10px;">
+          <div class="card-header bg-white border-0 p-3 pb-2 d-flex align-items-center justify-content-between"
+               role="button" data-bs-toggle="collapse" data-bs-target="#ws-mi-spec-collapse"
+               aria-expanded="false" aria-controls="ws-mi-spec-collapse"
+               style="cursor:pointer; border-radius:10px;">
+            <div class="mi-section-label mb-0" style="margin-bottom:0 !important;">
+              <i class="bi bi-sliders"></i>Technical Specs
+            </div>
+            <i class="bi bi-chevron-down mi-chevron" style="font-size:.75rem; color:#9ca3af;"></i>
+          </div>
+          <div id="ws-mi-spec-collapse" class="collapse">
+            <div class="card-body p-3 pt-1">
+              {% for attr in attributes %}
+                {% with val=attr.value_text|default:attr.value_number %}
+                {% if val %}
+                <div class="mi-attr-row">
+                  <span class="mi-attr-label">{{ attr.attribute_label }}</span>
+                  <span class="mi-attr-val">{{ val }}</span>
+                </div>
+                {% endif %}
+                {% endwith %}
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Price comparison chart (populated by JS) #}
+        <div class="card border-0 shadow-sm mt-3" id="ws-mi-price-chart-card" style="border-radius:10px; display:none;">
+          <div class="card-body p-3">
+            <div class="mi-section-label"><i class="bi bi-bar-chart-fill text-primary"></i>Price Comparison</div>
+            <div style="position:relative; height:240px;">
+              <canvas id="ws-mi-price-chart"></canvas>
+            </div>
+            <div class="text-center text-muted mt-1" style="font-size:.65rem;">AED midpoint estimate per unit</div>
+          </div>
+        </div>
+
+      </div>{# /col-lg-3 #}
+
+      {# ---- RIGHT: results area ---- #}
+      <div class="col-lg-9">
+
+        {# Spinner #}
+        <div class="mi-placeholder {% if mi_record %}d-none{% endif %}" id="ws-mi-spinner">
+          <span class="spinner-border text-primary mb-3" style="width:2.5rem;height:2.5rem;"></span>
+          <div class="fw-semibold text-secondary mb-1">Generating AI market intelligence...</div>
+          <div style="font-size:.79rem; color:#9ca3af;">
+            Analysing technical specs and matching HVAC products for this facility.<br>
+            This typically takes 10&ndash;20 seconds.
+          </div>
+        </div>
+
+        {# Error state #}
+        <div class="mi-placeholder d-none" id="ws-mi-error">
+          <i class="bi bi-exclamation-triangle text-danger fs-2 d-block mb-3"></i>
+          <div class="fw-semibold text-secondary mb-1">Analysis failed</div>
+          <div id="ws-mi-error-msg" style="font-size:.81rem;"></div>
+          <button class="btn btn-sm btn-outline-primary mt-3" id="ws-mi-btn-retry">
+            <i class="bi bi-arrow-clockwise me-1"></i>Retry
+          </button>
+        </div>
+
+        {# Results panel #}
+        <div id="ws-mi-results" class="{% if not mi_record %}d-none{% endif %}">
+          <div class="mi-query-banner">
+            <div class="d-flex align-items-start gap-2">
+              <i class="bi bi-lightbulb text-warning mt-1" style="font-size:.95rem;"></i>
+              <div>
+                <div class="text-muted fw-semibold mb-1" style="font-size:.7rem; text-transform:uppercase; letter-spacing:.06em;">AI Interpreted This Request As</div>
+                <div id="ws-mi-rephrased-query" class="fw-semibold" style="font-size:.88rem; color:#1e40af;">{% if mi_record %}{{ mi_record.rephrased_query|default:"" }}{% endif %}</div>
+              </div>
+            </div>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-7">
+              <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
+                <div class="card-body p-3">
+                  <div class="mi-section-label"><i class="bi bi-stars text-warning"></i>AI Summary</div>
+                  <div id="ws-mi-ai-summary" class="text-secondary" style="font-size:.84rem; line-height:1.7;">{% if mi_record %}{{ mi_record.ai_summary|default:"" }}{% endif %}</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-5">
+              <div class="card border-0 shadow-sm h-100" style="background:#f0fdf4; border-radius:10px;">
+                <div class="card-body p-3">
+                  <div class="mi-section-label"><i class="bi bi-graph-up-arrow text-success"></i>Market Context</div>
+                  <div id="ws-mi-market-context" class="text-secondary" style="font-size:.84rem; line-height:1.7;">{% if mi_record %}{{ mi_record.market_context|default:"" }}{% endif %}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>{# /ws-mi-results #}
+
+      </div>{# /col-lg-9 #}
+    </div>{# /row g-4 #}
+
+    {# ---- Full-width product table ---- #}
+    <div id="ws-mi-table-section" class="mt-4 {% if not mi_record %}d-none{% endif %}">
+      <div class="mi-section-label">
+        <i class="bi bi-table text-primary"></i>Product Suggestions
+        <span id="ws-mi-suggestion-count" class="badge bg-primary text-white ms-1" style="font-size:.65rem;">{% if mi_record %}{{ mi_record.suggestion_count|default:"0" }}{% else %}0{% endif %}</span>
+      </div>
+      <div class="card border-0 shadow-sm mb-3" style="border-radius:10px; overflow:hidden;">
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0" id="ws-mi-suggestions-table">
+            <thead>
+              <tr>
+                <th style="width:30px;">#</th>
+                <th>Product / Model</th>
+                <th>Type</th>
+                <th>Capacity</th>
+                <th>COP / EER</th>
+                <th>Price Range (AED)</th>
+                <th style="width:52px;">Fit</th>
+                <th>Key Benefits</th>
+                <th>Citations</th>
+                <th style="width:30px;"></th>
+              </tr>
+            </thead>
+            <tbody id="ws-mi-suggestions-tbody">
+              {# Server-side pre-render when mi_record exists #}
+              {% if mi_record %}
+              {% for s in mi_record.suggestions_json %}
+              <tr style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#ws-mi-det-{{ forloop.counter0 }}">
+                <td class="text-muted fw-bold">{{ s.rank|default:forloop.counter }}</td>
+                <td>
+                  <div class="fw-semibold" style="font-size:.83rem;">{{ s.product_name }}</div>
+                  <div class="text-muted" style="font-size:.72rem;">{{ s.manufacturer }}{% if s.model_code %} &middot; <code class="text-secondary">{{ s.model_code }}</code>{% endif %}</div>
+                </td>
+                <td><span class="badge bg-secondary-subtle text-secondary border" style="font-size:.67rem;">{{ s.system_type }}</span></td>
+                <td style="white-space:nowrap;">{{ s.cooling_capacity|default:"--" }}</td>
+                <td style="white-space:nowrap;font-size:.76rem;">{{ s.cop_eer|default:"--" }}</td>
+                <td style="font-size:.76rem;min-width:115px;">{{ s.price_range_aed|default:"--" }}</td>
+                <td>
+                  {% with score=s.fit_score|default:0 %}
+                  <span class="fit-circle {% if score >= 80 %}fit-green{% elif score >= 60 %}fit-amber{% else %}fit-red{% endif %}">{{ score }}</span>
+                  {% endwith %}
+                </td>
+                <td>{% for b in s.key_benefits %}<span class="benefit-chip">{{ b }}</span>{% endfor %}</td>
+                <td>
+                  {% if s.citation_url %}
+                  <a href="{{ s.citation_url }}" target="_blank" rel="noopener noreferrer"
+                     class="d-inline-flex align-items-center gap-1 btn btn-sm btn-outline-secondary py-0 px-2"
+                     style="font-size:.7rem; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                     title="{{ s.citation_url }}">
+                    <img src="https://www.google.com/s2/favicons?domain_url={{ s.citation_url }}&sz=32"
+                         width="14" height="14" style="border-radius:2px; flex-shrink:0;"
+                         onerror="this.replaceWith(document.createTextNode(''))" alt="">
+                    <span style="overflow:hidden; text-overflow:ellipsis;">{{ s.citation_source|default:"Source" }}</span>
+                    <i class="bi bi-box-arrow-up-right" style="font-size:.62rem; flex-shrink:0;"></i>
+                  </a>
+                  {% else %}
+                  <span class="text-muted" style="font-size:.72rem;">--</span>
+                  {% endif %}
+                </td>
+                <td class="text-muted"><i class="bi bi-chevron-down" style="font-size:.68rem;"></i></td>
+              </tr>
+              <tr>
+                <td colspan="10" style="padding:0;">
+                  <div id="ws-mi-det-{{ forloop.counter0 }}" class="collapse">
+                    <div class="p-3 d-flex gap-4 flex-wrap" style="background:#f9fafb;border-top:1px solid #e5e7eb;">
+                      <div style="min-width:185px;flex:1;">
+                        <div class="fw-semibold mb-1" style="font-size:.71rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;">Fit Rationale</div>
+                        <div style="font-size:.8rem;color:#374151;">{{ s.fit_rationale }}</div>
+                        {% if s.market_availability %}
+                        <div class="mt-2" style="font-size:.76rem;color:#6b7280;"><i class="bi bi-geo-alt me-1"></i>{{ s.market_availability }}</div>
+                        {% endif %}
+                      </div>
+                      {% if s.limitations %}
+                      <div style="min-width:165px;flex:1;">
+                        <div class="fw-semibold mb-1" style="font-size:.71rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;">Limitations</div>
+                        <ul class="mb-0 ps-3" style="font-size:.78rem;color:#6b7280;">
+                          {% for l in s.limitations %}<li>{{ l }}</li>{% endfor %}
+                        </ul>
+                      </div>
+                      {% endif %}
+                      <div style="min-width:165px;flex:1;">
+                        <div class="fw-semibold mb-1" style="font-size:.71rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;">Standards</div>
+                        {% for c in s.standards_compliance %}
+                        <span class="badge bg-light text-secondary border me-1" style="font-size:.64rem;">{{ c }}</span>
+                        {% empty %}<span class="text-muted" style="font-size:.74rem;">--</span>
+                        {% endfor %}
+                        <div class="mt-2 d-flex flex-wrap gap-1">
+                          {% if s.citation_url %}
+                          <a href="{{ s.citation_url }}" target="_blank" rel="noopener noreferrer"
+                             class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:.68rem;"
+                             title="{{ s.citation_url }}">
+                            <i class="bi bi-file-earmark-text me-1"></i>Product Page
+                          </a>
+                          {% endif %}
+                          {% if s.price_source_url and s.price_source_url != s.citation_url %}
+                          <a href="{{ s.price_source_url }}" target="_blank" rel="noopener noreferrer"
+                             class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:.68rem;"
+                             title="{{ s.price_source_url }}">
+                            <i class="bi bi-tag me-1"></i>Price Source
+                          </a>
+                          {% endif %}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="10" class="text-center text-muted py-4">No suggestions yet. Click Generate.</td></tr>
+              {% endfor %}
+              {% else %}
+              <tr><td colspan="10" class="text-center text-muted py-4">Click <strong>Generate</strong> to load AI product suggestions.</td></tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {# Perplexity source citations -- real URLs fetched by Perplexity during live search #}
+      {% if mi_record and mi_record.perplexity_citations_json %}
+      <div id="ws-mi-citations" class="px-3 py-2" style="border-top:1px solid #e5e7eb;background:#f9fafb;">
+        <div class="text-muted fw-semibold mb-1" style="font-size:.67rem;text-transform:uppercase;letter-spacing:.05em;">
+          <i class="bi bi-link-45deg me-1"></i>Perplexity Source References
+        </div>
+        <div class="d-flex flex-wrap gap-1">
+          {% for cit_url in mi_record.perplexity_citations_json %}
+          <a href="{{ cit_url }}" target="_blank" rel="noopener noreferrer"
+             class="btn btn-sm btn-outline-secondary py-0 px-2 d-inline-flex align-items-center gap-1"
+             style="font-size:.67rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+             title="{{ cit_url }}">
+            <i class="bi bi-box-arrow-up-right" style="font-size:.6rem;flex-shrink:0;"></i>
+            <span style="overflow:hidden;text-overflow:ellipsis;">{{ cit_url }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div id="ws-mi-citations" class="px-3 py-2 d-none" style="border-top:1px solid #e5e7eb;background:#f9fafb;">
+        <div class="text-muted fw-semibold mb-1" style="font-size:.67rem;text-transform:uppercase;letter-spacing:.05em;">
+          <i class="bi bi-link-45deg me-1"></i>Perplexity Source References
+        </div>
+        <div id="ws-mi-citations-list" class="d-flex flex-wrap gap-1"></div>
+      </div>
+      {% endif %}
+      <div class="text-center text-muted py-2" style="font-size:.71rem; border-top:1px solid #f3f4f6;">
+        <i class="bi bi-stars text-warning me-1"></i>Powered by AI &middot; Verify pricing with distributors before finalising procurement decisions.
+      </div>
+    </div>{# /ws-mi-table-section #}
+
+  </div>{# /end #external tab-pane #}
+
+{# -- RFQ Modal -- #}
+<div class="modal fade" id="rfqModal" tabindex="-1" aria-labelledby="rfqModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+
+      <div class="modal-header py-2 px-3" style="background:#1E3A5F;border-radius:.5rem .5rem 0 0;">
+        <h6 class="modal-title text-white mb-0" id="rfqModalLabel">
+          <i class="bi bi-file-earmark-spreadsheet me-2"></i>Generate RFQ Document
+        </h6>
+        <button type="button" class="btn-close btn-close-white btn-sm" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body pb-1">
+
+        <div id="rfqStep1">
+          <p class="text-muted small mb-3">
+            How would you like to generate the RFQ?
+          </p>
+          <div class="d-grid gap-2">
+
+            {% if recommendation %}
+            <button type="button" class="btn btn-outline-primary text-start p-3 rfq-choice-btn" id="rfqBtnRecommendation">
+              <div class="d-flex align-items-start gap-2">
+                <i class="bi bi-stars text-warning mt-1"></i>
+                <div>
+                  <div class="fw-semibold">Use Recommendation</div>
+                  <div class="small text-muted mt-1">
+                    Generate RFQ based on the recommended system:
+                    <strong class="text-primary">
+                      {% if reason_summary %}{{ reason_summary.system_name }}{% else %}{{ recommendation.recommended_option|truncatechars:50 }}{% endif %}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </button>
+            {% else %}
+            <div class="btn btn-outline-secondary text-start p-3 disabled opacity-50">
+              <div class="d-flex align-items-start gap-2">
+                <i class="bi bi-stars text-warning mt-1"></i>
+                <div>
+                  <div class="fw-semibold">Use Recommendation</div>
+                  <div class="small text-muted mt-1">No recommendation yet. Run an analysis first.</div>
+                </div>
+              </div>
+            </div>
+            {% endif %}
+
+            <button type="button" class="btn btn-outline-secondary text-start p-3 rfq-choice-btn" id="rfqBtnManual">
+              <div class="d-flex align-items-start gap-2">
+                <i class="bi bi-list-check text-info mt-1"></i>
+                <div>
+                  <div class="fw-semibold">Select Manually</div>
+                  <div class="small text-muted mt-1">Choose any HVAC system type from the list.</div>
+                </div>
+              </div>
+            </button>
+
+          </div>
+        </div>
+
+        <div id="rfqStep2" style="display:none;">
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <button type="button" class="btn btn-sm btn-light border" id="rfqBackBtn">
+              <i class="bi bi-arrow-left me-1"></i>Back
+            </button>
+            <span class="fw-semibold text-dark small">Manual RFQ Generation</span>
+          </div>
+
+          {# ---- Store Details ---- #}
+          <p class="text-uppercase fw-semibold mb-1" style="font-size:.72rem;letter-spacing:.06em;color:#1A3C5E;">
+            <i class="bi bi-building me-1"></i>Store Details
+          </p>
+          <table class="table table-sm table-bordered mb-3" style="font-size:.82rem;">
+            <tbody>
+              <tr>
+                <td class="fw-semibold bg-light" style="width:40%">Country</td>
+                <td>{{ proc_request.geography_country|default:"--" }}</td>
+              </tr>
+              <tr>
+                <td class="fw-semibold bg-light">City</td>
+                <td>{{ proc_request.geography_city|default:"--" }}</td>
+              </tr>
+              {% for attr in attributes %}
+                {% if attr.attribute_code == "store_type" %}
+                <tr><td class="fw-semibold bg-light">Store Type</td><td>{{ attr.value_text|default:"--" }}</td></tr>
+                {% elif attr.attribute_code == "area_sqft" %}
+                <tr><td class="fw-semibold bg-light">Area</td><td>{{ attr.value_text }} sq ft</td></tr>
+                {% elif attr.attribute_code == "ceiling_height" %}
+                <tr><td class="fw-semibold bg-light">Ceiling Height</td><td>{{ attr.value_text }} ft</td></tr>
+                {% elif attr.attribute_code == "ambient_temp_max" %}
+                <tr><td class="fw-semibold bg-light">Temperature</td><td>{{ attr.value_text }}&deg;C</td></tr>
+                {% elif attr.attribute_code == "humidity_level" %}
+                <tr><td class="fw-semibold bg-light">Humidity</td><td>{{ attr.value_text }}</td></tr>
+                {% elif attr.attribute_code == "budget_level" %}
+                <tr><td class="fw-semibold bg-light">Budget Level</td><td>{{ attr.value_text }}</td></tr>
+                {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+
+          {# ---- System Dropdown (from HVAC rules set) ---- #}
+          <p class="text-uppercase fw-semibold mb-2" style="font-size:.72rem;letter-spacing:.06em;color:#1A3C5E;">
+            <i class="bi bi-list-check me-1"></i>Select HVAC System
+            <span class="text-muted fw-normal text-lowercase" style="letter-spacing:0;">&nbsp;-- all available systems</span>
+          </p>
+          <select id="rfqSystemSelect" class="form-select form-select-sm mb-2">
+            <option value="">-- Select an Available System --</option>
+            {# Options populated by JS from HVAC rules set (rfq_scope_json keys) #}
+          </select>
+          <div id="rfqSystemDesc" class="small text-muted px-1 mb-1 d-none" style="font-style:italic;"></div>
+        </div>
+
+        <div id="rfqStep3" style="display:none;">
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <button type="button" class="btn btn-sm btn-light border" id="rfqBackBtn3">
+              <i class="bi bi-arrow-left me-1"></i>Back
+            </button>
+            <span class="fw-semibold text-dark small">Set Quantities</span>
+          </div>
+
+          {# Qty table — built by JS based on selected system's scope rows #}
+          <p class="text-uppercase fw-semibold mb-1" style="font-size:.72rem;letter-spacing:.06em;color:#1A3C5E;">
+            <i class="bi bi-123 me-1"></i>Scope Quantities
+          </p>
+          <div style="max-height:260px;overflow-y:auto;" class="mb-3">
+            <table class="table table-sm table-bordered mb-0" style="font-size:.82rem;" id="rfqQtyTable">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:32%">Category</th>
+                  <th>Description</th>
+                  <th style="width:12%">Unit</th>
+                  <th style="width:12%">Qty</th>
+                </tr>
+              </thead>
+              <tbody id="rfqQtyTableBody">
+                {# Populated by JS #}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="d-flex align-items-center justify-content-between mt-2">
+            <p class="text-muted mb-0" style="font-size:.78rem;">
+              <i class="bi bi-info-circle me-1"></i>Both Excel and PDF will be generated and saved.
+            </p>
+            <button type="button" class="btn btn-sm btn-success" id="rfqGenerateBtn">
+              <i class="bi bi-cloud-upload me-1"></i>Generate &amp; Save RFQ
+            </button>
+          </div>
+        </div>
+
+      </div>{# /modal-body #}
+
+      <div class="modal-footer pt-2" id="rfqFooter" style="display:none;">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="rfqNextBtn">
+          <i class="bi bi-arrow-right me-1"></i>Next: Set Quantities
+        </button>
+      </div>
+
+    </div>
   </div>
 </div>
-{% endblock %}
 
-{% block extra_js %}
+{{ mi_suggestions|json_script:"rfq-mi-suggestions" }}
+{{ rfq_scope_json|json_script:"rfq-scope-data" }}
+{{ rfq_db_products|json_script:"rfq-db-products" }}
+{# -- Run Analysis + Citations + RFQ JS -- #}
 <script>
-// Quotation PDF prefill upload
-var qForm = document.getElementById('quotation-prefill-form');
-if (qForm) {
-  qForm.addEventListener('submit', function(e) {
-    e.preventDefault();
-    var formData = new FormData(this);
-    var progress = document.getElementById('quotation-extract-progress');
-    var errorDiv = document.getElementById('quotation-extract-error');
-    var btn = document.getElementById('btn-quotation-extract');
-    progress.style.display = 'block';
-    errorDiv.style.display = 'none';
-    btn.disabled = true;
+(function(){
 
-    fetch('/api/v1/procurement/quotations/prefill/?request_id={{ proc_request.pk }}', {
-      method: 'POST',
-      body: formData,
-      headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
-    })
-    .then(function(resp) {
-      if (!resp.ok) return resp.json().then(function(err) { throw new Error(err.error || err.detail || 'Upload failed'); });
-      return resp.json();
-    })
-    .then(function(data) {
-      // Reload page to show the new quotation with prefill status
-      window.location.reload();
-    })
-    .catch(function(err) {
-      errorDiv.textContent = err.message;
-      errorDiv.style.display = 'block';
-      progress.style.display = 'none';
-      btn.disabled = false;
+  /* ---- Run Analysis ---- */
+  var runBtn = document.getElementById("btn-run-analysis");
+  if (runBtn) {
+    runBtn.addEventListener("click", function(){
+      var runType = document.getElementById("run-type-select").value;
+      var url = runBtn.dataset.triggerUrl;
+      var csrf = runBtn.dataset.csrf;
+      runBtn.disabled = true;
+      runBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...';
+      fetch(url, {
+        method: "POST",
+        headers: {"X-CSRFToken": csrf, "Content-Type": "application/x-www-form-urlencoded"},
+        body: "run_type=" + encodeURIComponent(runType),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if(data.status === "ok" || data.status === "success"){
+          window.location.reload();
+        } else {
+          runBtn.disabled = false;
+          runBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run Analysis';
+          alert(data.error || "Failed to trigger analysis.");
+        }
+      })
+      .catch(() => {
+        runBtn.disabled = false;
+        runBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run Analysis';
+      });
     });
-  });
-}
+  }
+
+  const fetchBtn = document.getElementById("btn-fetch-citations");
+  if (fetchBtn) {
+    fetchBtn.addEventListener("click", function(){
+      const url = fetchBtn.dataset.url;
+      const placeholder = document.getElementById("citations-placeholder");
+      const spinner    = document.getElementById("citations-spinner");
+      const results    = document.getElementById("citations-results");
+      const errBox     = document.getElementById("citations-error");
+      const errMsg     = document.getElementById("citations-error-msg");
+
+      placeholder.classList.add("d-none");
+      spinner.classList.remove("d-none");
+      results.classList.add("d-none");
+      errBox.classList.add("d-none");
+
+      fetchBtn.disabled = true;
+      fetchBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analyzing...';
+
+      fetch(url, {credentials: "same-origin"})
+        .then(r => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(data => {
+          spinner.classList.add("d-none");
+          fetchBtn.disabled = false;
+          fetchBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Re-run Analysis';
+
+          if (data.suggestions && data.suggestions.length === 0 && data.error) {
+            errMsg.textContent = data.ai_summary || "AI analysis unavailable. Please try again shortly.";
+            errBox.classList.remove("d-none");
+            return;
+          }
+
+          /* Populate AI query banner */
+          document.getElementById("ai-rephrased-query").textContent =
+            data.rephrased_query || ("Market analysis for " + (data.system_name || "HVAC system"));
+
+          /* AI summary + market context */
+          document.getElementById("ai-summary-text").textContent = data.ai_summary || "--";
+          document.getElementById("ai-market-context").textContent = data.market_context || "--";
+
+          /* Results count badge */
+          const suggestions = data.suggestions || [];
+          document.getElementById("results-count-badge").textContent =
+            suggestions.length + " product" + (suggestions.length !== 1 ? "s" : "");
+
+          /* Build table rows */
+          const tbody = document.getElementById("ai-suggestions-tbody");
+          tbody.innerHTML = "";
+
+          suggestions.forEach(function(s, idx){
+            const score = s.fit_score || 0;
+            const scoreColor = score >= 80 ? "#16a34a" : score >= 60 ? "#d97706" : "#dc2626";
+            const scoreBg    = score >= 80 ? "#f0fdf4" : score >= 60 ? "#fffbeb" : "#fef2f2";
+
+            const benefits = (s.key_benefits || []).slice(0, 3).map(function(b){
+              return '<span style="display:inline-block;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:20px;padding:.15em .6em;font-size:.72rem;margin:.1rem .1rem;">'
+                + escHtml(b) + '</span>';
+            }).join("");
+
+            const standards = (s.standards_compliance || []).map(function(std){
+              return '<span class="badge bg-light text-dark border" style="font-size:.62rem;margin:.1rem;">' + escHtml(std) + '</span>';
+            }).join("");
+
+            const limitations = (s.limitations || []).map(function(lim){
+              return '<li class="text-secondary" style="font-size:.78rem;">' + escHtml(lim) + '</li>';
+            }).join("");
+
+            const citationCell = s.citation_url && s.citation_url !== "#"
+              ? '<a href="' + escHtml(s.citation_url) + '" target="_blank" rel="noopener noreferrer" '
+                + 'class="btn btn-xs btn-outline-info" style="font-size:.7rem;padding:.2rem .5rem;" '
+                + 'title="' + escHtml(s.citation_source || "Source") + '">'
+                + '<i class="bi ' + escHtml(s.icon_class || "bi-box-arrow-up-right") + ' me-1"></i>'
+                + escHtml(s.citation_source || "Source") + '</a>'
+              : '<span class="text-muted small">' + escHtml(s.citation_source || "N/A") + '</span>';
+
+            const rowId = "sug-detail-" + idx;
+            const hasDetail = (s.limitations && s.limitations.length > 0) || s.fit_rationale || s.market_availability;
+
+            const expandBtn = hasDetail
+              ? '<button class="btn btn-link btn-sm p-0 ms-1 text-muted" style="font-size:.7rem;" '
+                + 'data-bs-toggle="collapse" data-bs-target="#' + rowId + '">'
+                + '<i class="bi bi-chevron-down"></i></button>'
+              : '';
+
+            const tr = document.createElement("tr");
+            tr.innerHTML = '<td class="text-muted fw-semibold" style="font-size:.75rem;">' + s.rank + '</td>'
+              + '<td>'
+              + '<div class="fw-semibold text-dark">' + escHtml(s.product_name || "") + expandBtn + '</div>'
+              + '<div class="text-muted" style="font-size:.75rem;">'
+              + escHtml(s.manufacturer || "") + (s.model_code ? ' &bull; <code style="font-size:.7rem;">' + escHtml(s.model_code) + '</code>' : '')
+              + '</div>'
+              + (hasDetail
+                ? '<div class="collapse" id="' + rowId + '">'
+                  + '<div class="mt-2 pt-2 border-top">'
+                  + (s.fit_rationale ? '<div class="text-secondary mb-1" style="font-size:.78rem;"><i class="bi bi-info-circle me-1 text-info"></i>' + escHtml(s.fit_rationale) + '</div>' : '')
+                  + (s.market_availability ? '<div class="text-secondary mb-1" style="font-size:.78rem;"><i class="bi bi-geo-alt me-1 text-success"></i>' + escHtml(s.market_availability) + '</div>' : '')
+                  + (limitations ? '<div class="text-muted fw-semibold mt-1 mb-1" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;">Limitations</div><ul class="mb-0 ps-3">' + limitations + '</ul>' : '')
+                  + '</div></div>'
+                : '')
+              + '</td>'
+              + '<td><span class="badge bg-secondary" style="font-size:.72rem;">' + escHtml(s.system_type || "") + '</span></td>'
+              + '<td class="fw-semibold text-dark">' + escHtml(s.cooling_capacity || "--") + '</td>'
+              + '<td class="text-muted small">' + escHtml(s.cop_eer || "--") + '</td>'
+              + '<td class="fw-semibold" style="color:#15803d;font-size:.8rem;">' + escHtml(s.price_range_aed || "--") + '</td>'
+              + '<td style="text-align:center;">'
+              + '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">'
+              + '<div style="width:48px;height:48px;border-radius:50%;background:' + scoreBg + ';border:3px solid ' + scoreColor + ';display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;color:' + scoreColor + ';">' + score + '</div>'
+              + (standards ? '<div style="margin-top:3px;">' + standards + '</div>' : '')
+              + '</div>'
+              + '</td>'
+              + '<td>' + (benefits || '<span class="text-muted small">--</span>') + '</td>'
+              + '<td style="text-align:center;">' + citationCell + '</td>';
+
+            tbody.appendChild(tr);
+          });
+
+          results.classList.remove("d-none");
+        })
+        .catch(function(err){
+          spinner.classList.add("d-none");
+          fetchBtn.disabled = false;
+          fetchBtn.innerHTML = '<i class="bi bi-robot me-1"></i>Retry Analysis';
+          errMsg.textContent = "AI market analysis failed: " + err.message;
+          errBox.classList.remove("d-none");
+        });
+    });
+  }
+
+  function escHtml(str){
+    if (typeof str !== "string") return str != null ? String(str) : "";
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+              .replace(/"/g,"&quot;").replace(/'/g,"&#x27;");
+  }
+
+  /* ---- RFQ Modal ---- */
+  var rfqFooter       = document.getElementById("rfqFooter");
+  var rfqNextBtn      = document.getElementById("rfqNextBtn");
+  var rfqGenerateBtn  = document.getElementById("rfqGenerateBtn");
+  var rfqSelectedCode = "";
+  var rfqSelectedLabel= "";
+
+  /* CSRF helper */
+  function rfqGetCsrf() {
+    var name = "csrftoken"; var ca = document.cookie.split(";");
+    for (var i = 0; i < ca.length; i++) {
+      var c = ca[i].trim();
+      if (c.indexOf(name + "=") === 0) return decodeURIComponent(c.substring(name.length + 1));
+    }
+    var el = document.querySelector("[name=csrfmiddlewaretoken]");
+    return el ? el.value : "";
+  }
+
+  /* Scope-of-work rows per system -- DB (HVACServiceScope) with hardcoded fallback */
+  var RFQ_SCOPE_FALLBACK = {
+    VRF:         [["Equipment","VRF Outdoor Unit(s)","Nos",""],["Equipment","VRF Indoor Units (Ceiling / Wall type per layout)","Nos",""],["Piping","Refrigerant Copper Piping & Fittings","RM",""],["Piping","Thermal Insulation for Refrigerant Pipes","RM",""],["Electrical","Power Cabling & Distribution Boards","LS",1],["Controls","Central Controller / BMS Integration","LS",1],["Civil & MEP","Structural Support, Drainage, Penetrations","LS",1],["Installation","Complete Installation Works","LS",1],["Testing","Testing, Commissioning & Handover","LS",1]],
+    SPLIT_AC:    [["Equipment","Split AC Outdoor Condensing Units","Nos",""],["Equipment","Split AC Indoor Units","Nos",""],["Piping","Refrigerant Copper Piping & Fittings","RM",""],["Piping","Condensate Drain Piping","RM",""],["Electrical","Power Cabling & MCB Distribution","LS",1],["Civil & MEP","Structural Support & Wall Penetrations","LS",1],["Installation","Complete Installation Works","LS",1],["Testing","Testing, Commissioning & Handover","LS",1]],
+    PACKAGED_DX: [["Equipment","Packaged DX Unit(s) (Roof-Top / Split Packaged)","Nos",""],["Ducting","GI Ducting (Supply & Return)","Sqm",""],["Ducting","Flexible Duct Connectors","RM",""],["Diffusers","Supply / Return Air Diffusers & Grilles","Nos",""],["Insulation","Duct Thermal & Acoustic Insulation","Sqm",""],["Electrical","Power Cabling & Distribution Boards","LS",1],["Civil & MEP","Roof Curb, Support Structure, Penetrations","LS",1],["Installation","Complete Installation Works","LS",1],["Testing","Testing, Commissioning & Handover","LS",1]],
+    CHILLER:     [["Equipment","Water-Cooled / Air-Cooled Chiller Plant","Nos",""],["Equipment","Cooling Towers (if water-cooled)","Nos",""],["Equipment","Air Handling Units (AHUs) / Fan Coil Units","Nos",""],["Piping","Chilled Water & Condenser Water Piping","RM",""],["Piping","Thermal Insulation for Chilled Water Pipes","RM",""],["Pumps","Primary & Secondary Chilled Water Pumps","Nos",""],["Electrical","LV Panels, Cabling & MCC","LS",1],["Controls","BMS / DDC Control System","LS",1],["Installation","Complete Installation Works","LS",1],["Testing","Testing, Commissioning & Handover","LS",1]],
+    FCU:         [["Equipment","Fan Coil Units (2-pipe or 4-pipe)","Nos",""],["Piping","Chilled Water Supply & Return Piping","RM",""],["Piping","Condensate Drain Piping","RM",""],["Insulation","Pipe Thermal Insulation","RM",""],["Electrical","Power Cabling & Wiring","LS",1],["Controls","Thermostat & Zone Controls","LS",1],["Civil & MEP","Ceiling Works & Support Structures","LS",1],["Installation","Complete Installation Works","LS",1],["Testing","Testing, Commissioning & Handover","LS",1]],
+    CASSETTE:    [["Equipment","Cassette Type Indoor Units (4-way blow)","Nos",""],["Equipment","Outdoor Condensing Units","Nos",""],["Piping","Refrigerant Copper Piping & Fittings","RM",""],["Piping","Condensate Drain Piping","RM",""],["Electrical","Power Cabling & Distribution","LS",1],["Civil & MEP","Ceiling Cutouts, Diffuser Frames, Supports","LS",1],["Installation","Complete Installation Works","LS",1],["Testing","Testing, Commissioning & Handover","LS",1]],
+  };
+  /* Load scope from DB (injected by request_workspace view via HVACServiceScope) */
+  var RFQ_SCOPE = RFQ_SCOPE_FALLBACK;
+  try {
+    var _scopeEl = document.getElementById("rfq-scope-data");
+    if (_scopeEl) {
+      var _dbScope = JSON.parse(_scopeEl.textContent || "{}");
+      if (_dbScope && Object.keys(_dbScope).length > 0) RFQ_SCOPE = _dbScope;
+    }
+  } catch(e) {}
+
+  /* Load AI market suggestions embedded by Django's json_script tag */
+  var rfqMiSuggestions = [];
+  try {
+    var _mi = document.getElementById("rfq-mi-suggestions");
+    if (_mi) rfqMiSuggestions = JSON.parse(_mi.textContent || "[]");
+  } catch(e) {}
+
+  /* Load DB products (Product model grouped by system_type) with fallback to standard list */
+  var rfqDbProductsMap = {};
+  try {
+    var _prodEl = document.getElementById("rfq-db-products");
+    if (_prodEl) rfqDbProductsMap = JSON.parse(_prodEl.textContent || "{}");
+  } catch(e) {}
+
+  /* Fallback standard product list (used when DB is empty) */
+  var rfqStandardProducts = [
+    { code: "VRF",         label: "VRF System",          desc: "Variable Refrigerant Flow -- ideal for large multi-zone stores" },
+    { code: "SPLIT_AC",    label: "Split AC System",     desc: "Cost-effective split units for smaller areas" },
+    { code: "PACKAGED_DX", label: "Packaged DX Unit",    desc: "Standalone rooftop / packaged unit, suited for extreme climates" },
+    { code: "CHILLER",     label: "Chiller System",      desc: "Large-scale centralised chilled water system" },
+    { code: "FCU",         label: "Fan Coil Unit (FCU)", desc: "Fan coil units connected to a central chiller plant" },
+    { code: "CASSETTE",    label: "Cassette Split AC",   desc: "Ceiling-mounted 4-way cassette units for open-plan layouts" },
+  ];
+
+  /* ---- Step controller: 1=mode choice, 2=product cards, 3=qty ---- */
+  function rfqShowStep(step) {
+    document.getElementById("rfqStep1").style.display = step === 1 ? "" : "none";
+    document.getElementById("rfqStep2").style.display = step === 2 ? "" : "none";
+    document.getElementById("rfqStep3").style.display = step === 3 ? "" : "none";
+    if (rfqFooter) {
+      rfqFooter.style.display = (step === 2 && rfqSelectedCode) ? "" : "none";
+    }
+    if (rfqNextBtn) rfqNextBtn.classList.toggle("d-none", step !== 2);
+    /* rfqGenerateBtn lives inside rfqStep3 -- shown/hidden with the step div */
+  }
+
+  /* ---- System type label/description map (code -> human-readable) ---- */
+  var rfqSystemLabelMap = {
+    "VRF":         { label: "VRF System (Variable Refrigerant Flow)",   desc: "Multi-zone system -- one outdoor unit serving multiple indoor units. Ideal for standalone stores with 3+ zones." },
+    "SPLIT_AC":    { label: "Split AC System",                           desc: "Wall-mounted or floor split units with dedicated condensers. Cost-effective for smaller areas up to 2 zones." },
+    "PACKAGED_DX": { label: "Packaged DX Unit (Rooftop / Floor)",        desc: "Self-contained packaged units delivering conditioned air via ductwork. Suited for warehouses and large open spaces." },
+    "CHILLER":     { label: "Chiller Plant (Air / Water Cooled)",        desc: "Central chiller for anchor stores, data centers or buildings with load > 200 TR." },
+    "FCU":         { label: "Fan Coil Unit (Chilled Water)",             desc: "FCU connected to existing central chilled water plant. Ideal for mall tenants with CW backbone." },
+    "CASSETTE":    { label: "Cassette Split AC (Ceiling Mounted)",       desc: "4-way blow ceiling-mounted cassette units for even distribution in open-plan layouts." },
+  };
+
+  /* ---- Populate system dropdown from HVAC rules set (Step 2) ---- */
+  function rfqPopulateSystemDropdown() {
+    var sel = document.getElementById("rfqSystemSelect");
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- Select an Available System --</option>';
+
+    /* Build from DB scope keys (HVACServiceScope) or fall back to standard list */
+    var scopeKeys = Object.keys(RFQ_SCOPE);
+    var systems;
+    if (scopeKeys.length > 0) {
+      systems = scopeKeys.map(function(code){
+        var info = rfqSystemLabelMap[code] || { label: code.replace(/_/g, " "), desc: "" };
+        return { code: code, label: info.label, desc: info.desc };
+      });
+    } else {
+      systems = rfqStandardProducts;
+    }
+    systems.forEach(function(s){
+      var opt = document.createElement("option");
+      opt.value = s.code;
+      opt.textContent = s.label;
+      sel.appendChild(opt);
+    });
+
+    /* Reset selection state when opening step 2 fresh */
+    sel.value = "";
+    rfqSelectedCode  = "";
+    rfqSelectedLabel = "";
+    var descBox = document.getElementById("rfqSystemDesc");
+    if (descBox) descBox.classList.add("d-none");
+    if (rfqFooter) rfqFooter.style.display = "none";
+    if (rfqNextBtn) rfqNextBtn.classList.add("d-none");
+  }
+
+  /* ---- Dropdown change: set selected system and show Next button ---- */
+  (function(){
+    var sel = document.getElementById("rfqSystemSelect");
+    if (!sel) return;
+    sel.addEventListener("change", function(){
+      var code = sel.value;
+      var descBox = document.getElementById("rfqSystemDesc");
+      if (!code) {
+        rfqSelectedCode  = "";
+        rfqSelectedLabel = "";
+        if (descBox) descBox.classList.add("d-none");
+        if (rfqFooter) rfqFooter.style.display = "none";
+        if (rfqNextBtn) rfqNextBtn.classList.add("d-none");
+        return;
+      }
+      rfqSelectedCode  = code;
+      rfqSelectedLabel = sel.options[sel.selectedIndex].text;
+      var info = rfqSystemLabelMap[code] || { desc: "" };
+      if (descBox) {
+        if (info.desc) {
+          descBox.textContent = info.desc;
+          descBox.classList.remove("d-none");
+        } else {
+          descBox.classList.add("d-none");
+        }
+      }
+      if (rfqFooter) rfqFooter.style.display = "";
+      if (rfqNextBtn) rfqNextBtn.classList.remove("d-none");
+    });
+  })();
+
+  /* ---- Build qty editor table (Step 3) ---- */
+  function rfqBuildQtyTable(code) {
+    var tbody = document.getElementById("rfqQtyTableBody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+    var rows = RFQ_SCOPE[code] || RFQ_SCOPE["PACKAGED_DX"];
+    rows.forEach(function(row, idx){
+      var tr = document.createElement("tr");
+      tr.innerHTML = '<td class="fw-semibold bg-light">' + escHtml(row[0]) + '</td>'
+        + '<td>' + escHtml(row[1]) + '</td>'
+        + '<td class="text-center">' + escHtml(row[2]) + '</td>'
+        + '<td><input type="number" class="form-control form-control-sm rfq-qty-input" '
+        + 'data-idx="' + idx + '" value="' + (row[3] !== "" ? row[3] : "") + '" '
+        + 'placeholder="--" min="0" step="1" style="width:60px;text-align:center;"></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  function rfqCollectQty() {
+    var out = {};
+    document.querySelectorAll(".rfq-qty-input").forEach(function(inp){
+      var v = inp.value.trim();
+      if (v !== "") out[inp.dataset.idx] = Number(v);
+    });
+    return Object.keys(out).length ? JSON.stringify(out) : "";
+  }
+
+  /* ---- Button logic ---- */
+  var rfqBtnRec = document.getElementById("rfqBtnRecommendation");
+  if (rfqBtnRec) {
+    rfqBtnRec.addEventListener("click", function(){
+      rfqSelectedCode = "RECOMMENDED";
+      /* Determine system code for qty table scope */
+      {% if recommendation %}
+      var _recCode = "{% if reason_summary and reason_summary.system_type_code %}{{ reason_summary.system_type_code }}{% else %}PACKAGED_DX{% endif %}";
+      rfqBuildQtyTable(_recCode);
+      {% else %}
+      rfqBuildQtyTable("PACKAGED_DX");
+      {% endif %}
+      rfqShowStep(3);
+    });
+  }
+
+  var rfqBtnManual = document.getElementById("rfqBtnManual");
+  if (rfqBtnManual) {
+    rfqBtnManual.addEventListener("click", function(){
+      rfqPopulateSystemDropdown();
+      rfqShowStep(2);
+    });
+  }
+
+  var rfqBackBtn = document.getElementById("rfqBackBtn");
+  if (rfqBackBtn) {
+    rfqBackBtn.addEventListener("click", function(){ rfqShowStep(1); });
+  }
+
+  var rfqBackBtn3 = document.getElementById("rfqBackBtn3");
+  if (rfqBackBtn3) {
+    rfqBackBtn3.addEventListener("click", function(){
+      rfqShowStep(rfqSelectedCode === "RECOMMENDED" ? 1 : 2);
+    });
+  }
+
+  if (rfqNextBtn) {
+    rfqNextBtn.addEventListener("click", function(){
+      if (!rfqSelectedCode) { alert("Please select a system type first."); return; }
+      rfqBuildQtyTable(rfqSelectedCode);
+      rfqShowStep(3);
+    });
+  }
+
+  /* ---- Generate & Save RFQ (POST -> JSON -> page reload) ---- */
+  function rfqGenerate() {
+    if (!rfqSelectedCode) { alert("No system selected."); return; }
+    var generateUrl = "{% url 'procurement:generate_rfq' pk=proc_request.pk %}";
+    var formData = new FormData();
+    formData.append("csrfmiddlewaretoken", rfqGetCsrf());
+    formData.append("product",  rfqSelectedCode);
+    formData.append("qty_json", rfqCollectQty());
+
+    if (rfqGenerateBtn) {
+      rfqGenerateBtn.disabled = true;
+      rfqGenerateBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating...';
+    }
+
+    fetch(generateUrl, { method: "POST", body: formData, credentials: "same-origin" })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.status === "ok") {
+          var modal = bootstrap.Modal.getInstance(document.getElementById("rfqModal"));
+          if (modal) modal.hide();
+          /* Reload page to display updated RFQ Documents panel */
+          window.location.reload();
+        } else {
+          alert("RFQ generation failed. Please try again.");
+          if (rfqGenerateBtn) {
+            rfqGenerateBtn.disabled = false;
+            rfqGenerateBtn.innerHTML = '<i class="bi bi-cloud-upload me-1"></i>Generate &amp; Save RFQ';
+          }
+        }
+      })
+      .catch(function(err){
+        console.error("RFQ generate error:", err);
+        alert("Network error. Please try again.");
+        if (rfqGenerateBtn) {
+          rfqGenerateBtn.disabled = false;
+          rfqGenerateBtn.innerHTML = '<i class="bi bi-cloud-upload me-1"></i>Generate &amp; Save RFQ';
+        }
+      });
+  }
+
+  if (rfqGenerateBtn) {
+    rfqGenerateBtn.addEventListener("click", rfqGenerate);
+  }
+
+  /* Reset on modal close */
+  var rfqModalEl = document.getElementById("rfqModal");
+  if (rfqModalEl) {
+    rfqModalEl.addEventListener("hidden.bs.modal", function(){
+      rfqSelectedCode  = "";
+      rfqSelectedLabel = "";
+      rfqShowStep(1);
+      /* Reset the system dropdown */
+      var _sel = document.getElementById("rfqSystemSelect");
+      if (_sel) _sel.value = "";
+      var _desc = document.getElementById("rfqSystemDesc");
+      if (_desc) _desc.classList.add("d-none");
+      if (rfqGenerateBtn) {
+        rfqGenerateBtn.disabled = false;
+        rfqGenerateBtn.innerHTML = '<i class="bi bi-cloud-upload me-1"></i>Generate &amp; Save RFQ';
+      }
+    });
+  }
+
+})();
+</script>
+
+{# ---- Market Intelligence: Chart.js + inline JS ---- #}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% if mi_record %}
+<script>window._WS_MI_SAVED = {{ mi_record.suggestions_json|safe }};</script>
+<script>window._WS_MI_SAVED_CITATIONS = {{ mi_record.perplexity_citations_json|safe }};</script>
+{% endif %}
+<script>
+(function () {
+  "use strict";
+
+  var _SURL      = "{% url 'procurement:api_external_suggestions' pk=proc_request.pk %}";
+  var _HAS_SAVED = {{ mi_record|yesno:"true,false" }};
+
+  var elSpin  = document.getElementById("ws-mi-spinner");
+  var elErr   = document.getElementById("ws-mi-error");
+  var elRes   = document.getElementById("ws-mi-results");
+  var elTbl   = document.getElementById("ws-mi-table-section");
+  var elBtnR  = document.getElementById("ws-mi-btn-refresh");
+  var elBtnRt = document.getElementById("ws-mi-btn-retry");
+
+  function esc(s) { var d = document.createElement("div"); d.textContent = String(s || ""); return d.innerHTML; }
+  function fitCls(sc) { return sc >= 80 ? "fit-green" : sc >= 60 ? "fit-amber" : "fit-red"; }
+
+  function showState(el) {
+    [elSpin, elErr, elRes].forEach(function(e){ if(e) e.classList.add("d-none"); });
+    if(elTbl) elTbl.classList.add("d-none");
+    if(el) el.classList.remove("d-none");
+    if(el === elRes && elTbl) elTbl.classList.remove("d-none");
+  }
+
+  var _wsMiChart = null;
+
+  function parseMid(str) {
+    if (!str || str === "--") return null;
+    var nums = String(str).replace(/,/g, "").match(/\d+(?:\.\d+)?/g);
+    if (!nums || !nums.length) return null;
+    var vals = nums.map(Number).filter(function(v){ return v > 0; });
+    return vals.length >= 2 ? (vals[0] + vals[vals.length - 1]) / 2 : vals[0];
+  }
+
+  function buildChart(sugs) {
+    var card = document.getElementById("ws-mi-price-chart-card");
+    var cvs  = document.getElementById("ws-mi-price-chart");
+    if (!card || !cvs || typeof Chart === "undefined") return;
+    var labels = [], prices = [], bg = [], bd = [];
+    sugs.forEach(function(s, i) {
+      var mid = parseMid(s.price_range_aed);
+      if (mid === null) return;
+      var n = String(s.product_name || "Product " + (i + 1));
+      labels.push(n.length > 18 ? n.slice(0, 16) + "..." : n);
+      prices.push(mid);
+      var sc = s.fit_score || 0;
+      var c = sc >= 80 ? "rgba(34,197,94,.75)" : sc >= 60 ? "rgba(245,158,11,.75)" : "rgba(239,68,68,.75)";
+      bg.push(c); bd.push(c.replace(".75)", "1)"));
+    });
+    if (!prices.length) { card.style.display = "none"; return; }
+    card.style.display = "";
+    if (_wsMiChart) _wsMiChart.destroy();
+    _wsMiChart = new Chart(cvs, {
+      type: "bar",
+      data: { labels: labels, datasets: [{ label: "AED (mid)", data: prices,
+        backgroundColor: bg, borderColor: bd, borderWidth: 1, borderRadius: 5 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) {
+          return " AED " + ctx.parsed.y.toLocaleString();
+        }}}},
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 35, minRotation: 25 } },
+          y: { beginAtZero: true, grid: { color: "#f3f4f6" }, ticks: { font: { size: 9 }, callback: function(v) {
+            return v >= 1000 ? (v / 1000).toFixed(0) + "k" : v;
+          }}}
+        }
+      }
+    });
+  }
+
+  function buildRows(sugs) {
+    var tbody = document.getElementById("ws-mi-suggestions-tbody");
+    var cntBd = document.getElementById("ws-mi-suggestion-count");
+    if (!tbody) return;
+    if (cntBd) cntBd.textContent = sugs.length;
+    tbody.innerHTML = "";
+    if (!sugs.length) {
+      tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No product suggestions returned. Try re-running the analysis.</td></tr>';
+      return;
+    }
+    sugs.forEach(function(s, idx) {
+      var fc = fitCls(s.fit_score || 0);
+      var benefits = (s.key_benefits || []).slice(0, 3).map(function(b) {
+        return '<span class="benefit-chip">' + esc(b) + '</span>';
+      }).join("");
+      var standards = (s.standards_compliance || []).map(function(c) {
+        return '<span class="badge bg-light text-secondary border me-1" style="font-size:.64rem;">' + esc(c) + '</span>';
+      }).join("");
+      var limitations = (s.limitations || []).map(function(l) {
+        return "<li>" + esc(l) + "</li>";
+      }).join("");
+      var _citBtns = (s.citation_url
+          ? '<a href="' + esc(s.citation_url) + '" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:.68rem;" title="' + esc(s.citation_url) + '"><i class="bi bi-file-earmark-text me-1"></i>Product Page</a>'
+          : "")
+        + (s.price_source_url && s.price_source_url !== s.citation_url
+          ? '<a href="' + esc(s.price_source_url) + '" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:.68rem;" title="' + esc(s.price_source_url) + '"><i class="bi bi-tag me-1"></i>Price Source</a>'
+          : "");
+      var citLink = _citBtns ? '<div class="mt-2 d-flex flex-wrap gap-1">' + _citBtns + '</div>' : "";
+      var citCell = s.citation_url
+        ? (function(url, lbl) {
+            var d = ""; try { d = new URL(url).hostname; } catch(e) {}
+            var fi = d ? '<img src="https://www.google.com/s2/favicons?domain=' + encodeURIComponent(d) + '&sz=32" width="14" height="14" style="border-radius:2px;flex-shrink:0;" onerror="this.style.display=\'none\'" alt="">' : '';
+            return '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" class="d-inline-flex align-items-center gap-1 btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.7rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(url) + '">' + fi + '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(lbl) + '</span><i class="bi bi-box-arrow-up-right" style="font-size:.62rem;flex-shrink:0;"></i></a>';
+          })(s.citation_url, s.citation_source || "Source")
+        : '<span class="text-muted" style="font-size:.72rem;">--</span>';
+
+      var tr = document.createElement("tr");
+      tr.style.cursor = "pointer";
+      tr.dataset.bsToggle = "collapse";
+      tr.dataset.bsTarget = "#ws-mi-det-" + idx;
+      tr.innerHTML = '<td class="text-muted fw-bold">' + esc(s.rank || idx + 1) + '</td>'
+        + '<td><div class="fw-semibold" style="font-size:.83rem;">' + esc(s.product_name || "") + '</div>'
+        + '<div class="text-muted" style="font-size:.72rem;">' + esc(s.manufacturer || "") + (s.model_code ? ' &middot; <code class="text-secondary">' + esc(s.model_code) + '</code>' : '') + '</div></td>'
+        + '<td><span class="badge bg-secondary-subtle text-secondary border" style="font-size:.67rem;">' + esc(s.system_type || "") + '</span></td>'
+        + '<td style="white-space:nowrap;">' + esc(s.cooling_capacity || "--") + '</td>'
+        + '<td style="white-space:nowrap;font-size:.76rem;">' + esc(s.cop_eer || "--") + '</td>'
+        + '<td style="font-size:.76rem;min-width:115px;">' + esc(s.price_range_aed || "--") + '</td>'
+        + '<td><span class="fit-circle ' + fc + '">' + esc(s.fit_score || 0) + '</span></td>'
+        + '<td>' + benefits + '</td>'
+        + '<td>' + citCell + '</td>'
+        + '<td class="text-muted"><i class="bi bi-chevron-down" style="font-size:.68rem;"></i></td>';
+
+      var detTr = document.createElement("tr");
+      var detTd = document.createElement("td"); detTd.colSpan = 10; detTd.style.padding = "0";
+      var cDiv = document.createElement("div"); cDiv.id = "ws-mi-det-" + idx; cDiv.className = "collapse";
+      cDiv.innerHTML = '<div class="p-3 d-flex gap-4 flex-wrap" style="background:#f9fafb;border-top:1px solid #e5e7eb;">'
+        + '<div style="min-width:185px;flex:1;"><div class="fw-semibold mb-1" style="font-size:.71rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;">Fit Rationale</div>'
+        + '<div style="font-size:.8rem;color:#374151;">' + esc(s.fit_rationale || "") + '</div>'
+        + (s.market_availability ? '<div class="mt-2" style="font-size:.76rem;color:#6b7280;"><i class="bi bi-geo-alt me-1"></i>' + esc(s.market_availability) + '</div>' : "")
+        + '</div>'
+        + (limitations ? '<div style="min-width:165px;flex:1;"><div class="fw-semibold mb-1" style="font-size:.71rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;">Limitations</div><ul class="mb-0 ps-3" style="font-size:.78rem;color:#6b7280;">' + limitations + '</ul></div>' : "")
+        + '<div style="min-width:165px;flex:1;"><div class="fw-semibold mb-1" style="font-size:.71rem;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;">Standards</div>'
+        + (standards || '<span class="text-muted" style="font-size:.74rem;">--</span>')
+        + citLink + '</div></div>';
+      detTd.appendChild(cDiv); detTr.appendChild(detTd);
+      tbody.appendChild(tr);
+      tbody.appendChild(detTr);
+    });
+  }
+
+  function renderCitations(citations) {
+    var box = document.getElementById("ws-mi-citations");
+    var list = document.getElementById("ws-mi-citations-list");
+    if (!box || !list || !citations || !citations.length) {
+      if (box) box.classList.add("d-none"); return;
+    }
+    list.innerHTML = "";
+    citations.forEach(function(url) {
+      var a = document.createElement("a");
+      a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.title = url;
+      a.className = "btn btn-sm btn-outline-secondary py-0 px-2 d-inline-flex align-items-center gap-1";
+      a.style.cssText = "font-size:.67rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      a.innerHTML = '<i class="bi bi-box-arrow-up-right" style="font-size:.6rem;flex-shrink:0;"></i>'
+        + '<span style="overflow:hidden;text-overflow:ellipsis;">' + esc(url) + '</span>';
+      list.appendChild(a);
+    });
+    box.classList.remove("d-none");
+  }
+
+  function renderData(data) {
+    var rq = document.getElementById("ws-mi-rephrased-query");
+    var sm = document.getElementById("ws-mi-ai-summary");
+    var mc = document.getElementById("ws-mi-market-context");
+    if (rq) rq.textContent = data.rephrased_query || "";
+    if (sm) sm.textContent = data.ai_summary || "";
+    if (mc) mc.textContent = data.market_context || "";
+    buildRows(data.suggestions || []);
+    buildChart(data.suggestions || []);
+    renderCitations(data.perplexity_citations || []);
+    showState(elRes);
+  }
+
+  function doFetch() {
+    if (elBtnR) { elBtnR.disabled = true; elBtnR.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...'; }
+    showState(elSpin);
+    fetch(_SURL, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error && !(data.ai_summary || (data.suggestions && data.suggestions.length))) {
+          var em = document.getElementById("ws-mi-error-msg");
+          if (em) em.textContent = data.error;
+          showState(elErr); return;
+        }
+        renderData(data);
+      })
+      .catch(function(err) {
+        var em = document.getElementById("ws-mi-error-msg");
+        if (em) em.textContent = "Network error: " + err.message;
+        showState(elErr);
+      })
+      .finally(function() {
+        if (elBtnR) { elBtnR.disabled = false; elBtnR.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Refresh'; }
+      });
+  }
+
+  // When external tab becomes visible: auto-fetch if no saved data, else build chart
+  var _wsTriggered = _HAS_SAVED;
+  var extTab = document.getElementById("external-tab");
+  if (extTab) {
+    extTab.addEventListener("shown.bs.tab", function() {
+      if (!_wsTriggered) {
+        _wsTriggered = true;
+        doFetch();
+      } else if (_HAS_SAVED && window._WS_MI_SAVED && Array.isArray(window._WS_MI_SAVED)) {
+        setTimeout(function() {
+          buildChart(window._WS_MI_SAVED);
+          if (window._WS_MI_SAVED_CITATIONS) renderCitations(window._WS_MI_SAVED_CITATIONS);
+        }, 50);
+      }
+    });
+  }
+
+  if (elBtnR)  elBtnR.addEventListener("click", doFetch);
+  if (elBtnRt) elBtnRt.addEventListener("click", doFetch);
+
+  // If page loaded directly with #external hash, trigger chart build
+  if (window.location.hash === "#external" && _HAS_SAVED && window._WS_MI_SAVED) {
+    var tabEl = document.getElementById("external-tab");
+    if (tabEl && typeof bootstrap !== "undefined") {
+      new bootstrap.Tab(tabEl).show();
+    }
+  }
+
+}());
 </script>
 {% endblock %}

@@ -186,3 +186,52 @@ def run_quotation_prefill_task(self, tenant_id: int = None, quotation_id: int = 
         from apps.procurement.services.prefill.prefill_status_service import PrefillStatusService
         PrefillStatusService.mark_quotation_failed(quotation, str(exc))
         return {"status": "failed", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Market Intelligence Tasks
+# ---------------------------------------------------------------------------
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=60, acks_late=True)
+@observed_task(
+    "procurement.market_intelligence",
+    audit_event="MARKET_INTELLIGENCE_STARTED",
+    entity_type="ProcurementRequest",
+)
+def generate_market_intelligence_task(self, request_id: int) -> dict:
+    """Generate and persist AI market intelligence for a ProcurementRequest.
+
+    Called automatically (with ~20s countdown) when a new HVAC request is created,
+    so the market intelligence page shows pre-populated results on the first visit.
+
+    Can also be queued manually via the seed_market_intelligence management command.
+    """
+    from apps.procurement.models import ProcurementRequest
+    from apps.procurement.services.market_intelligence_service import MarketIntelligenceService
+
+    try:
+        proc_request = ProcurementRequest.objects.get(pk=request_id)
+    except ProcurementRequest.DoesNotExist:
+        logger.warning("generate_market_intelligence_task: request pk=%s not found", request_id)
+        return {"status": "skipped", "reason": "Request not found"}
+
+    try:
+        result = MarketIntelligenceService.generate_auto(proc_request, generated_by=None)
+        logger.info(
+            "generate_market_intelligence_task: completed for pk=%s, %d suggestions",
+            request_id, len(result.get("suggestions", [])),
+        )
+        return {
+            "status": "completed",
+            "request_id": request_id,
+            "suggestion_count": len(result.get("suggestions", [])),
+        }
+    except Exception as exc:
+        logger.warning(
+            "generate_market_intelligence_task: failed for pk=%s: %s", request_id, exc,
+        )
+        try:
+            self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            pass
+        return {"status": "failed", "error": str(exc)}

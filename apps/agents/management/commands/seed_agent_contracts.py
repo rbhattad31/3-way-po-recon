@@ -168,6 +168,39 @@ CONTRACTS = [
         "human_review_required_conditions": "always - this agent assigns human review",
     },
     {
+        "agent_type": AgentType.COMPLIANCE_AGENT,
+        "purpose": "Assess invoice compliance: duplicate detection, tax validation, vendor approval, "
+                   "mandatory field completeness, fraud indicators, and amount-threshold policies",
+        "entry_conditions": (
+            "exception_type IN (DUPLICATE_INVOICE, TAX_MISMATCH, VENDOR_MISMATCH, MISSING_MANDATORY_FIELDS) "
+            "AND exception analysis has already run"
+        ),
+        "success_criteria": (
+            "compliance_status (PASS/FAIL/PARTIAL) determined, compliance_flags list populated in evidence, "
+            "ESCALATE_TO_MANAGER recommended for FAIL status"
+        ),
+        "prohibited_actions": ["AUTO_CLOSE"],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 2,
+        "tool_failure_confidence_cap": 0.5,
+        "allowed_recommendation_types": [
+            "SEND_TO_AP_REVIEW",
+            "ESCALATE_TO_MANAGER",
+            "SEND_TO_VENDOR_CLARIFICATION",
+            "REPROCESS_EXTRACTION",
+        ],
+        "default_fallback_recommendation": "ESCALATE_TO_MANAGER",
+        "output_schema_name": "AgentOutputSchema",
+        "output_schema_version": "v1",
+        "lifecycle_status": "active",
+        "owner_team": "Compliance & Audit",
+        "capability_tags": ["compliance", "fraud_detection", "validation"],
+        "domain_tags": ["invoice", "vendor", "tax", "audit"],
+        "human_review_required_conditions": (
+            "always when compliance_status=FAIL; when compliance_status=PARTIAL and confidence < 0.7"
+        ),
+    },
+    {
         "agent_type": AgentType.CASE_SUMMARY,
         "purpose": "Produce human-readable case summary for AP reviewers",
         "entry_conditions": "all preceding agents have completed for this pipeline run",

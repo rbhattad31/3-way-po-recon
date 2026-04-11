@@ -1,0 +1,407 @@
+Mermaid 1: End-to-End Low-Level Architecture (component + data + control flow)
+
+flowchart LR
+  subgraph U[User Interaction Layer]
+    U1[Procurement Buyer]
+    U2[Category Manager]
+    U3[Procurement Manager]
+    U4[Auditor / Finance Manager]
+  end
+
+  subgraph W[Web UI Layer]
+    T1[Request List Page]
+    T2[Request Create Page]
+    T3[Request Workspace Page]
+    T4[Run Detail Page]
+    T5[Forms: Mark Ready / Upload Quotation / Trigger Analysis / Trigger Validation]
+  end
+
+  subgraph A[API Layer: DRF]
+    A1[ProcurementRequestViewSet]
+    A2[SupplierQuotationViewSet]
+    A3[ValidationRuleSetViewSet]
+    A4[AnalysisRunValidationView]
+  end
+
+  subgraph P[Permission + Security]
+    P1[login_required / IsAuthenticated]
+    P2[permission_required_code]
+    P3[HasPermissionCode]
+    P4[RBAC Role-Permission Matrix]
+  end
+
+  subgraph S[Service Layer]
+    S1[ProcurementRequestService]
+    S2[AttributeService]
+    S3[QuotationService]
+    S4[LineItemNormalizationService]
+    S5[AnalysisRunService]
+    S6[RecommendationService]
+    S7[BenchmarkService]
+    S8[ComplianceService]
+    S9[ValidationOrchestratorService]
+    S10[ValidationRuleResolverService]
+    S11[AttributeCompletenessValidationService]
+    S12[DocumentCompletenessValidationService]
+    S13[ScopeCoverageValidationService]
+    S14[AmbiguityValidationService]
+    S15[CommercialCompletenessValidationService]
+    S16[ComplianceReadinessValidationService]
+    S17[MarketIntelligenceService]
+  end
+
+  subgraph AG[AI Agent Layer]
+    AG1[RecommendationAgent]
+    AG2[BenchmarkAgent]
+    AG3[ValidationAgentService]
+  end
+
+  subgraph Q[Async Execution]
+    Q1[run_analysis_task]
+    Q2[run_validation_task]
+    Q3[Celery Broker Redis]
+    Q4[Celery Worker]
+  end
+
+  subgraph O[Observability + Governance]
+    O1[TraceContext]
+    O2[observed_service / observed_task decorators]
+    O3[AuditService]
+    O4[AuditEvent / ProcessingLog]
+  end
+
+  subgraph D[Data Layer: MySQL]
+    D1[ProcurementRequest]
+    D2[ProcurementRequestAttribute]
+    D3[SupplierQuotation]
+    D4[QuotationLineItem]
+    D5[AnalysisRun]
+    D6[RecommendationResult]
+    D7[BenchmarkResult]
+    D8[BenchmarkResultLine]
+    D9[ComplianceResult]
+    D10[ValidationRuleSet]
+    D11[ValidationRule]
+    D12[ValidationResult]
+    D13[ValidationResultItem]
+    D14[DocumentUpload link]
+    D15[MarketIntelligenceSuggestion]
+    D16[ExternalSourceRegistry]
+  end
+
+  U1 --> W
+  U2 --> W
+  U3 --> W
+  U4 --> W
+
+  W --> P
+  W --> A
+  A --> P
+  A --> S
+
+  S --> D
+  S --> O
+
+  A --> Q
+  Q1 --> Q3 --> Q4 --> S
+  Q2 --> Q3 --> Q4 --> S
+
+  S6 --> AG1
+  S7 --> AG2
+  S9 --> AG3
+  S17 --> D15
+  S17 --> D16
+  S17 --> D1
+
+  S3 --> D14
+
+  O --> D
+  O --> D5
+
+
+Mermaid 2: Request-to-Run Sequence (Recommendation + Benchmark)
+
+sequenceDiagram
+  autonumber
+  participant UI as UI (Workspace/Create)
+  participant API as DRF ViewSet/Template View
+  participant PERM as RBAC Permission Layer
+  participant RS as RequestService
+  participant AS as AnalysisRunService
+  participant CT as Celery Task
+  participant REC as RecommendationService
+  participant BEN as BenchmarkService
+  participant COM as ComplianceService
+  participant DB as MySQL
+  participant AUD as Audit/Trace
+
+  UI->>API: Submit request fields + attributes
+  API->>PERM: Check procurement.create
+  PERM-->>API: allow
+  API->>RS: create_request(payload)
+  RS->>DB: Insert ProcurementRequest(status=DRAFT)
+  RS->>DB: Upsert attributes
+  RS->>AUD: log PROCUREMENT_REQUEST_CREATED
+
+  UI->>API: Mark Ready
+  API->>PERM: Check procurement.edit
+  API->>RS: mark_ready(request_id)
+  RS->>DB: validate required attributes
+  RS->>DB: update status READY
+  RS->>AUD: log status change
+
+  UI->>API: Trigger run_type=RECOMMENDATION|BENCHMARK
+  API->>PERM: Check procurement.run_analysis
+  API->>AS: create_run(run_type, snapshot)
+  AS->>DB: insert AnalysisRun(status=QUEUED,input_snapshot_json)
+  API->>CT: run_analysis_task.delay(run_id)
+
+  CT->>DB: load AnalysisRun + ProcurementRequest
+  CT->>RS: update_status(PROCESSING)
+
+  alt run_type == RECOMMENDATION
+    CT->>REC: run_recommendation(request, run)
+    REC->>AS: start_run(status=RUNNING)
+    REC->>REC: deterministic _apply_rules(attrs)
+    opt rules inconclusive and use_ai=true
+      REC->>REC: call RecommendationAgent
+    end
+    REC->>COM: check_recommendation(final_result)
+    REC->>DB: create RecommendationResult + ComplianceResult
+    REC->>AS: complete_run(status=COMPLETED)
+    REC->>RS: update request COMPLETED or REVIEW_REQUIRED
+  else run_type == BENCHMARK
+    CT->>BEN: run_benchmark(request, run, quotation)
+    BEN->>AS: start_run(status=RUNNING)
+    BEN->>BEN: resolve benchmark per line
+    opt use_ai=true
+      BEN->>BEN: call BenchmarkAgent when needed
+    end
+    BEN->>BEN: compute variance + classify risk
+    BEN->>DB: create BenchmarkResult + BenchmarkResultLine
+    BEN->>AS: complete_run(status=COMPLETED)
+    BEN->>RS: update request COMPLETED or REVIEW_REQUIRED
+  end
+
+  CT->>AUD: observed_task + audit logs
+
+
+Mermaid 3: Validation Deep Sequence (6 validators + optional agent augmentation)
+
+sequenceDiagram
+  autonumber
+  participant UI as UI/API
+  participant API as Endpoint validate
+  participant PERM as RBAC
+  participant AS as AnalysisRunService
+  participant T as run_validation_task
+  participant VO as ValidationOrchestrator
+  participant RR as RuleResolver
+  participant V1 as AttributeCompleteness
+  participant V2 as DocumentCompleteness
+  participant V3 as ScopeCoverage
+  participant V4 as Ambiguity
+  participant V5 as CommercialCompleteness
+  participant V6 as ComplianceReadiness
+  participant VA as ValidationAgent
+  participant DB as MySQL
+
+  UI->>API: POST validate(agent_enabled=true|false)
+  API->>PERM: check procurement.validate
+  API->>AS: create_run(run_type=VALIDATION,status=QUEUED)
+  API->>T: run_validation_task.delay(run_id, agent_enabled)
+
+  T->>VO: run_validation(request, run, agent_enabled)
+  VO->>AS: start_run(RUNNING)
+  VO->>RR: resolve_rules_for_request(domain_code,schema_code)
+  RR-->>VO: active rules ordered by specificity + priority
+
+  VO->>V1: validate(request,rules)
+  VO->>V2: validate(request,rules)
+  VO->>V3: validate(request,rules)
+  VO->>V4: validate(request,rules)
+  VO->>V5: validate(request,rules)
+  VO->>V6: validate(request,rules)
+
+  VO->>VO: aggregate findings, compute score, status, next action
+
+  alt agent_enabled && ambiguous_count >= 3
+    VO->>VA: augment_findings(request,run,findings)
+    VA-->>VO: refined findings
+  end
+
+  VO->>DB: create ValidationResult
+  VO->>DB: bulk create ValidationResultItem[]
+  VO->>AS: complete_run(COMPLETED, confidence=score/100)
+  T->>DB: map overall_status to request status READY/REVIEW_REQUIRED/FAILED
+
+
+Mermaid 4: Procurement Data Model (ER)
+
+erDiagram
+  PROCUREMENT_REQUEST ||--o{ PROCUREMENT_REQUEST_ATTRIBUTE : has
+  PROCUREMENT_REQUEST ||--o{ SUPPLIER_QUOTATION : has
+  SUPPLIER_QUOTATION ||--o{ QUOTATION_LINE_ITEM : has
+  PROCUREMENT_REQUEST ||--o{ ANALYSIS_RUN : has
+  PROCUREMENT_REQUEST ||--o{ MARKET_INTELLIGENCE_SUGGESTION : generates
+
+  ANALYSIS_RUN ||--o| RECOMMENDATION_RESULT : outputs
+  ANALYSIS_RUN ||--o{ BENCHMARK_RESULT : outputs
+  BENCHMARK_RESULT ||--o{ BENCHMARK_RESULT_LINE : has
+  ANALYSIS_RUN ||--o| COMPLIANCE_RESULT : outputs
+
+  ANALYSIS_RUN ||--o| VALIDATION_RESULT : outputs
+  VALIDATION_RESULT ||--o{ VALIDATION_RESULT_ITEM : has
+
+  VALIDATION_RULE_SET ||--o{ VALIDATION_RULE : defines
+
+  MARKET_INTELLIGENCE_SUGGESTION {
+    int id
+    int request_id
+    int generated_by_id
+    text rephrased_query
+    text ai_summary
+    text market_context
+    string system_code
+    string system_name
+    json suggestions_json
+    int suggestion_count
+    json perplexity_citations_json
+  }
+
+  EXTERNAL_SOURCE_REGISTRY {
+    int id
+    string source_name
+    string domain
+    string source_url
+    string source_type
+    json country_scope
+    int priority
+    float trust_score
+    string hvac_system_type
+    string equipment
+    bool allowed_for_discovery
+    bool allowed_for_compliance
+    string fetch_mode
+    bool is_active
+  }
+
+  PROCUREMENT_REQUEST {
+    uuid request_id
+    string title
+    string description
+    string domain_code
+    string schema_code
+    string request_type
+    string status
+    string priority
+    string geography_country
+    string geography_city
+    string currency
+    string trace_id
+  }
+
+  PROCUREMENT_REQUEST_ATTRIBUTE {
+    int id
+    int request_id
+    string attribute_code
+    string attribute_label
+    string data_type
+    text value_text
+    decimal value_number
+    json value_json
+    bool is_required
+    text normalized_value
+  }
+
+  SUPPLIER_QUOTATION {
+    int id
+    int request_id
+    string vendor_name
+    string quotation_number
+    date quotation_date
+    decimal total_amount
+    string currency
+    int uploaded_document_id
+    string extraction_status
+    float extraction_confidence
+  }
+
+  QUOTATION_LINE_ITEM {
+    int id
+    int quotation_id
+    int line_number
+    text description
+    text normalized_description
+    string category_code
+    decimal quantity
+    string unit
+    decimal unit_rate
+    decimal total_amount
+    string brand
+    string model
+    float extraction_confidence
+  }
+
+  ANALYSIS_RUN {
+    int id
+    uuid run_id
+    int request_id
+    string run_type
+    string status
+    datetime started_at
+    datetime completed_at
+    json input_snapshot_json
+    text output_summary
+    float confidence_score
+    string trace_id
+    text error_message
+  }
+
+  VALIDATION_RULE_SET {
+    int id
+    string domain_code
+    string schema_code
+    string rule_set_code
+    string rule_set_name
+    string validation_type
+    int priority
+    bool is_active
+    json config_json
+  }
+
+  VALIDATION_RULE {
+    int id
+    int rule_set_id
+    string rule_code
+    string rule_name
+    string rule_type
+    string severity
+    string evaluation_mode
+    json condition_json
+    json expected_value_json
+    string remediation_hint
+    int display_order
+  }
+
+
+Mermaid 5: State Machines
+
+stateDiagram-v2
+  state "ProcurementRequest" as PR {
+    [*] --> DRAFT
+    DRAFT --> READY: mark_ready + required attrs valid
+    READY --> PROCESSING: analysis or validation queued
+    PROCESSING --> COMPLETED: compliance/risk/status acceptable
+    PROCESSING --> REVIEW_REQUIRED: high risk or review needed
+    PROCESSING --> FAILED: task/service exception or hard fail
+    COMPLETED --> PROCESSING: rerun
+    REVIEW_REQUIRED --> PROCESSING: rerun
+  }
+
+  state "AnalysisRun" as AR {
+    [*] --> QUEUED
+    QUEUED --> RUNNING: start_run
+    RUNNING --> COMPLETED: complete_run
+    RUNNING --> FAILED: fail_run
+  }

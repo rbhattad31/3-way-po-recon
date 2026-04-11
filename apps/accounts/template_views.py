@@ -3,6 +3,8 @@
 URL prefix: /admin-console/
 """
 from django.contrib import messages
+from django.contrib.auth.views import LoginView as DjangoLoginView
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q, Count
 from django.shortcuts import get_object_or_404, redirect
@@ -21,6 +23,39 @@ from apps.accounts.rbac_models import (
 from apps.accounts.rbac_services import RBACEventService
 from apps.core.decorators import observed_action
 from apps.core.permissions import PermissionRequiredMixin
+
+
+# ============================================================================
+# Login — role-based redirect
+# ============================================================================
+
+class RoleBasedLoginView(DjangoLoginView):
+    """Custom login view that redirects PROCUREMENT_MANAGER users to their
+    dedicated dashboard instead of the default finalization dashboard."""
+
+    template_name = "accounts/login.html"
+
+    def get_success_url(self):
+        # If a ?next= param is present and safe, honour it as Django normally would.
+        next_url = self.request.POST.get("next") or self.request.GET.get("next")
+        if next_url:
+            from django.utils.http import url_has_allowed_host_and_scheme
+            if url_has_allowed_host_and_scheme(
+                url=next_url,
+                allowed_hosts=self.request.get_host(),
+            ):
+                return next_url
+
+        user = self.request.user
+        try:
+            role_codes = user.get_role_codes()
+        except Exception:
+            role_codes = []
+
+        if "PROCUREMENT_MANAGER" in role_codes:
+            return "/procurement/dashboard/"
+
+        return getattr(settings, "LOGIN_REDIRECT_URL", "/dashboard/")
 
 
 # ============================================================================

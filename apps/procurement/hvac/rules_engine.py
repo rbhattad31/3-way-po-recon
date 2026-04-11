@@ -1,4 +1,4 @@
-"""HVAC Deterministic Rules Engine.
+﻿"""HVAC Deterministic Rules Engine.
 
 Implements the 6-step recommendation logic from the HVAC GenAI Consulting
 Requirement Document (Section 5.4).
@@ -57,14 +57,24 @@ def _missing_required(attrs: Dict[str, Any]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Rule library — each rule is a callable that returns (match, option, reasoning, confidence)
+# DB-driven rules engine
 # ---------------------------------------------------------------------------
 
-class HVACRulesEngine:
-    """Stateless deterministic HVAC recommendation rules engine.
 
-    Call `evaluate(request, attrs)` to get a recommendation dict.
+class HVACRulesEngine:
+    """DB-driven HVAC recommendation rules engine.
+
+    All recommendation logic is stored in HVACRecommendationRule records
+    (configured via the Configuration page).  Rules are evaluated in ascending
+    priority order; the first rule whose conditions match the request attributes
+    determines the recommended system.  No hardcoded decision logic is applied.
+
+    Call `evaluate(domain_code, attrs, geography_country)` to get a
+    recommendation dict.
     """
+
+    # Default confidence assigned to DB-rule matches.
+    DEFAULT_CONFIDENCE = 0.90
 
     @staticmethod
     def evaluate(
@@ -72,7 +82,11 @@ class HVACRulesEngine:
         attrs: Dict[str, Any],
         geography_country: str = "",
     ) -> Dict[str, Any]:
-        """Evaluate all rules and return the best recommendation.
+        """Evaluate DB-configured rules and return the first matching recommendation.
+
+        Rules are loaded from HVACRecommendationRule (is_active=True), ordered by
+        priority ascending.  The first rule whose conditions match attrs determines
+        the outcome.  No hardcoded Python decision logic is applied.
 
         Returns the standard recommendation dict:
           {
@@ -84,366 +98,366 @@ class HVACRulesEngine:
             confident: bool,
           }
         """
+        # â”€â”€ Domain guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if domain_code.upper() != "HVAC":
             return {
                 "recommended_option": "",
-                "reasoning_summary": "Non-HVAC domain — deferring to AI.",
+                "reasoning_summary": "Non-HVAC domain -- deferring to AI.",
                 "confident": False,
                 "confidence": 0.0,
                 "constraints": [],
-                "reasoning_details": {"source": "rules_engine", "domain": domain_code},
+                "reasoning_details": {"source": "db_rules", "domain": domain_code},
             }
 
+        # â”€â”€ Required fields check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         missing = _missing_required(attrs)
         if missing:
             return {
                 "recommended_option": "",
                 "reasoning_summary": (
-                    f"Cannot determine recommendation: required attributes missing: {', '.join(missing)}. "
-                    "Please provide all mandatory store parameters."
+                    f"Cannot determine recommendation: required attributes missing: "
+                    f"{', '.join(missing)}. Please fill in all mandatory fields."
                 ),
                 "confident": False,
                 "confidence": 0.0,
                 "constraints": [{"type": "MISSING_DATA", "detail": f"Missing: {', '.join(missing)}"}],
-                "reasoning_details": {"source": "rules_engine", "missing_attrs": missing},
+                "reasoning_details": {"source": "db_rules", "missing_attrs": missing},
             }
 
-        # Gather normalised inputs
-        store_type = _get(attrs, "store_type", "STANDALONE")
-        zone_count = _get_num(attrs, "zone_count", 1)
-        area_sqm = _get_num(attrs, "area_sqm", 0)
-        ambient_max = _get_num(attrs, "ambient_temp_max", 45)
-        cw_available = _get(attrs, "chilled_water_available", "NO")
-        outdoor_restriction = _get(attrs, "outdoor_unit_restriction", "NO")
-        efficiency_priority = _get(attrs, "efficiency_priority", "NO")
-        dust_level = _get(attrs, "dust_level", "LOW")
+        # â”€â”€ Load active DB rules ordered by priority â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        try:
+            from apps.procurement.models import HVACRecommendationRule
+            active_rules: List[HVACRecommendationRule] = list(
+                HVACRecommendationRule.objects
+                .filter(is_active=True)
+                .order_by("priority", "rule_code")
+            )
+        except Exception:
+            logger.exception("HVACRulesEngine: failed to load rules from DB.")
+            return {
+                "recommended_option": "",
+                "reasoning_summary": "Rules could not be loaded from the database. Contact your administrator.",
+                "confident": False,
+                "confidence": 0.0,
+                "constraints": [],
+                "reasoning_details": {"source": "db_rules", "error": "db_load_failed"},
+            }
+
+        if not active_rules:
+            return {
+                "recommended_option": "",
+                "reasoning_summary": (
+                    "No active HVAC recommendation rules are configured. "
+                    "Please add rules in Configuration -> HVAC Recommendation Rules."
+                ),
+                "confident": False,
+                "confidence": 0.0,
+                "constraints": [],
+                "reasoning_details": {"source": "db_rules", "rules_loaded": 0},
+            }
+
+        # â”€â”€ Normalise key inputs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        store_type = _get(attrs, "store_type", "")
+        country = str(attrs.get("country") or attrs.get("geography_country") or "").strip().upper()
+        city = str(attrs.get("city") or attrs.get("geography_city") or "").strip().upper()
+        area_sqft_val: float = _get_num(attrs, "area_sqft", 0) or 0.0
+        ambient_max: float = _get_num(attrs, "ambient_temp_max", 0) or 0.0
+        budget_category = _get(attrs, "budget_level", "")
+        efficiency_priority = _get(attrs, "energy_efficiency_priority", "")
+        dust_level = _get(attrs, "dust_exposure", "LOW")
         humidity_level = _get(attrs, "humidity_level", "LOW")
-        budget_category = _get(attrs, "budget_category", "MEDIUM")
-        cooling_load_tr = _get_num(attrs, "cooling_load_tr")
-        noise_sensitivity = _get(attrs, "noise_sensitivity", "LOW")
-        existing_infra = _get(attrs, "existing_infrastructure", "NONE")
+        fresh_air_req = _get(attrs, "fresh_air_requirement", "NO")
+        footfall_category = _get(attrs, "footfall_category", "")
+        landlord_text = (attrs.get("landlord_constraints") or "").lower()
+        area_sqm: float = area_sqft_val * 0.0929
 
-        # Derive cooling load if not provided (rough rule: 130W/sqm for GCC retail)
-        estimated_tr = cooling_load_tr or (area_sqm * 130 / 3517) if area_sqm else None
+        # â”€â”€ Evaluate rules: first match wins â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        matched_rule = None
+        rules_evaluated = 0
+        for rule in active_rules:
+            rules_evaluated += 1
+            if rule.matches(attrs):
+                matched_rule = rule
+                break
 
+        if matched_rule is None:
+            return {
+                "recommended_option": "",
+                "reasoning_summary": (
+                    f"None of the {rules_evaluated} configured rules matched the given "
+                    f"parameters (store_type={store_type}, area={area_sqft_val:.0f} sqft, "
+                    f"ambient={ambient_max}C, budget={budget_category}, "
+                    f"energy_priority={efficiency_priority}). "
+                    "Please review the rules in Configuration -> HVAC Recommendation Rules."
+                ),
+                "confident": False,
+                "confidence": 0.0,
+                "constraints": [],
+                "reasoning_details": {
+                    "source": "db_rules",
+                    "rules_loaded": len(active_rules),
+                    "rules_evaluated": rules_evaluated,
+                    "inputs": {
+                        "country": country,
+                        "city": city,
+                        "store_type": store_type,
+                        "area_sqft": area_sqft_val,
+                        "ambient_temp_max": ambient_max,
+                        "budget_level": budget_category,
+                        "energy_efficiency_priority": efficiency_priority,
+                    },
+                },
+            }
+
+        # â”€â”€ Rule matched -- build constraint annotations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         constraints: List[Dict[str, str]] = []
-        rules_fired: List[str] = []
 
-        # ── Rule 1: Outdoor unit restriction ─────────────────────────────
-        if outdoor_restriction == "YES":
-            constraints.append({
-                "type": "OUTDOOR_UNIT_NOT_ALLOWED",
-                "detail": "Landlord/authority does not permit outdoor condensing units.",
-            })
-            rules_fired.append("RULE_01_OUTDOOR_RESTRICTION")
-
-        # ── Rule 2: Existing chilled water infrastructure ─────────────────
-        if cw_available == "YES" and existing_infra in ("CHILLED_WATER", "NONE", ""):
-            constraints.append({
-                "type": "CW_INTEGRATION",
-                "detail": "Existing chilled water backbone available — FCU integration recommended.",
-            })
-
-        # ── Rule 3: Compliance standards by geography ─────────────────────
-        geo_upper = geography_country.strip().upper()
+        # Geography / compliance standards
+        geo_upper = (geography_country or "").strip().upper()
         applicable_standards = (
             COMPLIANCE_STANDARDS_BY_GEO.get(geo_upper)
-            or COMPLIANCE_STANDARDS_BY_GEO.get("UAE")  # GCC default
+            or COMPLIANCE_STANDARDS_BY_GEO.get("UAE")
         )
-        constraints.append({
-            "type": "COMPLIANCE",
-            "detail": f"Applicable standards: {', '.join(applicable_standards[:3])}",
-        })
+        if applicable_standards:
+            constraints.append({
+                "type": "COMPLIANCE",
+                "detail": f"Applicable standards: {', '.join(applicable_standards[:3])}",
+            })
 
-        # ── Rule 4: High dust → filtration ────────────────────────────────
+        # Outdoor unit restriction
+        outdoor_restriction = (
+            "no outdoor" in landlord_text
+            or "outdoor unit" in landlord_text
+            or "restrict" in landlord_text
+        )
+        if outdoor_restriction:
+            constraints.append({
+                "type": "OUTDOOR_UNIT_NOT_ALLOWED",
+                "detail": "Landlord / authority does not permit outdoor condensing units.",
+            })
+
+        # Chilled water integration note
+        cw_available = "chilled water" in landlord_text or " cw " in landlord_text
+        if cw_available:
+            constraints.append({
+                "type": "CW_INTEGRATION",
+                "detail": "Existing chilled water backbone available -- FCU integration may be considered.",
+            })
+
+        # High dust
         if dust_level == "HIGH":
             constraints.append({
                 "type": "FILTRATION_REQUIRED",
                 "detail": "High dust environment: ASHRAE MERV 11+ or G4/F7 pre-filter mandatory.",
             })
-            rules_fired.append("RULE_04_HIGH_DUST")
 
-        # ── Rule 5: High humidity → anti-corrosion ────────────────────────
-        if humidity_level == "HIGH" or geo_upper in ("", "UAE_COASTAL", "UAE"):
+        # Humidity
+        if humidity_level == "HIGH":
             constraints.append({
                 "type": "ANTI_CORROSION_COILS",
-                "detail": "Coastal/humid environment: epoxy-coated or blue-fin coil treatment required.",
+                "detail": "High humidity: epoxy-coated or blue-fin coil treatment required.",
             })
-            rules_fired.append("RULE_05_HIGH_HUMIDITY")
-
-        # ── Rule 6: Noise sensitivity ─────────────────────────────────────
-        if noise_sensitivity == "HIGH":
+        elif geo_upper in ("UAE", "UAE_COASTAL", "QATAR", "QAT", "BAHRAIN", "BHR"):
             constraints.append({
-                "type": "LOW_NOISE_EQUIPMENT",
-                "detail": "High noise sensitivity: select low-dB indoor units (≤35 dBA at 1m).",
+                "type": "ANTI_CORROSION_COILS",
+                "detail": "GCC coastal location: blue-fin or epoxy-coated coils recommended for salt-air protection.",
             })
 
-        # ── Rule 7: Efficiency priority ───────────────────────────────────
-        if efficiency_priority == "YES":
+        # Efficiency
+        if efficiency_priority in ("YES", "HIGH", "MEDIUM_HIGH"):
             constraints.append({
                 "type": "EFFICIENCY_REQUIREMENT",
+                "detail": "Efficiency priority set: minimum SEER/IPLV thresholds apply.",
+            })
+
+        # Fresh air
+        if fresh_air_req in ("YES", "HIGH", "REQUIRED"):
+            constraints.append({
+                "type": "FRESH_AIR_REQUIRED",
+                "detail": "Fresh air requirement: ERV/HRU integration required per ASHRAE 62.1.",
+            })
+
+        # High footfall
+        if footfall_category in ("HIGH", "VERY_HIGH"):
+            constraints.append({
+                "type": "HIGH_FOOTFALL_LOAD_MARGIN",
                 "detail": (
-                    "Efficiency priority set: minimum SEER/IPLV thresholds apply. "
-                    "Prefer VRF (IPLV ≥ 5.0) or chilled water system."
+                    f"High footfall ({footfall_category}): add 10-15% capacity margin. "
+                    "Low-noise units preferred."
                 ),
             })
-            rules_fired.append("RULE_07_EFFICIENCY")
 
-        # ─────────────────────────────────────────────────────────────────
-        # PRIMARY SYSTEM SELECTION RULES
-        # ─────────────────────────────────────────────────────────────────
-
-        # Decision matrix based on store type + CW + zone count + area
-        selected_option = None
-        confidence = 0.0
-        reasoning_summary = ""
-        reasoning_lines: List[str] = []
-
-        # ── MALL + Chilled Water available → FCU ─────────────────────────
-        if store_type in ("MALL",) and cw_available == "YES":
-            selected_option = "FCU_CHILLED_WATER"
-            confidence = 0.95
-            rules_fired.append("RULE_M1_MALL_FCU_CW")
-            reasoning_lines.append(
-                "Mall store with chilled water backbone available → FCU (Fan Coil Unit) on "
-                "chilled water is the standard approach. No outdoor units required; "
-                "maximises energy efficiency using central plant."
-            )
-
-        # ── MALL + No Chilled Water → VRF (multi-zone) or Split ──────────
-        elif store_type in ("MALL",) and cw_available != "YES":
-            if zone_count and zone_count >= 3:
-                selected_option = "VRF_SYSTEM"
-                confidence = 0.82
-                rules_fired.append("RULE_M2_MALL_NO_CW_VRF")
-                reasoning_lines.append(
-                    f"Mall store without chilled water, {int(zone_count)} zones → "
-                    "VRF recommended. Single outdoor unit with multiple indoor units "
-                    "minimises installation footprint in mall structure."
-                )
-            else:
-                if outdoor_restriction == "YES":
-                    selected_option = "CASSETTE_SPLIT"
-                    confidence = 0.75
-                    rules_fired.append("RULE_M3_MALL_NO_CW_SPLIT_RESTRICTED")
-                    reasoning_lines.append(
-                        "Mall without CW and outdoor restriction: ceiling cassette split "
-                        "units with concealed refrigerant lines recommended."
-                    )
-                else:
-                    selected_option = "SPLIT_SYSTEM"
-                    confidence = 0.80
-                    rules_fired.append("RULE_M3_MALL_NO_CW_SPLIT")
-                    reasoning_lines.append(
-                        f"Mall store without CW, {int(zone_count or 1)} zone(s) → "
-                        "Split systems are cost-effective for low zone count."
-                    )
-
-        # ── STANDALONE + High Ambient + Multiple Zones → VRF ─────────────
-        elif store_type in ("STANDALONE", "OFFICE") and ambient_max and ambient_max >= 46:
-            if zone_count and zone_count >= 3:
-                if efficiency_priority == "YES" or (estimated_tr and estimated_tr > 15):
-                    selected_option = "VRF_SYSTEM"
-                    confidence = 0.92
-                    rules_fired.append("RULE_S1_STANDALONE_HIGH_AMB_VRF")
-                    reasoning_lines.append(
-                        f"Standalone store with max ambient {ambient_max}°C and {int(zone_count)} zones. "
-                        "VRF system recommended: superior performance at high ambient temperatures, "
-                        "individual zone control, and highest efficiency (IPLV ≥ 4.5) under GCC conditions."
-                    )
-                else:
-                    selected_option = "VRF_SYSTEM"
-                    confidence = 0.88
-                    rules_fired.append("RULE_S1b_STANDALONE_HIGH_AMB_VRF")
-                    reasoning_lines.append(
-                        f"Standalone store with high ambient ({ambient_max}°C) and multi-zone requirement → "
-                        "VRF is recommended for reliable performance and flexible zoning."
-                    )
-            else:
-                # Small standalone, high ambient but few zones
-                if estimated_tr and estimated_tr > 10 and budget_category not in ("LOW",):
-                    selected_option = "VRF_SYSTEM"
-                    confidence = 0.78
-                    rules_fired.append("RULE_S2_STANDALONE_MEDIUM_VRF")
-                    reasoning_lines.append(
-                        f"Standalone with {int(zone_count or 2)} zone(s) and moderate load "
-                        f"({estimated_tr:.1f} TR estimated) → VRF preferred for high ambient performance."
-                    )
-                else:
-                    selected_option = "SPLIT_SYSTEM"
-                    confidence = 0.85
-                    rules_fired.append("RULE_S3_STANDALONE_SMALL_SPLIT")
-                    reasoning_lines.append(
-                        f"Standalone store, {int(zone_count or 1)} zone(s), load ≈ "
-                        f"{estimated_tr:.1f} TR → Split systems are cost-effective and widely serviceable."
-                    )
-
-        # ── STANDALONE + Normal Ambient ───────────────────────────────────
-        elif store_type in ("STANDALONE", "OFFICE"):
-            if zone_count and zone_count >= 4:
-                selected_option = "VRF_SYSTEM"
-                confidence = 0.85
-                rules_fired.append("RULE_S4_STANDALONE_MULTI_VRF")
-                reasoning_lines.append(
-                    f"{int(zone_count)} independent zones → VRF recommended for individual zone control "
-                    "and reduced refrigerant piping complexity vs multiple split systems."
-                )
-            elif zone_count and zone_count >= 2 and budget_category not in ("LOW",):
-                selected_option = "VRF_SYSTEM"
-                confidence = 0.72
-                rules_fired.append("RULE_S5_STANDALONE_2ZONE_VRF")
-                reasoning_lines.append(
-                    "2-zone standalone store with medium/high budget → "
-                    "VRF provides better long-term efficiency though split systems are viable."
-                )
-            else:
-                selected_option = "SPLIT_SYSTEM"
-                confidence = 0.88
-                rules_fired.append("RULE_S6_STANDALONE_1ZONE_SPLIT")
-                reasoning_lines.append(
-                    "Single/low-zone standalone store → Split systems are the most practical "
-                    "and cost-effective solution."
-                )
-
-        # ── WAREHOUSE + Large Load → Packaged DX or Chiller ──────────────
-        elif store_type == "WAREHOUSE":
-            if estimated_tr and estimated_tr > 200:
-                selected_option = "CHILLER_PLANT"
-                confidence = 0.90
-                rules_fired.append("RULE_W1_WAREHOUSE_CHILLER")
-                reasoning_lines.append(
-                    f"Warehouse with estimated load {estimated_tr:.0f} TR → "
-                    "Central chiller plant (air-cooled, McQuay/Carrier/York) recommended "
-                    "for optimal lifecycle cost and reliability."
-                )
-            elif estimated_tr and estimated_tr > 50:
-                selected_option = "PACKAGED_DX_UNIT"
-                confidence = 0.87
-                rules_fired.append("RULE_W2_WAREHOUSE_PACKAGED")
-                reasoning_lines.append(
-                    f"Warehouse with load {estimated_tr:.0f} TR → "
-                    "Rooftop packaged DX unit with ductwork recommended. "
-                    "Self-contained, minimal plant room required."
-                )
-            else:
-                selected_option = "SPLIT_SYSTEM"
-                confidence = 0.80
-                rules_fired.append("RULE_W3_WAREHOUSE_SMALL_SPLIT")
-                reasoning_lines.append(
-                    f"Small warehouse (area {area_sqm:.0f} sqm, load ≈ {estimated_tr:.1f} TR) → "
-                    "Split systems are practical for small conditioned warehouse spaces."
-                )
-
-        # ── DATA CENTER ───────────────────────────────────────────────────
-        elif store_type == "DATA_CENTER":
-            selected_option = "CHILLER_PLANT"
-            confidence = 0.95
-            rules_fired.append("RULE_DC_CHILLER")
-            constraints.append({
-                "type": "DATA_CENTER_REDUNDANCY",
-                "detail": "N+1 redundancy required. Precision cooling units (CRAC/CRAH) may be needed.",
-            })
-            reasoning_lines.append(
-                "Data centre: chiller plant with N+1 redundancy and 24/7 operation profile. "
-                "Precision cooling preferred for rack-level thermal management."
-            )
-
-        # ── RESTAURANT / FOOD & BEVERAGE ──────────────────────────────────
-        elif store_type in ("RESTAURANT",):
-            if cw_available == "YES":
-                selected_option = "FCU_CHILLED_WATER"
-                confidence = 0.88
-                rules_fired.append("RULE_R1_RESTAURANT_FCU")
-            else:
-                selected_option = "CASSETTE_SPLIT"
-                confidence = 0.82
-                rules_fired.append("RULE_R2_RESTAURANT_CASSETTE")
-            constraints.append({
-                "type": "KITCHEN_EXHAUST",
-                "detail": "Kitchen exhaust/make-up air system required per ASHRAE 62.1 §6.4.",
-            })
-            reasoning_lines.append(
-                f"Restaurant/F&B use: {'FCU on CW' if selected_option == 'FCU_CHILLED_WATER' else 'Cassette splits'} "
-                "with kitchen exhaust ventilation. High fresh air rates required per ASHRAE 62.1."
-            )
-
-        # ── Fallback — insufficient data for deterministic decision ────────
-        if not selected_option:
-            return {
-                "recommended_option": "",
-                "reasoning_summary": (
-                    "Insufficient parameters for a deterministic recommendation. "
-                    f"Store type: {store_type}, Zones: {zone_count}, Area: {area_sqm} sqm. "
-                    "Deferring to AI analysis."
-                ),
-                "confident": False,
-                "confidence": 0.0,
-                "constraints": constraints,
-                "reasoning_details": {
-                    "source": "rules_engine",
-                    "rules_evaluated": len(rules_fired),
-                    "rules_fired": rules_fired,
-                    "inputs": {
-                        "store_type": store_type,
-                        "zone_count": zone_count,
-                        "area_sqm": area_sqm,
-                        "ambient_max": ambient_max,
-                        "cw_available": cw_available,
-                        "estimated_tr": estimated_tr,
-                    },
-                },
-            }
-
-        # ── Apply budget override ─────────────────────────────────────────
-        original_option = selected_option
+        # Low budget compliance note
         if budget_category == "LOW":
-            if selected_option in ("VRF_SYSTEM", "CHILLER_PLANT", "FCU_CHILLED_WATER"):
-                constraints.append({
-                    "type": "BUDGET_CONSTRAINT",
-                    "detail": (
-                        f"Budget constraint (LOW) noted. {SYSTEM_TYPES[selected_option]['name']} "
-                        "has higher upfront cost. Verify budget adequacy or consider split systems."
-                    ),
-                })
-                confidence = max(confidence - 0.08, 0.60)
-                rules_fired.append("RULE_BUDGET_LOW_ADJUSTMENT")
+            constraints.append({
+                "type": "LOW_BUDGET_COMPLIANCE_RISK",
+                "detail": (
+                    "Low budget: minimum compliant equipment must still be specified. "
+                    "Do not procure below applicable standards."
+                ),
+            })
 
-        # ── Compile final result ──────────────────────────────────────────
+        # â”€â”€ Compile final result â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        selected_option = matched_rule.recommended_system
         system_info = SYSTEM_TYPES.get(selected_option, {})
+
         recommendation_text = (
-            f"{system_info.get('name', selected_option)} — "
-            f"{system_info.get('description', '')}"
+            f"{system_info.get('name', selected_option)} -- {system_info.get('description', '')}"
+            if system_info
+            else selected_option
         )
 
-        full_reasoning = " ".join(reasoning_lines)
-        if not full_reasoning:
-            full_reasoning = f"Rules engine selected {selected_option} based on: {', '.join(rules_fired)}."
+        rationale = matched_rule.rationale or matched_rule.rule_name
+
+        # Indicative capacity guidance
+        estimated_tr = (area_sqm * 130 / 3517) if area_sqm else None
+        if estimated_tr:
+            if estimated_tr < 5:
+                cap_guidance = f"{estimated_tr:.1f} TR (small -- standard split configuration)"
+            elif estimated_tr < 20:
+                cap_guidance = f"{estimated_tr:.1f} TR (medium -- engineering review recommended before specification)"
+            elif estimated_tr < 100:
+                cap_guidance = f"{estimated_tr:.1f} TR (large -- HVAC engineer sizing analysis mandatory)"
+            else:
+                cap_guidance = f"{estimated_tr:.0f} TR (major plant -- full load analysis and engineer sign-off required)"
+        else:
+            cap_guidance = "Cooling load estimate not available -- area data missing."
+
+        # Compliance alignment
+        compliance_alignment = {
+            "standards": applicable_standards or [],
+            "summary": (
+                f"Recommendation aligned with: {', '.join((applicable_standards or [])[:4])}. "
+                + ("Low budget: verify minimum compliance before raising PO. " if budget_category == "LOW" else "")
+            ),
+        }
+
+        # Alternate option
+        alt_code = matched_rule.alternate_system or None
+        alt_info = SYSTEM_TYPES.get(alt_code, {}) if alt_code else {}
+        alternate_option = (
+            f"{alt_info.get('name', alt_code)} -- {alt_info.get('description', '')}"
+            if alt_code and alt_info
+            else alt_code or None
+        )
+
+        required_human_validation = (
+            budget_category == "LOW"
+            or (estimated_tr is not None and estimated_tr > 100)
+            or ambient_max >= 48
+            or fresh_air_req in ("YES", "HIGH", "REQUIRED")
+        )
+
+        # -- Build matched_condition_keys: only the input keys the rule actually tested --
+        _matched_keys: List[str] = []
+        if matched_rule.country_filter:
+            _matched_keys.append("country")
+        if matched_rule.city_filter:
+            _matched_keys.append("city")
+        if matched_rule.store_type_filter:
+            _matched_keys.append("store_type")
+        if matched_rule.area_sq_ft_min is not None or matched_rule.area_sq_ft_max is not None:
+            _matched_keys.append("area_sqft")
+            _matched_keys.append("area_sqm_derived")
+        if matched_rule.ambient_temp_min_c is not None:
+            _matched_keys.append("ambient_temp_max")
+        if matched_rule.budget_level_filter:
+            _matched_keys.append("budget_level")
+        if matched_rule.energy_priority_filter:
+            _matched_keys.append("energy_efficiency_priority")
+        # Derived conditions inferred from landlord text also count as matched
+        if outdoor_restriction:
+            _matched_keys.append("outdoor_restriction_derived")
+        if cw_available:
+            _matched_keys.append("chilled_water_derived")
+
+        # -- Build rule_conditions: ALL standard params with configured filter value or "Any"
+        # This allows the UI to show every parameter the rule can evaluate, even wildcards.
+        def _area_filter_label() -> str:
+            lo = matched_rule.area_sq_ft_min
+            hi = matched_rule.area_sq_ft_max
+            if lo is not None and hi is not None:
+                return f"{lo:,.0f} - {hi:,.0f} sqft"
+            if lo is not None:
+                return f">= {lo:,.0f} sqft"
+            if hi is not None:
+                return f"<= {hi:,.0f} sqft"
+            return "Any"
+
+        _rule_conditions: Dict[str, str] = {
+            "country":                    matched_rule.country_filter or "Any",
+            "city":                       matched_rule.city_filter or "Any",
+            "store_type":                 matched_rule.store_type_filter or "Any",
+            "area_sqft":                  _area_filter_label(),
+            "ambient_temp_max":           (
+                f">= {matched_rule.ambient_temp_min_c}C"
+                if matched_rule.ambient_temp_min_c is not None
+                else "Any"
+            ),
+            "budget_level":               matched_rule.budget_level_filter or "Any",
+            "energy_efficiency_priority": matched_rule.energy_priority_filter or "Any",
+            "outdoor_restriction_derived": "YES (required)" if outdoor_restriction else "Any",
+            "chilled_water_derived":       "YES (required)" if cw_available else "Any",
+        }
 
         return {
             "recommended_option": recommendation_text,
             "system_type_code": selected_option,
-            "reasoning_summary": full_reasoning,
+            "reasoning_summary": rationale,
             "confident": True,
-            "confidence": round(confidence, 3),
+            "confidence": HVACRulesEngine.DEFAULT_CONFIDENCE,
+            "confidence_score_100": round(HVACRulesEngine.DEFAULT_CONFIDENCE * 100),
             "constraints": constraints,
+            "alternate_option": alternate_option,
+            "indicative_capacity_guidance": cap_guidance,
+            "compliance_alignment": compliance_alignment,
+            "required_human_validation": required_human_validation,
+            "top_decision_drivers": [
+                f"Rule {matched_rule.rule_code}: {matched_rule.rule_name}",
+                f"Store type: {store_type}",
+                f"Area: {area_sqft_val:.0f} sqft",
+                f"Ambient max: {ambient_max}C",
+                f"Budget: {budget_category}",
+                f"Energy priority: {efficiency_priority}",
+            ],
             "reasoning_details": {
-                "source": "rules_engine",
-                "rules_evaluated": len(rules_fired),
-                "rules_fired": rules_fired,
+                "source": "db_rules",
+                "rule_matched": matched_rule.rule_code,
+                "rule_name": matched_rule.rule_name,
+                "rule_priority": matched_rule.priority,
+                "rule_id": matched_rule.pk,
+                "rules_loaded": len(active_rules),
+                "rules_evaluated": rules_evaluated,
+                "db_rule": {
+                    "id": matched_rule.pk,
+                    "rule_code": matched_rule.rule_code,
+                    "rule_name": matched_rule.rule_name,
+                    "priority": matched_rule.priority,
+                    "recommended_system": matched_rule.recommended_system,
+                    "alternate_system": matched_rule.alternate_system,
+                    "rationale": matched_rule.rationale,
+                },
+                "matched_condition_keys": _matched_keys,
+                "rule_conditions": _rule_conditions,
                 "inputs": {
+                    "country": country,
+                    "city": city,
                     "store_type": store_type,
-                    "zone_count": zone_count,
-                    "area_sqm": area_sqm,
+                    "area_sqft": area_sqft_val,
+                    "area_sqm_derived": round(area_sqm, 1),
                     "ambient_temp_max": ambient_max,
-                    "chilled_water_available": cw_available,
-                    "outdoor_unit_restriction": outdoor_restriction,
-                    "efficiency_priority": efficiency_priority,
-                    "dust_level": dust_level,
+                    "budget_level": budget_category,
+                    "energy_efficiency_priority": efficiency_priority,
+                    "dust_exposure": dust_level,
                     "humidity_level": humidity_level,
-                    "budget_category": budget_category,
+                    "fresh_air_requirement": fresh_air_req,
+                    "footfall_category": footfall_category,
+                    "chilled_water_derived": "YES" if cw_available else "NO",
+                    "outdoor_restriction_derived": "YES" if outdoor_restriction else "NO",
                     "estimated_cooling_tr": round(estimated_tr, 1) if estimated_tr else None,
                 },
-                "applicable_standards": applicable_standards,
+                "applicable_standards": applicable_standards or [],
                 "system_type": system_info,
             },
         }
+

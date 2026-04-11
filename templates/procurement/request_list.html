@@ -1,147 +1,444 @@
-{% extends "base.html" %}
+﻿{% extends "procurement/proc_base.html" %}
 {% load static %}
 
-{% block title %}Procurement Requests{% endblock %}
+{% block title %}HVAC Procurement Requests -- AI Intelligence Platform{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/procurement/request-list.css' %}">
+<style>
+/* ── New-Request Choice Modal ── */
+.nr-choice-card {
+  border: 2px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 28px 24px;
+  cursor: pointer;
+  transition: all .22s ease;
+  background: #fff;
+  text-align: center;
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.nr-choice-card:hover {
+  border-color: #6366f1;
+  box-shadow: 0 8px 32px rgba(99,102,241,.18);
+  transform: translateY(-3px);
+  text-decoration: none;
+  color: inherit;
+}
+.nr-choice-card.nr-card-doc:hover {
+  border-color: #0ea5e9;
+  box-shadow: 0 8px 32px rgba(14,165,233,.18);
+}
+.nr-choice-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+}
+.nr-card-manual .nr-choice-icon { background: linear-gradient(135deg,#eef2ff,#e0e7ff); color: #4f46e5; }
+.nr-card-doc .nr-choice-icon { background: linear-gradient(135deg,#e0f2fe,#bae6fd); color: #0369a1; }
+.nr-choice-title { font-size: 15px; font-weight: 700; color: #0f172a; }
+.nr-choice-desc { font-size: 12px; color: #64748b; line-height: 1.5; max-width: 200px; }
+.nr-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.nr-badge-ai { background: linear-gradient(90deg,#6366f1,#0ea5e9); color:#fff; }
+#newRequestModal .modal-header {
+  background: linear-gradient(135deg,#f8faff,#f0f9ff);
+  border-bottom: 1px solid #e2e8f0;
+}
+</style>
+{% endblock %}
 
 {% block breadcrumb %}
 <nav aria-label="breadcrumb" class="mb-3">
-  <ol class="breadcrumb mb-0" style="font-size:var(--ap-font-size-sm)">
-    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Home</a></li>
-    <li class="breadcrumb-item active">Procurement</li>
+  <ol class="breadcrumb mb-0" style="font-size:.78rem;">
+    <li class="breadcrumb-item">
+      <a href="{% url 'procurement:home' %}" class="text-decoration-none" style="color:#1665D8;">
+        <i class="bi bi-house me-1"></i>Procurement
+      </a>
+    </li>
+    <li class="breadcrumb-item active" style="color:#6b7280;">HVAC Requests</li>
   </ol>
 </nav>
 {% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-  <h4 class="mb-0"><i class="bi bi-cart4 me-2"></i>Procurement Requests</h4>
-  <a href="{% url 'procurement:request_create' %}" class="btn btn-primary btn-sm">
-    <i class="bi bi-plus-lg me-1"></i>New Request
-  </a>
+
+
+<div class="page-header-bar mb-4">
+  <div class="d-flex align-items-center gap-3">
+    <div class="page-header-icon">
+      <i class="bi bi-snow2"></i>
+    </div>
+    <div>
+      <h1 class="page-header-title">HVAC Procurement Requests</h1>
+      <div class="page-header-sub">AI-powered sourcing &bull; GCC market intelligence &bull; Agentic analysis</div>
+    </div>
+  </div>
+  <button type="button" class="btn-primary-action" data-bs-toggle="modal" data-bs-target="#newRequestModal">
+    <i class="bi bi-plus-circle"></i> New Request
+  </button>
 </div>
 
-{# Filters #}
-<div class="card mb-4">
-  <div class="card-body py-2">
-    <form method="get" class="row g-2 align-items-end">
-      <div class="col-md-2">
-        <label class="form-label small mb-1">Status</label>
+
+{% with total=page_obj.paginator.count %}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="kpi-card kpi-blue d-flex align-items-center gap-3">
+      <div class="kpi-icon"><i class="bi bi-collection-fill"></i></div>
+      <div>
+        <div class="kpi-value">{{ total }}</div>
+        <div class="kpi-label">Total Requests</div>
+      </div>
+      <div class="kpi-bar"></div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="kpi-card kpi-cyan d-flex align-items-center gap-3">
+      <div class="kpi-icon"><img src="{% static 'images/procurement-robot.png' %}" alt="AI Agent" style="width:28px;height:28px;object-fit:contain;"></div>
+      <div>
+        <div class="kpi-value">HVAC</div>
+        <div class="kpi-label">Active Domain</div>
+      </div>
+      <div class="kpi-bar"></div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="kpi-card kpi-green d-flex align-items-center gap-3">
+      <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
+      <div>
+        <div class="kpi-value">AED</div>
+        <div class="kpi-label">Base Currency</div>
+      </div>
+      <div class="kpi-bar"></div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="kpi-card kpi-amber d-flex align-items-center gap-3">
+      <div class="kpi-icon"><i class="bi bi-globe-asia-australia"></i></div>
+      <div>
+        <div class="kpi-value">6</div>
+        <div class="kpi-label">GCC Countries</div>
+      </div>
+      <div class="kpi-bar"></div>
+    </div>
+  </div>
+</div>
+{% endwith %}
+
+
+<div class="filter-panel mb-4">
+  <form method="get">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-2">
+        <label class="form-label">Status</label>
         <select name="status" class="form-select form-select-sm">
-          <option value="">All</option>
+          <option value="">All Statuses</option>
           {% for val, label in status_choices %}
           <option value="{{ val }}" {% if current_status == val %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-2">
-        <label class="form-label small mb-1">Type</label>
+      <div class="col-12 col-md-2">
+        <label class="form-label">Type</label>
         <select name="request_type" class="form-select form-select-sm">
-          <option value="">All</option>
+          <option value="">All Types</option>
           {% for val, label in type_choices %}
           <option value="{{ val }}" {% if current_type == val %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-2">
-        <label class="form-label small mb-1">Domain</label>
+      <div class="col-12 col-md-2">
+        <label class="form-label">Domain</label>
         <select name="domain_code" class="form-select form-select-sm">
-          <option value="">All</option>
+          <option value="">All Domains</option>
           {% for d in domains %}
           <option value="{{ d }}" {% if current_domain == d %}selected{% endif %}>{{ d }}</option>
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-3">
-        <label class="form-label small mb-1">Search</label>
-        <input type="text" name="q" value="{{ search_query }}" class="form-control form-control-sm" placeholder="Search title…">
+      <div class="col-12 col-md-4">
+        <label class="form-label">Search</label>
+        <div class="input-group input-group-sm">
+          <span class="input-group-text" style="background:#f8fafc;border-color:#cbd5e1;">
+            <i class="bi bi-search text-secondary" style="font-size:.75rem;"></i>
+          </span>
+          <input type="text" name="q" value="{{ search_query }}" class="form-control"
+                 placeholder="Search by title or description...">
+        </div>
       </div>
-      <div class="col-md-1">
-        <button type="submit" class="btn btn-outline-secondary btn-sm w-100">Filter</button>
+      <div class="col-12 col-md-2 d-flex gap-2">
+        <button type="submit" class="btn-filter flex-grow-1">
+          <i class="bi bi-funnel me-1"></i>Filter
+        </button>
+        {% if current_status or current_type or current_domain or search_query %}
+        <a href="{% url 'procurement:request_list' %}" class="btn-clear" title="Clear filters">
+          <i class="bi bi-x-lg"></i>
+        </a>
+        {% endif %}
       </div>
-    </form>
-  </div>
+    </div>
+  </form>
 </div>
 
-{# Table #}
-<div class="card">
-  <div class="table-responsive">
-    <table class="table table-hover mb-0" style="font-size:var(--ap-font-size-sm)">
-      <thead class="table-light">
-        <tr>
-          <th>Title</th>
-          <th>Domain</th>
-          <th>Type</th>
-          <th>Status</th>
-          <th>Priority</th>
-          <th>Attrs</th>
-          <th>Quotes</th>
-          <th>Runs</th>
-          <th>Created</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for req in page_obj %}
-        <tr>
-          <td><a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="text-decoration-none fw-medium">{{ req.title|truncatechars:50 }}</a></td>
-          <td><span class="badge bg-secondary">{{ req.domain_code }}</span></td>
-          <td>
-            {% if req.request_type == "RECOMMENDATION" %}
-              <span class="badge bg-info text-dark">Recommendation</span>
-            {% elif req.request_type == "BENCHMARK" %}
-              <span class="badge bg-warning text-dark">Benchmark</span>
-            {% else %}
-              <span class="badge bg-primary">Both</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if req.status == "DRAFT" %}<span class="badge bg-secondary">Draft</span>
-            {% elif req.status == "READY" %}<span class="badge bg-info text-dark">Ready</span>
-            {% elif req.status == "PROCESSING" %}<span class="badge bg-primary">Processing</span>
-            {% elif req.status == "COMPLETED" %}<span class="badge bg-success">Completed</span>
-            {% elif req.status == "REVIEW_REQUIRED" %}<span class="badge bg-warning text-dark">Review</span>
-            {% elif req.status == "FAILED" %}<span class="badge bg-danger">Failed</span>
-            {% else %}<span class="badge bg-light text-dark">{{ req.status }}</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if req.priority == "CRITICAL" %}<span class="text-danger fw-bold">●</span>
-            {% elif req.priority == "HIGH" %}<span class="text-warning fw-bold">●</span>
-            {% elif req.priority == "MEDIUM" %}<span class="text-info fw-bold">●</span>
-            {% else %}<span class="text-muted">●</span>
-            {% endif %}
-            {{ req.priority }}
-          </td>
-          <td>{{ req.attribute_count }}</td>
-          <td>{{ req.quotation_count }}</td>
-          <td>{{ req.run_count }}</td>
-          <td>{{ req.created_at|date:"M d, Y" }}</td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="9" class="text-center text-muted py-4">No procurement requests found.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+
+{% if page_obj.object_list %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <span class="section-label"><i class="bi bi-grid-3x3-gap me-1"></i>All Requests</span>
+  <span class="results-count">
+    Showing <strong>{{ page_obj.start_index }}</strong>-<strong>{{ page_obj.end_index }}</strong>
+    of <strong>{{ page_obj.paginator.count }}</strong> requests
+  </span>
 </div>
 
-{# Pagination #}
+<div class="row g-3">
+  {% for req in page_obj %}
+  <div class="col-md-6 col-xl-4">
+    <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="req-card h-100">
+
+      {# Accent bar by status #}
+      {% if req.status == "DRAFT" %}<div class="rc-accent rc-accent-draft"></div>
+      {% elif req.status == "READY" %}<div class="rc-accent rc-accent-ready"></div>
+      {% elif req.status == "PROCESSING" %}<div class="rc-accent rc-accent-processing"></div>
+      {% elif req.status == "COMPLETED" %}<div class="rc-accent rc-accent-completed"></div>
+      {% elif req.status == "REVIEW_REQUIRED" %}<div class="rc-accent rc-accent-review"></div>
+      {% elif req.status == "FAILED" %}<div class="rc-accent rc-accent-failed"></div>
+      {% else %}<div class="rc-accent rc-accent-default"></div>{% endif %}
+
+      <div class="rc-body">
+
+        {# Title + Status #}
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <div class="rc-title">{{ req.title|truncatechars:62 }}</div>
+          {% if req.status == "DRAFT" %}
+            <span class="status-pill sp-draft"><span class="sp-dot" style="background:#94a3b8;"></span>Draft</span>
+          {% elif req.status == "READY" %}
+            <span class="status-pill sp-ready"><span class="sp-dot" style="background:#0ea5e9;"></span>Ready</span>
+          {% elif req.status == "PROCESSING" %}
+            <span class="status-pill sp-processing"><span class="sp-dot" style="background:#6366f1;animation:pulse-blue 1.5s infinite;"></span>Processing</span>
+          {% elif req.status == "COMPLETED" %}
+            <span class="status-pill sp-completed"><span class="sp-dot" style="background:#22c55e;"></span>Completed</span>
+          {% elif req.status == "REVIEW_REQUIRED" %}
+            <span class="status-pill sp-review"><span class="sp-dot" style="background:#f59e0b;"></span>Review</span>
+          {% elif req.status == "FAILED" %}
+            <span class="status-pill sp-failed"><span class="sp-dot" style="background:#ef4444;"></span>Failed</span>
+          {% else %}
+            <span class="status-pill sp-default"><span class="sp-dot" style="background:#2563eb;"></span>{{ req.status }}</span>
+          {% endif %}
+        </div>
+
+        {# Description #}
+        <p class="rc-desc mb-2">
+          {% if req.description %}{{ req.description|truncatechars:95 }}{% else %}<em class="text-muted">No description provided.</em>{% endif %}
+        </p>
+
+        {# Meta tags #}
+        <div class="rc-meta">
+          <span class="rc-tag domain-tag"><i class="bi bi-snow2"></i> {{ req.domain_code }}</span>
+          <span class="rc-tag"><i class="bi bi-tag"></i> {{ req.request_type }}</span>
+          {% if req.geography_country %}
+          <span class="rc-tag geo-tag"><i class="bi bi-geo-alt-fill"></i> {{ req.geography_country }}</span>
+          {% endif %}
+        </div>
+
+        {# AI Recommendation Strip #}
+        {% if req.latest_recommended_option %}
+        <div class="ai-strip">
+          <div class="ai-strip-label">
+            <i class="bi bi-cpu-fill" style="color:#16a34a;"></i> AI Recommendation
+          </div>
+          <div class="ai-strip-text">{{ req.latest_recommended_option|truncatechars:85 }}</div>
+          {% if req.latest_confidence_score %}
+          <div class="ai-confidence">
+            <div class="conf-bar">
+              <div class="conf-fill" style="width:{% widthratio req.latest_confidence_score 1 100 %}%;"></div>
+            </div>
+            <span class="conf-pct">{% widthratio req.latest_confidence_score 1 100 %}% confidence</span>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+      </div>{# /rc-body #}
+
+      {# Card Footer: Stats + Priority #}
+      <div class="rc-footer">
+        <div class="d-flex gap-3">
+          <span class="rc-stat" title="Attributes">
+            <i class="bi bi-sliders2-vertical"></i> {{ req.attribute_count }}
+          </span>
+          <span class="rc-stat" title="Quotations">
+            <i class="bi bi-file-earmark-text"></i> {{ req.quotation_count }}
+          </span>
+          <span class="rc-stat" title="AI Runs">
+            <i class="bi bi-lightning-charge"></i> {{ req.run_count }}
+          </span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          {% if req.priority == "CRITICAL" %}
+            <span class="prio-dot prio-critical"></span><span class="rc-stat text-danger fw-semibold">Critical</span>
+          {% elif req.priority == "HIGH" %}
+            <span class="prio-dot prio-high"></span><span class="rc-stat fw-semibold" style="color:#b45309;">High</span>
+          {% elif req.priority == "MEDIUM" %}
+            <span class="prio-dot prio-medium"></span><span class="rc-stat" style="color:#0369a1;">Medium</span>
+          {% else %}
+            <span class="prio-dot prio-low"></span><span class="rc-stat">Low</span>
+          {% endif %}
+          <span class="rc-stat" style="color:#94a3b8;">
+            <i class="bi bi-calendar3"></i> {{ req.created_at|date:"d M Y" }}
+          </span>
+        </div>
+      </div>
+
+      <i class="bi bi-arrow-right rc-arrow"></i>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+
+
 {% if page_obj.has_other_pages %}
-<nav class="mt-3">
-  <ul class="pagination pagination-sm justify-content-center">
+<nav class="mt-4 d-flex justify-content-center" aria-label="Requests pagination">
+  <ul class="pagination pager gap-1 mb-0">
     {% if page_obj.has_previous %}
-    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">«</a></li>
+    <li class="page-item">
+      <a class="page-link" href="?page={{ page_obj.previous_page_number }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">
+        <i class="bi bi-chevron-left" style="font-size:.7rem;"></i>
+      </a>
+    </li>
     {% endif %}
     {% for num in page_obj.paginator.page_range %}
       {% if page_obj.number == num %}
-      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      <li class="page-item active">
+        <span class="page-link">{{ num }}</span>
+      </li>
       {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
-      <li class="page-item"><a class="page-link" href="?page={{ num }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">{{ num }}</a></li>
+      <li class="page-item">
+        <a class="page-link" href="?page={{ num }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">{{ num }}</a>
+      </li>
       {% endif %}
     {% endfor %}
     {% if page_obj.has_next %}
-    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">»</a></li>
+    <li class="page-item">
+      <a class="page-link" href="?page={{ page_obj.next_page_number }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">
+        <i class="bi bi-chevron-right" style="font-size:.7rem;"></i>
+      </a>
+    </li>
     {% endif %}
   </ul>
 </nav>
 {% endif %}
+
+{% else %}
+
+<div class="empty-state-wrap">
+  <div class="empty-icon-wrap">
+    <i class="bi bi-snow2"></i>
+  </div>
+  <h5 class="fw-bold mb-1" style="color:#1e293b;">No HVAC Requests Found</h5>
+  <p class="mb-4" style="color:#64748b;font-size:.85rem;max-width:380px;margin:0 auto .2rem;">
+    {% if current_status or current_type or current_domain or search_query %}
+      No requests match your current filters.
+      <a href="{% url 'procurement:request_list' %}" class="text-primary fw-semibold">Clear filters</a> to see all requests.
+    {% else %}
+      Begin by creating your first AI-powered HVAC procurement request and let the intelligence engine do the sourcing.
+    {% endif %}
+  </p>
+  {% if not current_status and not current_type and not current_domain and not search_query %}
+  <button type="button" class="btn btn-primary rounded-pill px-4 py-2 fw-semibold mt-2"
+     style="background:linear-gradient(135deg,#1d4ed8,#2563eb);border:none;
+            box-shadow:0 4px 14px rgba(37,99,235,.35);font-size:.85rem;"
+     data-bs-toggle="modal" data-bs-target="#newRequestModal">
+    <i class="bi bi-plus-circle me-2"></i>Create First Request
+  </button>
+  {% endif %}
+</div>
+{% endif %}
+
+
+{% endblock %}
+
+
+{% block modals %}
+<!-- ============================================================
+     NEW REQUEST CHOICE MODAL
+     Placed outside proc-layout so overflow-y:auto on the
+     layout div cannot trap the Bootstrap modal overlay.
+============================================================ -->
+<div class="modal fade" id="newRequestModal" tabindex="-1"
+     aria-labelledby="newRequestModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:560px;">
+    <div class="modal-content border-0 shadow-lg" style="border-radius:18px;overflow:hidden;">
+
+      <div class="modal-header px-4 pt-4 pb-3">
+        <div class="d-flex align-items-center gap-3">
+          <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#6366f1,#0ea5e9);display:flex;align-items:center;justify-content:center;">
+            <i class="bi bi-snow2 text-white" style="font-size:1.2rem;"></i>
+          </div>
+          <div>
+            <h5 class="modal-title mb-0 fw-bold" id="newRequestModalLabel"
+                style="color:#0f172a;font-size:1.05rem;">New HVAC Procurement Request</h5>
+            <p class="mb-0" style="font-size:.78rem;color:#64748b;">How would you like to create the request?</p>
+          </div>
+        </div>
+        <button type="button" class="btn-close ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body px-4 pb-4 pt-3">
+        <div class="row g-3">
+
+          <!-- Option 1: Manual Form -->
+          <div class="col-6">
+            <a href="{% url 'procurement:hvac_create' %}" class="nr-choice-card nr-card-manual h-100">
+              <div class="nr-choice-icon">
+                <i class="bi bi-ui-checks"></i>
+              </div>
+              <div>
+                <div class="nr-choice-title">Fill Form Manually</div>
+                <div class="nr-choice-desc">Enter all store &amp; site parameters directly into the guided form.</div>
+              </div>
+              <span class="nr-badge" style="background:#eef2ff;color:#4f46e5;border:1px solid #c7d2fe;">Manual Entry</span>
+            </a>
+          </div>
+
+          <!-- Option 2: Document Upload & Analyze -->
+          <div class="col-6">
+            <a href="{% url 'procurement:hvac_create' %}?mode=analyze" class="nr-choice-card nr-card-doc h-100">
+              <div class="nr-choice-icon">
+                <i class="bi bi-file-earmark-arrow-up"></i>
+              </div>
+              <div>
+                <div class="nr-choice-title">Attach &amp; Analyze</div>
+                <div class="nr-choice-desc">Upload an HVAC form or quotation &mdash; AI auto-fills the fields for you.</div>
+              </div>
+              <span class="nr-badge nr-badge-ai"><i class="bi bi-stars me-1"></i>AI Powered</span>
+            </a>
+          </div>
+
+        </div>
+
+        <!-- Tip strip -->
+        <div class="mt-3 px-3 py-2 rounded-3 d-flex align-items-center gap-2"
+             style="background:#f0fdf4;border:1px solid #bbf7d0;font-size:.78rem;color:#166534;">
+          <i class="bi bi-lightbulb-fill" style="color:#16a34a;"></i>
+          <span><strong>Tip:</strong> Use sample HVAC forms from <code>media/hvac_forms/</code> to test the document analysis feature.</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
 {% endblock %}

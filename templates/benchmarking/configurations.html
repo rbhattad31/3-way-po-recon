@@ -1,0 +1,650 @@
+﻿{% extends "procurement/proc_base.html" %}
+{% load static %}
+
+{% block title %}Benchmark Configurations | LMG Procurement{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0" style="font-size:.8rem;">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:home' %}" class="text-decoration-none">Home</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'benchmarking:request_list' %}" class="text-decoration-none">Benchmarking</a></li>
+    <li class="breadcrumb-item active">Configurations</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/procurement/configurations.css' %}">
+<style>
+  .cat-icon { width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; border-radius:8px; font-size:1rem; }
+  .band-bar  { height:8px; border-radius:4px; min-width:40px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- ================================================================ HERO -->
+<div class="cfg-hero">
+  <div class="d-flex align-items-center gap-3 mb-1">
+    <div style="width:44px;height:44px;background:linear-gradient(135deg,#1665D8,#0891b2);border-radius:12px;display:flex;align-items:center;justify-content:center;">
+      <i class="bi bi-sliders text-white fs-5"></i>
+    </div>
+    <div>
+      <h4 class="fw-bold mb-0" style="color:#1e293b;">Benchmark Configurations</h4>
+      <div class="text-muted" style="font-size:.82rem;">Manage benchmark corridors, categories, and variance thresholds</div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ KPI ROW -->
+<div class="cfg-kpi-row">
+  <div class="cfg-kpi-card" data-tab="categories" style="cursor:pointer;">
+    <div class="cfg-kpi-label">Category Master</div>
+    <div class="d-flex align-items-center gap-2 mt-1">
+      <span class="cfg-kpi-value" id="kpi-cat-total">{{ stats.category_total }}</span>
+      <span class="badge badge-active">{{ stats.category_active }} Active</span>
+    </div>
+  </div>
+  <div class="cfg-kpi-card" data-tab="corridors" style="cursor:pointer;">
+    <div class="cfg-kpi-label">Benchmark Table</div>
+    <div class="d-flex align-items-center gap-2 mt-1">
+      <span class="cfg-kpi-value" id="kpi-corr-total">{{ stats.corridor_total }}</span>
+      <span class="badge badge-active" id="kpi-corr-active">{{ stats.corridor_active }} Active</span>
+    </div>
+  </div>
+  <div class="cfg-kpi-card" data-tab="thresholds" style="cursor:pointer;">
+    <div class="cfg-kpi-label">Variance Thresholds</div>
+    <div class="d-flex align-items-center gap-2 mt-1">
+      <span class="cfg-kpi-value">{{ stats.threshold_total }}</span>
+      <span class="badge badge-active">{{ stats.threshold_active }} Active</span>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ TAB BAR -->
+<div class="d-flex gap-2 mb-0" style="padding:0 1px;">
+  <button class="cfg-tab-btn active" data-tab="categories">
+    <i class="bi bi-grid-3x3-gap me-1"></i>Category Master
+  </button>
+  <button class="cfg-tab-btn" data-tab="corridors">
+    <i class="bi bi-table me-1"></i>Benchmark Table
+  </button>
+  <button class="cfg-tab-btn" data-tab="thresholds">
+    <i class="bi bi-bar-chart-steps me-1"></i>Variance Thresholds
+  </button>
+</div>
+
+<!-- ================================================================ PANES -->
+
+<!-- ---- CATEGORIES ---- -->
+<div class="cfg-tab-pane active" id="pane-categories">
+  <div class="cfg-toolbar">
+    <div style="font-size:.85rem;color:#64748b;font-weight:500;">
+      <i class="bi bi-info-circle me-1"></i>Fixed categories derived from HVAC project line classifications.
+    </div>
+    <div>
+      <input type="text" id="cat-search" class="cfg-search-box" placeholder="Search categories..." oninput="debouncedLoadCat()">
+    </div>
+  </div>
+
+  <div id="cat-loading" class="cfg-loading"><span class="spinner-border spinner-border-sm me-2"></span>Loading...</div>
+  <div class="cfg-table-wrap" id="cat-table-wrap" style="display:none;">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th style="width:48px;"></th>
+          <th>Code</th>
+          <th>Category Name</th>
+          <th>Description</th>
+          <th class="text-center">Active Rules</th>
+          <th>Sample Keywords</th>
+        </tr>
+      </thead>
+      <tbody id="cat-tbody"></tbody>
+    </table>
+  </div>
+  <div id="cat-empty" class="cfg-empty" style="display:none;">
+    <i class="bi bi-folder2-open fs-2 text-muted"></i>
+    <div class="mt-2 text-muted">No categories match your search.</div>
+  </div>
+</div>
+
+<!-- ---- CORRIDORS ---- -->
+<div class="cfg-tab-pane" id="pane-corridors">
+  <div class="cfg-toolbar">
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <input type="text" id="corr-search" class="cfg-search-box" placeholder="Search rule code, name or keywords..." oninput="debouncedLoadCorr()">
+      <select id="corr-cat-filter" class="form-select form-select-sm" style="width:160px;" onchange="loadCorridors()">
+        <option value="">All Categories</option>
+      </select>
+      <select id="corr-geo-filter" class="form-select form-select-sm" style="width:160px;" onchange="loadCorridors()">
+        <option value="">All Geographies</option>
+        {% for code, label in geo_choices_with_all %}
+        <option value="{{ code }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-cfg-add" onclick="openAddCorridor()">
+      <i class="bi bi-plus-lg me-1"></i>Add Rule
+    </button>
+  </div>
+
+  <div id="corr-loading" class="cfg-loading" style="display:none;"><span class="spinner-border spinner-border-sm me-2"></span>Loading...</div>
+  <div class="cfg-table-wrap" id="corr-table-wrap">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th>Rule Code</th>
+          <th>Name</th>
+          <th>Category</th>
+          <th>Geography</th>
+          <th>Scope</th>
+          <th>UOM</th>
+          <th class="text-end">Min</th>
+          <th class="text-end">Mid</th>
+          <th class="text-end">Max</th>
+          <th>Currency</th>
+          <th>Priority</th>
+          <th class="text-center">Status</th>
+          <th class="cfg-col-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="corr-tbody">
+        <tr><td colspan="13" class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading rules...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="corr-empty" class="cfg-empty" style="display:none;">
+    <i class="bi bi-table fs-2 text-muted"></i>
+    <div class="mt-2 text-muted">No corridor rules found. Click <strong>Add Rule</strong> to create one.</div>
+  </div>
+</div>
+
+<!-- ---- THRESHOLDS ---- -->
+<div class="cfg-tab-pane" id="pane-thresholds">
+  <div class="cfg-toolbar">
+    <div style="font-size:.85rem;color:#64748b;font-weight:500;">
+      <i class="bi bi-info-circle me-1"></i>System-defined variance bands applied automatically during benchmark analysis.
+    </div>
+  </div>
+  <div id="thr-loading" class="cfg-loading"><span class="spinner-border spinner-border-sm me-2"></span>Loading...</div>
+  <div class="cfg-table-wrap" id="thr-table-wrap" style="display:none;">
+    <table class="cfg-table">
+      <thead>
+        <tr>
+          <th style="width:160px;">Status</th>
+          <th>Description</th>
+          <th style="width:160px;">Threshold Range</th>
+          <th class="text-center" style="width:120px;">Line Items</th>
+          <th>Interpretation</th>
+        </tr>
+      </thead>
+      <tbody id="thr-tbody"></tbody>
+    </table>
+  </div>
+  <div id="thr-empty" class="cfg-empty" style="display:none;">
+    <i class="bi bi-bar-chart fs-2 text-muted"></i>
+    <div class="mt-2 text-muted">No threshold data available.</div>
+  </div>
+</div>
+
+<!-- ================================================================ ADD / EDIT CORRIDOR MODAL -->
+<div class="modal fade" id="modalCorridor" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;border:none;box-shadow:0 20px 60px rgba(0,0,0,.18);">
+      <div class="modal-header" style="background:linear-gradient(135deg,#1665D8,#0891b2);border-radius:14px 14px 0 0;padding:1.1rem 1.4rem;">
+        <h5 class="modal-title text-white fw-semibold" id="modalCorridorTitle"><i class="bi bi-plus-circle me-2"></i>Add Corridor Rule</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-3">
+        <input type="hidden" id="corr-edit-id">
+
+        <div class="cfg-form-row">
+          <div>
+            <label class="form-label-cfg">Rule Code <span class="text-danger">*</span></label>
+            <input type="text" id="corr-rule-code" class="form-control form-control-cfg" placeholder="e.g. EQUIP-VRF-UAE">
+          </div>
+          <div>
+            <label class="form-label-cfg">Rule Name <span class="text-danger">*</span></label>
+            <input type="text" id="corr-name" class="form-control form-control-cfg" placeholder="e.g. VRF/VRV Systems - UAE">
+          </div>
+        </div>
+
+        <div class="cfg-form-row">
+          <div>
+            <label class="form-label-cfg">Category <span class="text-danger">*</span></label>
+            <select id="corr-category" class="form-control form-control-cfg"></select>
+          </div>
+          <div>
+            <label class="form-label-cfg">Geography</label>
+            <select id="corr-geo" class="form-control form-control-cfg">
+              <option value="ALL">All Geographies</option>
+              {% for code, label in geo_choices_with_all %}
+              {% if code != "ALL" %}<option value="{{ code }}">{{ label }}</option>{% endif %}
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="cfg-form-row">
+          <div>
+            <label class="form-label-cfg">Scope</label>
+            <select id="corr-scope" class="form-control form-control-cfg">
+              <option value="ALL">All Scopes</option>
+              {% for code, label in scope_choices_with_all %}
+              {% if code != "ALL" %}<option value="{{ code }}">{{ label }}</option>{% endif %}
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label-cfg">UOM</label>
+            <input type="text" id="corr-uom" class="form-control form-control-cfg" placeholder="e.g. TR, m2, LS">
+          </div>
+        </div>
+
+        <div class="cfg-form-row" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+          <div>
+            <label class="form-label-cfg">Min Rate</label>
+            <input type="number" id="corr-min" class="form-control form-control-cfg" placeholder="0.00" step="0.01" min="0">
+          </div>
+          <div>
+            <label class="form-label-cfg">Mid Rate</label>
+            <input type="number" id="corr-mid" class="form-control form-control-cfg" placeholder="0.00" step="0.01" min="0">
+          </div>
+          <div>
+            <label class="form-label-cfg">Max Rate</label>
+            <input type="number" id="corr-max" class="form-control form-control-cfg" placeholder="0.00" step="0.01" min="0">
+          </div>
+          <div>
+            <label class="form-label-cfg">Currency</label>
+            <input type="text" id="corr-currency" class="form-control form-control-cfg" value="AED" maxlength="5">
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label-cfg">Keywords <small class="text-muted">(comma-separated)</small></label>
+          <input type="text" id="corr-keywords" class="form-control form-control-cfg" placeholder="e.g. VRF, VRV, multi-split, heat pump">
+        </div>
+
+        <div class="mt-2">
+          <label class="form-label-cfg">Notes</label>
+          <textarea id="corr-notes" class="form-control form-control-cfg" rows="2" placeholder="Any additional notes or context..."></textarea>
+        </div>
+
+        <div class="cfg-form-row mt-2">
+          <div>
+            <label class="form-label-cfg">Priority</label>
+            <input type="number" id="corr-priority" class="form-control form-control-cfg" value="100" min="1" max="999">
+          </div>
+          <div class="d-flex align-items-end">
+            <div class="form-check form-check-cfg">
+              <input class="form-check-input" type="checkbox" id="corr-active" checked>
+              <label class="form-check-label" for="corr-active">Active</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9;padding:.85rem 1.3rem;">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="btnSaveCorridor" class="btn btn-sm btn-primary px-4 fw-semibold" onclick="saveCorridor()">
+          <i class="bi bi-check2 me-1"></i>Save Rule
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ DELETE CONFIRM MODAL -->
+<div class="modal fade" id="modalDelete" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;border:none;box-shadow:0 20px 60px rgba(0,0,0,.2);">
+      <div class="modal-body p-4 text-center">
+        <div class="cfg-delete-icon"><i class="bi bi-exclamation-triangle text-danger fs-4"></i></div>
+        <div class="fw-semibold mt-2" style="font-size:.95rem;">Deactivate Rule?</div>
+        <div class="cfg-delete-confirm-body" id="delete-confirm-text">This rule will be deactivated and excluded from future benchmark matching.</div>
+        <div class="d-flex gap-2 justify-content-center mt-3">
+          <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-sm btn-danger px-3" id="btnConfirmDelete" onclick="confirmDelete()">Deactivate</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ TOAST -->
+<div class="cfg-toast-wrap" id="toastWrap"></div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+// ================================================================ URL CONFIG
+const URLS = {
+  categories: "{% url 'benchmarking:api_bench_categories' %}",
+  corridors:  "{% url 'benchmarking:api_bench_corridors' %}",
+  corridor:   function(pk){ return "{% url 'benchmarking:api_bench_corridor_detail' pk=0 %}".replace('/0/', '/' + pk + '/'); },
+  thresholds: "{% url 'benchmarking:api_bench_thresholds' %}",
+};
+
+// ================================================================ CATEGORY DATA
+const LINE_CATEGORIES = [
+  { code: "EQUIPMENT",     label: "Equipment",     color: "#1665D8", icon: "bi-cpu" },
+  { code: "CONTROLS",      label: "Controls",      color: "#0891b2", icon: "bi-toggles" },
+  { code: "DUCTING",       label: "Ducting",       color: "#0369a1", icon: "bi-wind" },
+  { code: "INSULATION",    label: "Insulation",    color: "#d97706", icon: "bi-layers" },
+  { code: "ACCESSORIES",   label: "Accessories",   color: "#6b7280", icon: "bi-tools" },
+  { code: "INSTALLATION",  label: "Installation",  color: "#16a34a", icon: "bi-hammer" },
+  { code: "TC",            label: "TC",            color: "#7c3aed", icon: "bi-clipboard-check" },
+  { code: "UNCATEGORIZED", label: "Uncategorized", color: "#9ca3af", icon: "bi-question-circle" },
+];
+
+const CAT_MAP = {};
+LINE_CATEGORIES.forEach(function(c){ CAT_MAP[c.code] = c; });
+
+// ================================================================ TAB SWITCH
+var loadedTabs = {};
+
+document.querySelectorAll('.cfg-tab-btn').forEach(function(btn){
+  btn.addEventListener('click', function(){ switchTab(this.dataset.tab); });
+});
+document.querySelectorAll('.cfg-kpi-card[data-tab]').forEach(function(card){
+  card.addEventListener('click', function(){ switchTab(this.dataset.tab); });
+});
+
+function switchTab(name){
+  document.querySelectorAll('.cfg-tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
+  document.querySelectorAll('.cfg-tab-pane').forEach(function(p){ p.classList.toggle('active', p.id === 'pane-' + name); });
+  if (!loadedTabs[name]) loadTab(name);
+}
+
+function loadTab(name){
+  loadedTabs[name] = true;
+  if (name === 'categories') loadCategories();
+  if (name === 'corridors')  loadCorridors();
+  if (name === 'thresholds') loadThresholds();
+}
+
+// ================================================================ DEBOUNCE
+var catTimer, corrTimer;
+function debouncedLoadCat(){ clearTimeout(catTimer); catTimer = setTimeout(loadCategories, 350); }
+function debouncedLoadCorr(){ clearTimeout(corrTimer); corrTimer = setTimeout(loadCorridors, 350); }
+
+// ================================================================ POPULATE CATEGORY DROPDOWN
+function populateCatDropdown(current){
+  var sel = document.getElementById('corr-category');
+  sel.innerHTML = '';
+  LINE_CATEGORIES.forEach(function(c){
+    var opt = document.createElement('option');
+    opt.value = c.code; opt.textContent = c.label;
+    if (c.code === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  // populate corridors filter once
+  var f = document.getElementById('corr-cat-filter');
+  if (f && f.options.length <= 1){
+    LINE_CATEGORIES.forEach(function(c){
+      var o = document.createElement('option'); o.value = c.code; o.textContent = c.label;
+      f.appendChild(o);
+    });
+  }
+}
+
+// ================================================================ LOAD CATEGORIES
+function loadCategories(){
+  var q = $('#cat-search').val();
+  $('#cat-loading').show(); $('#cat-table-wrap').hide(); $('#cat-empty').hide();
+  $.get(URLS.categories, { q: q }, function(data){
+    $('#cat-loading').hide();
+    if (!data.items || !data.items.length){ $('#cat-empty').show(); return; }
+    var rows = data.items.map(function(it){
+      var cat = CAT_MAP[it.code] || { color:'#6b7280', icon:'bi-question-circle' };
+      return '<tr>'
+        + '<td><div class="cat-icon text-white" style="background:' + cat.color + ';"><i class="bi ' + cat.icon + '"></i></div></td>'
+        + '<td><code style="font-size:.78rem;">' + it.code + '</code></td>'
+        + '<td><span class="fw-semibold">' + it.label + '</span></td>'
+        + '<td style="color:#64748b;font-size:.82rem;">' + it.description + '</td>'
+        + '<td class="text-center"><span class="cfg-badge-count">' + it.rule_count + '</span></td>'
+        + '<td style="font-size:.78rem;color:#64748b;max-width:260px;">' + (it.sample_keywords || '<span class="text-muted">--</span>') + '</td>'
+        + '</tr>';
+    });
+    $('#cat-tbody').html(rows.join(''));
+    $('#cat-table-wrap').show();
+  }).fail(function(){ showToast('Failed to load categories.', 'danger'); $('#cat-loading').hide(); });
+}
+
+// ================================================================ LOAD CORRIDORS
+function loadCorridors(){
+  var q    = $('#corr-search').val();
+  var cat  = $('#corr-cat-filter').val();
+  var geo  = $('#corr-geo-filter').val();
+  $('#corr-loading').show(); $('#corr-tbody').html(''); $('#corr-empty').hide();
+  $.get(URLS.corridors, { q: q, category: cat, geography: geo }, function(data){
+    $('#corr-loading').hide();
+    if (!data.items || !data.items.length){ $('#corr-empty').show(); return; }
+    populateCatDropdown('');
+    var rows = data.items.map(function(it){
+      var cat = CAT_MAP[it.category] || { color:'#6b7280' };
+      var badge = '<span class="badge rounded-pill px-2" style="background:' + cat.color + ';font-size:.72rem;">' + it.category_display + '</span>';
+      var status = it.is_active
+        ? '<span class="badge badge-active">Active</span>'
+        : '<span class="badge badge-inactive">Inactive</span>';
+      var toggleIcon = it.is_active ? 'bi-toggle-on text-success' : 'bi-toggle-off text-secondary';
+      var itJson = JSON.stringify(it).replace(/'/g, "&#39;");
+      return '<tr>'
+        + '<td><code style="font-size:.77rem;">' + it.rule_code + '</code></td>'
+        + '<td style="font-size:.82rem;max-width:200px;">' + it.name + '</td>'
+        + '<td>' + badge + '</td>'
+        + '<td style="font-size:.82rem;">' + it.geography_display + '</td>'
+        + '<td style="font-size:.82rem;">' + it.scope_display + '</td>'
+        + '<td style="font-size:.82rem;">' + (it.uom || '--') + '</td>'
+        + '<td class="text-end" style="font-size:.82rem;">' + it.min_rate + '</td>'
+        + '<td class="text-end fw-semibold" style="font-size:.82rem;">' + it.mid_rate + '</td>'
+        + '<td class="text-end" style="font-size:.82rem;">' + it.max_rate + '</td>'
+        + '<td style="font-size:.78rem;">' + it.currency + '</td>'
+        + '<td class="text-center">' + it.priority + '</td>'
+        + '<td class="text-center">' + status + '</td>'
+        + '<td class="cfg-col-actions">'
+        + '<button class="btn btn-xs btn-outline-primary me-1" style="font-size:.75rem;padding:2px 7px;" onclick=\'openEditCorridor(' + itJson + ')\' title="Edit"><i class="bi bi-pencil"></i></button>'
+        + '<button class="btn btn-xs" style="font-size:.75rem;padding:2px 7px;border:1px solid #e2e8f0;" onclick="toggleCorridor(' + it.id + ')" title="Toggle"><i class="bi ' + toggleIcon + '"></i></button>'
+        + '<button class="btn btn-xs btn-outline-danger" style="font-size:.75rem;padding:2px 7px;" onclick="deleteCorridor(' + it.id + ', \'' + it.rule_code.replace(/'/g, "\\'") + '\')" title="Deactivate"><i class="bi bi-trash"></i></button>'
+        + '</td></tr>';
+    });
+    $('#corr-tbody').html(rows.join(''));
+    $('#corr-empty').hide();
+  }).fail(function(){ showToast('Failed to load corridor rules.', 'danger'); $('#corr-loading').hide(); });
+}
+
+// ================================================================ LOAD THRESHOLDS
+function loadThresholds(){
+  $('#thr-loading').show(); $('#thr-table-wrap').hide(); $('#thr-empty').hide();
+  $.get(URLS.thresholds, function(data){
+    $('#thr-loading').hide();
+    if (!data.items || !data.items.length){ $('#thr-empty').show(); return; }
+    var interpretations = {
+      WITHIN_RANGE: 'Quotation is competitive. Proceed to award.',
+      MODERATE:     'Minor negotiation recommended before awarding.',
+      HIGH:         'Significant negotiation or re-quoting strongly advised.',
+      NEEDS_REVIEW: 'Manual categorization or market check required.',
+    };
+    var barColors = { WITHIN_RANGE:'#16a34a', MODERATE:'#d97706', HIGH:'#dc2626', NEEDS_REVIEW:'#6b7280' };
+    var barWidths = { WITHIN_RANGE:'95%', MODERATE:'60%', HIGH:'30%', NEEDS_REVIEW:'15%' };
+    var rows = data.items.map(function(it){
+      var color  = barColors[it.code] || '#6b7280';
+      var width  = barWidths[it.code]  || '20%';
+      var interp = interpretations[it.code] || '';
+      return '<tr>'
+        + '<td><span class="badge bg-' + it.color + ' px-2 py-1" style="font-size:.78rem;">' + it.label + '</span>'
+        + '<div class="band-bar mt-1" style="background:' + color + ';width:' + width + ';opacity:.7;"></div></td>'
+        + '<td style="font-size:.82rem;color:#475569;">' + it.description + '</td>'
+        + '<td><code style="font-size:.78rem;background:#f1f5f9;padding:2px 6px;border-radius:4px;">' + it.range + '</code></td>'
+        + '<td class="text-center"><span class="cfg-badge-count">' + it.count + '</span></td>'
+        + '<td style="font-size:.82rem;color:#64748b;">' + interp + '</td>'
+        + '</tr>';
+    });
+    $('#thr-tbody').html(rows.join(''));
+    $('#thr-table-wrap').show();
+  }).fail(function(){ showToast('Failed to load thresholds.', 'danger'); $('#thr-loading').hide(); });
+}
+
+// ================================================================ CORRIDOR CRUD
+
+var deleteTargetId = null;
+
+function openAddCorridor(){
+  populateCatDropdown('EQUIPMENT');
+  $('#modalCorridorTitle').html('<i class="bi bi-plus-circle me-2"></i>Add Corridor Rule');
+  $('#corr-edit-id').val('');
+  $('#corr-rule-code').val('').prop('readonly', false);
+  $('#corr-name').val('');
+  $('#corr-geo').val('ALL');
+  $('#corr-scope').val('ALL');
+  $('#corr-uom').val('');
+  $('#corr-min').val('');
+  $('#corr-mid').val('');
+  $('#corr-max').val('');
+  $('#corr-currency').val('AED');
+  $('#corr-keywords').val('');
+  $('#corr-notes').val('');
+  $('#corr-priority').val(100);
+  $('#corr-active').prop('checked', true);
+  new bootstrap.Modal(document.getElementById('modalCorridor')).show();
+}
+
+function openEditCorridor(it){
+  populateCatDropdown(it.category);
+  $('#modalCorridorTitle').html('<i class="bi bi-pencil me-2"></i>Edit Corridor Rule');
+  $('#corr-edit-id').val(it.id);
+  $('#corr-rule-code').val(it.rule_code).prop('readonly', true);
+  $('#corr-name').val(it.name);
+  $('#corr-geo').val(it.geography);
+  $('#corr-scope').val(it.scope_type);
+  $('#corr-uom').val(it.uom);
+  $('#corr-min').val(it.min_rate);
+  $('#corr-mid').val(it.mid_rate);
+  $('#corr-max').val(it.max_rate);
+  $('#corr-currency').val(it.currency);
+  $('#corr-keywords').val(it.keywords);
+  $('#corr-notes').val(it.notes);
+  $('#corr-priority').val(it.priority);
+  $('#corr-active').prop('checked', Boolean(it.is_active));
+  new bootstrap.Modal(document.getElementById('modalCorridor')).show();
+}
+
+function saveCorridor(){
+  var pk  = $('#corr-edit-id').val();
+  var cat = document.getElementById('corr-category').value;
+  var payload = {
+    rule_code: $('#corr-rule-code').val().trim(),
+    name:      $('#corr-name').val().trim(),
+    category:  cat,
+    geography: $('#corr-geo').val(),
+    scope_type: $('#corr-scope').val(),
+    uom:       $('#corr-uom').val().trim(),
+    min_rate:  parseFloat($('#corr-min').val()) || 0,
+    mid_rate:  parseFloat($('#corr-mid').val()) || 0,
+    max_rate:  parseFloat($('#corr-max').val()) || 0,
+    currency:  $('#corr-currency').val().trim() || 'AED',
+    keywords:  $('#corr-keywords').val().trim(),
+    notes:     $('#corr-notes').val().trim(),
+    priority:  parseInt($('#corr-priority').val()) || 100,
+    is_active: $('#corr-active').prop('checked'),
+  };
+  if (!payload.rule_code || !payload.name || !payload.category){
+    showToast('Rule Code, Name and Category are required.', 'warning'); return;
+  }
+  var url  = pk ? URLS.corridor(pk) : URLS.corridors;
+  var body = pk ? $.extend(payload, { _action: 'update' }) : payload;
+
+  $('#btnSaveCorridor').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Saving...');
+  $.ajax({
+    url: url, method: 'POST', contentType: 'application/json',
+    data: JSON.stringify(body),
+    headers: { 'X-CSRFToken': getCsrf() },
+    success: function(r){
+      if (r.success){
+        $('#btnSaveCorridor').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Rule');
+        bootstrap.Modal.getInstance(document.getElementById('modalCorridor')).hide();
+        showToast(r.message, 'success');
+        delete loadedTabs['corridors']; loadCorridors();
+        delete loadedTabs['categories'];
+      } else {
+        showToast(r.message || 'Save failed.', 'danger');
+        $('#btnSaveCorridor').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Rule');
+      }
+    },
+    error: function(xhr){
+      showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Server error.', 'danger');
+      $('#btnSaveCorridor').prop('disabled', false).html('<i class="bi bi-check2 me-1"></i>Save Rule');
+    },
+  });
+}
+
+function toggleCorridor(pk){
+  $.ajax({
+    url: URLS.corridor(pk), method: 'POST', contentType: 'application/json',
+    data: JSON.stringify({ _action: 'toggle' }),
+    headers: { 'X-CSRFToken': getCsrf() },
+    success: function(r){
+      if (r.success){ showToast(r.message, 'success'); loadCorridors(); }
+      else { showToast(r.message, 'danger'); }
+    },
+    error: function(){ showToast('Toggle failed.', 'danger'); },
+  });
+}
+
+function deleteCorridor(pk, code){
+  deleteTargetId = pk;
+  $('#delete-confirm-text').text('Rule "' + code + '" will be deactivated and excluded from future benchmark matching.');
+  new bootstrap.Modal(document.getElementById('modalDelete')).show();
+}
+
+function confirmDelete(){
+  if (!deleteTargetId) return;
+  $('#btnConfirmDelete').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>...');
+  $.ajax({
+    url: URLS.corridor(deleteTargetId), method: 'POST', contentType: 'application/json',
+    data: JSON.stringify({ _action: 'delete' }),
+    headers: { 'X-CSRFToken': getCsrf() },
+    success: function(r){
+      bootstrap.Modal.getInstance(document.getElementById('modalDelete')).hide();
+      deleteTargetId = null;
+      $('#btnConfirmDelete').prop('disabled', false).html('Deactivate');
+      if (r.success){ showToast(r.message, 'success'); loadCorridors(); }
+      else { showToast(r.message, 'danger'); }
+    },
+    error: function(){
+      showToast('Delete failed.', 'danger');
+      $('#btnConfirmDelete').prop('disabled', false).html('Deactivate');
+    },
+  });
+}
+
+// ================================================================ TOAST
+function showToast(msg, type){
+  var id = 'toast-' + Date.now();
+  var icon = { success:'bi-check-circle-fill text-success', danger:'bi-x-circle-fill text-danger', warning:'bi-exclamation-circle-fill text-warning' }[type] || 'bi-info-circle-fill text-info';
+  var toast = '<div id="' + id + '" class="toast align-items-center border-0 shadow-sm mb-2" role="alert" style="background:#fff;min-width:280px;">'
+    + '<div class="d-flex align-items-center px-3 py-2 gap-2">'
+    + '<i class="bi ' + icon + ' fs-6"></i>'
+    + '<div class="me-auto" style="font-size:.84rem;">' + msg + '</div>'
+    + '<button class="btn-close" onclick="$(\'#' + id + '\').remove();"></button>'
+    + '</div></div>';
+  $('#toastWrap').prepend(toast);
+  setTimeout(function(){ $('#' + id).fadeOut(300, function(){ $(this).remove(); }); }, 4000);
+}
+
+// ================================================================ CSRF
+function getCsrf(){
+  return document.cookie.split(';').reduce(function(v, c){
+    var p = c.trim().split('='); return p[0] === 'csrftoken' ? decodeURIComponent(p[1]) : v;
+  }, '');
+}
+
+// ================================================================ INIT
+$(function(){
+  loadTab('categories');
+  populateCatDropdown('EQUIPMENT');
+  setTimeout(loadCorridors, 100);
+});
+</script>
+{% endblock %}

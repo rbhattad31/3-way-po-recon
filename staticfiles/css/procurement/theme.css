@@ -1,0 +1,239 @@
+/*
+ * theme.css -- LMG Procurement Platform Shared Design Tokens
+ * Import or link this in every procurement page.
+ * Defines CSS custom properties (variables) for consistent theming.
+ */
+
+:root {
+  /* ---- Primary brand ---- */
+  --proc-primary:        #1665D8;
+  --proc-primary-dark:   #1248a0;
+  --proc-primary-deep:   #1e3a8a;
+  --proc-primary-light:  #eff6ff;
+  --proc-primary-border: #bfdbfe;
+
+  /* ---- Gradient presets ---- */
+  --proc-gradient-hero:  linear-gradient(135deg, #1e3a8a 0%, #1665D8 50%, #0ea5e9 100%);
+  --proc-gradient-btn:   linear-gradient(135deg, #1d4ed8, #1665D8);
+  --proc-gradient-ai:    linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #0ea5e9 100%);
+
+  /* ---- Backgrounds ---- */
+  --proc-bg:             #f0f4fa;
+  --proc-surface:        #ffffff;
+  --proc-surface-soft:   #f8fafc;
+  --proc-surface-blue:   #f0f7ff;
+
+  /* ---- Borders ---- */
+  --proc-border:         #e2e8f0;
+  --proc-border-soft:    #f1f5f9;
+  --proc-border-focus:   #1665D8;
+
+  /* ---- Text ---- */
+  --proc-text:           #0f172a;
+  --proc-text-body:      #334155;
+  --proc-text-muted:     #64748b;
+  --proc-text-faint:     #94a3b8;
+
+  /* ---- Shadows ---- */
+  --proc-shadow-xs:      0 1px 3px rgba(0,0,0,.04);
+  --proc-shadow-sm:      0 2px 8px rgba(0,0,0,.05);
+  --proc-shadow-md:      0 4px 16px rgba(0,0,0,.08);
+  --proc-shadow-lg:      0 8px 32px rgba(0,0,0,.12);
+  --proc-shadow-primary: 0 6px 20px rgba(22,101,216,.2);
+
+  /* ---- Radii ---- */
+  --proc-radius-xs: 6px;
+  --proc-radius-sm: 8px;
+  --proc-radius-md: 12px;
+  --proc-radius-lg: 14px;
+  --proc-radius-xl: 16px;
+
+  /* ---- Typography ---- */
+  --proc-font:    'Inter', system-ui, sans-serif;
+  --proc-font-xs: .68rem;
+  --proc-font-sm: .78rem;
+  --proc-font-md: .86rem;
+  --proc-font-base: .93rem;
+
+  /* ---- Status colours ---- */
+  --proc-success:        #16a34a;
+  --proc-success-bg:     #dcfce7;
+  --proc-success-border: #bbf7d0;
+
+  --proc-warning:        #d97706;
+  --proc-warning-bg:     #fffbeb;
+  --proc-warning-border: #fde68a;
+
+  --proc-danger:         #e11d48;
+  --proc-danger-bg:      #fff1f2;
+  --proc-danger-border:  #fecdd3;
+
+  --proc-info:           #0891b2;
+  --proc-info-bg:        #ecfeff;
+  --proc-info-border:    #a5f3fc;
+}
+
+/* ---- Shared utility classes ---- */
+
+/* Hero banner used by multiple pages */
+.proc-hero {
+  background: var(--proc-gradient-hero);
+  border-radius: var(--proc-radius-xl);
+  padding: 1.5rem 1.75rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(22,101,216,.25);
+}
+.proc-hero::before {
+  content: '';
+  position: absolute;
+  top: -50px; right: -50px;
+  width: 220px; height: 220px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.06);
+  pointer-events: none;
+}
+.proc-hero::after {
+  content: '';
+  position: absolute;
+  bottom: -70px; left: 25%;
+  width: 280px; height: 280px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.04);
+  pointer-events: none;
+}
+.proc-hero-icon {
+  width: 56px; height: 56px;
+  border-radius: var(--proc-radius-lg);
+  background: rgba(255,255,255,.18);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.28);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.5rem; color: #fff; flex-shrink: 0;
+}
+.proc-hero-title {
+  font-size: 1.2rem; font-weight: 700;
+  color: #fff; letter-spacing: -.015em; margin: 0;
+}
+.proc-hero-sub {
+  font-size: var(--proc-font-xs);
+  color: rgba(255,255,255,.72);
+  margin-top: 4px;
+}
+.proc-hero-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(255,255,255,.15);
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: .7rem; color: rgba(255,255,255,.92);
+  backdrop-filter: blur(4px);
+}
+
+/* Shared primary action button */
+.btn-proc-primary {
+  background: var(--proc-gradient-btn);
+  color: #fff; border: none;
+  border-radius: var(--proc-radius-sm);
+  font-size: var(--proc-font-md); font-weight: 600;
+  padding: .48rem 1.1rem;
+  box-shadow: var(--proc-shadow-primary);
+  transition: all .2s ease;
+  display: inline-flex; align-items: center; gap: .4rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn-proc-primary:hover {
+  background: linear-gradient(135deg, #1e40af, #1248a0);
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 5px 18px rgba(22,101,216,.38);
+}
+
+/* Shared outline button */
+.btn-proc-outline {
+  background: var(--proc-primary-light);
+  color: var(--proc-primary);
+  border: 1px solid var(--proc-primary-border);
+  border-radius: var(--proc-radius-sm);
+  font-size: var(--proc-font-md); font-weight: 600;
+  padding: .46rem 1rem;
+  transition: all .15s;
+  display: inline-flex; align-items: center; gap: .4rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn-proc-outline:hover {
+  background: #dbeafe; color: var(--proc-primary-dark);
+  border-color: var(--proc-primary);
+}
+
+/* Shared surface card */
+.proc-card {
+  background: var(--proc-surface);
+  border: 1px solid var(--proc-border);
+  border-radius: var(--proc-radius-lg);
+  box-shadow: var(--proc-shadow-sm);
+}
+
+/* Shared section eyebrow */
+.proc-eyebrow {
+  font-size: var(--proc-font-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--proc-primary);
+  margin-bottom: .4rem;
+}
+
+/* Shared status badges */
+.proc-badge-active {
+  display: inline-flex; align-items: center; gap: .3rem;
+  background: var(--proc-success-bg); color: #15803d;
+  font-size: var(--proc-font-xs); font-weight: 700;
+  padding: .22rem .6rem; border-radius: 999px;
+  border: 1px solid var(--proc-success-border);
+}
+.proc-badge-active::before {
+  content: ''; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--proc-success);
+}
+.proc-badge-inactive {
+  display: inline-flex; align-items: center; gap: .3rem;
+  background: var(--proc-surface-soft); color: var(--proc-text-faint);
+  font-size: var(--proc-font-xs); font-weight: 700;
+  padding: .22rem .6rem; border-radius: 999px;
+  border: 1px solid var(--proc-border);
+}
+
+/* Shared confidence bar */
+.proc-conf-bar-wrap {
+  background: #f1f5f9; border-radius: 4px; height: 6px; overflow: hidden;
+}
+.proc-conf-bar {
+  height: 6px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--proc-primary), #06b6d4);
+}
+
+/* Shared table utilities */
+.proc-table-header-cell {
+  font-size: var(--proc-font-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--proc-text-faint);
+  background: var(--proc-surface-soft);
+  border-bottom: 2px solid var(--proc-border);
+  padding: .7rem .9rem;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Scrollbar (shared) */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #f0f4fa; }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--proc-primary), #0ea5e9);
+  border-radius: 3px;
+}

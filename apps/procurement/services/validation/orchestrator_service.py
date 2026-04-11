@@ -1,4 +1,9 @@
-"""ValidationOrchestratorService — central service that runs all validations."""
+"""ValidationOrchestratorService — central service that runs all validations.
+
+Phase 1 agentic bridge: AI agent augmentation now routes through
+ProcurementAgentOrchestrator for standard tracing, audit, and execution records.
+Deterministic validators are unchanged.
+"""
 from __future__ import annotations
 
 import logging
@@ -25,6 +30,7 @@ from apps.procurement.models import (
     ValidationResult,
     ValidationResultItem,
 )
+from apps.procurement.runtime import ProcurementAgentMemory, ProcurementAgentOrchestrator
 from apps.procurement.services.analysis_run_service import AnalysisRunService
 from apps.procurement.services.validation.ambiguity_service import AmbiguityValidationService
 from apps.procurement.services.validation.attribute_completeness_service import (
@@ -59,7 +65,7 @@ class ValidationOrchestratorService:
         run: AnalysisRun,
         *,
         agent_enabled: bool = False,
-        tenant=None,
+        request_user: Any = None,
     ) -> ValidationResult:
         """Execute the full validation pipeline.
 
@@ -103,6 +109,7 @@ class ValidationOrchestratorService:
             )
 
             # 3. Optional agent augmentation for high-ambiguity cases
+            # Phase 1: routes through ProcurementAgentOrchestrator bridge
             if agent_enabled:
                 ambiguous_count = sum(
                     1 for f in all_findings
@@ -110,7 +117,7 @@ class ValidationOrchestratorService:
                 )
                 if ambiguous_count >= 3:
                     all_findings = _run_agent_augmentation(
-                        request, run, all_findings
+                        request, run, all_findings, request_user=request_user
                     )
 
             # 4. Score and classify
@@ -128,6 +135,37 @@ class ValidationOrchestratorService:
             summary = _build_summary(overall_status, score, len(missing), len(warnings), len(ambiguous))
 
             # 5. Persist
+            failure_digest = _build_failure_digest(all_findings, overall_status, score)
+
+            # Build thought-process log for AnalysisRun
+            thought_process = [
+                {"step": 1, "stage": "rule_resolution",
+                 "decision": f"{len(rules)} validation rule(s) resolved",
+                 "reasoning": "Rules matched to domain/schema of this request."},
+                {"step": 2, "stage": "attribute_completeness",
+                 "decision": f"{len([f for f in all_findings if f.get('category') == 'ATTRIBUTE_COMPLETENESS'])} checks run",
+                 "reasoning": "Verified all required store parameters are present."},
+                {"step": 3, "stage": "document_completeness",
+                 "decision": f"{len([f for f in all_findings if f.get('category') == 'DOCUMENT_COMPLETENESS'])} checks run",
+                 "reasoning": "Verified quotation document presence and completeness."},
+                {"step": 4, "stage": "scope_coverage",
+                 "decision": f"{len([f for f in all_findings if f.get('category') == 'SCOPE_COVERAGE'])} checks run",
+                 "reasoning": "Validated HVAC scope categories match store type expectation."},
+                {"step": 5, "stage": "commercial_completeness",
+                 "decision": f"{len([f for f in all_findings if f.get('category') == 'COMMERCIAL_COMPLETENESS'])} checks run",
+                 "reasoning": "Checked for warranty, payment terms, and lead time."},
+                {"step": 6, "stage": "compliance_readiness",
+                 "decision": f"{len([f for f in all_findings if f.get('category') == 'COMPLIANCE_READINESS'])} checks run",
+                 "reasoning": "Ensured geography and compliance pre-conditions are set."},
+                {"step": 7, "stage": "scoring",
+                 "decision": f"Score={score:.1f}%, Status={overall_status}, NextAction={next_action}",
+                 "reasoning": (
+                     f"Missing={len(missing)}, Warnings={len(warnings)}, "
+                     f"Ambiguous={len(ambiguous)}. "
+                     "Score weighted by severity and category importance."
+                 )},
+            ]
+
             with transaction.atomic():
                 validation_result = ValidationResult.objects.create(
                     run=run,
@@ -135,6 +173,7 @@ class ValidationOrchestratorService:
                     overall_status=overall_status,
                     completeness_score=score,
                     summary_text=summary,
+                    failure_digest_text=failure_digest,
                     readiness_for_recommendation=ready_for_rec,
                     readiness_for_benchmarking=ready_for_bench,
                     recommended_next_action=next_action,
@@ -182,12 +221,18 @@ class ValidationOrchestratorService:
                 ]
                 ValidationResultItem.objects.bulk_create(items_to_create)
 
-            # 6. Complete the run
+            # 6. Complete the run and persist thought-process log
             AnalysisRunService.complete_run(
                 run,
                 output_summary=summary,
                 confidence_score=score / 100.0,
             )
+            # Write the step-by-step thought process log to AnalysisRun
+            try:
+                run.thought_process_log = thought_process
+                run.save(update_fields=["thought_process_log"])
+            except Exception:
+                logger.debug("Could not persist thought_process_log -- skipping", exc_info=True)
 
             # Audit
             AuditService.log_event(
@@ -368,21 +413,198 @@ def _build_summary(
     )
 
 
+_SEVERITY_LABEL = {
+    "ERROR": "[CRITICAL]",
+    "WARNING": "[WARNING]",
+    "INFO": "[INFO]",
+}
+
+_CATEGORY_WHY = {
+    "ATTRIBUTE_COMPLETENESS": (
+        "Required store/site parameters missing. Without these the rules engine "
+        "and AI cannot produce a valid HVAC system recommendation."
+    ),
+    "DOCUMENT_COMPLETENESS": (
+        "Supplier quotation document is absent or incomplete. Benchmarking and "
+        "commercial review cannot run without a valid quotation PDF."
+    ),
+    "SCOPE_COVERAGE": (
+        "The quotation scope does not cover all expected HVAC categories for "
+        "this store type. Missing categories may indicate scope gaps or wrong "
+        "work classification."
+    ),
+    "COMMERCIAL_COMPLETENESS": (
+        "Commercial terms (warranty, payment, lead time, taxes) are absent. "
+        "Finance and procurement leadership require these before approval."
+    ),
+    "COMPLIANCE_READINESS": (
+        "Compliance pre-conditions not met (e.g. geography not set, no ESMA/ASHRAE "
+        "standards linked). The compliance check module will not run until these "
+        "are resolved."
+    ),
+    "AMBIGUITY": (
+        "One or more field values are ambiguous or cannot be normalised. "
+        "The AI could not determine the intended value from the text provided."
+    ),
+}
+
+
+def _build_failure_digest(
+    all_findings: List[Dict[str, Any]],
+    overall_status: str,
+    score: float,
+) -> str:
+    """Build a plain-English root-cause digest of every validation failure.
+
+    The digest explains:
+    - Which items failed / are missing
+    - Why each item is required (category-level rationale)
+    - The exact remediation step to fix it
+    - A priority order (CRITICAL first, then WARNING)
+
+    This is written to ValidationResult.failure_digest_text so developers
+    and analysts can understand failures at a glance without reading raw JSON.
+    """
+    if overall_status == ValidationOverallStatus.PASS:
+        return ""
+
+    lines: List[str] = [
+        f"=== VALIDATION FAILURE DIGEST ===",
+        f"Overall Status : {overall_status}",
+        f"Completeness   : {score:.0f}%",
+        "",
+    ]
+
+    # Group failures by category for clarity
+    failed_by_cat: Dict[str, List[Dict[str, Any]]] = {}
+    for f in all_findings:
+        if f["status"] not in (
+            ValidationItemStatus.MISSING,
+            ValidationItemStatus.FAILED,
+            ValidationItemStatus.WARNING,
+            ValidationItemStatus.AMBIGUOUS,
+        ):
+            continue
+        cat = f.get("category", "UNKNOWN")
+        failed_by_cat.setdefault(cat, []).append(f)
+
+    if not failed_by_cat:
+        lines.append("No failures found -- status may be PASS_WITH_WARNINGS only.")
+        return "\n".join(lines)
+
+    for cat, findings in failed_by_cat.items():
+        why = _CATEGORY_WHY.get(cat, "")
+        lines.append(f"--- {cat} ---")
+        if why:
+            lines.append(f"Why this category matters: {why}")
+        lines.append("")
+
+        for idx, f in enumerate(findings, 1):
+            severity_tag = _SEVERITY_LABEL.get(f.get("severity", ""), "[OTHER]")
+            item_label = f.get("item_label", f.get("item_code", "Unknown"))
+            item_code = f.get("item_code", "")
+            status = f.get("status", "")
+            remarks = f.get("remarks", "").strip()
+            details = f.get("details_json") or {}
+            remediation = details.get("remediation_hint", "")
+
+            lines.append(f"  {idx}. {severity_tag} {item_label} ({item_code})")
+            lines.append(f"     Status     : {status}")
+            if remarks:
+                lines.append(f"     Root Cause : {remarks}")
+            if remediation:
+                lines.append(f"     Fix Action : {remediation}")
+            elif status == ValidationItemStatus.MISSING:
+                lines.append(
+                    f"     Fix Action : Provide a value for '{item_label}' before re-running validation."
+                )
+            elif status == ValidationItemStatus.AMBIGUOUS:
+                lines.append(
+                    f"     Fix Action : Clarify or standardise the value for '{item_label}'."
+                )
+            elif status in (ValidationItemStatus.FAILED, ValidationItemStatus.WARNING):
+                lines.append(
+                    f"     Fix Action : Review '{item_label}' and correct per the rule requirements."
+                )
+            lines.append("")
+
+        lines.append("")
+
+    lines.append(
+        "=== END OF DIGEST ===\n"
+        "Re-run Validation after addressing each Fix Action above to progress "
+        "to Recommendation or Benchmarking stage."
+    )
+    return "\n".join(lines)
+
+
 def _run_agent_augmentation(
     request: ProcurementRequest,
     run: AnalysisRun,
     findings: List[Dict[str, Any]],
+    *,
+    request_user: Any = None,
 ) -> List[Dict[str, Any]]:
-    """Optionally invoke ValidationAgent for ambiguity resolution.
+    """Invoke ValidationAgent for ambiguity resolution via ProcurementAgentOrchestrator.
 
-    Returns updated findings list. Falls back to original findings on error.
+    Phase 1 bridge: wraps ValidationAgentService call so that a
+    ProcurementAgentExecutionRecord is created for governance, Langfuse tracing
+    fires, and audit events are emitted -- without modifying the inner
+    ValidationAgentService logic that creates its own AgentRun records.
+
+    Falls back to original findings on any error.
     """
     try:
         from apps.procurement.services.validation.validation_agent import (
             ValidationAgentService,
         )
 
-        return ValidationAgentService.augment_findings(request, run, findings)
+        orchestrator = ProcurementAgentOrchestrator()
+        memory = ProcurementAgentMemory()
+        ambiguous_count = sum(1 for f in findings if f.get("status") == ValidationItemStatus.AMBIGUOUS)
+
+        def _agent_fn(ctx):  # noqa: ANN001
+            updated = ValidationAgentService.augment_findings(request, run, findings)
+            resolved = sum(
+                1 for f in updated
+                if f.get("status") != ValidationItemStatus.AMBIGUOUS
+                and next(
+                    (o for o in findings if o["item_code"] == f["item_code"]
+                     and o["status"] == ValidationItemStatus.AMBIGUOUS),
+                    None,
+                ) is not None
+            )
+            return {
+                "updated_findings": updated,
+                "resolved_count": resolved,
+                "ambiguous_input_count": ambiguous_count,
+                "confidence": 0.7,
+                "reasoning_summary": (
+                    f"Resolved {resolved} of {ambiguous_count} ambiguous validation items "
+                    f"for procurement request {request.request_id}"
+                ),
+            }
+
+        orch_result = orchestrator.run(
+            run=run,
+            agent_type="validation_augmentation",
+            agent_fn=_agent_fn,
+            memory=memory,
+            extra_context={
+                "ambiguous_count": ambiguous_count,
+                "request_id": request.request_id,
+            },
+            request_user=request_user,
+        )
+
+        if orch_result.status == "completed":
+            updated_findings = orch_result.output.get("updated_findings")
+            if isinstance(updated_findings, list) and updated_findings:
+                return updated_findings
+
+        # Orchestrator failed/skipped -- return original deterministic results
+        return findings
+
     except Exception:
         logger.warning(
             "ValidationAgent augmentation failed for request %s, using deterministic results",
