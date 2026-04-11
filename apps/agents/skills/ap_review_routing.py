@@ -30,6 +30,8 @@ ap_review_routing_skill = register_skill(Skill(
         "submit_recommendation",
         "assign_reviewer",
         "generate_case_summary",
+        "invoke_review_routing_agent",
+        "invoke_case_summary_agent",
         "auto_close_case",
         "escalate_case",
         "exception_list",
@@ -39,6 +41,11 @@ ap_review_routing_skill = register_skill(Skill(
         "If confidence >= 0.9 and all lines match within tolerance, AUTO_CLOSE.",
         "If confidence >= 0.6 but some deviations exist, SEND_TO_AP_REVIEW.",
         "If confidence < 0.6 or critical exceptions found, ESCALATE_TO_MANAGER.",
+        "Use invoke_review_routing_agent for complex routing decisions where "
+        "the Review Routing Agent's LLM reasoning will produce better results "
+        "than manual rule-based routing.",
+        "Use invoke_case_summary_agent to generate a rich LLM-authored case "
+        "summary -- prefer this over generate_case_summary for complex cases.",
         "Always generate a case summary regardless of the decision.",
     ],
 ))

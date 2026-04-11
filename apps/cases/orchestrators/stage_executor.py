@@ -360,7 +360,7 @@ class StageExecutor:
             invoice.save(update_fields=["po_number", "normalized_po_number", "updated_at"])
 
         runner = ReconciliationRunnerService()
-        run = runner.run(invoices=[invoice], triggered_by=case.created_by)
+        run = runner.run(invoices=[invoice], triggered_by=case.created_by, tenant=case.tenant)
 
         # Link result to case
         result = run.results.filter(invoice=case.invoice).first()

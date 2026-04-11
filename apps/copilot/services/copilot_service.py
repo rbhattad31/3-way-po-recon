@@ -746,6 +746,39 @@ class APCopilotService:
             except Exception:
                 pass
 
+            # Extraction approval status
+            try:
+                from apps.extraction.models import ExtractionApproval
+                approval = ExtractionApproval.objects.filter(
+                    invoice=inv,
+                ).select_related("reviewed_by").first()
+                if approval:
+                    ctx["extraction_approval"] = {
+                        "status": approval.status,
+                        "is_touchless": approval.is_touchless,
+                        "confidence_at_review": approval.confidence_at_review,
+                        "reviewed_by": approval.reviewed_by.email if approval.reviewed_by else None,
+                        "reviewed_at": approval.reviewed_at.isoformat() if approval.reviewed_at else None,
+                        "fields_corrected_count": approval.fields_corrected_count,
+                        "rejection_reason": approval.rejection_reason or "",
+                    }
+            except Exception:
+                pass
+
+            # Decision codes from extraction run
+            try:
+                from apps.extraction.models import ExtractionResult as ER2
+                er = ER2.objects.filter(
+                    document_upload__invoices=inv,
+                ).select_related("extraction_run").first()
+                if er and er.extraction_run:
+                    raw_json = er.extraction_run.extracted_data_json or {}
+                    codes = raw_json.get("_decision_codes", [])
+                    if codes:
+                        ctx["decision_codes"] = codes
+            except Exception:
+                pass
+
         if case.vendor:
             v = case.vendor
             ctx["vendor"] = {

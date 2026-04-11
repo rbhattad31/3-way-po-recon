@@ -21,10 +21,16 @@ invoice_extraction_skill = register_skill(Skill(
         "classify_document",
         "extract_invoice_fields",
         "re_extract_field",
+        "get_field_confidence",
+        "get_decision_codes",
     ],
     decision_hints=[
         "If extraction confidence is below 0.5, call re_extract_field for critical "
         "fields (invoice_number, total_amount, po_number, vendor_name) before proceeding.",
         "If the document is not an invoice, stop and report classification mismatch.",
+        "After extraction, call get_field_confidence to identify which specific "
+        "fields are unreliable. Focus re-extraction on low-confidence critical fields.",
+        "Call get_decision_codes to check for quality flags (MISSING_PO, "
+        "LOW_CONFIDENCE, DUPLICATE_SUSPECT) before moving to validation.",
     ],
 ))

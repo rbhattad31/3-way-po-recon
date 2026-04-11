@@ -950,13 +950,277 @@ flowchart LR
         The 1 benchmarking-specific agent (<code>BenchmarkDocumentExtractorAgent</code>) is in the Benchmarking Pipeline section.
       </p>
 
-      <div class="row g-3 mb-3">
-        {% for agent in procurement_agents %}
-        <div class="col-md-6">
-          <div class="agent-ref-card h-100">
-            <div class="agent-card-header">
-              <div class="agent-icon-wrap {% if agent.flow == 'Flow A' %}flow-a{% elif agent.flow == 'Flow B' %}flow-b{% else %}flow-both{% endif %}">
-                <i class="bi {% if agent.icon %}{{ agent.icon }}{% else %}bi-robot{% endif %} fs-5"></i>
+
+      <!-- Full Architecture Diagram -->
+      <h3 class="docs-h3" id="supervisor-architecture">Architecture &amp; Framework</h3>
+      <p class="text-muted small mb-3">
+        Complete supervisor architecture: initialization, skill loading, prompt composition, ReAct loop,
+        tool execution with RBAC enforcement and ERP routing, output interpretation, and persistence.
+      </p>
+
+      <div class="diagram-zoom-toolbar">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+        <span class="zoom-level">100%</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+      </div>
+      <div class="diagram-zoom-wrap p-3" style="height:620px">
+      <div class="mermaid">
+flowchart TD
+    %% ── Entry ──
+    TRIGGER(["Caller invokes\nSupervisorAgent(skill_names).run(ctx)"])
+    TRIGGER --> CTXBUILD
+
+    subgraph INIT ["Initialization"]
+        direction TB
+        CTXBUILD["build_supervisor_context()\nPopulates AgentContext:\ninvoice_id, po_number, mode,\nexceptions, RBAC snapshot,\ntrace_id, tenant, AgentMemory"]
+        CTXBUILD --> RBAC_ORCH{"AgentGuardrailsService\n.authorize_orchestration()\nagents.orchestrate"}
+        RBAC_ORCH -->|"Denied"| DENIED(["AuditEvent: GUARDRAIL_DENIED\nRun aborted"])
+        RBAC_ORCH -->|"Granted"| RBAC_AGENT{"authorize_agent()\nagents.run_supervisor"}
+        RBAC_AGENT -->|"Denied"| DENIED
+        RBAC_AGENT -->|"Granted"| LOAD
+    end
+
+    subgraph SKILLS ["Skill Loading & Prompt Assembly"]
+        direction TB
+        LOAD["_ensure_skills_loaded()\nImport 5 skill modules\nRegister into SkillRegistry singleton"]
+        LOAD --> S1["invoice_extraction\n6 tools, UNDERSTAND phase"]
+        LOAD --> S2["ap_validation\n7 tools, VALIDATE phase"]
+        LOAD --> S3["ap_3way_matching\n6 tools, MATCH phase"]
+        LOAD --> S4["ap_investigation\n6 tools, INVESTIGATE phase"]
+        LOAD --> S5["ap_review_routing\n9 tools, DECIDE phase"]
+        S1 & S2 & S3 & S4 & S5 --> MERGE["Merge all tools via\nSkillRegistry.all_tools()"]
+        MERGE --> PROMPT["build_supervisor_prompt()"]
+        PROMPT --> PR["1. PromptRegistry.get_or_default()\nagent.supervisor_ap_lifecycle\nLangfuse → DB → hardcoded"]
+        PR --> BASE["2. Base prompt:\nRole, reasoning framework,\ndecision rules, output JSON format,\nmax 15 tool rounds"]
+        BASE --> SKILL_EXT["3. SkillRegistry.compose_prompt()\nAppend 5 phase-specific\nprompt extensions"]
+        SKILL_EXT --> HINTS["4. SkillRegistry.compose_hints()\nNumbered decision hint list"]
+    end
+
+    subgraph REACT ["ReAct Loop (max 15 rounds)"]
+        direction TB
+        USER_MSG["build_user_message(ctx)\nMode, invoice details,\nexceptions, vendor info"]
+        USER_MSG --> LLM["LLMClient.chat()\nGPT-4o, temp=0,\nresponse_format=json_object\nMessages + tool_specs"]
+        LLM --> RESP{"LLM Response"}
+        RESP -->|"Has tool_calls"| TOOLEXEC
+        RESP -->|"No tool_calls\n(reasoning complete)"| INTERP
+        TOOLEXEC --> LLM
+    end
+
+    HINTS --> USER_MSG
+
+    subgraph TOOLEXEC ["Tool Execution Pipeline"]
+        direction TB
+        TC["For each tool_call\nin LLM response"]
+        TC --> RBAC_TOOL{"authorize_tool()\nTOOL_PERMISSIONS map\ne.g. po_lookup → purchase_orders.view"}
+        RBAC_TOOL -->|"Denied"| TOOL_DENY["ToolResult(success=False)\nAuditEvent logged\nLangfuse score = 0.0"]
+        RBAC_TOOL -->|"Granted"| ROUTE{"PluginToolRouter\nIs tool ERP-routable?"}
+        ROUTE -->|"Yes + connector active"| ERP_EXEC["ERPResolutionService\nCache → Live API → DB Fallback\nDynamics / Zoho / Salesforce / SQL"]
+        ROUTE -->|"No or no connector"| TOOL_REG["ToolRegistry.get(name)\nDeterministic service wrapper\nTenant-scoped via _scoped()"]
+        ERP_EXEC --> RESULT["ToolResult\nsuccess, data, _source"]
+        TOOL_REG --> RESULT
+        RESULT --> LOG["ToolCallLogger.log()\nAgentStep record\nLangfuse tool span"]
+        TOOL_DENY --> APPEND
+        LOG --> APPEND["Append result to\nmessage history"]
+    end
+
+    subgraph OUTPUT ["Output Interpretation & Persistence"]
+        direction TB
+        INTERP["interpret_supervisor_output()\n1. Strip markdown fences\n2. Parse JSON\n3. Validate via AgentOutputSchema\n4. Enforce submit_recommendation"]
+        INTERP --> CONF["_compute_composite_confidence()\nLLM confidence\nminus 0.1 per failed tool (max -0.3)\nCap if no evidence or min_tool_calls unmet"]
+        CONF --> FINAL["_finalise_run()\nCheck allowed_recs\nCheck prohibited_actions\nPersist AgentRun"]
+        FINAL --> PERSIST["AgentRun record:\nstatus, recommendation_type,\nconfidence, evidence, tools_used,\ntokens, duration_ms,\nRBAC snapshot"]
+        FINAL --> LF_SCORE["Langfuse Scores:\nsupervisor_confidence\nsupervisor_recommendation_present\nsupervisor_tools_used_count\nsupervisor_recovery_used\nsupervisor_auto_close_candidate"]
+    end
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LEG1["Initialization & RBAC"]
+        LEG2["Skill & Prompt Assembly"]
+        LEG3["ReAct Loop"]
+        LEG4["Tool Execution"]
+        LEG5["Output & Persistence"]
+        LEG6["ERP Connector"]
+    end
+
+    classDef init fill:#f3f4f6,stroke:#6b7280,color:#1f2937,font-weight:bold
+    classDef skill fill:#ede9fe,stroke:#8b5cf6,color:#4c1d95
+    classDef react fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a,font-weight:bold
+    classDef tool fill:#d1fae5,stroke:#059669,color:#065f46
+    classDef erp fill:#ecfdf5,stroke:#10b981,color:#064e3b
+    classDef output fill:#fef3c7,stroke:#d97706,color:#78350f,font-weight:bold
+    classDef denied fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    classDef neutral fill:#f9fafb,stroke:#9ca3af,color:#374151
+
+    class TRIGGER,CTXBUILD,RBAC_ORCH,RBAC_AGENT init
+    class LOAD,S1,S2,S3,S4,S5,MERGE,PROMPT,PR,BASE,SKILL_EXT,HINTS skill
+    class USER_MSG,LLM,RESP react
+    class TC,RBAC_TOOL,ROUTE,TOOL_REG,RESULT,LOG,APPEND tool
+    class ERP_EXEC erp
+    class INTERP,CONF,FINAL,PERSIST,LF_SCORE output
+    class DENIED,TOOL_DENY denied
+    class LEG1 init
+    class LEG2 skill
+    class LEG3 react
+    class LEG4 tool
+    class LEG5 output
+    class LEG6 erp
+      </div>{# /mermaid #}
+      </div>{# /diagram-zoom-wrap #}
+      <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-3">
+        <i class="bi bi-info-circle me-1"></i>
+        <strong>End-to-end flow:</strong> Caller &rarr; context build &rarr; RBAC (orchestration + agent) &rarr;
+        load 5 skills from SkillRegistry &rarr; compose prompt (PromptRegistry + skill extensions + hints) &rarr;
+        ReAct loop (LLM &harr; tool execution, up to 15 rounds) &rarr; interpret JSON output &rarr; compute composite confidence
+        &rarr; persist AgentRun + Langfuse scores. Every tool call goes through RBAC check and optional ERP routing.
+      </p>
+
+      <!-- 5-Phase Lifecycle Diagram -->
+      <h3 class="docs-h3 mt-4" id="supervisor-phase-flow">Phase Flow &amp; Backtracking</h3>
+      <p class="text-muted small mb-3">
+        Non-linear phase progression within the ReAct loop. The LLM decides which phase to enter next
+        based on tool results. Backtracking from INVESTIGATE to MATCH or UNDERSTAND is supported.
+      </p>
+
+      <div class="diagram-zoom-toolbar">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+        <span class="zoom-level">100%</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+      </div>
+      <div class="diagram-zoom-wrap p-3">
+      <div class="mermaid">
+flowchart TD
+    START(["Invoice received\nbuild_user_message(ctx)"])
+
+    START --> U
+
+    subgraph U ["UNDERSTAND — invoice_extraction skill"]
+        direction LR
+        U1["get_ocr_text"] --> U2["classify_document"]
+        U2 --> U3["extract_invoice_fields"]
+        U3 --> U4{"confidence\n>= 0.7?"}
+        U4 -->|"No"| U5["re_extract_field\nget_field_confidence\nget_decision_codes"]
+        U4 -->|"Yes"| U_OK(["Fields extracted"])
+        U5 --> U_OK
+    end
+
+    U_OK --> V
+
+    subgraph V ["VALIDATE — ap_validation skill"]
+        direction LR
+        V1["validate_extraction"] --> V2["check_duplicate"]
+        V2 --> V3["verify_vendor\n(by tax ID)"]
+        V3 --> V4["verify_tax_computation"]
+        V4 --> V5{"repair\nneeded?"}
+        V5 -->|"Yes"| V6["repair_extraction\ndetect_self_company\ncheck_approval_status"]
+        V5 -->|"No"| V_OK(["Validation passed"])
+        V6 --> V_OK
+    end
+
+    V_OK --> M
+
+    subgraph M ["MATCH — ap_3way_matching skill"]
+        direction LR
+        M1["get_tolerance_config"] --> M2["po_lookup"]
+        M2 --> M3["run_header_match"]
+        M3 --> M4["run_line_match"]
+        M4 --> M5{"3-way\nmode?"}
+        M5 -->|"Yes"| M6["grn_lookup\nrun_grn_match"]
+        M5 -->|"No (2-way)"| M_EVAL
+        M6 --> M_EVAL{"All lines\nwithin tolerance?"}
+    end
+
+    M_EVAL -->|"Yes"| D
+    M_EVAL -->|"PO not found\nor partial match"| I
+
+    subgraph I ["INVESTIGATE — ap_investigation skill"]
+        direction LR
+        I1["re_extract_field\n(suspected PO number)"]
+        I2["invoke_po_retrieval_agent\n(broader fuzzy search)"]
+        I3["invoke_grn_retrieval_agent\n(find receipts)"]
+        I4["get_vendor_history\nget_case_history\ninvoice_details"]
+        I1 --> I2
+        I2 --> I3
+        I3 --> I4
+        I4 --> I_EVAL{"New data\nrecovered?"}
+    end
+
+    I_EVAL -->|"Yes — retry matching"| M
+    I_EVAL -->|"No — recovery exhausted"| D
+
+    subgraph D ["DECIDE — ap_review_routing skill"]
+        direction LR
+        D1["persist_invoice\ncreate_case"]
+        D1 --> D2["exception_list\nreconciliation_summary"]
+        D2 --> D3["submit_recommendation\n(MANDATORY)"]
+        D3 --> D4{"Recommendation\ntype?"}
+        D4 -->|"AUTO_CLOSE"| D5["auto_close_case"]
+        D4 -->|"SEND_TO_*"| D6["assign_reviewer\n(queue + priority)"]
+        D4 -->|"ESCALATE"| D7["escalate_case\n(severity)"]
+        D4 -->|"REPROCESS"| D8(["Mark for\nre-extraction"])
+        D5 & D6 & D7 --> D9["generate_case_summary"]
+        D8 --> D9
+    end
+
+    D9 --> DONE(["AgentOutput returned\nrecommendation_type\nconfidence\nevidence + case_summary"])
+
+    U5 -.->|"Low confidence\nre-extract fields"| U3
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LP1["Tool call step"]
+        LP2["Decision gate"]
+        LP3["Phase boundary"]
+        LP4["Backtrack path"]
+    end
+
+    classDef phase fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef gate fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef ok fill:#d1fae5,stroke:#059669,color:#065f46
+    classDef done fill:#f3f4f6,stroke:#6b7280,color:#1f2937,font-weight:bold
+    classDef tool fill:#eff6ff,stroke:#93c5fd,color:#1e40af
+
+    class U1,U2,U3,U5,V1,V2,V3,V4,V6,M1,M2,M3,M4,M6,I1,I2,I3,I4,D1,D2,D3,D5,D6,D7,D8,D9 tool
+    class U4,V5,M5,M_EVAL,I_EVAL,D4 gate
+    class U_OK,V_OK ok
+    class START,DONE done
+    class LP1 tool
+    class LP2 gate
+    class LP3 ok
+    class LP4 done
+      </div>{# /mermaid #}
+      </div>{# /diagram-zoom-wrap #}
+      <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-3">
+        <i class="bi bi-info-circle me-1"></i>
+        <strong>Backtracking:</strong> INVESTIGATE &rarr; MATCH (when PO/GRN recovered) or UNDERSTAND &rarr; re-extract fields (when confidence low).
+        <strong>Mandatory:</strong> <code>submit_recommendation</code> must be called in DECIDE phase; defaults to <code>SEND_TO_AP_REVIEW</code> (conf 0.3) if omitted.
+        Each tool call in every phase is RBAC-checked and Langfuse-traced.
+      </p>
+
+      <!-- 5-Phase Lifecycle Cards -->
+      <h3 class="docs-h3" id="supervisor-phases">5-Phase Lifecycle</h3>
+      <p class="text-muted small mb-3">
+        Non-linear progression &mdash; the supervisor can backtrack between phases based on findings
+        (e.g., PO not found &rarr; INVESTIGATE &rarr; re-extract PO &rarr; MATCH retry).
+      </p>
+
+      <div class="row g-3 mb-4">
+        {% for phase in supervisor_phases %}
+        <div class="col-12 col-md-6 col-lg">
+          <div class="card h-100 border-{{ phase.color }}">
+            <div class="card-header bg-{{ phase.color }} bg-opacity-10 py-2">
+              <i class="bi {{ phase.icon }} me-1 text-{{ phase.color }}"></i>
+              <strong>{{ phase.name }}</strong>
+              <span class="badge bg-{{ phase.color }} bg-opacity-25 text-{{ phase.color }} float-end">{{ phase.tools|length }} tools</span>
+            </div>
+            <div class="card-body py-2">
+              <p class="small text-muted mb-2">{{ phase.description }}</p>
+              <div class="small">
+                <strong class="text-uppercase" style="font-size:.65rem;letter-spacing:.5px">Skill:</strong>
+                <code class="small">{{ phase.skill }}</code>
               </div>
               <div class="flex-grow-1 overflow-hidden">
                 <div class="d-flex align-items-center gap-2 flex-wrap">

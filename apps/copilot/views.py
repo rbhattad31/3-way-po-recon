@@ -689,6 +689,7 @@ def supervisor_run(request):
     invoice_id = request.data.get("invoice_id")
     reconciliation_result_id = request.data.get("reconciliation_result_id")
     case_id = request.data.get("case_id")
+    session_id_non_stream = request.data.get("session_id")
 
     if not invoice_id:
         return Response(
@@ -759,6 +760,22 @@ def supervisor_run(request):
                     ]
                 except Exception:
                     pass
+
+            # Persist supervisor messages to copilot session
+            if session_id_non_stream and agent_run_id:
+                try:
+                    _session = APCopilotService.get_session_detail(
+                        request.user, str(session_id_non_stream),
+                    )
+                    if _session:
+                        from apps.agents.models import AgentRun
+                        _agent_run = AgentRun.objects.filter(pk=agent_run_id).first()
+                        if _agent_run:
+                            _summary = _build_supervisor_summary(_agent_run)
+                            _persist_supervisor_messages(_session, _summary, _agent_run)
+                except Exception:
+                    logger.warning("Failed to persist supervisor messages (non-stream)", exc_info=True)
+
             return Response({
                 "success": True,
                 "recommendation": res_data.get("recommendation", ""),
@@ -937,6 +954,114 @@ def _build_supervisor_summary(agent_run):
     }
 
 
+def _persist_supervisor_messages(session, summary_dict, agent_run):
+    """Save the supervisor run as user + assistant CopilotMessages.
+
+    Called from the background thread after the supervisor agent completes.
+    This ensures the supervisor analysis appears in chat_messages on reload
+    with the same rich format (evidence cards, follow-up chips) as regular
+    copilot chat responses.
+    """
+    # Save "Run Supervisor Agent" as user message
+    APCopilotService.save_user_message(session, "Run Supervisor Agent")
+
+    # Build a markdown-style summary for the content field
+    rec = summary_dict.get("recommendation", "")
+    conf = summary_dict.get("confidence", 0)
+    parts = []
+    if rec:
+        parts.append("## Supervisor Analysis")
+        parts.append("")
+        parts.append("**Recommendation:** %s" % rec)
+    if conf:
+        parts.append("**Confidence:** %s%%" % conf)
+
+    findings = summary_dict.get("findings", [])
+    if findings:
+        parts.append("")
+        parts.append("### Findings")
+        for f in findings:
+            label = f.get("label", "")
+            value = f.get("value", "")
+            if label and value:
+                parts.append("- **%s:** %s" % (label, value))
+
+    issues = summary_dict.get("issues", [])
+    if issues:
+        parts.append("")
+        parts.append("### Issues")
+        for issue in issues:
+            parts.append("- %s" % issue)
+
+    analysis = summary_dict.get("analysis_text", "")
+    if analysis:
+        parts.append("")
+        parts.append(analysis)
+
+    tools_ok = summary_dict.get("tools_ok", 0)
+    tools_failed = summary_dict.get("tools_failed", 0)
+    if tools_ok or tools_failed:
+        parts.append("")
+        tool_info = "%d tools executed" % (tools_ok + tools_failed)
+        if tools_failed:
+            tool_info += ", %d failed" % tools_failed
+        parts.append("*%s*" % tool_info)
+
+    content_text = "\n".join(parts) if parts else "Supervisor analysis completed."
+
+    # Build evidence cards from supervisor findings
+    evidence = []
+    if rec or conf:
+        evidence.append({
+            "type": "decision",
+            "label": "Supervisor Recommendation",
+            "data": {
+                "recommendation": rec or "Analysis Complete",
+                "confidence": conf / 100.0 if conf else 0,
+            },
+        })
+    for f in findings:
+        label = f.get("label", "")
+        value = f.get("value", "")
+        severity = f.get("severity", "")
+        if label and value:
+            ev_type = "match" if severity == "success" else ("exception" if severity == "danger" else "info")
+            evidence.append({
+                "type": ev_type,
+                "label": label,
+                "data": {"result": value},
+            })
+    for issue in issues:
+        evidence.append({
+            "type": "exception",
+            "label": "Issue",
+            "data": {"description": issue},
+        })
+
+    follow_ups = [
+        "Summarize this case",
+        "What are the exceptions?",
+        "What is the recommendation?",
+    ]
+
+    # Build a structured payload matching what answer_question returns
+    payload = {
+        "summary": content_text,
+        "evidence": evidence,
+        "follow_up_prompts": follow_ups,
+        "consulted_agents": ["SUPERVISOR"],
+        "recommendation": {
+            "text": rec,
+            "confidence": conf / 100.0 if conf else None,
+            "read_only": True,
+        } if rec else None,
+        "governance": {},
+        "supervisor_summary": summary_dict,
+        "agent_run_id": agent_run.pk if agent_run else None,
+    }
+    APCopilotService.save_assistant_message(session, payload)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Supervisor Agent SSE Stream
 # ─────────────────────────────────────────────────────────────────────
@@ -968,6 +1093,7 @@ def supervisor_run_stream(request):
     invoice_id = body.get("invoice_id")
     reconciliation_result_id = body.get("reconciliation_result_id")
     case_id = body.get("case_id")
+    session_id = body.get("session_id")
 
     if not invoice_id:
         return JsonResponse({"error": "invoice_id is required"}, status=400)
@@ -1005,6 +1131,17 @@ def supervisor_run_stream(request):
     _po_number = None
     if recon_result and recon_result.purchase_order:
         _po_number = recon_result.purchase_order.po_number
+
+    # Resolve copilot session for message persistence
+    _copilot_session = None
+    _copilot_user = request.user
+    if session_id:
+        try:
+            _copilot_session = APCopilotService.get_session_detail(
+                request.user, str(session_id),
+            )
+        except Exception:
+            pass
 
     event_queue = queue.Queue()
 
@@ -1053,6 +1190,15 @@ def supervisor_run_stream(request):
                 "agent_run_id": agent_run.pk,
                 "status": str(agent_run.status),
             })
+
+            # Persist supervisor messages to copilot session
+            if _copilot_session:
+                try:
+                    _persist_supervisor_messages(
+                        _copilot_session, summary, agent_run,
+                    )
+                except Exception:
+                    logger.warning("Failed to persist supervisor messages to session", exc_info=True)
         except Exception as exc:
             logger.exception("Supervisor stream agent failed")
             event_queue.put({

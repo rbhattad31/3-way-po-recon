@@ -42,8 +42,12 @@ class PurchaseOrderForm(forms.ModelForm):
     )
 
     def __init__(self, *args, **kwargs):
+        tenant = kwargs.pop("tenant", None)
         super().__init__(*args, **kwargs)
-        self.fields["vendor"].queryset = Vendor.objects.order_by("name")
+        qs = Vendor.objects.order_by("name")
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
+        self.fields["vendor"].queryset = qs
         self.fields["po_date"].required = True
 
     class Meta:
@@ -205,8 +209,12 @@ class GoodsReceiptNoteForm(forms.ModelForm):
     )
 
     def __init__(self, *args, **kwargs):
+        tenant = kwargs.pop("tenant", None)
         super().__init__(*args, **kwargs)
-        self.fields["purchase_order"].queryset = PurchaseOrder.objects.order_by("-po_date")
+        qs = PurchaseOrder.objects.order_by("-po_date")
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
+        self.fields["purchase_order"].queryset = qs
         self.fields["receipt_date"].required = True
 
     class Meta:

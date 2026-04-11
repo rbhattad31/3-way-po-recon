@@ -70,7 +70,107 @@
     }
 
     if (chatInput) chatInput.focus();
+    rehydrateRichMessages();
     scrollToBottom();
+  }
+
+  /**
+   * On page load, upgrade any server-rendered assistant messages that
+   * carry a hidden JSON payload (`<script class="rich-payload-data">`)
+   * so they display with the same rich format as live chat responses.
+   */
+  function rehydrateRichMessages() {
+    if (!chatMessages) return;
+    var scripts = chatMessages.querySelectorAll('script.rich-payload-data');
+    for (var i = 0; i < scripts.length; i++) {
+      try {
+        var payload = JSON.parse(scripts[i].textContent);
+        var summary = payload.summary || payload.answer || payload.text || '';
+        var evidence = payload.evidence || [];
+        var followUps = payload.follow_up_prompts || [];
+        if (!summary && !evidence.length) continue;
+
+        // Find the sibling .copilot-msg-text and replace its contents
+        var msgBody = scripts[i].closest('.copilot-msg-body');
+        if (!msgBody) continue;
+        var msgText = msgBody.querySelector('.copilot-msg-text');
+        if (!msgText) continue;
+
+        var html = '<div class="chat-rich-response">';
+        if (summary) {
+          html += '<div class="chat-rich-summary">' + miniMarkdown(summary) + '</div>';
+        }
+        if (evidence.length) {
+          html += buildEvidenceHTML(evidence);
+        }
+        if (followUps.length) {
+          html += buildFollowUpHTML(followUps);
+        }
+        html += '</div>';
+        msgText.innerHTML = html;
+      } catch (e) {
+        // Parsing failed -- leave the plain text in place
+      }
+    }
+  }
+
+  function buildEvidenceHTML(evidence) {
+    var html = '<div class="chat-evidence-grid">';
+    for (var i = 0; i < evidence.length; i++) {
+      var ev = evidence[i];
+      var evType = ev.type || 'info';
+      var evLabel = ev.label || evType;
+      var evData = ev.data || {};
+
+      var evIcon = 'info-circle'; var evColor = '#64748b';
+      if (evType === 'invoice') { evIcon = 'receipt'; evColor = '#2563eb'; }
+      else if (evType === 'exception') { evIcon = 'exclamation-triangle-fill'; evColor = '#dc2626'; }
+      else if (evType === 'decision') { evIcon = 'signpost-split'; evColor = '#7c3aed'; }
+      else if (evType === 'match') { evIcon = 'check2-circle'; evColor = '#16a34a'; }
+      else if (evType === 'vendor') { evIcon = 'building'; evColor = '#0891b2'; }
+      else if (evType === 'po') { evIcon = 'file-earmark-text'; evColor = '#d97706'; }
+
+      html += '<div class="chat-evidence-card" style="border-left-color:' + evColor + '">';
+      html += '<div class="chat-ev-header">';
+      html += '<i class="bi bi-' + evIcon + '" style="color:' + evColor + '"></i>';
+      html += '<span class="chat-ev-label">' + esc(evLabel) + '</span>';
+      if (evData.severity) {
+        var sevCls = evData.severity === 'HIGH' ? 'danger' : (evData.severity === 'MEDIUM' ? 'warning' : 'secondary');
+        html += '<span class="badge bg-' + sevCls + ' chat-ev-badge">' + esc(evData.severity) + '</span>';
+      }
+      html += '</div>';
+
+      html += '<div class="chat-ev-body">';
+      var dataKeys = Object.keys(evData);
+      for (var j = 0; j < dataKeys.length; j++) {
+        var k = dataKeys[j];
+        if (k === 'severity') continue;
+        var v = evData[k];
+        if (v === null || v === undefined || v === '') continue;
+        var displayVal = v;
+        if (typeof v === 'number' && k.indexOf('confidence') >= 0) {
+          displayVal = Math.round(v * 100) + '%';
+        }
+        var kLabel = k.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+        html += '<div class="chat-ev-field">';
+        html += '<span class="chat-ev-key">' + esc(kLabel) + '</span>';
+        html += '<span class="chat-ev-val">' + esc(String(displayVal)) + '</span>';
+        html += '</div>';
+      }
+      html += '</div></div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function buildFollowUpHTML(followUps) {
+    var html = '<div class="chat-followup-row">';
+    for (var f = 0; f < followUps.length; f++) {
+      var chipFunc = IS_CASE ? 'chatSendQuick' : 'chipSend';
+      html += '<button class="chat-followup-chip" onclick="' + chipFunc + '(\'' + esc(followUps[f]).replace(/'/g, "\\'") + '\')"><i class="bi bi-arrow-return-right me-1"></i>' + esc(followUps[f]) + '</button>';
+    }
+    html += '</div>';
+    return html;
   }
 
   // ── Plain chat mode init ──
@@ -382,8 +482,12 @@
     run_line_match: 'Match line items',
     run_grn_match: 'Match goods receipt',
     re_extract_field: 'Re-extract field',
-    invoke_po_retrieval_agent: 'Retrieve purchase order',
-    invoke_grn_retrieval_agent: 'Retrieve goods receipt',
+    invoke_po_retrieval_agent: 'Run PO Retrieval Agent',
+    invoke_grn_retrieval_agent: 'Run GRN Retrieval Agent',
+    invoke_exception_analysis_agent: 'Run Exception Analysis Agent',
+    invoke_reconciliation_assist_agent: 'Run Reconciliation Assist Agent',
+    invoke_review_routing_agent: 'Run Review Routing Agent',
+    invoke_case_summary_agent: 'Run Case Summary Agent',
     get_vendor_history: 'Check vendor history',
     get_case_history: 'Review case history',
     get_tolerance_config: 'Check tolerance settings',
@@ -394,7 +498,13 @@
     generate_case_summary: 'Generate case summary',
     invoice_details: 'Get invoice details',
     exception_list: 'Get exception list',
-    reconciliation_summary: 'Get reconciliation summary'
+    reconciliation_summary: 'Get reconciliation summary',
+    get_field_confidence: 'Score field confidence',
+    detect_self_company: 'Detect self-company swap',
+    get_decision_codes: 'Check decision codes',
+    check_approval_status: 'Check approval status',
+    auto_close_case: 'Auto-close case',
+    escalate_case: 'Escalate case'
   };
 
   function updateStreamingSteps(container, steps) {
@@ -789,6 +899,14 @@
           if (!summary) summary = 'Supervisor analysis completed.';
           appendMessage('assistant', summary);
         }
+        // Refresh page in case mode so header/tabs reflect updated data
+        if (IS_CASE) {
+          setTimeout(function () {
+            var url = new URL(window.location.href);
+            url.searchParams.delete('auto_run');
+            window.location.href = url.toString();
+          }, 2500);
+        }
       } else if (evt.type === 'error') {
         steps.push({ kind: 'error', message: evt.message || 'Unknown error' });
         renderSteps();
@@ -809,6 +927,7 @@
             invoice_id: CFG.invoiceId || null,
             reconciliation_result_id: CFG.reconciliationResultId || null,
             case_id: caseId,
+            session_id: sid || sessionId || null,
           }),
         });
 
@@ -857,6 +976,7 @@
           invoice_id: CFG.invoiceId || null,
           reconciliation_result_id: CFG.reconciliationResultId || null,
           case_id: caseId,
+          session_id: sid || sessionId || null,
         },
       });
       if (res && !res.error) {
@@ -883,6 +1003,14 @@
           if (res.summary) summary += '\n\n' + (typeof res.summary === 'string' ? res.summary : res.summary.analysis_text || '');
           if (!summary) summary = 'Supervisor analysis completed.';
           appendMessage('assistant', summary);
+        }
+        // Refresh page in case mode so header/tabs reflect updated data
+        if (IS_CASE) {
+          setTimeout(function () {
+            var url = new URL(window.location.href);
+            url.searchParams.delete('auto_run');
+            window.location.href = url.toString();
+          }, 2500);
         }
       } else {
         steps.push({ kind: 'error', message: (res && res.error) || 'Unknown error' });
@@ -1311,60 +1439,11 @@
     }
 
     if (evidence.length) {
-      html += '<div class="chat-evidence-grid">';
-      for (var i = 0; i < evidence.length; i++) {
-        var ev = evidence[i];
-        var evType = ev.type || 'info';
-        var evLabel = ev.label || evType;
-        var evData = ev.data || {};
-
-        var evIcon = 'info-circle'; var evColor = '#64748b';
-        if (evType === 'invoice') { evIcon = 'receipt'; evColor = '#2563eb'; }
-        else if (evType === 'exception') { evIcon = 'exclamation-triangle-fill'; evColor = '#dc2626'; }
-        else if (evType === 'decision') { evIcon = 'signpost-split'; evColor = '#7c3aed'; }
-        else if (evType === 'match') { evIcon = 'check2-circle'; evColor = '#16a34a'; }
-        else if (evType === 'vendor') { evIcon = 'building'; evColor = '#0891b2'; }
-        else if (evType === 'po') { evIcon = 'file-earmark-text'; evColor = '#d97706'; }
-
-        html += '<div class="chat-evidence-card" style="border-left-color:' + evColor + '">';
-        html += '<div class="chat-ev-header">';
-        html += '<i class="bi bi-' + evIcon + '" style="color:' + evColor + '"></i>';
-        html += '<span class="chat-ev-label">' + esc(evLabel) + '</span>';
-        if (evData.severity) {
-          var sevCls = evData.severity === 'HIGH' ? 'danger' : (evData.severity === 'MEDIUM' ? 'warning' : 'secondary');
-          html += '<span class="badge bg-' + sevCls + ' chat-ev-badge">' + esc(evData.severity) + '</span>';
-        }
-        html += '</div>';
-
-        html += '<div class="chat-ev-body">';
-        var dataKeys = Object.keys(evData);
-        for (var j = 0; j < dataKeys.length; j++) {
-          var k = dataKeys[j];
-          if (k === 'severity') continue;
-          var v = evData[k];
-          if (v === null || v === undefined || v === '') continue;
-          var displayVal = v;
-          if (typeof v === 'number' && k.indexOf('confidence') >= 0) {
-            displayVal = Math.round(v * 100) + '%';
-          }
-          var kLabel = k.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
-          html += '<div class="chat-ev-field">';
-          html += '<span class="chat-ev-key">' + esc(kLabel) + '</span>';
-          html += '<span class="chat-ev-val">' + esc(String(displayVal)) + '</span>';
-          html += '</div>';
-        }
-        html += '</div></div>';
-      }
-      html += '</div>';
+      html += buildEvidenceHTML(evidence);
     }
 
     if (followUps.length) {
-      html += '<div class="chat-followup-row">';
-      for (var f = 0; f < followUps.length; f++) {
-        var chipFunc = IS_CASE ? 'chatSendQuick' : 'chipSend';
-        html += '<button class="chat-followup-chip" onclick="' + chipFunc + '(\'' + esc(followUps[f]).replace(/'/g, "\\'") + '\')"><i class="bi bi-arrow-return-right me-1"></i>' + esc(followUps[f]) + '</button>';
-      }
-      html += '</div>';
+      html += buildFollowUpHTML(followUps);
     }
 
     html += '</div>';

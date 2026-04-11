@@ -265,57 +265,46 @@ body:has(.copilot-app) #sidebar.show {
 }
 
 /* =================================================================
-   CASE HEADER (case mode only)
+   CASE HEADER (single compact row)
    ================================================================= */
 .copilot-case-header {
   background: var(--ap-bg-card, #fff);
   border-bottom: 1px solid var(--ap-bg-muted, #e2e8f0);
-  padding: 8px 20px;
+  padding: 5px 16px;
   flex-shrink: 0;
   z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
-/* Row 1: identity + facts */
+/* Single row: identity + facts + trailing buttons */
 .copilot-case-header-info {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: nowrap;
-}
-
-/* Row 2: action buttons */
-.copilot-case-header-actions {
-  display: flex;
-  align-items: center;
-  border-top: 1px solid var(--ap-bg-muted, #e2e8f0);
-  padding-top: 6px;
 }
 
 /* Identity */
 .copilot-case-identity {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
 }
 .copilot-case-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 .copilot-case-badge .badge {
-  font-size: 0.82rem;
-  padding: 5px 10px;
+  font-size: 0.72rem;
+  padding: 3px 8px;
 }
 
-/* Center facts */
+/* Center facts (compact) */
 .copilot-case-facts {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
   flex: 1;
   overflow-x: auto;
   padding: 2px 0;
@@ -323,54 +312,92 @@ body:has(.copilot-app) #sidebar.show {
 .copilot-case-fact {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   white-space: nowrap;
-  font-size: 0.82rem;
+  font-size: 0.75rem;
   color: var(--ap-text-secondary, #475569);
-  padding: 4px 12px;
+  padding: 2px 8px;
   background: var(--ap-bg-subtle, #f1f5f9);
-  border-radius: 8px;
+  border-radius: 6px;
 }
 .copilot-case-fact i {
-  font-size: 0.85rem;
+  font-size: 0.72rem;
   color: var(--ap-text-muted, #94a3b8);
 }
-.copilot-case-fact-label {
+.copilot-case-fact .badge {
   font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--ap-text-muted, #94a3b8);
-  font-weight: 600;
-}
-.copilot-case-fact-value {
-  color: var(--ap-text, #0f172a);
+  padding: 2px 6px;
 }
 
-/* Right actions */
-.copilot-case-actions {
+/* Trailing buttons */
+.copilot-case-header-trail {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
-.copilot-case-action-btn {
-  font-size: 0.78rem;
-  white-space: nowrap;
-}
-.copilot-case-action-divider {
-  width: 1px;
-  height: 24px;
-  background: var(--ap-bg-muted, #e2e8f0);
-  margin: 0 4px;
+.copilot-hdr-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 0.82rem;
 }
 
 /* =================================================================
-   TABS (case mode only)
+   ACTIONS OFFCANVAS (right panel)
+   ================================================================= */
+.copilot-actions-offcanvas {
+  max-width: 320px;
+}
+.copilot-actions-offcanvas .offcanvas-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ap-bg-muted, #e2e8f0);
+}
+.copilot-actions-offcanvas .offcanvas-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.copilot-actions-offcanvas .offcanvas-body {
+  padding: 12px 16px;
+}
+.copilot-offcanvas-section {
+  margin-bottom: 16px;
+}
+.copilot-offcanvas-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ap-text-muted, #94a3b8);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.copilot-offcanvas-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.copilot-offcanvas-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+}
+.copilot-offcanvas-detail-key {
+  color: var(--ap-text-muted, #94a3b8);
+  font-weight: 500;
+}
+
+/* =================================================================
+   TABS (case mode -- compact)
    ================================================================= */
 .copilot-tabs-nav {
   background: var(--ap-bg-card, #fff);
   border-bottom: 1px solid var(--ap-bg-muted, #e2e8f0);
-  padding: 0 20px;
+  padding: 0 16px;
   flex-shrink: 0;
 }
 .copilot-tabs-nav .nav-tabs {
@@ -378,10 +405,10 @@ body:has(.copilot-app) #sidebar.show {
   gap: 0;
 }
 .copilot-tabs-nav .nav-link {
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   font-weight: 500;
   color: var(--ap-text-secondary, #475569);
-  padding: 10px 16px;
+  padding: 7px 12px;
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
@@ -1043,6 +1070,11 @@ body:has(.copilot-app) #sidebar.show {
 .gov-label { color: var(--ap-text-muted, #94a3b8); }
 .gov-value { color: var(--ap-text, #0f172a); font-weight: 500; }
 
+/* Server-rendered summary card (full width in chat) */
+.sv-summary-server {
+  max-width: 520px;
+}
+
 /* =================================================================
    RESPONSIVE
    ================================================================= */
@@ -1069,6 +1101,4 @@ body:has(.copilot-app) #sidebar.show {
     border-bottom: 1px solid var(--ap-bg-muted, #e2e8f0);
   }
   .copilot-case-facts { display: none; }
-  .copilot-case-header-actions { border-top: none; padding-top: 0; }
-  .copilot-case-actions { flex-wrap: wrap; }
 }

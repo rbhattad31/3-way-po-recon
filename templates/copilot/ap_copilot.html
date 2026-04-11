@@ -133,10 +133,9 @@
 
     {% if ctx and ctx.case %}
     {# ================================================================ #}
-    {# CASE HEADER (case mode only)                                     #}
+    {# CASE HEADER (single compact row)                                 #}
     {# ================================================================ #}
     <header class="copilot-case-header" id="caseHeader">
-      {# Row 1: identity badges + key facts #}
       <div class="copilot-case-header-info">
         <div class="copilot-case-identity">
           <div class="copilot-case-badge">
@@ -156,34 +155,28 @@
           {% if ctx.vendor %}
           <div class="copilot-case-fact" title="Vendor">
             <i class="bi bi-building"></i>
-            <span class="copilot-case-fact-label">Vendor</span>
-            <span class="copilot-case-fact-value">{{ ctx.vendor.name|truncatechars:30 }}</span>
+            <span>{{ ctx.vendor.name|truncatechars:25 }}</span>
           </div>
           {% endif %}
           {% if ctx.invoice %}
-          <div class="copilot-case-fact" title="Invoice Number">
+          <div class="copilot-case-fact" title="Invoice">
             <i class="bi bi-receipt"></i>
-            <span class="copilot-case-fact-label">Invoice</span>
-            <span class="copilot-case-fact-value">{{ ctx.invoice.invoice_number|default:"-" }}</span>
+            <span>{{ ctx.invoice.invoice_number|default:"-" }}</span>
           </div>
-          <div class="copilot-case-fact" title="Invoice Amount">
+          <div class="copilot-case-fact" title="Amount">
             <i class="bi bi-currency-dollar"></i>
-            <span class="copilot-case-fact-label">Amount</span>
-            <span class="copilot-case-fact-value fw-semibold">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.amount|default:"-" }}</span>
+            <span class="fw-semibold">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.amount|default:"-" }}</span>
           </div>
           {% endif %}
           {% if ctx.purchase_order %}
-          <div class="copilot-case-fact" title="Purchase Order">
+          <div class="copilot-case-fact" title="PO">
             <i class="bi bi-cart-check"></i>
-            <span class="copilot-case-fact-label">PO</span>
-            <span class="copilot-case-fact-value">{{ ctx.purchase_order.po_number }}</span>
+            <span>{{ ctx.purchase_order.po_number }}</span>
           </div>
           {% endif %}
           {% if ctx.reconciliation %}
           <div class="copilot-case-fact" title="Match Status">
-            <i class="bi bi-check2-square"></i>
-            <span class="copilot-case-fact-label">Match</span>
-            <span class="copilot-case-fact-value badge
+            <span class="badge
               {% if ctx.reconciliation.match_status_code == 'MATCHED' %}bg-success-subtle text-success-emphasis
               {% elif ctx.reconciliation.match_status_code == 'PARTIAL_MATCH' %}bg-warning-subtle text-warning-emphasis
               {% elif ctx.reconciliation.match_status_code == 'UNMATCHED' %}bg-danger-subtle text-danger-emphasis
@@ -192,69 +185,85 @@
             </span>
           </div>
           {% endif %}
-          <div class="copilot-case-fact" title="Processing Path">
-            <i class="bi bi-signpost-split"></i>
-            <span class="copilot-case-fact-label">Path</span>
-            <span class="copilot-case-fact-value">{{ ctx.case.processing_path }}</span>
-          </div>
         </div>
-      </div>
 
-      {# Row 2: action buttons #}
-      <div class="copilot-case-header-actions">
-        <div class="copilot-case-actions">
-          {% has_permission "reviews.decide" as can_decide %}
-          {% has_permission "cases.edit" as can_edit_case %}
-          {% has_permission "invoices.view" as can_view_invoice %}
-
-          {% if ctx.case.status_code == "READY_FOR_REVIEW" or ctx.case.status_code == "IN_REVIEW" or ctx.case.status_code == "REVIEW_COMPLETED" or ctx.case.status_code == "READY_FOR_APPROVAL" or ctx.case.status_code == "APPROVAL_IN_PROGRESS" %}
-            {% if can_decide %}
-            <button class="btn btn-sm btn-success copilot-case-action-btn" onclick="caseAction('approve')" title="Approve">
-              <i class="bi bi-check-circle me-1"></i>Approve
-            </button>
-            <button class="btn btn-sm btn-danger copilot-case-action-btn" onclick="caseAction('reject')" title="Reject">
-              <i class="bi bi-x-circle me-1"></i>Reject
-            </button>
-            {% endif %}
-            {% if can_edit_case %}
-            <button class="btn btn-sm btn-outline-warning copilot-case-action-btn" onclick="caseAction('request_info')" title="Request info">
-              <i class="bi bi-question-circle me-1"></i>Request Info
-            </button>
-            <button class="btn btn-sm btn-outline-danger copilot-case-action-btn" onclick="caseAction('escalate')" title="Escalate">
-              <i class="bi bi-exclamation-triangle me-1"></i>Escalate
-            </button>
-            {% endif %}
-          {% elif ctx.case.status_code == "FAILED" or ctx.case.status_code == "ESCALATED" or ctx.case.status_code == "REJECTED" %}
-            {% if can_edit_case %}
-            <button class="btn btn-sm btn-outline-warning copilot-case-action-btn" onclick="caseAction('reprocess')" title="Reprocess">
-              <i class="bi bi-arrow-clockwise me-1"></i>Reprocess
-            </button>
-            {% endif %}
-          {% elif ctx.case.status_code == "CLOSED" %}
-            <span class="badge bg-success-subtle text-success-emphasis px-3 py-2">
-              <i class="bi bi-check-circle-fill me-1"></i>Closed
-            </span>
-          {% else %}
-            <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-2">
-              <i class="bi bi-hourglass-split me-1"></i>Processing
-            </span>
-          {% endif %}
-
-          <div class="copilot-case-action-divider"></div>
-          {% if ctx.invoice.id and can_view_invoice %}
-          <button class="btn btn-sm btn-outline-secondary copilot-case-action-btn" onclick="downloadInvoice({{ ctx.invoice.id }})" title="Download Invoice">
-            <i class="bi bi-download"></i>
-          </button>
-          {% endif %}
-          <button class="btn btn-sm btn-outline-secondary copilot-case-action-btn" onclick="exportReport()" title="Export Report">
-            <i class="bi bi-file-earmark-arrow-down"></i>
-          </button>
-          <a href="{% url 'cases:case_agent_view' ctx.case.id %}" class="btn btn-sm btn-outline-primary copilot-case-action-btn" title="Open in Case Console">
+        {# Right: actions toggle + case console link #}
+        <div class="copilot-case-header-trail">
+          <a href="{% url 'cases:case_agent_view' ctx.case.id %}" class="btn btn-sm btn-outline-secondary copilot-hdr-btn" title="Case Console">
             <i class="bi bi-display"></i>
           </a>
+          <button class="btn btn-sm btn-outline-primary copilot-hdr-btn" type="button" data-bs-toggle="offcanvas" data-bs-target="#caseActionsPanel" title="Actions">
+            <i class="bi bi-three-dots-vertical"></i>
+          </button>
         </div>
       </div>
     </header>
+
+    {# ================================================================ #}
+    {# ACTIONS OFFCANVAS (right side)                                   #}
+    {# ================================================================ #}
+    <div class="offcanvas offcanvas-end copilot-actions-offcanvas" tabindex="-1" id="caseActionsPanel" aria-labelledby="caseActionsPanelLabel">
+      <div class="offcanvas-header">
+        <h6 class="offcanvas-title" id="caseActionsPanelLabel"><i class="bi bi-lightning-charge me-2"></i>Case Actions</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+      </div>
+      <div class="offcanvas-body">
+        {% has_permission "reviews.decide" as can_decide %}
+        {% has_permission "cases.edit" as can_edit_case %}
+        {% has_permission "invoices.view" as can_view_invoice %}
+
+        {# Case details #}
+        <div class="copilot-offcanvas-section">
+          <div class="copilot-offcanvas-label">Details</div>
+          <div class="copilot-offcanvas-details">
+            <div class="copilot-offcanvas-detail"><span class="copilot-offcanvas-detail-key">Path</span><span>{{ ctx.case.processing_path }}</span></div>
+            {% if ctx.extraction_approval %}
+            <div class="copilot-offcanvas-detail"><span class="copilot-offcanvas-detail-key">Approval</span><span class="badge {% if ctx.extraction_approval.status == 'APPROVED' or ctx.extraction_approval.status == 'AUTO_APPROVED' %}bg-success-subtle text-success-emphasis{% elif ctx.extraction_approval.status == 'REJECTED' %}bg-danger-subtle text-danger-emphasis{% else %}bg-warning-subtle text-warning-emphasis{% endif %}">{{ ctx.extraction_approval.status }}</span></div>
+            {% endif %}
+            {% if ctx.reconciliation %}
+            <div class="copilot-offcanvas-detail"><span class="copilot-offcanvas-detail-key">Mode</span><span>{{ ctx.reconciliation.reconciliation_mode|default:"-" }}</span></div>
+            {% endif %}
+          </div>
+        </div>
+
+        {# Decision actions #}
+        <div class="copilot-offcanvas-section">
+          <div class="copilot-offcanvas-label">Decision</div>
+          <div class="d-grid gap-2">
+            {% if ctx.case.status_code == "READY_FOR_REVIEW" or ctx.case.status_code == "IN_REVIEW" or ctx.case.status_code == "REVIEW_COMPLETED" or ctx.case.status_code == "READY_FOR_APPROVAL" or ctx.case.status_code == "APPROVAL_IN_PROGRESS" %}
+              {% if can_decide %}
+              <button class="btn btn-sm btn-success" onclick="caseAction('approve')"><i class="bi bi-check-circle me-1"></i>Approve</button>
+              <button class="btn btn-sm btn-danger" onclick="caseAction('reject')"><i class="bi bi-x-circle me-1"></i>Reject</button>
+              {% endif %}
+              {% if can_edit_case %}
+              <button class="btn btn-sm btn-outline-warning" onclick="caseAction('request_info')"><i class="bi bi-question-circle me-1"></i>Request Info</button>
+              <button class="btn btn-sm btn-outline-danger" onclick="caseAction('escalate')"><i class="bi bi-exclamation-triangle me-1"></i>Escalate</button>
+              {% endif %}
+            {% elif ctx.case.status_code == "FAILED" or ctx.case.status_code == "ESCALATED" or ctx.case.status_code == "REJECTED" %}
+              {% if can_edit_case %}
+              <button class="btn btn-sm btn-outline-warning" onclick="caseAction('reprocess')"><i class="bi bi-arrow-clockwise me-1"></i>Reprocess</button>
+              {% endif %}
+            {% elif ctx.case.status_code == "CLOSED" %}
+              <span class="badge bg-success-subtle text-success-emphasis px-3 py-2 w-100 text-center"><i class="bi bi-check-circle-fill me-1"></i>Closed</span>
+            {% else %}
+              <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-2 w-100 text-center"><i class="bi bi-hourglass-split me-1"></i>Processing</span>
+            {% endif %}
+          </div>
+        </div>
+
+        {# Utility actions #}
+        <div class="copilot-offcanvas-section">
+          <div class="copilot-offcanvas-label">Utilities</div>
+          <div class="d-grid gap-2">
+            {% if ctx.invoice.id and can_view_invoice %}
+            <button class="btn btn-sm btn-outline-secondary" onclick="downloadInvoice({{ ctx.invoice.id }})"><i class="bi bi-download me-1"></i>Download Invoice</button>
+            {% endif %}
+            <button class="btn btn-sm btn-outline-secondary" onclick="exportReport()"><i class="bi bi-file-earmark-arrow-down me-1"></i>Export Report</button>
+            <a href="{% url 'cases:case_agent_view' ctx.case.id %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-display me-1"></i>Case Console</a>
+          </div>
+        </div>
+      </div>
+    </div>
 
     {# ================================================================ #}
     {# TABS (case mode only)                                            #}
@@ -356,6 +365,9 @@
           <div class="copilot-msg-body">
             <div class="copilot-msg-role">AP Copilot</div>
             <div class="copilot-msg-text">{{ msg.content|linebreaksbr }}</div>
+            {% if msg.structured_payload_json %}
+            <script type="application/json" class="rich-payload-data">{{ msg.structured_payload_json|to_json }}</script>
+            {% endif %}
           </div>
           {% endif %}
         </div>
@@ -381,6 +393,8 @@
             <button class="copilot-chip" onclick="chatSendQuick('Summarize this case')"><i class="bi bi-chat-text me-1"></i>Summarize case</button>
             <button class="copilot-chip" onclick="chatSendQuick('What are the exceptions?')"><i class="bi bi-exclamation-triangle me-1"></i>Show exceptions</button>
             <button class="copilot-chip" onclick="chatSendQuick('What is the recommendation?')"><i class="bi bi-lightbulb me-1"></i>Recommendation</button>
+            <button class="copilot-chip" onclick="chatSendQuick('Check field confidence scores')"><i class="bi bi-speedometer me-1"></i>Field confidence</button>
+            <button class="copilot-chip" onclick="chatSendQuick('What is the extraction approval status?')"><i class="bi bi-clipboard-check me-1"></i>Approval status</button>
             <button class="copilot-chip" onclick="runSupervisor()"><i class="bi bi-cpu me-1"></i>Run Supervisor Agent</button>
             {% else %}
             <button class="copilot-chip" onclick="chipSend('Summarize the top exceptions across open cases')"><i class="bi bi-chat-text me-1"></i>Summarize exceptions</button>
@@ -393,7 +407,7 @@
           <p class="text-muted small mt-3"><i class="bi bi-paperclip me-1"></i>Use the attachment button to upload an invoice</p>
           {% endif %}
         </div>
-      {% endif %}
+      {% endif %}{# /chat_messages #}
     </div>
 
     {# Quick-question chips -- hidden while welcome is visible, shown after first message #}
@@ -402,6 +416,8 @@
       <button class="copilot-chip" onclick="chatSendQuick('Summarize this case')"><i class="bi bi-chat-text me-1"></i>Summarize case</button>
       <button class="copilot-chip" onclick="chatSendQuick('What are the exceptions?')"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions</button>
       <button class="copilot-chip" onclick="chatSendQuick('What is the recommendation?')"><i class="bi bi-lightbulb me-1"></i>Recommendation</button>
+      <button class="copilot-chip" onclick="chatSendQuick('Check field confidence scores')"><i class="bi bi-speedometer me-1"></i>Field confidence</button>
+      <button class="copilot-chip" onclick="chatSendQuick('What is the extraction approval status?')"><i class="bi bi-clipboard-check me-1"></i>Approval status</button>
       {% else %}
       <button class="copilot-chip" onclick="chipSend('Summarize the top exceptions across open cases')"><i class="bi bi-chat-text me-1"></i>Summarize exceptions</button>
       <button class="copilot-chip" onclick="chipSend('What cases need my attention?')"><i class="bi bi-bell me-1"></i>Cases needing attention</button>

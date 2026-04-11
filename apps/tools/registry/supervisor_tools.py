@@ -259,7 +259,8 @@ class RepairExtractionTool(BaseTool):
     required_permission = "extraction.run"
     description = (
         "Apply automated repair rules to fix common extraction issues "
-        "(date formats, amount parsing, field normalization)."
+        "(date formats, amount parsing, field normalization) and persist "
+        "the corrected values back to the invoice record."
     )
     when_to_use = "When validation finds repairable issues."
     parameters_schema = {
@@ -269,11 +270,15 @@ class RepairExtractionTool(BaseTool):
                 "type": "integer",
                 "description": "PK of the Invoice to repair.",
             },
+            "persist": {
+                "type": "boolean",
+                "description": "If true, save normalized values back to invoice. Default false (dry-run).",
+            },
         },
         "required": ["invoice_id"],
     }
 
-    def run(self, *, invoice_id: int = 0, **kwargs) -> ToolResult:
+    def run(self, *, invoice_id: int = 0, persist: bool = False, **kwargs) -> ToolResult:
         try:
             from apps.documents.models import Invoice
             from apps.extraction.services.normalization_service import NormalizationService
@@ -286,14 +291,82 @@ class RepairExtractionTool(BaseTool):
             normalized = normalizer.normalize(parsed)
 
             repairs = []
-            if normalized.normalized_invoice_number != (invoice.invoice_number or ""):
-                repairs.append({"field": "invoice_number", "action": "normalized"})
-            if normalized.normalized_po_number != (invoice.po_number or ""):
-                repairs.append({"field": "po_number", "action": "normalized"})
+            update_fields = []
+
+            # Invoice number normalization
+            norm_inv_num = normalized.normalized_invoice_number or ""
+            if norm_inv_num and norm_inv_num != (invoice.invoice_number or ""):
+                repairs.append({
+                    "field": "invoice_number",
+                    "action": "normalized",
+                    "old_value": invoice.invoice_number or "",
+                    "new_value": norm_inv_num,
+                })
+                if persist:
+                    invoice.invoice_number = norm_inv_num
+                    update_fields.append("invoice_number")
+
+            # PO number normalization
+            norm_po = normalized.normalized_po_number or ""
+            if norm_po and norm_po != (invoice.po_number or ""):
+                repairs.append({
+                    "field": "po_number",
+                    "action": "normalized",
+                    "old_value": invoice.po_number or "",
+                    "new_value": norm_po,
+                })
+                if persist:
+                    invoice.po_number = norm_po
+                    update_fields.append("po_number")
+
+            # Currency normalization
+            norm_currency = normalized.currency or ""
+            if norm_currency and norm_currency != (invoice.currency or ""):
+                repairs.append({
+                    "field": "currency",
+                    "action": "normalized",
+                    "old_value": invoice.currency or "",
+                    "new_value": norm_currency,
+                })
+                if persist:
+                    invoice.currency = norm_currency
+                    update_fields.append("currency")
+
+            # Total amount normalization
+            if normalized.total_amount is not None:
+                old_total = invoice.total_amount
+                if old_total is None or abs(float(old_total) - float(normalized.total_amount)) > 0.001:
+                    repairs.append({
+                        "field": "total_amount",
+                        "action": "normalized",
+                        "old_value": _safe_str(old_total),
+                        "new_value": _safe_str(normalized.total_amount),
+                    })
+                    if persist:
+                        invoice.total_amount = normalized.total_amount
+                        update_fields.append("total_amount")
+
+            # Date normalization
+            if normalized.invoice_date and normalized.invoice_date != invoice.invoice_date:
+                repairs.append({
+                    "field": "invoice_date",
+                    "action": "normalized",
+                    "old_value": _safe_str(invoice.invoice_date),
+                    "new_value": _safe_str(normalized.invoice_date),
+                })
+                if persist:
+                    invoice.invoice_date = normalized.invoice_date
+                    update_fields.append("invoice_date")
+
+            if persist and update_fields:
+                update_fields.append("updated_at")
+                invoice.save(update_fields=update_fields)
 
             return ToolResult(success=True, data={
                 "invoice_id": invoice_id,
-                "repairs_applied": len(repairs),
+                "repairs_found": len(repairs),
+                "repairs_persisted": persist and len(update_fields) > 1,
+                "fields_updated": [f for f in update_fields if f != "updated_at"],
                 "repairs": repairs,
             })
         except Exception as exc:
@@ -472,6 +545,292 @@ class VerifyTaxComputationTool(BaseTool):
             "subtotal": _safe_str(subtotal),
             "tax_amount": _safe_str(tax),
         })
+
+
+# ============================================================================
+# CONFIDENCE & QUALITY phase tools
+# ============================================================================
+
+
+@register_tool
+class GetFieldConfidenceTool(BaseTool):
+    name = "get_field_confidence"
+    required_permission = "extraction.run"
+    description = (
+        "Score per-field extraction confidence for an invoice. Returns a "
+        "confidence map (0.0-1.0) for each header field, the weakest "
+        "critical field, and any QR/e-invoice evidence flags."
+    )
+    when_to_use = (
+        "After extraction to identify which fields are unreliable and "
+        "may need re-extraction."
+    )
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice.",
+            },
+        },
+        "required": ["invoice_id"],
+    }
+
+    def run(self, *, invoice_id: int = 0, **kwargs) -> ToolResult:
+        try:
+            from apps.documents.models import Invoice
+            from apps.extraction.services.normalization_service import NormalizationService
+            from apps.extraction.services.field_confidence_service import (
+                FieldConfidenceService,
+            )
+
+            qs = self._scoped(Invoice.objects.all())
+            invoice = qs.select_related("vendor").get(pk=invoice_id)
+
+            parsed = _invoice_to_parsed(invoice)
+            normalizer = NormalizationService()
+            normalized = normalizer.normalize(parsed)
+
+            # Attempt to retrieve the raw extraction JSON for richer scoring
+            raw_json = {}
+            evidence_context = {}
+            try:
+                from apps.extraction.models import ExtractionResult
+                er = ExtractionResult.objects.filter(
+                    document_upload__invoice=invoice,
+                ).select_related("extraction_run").first()
+                if er and er.extraction_run:
+                    raw_json = er.extraction_run.extracted_data_json or {}
+                    evidence_context = {
+                        "extraction_method": er.engine_name or "unknown",
+                        "qr_verified": raw_json.get("_qr_verified_fields", {}),
+                    }
+            except Exception:
+                pass
+
+            result = FieldConfidenceService.score(
+                normalized,
+                raw_json=raw_json,
+                evidence_context=evidence_context,
+            )
+
+            return ToolResult(success=True, data={
+                "invoice_id": invoice_id,
+                "header_confidence": result.header,
+                "weakest_critical_field": result.weakest_critical_field,
+                "weakest_critical_score": result.weakest_critical_score,
+                "low_confidence_fields": result.low_confidence_fields,
+                "evidence_flags": result.evidence_flags,
+                "line_count": len(result.lines),
+            })
+        except Exception as exc:
+            return ToolResult(success=False, error=str(exc))
+
+
+@register_tool
+class DetectSelfCompanyTool(BaseTool):
+    name = "detect_self_company"
+    required_permission = "extraction.run"
+    description = (
+        "Detect if the extracted vendor is actually the buyer's own company "
+        "(common OCR/extraction error where buyer and supplier are swapped). "
+        "Returns whether a swap is needed and the corrected names."
+    )
+    when_to_use = (
+        "During validation when the vendor name looks like the buyer's "
+        "company, or when vendor verification fails unexpectedly."
+    )
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice to check.",
+            },
+        },
+        "required": ["invoice_id"],
+    }
+
+    def run(self, *, invoice_id: int = 0, **kwargs) -> ToolResult:
+        try:
+            from apps.documents.models import Invoice
+            from apps.extraction_core.services.master_data_enrichment import (
+                MasterDataEnrichmentService,
+            )
+
+            qs = self._scoped(Invoice.objects.all())
+            invoice = qs.select_related("vendor").get(pk=invoice_id)
+
+            supplier_name = (
+                (invoice.vendor.name if invoice.vendor else "")
+                or invoice.raw_vendor_name or ""
+            )
+            supplier_tax_id = (
+                (invoice.vendor.tax_id if invoice.vendor else "")
+                or getattr(invoice, "vendor_gstin", "") or ""
+            )
+            buyer_name = getattr(invoice, "buyer_name", "") or ""
+
+            swap_result = MasterDataEnrichmentService._detect_and_swap_self_company(
+                supplier_name=supplier_name,
+                supplier_tax_id=supplier_tax_id,
+                buyer_name=buyer_name,
+            )
+
+            if swap_result is not None:
+                new_supplier, new_buyer = swap_result
+                return ToolResult(success=True, data={
+                    "invoice_id": invoice_id,
+                    "self_company_detected": True,
+                    "original_vendor": supplier_name,
+                    "original_buyer": buyer_name,
+                    "corrected_vendor": new_supplier,
+                    "corrected_buyer": new_buyer,
+                    "message": (
+                        "Vendor and buyer appear to be swapped. "
+                        "The extracted vendor is likely the buyer's own company."
+                    ),
+                })
+
+            return ToolResult(success=True, data={
+                "invoice_id": invoice_id,
+                "self_company_detected": False,
+                "vendor_name": supplier_name,
+                "buyer_name": buyer_name,
+                "message": "No self-company swap detected.",
+            })
+        except Exception as exc:
+            return ToolResult(success=False, error=str(exc))
+
+
+@register_tool
+class GetDecisionCodesTool(BaseTool):
+    name = "get_decision_codes"
+    required_permission = "extraction.run"
+    description = (
+        "Retrieve the extraction decision codes for an invoice. Decision "
+        "codes are tags derived during extraction that flag quality issues "
+        "(e.g. MISSING_PO, LOW_CONFIDENCE, QR_MISMATCH, DUPLICATE_SUSPECT)."
+    )
+    when_to_use = (
+        "After extraction to understand what quality flags were raised, "
+        "before deciding on next steps."
+    )
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice.",
+            },
+        },
+        "required": ["invoice_id"],
+    }
+
+    def run(self, *, invoice_id: int = 0, **kwargs) -> ToolResult:
+        try:
+            from apps.documents.models import Invoice
+            from apps.extraction.models import ExtractionResult
+
+            qs = self._scoped(Invoice.objects.all())
+            invoice = qs.get(pk=invoice_id)
+
+            # Decision codes are stored in extraction run JSON
+            decision_codes = []
+            raw_json = {}
+            try:
+                er = ExtractionResult.objects.filter(
+                    document_upload__invoice=invoice,
+                ).select_related("extraction_run").first()
+                if er and er.extraction_run:
+                    raw_json = er.extraction_run.extracted_data_json or {}
+                    decision_codes = raw_json.get("_decision_codes", [])
+            except Exception:
+                pass
+
+            # If no stored codes, try to derive them now
+            if not decision_codes:
+                try:
+                    from apps.extraction.decision_codes import derive_codes
+                    decision_codes = derive_codes() or []
+                except Exception:
+                    pass
+
+            return ToolResult(success=True, data={
+                "invoice_id": invoice_id,
+                "decision_codes": decision_codes,
+                "code_count": len(decision_codes),
+                "has_critical": any(
+                    c in decision_codes
+                    for c in [
+                        "MISSING_PO", "MISSING_VENDOR",
+                        "BELOW_MIN_CONFIDENCE", "DUPLICATE_SUSPECT",
+                    ]
+                ),
+            })
+        except Exception as exc:
+            return ToolResult(success=False, error=str(exc))
+
+
+@register_tool
+class CheckApprovalStatusTool(BaseTool):
+    name = "check_approval_status"
+    required_permission = "extraction.run"
+    description = (
+        "Check the extraction approval status for an invoice. Returns "
+        "PENDING, APPROVED, REJECTED, or AUTO_APPROVED along with "
+        "reviewer details and correction count."
+    )
+    when_to_use = (
+        "To check if an invoice has been through the approval gate before "
+        "proceeding with downstream actions."
+    )
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice.",
+            },
+        },
+        "required": ["invoice_id"],
+    }
+
+    def run(self, *, invoice_id: int = 0, **kwargs) -> ToolResult:
+        try:
+            from apps.documents.models import Invoice
+            from apps.extraction.models import ExtractionApproval
+
+            qs = self._scoped(Invoice.objects.all())
+            invoice = qs.get(pk=invoice_id)
+
+            approval = ExtractionApproval.objects.filter(
+                invoice=invoice
+            ).select_related("reviewed_by").first()
+
+            if not approval:
+                return ToolResult(success=True, data={
+                    "invoice_id": invoice_id,
+                    "has_approval": False,
+                    "status": "NO_APPROVAL_RECORD",
+                    "message": "No extraction approval record exists for this invoice.",
+                })
+
+            return ToolResult(success=True, data={
+                "invoice_id": invoice_id,
+                "has_approval": True,
+                "status": approval.status,
+                "is_touchless": approval.is_touchless,
+                "confidence_at_review": approval.confidence_at_review,
+                "reviewed_by": (
+                    approval.reviewed_by.email if approval.reviewed_by else None
+                ),
+                "reviewed_at": _safe_str(approval.reviewed_at),
+                "fields_corrected_count": approval.fields_corrected_count,
+                "rejection_reason": approval.rejection_reason or "",
+            })
+        except Exception as exc:
+            return ToolResult(success=False, error=str(exc))
 
 
 # ============================================================================
@@ -731,8 +1090,9 @@ class ReExtractFieldTool(BaseTool):
     name = "re_extract_field"
     required_permission = "extraction.run"
     description = (
-        "Re-extract a specific field from the invoice when the original "
-        "extraction is suspected to be incorrect."
+        "Re-extract a specific field from the invoice OCR text using "
+        "targeted LLM extraction. Falls back to current value if OCR "
+        "text is unavailable or LLM call fails."
     )
     when_to_use = "When a field value seems wrong and re-extraction might fix it."
     parameters_schema = {
@@ -744,7 +1104,7 @@ class ReExtractFieldTool(BaseTool):
             },
             "field_name": {
                 "type": "string",
-                "description": "Name of the field to re-extract (e.g. po_number, total_amount).",
+                "description": "Name of the field to re-extract (e.g. po_number, total_amount, vendor_name, invoice_number, invoice_date).",
             },
         },
         "required": ["invoice_id", "field_name"],
@@ -755,7 +1115,7 @@ class ReExtractFieldTool(BaseTool):
 
         try:
             qs = self._scoped(Invoice.objects.all())
-            invoice = qs.get(pk=invoice_id)
+            invoice = qs.select_related("vendor").get(pk=invoice_id)
         except Invoice.DoesNotExist:
             return ToolResult(success=False, error=f"Invoice {invoice_id} not found")
 
@@ -771,14 +1131,193 @@ class ReExtractFieldTool(BaseTool):
         else:
             current_value = ""
 
-        # In shadow mode, return current value -- actual re-extraction requires
-        # LLM call which is handled by the supervisor's reasoning.
+        # Attempt targeted LLM re-extraction from OCR text
+        llm_value = None
+        llm_used = False
+        try:
+            ocr_text = self._get_ocr_text(invoice)
+            if ocr_text and len(ocr_text) > 50:
+                llm_value = self._llm_extract_field(ocr_text, field_name, current_value)
+                llm_used = True
+        except Exception as exc:
+            logger.warning("re_extract_field LLM failed for invoice %s field %s: %s",
+                           invoice_id, field_name, exc)
+
+        extracted_value = llm_value if llm_value else current_value
+        changed = llm_used and llm_value and llm_value != current_value
+
         return ToolResult(success=True, data={
             "invoice_id": invoice_id,
             "field_name": field_name,
             "current_value": current_value,
-            "message": "Field value retrieved. Supervisor should reason about correctness.",
+            "extracted_value": extracted_value,
+            "value_changed": changed,
+            "llm_used": llm_used,
+            "message": (
+                f"LLM re-extracted '{field_name}': '{extracted_value}' (was '{current_value}')"
+                if changed
+                else "Field value retrieved. Supervisor should reason about correctness."
+            ),
         })
+
+    @staticmethod
+    def _get_ocr_text(invoice) -> str:
+        """Get OCR text from the document upload linked to this invoice."""
+        try:
+            from apps.documents.models import DocumentUpload
+            upload = DocumentUpload.objects.filter(
+                invoice=invoice, is_active=True
+            ).first()
+            if upload:
+                return getattr(upload, "ocr_text", "") or getattr(upload, "extracted_text", "") or ""
+            # Try via extraction_run
+            from apps.extraction.models import ExtractionResult
+            er = ExtractionResult.objects.filter(
+                document_upload__invoice=invoice
+            ).select_related("extraction_run").first()
+            if er and er.extraction_run:
+                return er.extraction_run.ocr_text or ""
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _llm_extract_field(ocr_text: str, field_name: str, current_value: str) -> str:
+        """Use LLM to extract a single field from OCR text."""
+        from apps.agents.services.llm_client import LLMClient
+
+        # Truncate OCR text for context window
+        ocr_snippet = ocr_text[:8000]
+
+        field_descriptions = {
+            "invoice_number": "The invoice number or bill number",
+            "po_number": "The purchase order number (PO number)",
+            "vendor_name": "The supplier/vendor name",
+            "vendor_tax_id": "The vendor tax ID (GSTIN, VAT number, TIN, etc.)",
+            "total_amount": "The total invoice amount including tax",
+            "subtotal": "The subtotal before tax",
+            "tax_amount": "The total tax amount",
+            "invoice_date": "The invoice date (format: YYYY-MM-DD)",
+            "due_date": "The payment due date (format: YYYY-MM-DD)",
+            "currency": "The invoice currency code (e.g. USD, INR, EUR)",
+        }
+        field_desc = field_descriptions.get(field_name, f"The {field_name} field")
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an invoice data extraction specialist. "
+                    "Extract the requested field value from the OCR text. "
+                    "Return ONLY the extracted value, nothing else. "
+                    "If you cannot find the field, return exactly: NOT_FOUND"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Extract '{field_desc}' from this invoice text.\n"
+                    f"Current (possibly wrong) value: {current_value}\n\n"
+                    f"OCR TEXT:\n{ocr_snippet}"
+                ),
+            },
+        ]
+
+        client = LLMClient()
+        response = client.chat(messages=messages, max_tokens=200, temperature=0.0)
+        result = (response or "").strip()
+
+        if not result or result == "NOT_FOUND":
+            return ""
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Helper: build a lightweight AgentContext for delegated agent runs
+# ---------------------------------------------------------------------------
+
+def _build_delegate_context(
+    invoice_id: int,
+    tenant=None,
+    reconciliation_result=None,
+    po_number: str = "",
+    reconciliation_mode: str = "",
+    extra: dict | None = None,
+):
+    """Build an AgentContext suitable for running a real sub-agent.
+
+    Reuses the same ``build_supervisor_context`` helper that the task layer
+    uses so the delegated agent gets full invoice metadata, memory, and
+    tenant scoping.
+    """
+    from apps.agents.services.supervisor_context_builder import build_supervisor_context
+    return build_supervisor_context(
+        invoice_id=invoice_id,
+        reconciliation_result=reconciliation_result,
+        po_number=po_number,
+        reconciliation_mode=reconciliation_mode,
+        actor_primary_role="SYSTEM_AGENT",
+        tenant=tenant,
+        extra=extra or {},
+    )
+
+
+def _resolve_recon_result(tool_instance, pk: int):
+    """Look up ReconciliationResult with tenant scoping, falling back to
+    unscoped if the record has a NULL tenant_id (legacy / pipeline gap)."""
+    from apps.reconciliation.models import ReconciliationResult
+
+    qs = tool_instance._scoped(
+        ReconciliationResult.objects.select_related("invoice", "purchase_order")
+    )
+    try:
+        return qs.get(pk=pk)
+    except ReconciliationResult.DoesNotExist:
+        pass
+
+    # Fallback: the record may exist with tenant_id=NULL.
+    try:
+        return (
+            ReconciliationResult.objects
+            .select_related("invoice", "purchase_order")
+            .get(pk=pk)
+        )
+    except ReconciliationResult.DoesNotExist:
+        return None
+
+
+def _agent_run_to_result(agent_run, agent_label: str) -> ToolResult:
+    """Convert a completed AgentRun into a ToolResult for the supervisor."""
+    from apps.core.enums import AgentRunStatus
+
+    status = getattr(agent_run, "status", "")
+    output = getattr(agent_run, "output_payload", None) or {}
+    reasoning = output.get("summarized_reasoning") or output.get("reasoning", "")
+    recommendation = output.get("recommendation_type")
+    confidence = output.get("confidence", 0.0)
+    evidence = output.get("evidence") or {}
+    tools_used = output.get("tools_used") or []
+
+    success = status in (
+        AgentRunStatus.COMPLETED,
+        AgentRunStatus.COMPLETED.value if hasattr(AgentRunStatus.COMPLETED, "value") else "COMPLETED",
+        "COMPLETED",
+    )
+
+    return ToolResult(
+        success=success,
+        data={
+            "agent": agent_label,
+            "agent_run_id": agent_run.pk,
+            "status": str(status),
+            "recommendation": recommendation,
+            "confidence": confidence,
+            "reasoning": (reasoning or "")[:500],
+            "evidence": evidence,
+            "tools_used": tools_used,
+        },
+        error=None if success else f"{agent_label} completed with status {status}",
+    )
 
 
 @register_tool
@@ -786,8 +1325,10 @@ class InvokePORetrievalAgentTool(BaseTool):
     name = "invoke_po_retrieval_agent"
     required_permission = "agents.run_po_retrieval"
     description = (
-        "Delegate PO search to the specialized PO Retrieval Agent when "
-        "the PO number on the invoice does not match any record."
+        "Delegate PO search to the specialized PO Retrieval Agent (full LLM "
+        "agent with reasoning) when the PO number on the invoice does not "
+        "match any record. The agent uses po_lookup, vendor_search, and "
+        "invoice_details tools and returns a structured recommendation."
     )
     when_to_use = "When po_lookup fails to find a PO and recovery is needed."
     parameters_schema = {
@@ -811,107 +1352,382 @@ class InvokePORetrievalAgentTool(BaseTool):
 
     def run(self, *, invoice_id: int = 0, vendor_name: str = "",
             po_number_hint: str = "", **kwargs) -> ToolResult:
-        # This tool delegates to the existing PO lookup with broader search
-        from apps.documents.models import Invoice, PurchaseOrder
-        from apps.vendors.models import Vendor
+        from apps.agents.services.agent_classes import PORetrievalAgent
+        from apps.documents.models import Invoice
 
         try:
-            qs = self._scoped(Invoice.objects.all())
-            invoice = qs.select_related("vendor").get(pk=invoice_id)
+            qs = self._scoped(Invoice.objects.select_related("vendor"))
+            invoice = qs.get(pk=invoice_id)
         except Invoice.DoesNotExist:
             return ToolResult(success=False, error=f"Invoice {invoice_id} not found")
 
-        # Search by vendor
-        vendor = invoice.vendor
-        if not vendor and vendor_name:
-            from apps.core.utils import normalize_string
-            norm = normalize_string(vendor_name)
-            for v in self._scoped(Vendor.objects.filter(is_active=True))[:200]:
-                if normalize_string(v.name) == norm:
-                    vendor = v
-                    break
+        vendor = vendor_name or (invoice.vendor.name if invoice.vendor else "")
+        po_hint = po_number_hint or invoice.po_number or ""
 
-        if vendor:
-            pos = self._scoped(
-                PurchaseOrder.objects.filter(vendor=vendor, status="OPEN")
-            ).order_by("-po_date")[:10]
-            if pos:
-                po_list = []
-                for p in pos:
-                    po_list.append({
-                        "po_number": p.po_number,
-                        "total_amount": _safe_str(p.total_amount),
-                        "po_date": _safe_str(p.po_date),
-                    })
-                return ToolResult(success=True, data={
-                    "found": True,
-                    "search_method": "vendor_open_pos",
-                    "vendor_id": vendor.pk,
-                    "vendor_name": vendor.name,
-                    "candidates": po_list,
-                })
+        ctx = _build_delegate_context(
+            invoice_id=invoice_id,
+            tenant=kwargs.get("tenant"),
+            po_number=po_hint,
+            extra={
+                "vendor_name": vendor,
+                "total_amount": _safe_str(invoice.total_amount),
+            },
+        )
 
-        return ToolResult(success=True, data={
-            "found": False,
-            "invoice_id": invoice_id,
-            "message": "No candidate POs found for this vendor",
-        })
+        try:
+            agent = PORetrievalAgent()
+            agent_run = agent.run(ctx)
+            return _agent_run_to_result(agent_run, "PO_RETRIEVAL")
+        except Exception as exc:
+            logger.exception("PO Retrieval Agent failed for invoice %s", invoice_id)
+            return ToolResult(
+                success=False,
+                error=f"PO Retrieval Agent error: {str(exc)[:200]}",
+            )
 
 
 @register_tool
 class InvokeGRNRetrievalAgentTool(BaseTool):
     name = "invoke_grn_retrieval_agent"
     required_permission = "agents.run_grn_retrieval"
-    description = "Delegate GRN search to find receipt records for a PO."
+    description = (
+        "Delegate GRN search to the specialized GRN Retrieval Agent (full "
+        "LLM agent with reasoning) when GRN is missing for a 3-way match. "
+        "The agent uses grn_lookup, po_lookup, and invoice_details tools."
+    )
     when_to_use = "When grn_lookup fails in 3-WAY mode."
     parameters_schema = {
         "type": "object",
         "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice.",
+            },
             "po_number": {
                 "type": "string",
                 "description": "PO number to search GRNs for.",
             },
+            "reconciliation_mode": {
+                "type": "string",
+                "description": "TWO_WAY or THREE_WAY. Defaults to THREE_WAY.",
+            },
         },
-        "required": ["po_number"],
+        "required": ["invoice_id"],
     }
 
-    def run(self, *, po_number: str = "", **kwargs) -> ToolResult:
-        from apps.documents.models import GoodsReceiptNote, PurchaseOrder
+    def run(self, *, invoice_id: int = 0, po_number: str = "",
+            reconciliation_mode: str = "THREE_WAY", **kwargs) -> ToolResult:
+        from apps.agents.services.agent_classes import GRNRetrievalAgent
+        from apps.documents.models import Invoice
 
-        if not po_number:
-            return ToolResult(success=False, error="po_number is required")
+        try:
+            qs = self._scoped(Invoice.objects.all())
+            invoice = qs.get(pk=invoice_id)
+        except Invoice.DoesNotExist:
+            return ToolResult(success=False, error=f"Invoice {invoice_id} not found")
 
-        po = self._scoped(PurchaseOrder.objects.filter(po_number=po_number)).first()
-        if not po:
-            return ToolResult(success=True, data={
-                "found": False, "po_number": po_number,
-                "message": "PO not found -- cannot search for GRNs",
-            })
+        po_num = po_number or invoice.po_number or ""
 
-        grns = self._scoped(
-            GoodsReceiptNote.objects.filter(purchase_order=po)
-        ).order_by("-receipt_date")
+        ctx = _build_delegate_context(
+            invoice_id=invoice_id,
+            tenant=kwargs.get("tenant"),
+            po_number=po_num,
+            reconciliation_mode=reconciliation_mode,
+            extra={"grn_available": "unknown", "grn_fully_received": "unknown"},
+        )
 
-        if not grns.exists():
-            return ToolResult(success=True, data={
-                "found": False, "po_number": po_number,
-                "message": "No GRN records exist for this PO",
-            })
+        try:
+            agent = GRNRetrievalAgent()
+            agent_run = agent.run(ctx)
+            return _agent_run_to_result(agent_run, "GRN_RETRIEVAL")
+        except Exception as exc:
+            logger.exception("GRN Retrieval Agent failed for invoice %s", invoice_id)
+            return ToolResult(
+                success=False,
+                error=f"GRN Retrieval Agent error: {str(exc)[:200]}",
+            )
 
-        grn_list = []
-        for g in grns[:10]:
-            grn_list.append({
-                "grn_number": g.grn_number,
-                "receipt_date": _safe_str(g.receipt_date),
-                "status": getattr(g, "status", ""),
-            })
 
-        return ToolResult(success=True, data={
-            "found": True,
-            "po_number": po_number,
-            "grn_count": grns.count(),
-            "grns": grn_list,
-        })
+@register_tool
+class InvokeExceptionAnalysisAgentTool(BaseTool):
+    name = "invoke_exception_analysis_agent"
+    required_permission = "agents.run_exception_analysis"
+    description = (
+        "Delegate exception analysis to the specialized Exception Analysis "
+        "Agent (full LLM agent). Analyses reconciliation exceptions, "
+        "determines root causes, and recommends actions. Requires a "
+        "reconciliation result to exist."
+    )
+    when_to_use = (
+        "After reconciliation produces exceptions that need deeper analysis."
+    )
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice.",
+            },
+            "reconciliation_result_id": {
+                "type": "integer",
+                "description": "PK of the ReconciliationResult.",
+            },
+        },
+        "required": ["invoice_id", "reconciliation_result_id"],
+    }
+
+    def run(self, *, invoice_id: int = 0, reconciliation_result_id: int = 0,
+            **kwargs) -> ToolResult:
+        from apps.agents.services.agent_classes import ExceptionAnalysisAgent
+
+        rr = _resolve_recon_result(self, reconciliation_result_id)
+        if rr is None:
+            return ToolResult(
+                success=False,
+                error=f"ReconciliationResult {reconciliation_result_id} not found",
+            )
+
+        # Load exceptions
+        from apps.reconciliation.models import ReconciliationException
+        exceptions = list(
+            ReconciliationException.objects.filter(
+                reconciliation_result=rr,
+            ).values("exception_type", "severity", "field_name", "description")
+        )
+
+        ctx = _build_delegate_context(
+            invoice_id=invoice_id,
+            tenant=kwargs.get("tenant"),
+            reconciliation_result=rr,
+            po_number=rr.purchase_order.po_number if rr.purchase_order else "",
+            reconciliation_mode=getattr(rr, "reconciliation_mode", ""),
+        )
+        ctx.exceptions = exceptions
+
+        try:
+            agent = ExceptionAnalysisAgent()
+            agent_run = agent.run(ctx)
+            return _agent_run_to_result(agent_run, "EXCEPTION_ANALYSIS")
+        except Exception as exc:
+            logger.exception(
+                "Exception Analysis Agent failed for result %s",
+                reconciliation_result_id,
+            )
+            return ToolResult(
+                success=False,
+                error=f"Exception Analysis Agent error: {str(exc)[:200]}",
+            )
+
+
+@register_tool
+class InvokeReconciliationAssistAgentTool(BaseTool):
+    name = "invoke_reconciliation_assist_agent"
+    required_permission = "agents.run_reconciliation_assist"
+    description = (
+        "Delegate to the Reconciliation Assist Agent (full LLM agent) for "
+        "general-purpose investigation of partial matches. The agent uses "
+        "all lookup tools and provides structured recommendations."
+    )
+    when_to_use = (
+        "When a reconciliation is partially matched and needs deeper "
+        "investigation beyond what individual tools provide."
+    )
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice.",
+            },
+            "reconciliation_result_id": {
+                "type": "integer",
+                "description": "PK of the ReconciliationResult.",
+            },
+        },
+        "required": ["invoice_id", "reconciliation_result_id"],
+    }
+
+    def run(self, *, invoice_id: int = 0, reconciliation_result_id: int = 0,
+            **kwargs) -> ToolResult:
+        from apps.agents.services.agent_classes import ReconciliationAssistAgent
+
+        rr = _resolve_recon_result(self, reconciliation_result_id)
+        if rr is None:
+            return ToolResult(
+                success=False,
+                error=f"ReconciliationResult {reconciliation_result_id} not found",
+            )
+
+        from apps.reconciliation.models import ReconciliationException
+        exceptions = list(
+            ReconciliationException.objects.filter(
+                reconciliation_result=rr,
+            ).values("exception_type", "severity", "field_name", "description")
+        )
+
+        ctx = _build_delegate_context(
+            invoice_id=invoice_id,
+            tenant=kwargs.get("tenant"),
+            reconciliation_result=rr,
+            po_number=rr.purchase_order.po_number if rr.purchase_order else "",
+            reconciliation_mode=getattr(rr, "reconciliation_mode", ""),
+        )
+        ctx.exceptions = exceptions
+
+        try:
+            agent = ReconciliationAssistAgent()
+            agent_run = agent.run(ctx)
+            return _agent_run_to_result(agent_run, "RECONCILIATION_ASSIST")
+        except Exception as exc:
+            logger.exception(
+                "Reconciliation Assist Agent failed for result %s",
+                reconciliation_result_id,
+            )
+            return ToolResult(
+                success=False,
+                error=f"Reconciliation Assist Agent error: {str(exc)[:200]}",
+            )
+
+
+@register_tool
+class InvokeReviewRoutingAgentTool(BaseTool):
+    name = "invoke_review_routing_agent"
+    required_permission = "agents.run_review_routing"
+    description = (
+        "Delegate to the Review Routing Agent (full LLM agent) to determine "
+        "the best review queue, team, and priority for a reconciliation case. "
+        "The agent uses reconciliation_summary and exception_list tools."
+    )
+    when_to_use = (
+        "In the DECIDE phase when routing decisions need LLM reasoning "
+        "based on exception patterns and match status."
+    )
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice.",
+            },
+            "reconciliation_result_id": {
+                "type": "integer",
+                "description": "PK of the ReconciliationResult.",
+            },
+        },
+        "required": ["invoice_id", "reconciliation_result_id"],
+    }
+
+    def run(self, *, invoice_id: int = 0, reconciliation_result_id: int = 0,
+            **kwargs) -> ToolResult:
+        from apps.agents.services.agent_classes import ReviewRoutingAgent
+
+        rr = _resolve_recon_result(self, reconciliation_result_id)
+        if rr is None:
+            return ToolResult(
+                success=False,
+                error=f"ReconciliationResult {reconciliation_result_id} not found",
+            )
+
+        from apps.reconciliation.models import ReconciliationException
+        exceptions = list(
+            ReconciliationException.objects.filter(
+                reconciliation_result=rr,
+            ).values("exception_type", "severity", "field_name", "description")
+        )
+
+        ctx = _build_delegate_context(
+            invoice_id=invoice_id,
+            tenant=kwargs.get("tenant"),
+            reconciliation_result=rr,
+            po_number=rr.purchase_order.po_number if rr.purchase_order else "",
+            reconciliation_mode=getattr(rr, "reconciliation_mode", ""),
+        )
+        ctx.exceptions = exceptions
+
+        try:
+            agent = ReviewRoutingAgent()
+            agent_run = agent.run(ctx)
+            return _agent_run_to_result(agent_run, "REVIEW_ROUTING")
+        except Exception as exc:
+            logger.exception(
+                "Review Routing Agent failed for result %s",
+                reconciliation_result_id,
+            )
+            return ToolResult(
+                success=False,
+                error=f"Review Routing Agent error: {str(exc)[:200]}",
+            )
+
+
+@register_tool
+class InvokeCaseSummaryAgentTool(BaseTool):
+    name = "invoke_case_summary_agent"
+    required_permission = "agents.run_case_summary"
+    description = (
+        "Delegate to the Case Summary Agent (full LLM agent) to produce a "
+        "human-readable case summary for reviewers. The agent uses "
+        "invoice_details, po_lookup, grn_lookup, reconciliation_summary, "
+        "and exception_list tools to gather context before summarizing."
+    )
+    when_to_use = (
+        "In the DECIDE phase to generate a comprehensive case summary "
+        "that incorporates all prior analysis findings."
+    )
+    parameters_schema = {
+        "type": "object",
+        "properties": {
+            "invoice_id": {
+                "type": "integer",
+                "description": "PK of the Invoice.",
+            },
+            "reconciliation_result_id": {
+                "type": "integer",
+                "description": "PK of the ReconciliationResult.",
+            },
+        },
+        "required": ["invoice_id", "reconciliation_result_id"],
+    }
+
+    def run(self, *, invoice_id: int = 0, reconciliation_result_id: int = 0,
+            **kwargs) -> ToolResult:
+        from apps.agents.services.agent_classes import CaseSummaryAgent
+
+        rr = _resolve_recon_result(self, reconciliation_result_id)
+        if rr is None:
+            return ToolResult(
+                success=False,
+                error=f"ReconciliationResult {reconciliation_result_id} not found",
+            )
+
+        from apps.reconciliation.models import ReconciliationException
+        exceptions = list(
+            ReconciliationException.objects.filter(
+                reconciliation_result=rr,
+            ).values("exception_type", "severity", "field_name", "description")
+        )
+
+        ctx = _build_delegate_context(
+            invoice_id=invoice_id,
+            tenant=kwargs.get("tenant"),
+            reconciliation_result=rr,
+            po_number=rr.purchase_order.po_number if rr.purchase_order else "",
+            reconciliation_mode=getattr(rr, "reconciliation_mode", ""),
+        )
+        ctx.exceptions = exceptions
+
+        try:
+            agent = CaseSummaryAgent()
+            agent_run = agent.run(ctx)
+            return _agent_run_to_result(agent_run, "CASE_SUMMARY")
+        except Exception as exc:
+            logger.exception(
+                "Case Summary Agent failed for result %s",
+                reconciliation_result_id,
+            )
+            return ToolResult(
+                success=False,
+                error=f"Case Summary Agent error: {str(exc)[:200]}",
+            )
 
 
 @register_tool
