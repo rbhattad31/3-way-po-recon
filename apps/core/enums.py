@@ -89,6 +89,8 @@ class AgentType(models.TextChoices):
     SYSTEM_BULK_EXTRACTION_INTAKE = "SYSTEM_BULK_EXTRACTION_INTAKE", "System Bulk Extraction Intake"
     SYSTEM_CASE_INTAKE = "SYSTEM_CASE_INTAKE", "System Case Intake"
     SYSTEM_POSTING_PREPARATION = "SYSTEM_POSTING_PREPARATION", "System Posting Preparation"
+    # Supervisor agent -- full lifecycle orchestrator
+    SUPERVISOR = "SUPERVISOR", "Supervisor"
 
 
 class ToolCallStatus(models.TextChoices):

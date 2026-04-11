@@ -7,6 +7,7 @@ app_name = "copilot"
 
 urlpatterns = [
     path("", template_views.copilot_workspace, name="workspace"),
+    path("cases/", template_views.copilot_case_hub, name="case_hub"),
     path("case/<int:case_id>/", template_views.copilot_case, name="case"),
     path("session/<uuid:session_id>/", template_views.copilot_session, name="session"),
 ]

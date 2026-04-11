@@ -106,12 +106,13 @@ class CaseOrchestrator:
         orchestrator.run_from(stage)     # Reprocess from a specific stage
     """
 
-    def __init__(self, case: APCase):
+    def __init__(self, case: APCase, skip_agent_pipeline: bool = False):
         self.case = case
         self._lf_trace = None
         self._lf_trace_id = None
         self._stage_index = 0
         self._skip_before_stage = None  # set by run_from() to skip earlier stages
+        self._skip_agent_pipeline = skip_agent_pipeline  # skip AgentOrchestrator (copilot mode)
 
     @observed_service("cases.orchestrator.run", audit_event="CASE_PROCESSING_STARTED", entity_type="APCase")
     def run(self, tenant=None, lf_trace=None, lf_trace_id: Optional[str] = None) -> APCase:
@@ -378,6 +379,20 @@ class CaseOrchestrator:
 
     def _run_common_tail(self):
         """Execute the common tail stages: exception analysis -> routing -> summary."""
+        if self._skip_agent_pipeline:
+            logger.info(
+                "Case %s: skipping EXCEPTION_ANALYSIS, REVIEW_ROUTING, CASE_SUMMARY "
+                "(skip_agent_pipeline=True) -- supervisor will handle",
+                self.case.case_number,
+            )
+            # Transition to READY_FOR_REVIEW so supervisor can pick it up.
+            # Do NOT run REVIEW_ROUTING or CASE_SUMMARY -- the supervisor
+            # agent will handle review routing and summary generation.
+            CaseStateMachine.transition(
+                self.case, CaseStatus.READY_FOR_REVIEW, PerformedByType.DETERMINISTIC,
+            )
+            return
+
         self._execute_stage(CaseStageType.EXCEPTION_ANALYSIS)
         if not CaseStateMachine.is_terminal(self.case.status):
             self._execute_stage(CaseStageType.REVIEW_ROUTING)

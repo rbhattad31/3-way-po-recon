@@ -7,7 +7,7 @@
 
 ## 1. Agent Inventory
 
-### LLM Agents (8 — in `AGENT_CLASS_REGISTRY`, `apps/agents/services/agent_classes.py`)
+### LLM Agents (9 — in `AGENT_CLASS_REGISTRY`, `apps/agents/services/agent_classes.py`)
 
 | Agent | `AgentType` | System Prompt Key | Allowed Tools | Primary Purpose |
 |-------|------------|-------------------|--------------|----------------|
@@ -19,6 +19,7 @@
 | ReviewRoutingAgent | `REVIEW_ROUTING` | `agent.review_routing` | reconciliation_summary, exception_list | Select review queue, priority, assignee role |
 | CaseSummaryAgent | `CASE_SUMMARY` | `agent.case_summary` | All 5 business tools | Generate reviewer-facing case summary |
 | ReconciliationAssistAgent | `RECONCILIATION_ASSIST` | `agent.reconciliation_assist` | All 5 business tools | General-purpose reconciliation advisor |
+| **SupervisorAgent** | `SUPERVISOR` | `agent.supervisor_ap_lifecycle` | 30 tools (24 supervisor + 6 base) | Full AP lifecycle orchestrator; 5-phase non-linear processing with skill-based composition. See [17_Supervisor_Agent_Architecture.md](17_Supervisor_Agent_Architecture.md) |
 
 ### System Agents (5 — deterministic, `apps/agents/services/system_agent_classes.py`)
 
@@ -76,6 +77,7 @@ AGENT_CLASS_REGISTRY: Dict[str, type] = {
     AgentType.REVIEW_ROUTING:        ReviewRoutingAgent,
     AgentType.CASE_SUMMARY:          CaseSummaryAgent,
     AgentType.RECONCILIATION_ASSIST: ReconciliationAssistAgent,
+    AgentType.SUPERVISOR:            SupervisorAgent,
     # + 5 system agents merged in at import time
 }
 ```
@@ -121,6 +123,13 @@ Path D — Case pipeline (system agents):
     → SystemCaseIntakeAgent().run(ctx)  # called directly before CaseOrchestrator
     → CaseOrchestrator.run()
         → StageExecutor → may call SystemReviewRoutingAgent, SystemCaseSummaryAgent
+
+Path E — Supervisor (single-agent lifecycle):
+  SupervisorAgent(skill_names=DEFAULT_SKILLS).run(ctx)
+    → build_supervisor_context(invoice_id, mode, tenant, ...)
+    → ReAct loop with 30 tools, max 15 rounds
+    → 5-phase non-linear: UNDERSTAND → VALIDATE → MATCH → INVESTIGATE → DECIDE
+    → submit_recommendation → AgentOutput
 ```
 
 ---
@@ -213,6 +222,7 @@ class AgentContext:
 | InvoiceExtractionAgent | LLM (GPT-4o) | Single-shot, temperature=0 |
 | All other LLM agents | LLM (GPT-4o) | ReAct loop, temperature=0.1 |
 | ReasoningPlanner | LLM (GPT-4o) | Optional; off by default |
+| SupervisorAgent | LLM (GPT-4o) | Full lifecycle; 15 tool rounds, skill-composed prompt |
 | SystemReviewRoutingAgent | Deterministic | Rule-based, no LLM |
 | SystemCaseSummaryAgent | Deterministic | Rule-based, no LLM |
 

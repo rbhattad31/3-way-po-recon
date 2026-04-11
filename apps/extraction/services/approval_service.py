@@ -101,10 +101,14 @@ class ExtractionApprovalService:
         extraction_result: Optional[ExtractionResult] = None,
         lf_trace_id: Optional[str] = None,
         lf_span=None,
+        skip_case_processing: bool = False,
     ) -> Optional[ExtractionApproval]:
         """Auto-approve if confidence meets the configured threshold.
 
         Returns the ExtractionApproval if auto-approved, else None.
+        When called from the extraction task, pass skip_case_processing=True
+        because the task dispatches process_case_task separately with the
+        correct skip_agent_pipeline flag.
         """
         enabled = getattr(settings, "EXTRACTION_AUTO_APPROVE_ENABLED", False)
         threshold = getattr(settings, "EXTRACTION_AUTO_APPROVE_THRESHOLD", 1.1)
@@ -154,7 +158,8 @@ class ExtractionApprovalService:
             invoice.pk, confidence,
         )
         # ── Create AP Case and trigger case pipeline ──
-        cls._ensure_case_and_process(invoice, user=None)
+        if not skip_case_processing:
+            cls._ensure_case_and_process(invoice, user=None)
 
         # ── core_eval: persist auto-approval learning signal ──
         try:

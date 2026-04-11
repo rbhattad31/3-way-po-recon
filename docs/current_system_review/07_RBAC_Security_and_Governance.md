@@ -96,7 +96,7 @@ Permission check logic in `rbac_services.py`:
 | Reviewer | `REVIEWER` | Exception review | reviews.*, cases.view |
 | Finance Manager | `FINANCE_MANAGER` | Escalation + approvals | cases.escalate, approvals |
 | Auditor | `AUDITOR` | Read-only compliance | *.view (all modules), no write |
-| System Agent | `SYSTEM_AGENT` | Autonomous pipeline | agents.orchestrate, agents.run_*, invoices.view, reconciliation.view |
+| System Agent | `SYSTEM_AGENT` | Autonomous pipeline | agents.orchestrate, agents.run_*, agents.run_supervisor, invoices.view, reconciliation.view |
 
 ---
 
@@ -123,6 +123,7 @@ AGENT_PERMISSIONS = {
     "SYSTEM_BULK_EXTRACTION_INTAKE": "agents.run_system_bulk_extraction_intake",
     "SYSTEM_CASE_INTAKE":          "agents.run_system_case_intake",
     "SYSTEM_POSTING_PREPARATION":  "agents.run_system_posting_preparation",
+    "SUPERVISOR":                  "agents.run_supervisor",
 }
 ```
 
@@ -135,6 +136,31 @@ TOOL_PERMISSIONS = {
     "invoice_details":         "invoices.view",
     "exception_list":          "reconciliation.view",
     "reconciliation_summary":  "reconciliation.view",
+    # Supervisor-specific tools (24 additional):
+    "get_ocr_text":              "invoices.view",
+    "classify_document":         "invoices.view",
+    "extract_invoice_fields":    "extraction.run",
+    "re_extract_field":          "extraction.run",
+    "validate_extraction":       "extraction.run",
+    "repair_extraction":         "extraction.run",
+    "check_duplicate":           "invoices.view",
+    "verify_vendor":             "vendors.view",
+    "verify_tax_computation":    "invoices.view",
+    "run_header_match":          "reconciliation.run",
+    "run_line_match":            "reconciliation.run",
+    "run_grn_match":             "reconciliation.run",
+    "get_tolerance_config":      "reconciliation.view",
+    "invoke_po_retrieval_agent": "agents.run_po_retrieval",
+    "invoke_grn_retrieval_agent":"agents.run_grn_retrieval",
+    "get_vendor_history":        "vendors.view",
+    "get_case_history":          "cases.view",
+    "persist_invoice":           "invoices.edit",
+    "create_case":               "cases.create",
+    "submit_recommendation":     "recommendations.route_review",
+    "assign_reviewer":           "reviews.assign",
+    "generate_case_summary":     "cases.view",
+    "auto_close_case":           "recommendations.auto_close",
+    "escalate_case":             "cases.escalate",
 }
 ```
 

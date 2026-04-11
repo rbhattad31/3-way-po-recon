@@ -48,8 +48,9 @@ PromptRegistry.get(slug, **format_vars)
 | `agent.exception_analysis` | ExceptionAnalysisAgent |
 | `agent.review_routing` | ReviewRoutingAgent |
 | `agent.case_summary` | CaseSummaryAgent |
+| `agent.supervisor_ap_lifecycle` | SupervisorAgent (full lifecycle) |
 
-**Total confirmed prompt keys**: 14 (matches README's "18 prompts in Langfuse" — 4 additional not inspected in detail)
+**Total confirmed prompt keys**: 15 (matches README's "18 prompts in Langfuse" — 3 additional not inspected in detail)
 
 ---
 
@@ -76,6 +77,20 @@ Metadata captured:
 ```
 
 The composed prompt is passed to `InvoiceExtractionAgent` via `ctx.extra["composed_prompt"]`.
+
+### Supervisor Prompt Composition (`supervisor_prompt_builder.py`)
+
+For the SupervisorAgent, a skill-based prompt composition system assembles the system prompt at runtime:
+
+```
+build_supervisor_prompt(skill_names, max_tool_rounds=15)
+  1. Load base prompt  (PromptRegistry → "agent.supervisor_ap_lifecycle" → _BASE_SYSTEM_PROMPT fallback)
+  2. Replace {max_tool_rounds} placeholder
+  3. Append skill prompt extensions  ("# SKILL-SPECIFIC GUIDANCE" + per-skill phase instructions)
+  4. Append decision hints  ("# DECISION HINTS" + numbered hints from all skills)
+```
+
+Skills are loaded from a code-only `SkillRegistry` (5 default skills: invoice_extraction, ap_validation, ap_3way_matching, ap_investigation, ap_review_routing). Each skill contributes prompt_extension, tool names, and decision_hints. See [17_Supervisor_Agent_Architecture.md](17_Supervisor_Agent_Architecture.md).
 
 ---
 
@@ -117,6 +132,43 @@ DB storage acts as fallback when Langfuse is unavailable. The `seed_prompts` man
 | `invoice_details` | `InvoiceDetailsTool` | `invoices.view` | No (DB only) |
 | `exception_list` | `ExceptionListTool` | `reconciliation.view` | No (DB only) |
 | `reconciliation_summary` | `ReconciliationSummaryTool` | `reconciliation.view` | No (DB only) |
+
+### Supervisor-Specific Tools (24 — in `apps/tools/registry/supervisor_tools.py`)
+
+| Tool Name | Permission | Phase | ERP-Aware |
+|-----------|-----------|-------|----------|
+| `get_ocr_text` | `invoices.view` | UNDERSTAND | No |
+| `classify_document` | `invoices.view` | UNDERSTAND | No |
+| `extract_invoice_fields` | `extraction.run` | UNDERSTAND | No |
+| `re_extract_field` | `extraction.run` | UNDERSTAND/INVESTIGATE | No |
+| `validate_extraction` | `extraction.run` | VALIDATE | No |
+| `repair_extraction` | `extraction.run` | VALIDATE | No |
+| `check_duplicate` | `invoices.view` | VALIDATE | Yes (via PluginToolRouter) |
+| `verify_vendor` | `vendors.view` | VALIDATE | Yes (via PluginToolRouter) |
+| `verify_tax_computation` | `invoices.view` | VALIDATE | No |
+| `run_header_match` | `reconciliation.run` | MATCH | No |
+| `run_line_match` | `reconciliation.run` | MATCH | No |
+| `run_grn_match` | `reconciliation.run` | MATCH | No |
+| `get_tolerance_config` | `reconciliation.view` | MATCH | No |
+| `invoke_po_retrieval_agent` | `agents.run_po_retrieval` | INVESTIGATE | No |
+| `invoke_grn_retrieval_agent` | `agents.run_grn_retrieval` | INVESTIGATE | No |
+| `get_vendor_history` | `vendors.view` | INVESTIGATE | No |
+| `get_case_history` | `cases.view` | INVESTIGATE | No |
+| `persist_invoice` | `invoices.edit` | DECIDE | No |
+| `create_case` | `cases.create` | DECIDE | No |
+| `submit_recommendation` | `recommendations.route_review` | DECIDE | No |
+| `assign_reviewer` | `reviews.assign` | DECIDE | No |
+| `generate_case_summary` | `cases.view` | DECIDE | No |
+| `auto_close_case` | `recommendations.auto_close` | DECIDE | No |
+| `escalate_case` | `cases.escalate` | DECIDE | No |
+
+These tools wrap existing deterministic services — the LLM reasons over tool outputs rather than reimplementing logic. See [17_Supervisor_Agent_Architecture.md](17_Supervisor_Agent_Architecture.md) for details.
+
+### PluginToolRouter (ERP Routing Layer)
+
+**File**: `apps/agents/plugins/plugin_router.py`
+
+Routes 5 tools (`po_lookup`, `grn_lookup`, `vendor_search`, `verify_vendor`, `check_duplicate`) through tenant-specific ERP connectors when available. Falls back to standard ToolRegistry if no connector is active. Uses `ERPResolutionService` for ERP-resolved lookups.
 
 ### Tool Registration
 

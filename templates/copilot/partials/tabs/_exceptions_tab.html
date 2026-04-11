@@ -1,0 +1,94 @@
+{# Exceptions tab -- all reconciliation exceptions + validation issues #}
+
+<div class="tab-panel-inner">
+  {% if ctx.exceptions or ctx.validation_issues %}
+  <div class="row g-3">
+
+    {# ── Reconciliation Exceptions ── #}
+    {% if ctx.exceptions %}
+    <div class="col-12">
+      <div class="case-card">
+        <div class="case-card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-exclamation-triangle text-warning me-2"></i>Reconciliation Exceptions</span>
+          <span class="badge bg-warning text-dark">{{ ctx.exceptions|length }}</span>
+        </div>
+        <div class="case-card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 case-table">
+              <thead>
+                <tr>
+                  <th style="width:100px;">Severity</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for exc in ctx.exceptions %}
+                <tr>
+                  <td>
+                    <span class="badge
+                      {% if exc.severity == 'CRITICAL' %}bg-danger
+                      {% elif exc.severity == 'HIGH' %}bg-warning text-dark
+                      {% elif exc.severity == 'MEDIUM' %}bg-info
+                      {% else %}bg-secondary{% endif %}">
+                      {{ exc.severity }}
+                    </span>
+                  </td>
+                  <td class="fw-medium">{{ exc.exception_type }}</td>
+                  <td class="small">{{ exc.message|default:"-" }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Validation Issues (Non-PO) ── #}
+    {% if ctx.validation_issues %}
+    <div class="col-12">
+      <div class="case-card">
+        <div class="case-card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-clipboard-x text-danger me-2"></i>Validation Issues</span>
+          <span class="badge bg-danger">{{ ctx.validation_issues|length }}</span>
+        </div>
+        <div class="case-card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 case-table">
+              <thead>
+                <tr>
+                  <th style="width:100px;">Status</th>
+                  <th>Check</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for issue in ctx.validation_issues %}
+                <tr>
+                  <td>
+                    <span class="badge {% if issue.status == 'FAIL' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+                      {{ issue.status }}
+                    </span>
+                  </td>
+                  <td class="fw-medium">{{ issue.check_name }}</td>
+                  <td class="small">{{ issue.message|default:"-" }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+  {% else %}
+  <div class="tab-panel-empty">
+    <i class="bi bi-check-circle text-success" style="font-size:2rem;"></i>
+    <p class="text-muted mt-2">No exceptions or validation issues found.</p>
+  </div>
+  {% endif %}
+</div>

@@ -58,7 +58,7 @@
 | `extraction_core` | Platform | Active | ExtractionRun model, control center, extraction_documents (legacy table migration) |
 | `extraction_configs` | Config | Active | Extraction configuration models |
 | `reconciliation` | Domain/Engine | Active | 14-service matching engine, ReconciliationResult, ReconciliationException |
-| `agents` | Agentic | Active | 8 LLM agents + 5 system agents, orchestrator, policy engine |
+| `agents` | Agentic | Active | 9 LLM agents (8 standard + 1 supervisor) + 5 system agents, orchestrator, policy engine, skills, plugins |
 | `tools` | Agentic | Active | 6 tools with BaseTool pattern + permission registry |
 | `cases` | Domain | Active | APCase central object, 11+ stage state machine, orchestrators |
 | `copilot` | UI/AI | Active | Copilot conversational service + views |
@@ -258,7 +258,8 @@ Seed data references "Saudi McD" (McDonald's Saudi Arabia), suggesting hospitali
 2. **reviews app**: README doesn't flag it as a stub; code comment in settings.py explicitly notes "migrations-only stub; models moved to apps.cases"
 3. **Beat schedule**: README says "Celery Beat (scheduled tasks) — Not started" but celery.py has `process_approved_learning_actions` on 30-min schedule — this is implemented
 4. **ReasoningPlanner**: Available in code (`AGENT_REASONING_ENGINE_ENABLED`) but not prominently documented
-5. **System agents**: 5 system/deterministic agents exist alongside the 8 LLM agents; README only mentions 8
+5. **System agents**: 5 system/deterministic agents exist alongside the 9 LLM agents (8 standard + 1 supervisor); README only mentions 8
+6. **Supervisor agent**: Full AP lifecycle orchestrator with 5 skills, 24 dedicated tools, PluginToolRouter, non-linear 5-phase processing — see `17_Supervisor_Agent_Architecture.md`
 
 ---
 

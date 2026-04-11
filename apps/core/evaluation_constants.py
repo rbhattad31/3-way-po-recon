@@ -264,3 +264,13 @@ TRACE_SYSTEM_AGENT = "system_agent"
 TRACE_SYSTEM_BULK_INTAKE = "system_bulk_intake"
 TRACE_SYSTEM_CASE_INTAKE = "system_case_intake"
 TRACE_SYSTEM_POSTING_PREPARATION = "system_posting_preparation"
+
+# =====================================================================
+# SUPERVISOR AGENT
+# =====================================================================
+TRACE_SUPERVISOR_PIPELINE = "supervisor_pipeline"
+SUPERVISOR_CONFIDENCE = "supervisor_confidence"                       # 0.0-1.0
+SUPERVISOR_RECOMMENDATION_PRESENT = "supervisor_recommendation_present"  # 1.0 / 0.0
+SUPERVISOR_TOOLS_USED_COUNT = "supervisor_tools_used_count"           # int as float
+SUPERVISOR_RECOVERY_USED = "supervisor_recovery_used"                 # 1.0 / 0.0
+SUPERVISOR_AUTO_CLOSE_CANDIDATE = "supervisor_auto_close_candidate"   # 1.0 / 0.0

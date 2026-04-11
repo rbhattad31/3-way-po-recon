@@ -791,6 +791,13 @@ AGENT_CLASS_REGISTRY: Dict[str, type] = {
     AgentType.RECONCILIATION_ASSIST: ReconciliationAssistAgent,
 }
 
+# Register SupervisorAgent (lazy to avoid heavy imports at module load)
+try:
+    from apps.agents.services.supervisor_agent import SupervisorAgent
+    AGENT_CLASS_REGISTRY[AgentType.SUPERVISOR] = SupervisorAgent
+except Exception:  # pragma: no cover
+    pass
+
 # Merge system agent classes (done at import time)
 try:
     AGENT_CLASS_REGISTRY.update(_get_system_agent_classes())

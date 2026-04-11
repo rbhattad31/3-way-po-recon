@@ -139,7 +139,7 @@
             {% has_permission "agents.use_copilot" as can_use_copilot %}
             {% if can_use_copilot %}
             <a class="dropdown-item {% if request.resolver_match.app_name == 'copilot' %}active{% endif %}"
-               href="{% url 'copilot:workspace' %}">
+               href="{% url 'copilot:case_hub' %}">
               <i class="bi bi-stars me-2 opacity-75"></i>AP Copilot
             </a>
             {% endif %}

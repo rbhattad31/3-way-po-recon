@@ -1,0 +1,109 @@
+{# Matching tab -- reconciliation result + line matching details #}
+
+<div class="tab-panel-inner">
+  {% if ctx.reconciliation %}
+  <div class="row g-3">
+
+    {# Match summary #}
+    <div class="col-lg-4">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-check2-square text-primary me-2"></i>Match Summary
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv">
+            <span class="case-kv-k">Status</span>
+            <span class="case-kv-v">
+              <span class="badge
+                {% if ctx.reconciliation.match_status_code == 'MATCHED' %}bg-success
+                {% elif ctx.reconciliation.match_status_code == 'PARTIAL_MATCH' %}bg-warning text-dark
+                {% elif ctx.reconciliation.match_status_code == 'UNMATCHED' %}bg-danger
+                {% else %}bg-secondary{% endif %}" style="font-size:0.85rem;">
+                {{ ctx.reconciliation.match_status }}
+              </span>
+            </span>
+          </div>
+          <div class="case-kv"><span class="case-kv-k">Mode</span><span class="case-kv-v">{{ ctx.reconciliation.reconciliation_mode|default:"-" }}</span></div>
+          {% if ctx.reconciliation.overall_confidence %}
+          <div class="case-kv"><span class="case-kv-k">Confidence</span><span class="case-kv-v">{% widthratio ctx.reconciliation.overall_confidence 1 100 %}%</span></div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# Header-level comparison #}
+    <div class="col-lg-8">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-arrows-angle-contract text-primary me-2"></i>Header Comparison
+        </div>
+        <div class="case-card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm mb-0 case-table">
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>Invoice</th>
+                  <th>PO</th>
+                  <th>Variance</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody id="headerComparison">
+                <tr>
+                  <td colspan="5" class="text-center text-muted py-3">
+                    <i class="bi bi-hourglass-split me-1"></i>Loading comparison...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# Line-level matching #}
+    <div class="col-12">
+      <div class="case-card">
+        <div class="case-card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-list-columns-reverse text-primary me-2"></i>Line-Level Matching</span>
+          <span class="badge bg-primary-subtle text-primary-emphasis" id="lineMatchCount">--</span>
+        </div>
+        <div class="case-card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 case-table">
+              <thead>
+                <tr>
+                  <th>Inv Line</th>
+                  <th>PO Line</th>
+                  <th>Description</th>
+                  <th class="text-end">Inv Qty</th>
+                  <th class="text-end">PO Qty</th>
+                  <th class="text-end">Inv Price</th>
+                  <th class="text-end">PO Price</th>
+                  <th>Confidence</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="lineMatching">
+                <tr>
+                  <td colspan="9" class="text-center text-muted py-3">
+                    <i class="bi bi-hourglass-split me-1"></i>Loading line matches...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  {% else %}
+  <div class="tab-panel-empty">
+    <i class="bi bi-check2-square text-muted" style="font-size:2rem;"></i>
+    <p class="text-muted mt-2">No reconciliation data available yet.</p>
+    <p class="text-muted small">Reconciliation runs after extraction and PO lookup.</p>
+  </div>
+  {% endif %}
+</div>

@@ -71,6 +71,8 @@ PERMISSIONS = [
     {"code": "agents.run_system_bulk_extraction_intake", "name": "Run System Bulk Extraction Intake", "module": "agents", "action": "run_system_bulk_extraction_intake", "description": "Execute deterministic system bulk extraction intake agent"},
     {"code": "agents.run_system_case_intake", "name": "Run System Case Intake", "module": "agents", "action": "run_system_case_intake", "description": "Execute deterministic system case intake agent"},
     {"code": "agents.run_system_posting_preparation", "name": "Run System Posting Preparation", "module": "agents", "action": "run_system_posting_preparation", "description": "Execute deterministic system posting preparation agent"},
+    # Supervisor agent
+    {"code": "agents.run_supervisor", "name": "Run Supervisor Agent", "module": "agents", "action": "run_supervisor", "description": "Execute the supervisor agent for full AP lifecycle orchestration"},
     # Recommendations
     {"code": "recommendations.auto_close", "name": "Accept Auto-Close", "module": "recommendations", "action": "auto_close", "description": "Accept or trigger auto-close recommendations"},
     {"code": "recommendations.route_review", "name": "Route to Review", "module": "recommendations", "action": "route_review", "description": "Accept send-to-review recommendations"},
@@ -201,9 +203,14 @@ ROLE_MATRIX = {
         "agents.run_system_review_routing", "agents.run_system_case_summary",
         "agents.run_system_bulk_extraction_intake", "agents.run_system_case_intake",
         "agents.run_system_posting_preparation",
+        # Supervisor agent
+        "agents.run_supervisor",
         # Read access for tools
-        "invoices.view", "reconciliation.view",
+        "invoices.view", "invoices.edit", "reconciliation.view",
         "purchase_orders.view", "grns.view", "vendors.view",
+        "cases.view", "cases.create",
+        # Extraction execution (for supervisor tools)
+        "extraction.run", "reconciliation.run",
         # Protected actions agents are allowed to take
         "recommendations.auto_close", "recommendations.route_review",
         "recommendations.escalate", "recommendations.reprocess",

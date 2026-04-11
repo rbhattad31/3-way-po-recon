@@ -1,0 +1,144 @@
+{# Overview tab -- summary cards for the case #}
+{% load rbac_tags %}
+
+<div class="tab-panel-inner">
+  <div class="row g-3">
+
+    {# ── Case Summary Card ── #}
+    <div class="col-md-6 col-xl-4">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-briefcase text-primary me-2"></i>Case Summary
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv"><span class="case-kv-k">Case #</span><span class="case-kv-v fw-semibold">{{ ctx.case.case_number }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Status</span><span class="case-kv-v">{{ ctx.case.status }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Priority</span><span class="case-kv-v">{{ ctx.case.priority }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Path</span><span class="case-kv-v">{{ ctx.case.processing_path }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Invoice Type</span><span class="case-kv-v">{{ ctx.case.invoice_type|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Stage</span><span class="case-kv-v">{{ ctx.case.current_stage|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Created</span><span class="case-kv-v">{{ ctx.case.created_at|default:"-" }}</span></div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Invoice Snapshot Card ── #}
+    {% if ctx.invoice %}
+    <div class="col-md-6 col-xl-4">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-receipt text-info me-2"></i>Invoice
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv"><span class="case-kv-k">Number</span><span class="case-kv-v">{{ ctx.invoice.invoice_number|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Amount</span><span class="case-kv-v fw-semibold">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.amount|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Date</span><span class="case-kv-v">{{ ctx.invoice.invoice_date|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Status</span><span class="case-kv-v">{{ ctx.invoice.status|default:"-" }}</span></div>
+          {% if ctx.invoice.extraction_confidence %}
+          <div class="case-kv">
+            <span class="case-kv-k">Confidence</span>
+            <span class="case-kv-v">
+              <div class="progress" style="width:80px;height:6px;display:inline-flex;vertical-align:middle;">
+                <div class="progress-bar" style="width:{% widthratio ctx.invoice.extraction_confidence 1 100 %}%"></div>
+              </div>
+              <span class="small text-muted ms-1">{% widthratio ctx.invoice.extraction_confidence 1 100 %}%</span>
+            </span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Vendor Card ── #}
+    {% if ctx.vendor %}
+    <div class="col-md-6 col-xl-4">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-building text-success me-2"></i>Vendor
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv"><span class="case-kv-k">Name</span><span class="case-kv-v fw-semibold">{{ ctx.vendor.name }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Code</span><span class="case-kv-v">{{ ctx.vendor.vendor_code|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Tax ID</span><span class="case-kv-v">{{ ctx.vendor.tax_id|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Country</span><span class="case-kv-v">{{ ctx.vendor.country|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Currency</span><span class="case-kv-v">{{ ctx.vendor.currency|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Payment Terms</span><span class="case-kv-v">{{ ctx.vendor.payment_terms|default:"-" }}</span></div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Reconciliation Card ── #}
+    {% if ctx.reconciliation %}
+    <div class="col-md-6 col-xl-4">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-check2-square text-warning me-2"></i>Reconciliation
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv">
+            <span class="case-kv-k">Match</span>
+            <span class="case-kv-v">
+              <span class="badge
+                {% if ctx.reconciliation.match_status_code == 'MATCHED' %}bg-success-subtle text-success-emphasis
+                {% elif ctx.reconciliation.match_status_code == 'PARTIAL_MATCH' %}bg-warning-subtle text-warning-emphasis
+                {% elif ctx.reconciliation.match_status_code == 'UNMATCHED' %}bg-danger-subtle text-danger-emphasis
+                {% else %}bg-secondary-subtle text-secondary-emphasis{% endif %}">
+                {{ ctx.reconciliation.match_status }}
+              </span>
+            </span>
+          </div>
+          <div class="case-kv"><span class="case-kv-k">Mode</span><span class="case-kv-v">{{ ctx.reconciliation.reconciliation_mode|default:"-" }}</span></div>
+          {% if ctx.reconciliation.overall_confidence %}
+          <div class="case-kv">
+            <span class="case-kv-k">Confidence</span>
+            <span class="case-kv-v">{% widthratio ctx.reconciliation.overall_confidence 1 100 %}%</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Recommendation Card ── #}
+    {% if ctx.recommendation %}
+    <div class="col-md-6 col-xl-4">
+      <div class="case-card case-card-highlight">
+        <div class="case-card-header">
+          <i class="bi bi-lightbulb text-warning me-2"></i>AI Recommendation
+        </div>
+        <div class="case-card-body">
+          <p class="mb-2 small">{{ ctx.recommendation.text }}</p>
+          {% if ctx.recommendation.confidence %}
+          <div class="case-kv">
+            <span class="case-kv-k">Confidence</span>
+            <span class="case-kv-v">{% widthratio ctx.recommendation.confidence 1 100 %}%</span>
+          </div>
+          {% endif %}
+          <div class="case-kv">
+            <span class="case-kv-k">Type</span>
+            <span class="case-kv-v"><span class="badge bg-warning-subtle text-warning-emphasis">{{ ctx.recommendation.type }}</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Review Status Card ── #}
+    {% if ctx.review %}
+    <div class="col-md-6 col-xl-4">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-person-check text-info me-2"></i>Review
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv"><span class="case-kv-k">Status</span><span class="case-kv-v">{{ ctx.review.status }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Reviewer</span><span class="case-kv-v">{{ ctx.review.assigned_to|default:"Unassigned" }}</span></div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>

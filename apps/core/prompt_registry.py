@@ -31,6 +31,7 @@ _AGENT_TYPE_TO_PROMPT_KEY: Dict[str, str] = {
     "EXCEPTION_ANALYSIS":    "agent.exception_analysis",
     "REVIEW_ROUTING":        "agent.review_routing",
     "CASE_SUMMARY":          "agent.case_summary",
+    "SUPERVISOR":            "agent.supervisor_ap_lifecycle",
 }
 
 

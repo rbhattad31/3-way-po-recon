@@ -45,7 +45,8 @@ apps/core_eval/tests/  (confirmed: test_end_to_end.py visible in git status)
 |------|-----------|--------|
 | Extraction Phase 2 pipeline (OCR, compose, LLM, repair, parse, normalize, validate, duplicate, persist, approve) | 51 | Claimed ✅ |
 | Reconciliation engine (14 services, mode resolver, tolerance, exceptions, agent feedback) | 73 | Claimed ✅ |
-| **Total** | **124+** | **Claimed ✅** |
+| Supervisor agent (SkillRegistry, PluginToolRouter, prompt/output/context, tools, guardrails, full run) | ~40 | Confirmed ✅ |
+| **Total** | **164+** | **Claimed ✅** |
 
 ---
 
@@ -124,6 +125,7 @@ ERP connector tests likely use mocked HTTP responses or test databases rather th
 | Mode resolution | **High** | Part of reconciliation test suite |
 | Tolerance bands | **High** | Tiered tolerance tested |
 | Agent pipeline structure | **Medium** | Test infrastructure present; LLM mocked |
+| Supervisor agent (skills, tools, router, output) | **High** | ~40 dedicated tests: SR/PT/SA/SP/ST/SU/SO/SG/SPR/SAR/STE/SCB/SMR |
 | RBAC enforcement | **Medium** | Guardrails service tested; coverage unknown |
 | Case state machine | **Medium** | State machine code is tested; coverage unknown |
 | ERP connector resolution | **Medium** | Tests present; connector behavior unclear |

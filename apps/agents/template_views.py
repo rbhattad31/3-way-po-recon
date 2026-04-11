@@ -257,11 +257,27 @@ _AGENT_CONTRACTS = {
         "skip_conditions": "Skipped only if the entire agent pipeline is skipped (e.g., MATCHED + high confidence).",
         "human_review_required_conditions": "always -- summary is produced for human reviewer",
     },
+    "SUPERVISOR": {
+        "purpose": "Full AP lifecycle orchestrator -- owns the entire invoice processing lifecycle from document receipt to final decision in a single ReAct loop",
+        "entry_conditions": "Invoice exists, reconciliation mode determined, RBAC access granted (agents.run_supervisor)",
+        "success_criteria": "submit_recommendation tool called with valid recommendation type and confidence score",
+        "prohibited_actions": ["Fabricate tool outputs", "Bypass RBAC/tenant restrictions", "Auto-close without checking ALL lines against tolerance"],
+        "requires_tool_grounding": True,
+        "min_tool_calls": 3,
+        "tool_failure_confidence_cap": 0.3,
+        "allowed_recs": ["AUTO_CLOSE", "SEND_TO_AP_REVIEW", "SEND_TO_PROCUREMENT", "SEND_TO_VENDOR_CLARIFICATION", "REPROCESS_EXTRACTION", "ESCALATE_TO_MANAGER"],
+        "default_fallback_rec": "SEND_TO_AP_REVIEW",
+        "is_pipeline": False,
+        "trigger": "Direct invocation via SupervisorAgent(skill_names=[...]).run(ctx). Not dispatched by PolicyEngine.",
+        "dynamic_adds": "Non-linear phase progression: can backtrack from INVESTIGATE to UNDERSTAND/MATCH based on findings.",
+        "skip_conditions": "N/A -- supervisor is invoked directly, not via the orchestrator pipeline.",
+        "human_review_required_conditions": "confidence < 0.6 or critical exceptions found or vendor verification failed",
+    },
 }
 
 # Increment this whenever the reference page template or view data changes.
 # Passed into the template so the browser sees a new ETag / detects staleness.
-_PAGE_VERSION = 3
+_PAGE_VERSION = 5
 
 # PolicyEngine dispatch rules -- shown as a table in the reference page
 _POLICY_ENGINE_RULES = [
@@ -272,14 +288,32 @@ _POLICY_ENGINE_RULES = [
         "notes": "Pipeline skipped entirely -- no agents run",
     },
     {
+        "condition": "PARTIAL_MATCH within auto-close band",
+        "mode": "TWO_WAY / THREE_WAY",
+        "agents": [],
+        "notes": "Auto-close band: qty 5%, price 3%, amount 3% -- within band = AUTO_CLOSE, skip agents. Blocked by GRN_NOT_FOUND in 3-way or first-partial invoices (self-comparison always passes).",
+    },
+    {
+        "condition": "NON_PO mode + low extraction confidence",
+        "mode": "NON_PO only",
+        "agents": ["INVOICE_UNDERSTANDING"],
+        "notes": "No PO/GRN retrieval or reconciliation assist in NON_PO mode. Focus on exception analysis + vendor verification.",
+    },
+    {
+        "condition": "NON_PO mode + normal confidence",
+        "mode": "NON_PO only",
+        "agents": ["EXCEPTION_ANALYSIS"],
+        "notes": "Skip PO/GRN agents entirely. Route directly to exception analysis and review.",
+    },
+    {
         "condition": "extraction_conf < 0.70",
-        "mode": "Any",
+        "mode": "TWO_WAY / THREE_WAY",
         "agents": ["INVOICE_UNDERSTANDING"],
         "notes": "May extend plan with RECONCILIATION_ASSIST via _reflect() if own confidence < 0.5",
     },
     {
         "condition": "PO_NOT_FOUND exception",
-        "mode": "Any",
+        "mode": "TWO_WAY / THREE_WAY",
         "agents": ["PO_RETRIEVAL"],
         "notes": "May extend plan with GRN_RETRIEVAL via _reflect() if PO found in THREE_WAY case",
     },
@@ -287,13 +321,13 @@ _POLICY_ENGINE_RULES = [
         "condition": "GRN_NOT_FOUND or GRN_PARTIAL exception",
         "mode": "THREE_WAY only",
         "agents": ["GRN_RETRIEVAL"],
-        "notes": "Suppressed in TWO_WAY and NON_PO modes",
+        "notes": "Suppressed in TWO_WAY and NON_PO modes. GRN_NOT_FOUND also blocks auto-close in rule 1b.",
     },
     {
         "condition": "match_status = PARTIAL_MATCH (outside auto-close band)",
-        "mode": "Any",
+        "mode": "TWO_WAY / THREE_WAY",
         "agents": ["RECONCILIATION_ASSIST"],
-        "notes": "Auto-close band: qty 5%, price 3%, amount 3% -- within band = AUTO_CLOSE rec, no agent",
+        "notes": "First-partial invoices (no prior invoices on PO) always route here -- tolerance self-comparison bypassed.",
     },
     {
         "condition": "Any exceptions present after matching",
@@ -655,55 +689,87 @@ def agent_reference(request):
             "icon": "bi-cloud-arrow-up",
             "color": "secondary",
             "performer": "User / System",
-            "description": "Invoice PDF uploaded via the Documents UI or API. A DocumentUpload record is created and the file is stored.",
+            "description": "Invoice PDF uploaded via the Documents UI or API. A DocumentUpload record is created and the file is stored in Azure Blob Storage.",
         },
         {
             "step": 2,
             "name": "OCR (Azure Document Intelligence)",
             "icon": "bi-eye",
             "color": "info",
-            "performer": "Azure Document Intelligence",
-            "description": "The uploaded PDF is sent to Azure Document Intelligence for optical character recognition. Raw text and layout data are returned.",
+            "performer": "Azure Document Intelligence (PyPDF2 fallback)",
+            "description": "The uploaded PDF is sent to Azure Document Intelligence for OCR. Raw text and layout data are returned. PyPDF2 fallback for text-based PDFs. QR code detection for e-invoices (IN).",
         },
         {
             "step": 3,
-            "name": "Invoice Extraction Agent",
-            "icon": "bi-robot",
-            "color": "primary",
-            "performer": "Invoice Extraction Agent (GPT-4o)",
-            "description": "The OCR text is passed to the Invoice Extraction Agent which uses GPT-4o with response_format=json_object and temperature=0 to extract structured fields (invoice number, date, vendor, line items, totals). Full agent traceability is recorded.",
+            "name": "Category Classification",
+            "icon": "bi-tags",
+            "color": "info",
+            "performer": "System (CategoryClassifier)",
+            "description": "Classify the invoice as goods, service, or travel based on OCR text analysis. Determines which category overlay prompt to apply in step 5.",
         },
         {
             "step": 4,
-            "name": "Parse & Normalize",
-            "icon": "bi-funnel",
-            "color": "success",
-            "performer": "System (extraction_adapter)",
-            "description": "The agent's JSON output is parsed into a structured dict. Dates, amounts, and currency codes are normalized. Line items are mapped to a standard schema.",
+            "name": "Prompt Composition",
+            "icon": "bi-puzzle",
+            "color": "info",
+            "performer": "System (InvoicePromptComposer)",
+            "description": "Modular 3-step prompt assembly: (1) base extraction prompt, (2) category overlay (goods/service/travel), (3) country overlay (India GST / generic VAT). Falls back to monolithic prompt if base is absent.",
         },
         {
             "step": 5,
-            "name": "Validation & Persistence",
-            "icon": "bi-check2-square",
-            "color": "warning",
-            "performer": "System (extraction tasks)",
-            "description": "Extracted data is validated (required fields, amount consistency). An Invoice record and InvoiceLineItems are created in the database. Extraction confidence score is computed.",
+            "name": "LLM Extraction",
+            "icon": "bi-robot",
+            "color": "primary",
+            "performer": "Invoice Extraction Agent (GPT-4o, temp=0)",
+            "description": "The composed prompt + OCR text are sent to GPT-4o with response_format=json_object and temperature=0. Extracts structured fields: invoice number, date, vendor, line items, totals, tax details. Full AgentRun traceability recorded.",
         },
         {
             "step": 6,
-            "name": "AP Case Creation",
-            "icon": "bi-briefcase",
-            "color": "dark",
-            "performer": "System (CaseCreationService)",
-            "description": "An AP Case is created linking the invoice. The case orchestrator begins driving the invoice through its processing path.",
+            "name": "Response Repair",
+            "icon": "bi-wrench",
+            "color": "warning",
+            "performer": "System (ResponseRepairService)",
+            "description": "5 deterministic pre-parser rules fix common LLM JSON issues: strip markdown fences, fix trailing commas, repair truncated JSON, unwrap nested objects, normalize line_items array. 25 dedicated tests.",
         },
         {
             "step": 7,
-            "name": "Invoice Understanding Agent",
-            "icon": "bi-lightbulb",
-            "color": "purple",
-            "performer": "Invoice Understanding Agent (conditional)",
-            "description": f"Only triggered when extraction confidence is below {confidence_threshold}%. Uses tools (invoice_details, vendor_search) to validate and cross-check the extracted data. Runs within the case orchestrator's EXTRACTION stage.",
+            "name": "Parse",
+            "icon": "bi-braces",
+            "color": "success",
+            "performer": "System (ParserService)",
+            "description": "Parse the repaired JSON into structured domain objects. Map raw fields to the Invoice schema. Extract line items into InvoiceLineItem objects.",
+        },
+        {
+            "step": 8,
+            "name": "Normalize",
+            "icon": "bi-funnel",
+            "color": "success",
+            "performer": "System (NormalizationService)",
+            "description": "Normalize dates (dateparser), amounts (Decimal), currency codes (ISO 4217), PO numbers (strip prefixes/whitespace). Standardize vendor names for matching.",
+        },
+        {
+            "step": 9,
+            "name": "Validate",
+            "icon": "bi-check2-square",
+            "color": "warning",
+            "performer": "System (ValidationService)",
+            "description": "Field validation: required fields present, amount consistency (line totals = subtotal + tax = grand total), date reasonability, decision codes generated for each validation outcome.",
+        },
+        {
+            "step": 10,
+            "name": "Duplicate Detection & Persistence",
+            "icon": "bi-files",
+            "color": "warning",
+            "performer": "System (DuplicateDetectionService + PersistenceService)",
+            "description": "Check for duplicate invoice number + vendor + amount within 90-day window. Compute field-level confidence scores. Create Invoice + InvoiceLineItem records. Store extraction_raw_json for audit.",
+        },
+        {
+            "step": 11,
+            "name": "Approval Gate",
+            "icon": "bi-shield-check",
+            "color": "dark",
+            "performer": "System (ApprovalService)",
+            "description": f"Auto-approve if confidence >= {confidence_threshold}% and no critical validation failures. Otherwise route to human review (PENDING_APPROVAL). Credit system tracks extraction quality per vendor.",
         },
     ]
 
@@ -1059,6 +1125,293 @@ def agent_reference(request):
         {"type": "DUPLICATE_INVOICE", "label": "Duplicate Invoice Check", "db_model": "Invoice (local)", "fallback": "DuplicateInvoiceDBFallbackAdapter"},
     ]
 
+    # ---- Supervisor Agent ----
+    supervisor_skills = []
+    supervisor_tool_list = []
+    supervisor_phases = [
+        {
+            "name": "UNDERSTAND",
+            "skill": "invoice_extraction",
+            "icon": "bi-eye",
+            "color": "info",
+            "description": "Extract structured data from the invoice document via OCR, classification, and field extraction.",
+            "tools": ["get_ocr_text", "classify_document", "extract_invoice_fields", "re_extract_field"],
+        },
+        {
+            "name": "VALIDATE",
+            "skill": "ap_validation",
+            "icon": "bi-check2-square",
+            "color": "warning",
+            "description": "Validate extraction quality, detect duplicates, verify vendor identity by tax ID, and check tax computation.",
+            "tools": ["validate_extraction", "repair_extraction", "check_duplicate", "verify_vendor", "verify_tax_computation"],
+        },
+        {
+            "name": "MATCH",
+            "skill": "ap_3way_matching",
+            "icon": "bi-arrow-left-right",
+            "color": "primary",
+            "description": "Run deterministic header, line, and GRN matching against PO data using configurable tolerance thresholds.",
+            "tools": ["po_lookup", "run_header_match", "run_line_match", "grn_lookup", "run_grn_match", "get_tolerance_config"],
+        },
+        {
+            "name": "INVESTIGATE",
+            "skill": "ap_investigation",
+            "icon": "bi-search",
+            "color": "danger",
+            "description": "Recover from matching failures via re-extraction, PO/GRN retrieval delegation, vendor history, and case history.",
+            "tools": ["re_extract_field", "invoke_po_retrieval_agent", "invoke_grn_retrieval_agent", "get_vendor_history", "get_case_history", "invoice_details"],
+        },
+        {
+            "name": "DECIDE",
+            "skill": "ap_review_routing",
+            "icon": "bi-signpost-split",
+            "color": "success",
+            "description": "Persist results, create cases, submit recommendation, route to review queues, auto-close, or escalate.",
+            "tools": ["persist_invoice", "create_case", "submit_recommendation", "assign_reviewer", "generate_case_summary", "auto_close_case", "escalate_case", "exception_list", "reconciliation_summary"],
+        },
+    ]
+
+    try:
+        from apps.agents.skills.base import SkillRegistry
+        from apps.agents.services.supervisor_agent import SUPERVISOR_MAX_TOOL_ROUNDS, _ensure_skills_loaded
+        _ensure_skills_loaded()
+        for skill_name in ["invoice_extraction", "ap_validation", "ap_3way_matching", "ap_investigation", "ap_review_routing"]:
+            skill = SkillRegistry.get(skill_name)
+            if skill:
+                supervisor_skills.append({
+                    "name": skill.name,
+                    "description": skill.description,
+                    "tools": skill.tools,
+                    "tool_count": len(skill.tools),
+                    "decision_hints": skill.decision_hints,
+                    "prompt_extension": skill.prompt_extension,
+                })
+        supervisor_tool_list = SkillRegistry.all_tools(
+            ["invoice_extraction", "ap_validation", "ap_3way_matching", "ap_investigation", "ap_review_routing"]
+        )
+    except Exception:
+        SUPERVISOR_MAX_TOOL_ROUNDS = 15
+
+    supervisor_erp_routable = ["po_lookup", "grn_lookup", "vendor_search", "verify_vendor", "check_duplicate"]
+
+    supervisor_decision_rules = [
+        {"rule": "Must call submit_recommendation", "enforcement": "Code (interpret_response)", "icon": "bi-exclamation-triangle", "color": "danger"},
+        {"rule": "Never auto-close without checking ALL lines against tolerance", "enforcement": "Prompt instruction", "icon": "bi-x-octagon", "color": "danger"},
+        {"rule": "Verify vendor by tax ID, not name alone", "enforcement": "Prompt + verify_vendor tool", "icon": "bi-person-check", "color": "warning"},
+        {"rule": "Attempt re-extraction before PO_NOT_FOUND escalation", "enforcement": "Prompt instruction", "icon": "bi-arrow-repeat", "color": "info"},
+        {"rule": "Never hardcode tolerance values", "enforcement": "Prompt + get_tolerance_config tool", "icon": "bi-sliders", "color": "primary"},
+        {"rule": "No fabricated tool outputs", "enforcement": "Prompt instruction", "icon": "bi-shield-check", "color": "secondary"},
+        {"rule": "Max 15 tool rounds per session", "enforcement": "Code (MAX_TOOL_ROUNDS patch)", "icon": "bi-speedometer2", "color": "dark"},
+    ]
+
+    supervisor_confidence_routing = [
+        {"threshold": ">= 0.9", "condition": "All lines match within tolerance", "recommendation": "AUTO_CLOSE", "color": "success"},
+        {"threshold": ">= 0.6", "condition": "Some deviations exist", "recommendation": "SEND_TO_AP_REVIEW", "color": "warning"},
+        {"threshold": "< 0.6", "condition": "Critical exceptions found", "recommendation": "ESCALATE_TO_MANAGER", "color": "danger"},
+    ]
+
+    # ---- Langfuse Evaluation Score Catalog ----
+    langfuse_score_domains = [
+        {
+            "domain": "Extraction",
+            "icon": "bi-file-earmark-text",
+            "color": "primary",
+            "count": 21,
+            "examples": [
+                "extraction_success", "extraction_confidence", "extraction_is_valid",
+                "extraction_is_duplicate", "response_was_repaired", "qr_detected",
+                "decision_code_count", "weakest_critical_field_score", "ocr_char_count",
+                "extraction_auto_approve_confidence", "extraction_approval_decision",
+                "extraction_corrections_count", "bulk_job_success_rate",
+            ],
+        },
+        {
+            "domain": "Reconciliation",
+            "icon": "bi-arrow-left-right",
+            "color": "info",
+            "count": 37,
+            "examples": [
+                "recon_final_success", "recon_final_status_matched", "recon_po_found",
+                "recon_grn_found", "recon_auto_close_eligible", "recon_exception_count_final",
+                "recon_header_match_ratio", "recon_line_match_ratio", "recon_grn_match_ratio",
+                "recon_po_lookup_authoritative", "recon_match_status_correct",
+                "recon_auto_close_correct", "recon_review_outcome",
+            ],
+        },
+        {
+            "domain": "Agents",
+            "icon": "bi-robot",
+            "color": "success",
+            "count": 12,
+            "examples": [
+                "agent_pipeline_final_confidence", "agent_pipeline_recommendation_present",
+                "agent_pipeline_auto_close_candidate", "agent_confidence",
+                "agent_tool_success_rate", "tool_call_success",
+                "agent_feedback_triggered_rerun", "agent_feedback_improved_outcome",
+            ],
+        },
+        {
+            "domain": "Case / Review",
+            "icon": "bi-briefcase",
+            "color": "warning",
+            "count": 20,
+            "examples": [
+                "case_processing_success", "case_closed", "case_auto_closed",
+                "case_stages_executed", "case_routed_to_review",
+                "review_approved", "review_rejected", "review_had_corrections",
+                "review_fields_corrected_count", "case_non_po_risk_score",
+            ],
+        },
+        {
+            "domain": "Posting",
+            "icon": "bi-send",
+            "color": "dark",
+            "count": 17,
+            "examples": [
+                "posting_confidence", "posting_touchless", "posting_ready_to_submit",
+                "posting_vendor_mapping_success", "posting_item_mapping_success_rate",
+                "posting_validation_error_count", "posting_payload_build_success",
+            ],
+        },
+        {
+            "domain": "ERP",
+            "icon": "bi-cloud",
+            "color": "secondary",
+            "count": 23,
+            "examples": [
+                "erp_resolution_success", "erp_resolution_fresh", "erp_cache_hit",
+                "erp_live_lookup_success", "erp_live_lookup_timeout",
+                "erp_db_fallback_used", "erp_submission_success",
+                "erp_duplicate_found", "erp_retry_success",
+            ],
+        },
+        {
+            "domain": "Cross-Cutting / Decision Quality",
+            "icon": "bi-intersect",
+            "color": "danger",
+            "count": 13,
+            "examples": [
+                "latency_ok", "fallback_used", "rbac_guardrail", "rbac_data_scope",
+                "copilot_session_length", "decision_confidence_alignment",
+                "review_required_correctly_triggered", "stale_data_accepted",
+            ],
+        },
+        {
+            "domain": "Supervisor Agent",
+            "icon": "bi-diagram-3",
+            "color": "purple",
+            "count": 6,
+            "examples": [
+                "supervisor_confidence", "supervisor_recommendation_present",
+                "supervisor_tools_used_count", "supervisor_recovery_used",
+                "supervisor_auto_close_candidate",
+            ],
+        },
+        {
+            "domain": "System Agents",
+            "icon": "bi-gear",
+            "color": "secondary",
+            "count": 7,
+            "examples": [
+                "system_agent_success", "system_agent_decision_count",
+                "system_review_routing_success", "system_case_summary_success",
+                "system_bulk_intake_success", "system_posting_preparation_success",
+            ],
+        },
+    ]
+
+    langfuse_latency_thresholds = [
+        {"operation": "OCR (Document Intelligence)", "threshold_ms": 30000, "threshold_label": "30s"},
+        {"operation": "LLM Generation", "threshold_ms": 20000, "threshold_label": "20s"},
+        {"operation": "Agent Tool Call", "threshold_ms": 10000, "threshold_label": "10s"},
+        {"operation": "ERP API Call", "threshold_ms": 5000, "threshold_label": "5s"},
+        {"operation": "Reconciliation Sub-Stage", "threshold_ms": 5000, "threshold_label": "5s"},
+        {"operation": "Posting Sub-Stage", "threshold_ms": 5000, "threshold_label": "5s"},
+        {"operation": "Database Query / Fallback", "threshold_ms": 2000, "threshold_label": "2s"},
+    ]
+
+    langfuse_root_traces = [
+        "extraction_pipeline", "reconciliation_pipeline", "agent_pipeline",
+        "case_pipeline", "posting_pipeline", "erp_submission_pipeline",
+        "review_workflow", "copilot_session", "supervisor_pipeline",
+        "system_agent", "system_bulk_intake", "system_case_intake",
+        "system_posting_preparation",
+    ]
+
+    # ---- Celery Task Inventory ----
+    celery_tasks = [
+        {
+            "task": "extraction.tasks.run_extraction_task",
+            "trigger": "On-demand (document upload)",
+            "max_retries": "3",
+            "retry_delay": "60s",
+            "acks_late": "No",
+            "description": "11-stage extraction pipeline: OCR, classify, compose, LLM, repair, parse, normalize, validate, duplicate, persist, approve.",
+        },
+        {
+            "task": "reconciliation.tasks.run_reconciliation_task",
+            "trigger": "On-demand (post-extraction approval)",
+            "max_retries": "5",
+            "retry_delay": "60s",
+            "acks_late": "No",
+            "description": "Batch reconciliation run: mode resolution, PO/GRN lookup, header/line/GRN matching, tolerance, classification, exception building.",
+        },
+        {
+            "task": "reconciliation.tasks.reconcile_single_invoice_task",
+            "trigger": "On-demand (convenience wrapper)",
+            "max_retries": "5",
+            "retry_delay": "60s",
+            "acks_late": "No",
+            "description": "Single-invoice convenience wrapper around run_reconciliation_task.",
+        },
+        {
+            "task": "agents.tasks.run_agent_pipeline_task",
+            "trigger": "Auto-chained from reconciliation (non-MATCHED results)",
+            "max_retries": "1",
+            "retry_delay": "30s",
+            "acks_late": "No",
+            "description": "Agent orchestrator pipeline: PolicyEngine plan, execute agents in sequence, feedback loop for PO recovery.",
+        },
+        {
+            "task": "cases.tasks.process_case_task",
+            "trigger": "On-demand (case creation)",
+            "max_retries": "3",
+            "retry_delay": "30s",
+            "acks_late": "Yes",
+            "description": "Case orchestrator: drives the APCase through its processing path stages via CaseOrchestrator.run().",
+        },
+        {
+            "task": "cases.tasks.reprocess_case_from_stage_task",
+            "trigger": "On-demand (reprocessing request)",
+            "max_retries": "2",
+            "retry_delay": "10s",
+            "acks_late": "Yes",
+            "description": "Resume case processing from a specific stage (e.g., after human review or extraction correction).",
+        },
+        {
+            "task": "core_eval.tasks.process_approved_learning_actions",
+            "trigger": "Celery Beat (every 30 min)",
+            "max_retries": "1",
+            "retry_delay": "—",
+            "acks_late": "No",
+            "description": "Process approved LearningAction records from the core_eval framework. Only scheduled Beat task.",
+        },
+    ]
+
+    celery_task_chain = {
+        "description": "reconciliation_task -> (auto-chain) -> run_agent_pipeline_task for non-MATCHED results",
+        "actor_propagation": "actor_user_id passed through all Celery task signatures via .as_celery_headers()",
+    }
+
+    # ---- Review Action Types ----
+    review_action_types = [
+        {"action": "APPROVE", "icon": "bi-check-circle", "color": "success", "description": "Accept the reconciliation result as-is. Invoice proceeds to posting."},
+        {"action": "APPROVE_WITH_FIXES", "icon": "bi-pencil-square", "color": "primary", "description": "Accept with field corrections. Reviewer-corrected values are persisted and a LearningSignal is emitted."},
+        {"action": "REJECT", "icon": "bi-x-circle", "color": "danger", "description": "Reject the invoice. Case moves to REJECTED terminal state."},
+        {"action": "NEEDS_INFO", "icon": "bi-question-circle", "color": "warning", "description": "Request additional information. Case remains in IN_REVIEW, pending vendor clarification."},
+        {"action": "ESCALATE", "icon": "bi-arrow-up-circle", "color": "dark", "description": "Escalate to Finance Manager. Case moves to ESCALATED state with priority bump."},
+    ]
+
     response = render(request, "agents/reference.html", {
         "page_version": _PAGE_VERSION,
         "agents_info": agents_info,
@@ -1110,6 +1463,25 @@ def agent_reference(request):
         "erp_connector_info": erp_connector_info,
         "erp_resolution_chain": erp_resolution_chain,
         "erp_resolution_types_info": erp_resolution_types_info,
+        # Supervisor Agent
+        "supervisor_phases": supervisor_phases,
+        "supervisor_skills": supervisor_skills,
+        "supervisor_tool_list": supervisor_tool_list,
+        "supervisor_tool_count": len(supervisor_tool_list),
+        "supervisor_max_tool_rounds": SUPERVISOR_MAX_TOOL_ROUNDS,
+        "supervisor_erp_routable": supervisor_erp_routable,
+        "supervisor_decision_rules": supervisor_decision_rules,
+        "supervisor_confidence_routing": supervisor_confidence_routing,
+        # Langfuse Evaluation Score Catalog
+        "langfuse_score_domains": langfuse_score_domains,
+        "langfuse_total_scores": sum(d["count"] for d in langfuse_score_domains),
+        "langfuse_latency_thresholds": langfuse_latency_thresholds,
+        "langfuse_root_traces": langfuse_root_traces,
+        # Celery Tasks
+        "celery_tasks": celery_tasks,
+        "celery_task_chain": celery_task_chain,
+        # Review Actions
+        "review_action_types": review_action_types,
     })
     response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response["Pragma"] = "no-cache"

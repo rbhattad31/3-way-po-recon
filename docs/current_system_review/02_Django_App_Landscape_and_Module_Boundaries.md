@@ -17,8 +17,8 @@
 | 6 | `extraction_core` | Platform | ExtractionRun model, control center views, extraction configuration API |
 | 7 | `extraction_configs` | Config | Extraction configuration models and admin |
 | 8 | `reconciliation` | Domain/Engine | 14-service matching engine, ReconciliationConfig, ReconciliationPolicy, ReconciliationResult, ReconciliationException, ReconciliationRun |
-| 9 | `agents` | Agentic | AgentDefinition, AgentRun, AgentOrchestrationRun, AgentStep, AgentMessage, DecisionLog, AgentRecommendation, AgentEscalation, LLMCostRate + all agent services |
-| 10 | `tools` | Agentic | BaseTool, ToolRegistry, 6 concrete tools, tool call logger |
+| 9 | `agents` | Agentic | AgentDefinition, AgentRun, AgentOrchestrationRun, AgentStep, AgentMessage, DecisionLog, AgentRecommendation, AgentEscalation, LLMCostRate + all agent services + SupervisorAgent (skills/, plugins/) |
+| 10 | `tools` | Agentic | BaseTool, ToolRegistry, 6 base + 24 supervisor tools, tool call logger |
 | 11 | `cases` | Domain | APCase (central object), APCaseStage, APCaseDecision, ReviewAssignment, state machine, CaseOrchestrator, StageExecutor |
 | 12 | `copilot` | UI/AI | Conversational copilot service, API and template views |
 | 13 | `dashboard` | UI/Analytics | Dashboard views, agent governance service, analytics APIs |

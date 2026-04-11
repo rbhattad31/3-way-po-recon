@@ -1,0 +1,544 @@
+{% extends "base.html" %}
+{% load static %}
+{% load rbac_tags %}
+
+{% block title %}{% if ctx and ctx.case %}Case {{ ctx.case.case_number }} - {% endif %}AP Copilot{% endblock %}
+
+{% block extra_css %}
+<link href="{% static 'css/ap-copilot.css' %}?v={% now 'U' %}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="copilot-app{% if ctx and ctx.case %} copilot-case-mode{% endif %}" id="copilotApp">
+
+  {# ================================================================== #}
+  {# LEFT SIDEBAR                                                       #}
+  {# ================================================================== #}
+  <aside class="copilot-sidebar" id="copilotSidebar">
+    <div class="copilot-sidebar-header">
+      {% if ctx and ctx.case %}
+        {# Case mode sidebar header #}
+        <div class="d-flex align-items-center gap-2">
+          <i class="bi bi-stars text-primary"></i>
+          <h6 class="mb-0">AP Copilot</h6>
+        </div>
+        <a href="{% url 'copilot:case_hub' %}" class="btn btn-sm btn-outline-primary rounded-pill" title="New Chat">
+          <i class="bi bi-plus-lg me-1"></i>New Chat
+        </a>
+      {% else %}
+        {# Plain chat mode sidebar header #}
+        <button class="btn btn-sm btn-outline-secondary copilot-sidebar-collapse" id="btnCollapseSidebar" title="Collapse sidebar">
+          <i class="bi bi-layout-sidebar"></i>
+        </button>
+        <a href="{% url 'copilot:case_hub' %}" class="copilot-sidebar-logo">
+          <i class="bi bi-stars text-primary"></i>
+          <span>AP Copilot</span>
+        </a>
+        <button class="btn btn-sm btn-primary copilot-sidebar-new" id="btnNewChat" title="New chat">
+          <i class="bi bi-plus-lg"></i>
+        </button>
+      {% endif %}
+    </div>
+
+    {# Search #}
+    <div class="copilot-sidebar-search">
+      {% if ctx and ctx.case %}
+      <input type="text" class="form-control form-control-sm" placeholder="Search conversations..." id="sidebarSearch">
+      {% else %}
+      <div class="input-group input-group-sm">
+        <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search text-muted"></i></span>
+        <input type="text" class="form-control border-start-0" placeholder="Search sessions..." id="sidebarSearch">
+      </div>
+      {% endif %}
+    </div>
+
+    {# Session list #}
+    <div class="copilot-sidebar-body" id="sidebarBody">
+      {% if ctx and ctx.case %}
+        {# Case mode: current case + recent sessions #}
+        <div class="copilot-sidebar-section">
+          <div class="copilot-sidebar-label">Current Case</div>
+          <div class="copilot-session-item active">
+            <div class="copilot-session-info">
+              <div class="copilot-session-title">{{ ctx.case.case_number }}</div>
+              <div class="copilot-session-meta">
+                <span class="badge bg-primary-subtle text-primary-emphasis copilot-session-badge">Active</span>
+                {% if ctx.vendor %}
+                <span class="text-muted">{{ ctx.vendor.name|truncatechars:20 }}</span>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="copilot-sidebar-section">
+          <div class="copilot-sidebar-label">Recent Sessions</div>
+          {% for s in sessions %}
+          <a href="{% url 'copilot:session' session_id=s.id %}" class="copilot-session-item" data-session-id="{{ s.id }}">
+            <div class="copilot-session-info">
+              <div class="copilot-session-title">{{ s.title|default:"Untitled" }}</div>
+              <div class="copilot-session-meta">
+                {% if s.linked_case %}
+                <span class="badge bg-info-subtle text-info-emphasis copilot-session-badge">{{ s.linked_case.case_number }}</span>
+                {% endif %}
+                <span class="text-muted">
+                  {% if s.last_message_at %}{{ s.last_message_at|timesince }}{% else %}{{ s.created_at|timesince }}{% endif %} ago
+                </span>
+              </div>
+            </div>
+          </a>
+          {% empty %}
+          <div class="copilot-sidebar-empty">
+            <i class="bi bi-chat-dots"></i>
+            <p class="mb-0 small text-muted">No other sessions</p>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        {# Plain chat mode: all sessions #}
+        {% for s in sessions %}
+        <a href="{% url 'copilot:session' session_id=s.id %}"
+           class="copilot-session-item {% if session_id == s.id|stringformat:'s' %}active{% endif %}"
+           data-session-id="{{ s.id }}"
+           data-case-id="{{ s.linked_case_id|default:'' }}">
+          <div class="copilot-session-icon">
+            <i class="bi bi-chat-dots"></i>
+          </div>
+          <div class="copilot-session-info">
+            <div class="copilot-session-title">{{ s.title|default:"Untitled" }}</div>
+            <div class="copilot-session-meta">
+              {% if s.linked_case %}
+              <span class="badge bg-primary-subtle text-primary-emphasis copilot-session-badge">{{ s.linked_case.case_number }}</span>
+              {% endif %}
+              <span class="text-muted">
+                {% if s.last_message_at %}{{ s.last_message_at|timesince }}{% else %}{{ s.created_at|timesince }}{% endif %} ago
+              </span>
+            </div>
+          </div>
+        </a>
+        {% empty %}
+        <div class="copilot-sidebar-empty" id="sidebarEmpty">
+          <i class="bi bi-chat-dots" style="font-size:1.5rem;"></i>
+          <p class="mb-1 fw-medium">No sessions yet</p>
+          <p class="small text-muted mb-0">Start a new chat to investigate a case</p>
+        </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+  </aside>
+
+  {# ================================================================== #}
+  {# MAIN AREA                                                          #}
+  {# ================================================================== #}
+  <main class="copilot-main" id="copilotMain">
+
+    {% if ctx and ctx.case %}
+    {# ================================================================ #}
+    {# CASE HEADER (case mode only)                                     #}
+    {# ================================================================ #}
+    <header class="copilot-case-header" id="caseHeader">
+      {# Row 1: identity badges + key facts #}
+      <div class="copilot-case-header-info">
+        <div class="copilot-case-identity">
+          <div class="copilot-case-badge">
+            <span class="badge bg-primary-subtle text-primary-emphasis">{{ ctx.case.case_number }}</span>
+            <span class="badge
+              {% if ctx.case.status_code == 'CLOSED' %}bg-success-subtle text-success-emphasis
+              {% elif ctx.case.status_code == 'FAILED' or ctx.case.status_code == 'REJECTED' %}bg-danger-subtle text-danger-emphasis
+              {% elif ctx.case.status_code == 'ESCALATED' %}bg-warning-subtle text-warning-emphasis
+              {% elif ctx.case.status_code == 'IN_REVIEW' or ctx.case.status_code == 'READY_FOR_REVIEW' %}bg-info-subtle text-info-emphasis
+              {% else %}bg-secondary-subtle text-secondary-emphasis{% endif %}">
+              {{ ctx.case.status }}
+            </span>
+          </div>
+        </div>
+
+        <div class="copilot-case-facts">
+          {% if ctx.vendor %}
+          <div class="copilot-case-fact" title="Vendor">
+            <i class="bi bi-building"></i>
+            <span class="copilot-case-fact-label">Vendor</span>
+            <span class="copilot-case-fact-value">{{ ctx.vendor.name|truncatechars:30 }}</span>
+          </div>
+          {% endif %}
+          {% if ctx.invoice %}
+          <div class="copilot-case-fact" title="Invoice Number">
+            <i class="bi bi-receipt"></i>
+            <span class="copilot-case-fact-label">Invoice</span>
+            <span class="copilot-case-fact-value">{{ ctx.invoice.invoice_number|default:"-" }}</span>
+          </div>
+          <div class="copilot-case-fact" title="Invoice Amount">
+            <i class="bi bi-currency-dollar"></i>
+            <span class="copilot-case-fact-label">Amount</span>
+            <span class="copilot-case-fact-value fw-semibold">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.amount|default:"-" }}</span>
+          </div>
+          {% endif %}
+          {% if ctx.purchase_order %}
+          <div class="copilot-case-fact" title="Purchase Order">
+            <i class="bi bi-cart-check"></i>
+            <span class="copilot-case-fact-label">PO</span>
+            <span class="copilot-case-fact-value">{{ ctx.purchase_order.po_number }}</span>
+          </div>
+          {% endif %}
+          {% if ctx.reconciliation %}
+          <div class="copilot-case-fact" title="Match Status">
+            <i class="bi bi-check2-square"></i>
+            <span class="copilot-case-fact-label">Match</span>
+            <span class="copilot-case-fact-value badge
+              {% if ctx.reconciliation.match_status_code == 'MATCHED' %}bg-success-subtle text-success-emphasis
+              {% elif ctx.reconciliation.match_status_code == 'PARTIAL_MATCH' %}bg-warning-subtle text-warning-emphasis
+              {% elif ctx.reconciliation.match_status_code == 'UNMATCHED' %}bg-danger-subtle text-danger-emphasis
+              {% else %}bg-secondary-subtle text-secondary-emphasis{% endif %}">
+              {{ ctx.reconciliation.match_status }}
+            </span>
+          </div>
+          {% endif %}
+          <div class="copilot-case-fact" title="Processing Path">
+            <i class="bi bi-signpost-split"></i>
+            <span class="copilot-case-fact-label">Path</span>
+            <span class="copilot-case-fact-value">{{ ctx.case.processing_path }}</span>
+          </div>
+        </div>
+      </div>
+
+      {# Row 2: action buttons #}
+      <div class="copilot-case-header-actions">
+        <div class="copilot-case-actions">
+          {% has_permission "reviews.decide" as can_decide %}
+          {% has_permission "cases.edit" as can_edit_case %}
+          {% has_permission "invoices.view" as can_view_invoice %}
+
+          {% if ctx.case.status_code == "READY_FOR_REVIEW" or ctx.case.status_code == "IN_REVIEW" or ctx.case.status_code == "REVIEW_COMPLETED" or ctx.case.status_code == "READY_FOR_APPROVAL" or ctx.case.status_code == "APPROVAL_IN_PROGRESS" %}
+            {% if can_decide %}
+            <button class="btn btn-sm btn-success copilot-case-action-btn" onclick="caseAction('approve')" title="Approve">
+              <i class="bi bi-check-circle me-1"></i>Approve
+            </button>
+            <button class="btn btn-sm btn-danger copilot-case-action-btn" onclick="caseAction('reject')" title="Reject">
+              <i class="bi bi-x-circle me-1"></i>Reject
+            </button>
+            {% endif %}
+            {% if can_edit_case %}
+            <button class="btn btn-sm btn-outline-warning copilot-case-action-btn" onclick="caseAction('request_info')" title="Request info">
+              <i class="bi bi-question-circle me-1"></i>Request Info
+            </button>
+            <button class="btn btn-sm btn-outline-danger copilot-case-action-btn" onclick="caseAction('escalate')" title="Escalate">
+              <i class="bi bi-exclamation-triangle me-1"></i>Escalate
+            </button>
+            {% endif %}
+          {% elif ctx.case.status_code == "FAILED" or ctx.case.status_code == "ESCALATED" or ctx.case.status_code == "REJECTED" %}
+            {% if can_edit_case %}
+            <button class="btn btn-sm btn-outline-warning copilot-case-action-btn" onclick="caseAction('reprocess')" title="Reprocess">
+              <i class="bi bi-arrow-clockwise me-1"></i>Reprocess
+            </button>
+            {% endif %}
+          {% elif ctx.case.status_code == "CLOSED" %}
+            <span class="badge bg-success-subtle text-success-emphasis px-3 py-2">
+              <i class="bi bi-check-circle-fill me-1"></i>Closed
+            </span>
+          {% else %}
+            <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-2">
+              <i class="bi bi-hourglass-split me-1"></i>Processing
+            </span>
+          {% endif %}
+
+          <div class="copilot-case-action-divider"></div>
+          {% if ctx.invoice.id and can_view_invoice %}
+          <button class="btn btn-sm btn-outline-secondary copilot-case-action-btn" onclick="downloadInvoice({{ ctx.invoice.id }})" title="Download Invoice">
+            <i class="bi bi-download"></i>
+          </button>
+          {% endif %}
+          <button class="btn btn-sm btn-outline-secondary copilot-case-action-btn" onclick="exportReport()" title="Export Report">
+            <i class="bi bi-file-earmark-arrow-down"></i>
+          </button>
+          <a href="{% url 'cases:case_agent_view' ctx.case.id %}" class="btn btn-sm btn-outline-primary copilot-case-action-btn" title="Open in Case Console">
+            <i class="bi bi-display"></i>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    {# ================================================================ #}
+    {# TABS (case mode only)                                            #}
+    {# ================================================================ #}
+    <nav class="copilot-tabs-nav" id="caseTabsNav">
+      <ul class="nav nav-tabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="tab-chat" data-bs-toggle="tab" data-bs-target="#panel-chat" type="button" role="tab" aria-selected="true">
+            <i class="bi bi-stars me-1"></i>Chat
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-overview" data-bs-toggle="tab" data-bs-target="#panel-overview" type="button" role="tab">
+            <i class="bi bi-grid-1x2 me-1"></i>Overview
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-invoice" data-bs-toggle="tab" data-bs-target="#panel-invoice" type="button" role="tab">
+            <i class="bi bi-receipt me-1"></i>Invoice
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-po-grn" data-bs-toggle="tab" data-bs-target="#panel-po-grn" type="button" role="tab">
+            <i class="bi bi-cart-check me-1"></i>PO & GRN
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-matching" data-bs-toggle="tab" data-bs-target="#panel-matching" type="button" role="tab">
+            <i class="bi bi-check2-square me-1"></i>Matching
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link {% if ctx.exceptions %}text-warning{% endif %}" id="tab-exceptions" data-bs-toggle="tab" data-bs-target="#panel-exceptions" type="button" role="tab">
+            <i class="bi bi-exclamation-triangle me-1"></i>Exceptions
+            {% if ctx.exceptions %}<span class="badge bg-warning text-dark ms-1">{{ ctx.exceptions|length }}</span>{% endif %}
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-timeline" data-bs-toggle="tab" data-bs-target="#panel-timeline" type="button" role="tab">
+            <i class="bi bi-clock-history me-1"></i>Timeline
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-governance" data-bs-toggle="tab" data-bs-target="#panel-governance" type="button" role="tab">
+            <i class="bi bi-shield-check me-1"></i>Governance
+          </button>
+        </li>
+      </ul>
+    </nav>
+
+    {# Tab content body #}
+    <div class="copilot-tab-body">
+      <div class="tab-content copilot-tab-content" id="caseTabContent">
+
+        {# ── CHAT TAB ── #}
+        <div class="tab-pane fade show active" id="panel-chat" role="tabpanel">
+          <div class="copilot-chat-panel">
+    {% else %}
+    {# ================================================================ #}
+    {# TOP BAR (plain chat mode only)                                   #}
+    {# ================================================================ #}
+    <div class="copilot-topbar" id="copilotTopbar">
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-secondary d-none copilot-expand-btn" id="btnExpandSidebar" title="Show sidebar">
+          <i class="bi bi-layout-sidebar"></i>
+        </button>
+        <span class="copilot-topbar-title" id="topbarTitle">
+          {% if active_session %}
+            {{ active_session.title|default:"New Conversation" }}
+          {% else %}
+            AP Copilot
+          {% endif %}
+        </span>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-primary" id="btnLinkCase" title="Link case to this session">
+          <i class="bi bi-briefcase me-1"></i>
+          <span id="linkCaseLabel">Link Case</span>
+        </button>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ================================================================ #}
+    {# CHAT MESSAGES (shared between both modes)                        #}
+    {# ================================================================ #}
+    <div class="copilot-messages" id="chatMessages">
+      {% if chat_messages %}
+        {% for msg in chat_messages %}
+        <div class="copilot-msg {% if msg.message_type == 'USER' %}copilot-msg-user{% endif %}">
+          {% if msg.message_type == 'USER' %}
+          <div class="copilot-msg-avatar copilot-msg-avatar-user"><i class="bi bi-person-fill"></i></div>
+          <div class="copilot-msg-body">
+            <div class="copilot-msg-role">You</div>
+            <div class="copilot-msg-text">{{ msg.content|linebreaksbr }}</div>
+          </div>
+          {% else %}
+          <div class="copilot-msg-avatar copilot-msg-avatar-ai"><i class="bi bi-stars"></i></div>
+          <div class="copilot-msg-body">
+            <div class="copilot-msg-role">AP Copilot</div>
+            <div class="copilot-msg-text">{{ msg.content|linebreaksbr }}</div>
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      {% else %}
+        {# Welcome state #}
+        <div class="copilot-welcome" id="welcomeState">
+          <div class="copilot-welcome-icon">
+            <i class="bi bi-stars"></i>
+          </div>
+          <h4 class="mt-3 mb-2">AP Copilot</h4>
+          <p class="text-muted mb-4">
+            {% if ctx and ctx.case %}
+            Ask about this case, mismatches, exceptions, or recommendations.
+            {% else %}
+            Your AI assistant for AP case investigation.<br>
+            Ask about cases, invoices, mismatches, or recommendations.
+            {% endif %}
+          </p>
+
+          <div class="copilot-welcome-chips">
+            {% if ctx and ctx.case %}
+            <button class="copilot-chip" onclick="chatSendQuick('Summarize this case')"><i class="bi bi-chat-text me-1"></i>Summarize case</button>
+            <button class="copilot-chip" onclick="chatSendQuick('What are the exceptions?')"><i class="bi bi-exclamation-triangle me-1"></i>Show exceptions</button>
+            <button class="copilot-chip" onclick="chatSendQuick('What is the recommendation?')"><i class="bi bi-lightbulb me-1"></i>Recommendation</button>
+            <button class="copilot-chip" onclick="runSupervisor()"><i class="bi bi-cpu me-1"></i>Run Supervisor Agent</button>
+            {% else %}
+            <button class="copilot-chip" onclick="chipSend('Summarize the top exceptions across open cases')"><i class="bi bi-chat-text me-1"></i>Summarize exceptions</button>
+            <button class="copilot-chip" onclick="chipSend('What cases need my attention?')"><i class="bi bi-bell me-1"></i>Cases needing attention</button>
+            <button class="copilot-chip" onclick="chipSend('What is the recommended action?')"><i class="bi bi-lightbulb me-1"></i>Get recommendation</button>
+            {% endif %}
+          </div>
+
+          {% if not ctx or not ctx.case %}
+          <p class="text-muted small mt-3"><i class="bi bi-paperclip me-1"></i>Use the attachment button to upload an invoice</p>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+
+    {# Quick-question chips -- hidden while welcome is visible, shown after first message #}
+    <div class="copilot-quick-questions{% if not chat_messages %} d-none{% endif %}" id="quickQuestions">
+      {% if ctx and ctx.case %}
+      <button class="copilot-chip" onclick="chatSendQuick('Summarize this case')"><i class="bi bi-chat-text me-1"></i>Summarize case</button>
+      <button class="copilot-chip" onclick="chatSendQuick('What are the exceptions?')"><i class="bi bi-exclamation-triangle me-1"></i>Exceptions</button>
+      <button class="copilot-chip" onclick="chatSendQuick('What is the recommendation?')"><i class="bi bi-lightbulb me-1"></i>Recommendation</button>
+      {% else %}
+      <button class="copilot-chip" onclick="chipSend('Summarize the top exceptions across open cases')"><i class="bi bi-chat-text me-1"></i>Summarize exceptions</button>
+      <button class="copilot-chip" onclick="chipSend('What cases need my attention?')"><i class="bi bi-bell me-1"></i>Cases needing attention</button>
+      <button class="copilot-chip" onclick="chipSend('What is the recommended action?')"><i class="bi bi-lightbulb me-1"></i>Get recommendation</button>
+      {% endif %}
+    </div>
+
+    {# Input bar #}
+    <div class="copilot-input-area" id="chatInputArea">
+      <form id="chatForm" autocomplete="off">
+        <div class="copilot-input-row">
+          {% if ctx and ctx.case %}
+          <button type="button" class="btn btn-sm btn-outline-primary copilot-supervisor-btn" id="btnRunSupervisor" title="Run Supervisor Agent" onclick="runSupervisor();">
+            <i class="bi bi-cpu"></i>
+          </button>
+          {% endif %}
+          <button type="button" class="copilot-attach-btn" id="btnAttachFile" title="Upload invoice">
+            <i class="bi bi-paperclip"></i>
+          </button>
+          <input type="file" id="invoiceFileInput" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif" class="d-none">
+          <textarea id="chatInput" class="form-control"
+                    placeholder="{% if ctx and ctx.case %}Ask the copilot about this case...{% else %}Ask about a case, mismatch, or recommendation...{% endif %}"
+                    rows="1" maxlength="4000"></textarea>
+          <button type="submit" class="btn btn-primary copilot-send-btn" id="btnSend" disabled>
+            <i class="bi bi-{% if ctx and ctx.case %}send-fill{% else %}arrow-up{% endif %}"></i>
+          </button>
+        </div>
+      </form>
+      <div class="copilot-input-footer">
+        <span class="text-muted small">AP Copilot can make mistakes. Verify important information.</span>
+      </div>
+    </div>
+
+    {% if ctx and ctx.case %}
+          </div>{# /copilot-chat-panel #}
+        </div>{# /panel-chat #}
+
+        {# ── OVERVIEW TAB ── #}
+        <div class="tab-pane fade" id="panel-overview" role="tabpanel">
+          {% include "copilot/partials/tabs/_overview_tab.html" %}
+        </div>
+
+        {# ── INVOICE TAB ── #}
+        <div class="tab-pane fade" id="panel-invoice" role="tabpanel">
+          {% include "copilot/partials/tabs/_invoice_tab.html" %}
+        </div>
+
+        {# ── PO & GRN TAB ── #}
+        <div class="tab-pane fade" id="panel-po-grn" role="tabpanel">
+          {% include "copilot/partials/tabs/_po_grn_tab.html" %}
+        </div>
+
+        {# ── MATCHING TAB ── #}
+        <div class="tab-pane fade" id="panel-matching" role="tabpanel">
+          {% include "copilot/partials/tabs/_matching_tab.html" %}
+        </div>
+
+        {# ── EXCEPTIONS TAB ── #}
+        <div class="tab-pane fade" id="panel-exceptions" role="tabpanel">
+          {% include "copilot/partials/tabs/_exceptions_tab.html" %}
+        </div>
+
+        {# ── TIMELINE TAB ── #}
+        <div class="tab-pane fade" id="panel-timeline" role="tabpanel">
+          {% include "copilot/partials/tabs/_timeline_tab.html" %}
+        </div>
+
+        {# ── GOVERNANCE TAB ── #}
+        <div class="tab-pane fade" id="panel-governance" role="tabpanel">
+          {% include "copilot/partials/tabs/_governance_tab.html" %}
+        </div>
+
+      </div>{# /tab-content #}
+    </div>{# /copilot-tab-body #}
+    {% endif %}
+
+  </main>
+
+</div>
+
+{% if not ctx or not ctx.case %}
+{# ── Case Search Modal (plain chat mode) ── #}
+<div class="copilot-modal-backdrop d-none" id="caseSearchBackdrop">
+  <div class="copilot-case-search-modal">
+    <div class="copilot-case-search-header">
+      <h6 class="mb-0"><i class="bi bi-search me-2"></i>Link Case to Session</h6>
+      <button type="button" class="btn-close btn-close-sm" id="btnCloseCaseSearch"></button>
+    </div>
+    <div class="copilot-case-search-body">
+      <input type="text" class="form-control form-control-sm" id="caseSearchInput"
+             placeholder="Search by case number, invoice, vendor, or PO..." autocomplete="off">
+      <div class="copilot-case-search-results" id="caseSearchResults">
+        <div class="copilot-case-search-empty">
+          <i class="bi bi-briefcase"></i>
+          <p class="mb-0">Type to search for a case</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# Hidden config for JS (unified for both modes) #}
+<script type="application/json" id="copilotConfig">
+{
+  "hasCaseWorkspace": {% if ctx and ctx.case %}true{% else %}false{% endif %},
+  "sessionId": {% if session_id %}"{{ session_id }}"{% else %}null{% endif %},
+  "caseId": {% if case_id %}{{ case_id }}{% else %}null{% endif %},
+  {% if ctx and ctx.case %}
+  "caseNumber": "{{ ctx.case.case_number }}",
+  "autoRunSupervisor": {% if auto_run_supervisor %}true{% else %}false{% endif %},
+  "invoiceId": {% if ctx.invoice %}{{ ctx.invoice.id }}{% else %}null{% endif %},
+  "reconciliationResultId": {% if ctx.reconciliation %}{{ ctx.reconciliation.id }}{% else %}null{% endif %},
+  {% endif %}
+  "csrfToken": "{{ csrf_token }}",
+  "urls": {
+    "sessionStart": "{% url 'copilot_api:session_start' %}",
+    "sessions": "{% url 'copilot_api:session_list' %}",
+    "chat": "{% url 'copilot_api:chat' %}",
+    "caseSearch": "{% url 'copilot_api:case_search' %}",
+    "supervisorRun": "/api/v1/copilot/supervisor/run/",
+    "supervisorRunStream": "/api/v1/copilot/supervisor/stream/",
+    "invoiceUpload": "/api/v1/copilot/upload/",
+    "uploadStatus": "/api/v1/copilot/upload/{id}/status/",
+    "hubBase": "{% url 'copilot:case_hub' %}",
+    "sessionBase": "/copilot/session/",
+    "caseBase": "/copilot/case/"{% if ctx and ctx.case %},
+    "caseContext": "{% url 'copilot_api:case_context' case_id=ctx.case.id %}",
+    "caseTimeline": "{% url 'copilot_api:case_timeline' case_id=ctx.case.id %}",
+    "caseEvidence": "{% url 'copilot_api:case_evidence' case_id=ctx.case.id %}",
+    "caseGovernance": "{% url 'copilot_api:case_governance' case_id=ctx.case.id %}",
+    "caseAction": "/api/v1/copilot/case/{{ ctx.case.id }}/action/"{% endif %}
+  }
+}
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/ap-copilot.js' %}?v={% now 'U' %}"></script>
+{% endblock %}

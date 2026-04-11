@@ -112,7 +112,7 @@ def _update_progress(upload_id: int, message: str):
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("extraction.process_invoice_upload", audit_event="EXTRACTION_STARTED", entity_type="DocumentUpload")
-def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0, credit_ref_type: str = "document_upload", credit_ref_id: str = "", case_id: int = None, case_number: str = None) -> dict:
+def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0, credit_ref_type: str = "document_upload", credit_ref_id: str = "", case_id: int = None, case_number: str = None, skip_agent_pipeline: bool = False) -> dict:
     """End-to-end extraction pipeline for a single DocumentUpload.
 
     Steps executed sequentially:
@@ -560,6 +560,7 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
             # Skip auto-approval entirely when critical field review is forced
             auto_approval = None if review_forced else ExtractionApprovalService.try_auto_approve(
                 invoice, ext_result, lf_trace_id=_trace_id, lf_span=_lf_root,
+                skip_case_processing=True,
             )
             if not auto_approval:
                 # Human approval required -- set PENDING_APPROVAL
@@ -725,7 +726,7 @@ def process_invoice_upload_task(self, tenant_id: int = None, upload_id: int = 0,
             # approval, the pipeline pauses at PENDING_EXTRACTION_APPROVAL.
             from apps.cases.tasks import process_case_task
             from apps.core.utils import dispatch_task
-            dispatch_task(process_case_task, tenant_id, case.pk)
+            dispatch_task(process_case_task, tenant_id, case.pk, skip_agent_pipeline=skip_agent_pipeline)
         except Exception as case_exc:
             logger.exception(
                 "AP Case link/processing failed for invoice %s: %s",

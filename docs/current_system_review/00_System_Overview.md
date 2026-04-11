@@ -53,6 +53,7 @@ The platform supports **configurable reconciliation mode selection** (2-way vs 3
 | Non-PO invoice validation | Implemented |
 | Configurable tolerance bands (strict + auto-close) | Implemented |
 | LLM agent analysis pipeline (8 agents) | Implemented |
+| Supervisor agent (full lifecycle, 5 skills, 24 tools) | Implemented |
 | Agent feedback loop (PO/GRN re-reconciliation) | Implemented |
 | Human review workflow with auto-assignment | Implemented |
 | Case management (11-stage state machine) | Implemented |
@@ -118,7 +119,12 @@ The platform supports **configurable reconciliation mode selection** (2-way vs 3
                      │    ├── ExceptionAnalysis + Reviewer Summary
                      │    ├── ReviewRouting
                      │    └── CaseSummary
-                     └── Agent Feedback Loop (if PO recovered → re-reconcile)
+                     ├── Agent Feedback Loop (if PO recovered → re-reconcile)
+                     │
+                     └── [Alt: SupervisorAgent] (single-agent lifecycle)
+                          ├── 5-phase non-linear: UNDERSTAND→VALIDATE→MATCH→INVESTIGATE→DECIDE
+                          ├── 30 tools (24 supervisor + 6 base), skill-based prompt composition
+                          └── submit_recommendation → route / auto-close / escalate
                               │
                               ▼
                      [Human Review Queue]
@@ -171,7 +177,7 @@ The platform supports **configurable reconciliation mode selection** (2-way vs 3
 |------|---------|
 | Extraction pipeline | Production-ready (11-stage, 25 repair tests, Langfuse traced) |
 | Reconciliation engine | Production-ready (14 services, tiered tolerance, 73+ tests) |
-| Agent pipeline | Production-ready (8 LLM + 5 system agents, RBAC guardrails, feedback loop) |
+| Agent pipeline | Production-ready (8 LLM + 5 system + 1 supervisor agent, RBAC guardrails, feedback loop) |
 | RBAC / governance | Production-ready (6 roles, 40 permissions, per-user overrides, audit trail) |
 | Case management | Production-ready (state machine, orchestrators, review workflow) |
 | ERP integration | Framework complete; connector maturity depends on specific ERP |

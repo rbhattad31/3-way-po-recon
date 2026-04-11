@@ -497,6 +497,7 @@ class TestCopilotPipelineWorker:
                 "upload_id": upload.pk,
                 "case_id": 99,
                 "case_number": "CASE-0099",
+                "skip_agent_pipeline": True,
             },
             throw=True,
         )

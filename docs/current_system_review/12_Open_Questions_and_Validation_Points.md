@@ -44,7 +44,8 @@
 **Question**: What does the Copilot feature do exactly? Is it a Q&A interface for AP processors? Is it production-ready or experimental?
 
 ### B4. `ReasoningPlanner` Activation Plans
-**Code**: Available via `AGENT_REASONING_ENGINE_ENABLED=true`; no tests referenced  
+**Code**: Available via `AGENT_REASONING_ENGINE_ENABLED=true`; 17 tests in `test_reasoning_planner.py`; eval tracking wired via `AgentEvalAdapter` (plan_source, plan_confidence, plan_adherence metrics).  
+**Status**: RESOLVED -- flag is wired into `AgentOrchestrator.__init__()`, tests cover LLM plan, fallback, validation, and orchestrator flag wiring. See `docs/REASONING_PLANNER.md` for full architecture + LLM-only upgrade path.  
 **Question**: Is there a plan to enable this in production? What would be the trigger criteria? Are there eval baselines for it?
 
 ### B5. Single Celery Queue

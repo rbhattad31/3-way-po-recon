@@ -88,6 +88,34 @@ def _extract_vendor_mapped(run, payload, evidence):
     return str(mapped) if mapped is not None else "", conf
 
 
+def _extract_match_status(run, payload, evidence):
+    """Supervisor: match status from evidence."""
+    status = evidence.get("match_status") or ""
+    conf = run.confidence or 0.0
+    return str(status), conf
+
+
+def _extract_vendor_verified(run, payload, evidence):
+    """Supervisor: whether vendor was verified by tax ID."""
+    verified = evidence.get("vendor_verified")
+    conf = run.confidence or 0.0
+    return str(verified) if verified is not None else "", conf
+
+
+def _extract_lines_checked(run, payload, evidence):
+    """Supervisor: number of line items checked."""
+    count = evidence.get("lines_checked")
+    conf = run.confidence or 0.0
+    return str(count) if count is not None else "", conf
+
+
+def _extract_recovery_actions(run, payload, evidence):
+    """Supervisor: recovery actions taken."""
+    actions = evidence.get("recovery_actions") or []
+    conf = run.confidence or 0.0
+    return ",".join(str(a) for a in actions)[:500] if actions else "", conf
+
+
 # Agent type -> list of (field_name, extractor)
 _AGENT_FIELD_EXTRACTORS: Dict[str, List[tuple]] = {
     "PO_RETRIEVAL": [
@@ -129,6 +157,14 @@ _AGENT_FIELD_EXTRACTORS: Dict[str, List[tuple]] = {
     ],
     "SYSTEM_BULK_EXTRACTION_INTAKE": [
         ("recommendation", _extract_recommendation),
+    ],
+    # Supervisor agent -- full lifecycle orchestrator
+    "SUPERVISOR": [
+        ("recommendation", _extract_recommendation),
+        ("match_status", _extract_match_status),
+        ("vendor_verified", _extract_vendor_verified),
+        ("lines_checked", _extract_lines_checked),
+        ("recovery_actions", _extract_recovery_actions),
     ],
 }
 
