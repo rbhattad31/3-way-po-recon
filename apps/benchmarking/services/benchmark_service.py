@@ -1,8 +1,12 @@
 """
 Benchmark engine service.
 Orchestrates the full should-cost pipeline:
-  Upload -> Extract text -> Parse line items -> Classify -> Corridor lookup
-  -> Variance calculation -> Result aggregation -> Negotiation notes
+  Upload -> Extract text (Azure DI) -> Parse line items -> Classify (AI / keywords)
+  -> Corridor lookup -> Variance calculation -> Result aggregation -> Negotiation notes
+
+BenchmarkDocumentExtractorAgent handles Stages 1-5 (Blob upload, Azure DI extraction,
+OpenAI line-item classification, VarianceThresholdConfig application, DB persistence).
+BenchmarkEngine._build_result then aggregates everything into a BenchmarkResult.
 """
 import logging
 from decimal import Decimal
@@ -16,8 +20,8 @@ from apps.benchmarking.models import (
     BenchmarkResult,
     VarianceStatus,
 )
-from apps.benchmarking.services.classification_service import ClassificationService
-from apps.benchmarking.services.extraction_service import ExtractionService
+# ClassificationService and ExtractionService are now used exclusively inside
+# BenchmarkDocumentExtractorAgent; no direct import needed here.
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +139,11 @@ class BenchmarkEngine:
 
     @classmethod
     def _process_request(cls, bench_request: BenchmarkRequest, user):
-        """Inner pipeline (runs inside a transaction)."""
+        """Inner pipeline (runs inside a transaction).
+
+        Delegates per-quotation extraction + classification to BenchmarkDocumentExtractorAgent
+        (Azure DI + OpenAI), then aggregates all line items into a BenchmarkResult.
+        """
         all_line_items = []
 
         for quotation in bench_request.quotations.filter(is_active=True):
@@ -147,101 +155,43 @@ class BenchmarkEngine:
 
     @classmethod
     def _process_quotation(cls, quotation: BenchmarkQuotation, bench_request: BenchmarkRequest, user) -> list:
-        """Extract, classify, and run benchmarks on one quotation. Returns saved BenchmarkLineItem instances."""
-        # -- Step 1: Extract text
-        file_path = quotation.document.path
-        extraction = ExtractionService.extract_and_parse(file_path)
+        """
+        Run the BenchmarkDocumentExtractorAgent pipeline for one quotation.
 
-        if extraction["error"]:
-            quotation.extraction_status = "FAILED"
-            quotation.extraction_error = extraction["error"]
-            quotation.save(update_fields=["extraction_status", "extraction_error", "updated_at"])
-            return []
+        The agent handles:
+          1. Azure Blob upload (fail-silent)
+          2. Azure DI text/table extraction (falls back to pdfplumber)
+          3. OpenAI batch classification via CategoryMaster (falls back to keywords)
+          4. VarianceThresholdConfig application
+          5. BenchmarkLineItem persistence
 
-        quotation.extracted_text = extraction["text"][:50000]   # cap at 50K chars
-        quotation.extraction_status = "DONE"
-        quotation.save(update_fields=["extracted_text", "extraction_status", "updated_at"])
+        Returns the newly persisted BenchmarkLineItem instances for aggregation.
+        """
+        from apps.benchmarking.services.document_extractor_agent import BenchmarkDocumentExtractorAgent
 
-        raw_items = extraction["line_items"]
-        if not raw_items:
-            logger.warning("No line items extracted from quotation %s", quotation.pk)
-            return []
+        agent = BenchmarkDocumentExtractorAgent()
+        agent_result = agent.run(
+            quotation_pk=quotation.pk,
+            bench_request_pk=bench_request.pk,
+            user=user,
+        )
 
-        # -- Step 2: Delete old line items for this quotation (re-process)
-        quotation.line_items.all().delete()
-
-        # -- Step 3: Classify + benchmark each line item
-        saved_items = []
-        for raw in raw_items:
-            cls_result = ClassificationService.classify(raw.get("description", ""))
-            category = cls_result["category"]
-
-            # Corridor lookup
-            corridor = CorridorLookupService.find_corridor(
-                category=category,
-                geography=bench_request.geography,
-                scope_type=bench_request.scope_type,
-                description=raw.get("description", ""),
+        if not agent_result["success"]:
+            logger.warning(
+                "BenchmarkEngine._process_quotation: agent failed for quotation %d: %s",
+                quotation.pk,
+                agent_result.get("error"),
             )
+            return []
 
-            quoted_rate = raw.get("unit_rate")
-            variance_pct = None
-            variance_status = VarianceStatus.NEEDS_REVIEW
-            variance_note = ""
-            bench_min = bench_mid = bench_max = None
-            corridor_code = ""
-
-            if corridor and quoted_rate is not None:
-                bench_min = corridor.min_rate
-                bench_mid = corridor.mid_rate
-                bench_max = corridor.max_rate
-                corridor_code = corridor.rule_code
-                try:
-                    mid = float(corridor.mid_rate)
-                    rate = float(quoted_rate)
-                    if mid > 0:
-                        variance_pct = ((rate - mid) / mid) * 100
-                        variance_status = classify_variance(variance_pct)
-                        if abs(variance_pct) >= 15:
-                            variance_note = (
-                                f"Quoted {rate:.2f} vs benchmark {mid:.2f}. "
-                                f"Consider negotiating a {abs(variance_pct):.1f}% reduction."
-                            )
-                        elif abs(variance_pct) >= 5:
-                            variance_note = (
-                                f"Quoted {rate:.2f} is within moderate range vs benchmark {mid:.2f}."
-                            )
-                except (TypeError, ValueError, ZeroDivisionError):
-                    pass
-
-            qty = raw.get("quantity")
-            amount = raw.get("amount")
-
-            item = BenchmarkLineItem(
+        # Re-fetch the saved BenchmarkLineItem instances for aggregation
+        from apps.benchmarking.models import BenchmarkLineItem
+        return list(
+            BenchmarkLineItem.objects.filter(
                 quotation=quotation,
-                description=raw["description"],
-                uom=raw.get("uom", ""),
-                quantity=Decimal(str(qty)) if qty is not None else None,
-                quoted_unit_rate=Decimal(str(quoted_rate)) if quoted_rate is not None else None,
-                line_amount=Decimal(str(amount)) if amount is not None else None,
-                line_number=raw.get("line_number", 0),
-                extraction_confidence=raw.get("extraction_confidence", 0.0),
-                category=category,
-                classification_confidence=cls_result["confidence"],
-                benchmark_min=bench_min,
-                benchmark_mid=bench_mid,
-                benchmark_max=bench_max,
-                corridor_rule_code=corridor_code,
-                variance_pct=variance_pct,
-                variance_status=variance_status,
-                variance_note=variance_note,
+                is_active=True,
             )
-            if user:
-                item.created_by = user
-            item.save()
-            saved_items.append(item)
-
-        return saved_items
+        )
 
     @classmethod
     def _build_result(cls, bench_request: BenchmarkRequest, line_items: list, user):

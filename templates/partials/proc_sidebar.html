@@ -29,13 +29,13 @@
    data-bs-toggle="collapse"
    href="#hvacMenu"
    role="button"
-   aria-expanded="{% if request.resolver_match.url_name in 'request_list configurations' %}true{% else %}false{% endif %}">
+   aria-expanded="{% if request.resolver_match.url_name in 'request_list configurations stores_management' %}true{% else %}false{% endif %}">
    
   <i class="bi bi-tools"></i>
   HVAC Requests
 </a>
 
-<div class="collapse {% if request.resolver_match.url_name in 'request_list configurations' %}show{% endif %}" 
+<div class="collapse {% if request.resolver_match.url_name in 'request_list configurations stores_management' %}show{% endif %}" 
      id="hvacMenu"
      data-bs-parent="#procSidebar"  style="padding: 15px; gap: 10px; display: flex; flex-direction: column; gap: 15px;">
 
@@ -45,8 +45,9 @@
     All Requests
   </a>
 
-  <a class="proc-nav-sublink" href="javascript:void(0);" style=" text-decoration: none;">
-    <i class="bi bi-box-seam me-2"></i>
+  <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'stores_management' %}active{% endif %}"
+     href="{% url 'procurement:stores_management' %}" style=" text-decoration: none;">
+    <i class="bi bi-shop me-2"></i>
     Stores Management
   </a>
 

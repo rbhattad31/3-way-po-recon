@@ -12,7 +12,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_http_methods
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -340,6 +340,377 @@ def hvac_create(request):
     return render(request, "procurement/request_create_hvac.html", _hvac_create_context())
 
 
+# ---------------------------------------------------------------------------
+# HVAC Document Analyze Endpoint
+# ---------------------------------------------------------------------------
+
+def _map_hvac_extraction_to_fields(result: dict) -> dict:
+    """Map AzureDIExtractorAgent output to HVAC form field names.
+
+    Looks in result["header"] first, then falls back to result["key_value_pairs"]
+    using fuzzy label matching.  Returns a flat dict of form_field -> value.
+    """
+    import re
+
+    header = result.get("header") or {}
+    kv_pairs = result.get("key_value_pairs") or []
+
+    def _unwrap(v):
+        """If the agent returned {'value': ..., 'confidence': ...}, extract the value string."""
+        if isinstance(v, dict):
+            v = v.get("value") or v.get("text") or v.get("content") or ""
+        return str(v).strip() if v is not None else ""
+
+    # Build a normalised lookup from kv_pairs: {lower_key: value}
+    kv_lookup: dict = {}
+    for kv in kv_pairs:
+        raw_key = (kv.get("key") or kv.get("label") or "").lower().strip()
+        raw_val = _unwrap(kv.get("value") or "")
+        if raw_key and raw_val:
+            kv_lookup[raw_key] = raw_val
+
+    def _get(header_keys, kv_fragments, default=""):
+        """Try header dict first, then kv_lookup, then KV fragment scanning."""
+        for k in header_keys:
+            v = header.get(k)
+            if v is not None:
+                v = _unwrap(v)
+                if v:
+                    return v
+        norm_frags = [f.lower() for f in kv_fragments]
+        for k, v in kv_lookup.items():
+            if any(frag in k for frag in norm_frags):
+                if v:
+                    return v
+        return default
+
+    def _numeric(val, fallback=""):
+        """Extract first number from a string."""
+        if not val:
+            return fallback
+        m = re.search(r"[\d]+(?:\.\d+)?", str(val).replace(",", ""))
+        return m.group(0) if m else fallback
+
+    def _normalise_priority(val):
+        v = val.upper() if val else ""
+        if "CRITICAL" in v:
+            return "CRITICAL"
+        if "HIGH" in v:
+            return "HIGH"
+        if "LOW" in v:
+            return "LOW"
+        return "MEDIUM"
+
+    def _normalise_store_type(val):
+        v = val.upper() if val else ""
+        if "MALL" in v:
+            return "MALL"
+        if "WAREHOUSE" in v or "WH" in v:
+            return "WAREHOUSE"
+        if "OFFICE" in v:
+            return "OFFICE"
+        if "STANDALONE" in v:
+            return "STANDALONE"
+        if "DATA" in v and "CENTER" in v:
+            return "DATA_CENTER"
+        if "RESTAURANT" in v or "F&B" in v or "FNB" in v or "FOOD" in v or "BEVERAGE" in v:
+            return "RESTAURANT"
+        return val if val in ("MALL", "STANDALONE", "WAREHOUSE", "OFFICE", "DATA_CENTER", "RESTAURANT") else ""
+
+    def _normalise_store_format(val):
+        v = val.upper() if val else ""
+        if "HYPER" in v:
+            return "HYPERMARKET"
+        if "FURNITURE" in v:
+            return "FURNITURE"
+        if "ELECTRONICS" in v:
+            return "ELECTRONICS"
+        if "FOOD" in v or "BEVERAGE" in v or "F&B" in v:
+            return "FOOD_BEVERAGE"
+        if "RETAIL" in v:
+            return "RETAIL"
+        return ""
+
+    def _normalise_level(val):
+        v = val.upper() if val else ""
+        if "HIGH" in v:
+            return "HIGH"
+        if "LOW" in v:
+            return "LOW"
+        if "MEDIUM" in v or "MED" in v:
+            return "MEDIUM"
+        return ""
+
+    def _normalise_country(val):
+        v = val.upper() if val else ""
+        if "UAE" in v or "UNITED ARAB" in v or "EMIRATES" in v:
+            return "UAE"
+        if "KSA" in v or "SAUDI" in v or "KINGDOM" in v:
+            return "KSA"
+        if "QATAR" in v:
+            return "QATAR"
+        if "OMAN" in v:
+            return "OMAN"
+        if "KUWAIT" in v:
+            return "KUWAIT"
+        if "BAHRAIN" in v:
+            return "BAHRAIN"
+        return val or ""
+
+    def _normalise_currency(val):
+        v = val.upper() if val else ""
+        if "SAR" in v:
+            return "SAR"
+        if "OMR" in v:
+            return "OMR"
+        if "QAR" in v:
+            return "QAR"
+        if "KWD" in v:
+            return "KWD"
+        if "BHD" in v:
+            return "BHD"
+        if "USD" in v:
+            return "USD"
+        return "AED"
+
+    raw_title = _get(
+        ["title", "request_title"],
+        ["request title", "title"],
+    )
+    raw_priority = _get(["priority"], ["priority"])
+    raw_type = _get(["request_type", "type"], ["request type", "type"])
+    raw_desc = _get(["description", "background", "description_background"], ["description", "background"])
+    raw_currency = _get(["currency"], ["currency"])
+    raw_store_id = _get(["store_id", "facility_id", "store_number"], ["store id", "facility id", "store number", "facility identification"])
+    raw_brand = _get(["brand", "brand_name"], ["brand"])
+    raw_country = _get(["country", "geography_country"], ["country"])
+    raw_city = _get(["city", "geography_city"], ["city"])
+    raw_store_type = _get(["store_type", "facility_type"], ["store type", "facility type"])
+    raw_store_format = _get(["store_format", "format"], ["store format", "format"])
+    raw_area = _get(["area_sqft", "area", "area_sq_ft"], ["area (sq ft)", "area sq ft", "area sqft", "total area"])
+    raw_ceiling = _get(["ceiling_height_ft", "ceiling_height", "ceiling"], ["ceiling height", "ceiling"])
+    raw_hours = _get(["operating_hours", "hours"], ["operating hours"])
+    raw_footfall = _get(["footfall_category", "footfall"], ["footfall category", "footfall"])
+    raw_temp = _get(["ambient_temp_max", "ambient_temperature_max", "ambient_temp", "temperature_max"],
+                    ["ambient temp", "ambient temperature", "temperature max"])
+    raw_humidity = _get(["humidity_level", "humidity"], ["humidity level", "humidity"])
+    raw_dust = _get(["dust_exposure", "dust"], ["dust exposure", "dust"])
+    raw_heat = _get(["heat_load_category", "heat_load"], ["heat load category", "heat load"])
+    raw_fresh_air = _get(["fresh_air_requirement", "fresh_air"], ["fresh air requirement", "fresh air"])
+    raw_budget = _get(["budget_level", "budget"], ["budget level", "budget"])
+    raw_energy = _get(
+        ["energy_efficiency_priority", "energy_priority", "energy_efficiency"],
+        ["energy efficiency priority", "energy priority", "energy efficiency"],
+    )
+    raw_landlord = _get(["landlord_constraint", "landlord_constraints"], ["landlord constraint"])
+
+    fields = {}
+    if raw_title:
+        fields["title"] = raw_title
+    if raw_priority:
+        fields["priority"] = _normalise_priority(raw_priority)
+    if raw_type:
+        # Normalize to RECOMMENDATION by default for HVAC
+        rt = raw_type.upper()
+        fields["request_type"] = "RECOMMENDATION" if "RECOM" in rt else raw_type
+    if raw_desc:
+        fields["description"] = raw_desc
+    if raw_currency:
+        fields["currency"] = _normalise_currency(raw_currency)
+    if raw_store_id:
+        fields["f_store_id"] = raw_store_id
+    if raw_brand:
+        fields["f_brand"] = raw_brand
+    if raw_country:
+        fields["f_country"] = _normalise_country(raw_country)
+    if raw_city:
+        fields["f_city"] = raw_city
+    if raw_store_type:
+        fields["f_store_type"] = _normalise_store_type(raw_store_type)
+    if raw_store_format:
+        fields["f_store_format"] = _normalise_store_format(raw_store_format)
+    if raw_area:
+        num = _numeric(raw_area)
+        if num:
+            fields["f_area_sqft"] = num
+    if raw_ceiling:
+        num = _numeric(raw_ceiling)
+        if num:
+            fields["f_ceiling_height_ft"] = num
+    if raw_hours:
+        # Try to match to select options
+        h = raw_hours.lower()
+        if "24" in h:
+            fields["f_operating_hours"] = "24 Hours"
+        elif "8" in h and "6" in h:
+            fields["f_operating_hours"] = "8 AM - 6 PM"
+        elif "9" in h and "10" in h:
+            fields["f_operating_hours"] = "9 AM - 10 PM"
+        elif "9" in h and "11" in h:
+            fields["f_operating_hours"] = "9 AM - 11 PM"
+        elif "10" in h and "10" in h:
+            fields["f_operating_hours"] = "10 AM - 10 PM"
+        elif "10" in h and "11" in h:
+            fields["f_operating_hours"] = "10 AM - 11 PM"
+        elif "10" in h and "12" in h:
+            fields["f_operating_hours"] = "10 AM - 12 AM"
+        elif "6" in h and "10" in h:
+            fields["f_operating_hours"] = "6 AM - 10 PM"
+        else:
+            fields["f_operating_hours"] = raw_hours
+    if raw_footfall:
+        fields["f_footfall_category"] = _normalise_level(raw_footfall)
+    if raw_temp:
+        num = _numeric(raw_temp)
+        if num:
+            fields["f_ambient_temp_max"] = num
+    if raw_humidity:
+        fields["f_humidity_level"] = _normalise_level(raw_humidity)
+    if raw_dust:
+        fields["f_dust_exposure"] = _normalise_level(raw_dust)
+    if raw_heat:
+        fields["f_heat_load_category"] = _normalise_level(raw_heat)
+    if raw_fresh_air:
+        fields["f_fresh_air_requirement"] = _normalise_level(raw_fresh_air)
+    if raw_budget:
+        fields["f_budget_level"] = _normalise_level(raw_budget)
+    if raw_energy:
+        fields["f_energy_efficiency_priority"] = _normalise_level(raw_energy)
+    if raw_landlord:
+        fields["f_landlord_constraint"] = raw_landlord
+
+    return fields
+
+
+@login_required
+@require_http_methods(["POST"])
+def hvac_analyze_document(request):
+    """Accept an uploaded HVAC document, run Azure DI extraction, and return mapped form fields as JSON."""
+    from django.http import JsonResponse
+    import mimetypes
+
+    uploaded_file = request.FILES.get("document")
+    if not uploaded_file:
+        return JsonResponse({"success": False, "error": "No document file provided."}, status=400)
+
+    # Supported formats by Azure DI
+    allowed_mime = {
+        "application/pdf",
+        "image/jpeg", "image/jpg", "image/png",
+        "image/tiff", "image/bmp",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    mime_type, _ = mimetypes.guess_type(uploaded_file.name)
+    if not mime_type:
+        ext = uploaded_file.name.rsplit(".", 1)[-1].lower() if "." in uploaded_file.name else ""
+        mime_map = {
+            "pdf": "application/pdf",
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "tiff": "image/tiff", "tif": "image/tiff",
+            "bmp": "image/bmp",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "html": "text/html",
+        }
+        mime_type = mime_map.get(ext, "application/octet-stream")
+
+    # We also allow HTML (for the sample forms we provide in media/hvac_forms/)
+    allowed_mime.add("text/html")
+
+    if mime_type not in allowed_mime:
+        return JsonResponse({
+            "success": False,
+            "error": f"Unsupported file type '{mime_type}'. Please upload a PDF, image, DOCX, XLSX, or HTML file.",
+        }, status=400)
+
+    try:
+        file_bytes = uploaded_file.read()
+    except Exception as exc:
+        return JsonResponse({"success": False, "error": f"Failed to read uploaded file: {exc}"}, status=500)
+
+    # For HTML files (sample forms), pass them as text + instruct LLM to extract from HTML content
+    if mime_type == "text/html":
+        # Azure DI does not support HTML natively -- convert to plain text extraction via GPT only
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(file_bytes.decode("utf-8", errors="ignore"), "html.parser")
+            plain_text = soup.get_text(separator="\n", strip=True)
+        except Exception:
+            plain_text = file_bytes.decode("utf-8", errors="ignore")
+
+        # Build a direct GPT-based extraction bypassing Azure DI
+        try:
+            from apps.agents.services.llm_client import LLMClient, LLMMessage
+            llm = LLMClient(max_tokens=4096)
+            system_prompt = (
+                "You are an HVAC procurement document parser. "
+                "Extract all structured data from the following HVAC procurement request form text. "
+                "Return a JSON object with these keys: "
+                "title, priority, request_type, description, currency, store_id, brand, country, city, "
+                "store_type, store_format, area_sqft, ceiling_height_ft, operating_hours, footfall_category, "
+                "ambient_temp_max, humidity_level, dust_exposure, heat_load_category, fresh_air_requirement, "
+                "landlord_constraint. "
+                "Use null for fields not found. Return only valid JSON."
+            )
+            response = llm.chat(messages=[
+                LLMMessage(role="system", content=system_prompt),
+                LLMMessage(role="user", content=f"Document text:\n\n{plain_text[:12000]}"),
+            ])
+            import json as _json
+            content = (response.content or "").strip()
+            if content.startswith("```"):
+                content = "\n".join(l for l in content.splitlines() if not l.strip().startswith("```")).strip()
+            extracted_header = _json.loads(content)
+            result = {
+                "success": True,
+                "doc_type": "hvac_request_form",
+                "confidence": 0.82,
+                "header": extracted_header,
+                "line_items": [],
+                "commercial_terms": {},
+                "key_value_pairs": [],
+                "engine": "gpt4o_html",
+                "duration_ms": 0,
+                "error": None,
+            }
+        except Exception as exc:
+            logger.warning("HTML HVAC extraction failed: %s", exc)
+            return JsonResponse({"success": False, "error": f"Document analysis failed: {exc}"}, status=500)
+    else:
+        # Full Azure DI + GPT extraction
+        try:
+            from apps.procurement.agents.Azure_Document_Intelligence_Extractor_Agent import AzureDIExtractorAgent
+            result = AzureDIExtractorAgent.extract(
+                file_bytes=file_bytes,
+                mime_type=mime_type,
+                doc_type_hint="hvac_request_form",
+            )
+        except Exception as exc:
+            logger.warning("AzureDIExtractorAgent call failed: %s", exc)
+            return JsonResponse({"success": False, "error": f"Document analysis failed: {exc}"}, status=500)
+
+    if not result.get("success"):
+        return JsonResponse({
+            "success": False,
+            "error": result.get("error") or "Extraction returned no data.",
+            "confidence": result.get("confidence", 0.0),
+        }, status=422)
+
+    # Map extracted fields to HVAC form fields
+    fields = _map_hvac_extraction_to_fields(result)
+
+    return JsonResponse({
+        "success": True,
+        "fields": fields,
+        "confidence": result.get("confidence", 0.0),
+        "doc_type": result.get("doc_type", "unknown"),
+        "engine": result.get("engine", ""),
+        "duration_ms": result.get("duration_ms", 0),
+        "fields_extracted": len(fields),
+    })
+
+
 @login_required
 @permission_required_code("procurement.create")
 def api_hvac_store_suggestions(request):
@@ -474,13 +845,162 @@ def request_workspace(request, pk):
     )
     validation_items = validation_result.items.all() if validation_result else []
 
-    # ReasonSummaryAgent -- structured explanation for the workspace UI
+    # ReasonSummaryAgent -- structured explanation for the workspace UI.
+    # Result is cached in recommendation.reason_summary_json to avoid hitting
+    # the LLM API on every page load.  Cache is populated on first visit and
+    # invalidated only when the user explicitly clicks "Regenerate".
+    # Auto-invalidation: if cached conditions_table rows lack the "rule_filter"
+    # key (added in the rule_conditions upgrade), the cache is stale and is
+    # rebuilt transparently.
     reason_summary = None
     if recommendation:
+        _cached = recommendation.reason_summary_json
+        _cache_stale = False
+        if _cached:
+            _ct = _cached.get("conditions_table") or []
+            if _ct and "rule_filter" not in (_ct[0] if _ct else {}):
+                _cache_stale = True
+
+        if _cached and not _cache_stale:
+            # Serve from cache -- no LLM call needed
+            reason_summary = _cached
+        else:
+            try:
+                reason_summary = ReasonSummaryAgent.generate(recommendation)
+                if reason_summary:
+                    recommendation.reason_summary_json = reason_summary
+                    recommendation.save(update_fields=["reason_summary_json"])
+            except Exception as _e:
+                logger.warning("ReasonSummaryAgent failed for request %s: %s", pk, _e)
+
+    # Latest AI Market Intelligence suggestions (for Manual RFQ product picker)
+    from apps.procurement.models import MarketIntelligenceSuggestion, HVACServiceScope
+    mi_record = MarketIntelligenceSuggestion.objects.filter(
+        request=proc_request
+    ).order_by("-created_at").first()
+    mi_suggestions = (mi_record.suggestions_json or []) if mi_record else []
+
+    # Service scopes -- fetch all active rows; filter to match recommended system
+    all_service_scopes = list(HVACServiceScope.objects.filter(is_active=True).order_by("sort_order", "system_type"))
+    matched_service_scope = None
+
+    # Keyword map: text patterns found in recommended_option or system_code -> HVACServiceScope.system_type
+    _SCOPE_KEYWORD_MAP = [
+        ("VRF",               "VRF"),
+        ("VARIABLE REFRIGERANT", "VRF"),
+        ("CHILLER",           "CHILLER"),
+        ("CHILLED WATER",     "CHILLER"),
+        ("FCU",               "FCU"),
+        ("FAN COIL",          "FCU"),
+        ("CASSETTE",          "CASSETTE"),
+        ("PACKAGED_DX",       "PACKAGED_DX"),
+        ("PACKAGED DX",       "PACKAGED_DX"),
+        ("PACKAGED UNIT",     "PACKAGED_DX"),
+        ("PACKAGED",          "PACKAGED_DX"),
+        ("SPLIT_AC",          "SPLIT_AC"),
+        ("SPLIT AC",          "SPLIT_AC"),
+        ("SPLIT AIR",         "SPLIT_AC"),
+        ("SPLIT",             "SPLIT_AC"),
+    ]
+
+    def _find_scope_by_code(code_upper, scopes):
+        """Find a single HVACServiceScope by exact, startswith, or contains match."""
+        for _ss in scopes:
+            _st = _ss.system_type.upper()
+            if _st == code_upper or code_upper.startswith(_st) or _st in code_upper:
+                return _ss
+        return None
+
+    def _find_scope_by_text(text_upper, scopes):
+        """Find a single HVACServiceScope by scanning text for known keywords."""
+        for _kw, _sys in _SCOPE_KEYWORD_MAP:
+            if _kw in text_upper:
+                for _ss in scopes:
+                    if _ss.system_type.upper() == _sys:
+                        return _ss
+        return None
+
+    if recommendation:
+        # Step 1: try reason_summary.system_code (startswith / contains match)
+        if reason_summary:
+            _sys_code = (getattr(reason_summary, "system_code", "") or "").upper()
+            if _sys_code:
+                matched_service_scope = _find_scope_by_code(_sys_code, all_service_scopes)
+
+        # Step 2: if still no match, scan recommendation.recommended_option text
+        if not matched_service_scope:
+            _rec_text = (recommendation.recommended_option or "").upper()
+            if _rec_text:
+                matched_service_scope = _find_scope_by_text(_rec_text, all_service_scopes)
+
+        # When a recommendation exists, do NOT show all scopes -- only the matched one
+        # (if matched_service_scope is None the template will show a "not configured" notice)
+        all_service_scopes = []
+
+    # --- RFQ scope rows from HVACServiceScope (for RFQ modal Step 3 qty table) ---
+    _all_scopes_for_rfq = HVACServiceScope.objects.filter(is_active=True).order_by("sort_order", "system_type")
+    rfq_scope_json = {}
+    for _ss in _all_scopes_for_rfq:
+        _rows = []
+        for _cat, _field_text in [
+            ("Equipment",       _ss.equipment_scope),
+            ("Installation",    _ss.installation_services),
+            ("Piping/Ducting",  _ss.piping_ducting),
+            ("Electrical",      _ss.electrical_works),
+            ("Controls",        _ss.controls_accessories),
+            ("Testing",         _ss.testing_commissioning),
+        ]:
+            for _line in (_field_text or "").splitlines():
+                _line = _line.strip().lstrip("-*. ").strip()
+                if _line:
+                    _rows.append([_cat, _line, "LS", 1])
+        if _rows:
+            rfq_scope_json[_ss.system_type] = _rows
+
+    # --- Products from DB for RFQ manual product selection (Step 2 cards) ---
+    from apps.procurement.models import Product as _HVACProduct
+    rfq_db_products = {}
+    for _p in _HVACProduct.objects.filter(is_active=True).values(
+        "system_type", "manufacturer", "product_name", "capacity_kw", "cop_rating", "sku"
+    ).order_by("system_type", "manufacturer", "capacity_kw"):
+        _stype = _p["system_type"]
+        if _stype not in rfq_db_products:
+            rfq_db_products[_stype] = []
+        rfq_db_products[_stype].append({
+            "code": _stype,
+            "label": "{} {}".format(_p["manufacturer"], _p["product_name"]),
+            "desc": "{}kW capacity".format(_p["capacity_kw"]),
+            "brand": _p["manufacturer"],
+            "capacity": str(_p["capacity_kw"]),
+            "cop": str(_p["cop_rating"]) if _p["cop_rating"] else "",
+            "sku": _p["sku"],
+        })
+
+    # --- Latest GeneratedRFQ for this request (for persistent download panel) ---
+    from apps.procurement.models import GeneratedRFQ as _GeneratedRFQ
+    rfq_record = (
+        _GeneratedRFQ.objects
+        .filter(request=proc_request)
+        .order_by("-created_at")
+        .first()
+    )
+
+    # Generate 2-hour SAS URLs for in-browser preview (fail silent)
+    rfq_xlsx_view_url = ""
+    rfq_pdf_view_url = ""
+    if rfq_record:
         try:
-            reason_summary = ReasonSummaryAgent.generate(recommendation)
-        except Exception as _e:
-            logger.warning("ReasonSummaryAgent failed for request %s: %s", pk, _e)
+            from apps.documents.blob_service import (
+                generate_blob_sas_url as _gen_sas,
+                is_blob_storage_enabled as _blob_ok,
+            )
+            if _blob_ok():
+                if rfq_record.xlsx_blob_path:
+                    rfq_xlsx_view_url = _gen_sas(rfq_record.xlsx_blob_path, expiry_minutes=120) or ""
+                if rfq_record.pdf_blob_path:
+                    rfq_pdf_view_url = _gen_sas(rfq_record.pdf_blob_path, expiry_minutes=120) or ""
+        except Exception:
+            pass
 
     return render(request, "procurement/request_workspace.html", {
         "proc_request": proc_request,
@@ -495,7 +1015,976 @@ def request_workspace(request, pk):
         "validation_items": validation_items,
         "audit_events": audit_events[:50],
         "status_choices": ProcurementRequestStatus.choices,
+        "mi_suggestions": mi_suggestions,
+        "mi_record": mi_record,
+        "all_service_scopes": all_service_scopes,
+        "matched_service_scope": matched_service_scope,
+        "rfq_scope_json": rfq_scope_json,
+        "rfq_db_products": rfq_db_products,
+        "rfq_record": rfq_record,
+        "rfq_xlsx_view_url": rfq_xlsx_view_url,
+        "rfq_pdf_view_url": rfq_pdf_view_url,
     })
+
+
+# ---------------------------------------------------------------------------
+# 3b. Generate RFQ (Excel or PDF download)
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 3c. Regenerate Reasoning Summary (clears cache and re-calls LLM)
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.view")
+def regenerate_reason_summary(request, pk):
+    """POST-only: clear the cached reason_summary_json and regenerate via LLM."""
+    if request.method != "POST":
+        return redirect("procurement:request_workspace", pk=pk)
+
+    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+    recommendation = (
+        RecommendationResult.objects
+        .filter(run__request=proc_request)
+        .order_by("-created_at")
+        .first()
+    )
+    if recommendation:
+        # Clear the cache so the next workspace load will re-call the LLM
+        recommendation.reason_summary_json = None
+        recommendation.save(update_fields=["reason_summary_json"])
+        try:
+            new_summary = ReasonSummaryAgent.generate(recommendation)
+            if new_summary:
+                recommendation.reason_summary_json = new_summary
+                recommendation.save(update_fields=["reason_summary_json"])
+            messages.success(request, "Reasoning summary regenerated successfully.")
+        except Exception as exc:
+            logger.warning("regenerate_reason_summary failed for pk=%s: %s", pk, exc)
+            messages.error(request, "Regeneration failed -- please try again shortly.")
+    else:
+        messages.warning(request, "No recommendation found to regenerate.")
+
+    return redirect("procurement:request_workspace", pk=pk)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def generate_rfq(request, pk):
+    """Generate and save RFQ documents (Excel + PDF) to Azure Blob Storage.
+
+    POST  (action=generate)  -- build both files, upload to blob, save
+          GeneratedRFQ record, return JSON {"status":"ok","rfq_id":...}.
+
+    GET   action=download&rfq_id=<id>&format=xlsx|pdf
+          -- redirect to Azure Blob SAS URL for existing file.
+
+    GET   (legacy, no action) -- build xlsx, stream as download.
+    """
+    import io
+    import json as _json
+    import datetime
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        from django.http import HttpResponse
+        return HttpResponse("openpyxl is not installed.", status=500)
+
+    from django.http import HttpResponse, JsonResponse
+
+    # ------------------------------------------------------------------
+    # action=download: serve existing file from blob (or 404)
+    # ------------------------------------------------------------------
+    if request.method == "GET" and request.GET.get("action") == "download":
+        from apps.procurement.models import GeneratedRFQ as _GRFQ
+        from apps.documents.blob_service import generate_blob_sas_url, is_blob_storage_enabled
+        rfq_id = request.GET.get("rfq_id", "")
+        dl_fmt = request.GET.get("format", "xlsx").strip().lower()
+        try:
+            _grfq = _GRFQ.objects.get(pk=int(rfq_id), request__pk=pk)
+        except Exception:
+            from django.http import Http404
+            raise Http404("RFQ record not found.")
+        blob_path = _grfq.xlsx_blob_path if dl_fmt == "xlsx" else _grfq.pdf_blob_path
+        if blob_path and is_blob_storage_enabled():
+            # Force download (not inline preview) by setting Content-Disposition via SAS rscd
+            _rfq_ref = f"RFQ-{pk:04d}"
+            if dl_fmt == "pdf":
+                _cd = f'attachment; filename="{_rfq_ref}.pdf"'
+            else:
+                _cd = f'attachment; filename="{_rfq_ref}.xlsx"'
+            sas_url = generate_blob_sas_url(blob_path, expiry_minutes=30, content_disposition=_cd)
+            if sas_url:
+                from django.shortcuts import redirect as _redirect
+                return _redirect(sas_url)
+        # Blob path unavailable -- fall through to regenerate + stream
+        _dl_fmt_override = dl_fmt
+    else:
+        _dl_fmt_override = None  # not a download-only GET
+
+    # ------------------------------------------------------------------
+    # Parse params (POST for generate action, GET for legacy)
+    # ------------------------------------------------------------------
+    _is_generate_post = (request.method == "POST")
+    if _is_generate_post:
+        product_param_raw = request.POST.get("product", "RECOMMENDED")
+        raw_qty = request.POST.get("qty_json", "")
+    else:
+        product_param_raw = request.GET.get("product", "RECOMMENDED")
+        raw_qty = request.GET.get("qty_json", "")
+
+    # qty overrides: JSON dict {"row_index": qty}
+    qty_overrides = {}
+    try:
+        if raw_qty:
+            qty_overrides = {int(k): v for k, v in _json.loads(raw_qty).items()}
+    except Exception:
+        qty_overrides = {}
+
+    product_param = product_param_raw.strip().upper()
+
+    proc_request = get_object_or_404(
+        ProcurementRequest.objects.select_related("created_by"),
+        pk=pk,
+    )
+
+    # -----------------------------------------------------------------------
+    # Delegate all generation logic to RFQGeneratorAgent.
+    #
+    # When the user clicks "Use Recommendation" in the modal form the view
+    # receives product_param == "RECOMMENDED" and passes selection_mode=
+    # "RECOMMENDED" to the agent, which fetches the latest RecommendationResult
+    # and uses its system_type_code automatically.
+    # -----------------------------------------------------------------------
+    from apps.procurement.agents.RFQ_Generator_Agent import RFQGeneratorAgent
+
+    rfq_result = RFQGeneratorAgent.run(
+        proc_request,
+        selection_mode=product_param,        # "RECOMMENDED" or a system code
+        qty_overrides=qty_overrides,
+        generated_by=request.user,
+        save_record=_is_generate_post,       # only persist on POST action=generate
+    )
+
+    if rfq_result.error and not rfq_result.xlsx_bytes:
+        # Hard failure: nothing was built
+        from django.http import HttpResponseServerError
+        logger.error("RFQGeneratorAgent hard failure for pk=%s: %s", pk, rfq_result.error)
+        if _is_generate_post:
+            return JsonResponse({"status": "error", "detail": rfq_result.error}, status=500)
+        return HttpResponseServerError("RFQ generation failed -- please try again.")
+
+    xlsx_bytes   = rfq_result.xlsx_bytes
+    pdf_bytes    = rfq_result.pdf_bytes
+    rfq_ref      = rfq_result.rfq_ref
+    filename_xlsx = rfq_result.filename_xlsx
+    filename_pdf  = rfq_result.filename_pdf
+
+    # ---- Short-circuit: all generation handled by the agent above. ----
+    # Return immediately so legacy inline code below is never reached.
+
+    if _is_generate_post:
+        _rfq_rec = rfq_result.rfq_record
+        return JsonResponse({
+            "status": "ok",
+            "rfq_ref": rfq_ref,
+            "rfq_id": _rfq_rec.pk if _rfq_rec else None,
+            "has_xlsx": bool(xlsx_bytes),
+            "has_pdf": bool(pdf_bytes),
+            "blob_enabled": bool(
+                _rfq_rec and _rfq_rec.xlsx_blob_path
+            ) if _rfq_rec else False,
+        })
+
+    if _dl_fmt_override == "pdf":
+        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="{filename_pdf}"'
+        return resp
+
+    response = HttpResponse(
+        xlsx_bytes,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename_xlsx}"'
+    return response
+
+    # =========================================================================
+    # NOTE: Code below this point is unreachable (kept for reference only).
+    # All generation logic now lives in RFQ_Generator_Agent.py.
+    # =========================================================================
+    SYSTEM_SCOPE = {
+        "VRF": {
+            "capacity": "As per heat load calculation (TR)",
+            "scope": [
+                ("Equipment",    "VRF Outdoor Unit(s)",                             "Nos",  ""),
+                ("Equipment",    "VRF Indoor Units (Ceiling / Wall type per layout)","Nos",  ""),
+                ("Piping",       "Refrigerant Copper Piping & Fittings",             "RM",   ""),
+                ("Piping",       "Thermal Insulation for Refrigerant Pipes",         "RM",   ""),
+                ("Electrical",   "Power Cabling & Distribution Boards",              "LS",   1),
+                ("Controls",     "Central Controller / BMS Integration",             "LS",   1),
+                ("Civil & MEP",  "Structural Support, Drainage, Penetrations",       "LS",   1),
+                ("Installation", "Complete Installation Works",                      "LS",   1),
+                ("Testing",      "Testing, Commissioning & Handover",                "LS",   1),
+            ],
+        },
+        "SPLIT_AC": {
+            "capacity": "As per heat load calculation (TR)",
+            "scope": [
+                ("Equipment",    "Split AC Outdoor Condensing Units",                "Nos",  ""),
+                ("Equipment",    "Split AC Indoor Units",                            "Nos",  ""),
+                ("Piping",       "Refrigerant Copper Piping & Fittings",             "RM",   ""),
+                ("Piping",       "Condensate Drain Piping",                          "RM",   ""),
+                ("Electrical",   "Power Cabling & MCB Distribution",                 "LS",   1),
+                ("Civil & MEP",  "Structural Support & Wall Penetrations",           "LS",   1),
+                ("Installation", "Complete Installation Works",                      "LS",   1),
+                ("Testing",      "Testing, Commissioning & Handover",                "LS",   1),
+            ],
+        },
+        "PACKAGED_DX": {
+            "capacity": "As per heat load calculation (TR)",
+            "scope": [
+                ("Equipment",    "Packaged DX Unit(s) (Roof-Top / Split Packaged)", "Nos",  ""),
+                ("Ducting",      "GI Ducting (Supply & Return)",                    "Sqm",  ""),
+                ("Ducting",      "Flexible Duct Connectors",                        "RM",   ""),
+                ("Diffusers",    "Supply / Return Air Diffusers & Grilles",         "Nos",  ""),
+                ("Insulation",   "Duct Thermal & Acoustic Insulation",              "Sqm",  ""),
+                ("Electrical",   "Power Cabling & Distribution Boards",             "LS",   1),
+                ("Civil & MEP",  "Roof Curb, Support Structure, Penetrations",      "LS",   1),
+                ("Installation", "Complete Installation Works",                     "LS",   1),
+                ("Testing",      "Testing, Commissioning & Handover",               "LS",   1),
+            ],
+        },
+        "CHILLER": {
+            "capacity": "As per heat load calculation (TR)",
+            "scope": [
+                ("Equipment",    "Water-Cooled / Air-Cooled Chiller Plant",         "Nos",  ""),
+                ("Equipment",    "Cooling Towers (if water-cooled)",                "Nos",  ""),
+                ("Equipment",    "Air Handling Units (AHUs) / Fan Coil Units",      "Nos",  ""),
+                ("Piping",       "Chilled Water & Condenser Water Piping",          "RM",   ""),
+                ("Piping",       "Thermal Insulation for Chilled Water Pipes",      "RM",   ""),
+                ("Pumps",        "Primary & Secondary Chilled Water Pumps",         "Nos",  ""),
+                ("Electrical",   "LV Panels, Cabling & MCC",                        "LS",   1),
+                ("Controls",     "BMS / DDC Control System",                        "LS",   1),
+                ("Installation", "Complete Installation Works",                     "LS",   1),
+                ("Testing",      "Testing, Commissioning & Handover",               "LS",   1),
+            ],
+        },
+        "FCU": {
+            "capacity": "As per heat load calculation (TR)",
+            "scope": [
+                ("Equipment",    "Fan Coil Units (2-pipe or 4-pipe)",               "Nos",  ""),
+                ("Piping",       "Chilled Water Supply & Return Piping",            "RM",   ""),
+                ("Piping",       "Condensate Drain Piping",                         "RM",   ""),
+                ("Insulation",   "Pipe Thermal Insulation",                         "RM",   ""),
+                ("Electrical",   "Power Cabling & Wiring",                          "LS",   1),
+                ("Controls",     "Thermostat & Zone Controls",                      "LS",   1),
+                ("Civil & MEP",  "Ceiling Works & Support Structures",              "LS",   1),
+                ("Installation", "Complete Installation Works",                     "LS",   1),
+                ("Testing",      "Testing, Commissioning & Handover",               "LS",   1),
+            ],
+        },
+        "CASSETTE": {
+            "capacity": "As per heat load calculation (TR)",
+            "scope": [
+                ("Equipment",    "Cassette Type Indoor Units (4-way blow)",         "Nos",  ""),
+                ("Equipment",    "Outdoor Condensing Units",                        "Nos",  ""),
+                ("Piping",       "Refrigerant Copper Piping & Fittings",            "RM",   ""),
+                ("Piping",       "Condensate Drain Piping",                         "RM",   ""),
+                ("Electrical",   "Power Cabling & Distribution",                    "LS",   1),
+                ("Civil & MEP",  "Ceiling Cutouts, Diffuser Frames, Supports",      "LS",   1),
+                ("Installation", "Complete Installation Works",                     "LS",   1),
+                ("Testing",      "Testing, Commissioning & Handover",               "LS",   1),
+            ],
+        },
+    }
+
+    # ---- Normalize raw system text to a canonical DB system_type key ----
+    _SCOPE_CODE_MAP = [
+        ("VRF",               "VRF"),
+        ("VARIABLE REFRIGERANT", "VRF"),
+        ("CHILLER",           "CHILLER"),
+        ("CHILLED WATER",     "CHILLER"),
+        ("FCU",               "FCU"),
+        ("FAN COIL",          "FCU"),
+        ("CASSETTE",          "CASSETTE"),
+        ("PACKAGED_DX",       "PACKAGED_DX"),
+        ("PACKAGED DX",       "PACKAGED_DX"),
+        ("PACKAGED UNIT",     "PACKAGED_DX"),
+        ("PACKAGED",          "PACKAGED_DX"),
+        ("SPLIT_AC",          "SPLIT_AC"),
+        ("SPLIT AC",          "SPLIT_AC"),
+        ("SPLIT AIR",         "SPLIT_AC"),
+        ("SPLIT",             "SPLIT_AC"),
+    ]
+
+    def _normalize_system_code(raw):
+        """Resolve any text form of an HVAC system name to its canonical DB system_type key."""
+        if not raw:
+            return "PACKAGED_DX"
+        _u = raw.strip().upper()
+        # 1. Direct match
+        for _kw, _code in _SCOPE_CODE_MAP:
+            if _u == _kw:
+                return _code
+        # 2. Startswith
+        for _kw, _code in _SCOPE_CODE_MAP:
+            if _u.startswith(_kw):
+                return _code
+        # 3. Contains
+        for _kw, _code in _SCOPE_CODE_MAP:
+            if _kw in _u:
+                return _code
+        return _u  # Return as-is -- may be a valid DB key already
+
+    # ---- Resolve product ----
+    # NOTE: use product_param that was already resolved from POST or GET above;
+    # do NOT re-read from request.GET here as that would ignore POST values.
+    if product_param == "RECOMMENDED":
+        rec = RecommendationResult.objects.filter(
+            run__request=proc_request,
+        ).order_by("-created_at").first()
+        if rec:
+            _raw_sys = (
+                (rec.output_payload_json or {}).get("system_type_code", "")
+                or str(rec.recommended_option or "").split("(")[0].strip()
+            )
+            system_code = _normalize_system_code(_raw_sys)
+            rationale = rec.reasoning_summary or "Based on store profile and site conditions."
+            confidence_pct = round(float(rec.confidence_score or 0) * 100)
+        else:
+            system_code = "PACKAGED_DX"
+            rationale = "Default recommendation -- no analysis run yet."
+            confidence_pct = 0
+        selection_basis = "AI / Rules Engine Recommendation"
+    else:
+        system_code = _normalize_system_code(product_param)
+        rationale = "Manually selected based on project requirements."
+        confidence_pct = 0
+        selection_basis = "Manual Selection"
+
+    # -- Scope: DB-first (HVACServiceScope mandatory), fallback to hardcoded SYSTEM_SCOPE --
+    # DB scope takes absolute priority -- all 6 categories are always emitted
+    # so that Equipment/Installation/Piping/Electrical/Controls/Testing are
+    # always present in both the Excel and PDF documents.
+    from apps.procurement.models import HVACServiceScope as _HSSModel
+    _db_scope = _HSSModel.objects.filter(system_type=system_code, is_active=True).first()
+    if not _db_scope:
+        # Try a case-insensitive search as a safety net
+        _db_scope = _HSSModel.objects.filter(
+            system_type__iexact=system_code, is_active=True
+        ).first()
+    if _db_scope:
+        system_label = _db_scope.display_name or SYSTEM_LABELS.get(system_code, system_code)
+        _raw_rows = []
+        for _cat, _field_text in [
+            ("Equipment",       _db_scope.equipment_scope),
+            ("Installation",    _db_scope.installation_services),
+            ("Piping/Ducting",  _db_scope.piping_ducting),
+            ("Electrical",      _db_scope.electrical_works),
+            ("Controls",        _db_scope.controls_accessories),
+            ("Testing",         _db_scope.testing_commissioning),
+        ]:
+            _lines_added = 0
+            for _line in (_field_text or "").splitlines():
+                _line = _line.strip().lstrip("-*. ").strip()
+                if _line:
+                    _raw_rows.append((_cat, _line, "LS", 1))
+                    _lines_added += 1
+            # Always emit at least one placeholder row per category so every
+            # category header appears in the document even if the DB field is blank.
+            if _lines_added == 0:
+                _raw_rows.append((_cat, "(As per site conditions)", "LS", 1))
+        capacity_note = "As per heat load calculation (TR)"
+        scope_rows = _raw_rows
+        logger.info(
+            "RFQ scope for pk=%s system=%s: loaded %d rows from HVACServiceScope DB",
+            pk, system_code, len(scope_rows),
+        )
+    else:
+        system_label = SYSTEM_LABELS.get(system_code, system_code)
+        scope_data = SYSTEM_SCOPE.get(system_code, SYSTEM_SCOPE["PACKAGED_DX"])
+        capacity_note = scope_data["capacity"]
+        scope_rows = list(scope_data["scope"])
+        logger.info(
+            "RFQ scope for pk=%s system=%s: DB scope not found, using hardcoded table",
+            pk, system_code,
+        )
+    # Apply qty overrides
+    if qty_overrides:
+        scope_rows = [
+            (cat, desc, unit, qty_overrides.get(i, qty))
+            for i, (cat, desc, unit, qty) in enumerate(scope_rows)
+        ]
+
+    # ---- Gather attributes ----
+    attr_map = {a.attribute_code: a.value_text for a in proc_request.attributes.all()}
+    country       = attr_map.get("country", "") or proc_request.geography_country or ""
+    city          = attr_map.get("city", "") or proc_request.geography_city or ""
+    store_type    = attr_map.get("store_type", "")
+    area_sqft     = attr_map.get("area_sqft", "")
+    ceiling_h     = attr_map.get("ceiling_height", "")
+    ambient       = attr_map.get("ambient_temp_max", "")
+    humidity      = attr_map.get("humidity_level", "")
+    cooling_tr    = attr_map.get("estimated_cooling_tr", "")
+    budget        = attr_map.get("budget_level", "")
+
+    today     = datetime.date.today().strftime("%d-%b-%Y")
+    rfq_ref   = f"RFQ-{proc_request.pk:04d}-{datetime.date.today().strftime('%Y%m%d')}"
+    capacity_display = f"{cooling_tr} TR" if cooling_tr else capacity_note
+
+    # ================================================================ Build workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "RFQ"
+    ws.sheet_view.showGridLines = False  # clean white canvas
+
+    # Column widths: A(idx)=6, B(param)=28, C(value/desc)=48, D(unit)=14, E(qty)=10
+    for i, w in zip(range(1, 6), [6, 28, 48, 14, 10]):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ---- Style helpers ----
+    def _thin():
+        s = Side(style="thin", color="BDBDBD")
+        return Border(left=s, right=s, top=s, bottom=s)
+
+    def _fill(hex_val):
+        return PatternFill("solid", fgColor=hex_val)
+
+    NAVY   = "1A3C5E"
+    LTBLUE = "EAF2FB"
+    GREY   = "F5F5F5"
+    WHITE  = "FFFFFF"
+    SECBG  = "D6E4F0"
+
+    def _merge_write(row, col_start, col_end, value, font=None, fill=None,
+                     align=None, height=None, border=True):
+        ws.merge_cells(start_row=row, start_column=col_start,
+                       end_row=row, end_column=col_end)
+        c = ws.cell(row=row, column=col_start, value=value)
+        if font:  c.font = font
+        if fill:  c.fill = fill
+        if align: c.alignment = align
+        if border:
+            for col in range(col_start, col_end + 1):
+                ws.cell(row=row, column=col).border = _thin()
+        if height:
+            ws.row_dimensions[row].height = height
+
+    def _kv(row, label, value, label_fill=GREY):
+        """Write a 2-column key-value row (columns B & C), blank A D E."""
+        lc = ws.cell(row=row, column=2, value=label)
+        lc.font = Font(bold=True, size=10)
+        lc.fill = _fill(label_fill)
+        lc.border = _thin()
+        lc.alignment = Alignment(vertical="center")
+        vc = ws.cell(row=row, column=3, value=value or "--")
+        vc.font = Font(size=10)
+        vc.fill = _fill(WHITE)
+        vc.border = _thin()
+        vc.alignment = Alignment(vertical="center", wrap_text=True)
+        # Span value across C-E for readability
+        ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=5)
+        for col in range(3, 6):
+            ws.cell(row=row, column=col).border = _thin()
+        ws.row_dimensions[row].height = 18
+
+    def _section_header(row, number, title):
+        """Bold section title spanning B-E."""
+        ws.merge_cells(start_row=row, start_column=2,
+                       end_row=row, end_column=5)
+        c = ws.cell(row=row, column=2, value=f"{number}. {title}")
+        c.font = Font(bold=True, size=11, color=NAVY)
+        c.fill = _fill(SECBG)
+        c.alignment = Alignment(vertical="center")
+        c.border = _thin()
+        for col in range(2, 6):
+            ws.cell(row=row, column=col).border = _thin()
+        ws.row_dimensions[row].height = 20
+
+    def _table_header(row, cols):
+        """Write table column headers spanning B-E."""
+        # cols = list of (col_index, label) with col_index relative to sheet
+        for ci, label in cols:
+            c = ws.cell(row=row, column=ci, value=label)
+            c.font = Font(bold=True, size=10, color=NAVY)
+            c.fill = _fill(LTBLUE)
+            c.border = _thin()
+            c.alignment = Alignment(horizontal="center", vertical="center",
+                                    wrap_text=True)
+        ws.row_dimensions[row].height = 18
+
+    # ============================== ROW 1: TITLE ==============================
+    _merge_write(1, 1, 5,
+        "REQUEST FOR QUOTATION (RFQ) - HVAC WORKS",
+        font=Font(bold=True, size=16, color="FFFFFF"),
+        fill=_fill(NAVY),
+        align=Alignment(horizontal="center", vertical="center"),
+        height=36, border=False)
+
+    # Row 2: Ref + Date on same line
+    ws.cell(row=2, column=2, value=f"RFQ Ref: {rfq_ref}").font = Font(bold=True, size=9, color="555555")
+    ws.merge_cells("B2:C2")
+    date_c = ws.cell(row=2, column=4, value=f"Date: {today}")
+    date_c.font = Font(size=9, color="555555")
+    date_c.alignment = Alignment(horizontal="right")
+    ws.merge_cells("D2:E2")
+    ws.row_dimensions[2].height = 14
+
+    # ========================== INTRO PARAGRAPH ================================
+    intro = (
+        f"We invite your quotation for the Supply, Installation, Testing, and Commissioning (SITC) "
+        f"of a {system_label} HVAC system for the store described below. "
+        f"Please submit a detailed, itemised quotation covering all scope items listed in Section 3."
+    )
+    _merge_write(4, 2, 5, intro,
+        font=Font(size=10),
+        fill=_fill(WHITE),
+        align=Alignment(wrap_text=True, vertical="top"),
+        height=40, border=False)
+    ws.row_dimensions[4].height = 44
+
+    # ========================== SECTION 1: STORE DETAILS ======================
+    r = 6
+    _section_header(r, 1, "Store Details"); r += 1
+    _table_header(r, [(2, "Parameter"), (3, "Value")]); r += 1
+    store_rows = [
+        ("Country",          country),
+        ("City",             city),
+        ("Store Type",       store_type),
+        ("Area",             f"{area_sqft} sq ft" if area_sqft else ""),
+        ("Ceiling Height",   f"{ceiling_h} ft" if ceiling_h else ""),
+        ("Max Temperature",  f"{ambient} deg C" if ambient else ""),
+        ("Humidity",         humidity),
+        ("Budget Level",     budget),
+    ]
+    for param, val in store_rows:
+        if not val:
+            continue
+        _kv(r, param, val); r += 1
+
+    # ========================= SECTION 2: HVAC SYSTEM =========================
+    r += 1
+    _section_header(r, 2, "Recommended HVAC System"); r += 1
+    _table_header(r, [(2, "Field"), (3, "Value")]); r += 1
+    _kv(r, "System Type",        system_label); r += 1
+    _kv(r, "Capacity",           capacity_display); r += 1
+    _kv(r, "Selection Basis",    selection_basis); r += 1
+    if confidence_pct:
+        _kv(r, "Confidence", f"{confidence_pct}%"); r += 1
+    # Rationale - taller row
+    lc2 = ws.cell(row=r, column=2, value="Reason / Rationale")
+    lc2.font = Font(bold=True, size=10)
+    lc2.fill = _fill(GREY)
+    lc2.border = _thin()
+    lc2.alignment = Alignment(vertical="top")
+    ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=5)
+    vc2 = ws.cell(row=r, column=3, value=rationale)
+    vc2.font = Font(size=10, italic=True)
+    vc2.fill = _fill(WHITE)
+    vc2.alignment = Alignment(wrap_text=True, vertical="top")
+    for col in range(2, 6):
+        ws.cell(row=r, column=col).border = _thin()
+    ws.row_dimensions[r].height = 50
+    r += 1
+
+    # ========================== SECTION 3: SCOPE OF WORK ======================
+    r += 1
+    _section_header(r, 3, "Scope of Work"); r += 1
+
+    # Table header: A=S.No, B=Category, C=Description, D=Unit, E=Qty
+    scope_hdr_cols = [(1, "S.No"), (2, "Category"), (3, "Description"), (4, "Unit"), (5, "Qty")]
+    for ci, label in scope_hdr_cols:
+        c = ws.cell(row=r, column=ci, value=label)
+        c.font = Font(bold=True, size=10, color=NAVY)
+        c.fill = _fill(LTBLUE)
+        c.border = _thin()
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[r].height = 18
+    r += 1
+
+    for sno, (cat, desc, unit, qty) in enumerate(scope_rows, 1):
+        # S.No
+        sno_c = ws.cell(row=r, column=1, value=sno)
+        sno_c.font = Font(size=10)
+        sno_c.fill = _fill(GREY)
+        sno_c.border = _thin()
+        sno_c.alignment = Alignment(horizontal="center", vertical="center")
+        # Category
+        cat_c = ws.cell(row=r, column=2, value=cat)
+        cat_c.font = Font(bold=True, size=10)
+        cat_c.fill = _fill(GREY)
+        cat_c.border = _thin()
+        cat_c.alignment = Alignment(vertical="center")
+        # Description
+        desc_c = ws.cell(row=r, column=3, value=desc)
+        desc_c.font = Font(size=10)
+        desc_c.fill = _fill(WHITE)
+        desc_c.border = _thin()
+        desc_c.alignment = Alignment(vertical="center", wrap_text=True)
+        # Unit
+        unit_c = ws.cell(row=r, column=4, value=unit)
+        unit_c.font = Font(size=10)
+        unit_c.fill = _fill(WHITE)
+        unit_c.border = _thin()
+        unit_c.alignment = Alignment(horizontal="center", vertical="center")
+        # Qty
+        qty_c = ws.cell(row=r, column=5, value=qty)
+        qty_c.font = Font(size=10)
+        qty_c.fill = _fill(WHITE)
+        qty_c.border = _thin()
+        qty_c.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[r].height = 20
+        r += 1
+
+    # ========================== SECTION 4: COMMERCIAL TERMS ===================
+    r += 1
+    _section_header(r, 4, "Commercial Terms"); r += 1
+    _table_header(r, [(2, "Term"), (3, "Details")]); r += 1
+    commercial_rows = [
+        ("Quotation Validity", "90 days from submission date"),
+        ("Submission Deadline", "As advised by issuing party"),
+        ("Delivery / Completion", "Vendor to specify in quotation"),
+        ("Payment Terms", "As per standard purchase order terms"),
+        ("Currency", f"{country} local currency or as agreed"),
+        ("Pricing Basis", "Lump sum (supply + installation + commissioning)"),
+        ("Warranty", "Minimum 2 years on equipment and workmanship"),
+        ("Compliance", "ASHRAE 90.1, SASO, and applicable local building code"),
+    ]
+    for term, detail in commercial_rows:
+        _kv(r, term, detail); r += 1
+
+    # ========================== SECTION 5: VENDOR PRICING RESPONSE ============
+    r += 1
+    _section_header(r, 5, "Vendor Pricing Response (To be filled by Vendor)"); r += 1
+    vnd_cols = [(1, "S.No"), (2, "Category"), (3, "Description / Proposed Model"),
+                (4, "Unit Price"), (5, "Total")]
+    for ci, label in vnd_cols:
+        c = ws.cell(row=r, column=ci, value=label)
+        c.font = Font(bold=True, size=10, color=NAVY)
+        c.fill = _fill(LTBLUE)
+        c.border = _thin()
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[r].height = 18
+    r += 1
+    for idx in range(1, len(scope_rows) + 1):
+        for ci in range(1, 6):
+            c = ws.cell(row=r, column=ci, value=idx if ci == 1 else "")
+            c.border = _thin()
+            c.fill = _fill(WHITE)
+            c.font = Font(size=10)
+            if ci in (4, 5):
+                c.alignment = Alignment(horizontal="right")
+        ws.row_dimensions[r].height = 18
+        r += 1
+
+    # Totals row
+    ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+    tc = ws.cell(row=r, column=3, value="GRAND TOTAL (Excl. VAT)")
+    tc.font = Font(bold=True, size=10)
+    tc.fill = _fill(SECBG)
+    tc.border = _thin()
+    tc.alignment = Alignment(horizontal="right", vertical="center")
+    gt = ws.cell(row=r, column=5, value="")
+    gt.border = _thin()
+    gt.fill = _fill(SECBG)
+    gt.font = Font(bold=True, size=10)
+    ws.row_dimensions[r].height = 18
+    r += 2
+
+    # ========================== DISCLAIMER ====================================
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+    dc = ws.cell(row=r, column=1,
+        value=("Note: This RFQ is system-generated. All specifications are indicative."
+               " A qualified HVAC engineer must review and confirm final scope before award."))
+    dc.font = Font(size=8, italic=True, color="888888")
+    dc.alignment = Alignment(wrap_text=True, horizontal="center")
+    dc.fill = _fill("FFFDE7")
+    ws.row_dimensions[r].height = 24
+
+    # ================================================================ Response
+    safe_title = "".join(
+        c for c in (proc_request.title or "Request") if c.isalnum() or c in " _-"
+    )[:30].strip().replace(" ", "_")
+
+    # ---- Always build Excel buffer ----
+    buf = io.BytesIO()
+    wb.save(buf)
+    xlsx_bytes = buf.getvalue()
+    filename_xlsx = f"RFQ_{rfq_ref}_{safe_title}.xlsx"
+
+    # ---- Always build PDF buffer ----
+    pdf_bytes = b""
+    filename_pdf = f"RFQ_{rfq_ref}_{safe_title}.pdf"
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        )
+
+        pdf_buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            pdf_buf, pagesize=A4,
+            leftMargin=18 * mm, rightMargin=18 * mm,
+            topMargin=18 * mm, bottomMargin=18 * mm,
+        )
+
+        styles = getSampleStyleSheet()
+        NAVY_RL  = colors.HexColor("#1A3C5E")
+        LTBLUE_RL = colors.HexColor("#EAF2FB")
+        SECBG_RL  = colors.HexColor("#D6E4F0")
+        GREY_RL   = colors.HexColor("#F5F5F5")
+
+        title_style = ParagraphStyle(
+            "rfqTitle", parent=styles["Title"],
+            fontSize=14, textColor=colors.white,
+            backColor=NAVY_RL, spaceAfter=4, spaceBefore=0,
+            alignment=1,  # center
+        )
+        sec_style = ParagraphStyle(
+            "rfqSec", parent=styles["Normal"],
+            fontSize=11, textColor=NAVY_RL, fontName="Helvetica-Bold",
+            spaceAfter=2, spaceBefore=6,
+        )
+        normal_sm = ParagraphStyle(
+            "rfqNorm", parent=styles["Normal"],
+            fontSize=9, spaceAfter=1,
+        )
+        italic_sm = ParagraphStyle(
+            "rfqItalic", parent=styles["Normal"],
+            fontSize=9, fontName="Helvetica-Oblique", spaceAfter=4,
+        )
+
+        story = []
+
+        # Title
+        story.append(Paragraph("REQUEST FOR QUOTATION (RFQ) -- HVAC WORKS", title_style))
+        story.append(Spacer(1, 4 * mm))
+
+        # Ref + Date
+        story.append(Paragraph(
+            f"<b>RFQ Ref:</b> {rfq_ref} &nbsp;&nbsp;&nbsp; <b>Date:</b> {today}",
+            normal_sm,
+        ))
+        story.append(Spacer(1, 3 * mm))
+
+        # Intro
+        story.append(Paragraph(
+            f"We invite your quotation for the Supply, Installation, Testing, and Commissioning "
+            f"(SITC) of a <b>{system_label}</b> HVAC system for the store described below. "
+            f"Please submit a detailed, itemised quotation covering all scope items in Section 3.",
+            italic_sm,
+        ))
+        story.append(Spacer(1, 2 * mm))
+
+        def _kv_table(rows, col_widths=(55 * mm, 115 * mm)):
+            data = [[Paragraph(f"<b>{k}</b>", normal_sm), Paragraph(str(v or "--"), normal_sm)]
+                    for k, v in rows]
+            t = Table(data, colWidths=col_widths)
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (0, -1), GREY_RL),
+                ("BACKGROUND", (1, 0), (1, -1), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#BDBDBD")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            return t
+
+        # Section 1: Store Details
+        story.append(Paragraph("1. Store Details", sec_style))
+        store_kv = [(p, v) for p, v in [
+            ("Country", country), ("City", city), ("Store Type", store_type),
+            ("Area", f"{area_sqft} sq ft" if area_sqft else ""),
+            ("Ceiling Height", f"{ceiling_h} ft" if ceiling_h else ""),
+            ("Max Temperature", f"{ambient} deg C" if ambient else ""),
+            ("Humidity", humidity), ("Budget Level", budget),
+        ] if v]
+        story.append(_kv_table(store_kv))
+        story.append(Spacer(1, 3 * mm))
+
+        # Section 2: HVAC System
+        story.append(Paragraph("2. Recommended HVAC System", sec_style))
+        sys_kv = [
+            ("System Type", system_label),
+            ("Capacity", capacity_display),
+            ("Selection Basis", selection_basis),
+        ]
+        if confidence_pct:
+            sys_kv.append(("Confidence", f"{confidence_pct}%"))
+        sys_kv.append(("Reason / Rationale", rationale))
+        story.append(_kv_table(sys_kv))
+        story.append(Spacer(1, 3 * mm))
+
+        # Section 3: Scope of Work
+        story.append(Paragraph("3. Scope of Work", sec_style))
+        hdr = [
+            Paragraph("<b>S.No</b>", normal_sm),
+            Paragraph("<b>Category</b>", normal_sm),
+            Paragraph("<b>Description</b>", normal_sm),
+            Paragraph("<b>Unit</b>", normal_sm),
+            Paragraph("<b>Qty</b>", normal_sm),
+        ]
+        scope_pdf_rows = [hdr] + [
+            [
+                Paragraph(str(i), normal_sm),
+                Paragraph(cat, normal_sm),
+                Paragraph(desc, normal_sm),
+                Paragraph(unit, normal_sm),
+                Paragraph(str(qty) if qty != "" else "", normal_sm),
+            ]
+            for i, (cat, desc, unit, qty) in enumerate(scope_rows, 1)
+        ]
+        scope_t = Table(scope_pdf_rows, colWidths=[10 * mm, 28 * mm, 80 * mm, 20 * mm, 14 * mm])
+        scope_ts = TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), LTBLUE_RL),
+            ("BACKGROUND", (0, 1), (1, -1), GREY_RL),
+            ("BACKGROUND", (2, 1), (-1, -1), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#BDBDBD")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ])
+        scope_t.setStyle(scope_ts)
+        story.append(scope_t)
+        story.append(Spacer(1, 3 * mm))
+
+        # Section 4: Commercial Terms
+        story.append(Paragraph("4. Commercial Terms", sec_style))
+        comm_kv = [
+            ("Quotation Validity", "90 days from submission date"),
+            ("Delivery / Completion", "Vendor to specify in quotation"),
+            ("Payment Terms", "As per standard purchase order terms"),
+            ("Currency", f"{country} local currency or as agreed"),
+            ("Pricing Basis", "Lump sum (supply + installation + commissioning)"),
+            ("Warranty", "Minimum 2 years on equipment and workmanship"),
+            ("Compliance", "ASHRAE 90.1, SASO, and applicable local building code"),
+        ]
+        story.append(_kv_table(comm_kv))
+        story.append(Spacer(1, 3 * mm))
+
+        # Section 5: Vendor Pricing Response
+        story.append(Paragraph("5. Vendor Pricing Response (To be filled by Vendor)", sec_style))
+        vnd_hdr = [
+            Paragraph("<b>S.No</b>", normal_sm),
+            Paragraph("<b>Category</b>", normal_sm),
+            Paragraph("<b>Description / Proposed Model</b>", normal_sm),
+            Paragraph("<b>Unit Price</b>", normal_sm),
+            Paragraph("<b>Total</b>", normal_sm),
+        ]
+        vnd_rows = [vnd_hdr] + [
+            [Paragraph(str(i), normal_sm), Paragraph("", normal_sm),
+             Paragraph("", normal_sm), Paragraph("", normal_sm), Paragraph("", normal_sm)]
+            for i in range(1, len(scope_rows) + 1)
+        ] + [[
+            Paragraph("", normal_sm),
+            Paragraph("", normal_sm),
+            Paragraph("<b>GRAND TOTAL (Excl. VAT)</b>", normal_sm),
+            Paragraph("", normal_sm),
+            Paragraph("", normal_sm),
+        ]]
+        vnd_t = Table(vnd_rows, colWidths=[10 * mm, 28 * mm, 80 * mm, 20 * mm, 14 * mm])
+        vnd_t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), LTBLUE_RL),
+            ("BACKGROUND", (-3, -1), (-1, -1), SECBG_RL),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#BDBDBD")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(vnd_t)
+        story.append(Spacer(1, 4 * mm))
+
+        # Disclaimer
+        story.append(Paragraph(
+            "<i>Note: This RFQ is system-generated. All specifications are indicative. "
+            "A qualified HVAC engineer must review and confirm the final scope before award.</i>",
+            ParagraphStyle("disc", parent=styles["Normal"], fontSize=7,
+                           textColor=colors.HexColor("#888888")),
+        ))
+
+        doc.build(story)
+        pdf_buf.seek(0)
+        pdf_bytes = pdf_buf.getvalue()
+    except Exception as _pdf_exc:
+        logger.warning("RFQ PDF build failed: %s", _pdf_exc)
+        pdf_bytes = b""
+
+    # ---- Upload both to Azure Blob + persist GeneratedRFQ ----
+    xlsx_blob_path = ""
+    pdf_blob_path = ""
+    if _is_generate_post:
+        try:
+            from apps.documents.blob_service import upload_to_blob, is_blob_storage_enabled
+            if is_blob_storage_enabled():
+                _date_str = datetime.date.today().strftime("%Y%m%d")
+                _base_name = f"RFQ-{proc_request.pk:04d}-{_date_str}_{safe_title}"
+                _folder = f"rfq/{safe_title}"
+                if xlsx_bytes:
+                    _xblob = f"{_folder}/{_base_name}.xlsx"
+                    upload_to_blob(
+                        io.BytesIO(xlsx_bytes),
+                        _xblob,
+                        content_type=(
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ),
+                    )
+                    xlsx_blob_path = _xblob
+                if pdf_bytes:
+                    _pblob = f"{_folder}/{_base_name}.pdf"
+                    upload_to_blob(
+                        io.BytesIO(pdf_bytes),
+                        _pblob,
+                        content_type="application/pdf",
+                    )
+                    pdf_blob_path = _pblob
+        except Exception as _blob_exc:
+            logger.warning("RFQ blob upload failed: %s", _blob_exc)
+
+        # Persist GeneratedRFQ record
+        from apps.procurement.models import GeneratedRFQ as _GRFQ
+        _rfq_rec = _GRFQ.objects.create(
+            request=proc_request,
+            rfq_ref=rfq_ref,
+            system_code=system_code,
+            system_label=system_label,
+            qty_json=qty_overrides,
+            xlsx_blob_path=xlsx_blob_path,
+            pdf_blob_path=pdf_blob_path,
+            generated_by=request.user if request.user.is_authenticated else None,
+        )
+        return JsonResponse({
+            "status": "ok",
+            "rfq_ref": rfq_ref,
+            "rfq_id": _rfq_rec.pk,
+            "has_xlsx": bool(xlsx_bytes),
+            "has_pdf": bool(pdf_bytes),
+            "blob_enabled": bool(xlsx_blob_path),
+        })
+
+    # ---- Legacy GET: stream xlsx (default) or pdf ----
+    if _dl_fmt_override == "pdf":
+        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="{filename_pdf}"'
+        return resp
+
+    response = HttpResponse(
+        xlsx_bytes,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename_xlsx}"'
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -510,8 +1999,6 @@ def run_detail(request, pk):
         pk=pk,
     )
 
-    recommendation = None
-    benchmarks = None
     compliance = None
     validation = None
 
@@ -725,6 +2212,51 @@ def procurement_dashboard(request):
         .order_by("-created_at")[:10]
     )
 
+    # ------------------------------------------------------------------
+    # Benchmarking KPIs
+    # ------------------------------------------------------------------
+    from apps.benchmarking.models import BenchmarkRequest, BenchmarkResult
+
+    bq_total = BenchmarkRequest.objects.count()
+    bq_completed = BenchmarkRequest.objects.filter(status="COMPLETED").count()
+    bq_pending = BenchmarkRequest.objects.filter(status__in=["PENDING", "PROCESSING"]).count()
+    bq_failed = BenchmarkRequest.objects.filter(status="FAILED").count()
+
+    # Variance distribution across all completed results
+    from django.db.models import Sum
+    variance_agg = BenchmarkResult.objects.aggregate(
+        within=Sum("lines_within_range"),
+        moderate=Sum("lines_moderate"),
+        high=Sum("lines_high"),
+        needs_review=Sum("lines_needs_review"),
+    )
+    bq_kpi = {
+        "total": bq_total,
+        "completed": bq_completed,
+        "pending": bq_pending,
+        "failed": bq_failed,
+        "lines_within_range": variance_agg["within"] or 0,
+        "lines_moderate": variance_agg["moderate"] or 0,
+        "lines_high": variance_agg["high"] or 0,
+        "lines_needs_review": variance_agg["needs_review"] or 0,
+    }
+
+    # Geography breakdown for benchmark requests
+    bench_by_geo = list(
+        BenchmarkRequest.objects
+        .exclude(geography="")
+        .values("geography")
+        .annotate(total=Count("id"))
+        .order_by("-total")
+    )
+
+    # Recent benchmark requests with their result
+    recent_benchmarks = (
+        BenchmarkRequest.objects
+        .select_related("submitted_by", "result")
+        .order_by("-created_at")[:10]
+    )
+
     return render(request, "procurement/procurement_dashboard.html", {
         "kpi": kpi,
         "status_chart": status_chart,
@@ -732,6 +2264,10 @@ def procurement_dashboard(request):
         "by_country": by_country,
         "hvac_by_type": hvac_by_type,
         "recent_requests": recent_requests,
+        # benchmarking
+        "bq_kpi": bq_kpi,
+        "bench_by_geo": bench_by_geo,
+        "recent_benchmarks": recent_benchmarks,
     })
 
 
@@ -1045,7 +2581,7 @@ def proc_configurations(request):
     """Procurement Configurations hub -- seed data admin control."""
     from apps.procurement.models import (
         ExternalSourceRegistry, ValidationRuleSet, Product, Vendor, Room,
-        HVACRecommendationRule,
+        HVACRecommendationRule, HVACServiceScope,
     )
     from apps.core.enums import (
         ExternalSourceClass, ValidationType, HVACSystemType, RoomUsageType,
@@ -1064,6 +2600,8 @@ def proc_configurations(request):
         "rooms_active": Room.objects.filter(is_active=True).count(),
         "hvacrules_total": HVACRecommendationRule.objects.count(),
         "hvacrules_active": HVACRecommendationRule.objects.filter(is_active=True).count(),
+        "service_total": HVACServiceScope.objects.count(),
+        "service_active": HVACServiceScope.objects.filter(is_active=True).count(),
     }
 
     return render(request, "procurement/configurations.html", {
@@ -1104,6 +2642,9 @@ def api_config_sources(request):
                 "id": s.pk,
                 "source_name": s.source_name,
                 "domain": s.domain,
+                "source_url": s.source_url or "",
+                "hvac_system_type": s.hvac_system_type,
+                "equipment": s.equipment,
                 "source_type": s.source_type,
                 "source_type_display": s.get_source_type_display(),
                 "priority": s.priority,
@@ -1128,6 +2669,9 @@ def api_config_sources(request):
             src = ExternalSourceRegistry.objects.create(
                 source_name=body.get("source_name", "").strip(),
                 domain=body.get("domain", "").strip(),
+                hvac_system_type=body.get("hvac_system_type", "").strip(),
+                equipment=body.get("equipment", "").strip(),
+                source_url=body.get("source_url", "").strip(),
                 source_type=body.get("source_type", "OEM_OFFICIAL"),
                 country_scope=[c.strip() for c in body.get("country_scope", "").split(",") if c.strip()],
                 priority=int(body.get("priority", 10)),
@@ -1166,6 +2710,9 @@ def api_config_source_detail(request, pk):
             "id": src.pk,
             "source_name": src.source_name,
             "domain": src.domain,
+            "hvac_system_type": src.hvac_system_type,
+            "equipment": src.equipment,
+            "source_url": src.source_url or "",
             "source_type": src.source_type,
             "priority": src.priority,
             "trust_score": float(src.trust_score),
@@ -1196,6 +2743,9 @@ def api_config_source_detail(request, pk):
             # update
             src.source_name = body.get("source_name", src.source_name).strip()
             src.domain = body.get("domain", src.domain).strip()
+            src.hvac_system_type = body.get("hvac_system_type", src.hvac_system_type or "").strip()
+            src.equipment = body.get("equipment", src.equipment or "").strip()
+            src.source_url = body.get("source_url", src.source_url or "").strip()
             src.source_type = body.get("source_type", src.source_type)
             country_raw = body.get("country_scope", "")
             src.country_scope = [c.strip() for c in country_raw.split(",") if c.strip()] if country_raw else src.country_scope
@@ -1213,6 +2763,35 @@ def api_config_source_detail(request, pk):
             return JsonResponse({"success": False, "message": str(exc)}, status=400)
 
     return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_validate_url(request):
+    """HEAD-check a URL and return whether it is reachable (no broken link)."""
+    import requests as _req
+    from django.http import JsonResponse
+
+    url = request.GET.get("url", "").strip()
+    if not url:
+        return JsonResponse({"ok": False, "error": "No URL provided."})
+    if not url.startswith(("http://", "https://")):
+        return JsonResponse({"ok": False, "error": "URL must start with http:// or https://"})
+    try:
+        resp = _req.head(
+            url,
+            timeout=8,
+            allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; LinkChecker/1.0)"},
+        )
+        ok = resp.status_code < 400
+        return JsonResponse({"ok": ok, "status_code": resp.status_code})
+    except _req.exceptions.Timeout:
+        return JsonResponse({"ok": False, "error": "Request timed out."})
+    except _req.exceptions.ConnectionError:
+        return JsonResponse({"ok": False, "error": "Could not connect to the server."})
+    except Exception as exc:
+        return JsonResponse({"ok": False, "error": str(exc)})
 
 
 # ---------------------------------------------------------------------------
@@ -1925,6 +3504,39 @@ def api_config_hvacrule_detail(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# AJAX API -- HVAC Service Scope (read-only reference table)
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def api_config_servicescopes(request):
+    """List all HVACServiceScope rows (GET only -- managed via seed command)."""
+    from apps.procurement.models import HVACServiceScope
+    from django.http import JsonResponse
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    qs = HVACServiceScope.objects.all().order_by("sort_order", "system_type")
+    items = [
+        {
+            "id": s.pk,
+            "system_type": s.system_type,
+            "system_type_display": s.display_name or s.system_type,
+            "equipment_scope": s.equipment_scope,
+            "installation_services": s.installation_services,
+            "piping_ducting": s.piping_ducting,
+            "electrical_works": s.electrical_works,
+            "controls_accessories": s.controls_accessories,
+            "testing_commissioning": s.testing_commissioning,
+            "is_active": s.is_active,
+        }
+        for s in qs
+    ]
+    return JsonResponse({"items": items, "total": len(items)})
+
+
+# ---------------------------------------------------------------------------
 # External Suggestions API
 # ---------------------------------------------------------------------------
 @login_required
@@ -1941,18 +3553,21 @@ def api_external_suggestions(request, pk):
     proc_request = get_object_or_404(ProcurementRequest, pk=pk)
 
     try:
-        result = MarketIntelligenceService.generate(
+        result = MarketIntelligenceService.generate_auto(
             proc_request,
             generated_by=request.user if request.user.is_authenticated else None,
         )
     except Exception as exc:
-        logger.warning("api_external_suggestions LLM call failed for pk=%s: %s", pk, exc)
+        logger.error(
+            "api_external_suggestions LLM call failed for pk=%s: %s",
+            pk, exc, exc_info=True,
+        )
         _, system_code, system_name = MarketIntelligenceService.get_rec_context(proc_request)
         return JsonResponse({
             "system_code": system_code,
             "system_name": system_name,
             "rephrased_query": f"Market data for {system_name or 'HVAC system'} in {proc_request.geography_country or 'UAE'}",
-            "ai_summary": "AI market analysis is temporarily unavailable. Please try again shortly.",
+            "ai_summary": f"Analysis failed: {exc}",
             "market_context": "",
             "suggestions": [],
             "error": str(exc),
@@ -2030,12 +3645,45 @@ def api_perplexity_research(request, pk):
         .order_by("-created_at")
         .first()
     )
+    system_code = ""
     rec_block = "(no internal recommendation yet)"
     if recommendation:
         payload = recommendation.output_payload_json or {}
         system_code = payload.get("system_type_code", "")
         conf = int((recommendation.confidence_score or 0) * 100)
         rec_block = f"Recommended: {system_code} (confidence {conf}%)"
+
+    # Load approved sources restricted to this product's HVAC system type
+    from apps.procurement.models import ExternalSourceRegistry as _ESR
+    _SOURCE_CLASS_ORDER = {"OEM_OFFICIAL": 0, "AUTHORIZED_DISTRIBUTOR": 1, "OEM_REGIONAL": 2}
+    _approved_sources = []
+    if system_code:
+        _approved_sources = list(
+            _ESR.objects.filter(
+                hvac_system_type=system_code,
+                is_active=True,
+                allowed_for_discovery=True,
+            ).values("source_name", "domain", "source_url", "source_class")
+        )
+    if not _approved_sources:
+        # Fallback: all active discovery-enabled sources (no open-web leak)
+        _approved_sources = list(
+            _ESR.objects.filter(
+                is_active=True,
+                allowed_for_discovery=True,
+            ).values("source_name", "domain", "source_url", "source_class")
+        )
+    _approved_sources.sort(key=lambda s: _SOURCE_CLASS_ORDER.get(s["source_class"], 99))
+    _domain_list = [s["domain"] for s in _approved_sources]
+    _domain_to_url = {
+        s["domain"]: (s["source_url"] or f"https://{s['domain']}")
+        for s in _approved_sources
+    }
+    _sources_lines = [
+        f"  - {s['source_name']} | {s['source_url'] or 'https://' + s['domain']} | domain: {s['domain']}"
+        for s in _approved_sources
+    ]
+    _sources_block = "\n".join(_sources_lines)
 
     api_key = getattr(settings, "PERPLEXITY_API_KEY", "")
     model = getattr(settings, "PERPLEXITY_MODEL", "sonar-pro")
@@ -2113,6 +3761,15 @@ Return this exact JSON object (no other text):
 Provide 5 to 7 suggestions ranked by fit_score descending. Use only real verified product lines.
 """
 
+    if _approved_sources:
+        USER_PROMPT += (
+            f"\n\n=== APPROVED SOURCES (STRICT - DO NOT DEVIATE) ===\n"
+            f"You MUST search and cite information ONLY from the following approved websites. "
+            f"Do NOT reference, cite, or retrieve information from any other website or domain. "
+            f"Every citation_url in your response must belong to one of these domains.\n"
+            + _sources_block
+        )
+
     # ---- Call Perplexity sonar-pro (live web search) ----
     try:
         pplx_payload = {
@@ -2121,6 +3778,7 @@ Provide 5 to 7 suggestions ranked by fit_score descending. Use only real verifie
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": USER_PROMPT},
             ],
+            "search_domain_filter": _domain_list,
         }
         resp = requests.post(
             "https://api.perplexity.ai/chat/completions",
@@ -2180,10 +3838,51 @@ Provide 5 to 7 suggestions ranked by fit_score descending. Use only real verifie
         except (TypeError, ValueError):
             s["fit_score"] = 0
 
-    # ---- Build citation cards (real live URLs from Perplexity) ----
+    # ---- Enforce approved-domain citations ----
+    if _approved_sources and _domain_list:
+        def _ci_dom(url):
+            try:
+                return urlparse(url).netloc.lower().lstrip("www.")
+            except Exception:
+                return ""
+        for s in suggestions:
+            curl = s.get("citation_url") or ""
+            if curl:
+                cd = _ci_dom(curl)
+                matched = any(
+                    cd == ad.lower().lstrip("www.") or
+                    cd.endswith("." + ad.lower().lstrip("www."))
+                    for ad in _domain_list
+                )
+                if not matched:
+                    csrc = (s.get("citation_source") or "").lower()
+                    replacement = None
+                    for src in _approved_sources:
+                        if src["source_name"].lower() in csrc or csrc in src["source_name"].lower():
+                            replacement = src["source_url"] or f"https://{src['domain']}"
+                            break
+                    s["citation_url"] = replacement or _domain_to_url.get(_domain_list[0], f"https://{_domain_list[0]}")
+            else:
+                s["citation_url"] = _domain_to_url.get(_domain_list[0], f"https://{_domain_list[0]}")
+
+    # ---- Build citation cards -- only from approved domains ----
+    _approved_domain_bare = {ad.lower().lstrip("www.") for ad in _domain_list}
+
+    def _is_approved_url(url):
+        try:
+            host = urlparse(url).netloc.lower().lstrip("www.")
+            return any(
+                host == ad or host.endswith("." + ad)
+                for ad in _approved_domain_bare
+            )
+        except Exception:
+            return False
+
     citation_cards = []
     seen_domains: set = set()
     for url in raw_citations:
+        if not _is_approved_url(url):
+            continue
         try:
             domain = urlparse(url).netloc.replace("www.", "")
         except Exception:
@@ -2192,10 +3891,10 @@ Provide 5 to 7 suggestions ranked by fit_score descending. Use only real verifie
             seen_domains.add(domain)
             citation_cards.append({"url": url, "domain": domain})
 
-    # Also add per-suggestion citation URLs if not already in the list
+    # Also add per-suggestion citation URLs (already restricted above) if not yet in list
     for s in suggestions:
         curl = s.get("citation_url", "")
-        if curl:
+        if curl and _is_approved_url(curl):
             try:
                 cdomain = urlparse(curl).netloc.replace("www.", "")
             except Exception:
@@ -2215,3 +3914,149 @@ Provide 5 to 7 suggestions ranked by fit_score descending. Use only real verifie
     })
 
 
+# ---------------------------------------------------------------------------
+# Stores Management (full CRUD page)
+# ---------------------------------------------------------------------------
+
+@login_required
+@permission_required_code("procurement.view")
+def stores_management(request):
+    """Full-page store management: list, search, create, edit, toggle status."""
+    query = (request.GET.get("q") or "").strip()
+    country_filter = (request.GET.get("country") or "").strip()
+    store_type_filter = (request.GET.get("store_type") or "").strip()
+    status_filter = (request.GET.get("status") or "").strip()
+
+    qs = HVACStoreProfile.objects.all().order_by("store_id")
+    if query:
+        qs = qs.filter(
+            Q(store_id__icontains=query)
+            | Q(brand__icontains=query)
+            | Q(city__icontains=query)
+            | Q(country__icontains=query)
+        )
+    if country_filter:
+        qs = qs.filter(country__iexact=country_filter)
+    if store_type_filter:
+        qs = qs.filter(store_type__iexact=store_type_filter)
+    if status_filter == "active":
+        qs = qs.filter(is_active=True)
+    elif status_filter == "inactive":
+        qs = qs.filter(is_active=False)
+
+    total_stores = HVACStoreProfile.objects.count()
+    active_stores = HVACStoreProfile.objects.filter(is_active=True).count()
+    inactive_stores = total_stores - active_stores
+
+    countries = (
+        HVACStoreProfile.objects
+        .exclude(country="")
+        .values_list("country", flat=True)
+        .distinct()
+        .order_by("country")
+    )
+    store_types = (
+        HVACStoreProfile.objects
+        .exclude(store_type="")
+        .values_list("store_type", flat=True)
+        .distinct()
+        .order_by("store_type")
+    )
+
+    paginator = Paginator(qs, 25)
+    page_obj = paginator.get_page(request.GET.get("page", 1))
+
+    return render(request, "procurement/stores_management.html", {
+        "page_obj": page_obj,
+        "query": query,
+        "country_filter": country_filter,
+        "store_type_filter": store_type_filter,
+        "status_filter": status_filter,
+        "total_stores": total_stores,
+        "active_stores": active_stores,
+        "inactive_stores": inactive_stores,
+        "countries": list(countries),
+        "store_types": list(store_types),
+    })
+
+
+@login_required
+@permission_required_code("procurement.create")
+def api_store_management_create(request):
+    """AJAX POST -- create a new store from the Stores Management page."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    store_id = (request.POST.get("store_id") or "").strip()
+    if not store_id:
+        return JsonResponse({"error": "Store ID is required."}, status=400)
+
+    if HVACStoreProfile.objects.filter(store_id=store_id).exists():
+        return JsonResponse({"error": f"Store ID '{store_id}' already exists."}, status=409)
+
+    try:
+        defaults = _build_hvac_store_profile_defaults(request.POST)
+        profile = HVACStoreProfile.objects.create(
+            store_id=store_id,
+            created_by=request.user,
+            **defaults,
+        )
+        return JsonResponse({"ok": True, "store_id": profile.store_id, "pk": profile.pk}, status=201)
+    except Exception as exc:
+        logger.exception("api_store_management_create failed: %s", exc)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+@login_required
+@permission_required_code("procurement.create")
+def api_store_management_detail(request, pk):
+    """AJAX: GET detail, POST update, POST with _action=DELETE to remove."""
+    profile = get_object_or_404(HVACStoreProfile, pk=pk)
+
+    if request.method == "GET":
+        return JsonResponse({
+            "pk": profile.pk,
+            "store_id": profile.store_id,
+            "brand": profile.brand,
+            "country": profile.country,
+            "city": profile.city,
+            "store_type": profile.store_type,
+            "store_format": profile.store_format,
+            "area_sqft": profile.area_sqft,
+            "ceiling_height_ft": profile.ceiling_height_ft,
+            "operating_hours": profile.operating_hours,
+            "footfall_category": profile.footfall_category,
+            "ambient_temp_max": profile.ambient_temp_max,
+            "humidity_level": profile.humidity_level,
+            "dust_exposure": profile.dust_exposure,
+            "heat_load_category": profile.heat_load_category,
+            "fresh_air_requirement": profile.fresh_air_requirement,
+            "landlord_constraints": profile.landlord_constraints,
+            "existing_hvac_type": profile.existing_hvac_type,
+            "budget_level": profile.budget_level,
+            "energy_efficiency_priority": profile.energy_efficiency_priority,
+            "is_active": profile.is_active,
+        })
+
+    if request.method == "POST":
+        action = (request.POST.get("_action") or "").strip().upper()
+        if action == "DELETE":
+            store_id = profile.store_id
+            profile.delete()
+            return JsonResponse({"ok": True, "deleted_pk": pk, "store_id": store_id})
+
+        # UPDATE path
+        defaults = _build_hvac_store_profile_defaults(request.POST)
+        for field, value in defaults.items():
+            setattr(profile, field, value)
+        is_active_val = request.POST.get("is_active")
+        if is_active_val is not None:
+            profile.is_active = is_active_val in ("true", "1", "True", "on")
+        try:
+            profile.save()
+            return JsonResponse({"ok": True, "pk": profile.pk, "store_id": profile.store_id})
+        except Exception as exc:
+            logger.exception("api_store_management_detail update failed: %s", exc)
+            return JsonResponse({"error": str(exc)}, status=500)
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)

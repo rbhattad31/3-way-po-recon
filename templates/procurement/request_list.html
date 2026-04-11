@@ -5,6 +5,61 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/procurement/request-list.css' %}">
+<style>
+/* ── New-Request Choice Modal ── */
+.nr-choice-card {
+  border: 2px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 28px 24px;
+  cursor: pointer;
+  transition: all .22s ease;
+  background: #fff;
+  text-align: center;
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.nr-choice-card:hover {
+  border-color: #6366f1;
+  box-shadow: 0 8px 32px rgba(99,102,241,.18);
+  transform: translateY(-3px);
+  text-decoration: none;
+  color: inherit;
+}
+.nr-choice-card.nr-card-doc:hover {
+  border-color: #0ea5e9;
+  box-shadow: 0 8px 32px rgba(14,165,233,.18);
+}
+.nr-choice-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+}
+.nr-card-manual .nr-choice-icon { background: linear-gradient(135deg,#eef2ff,#e0e7ff); color: #4f46e5; }
+.nr-card-doc .nr-choice-icon { background: linear-gradient(135deg,#e0f2fe,#bae6fd); color: #0369a1; }
+.nr-choice-title { font-size: 15px; font-weight: 700; color: #0f172a; }
+.nr-choice-desc { font-size: 12px; color: #64748b; line-height: 1.5; max-width: 200px; }
+.nr-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.nr-badge-ai { background: linear-gradient(90deg,#6366f1,#0ea5e9); color:#fff; }
+#newRequestModal .modal-header {
+  background: linear-gradient(135deg,#f8faff,#f0f9ff);
+  border-bottom: 1px solid #e2e8f0;
+}
+</style>
 {% endblock %}
 
 {% block breadcrumb %}
@@ -33,9 +88,9 @@
       <div class="page-header-sub">AI-powered sourcing &bull; GCC market intelligence &bull; Agentic analysis</div>
     </div>
   </div>
-  <a href="{% url 'procurement:hvac_create' %}" class="btn-primary-action">
+  <button type="button" class="btn-primary-action" data-bs-toggle="modal" data-bs-target="#newRequestModal">
     <i class="bi bi-plus-circle"></i> New Request
-  </a>
+  </button>
 </div>
 
 
@@ -53,7 +108,7 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="kpi-card kpi-cyan d-flex align-items-center gap-3">
-      <div class="kpi-icon"><i class="bi bi-wind"></i></div>
+      <div class="kpi-icon"><img src="{% static 'images/procurement-robot.png' %}" alt="AI Agent" style="width:28px;height:28px;object-fit:contain;"></div>
       <div>
         <div class="kpi-value">HVAC</div>
         <div class="kpi-label">Active Domain</div>
@@ -303,13 +358,87 @@
     {% endif %}
   </p>
   {% if not current_status and not current_type and not current_domain and not search_query %}
-  <a href="{% url 'procurement:hvac_create' %}" class="btn btn-primary rounded-pill px-4 py-2 fw-semibold mt-2"
+  <button type="button" class="btn btn-primary rounded-pill px-4 py-2 fw-semibold mt-2"
      style="background:linear-gradient(135deg,#1d4ed8,#2563eb);border:none;
-            box-shadow:0 4px 14px rgba(37,99,235,.35);font-size:.85rem;">
+            box-shadow:0 4px 14px rgba(37,99,235,.35);font-size:.85rem;"
+     data-bs-toggle="modal" data-bs-target="#newRequestModal">
     <i class="bi bi-plus-circle me-2"></i>Create First Request
-  </a>
+  </button>
   {% endif %}
 </div>
 {% endif %}
 
+
+{% endblock %}
+
+
+{% block modals %}
+<!-- ============================================================
+     NEW REQUEST CHOICE MODAL
+     Placed outside proc-layout so overflow-y:auto on the
+     layout div cannot trap the Bootstrap modal overlay.
+============================================================ -->
+<div class="modal fade" id="newRequestModal" tabindex="-1"
+     aria-labelledby="newRequestModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:560px;">
+    <div class="modal-content border-0 shadow-lg" style="border-radius:18px;overflow:hidden;">
+
+      <div class="modal-header px-4 pt-4 pb-3">
+        <div class="d-flex align-items-center gap-3">
+          <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#6366f1,#0ea5e9);display:flex;align-items:center;justify-content:center;">
+            <i class="bi bi-snow2 text-white" style="font-size:1.2rem;"></i>
+          </div>
+          <div>
+            <h5 class="modal-title mb-0 fw-bold" id="newRequestModalLabel"
+                style="color:#0f172a;font-size:1.05rem;">New HVAC Procurement Request</h5>
+            <p class="mb-0" style="font-size:.78rem;color:#64748b;">How would you like to create the request?</p>
+          </div>
+        </div>
+        <button type="button" class="btn-close ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body px-4 pb-4 pt-3">
+        <div class="row g-3">
+
+          <!-- Option 1: Manual Form -->
+          <div class="col-6">
+            <a href="{% url 'procurement:hvac_create' %}" class="nr-choice-card nr-card-manual h-100">
+              <div class="nr-choice-icon">
+                <i class="bi bi-ui-checks"></i>
+              </div>
+              <div>
+                <div class="nr-choice-title">Fill Form Manually</div>
+                <div class="nr-choice-desc">Enter all store &amp; site parameters directly into the guided form.</div>
+              </div>
+              <span class="nr-badge" style="background:#eef2ff;color:#4f46e5;border:1px solid #c7d2fe;">Manual Entry</span>
+            </a>
+          </div>
+
+          <!-- Option 2: Document Upload & Analyze -->
+          <div class="col-6">
+            <a href="{% url 'procurement:hvac_create' %}?mode=analyze" class="nr-choice-card nr-card-doc h-100">
+              <div class="nr-choice-icon">
+                <i class="bi bi-file-earmark-arrow-up"></i>
+              </div>
+              <div>
+                <div class="nr-choice-title">Attach &amp; Analyze</div>
+                <div class="nr-choice-desc">Upload an HVAC form or quotation &mdash; AI auto-fills the fields for you.</div>
+              </div>
+              <span class="nr-badge nr-badge-ai"><i class="bi bi-stars me-1"></i>AI Powered</span>
+            </a>
+          </div>
+
+        </div>
+
+        <!-- Tip strip -->
+        <div class="mt-3 px-3 py-2 rounded-3 d-flex align-items-center gap-2"
+             style="background:#f0fdf4;border:1px solid #bbf7d0;font-size:.78rem;color:#166534;">
+          <i class="bi bi-lightbulb-fill" style="color:#16a34a;"></i>
+          <span><strong>Tip:</strong> Use sample HVAC forms from <code>media/hvac_forms/</code> to test the document analysis feature.</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
 {% endblock %}

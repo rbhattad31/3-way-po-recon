@@ -333,6 +333,16 @@ class RecommendationResult(TimestampMixin):
         default=ComplianceStatus.NOT_CHECKED,
     )
     output_payload_json = models.JSONField(null=True, blank=True)
+    reason_summary_json = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Cached ReasonSummaryAgent output dict (headline, reasoning_summary, "
+            "top_drivers, rules_table, conditions_table, etc.). "
+            "Populated on first page load; avoids repeated LLM API calls. "
+            "Set to null to force regeneration."
+        ),
+    )
 
     class Meta:
         db_table = "procurement_recommendation_result"
@@ -1034,6 +1044,12 @@ class ExternalSourceRegistry(BaseModel):
 
     source_name = models.CharField(max_length=200, help_text="Display name e.g. 'Daikin MEA Official'")
     domain = models.CharField(max_length=300, help_text="Root domain e.g. daikinmea.com")
+    source_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Direct product-page URL for this source e.g. https://www.daikin.com/products/ac/",
+    )
     source_type = models.CharField(
         max_length=40,
         choices=ExternalSourceClass.choices,
@@ -1049,6 +1065,20 @@ class ExternalSourceRegistry(BaseModel):
     trust_score = models.FloatField(
         default=0.8,
         help_text="Trust score 0.0-1.0 used in candidate ranking",
+    )
+    hvac_system_type = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="HVAC system type this source covers e.g. VRF, SPLIT_AC, PACKAGED_DX, CHILLER, DUCTING. Blank = all types.",
+    )
+    equipment = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Equipment type within the HVAC system e.g. 'VRF Outdoor Unit', 'Chiller Unit', 'FCU / AHU Units'.",
     )
     allowed_for_discovery = models.BooleanField(
         default=True,
@@ -1320,6 +1350,12 @@ class MarketIntelligenceSuggestion(BaseModel):
         help_text="Full list of suggestion dicts as returned by the LLM.",
     )
     suggestion_count = models.IntegerField(default=0)
+    perplexity_citations_json = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Raw citations list returned by Perplexity API (top-level field). "
+                  "These are the real URLs Perplexity fetched during live search.",
+    )
 
     class Meta:
         db_table = "procurement_market_intelligence_suggestion"
@@ -1327,3 +1363,129 @@ class MarketIntelligenceSuggestion(BaseModel):
 
     def __str__(self) -> str:
         return f"Market Suggestions for {self.request.title} ({self.created_at.date() if self.created_at else 'new'})"
+
+
+# ---------------------------------------------------------------------------
+# HVACServiceScope -- Scope matrix: one row per HVAC system type
+# ---------------------------------------------------------------------------
+
+class HVACServiceScope(BaseModel):
+    """HVAC installation service scope matrix.
+
+    Each row represents one HVAC system type and describes the full scope
+    of work across Equipment, Installation, Piping/Ducting, Electrical,
+    Controls/Accessories, and Testing/Commissioning.
+    """
+
+    system_type = models.CharField(
+        max_length=30,
+        unique=True,
+        db_index=True,
+        help_text="HVAC system type key (e.g. SPLIT_AC, VRF, CHILLER, DUCTING)",
+    )
+    display_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        help_text="Override display label shown in the UI (e.g. 'Packaged Unit (Rooftop)'). Falls back to system_type if blank.",
+    )
+    equipment_scope = models.TextField(
+        help_text="Physical equipment included (e.g. indoor & outdoor units)"
+    )
+    installation_services = models.TextField(
+        help_text="Labor and installation work (e.g. mounting, fixing, alignment)"
+    )
+    piping_ducting = models.TextField(
+        help_text="Refrigerant copper piping or GI ducting"
+    )
+    electrical_works = models.TextField(
+        help_text="Power supply, cabling, panels, isolators"
+    )
+    controls_accessories = models.TextField(
+        help_text="Control systems and small components (thermostat, dampers, sensors)"
+    )
+    testing_commissioning = models.TextField(
+        help_text="Final verification stage (cooling test, performance check)"
+    )
+    sort_order = models.IntegerField(
+        default=10,
+        help_text="Display order -- lower value appears first",
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = "procurement_hvac_service_scope"
+        ordering = ["sort_order", "system_type"]
+        verbose_name = "HVAC Service Scope"
+        verbose_name_plural = "HVAC Service Scopes"
+
+    def __str__(self) -> str:
+        return f"ServiceScope({self.display_name or self.system_type})"
+
+
+# ---------------------------------------------------------------------------
+# GeneratedRFQ  --  persists every RFQ file generation (both xlsx + pdf)
+# ---------------------------------------------------------------------------
+class GeneratedRFQ(BaseModel):
+    """Tracks a generated RFQ document pair (Excel + PDF) for a procurement request.
+
+    Files are uploaded to Azure Blob Storage under:
+      rfq/<safe_title>/RFQ-<pk>-<YYYYMMDD>_<safe_title>.xlsx
+      rfq/<safe_title>/RFQ-<pk>-<YYYYMMDD>_<safe_title>.pdf
+
+    When blob storage is not configured the fields are left empty and
+    files fall back to a streamed download response.
+    """
+
+    request = models.ForeignKey(
+        "ProcurementRequest",
+        on_delete=models.CASCADE,
+        related_name="generated_rfqs",
+    )
+    rfq_ref = models.CharField(
+        max_length=80,
+        db_index=True,
+        help_text="Human-readable reference e.g. RFQ-0001-20250101",
+    )
+    system_code = models.CharField(
+        max_length=30,
+        default="",
+        help_text="HVAC system type code used for this RFQ (e.g. VRF, SPLIT_AC)",
+    )
+    system_label = models.CharField(
+        max_length=150,
+        default="",
+        help_text="Human-readable system label at time of generation",
+    )
+    qty_json = models.JSONField(
+        default=dict,
+        help_text="Per-row quantity overrides used when building the scope table",
+    )
+    xlsx_blob_path = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Azure Blob path for the Excel file (empty if blob not configured)",
+    )
+    pdf_blob_path = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Azure Blob path for the PDF file (empty if blob not configured)",
+    )
+    generated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "procurement_generated_rfq"
+        ordering = ["-created_at"]
+        verbose_name = "Generated RFQ"
+        verbose_name_plural = "Generated RFQs"
+
+    def __str__(self) -> str:
+        return f"GeneratedRFQ({self.rfq_ref})"

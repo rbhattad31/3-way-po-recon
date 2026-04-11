@@ -30,7 +30,7 @@ urlpatterns = [
     path("health/", health_check, name="health_check"),
     path("health/live/", health_live, name="health_live"),
     path("health/ready/", health_ready, name="health_ready"),
-    path("", RedirectView.as_view(url="/dashboard/", permanent=False)),
+    path("", RedirectView.as_view(url="procurement/dashboard/", permanent=False)),
     path("admin/", admin.site.urls),
     path("accounts/", include("apps.accounts.urls")),
     path("api/", include("apps.core.api_urls")),

@@ -47,6 +47,7 @@ flowchart LR
     S14[AmbiguityValidationService]
     S15[CommercialCompletenessValidationService]
     S16[ComplianceReadinessValidationService]
+    S17[MarketIntelligenceService]
   end
 
   subgraph AG[AI Agent Layer]
@@ -84,6 +85,8 @@ flowchart LR
     D12[ValidationResult]
     D13[ValidationResultItem]
     D14[DocumentUpload link]
+    D15[MarketIntelligenceSuggestion]
+    D16[ExternalSourceRegistry]
   end
 
   U1 --> W
@@ -106,6 +109,9 @@ flowchart LR
   S6 --> AG1
   S7 --> AG2
   S9 --> AG3
+  S17 --> D15
+  S17 --> D16
+  S17 --> D1
 
   S3 --> D14
 
@@ -237,6 +243,7 @@ erDiagram
   PROCUREMENT_REQUEST ||--o{ SUPPLIER_QUOTATION : has
   SUPPLIER_QUOTATION ||--o{ QUOTATION_LINE_ITEM : has
   PROCUREMENT_REQUEST ||--o{ ANALYSIS_RUN : has
+  PROCUREMENT_REQUEST ||--o{ MARKET_INTELLIGENCE_SUGGESTION : generates
 
   ANALYSIS_RUN ||--o| RECOMMENDATION_RESULT : outputs
   ANALYSIS_RUN ||--o{ BENCHMARK_RESULT : outputs
@@ -247,6 +254,37 @@ erDiagram
   VALIDATION_RESULT ||--o{ VALIDATION_RESULT_ITEM : has
 
   VALIDATION_RULE_SET ||--o{ VALIDATION_RULE : defines
+
+  MARKET_INTELLIGENCE_SUGGESTION {
+    int id
+    int request_id
+    int generated_by_id
+    text rephrased_query
+    text ai_summary
+    text market_context
+    string system_code
+    string system_name
+    json suggestions_json
+    int suggestion_count
+    json perplexity_citations_json
+  }
+
+  EXTERNAL_SOURCE_REGISTRY {
+    int id
+    string source_name
+    string domain
+    string source_url
+    string source_type
+    json country_scope
+    int priority
+    float trust_score
+    string hvac_system_type
+    string equipment
+    bool allowed_for_discovery
+    bool allowed_for_compliance
+    string fetch_mode
+    bool is_active
+  }
 
   PROCUREMENT_REQUEST {
     uuid request_id

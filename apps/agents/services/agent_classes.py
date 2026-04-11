@@ -758,6 +758,107 @@ class ReconciliationAssistAgent(BaseAgent):
 
 
 # ============================================================================
+# 8. Compliance Agent
+# ============================================================================
+class ComplianceAgent(BaseAgent):
+    """Assesses invoice compliance: duplicate detection, tax validation, vendor approval,
+    mandatory field completeness, fraud indicators, and amount-threshold policies.
+
+    Runs AFTER ExceptionAnalysisAgent and BEFORE ReviewRoutingAgent so that
+    compliance flags can influence routing priority and escalation decisions.
+
+    Trigger conditions (set by PolicyEngine):
+      - DUPLICATE_INVOICE exception present
+      - TAX_MISMATCH exception present
+      - VENDOR_MISMATCH exception present
+      - MISSING_MANDATORY_FIELDS exception present
+      - Invoice amount exceeds the high-value review threshold
+
+    Output always includes ``compliance_status`` (PASS/FAIL/PARTIAL) and
+    ``compliance_flags`` (list of triggered compliance rules) in ``evidence``.
+    """
+
+    agent_type = AgentType.COMPLIANCE_AGENT
+
+    @property
+    def system_prompt(self) -> str:
+        return PromptRegistry.get("agent.compliance_check")
+
+    def build_user_message(self, ctx: AgentContext) -> str:
+        # Summarise any prior agent analysis from memory so the compliance
+        # agent benefits from exception analysis context.
+        prior_summary = ""
+        if ctx.memory and ctx.memory.agent_summaries:
+            prior_texts = [
+                f"[{a}] {s}"
+                for a, s in ctx.memory.agent_summaries.items()
+                if s
+            ]
+            if prior_texts:
+                prior_summary = "Prior agent analysis:\n" + "\n".join(prior_texts) + "\n\n"
+
+        exc_summary = json.dumps(ctx.exceptions, indent=2, default=str) if ctx.exceptions else "None"
+        return (
+            _mode_context(ctx)
+            + f"Invoice ID: {ctx.invoice_id}\n"
+            f"PO Number: {ctx.po_number or 'N/A'}\n"
+            f"Match Status: {ctx.reconciliation_result.match_status}\n"
+            f"Extraction Confidence: {ctx.reconciliation_result.extraction_confidence}\n"
+            f"Exceptions ({len(ctx.exceptions)}):\n{exc_summary}\n\n"
+            + prior_summary
+            + "Review this invoice for compliance violations. "
+            "Use tools to retrieve invoice details, vendor status, and exception data. "
+            "Produce a structured compliance assessment with compliance_status and "
+            "compliance_flags in your evidence output."
+        )
+
+    @property
+    def allowed_tools(self) -> List[str]:
+        return [
+            "invoice_details",
+            "vendor_search",
+            "po_lookup",
+            "exception_list",
+            "reconciliation_summary",
+        ]
+
+    def interpret_response(self, content: str, ctx: AgentContext) -> AgentOutput:
+        data = _parse_agent_json(content)
+
+        # Validate recommendation_type.
+        valid_rec_types = {rt.value for rt in RecommendationType}
+        rec_type = data.get("recommendation_type")
+        if rec_type is not None and rec_type not in valid_rec_types:
+            # Compliance failures default to escalation.
+            data["recommendation_type"] = RecommendationType.ESCALATE_TO_MANAGER.value
+            data["confidence"] = min(data.get("confidence") or 0.0, 0.6)
+
+        # Clamp confidence to [0.0, 1.0].
+        try:
+            data["confidence"] = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
+        except (TypeError, ValueError):
+            data["confidence"] = 0.0
+
+        # Ensure compliance_status is present in evidence (default to PARTIAL on missing).
+        evidence = data.get("evidence") or {}
+        if "compliance_status" not in evidence:
+            evidence["compliance_status"] = "PARTIAL"
+            data["evidence"] = evidence
+
+        output = _to_agent_output(data, content)
+
+        # Upgrade recommendation to ESCALATE_TO_MANAGER when compliance fails.
+        compliance_status = (data.get("evidence") or {}).get("compliance_status", "")
+        if compliance_status == "FAIL" and output.recommendation_type not in (
+            RecommendationType.ESCALATE_TO_MANAGER,
+        ):
+            output.recommendation_type = RecommendationType.ESCALATE_TO_MANAGER.value
+            output.confidence = max(output.confidence, 0.8)
+
+        return output
+
+
+# ============================================================================
 # Agent class registry
 # ============================================================================
 
@@ -785,6 +886,7 @@ AGENT_CLASS_REGISTRY: Dict[str, type] = {
     AgentType.INVOICE_UNDERSTANDING: InvoiceUnderstandingAgent,
     AgentType.PO_RETRIEVAL: PORetrievalAgent,
     AgentType.GRN_RETRIEVAL: GRNRetrievalAgent,
+    AgentType.COMPLIANCE_AGENT: ComplianceAgent,
     AgentType.REVIEW_ROUTING: ReviewRoutingAgent,
     AgentType.CASE_SUMMARY: CaseSummaryAgent,
     AgentType.RECONCILIATION_ASSIST: ReconciliationAssistAgent,

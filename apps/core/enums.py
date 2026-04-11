@@ -81,6 +81,7 @@ class AgentType(models.TextChoices):
     GRN_RETRIEVAL = "GRN_RETRIEVAL", "GRN Retrieval"
     RECONCILIATION_ASSIST = "RECONCILIATION_ASSIST", "Reconciliation Assist"
     EXCEPTION_ANALYSIS = "EXCEPTION_ANALYSIS", "Exception Analysis"
+    COMPLIANCE_AGENT = "COMPLIANCE_AGENT", "Compliance Agent"
     REVIEW_ROUTING = "REVIEW_ROUTING", "Review Routing"
     CASE_SUMMARY = "CASE_SUMMARY", "Case Summary"
     # Deterministic system agents

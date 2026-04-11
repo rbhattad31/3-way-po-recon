@@ -69,6 +69,64 @@
     box-shadow: 0 0 0 0.2rem rgba(99,102,241,.20) !important;
     outline: none;
   }
+
+  /* ── Document Analyze Panel ── */
+  .di-panel {
+    border: 2px dashed #6366f1;
+    border-radius: 16px;
+    background: linear-gradient(135deg,#fafafe 0%,#f0f9ff 100%);
+    padding: 28px 28px 22px;
+    margin-bottom: 28px;
+    transition: all .25s ease;
+  }
+  .di-panel.drag-over {
+    border-color: #0ea5e9;
+    background: linear-gradient(135deg,#eff6ff,#e0f2fe);
+  }
+  .di-panel.has-file {
+    border-color: #22c55e;
+    background: linear-gradient(135deg,#f0fdf4,#dcfce7);
+  }
+  .di-drop-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 0 8px;
+    cursor: pointer;
+  }
+  .di-drop-icon {
+    width: 70px; height: 70px;
+    border-radius: 50%;
+    background: linear-gradient(135deg,rgba(99,102,241,.15),rgba(14,165,233,.1));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2rem; color: #6366f1;
+  }
+  .di-panel.has-file .di-drop-icon { background: linear-gradient(135deg,rgba(34,197,94,.18),rgba(16,185,129,.1)); color: #16a34a; }
+  .di-drop-title { font-weight: 700; font-size: 15px; color: #0f172a; }
+  .di-drop-sub   { font-size: 12px; color: #64748b; }
+  .di-analyze-btn {
+    background: linear-gradient(135deg,#6366f1,#0ea5e9);
+    border: none; color: #fff; font-weight: 700; font-size: 13px;
+    padding: 10px 26px; border-radius: 30px;
+    display: inline-flex; align-items: center; gap: 8px;
+    box-shadow: 0 4px 14px rgba(99,102,241,.35);
+    transition: all .2s; cursor: pointer;
+  }
+  .di-analyze-btn:disabled { opacity: .6; cursor: not-allowed; box-shadow: none; }
+  .di-analyze-btn:not(:disabled):hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99,102,241,.45); }
+  .di-progress { height: 4px; border-radius: 4px; background: #e2e8f0; overflow: hidden; margin-top: 12px; display: none; }
+  .di-progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg,#6366f1,#0ea5e9); border-radius: 4px;
+    animation: di-pulse 1.4s infinite; }
+  @keyframes di-pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+  .di-result { display: none; margin-top: 14px; padding: 10px 16px;
+    background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px;
+    font-size: 12px; color: #166534; align-items: center; gap: 10px; }
+  @keyframes field-filled {
+    0%   { background: rgba(99,102,241,.2); box-shadow: 0 0 0 3px rgba(99,102,241,.2); }
+    100% { background: transparent; box-shadow: none; }
+  }
+  .field-autofilled { animation: field-filled 1.6s ease forwards; border-radius: 6px; }
 </style>
 {% endblock %}
 
@@ -87,7 +145,7 @@
         </a>
         <div>
           <h5 class="mb-0 d-flex align-items-center gap-2" style="color:#1e3a8a;font-weight:700;">
-            <i class="bi bi-wind" style="color:#6366f1;"></i>
+            <img src="{% static 'images/procurement-robot.png' %}" alt="AI" style="width:22px;height:22px;object-fit:contain;">
             New HVAC Procurement Request
           </h5>
           <p class="mb-0 d-none d-md-block" style="color:#64748b;font-size:.82rem;">
@@ -112,6 +170,55 @@
       {# Hidden geography model fields -- synced from f_country / f_city on submit #}
       <input type="hidden" name="geography_country" id="hidden-geography-country" value="UAE">
       <input type="hidden" name="geography_city"    id="hidden-geography-city"    value="">
+
+      {# ── DOCUMENT ANALYSIS PANEL ── #}
+      <div id="di-panel" class="di-panel" style="display:none;">
+
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <div class="d-flex align-items-center gap-2">
+            <div style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#6366f1,#0ea5e9);display:flex;align-items:center;justify-content:center;">
+              <i class="bi bi-file-earmark-arrow-up text-white" style="font-size:1.1rem;"></i>
+            </div>
+            <div>
+              <div style="font-size:14px;font-weight:700;color:#0f172a;">Upload Document to Auto-Fill Form</div>
+            </div>
+          </div>
+          <button type="button" onclick="diHidePanel()" style="background:none;border:none;color:#94a3b8;font-size:1.1rem;cursor:pointer;" title="Close">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <input type="file" id="di-file-input" accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp,.docx,.xlsx,.html" style="display:none;" onchange="diOnFileSelected(this)">
+
+        <div class="di-drop-area" id="di-drop-area" onclick="document.getElementById('di-file-input').click()">
+          <div class="di-drop-icon"><i class="bi bi-cloud-arrow-up" id="di-drop-icon"></i></div>
+          <div class="di-drop-title" id="di-drop-title">Click here or drag &amp; drop your HVAC document</div>
+          <div class="di-drop-sub" id="di-drop-sub">Supports PDF, JPG, PNG, TIFF, DOCX, XLSX, HTML &bull; Max 20 MB</div>
+        </div>
+
+        <div class="di-progress" id="di-progress"><div class="di-progress-fill" id="di-progress-fill"></div></div>
+
+        <div class="d-flex align-items-center justify-content-between mt-3 flex-wrap gap-2">
+          
+          <div class="d-flex gap-2 align-items-center">
+            <button type="button" id="di-clear-btn" onclick="diClear()" style="display:none;" class="btn btn-sm btn-outline-secondary rounded-pill px-3" style="font-size:12px;">
+              <i class="bi bi-trash3 me-1"></i>Remove file
+            </button>
+            <button type="button" id="di-analyze-btn" class="di-analyze-btn" disabled onclick="diAnalyze()">
+              <i class="bi bi-stars" id="di-btn-icon"></i>
+              <span id="di-btn-label">Analyze &amp; Fill Form</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="di-result" id="di-result">
+          <i class="bi bi-check-circle-fill" style="color:#16a34a;font-size:1.1rem;"></i>
+          <span id="di-result-text">Fields extracted successfully.</span>
+          <span class="ms-auto badge bg-success" id="di-fields-badge" style="font-size:10px;"></span>
+        </div>
+
+      </div>
+      {# /di-panel #}
 
       {# Mandatory hidden attributes will be submitted as attr_code[]/attr_value[] arrays #}
       <div class="row g-4">
@@ -208,7 +315,6 @@
                   <label class="form-label fw-medium">Brand</label>
                   <input type="text" name="f_brand" class="form-control"
                     placeholder="e.g. Max, Home Centre, Splash">
-                  <div class="form-text">Brand or business unit operating this store.</div>
                 </div>
               </div>
             </div>
@@ -241,8 +347,9 @@
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-medium">City <span class="text-danger">*</span></label>
-                  <input type="text" name="f_city" id="f_city" class="form-control" required
-                    placeholder="e.g. Dubai, Riyadh">
+                  <select name="f_city" id="f_city" class="form-select" required>
+                    <option value="">-- Select Country First --</option>
+                  </select>
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-medium">Store Type <span class="text-danger">*</span></label>
@@ -256,7 +363,6 @@
                     <option value="RESTAURANT">Restaurant / F&amp;B</option>
                     <option value="OTHER">Other</option>
                   </select>
-                  <div class="form-text" id="store-type-hint"></div>
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-medium">Store Format</label>
@@ -290,13 +396,11 @@
                   <label class="form-label fw-medium">Area (sq ft) <span class="text-danger">*</span></label>
                   <input type="number" name="f_area_sqft" class="form-control" required min="1"
                     placeholder="e.g. 5000">
-                  <div class="form-text">Total conditioned floor area in square feet.</div>
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-medium">Ceiling Height (ft)</label>
                   <input type="number" step="0.1" name="f_ceiling_height_ft" class="form-control" min="1"
                     placeholder="e.g. 12">
-                  <div class="form-text">Average finished ceiling height in feet.</div>
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-medium">Operating Hours</label>
@@ -312,7 +416,6 @@
                     <option value="6 AM - 10 PM">6 AM - 10 PM</option>
                     <option value="24 Hours">24 Hours</option>
                   </select>
-                  <div class="form-text">Store operating hours.</div>
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-medium">Footfall Category</label>
@@ -322,7 +425,6 @@
                     <option value="MEDIUM">Medium</option>
                     <option value="HIGH">High</option>
                   </select>
-                  <div class="form-text">Proxy for occupancy / people load.</div>
                 </div>
               </div>
             </div>
@@ -344,7 +446,6 @@
                   <label class="form-label fw-medium">Ambient Temp Max (C) <span class="text-danger">*</span></label>
                   <input type="number" name="f_ambient_temp_max" class="form-control" required
                     value="48" min="30" max="60" placeholder="e.g. 48">
-                  <div class="form-text">GCC typical: 46-52C</div>
                 </div>
                 <div class="col-md-2">
                   <label class="form-label fw-medium">Humidity Level</label>
@@ -372,7 +473,6 @@
                     <option value="MEDIUM" selected>Medium</option>
                     <option value="HIGH">High</option>
                   </select>
-                  <div class="form-text">Primary sizing discriminator for system selection.</div>
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-medium">Fresh Air Requirement</label>
@@ -382,7 +482,6 @@
                     <option value="MEDIUM">Medium</option>
                     <option value="HIGH">High</option>
                   </select>
-                  <div class="form-text">Ventilation load per ASHRAE 62.1.</div>
                 </div>
               </div>
             </div>
@@ -412,7 +511,6 @@
                     placeholder="Describe restrictions and available infrastructure."
                     oninput="syncLandlordCustom(this.value)"></textarea>
                   <input type="hidden" name="f_landlord_constraints" id="f_landlord_constraints" value="">
-                  <div class="form-text">Select restriction type. Choose 'Other' to enter custom text.</div>
                 </div>
                 <div class="col-12">
                   <label class="form-label fw-medium">Existing HVAC Type</label>
@@ -430,7 +528,6 @@
                     <option value="Evaporative coolers">Evaporative Coolers</option>
                     <option value="Mixed systems">Mixed Systems</option>
                   </select>
-                  <div class="form-text">Useful in retrofit / replacement cases.</div>
                 </div>
               </div>
             </div>
@@ -473,7 +570,6 @@
                   <label class="form-label fw-medium">Preferred OEMs</label>
                   <textarea name="f_preferred_oems" class="form-control" rows="2"
                     placeholder="e.g. Daikin, Carrier, LG, Mitsubishi Electric"></textarea>
-                  <div class="form-text">Leave blank for best-value recommendation.</div>
                 </div>
                 <div class="col-12">
                   <label class="form-label fw-medium">Required Standards / Local Notes</label>
@@ -520,23 +616,40 @@
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
-// ── Store type change -> contextual hints ──────────────────────────────
-const storeTypeHints = {
-  MALL: 'Mall stores use chilled water or VRF. Check with mall operator for landlord constraints.',
-  STANDALONE: 'Standalone stores use VRF or split systems. Enter landlord constraints if any.',
-  WAREHOUSE: 'Large warehouses may require packaged DX units or chiller plants.',
-  OFFICE: 'Offices commonly use FCU on chilled water or VRF for multi-zone control.',
-  DATA_CENTER: 'Data centers require precision cooling with N+1 redundancy.',
-  RESTAURANT: 'F&B outlets require high fresh air rates (ASHRAE 62.1). Include kitchen exhaust.',
-  OTHER: '',
+function onStoreTypeChange() { /* hint display removed */ }
+
+var COUNTRY_CITIES = {
+  'UAE':    ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah', 'Umm Al Quwain', 'Al Ain'],
+  'KSA':    ['Riyadh', 'Jeddah', 'Dammam', 'Mecca', 'Medina', 'Al Khobar', 'Tabuk', 'Abha', 'Jubail'],
+  'QATAR':  ['Doha', 'Lusail', 'Al Wakrah', 'Al Khor', 'Al Rayyan', 'Dukhan'],
+  'OMAN':   ['Muscat', 'Salalah', 'Sohar', 'Nizwa', 'Sur', 'Ibri'],
+  'KUWAIT': ['Kuwait City', 'Hawalli', 'Ahmadi', 'Salmiya', 'Jahra', 'Farwaniya'],
+  'BAHRAIN':['Manama', 'Muharraq', 'Riffa', 'Hamad Town', 'Isa Town', 'Sitra']
 };
 
-function onStoreTypeChange() {
-  const val = document.getElementById('f_store_type').value;
-  document.getElementById('store-type-hint').textContent = storeTypeHints[val] || '';
+function onCountryChange() {
+  var country = document.getElementById('f_country').value;
+  var citySelect = document.getElementById('f_city');
+  citySelect.innerHTML = '';
+  if (!country || !COUNTRY_CITIES[country]) {
+    citySelect.innerHTML = '<option value="">-- Select Country First --</option>';
+    citySelect.required = true;
+    return;
+  }
+  var placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '-- Select City --';
+  citySelect.appendChild(placeholder);
+  COUNTRY_CITIES[country].forEach(function(city) {
+    var opt = document.createElement('option');
+    opt.value = city;
+    opt.textContent = city;
+    citySelect.appendChild(opt);
+  });
+  // Update hidden geography field to match country
+  var geoCountry = document.getElementById('hidden-geography-country');
+  if (geoCountry) geoCountry.value = country;
 }
-
-function onCountryChange() { /* reserved for country-specific hint logic */ }
 
 // ── Landlord Constraints helpers ──────────────────────────────────────
 function onLandlordChange(val) {
@@ -568,6 +681,7 @@ function setFieldValue(fieldName, value) {
 function applyStoreProfile(profile) {
   setFieldValue('f_brand',                     (profile && profile.brand)                     || '');
   setFieldValue('f_country',                   (profile && profile.country)                   || '');
+  onCountryChange();  // populate city options before setting city value
   setFieldValue('f_city',                      (profile && profile.city)                      || '');
   setFieldValue('f_store_type',                (profile && profile.store_type)                || '');
   setFieldValue('f_store_format',              (profile && profile.store_format)              || '');
@@ -613,6 +727,37 @@ function applyStoreProfile(profile) {
   onStoreTypeChange();
 }
 
+function clearStoreFields() {
+  // Called when a NEW Store ID is typed -- clear all profile fields so the
+  // user must fill everything manually (no auto-filled defaults).
+  setFieldValue('f_brand',                     '');
+  setFieldValue('f_country',                   '');
+  onCountryChange();  // reset city dropdown to placeholder
+  setFieldValue('f_city',                      '');  // ensure blank selected
+  setFieldValue('f_store_type',                '');
+  setFieldValue('f_store_format',              '');
+  setFieldValue('f_area_sqft',                 '');
+  setFieldValue('f_ceiling_height_ft',         '');
+  setFieldValue('f_operating_hours',           '');
+  setFieldValue('f_footfall_category',         '');
+  setFieldValue('f_ambient_temp_max',          '');
+  setFieldValue('f_humidity_level',            '');
+  setFieldValue('f_dust_exposure',             '');
+  setFieldValue('f_heat_load_category',        '');
+  setFieldValue('f_fresh_air_requirement',     '');
+  setFieldValue('f_budget_level',              '');
+  setFieldValue('f_energy_efficiency_priority','');
+  setFieldValue('f_existing_hvac_type',        '');
+  // Landlord constraints
+  var landlordSelect = document.getElementById('f_landlord_select');
+  var landlordHidden = document.getElementById('f_landlord_constraints');
+  var landlordCustom = document.getElementById('f_landlord_custom');
+  if (landlordSelect) landlordSelect.value = '';
+  if (landlordHidden) landlordHidden.value = '';
+  if (landlordCustom) { landlordCustom.classList.add('d-none'); landlordCustom.value = ''; }
+  onStoreTypeChange();
+}
+
 function initStoreSelect2(results) {
   // Build <option> elements directly on the <select> so Select2 reads from DOM.
   // A leading blank <option value=""> is mandatory for placeholder + allowClear.
@@ -649,6 +794,7 @@ function initStoreSelect2(results) {
     if (hidden) hidden.value = val;
     if (isNew) {
       if (hint) hint.innerHTML = '<span class="text-info"><i class="bi bi-plus-circle me-1"></i>New Store ID <strong>' + val + '</strong> will be saved when you submit.</span>';
+      clearStoreFields();
     } else {
       if (hint) hint.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Store profile loaded. Fields auto-filled.</span>';
       applyStoreProfile(storeProfilesById[val]);
@@ -660,6 +806,7 @@ function initStoreSelect2(results) {
     var hint   = document.getElementById('store-id-hint');
     if (hidden) hidden.value = '';
     if (hint) hint.textContent = 'Select an existing store or type a new Store ID.';
+    clearStoreFields();
   });
 }
 
@@ -678,6 +825,9 @@ function initStoreSelect2(results) {
     initStoreSelect2([]);
   });
 })();
+
+// Pre-populate city dropdown based on default selected country (UAE)
+onCountryChange();
 
 // ── On form submit: SweetAlert confirm, then convert f_* to attr arrays ──
 document.getElementById('hvac-form').addEventListener('submit', function(e) {
@@ -801,6 +951,239 @@ document.getElementById('hvac-form').addEventListener('submit', function(e) {
     form.submit();
   });
 });
+
+// ================================================================
+//  DOCUMENT ANALYSIS PANEL
+// ================================================================
+var _diFile = null;
+
+// Show/hide panel
+function diShowPanel() {
+  var p = document.getElementById('di-panel');
+  if (p) { p.style.display = ''; setTimeout(function(){ p.scrollIntoView({behavior:'smooth',block:'center'}); }, 100); }
+}
+function diHidePanel() {
+  var p = document.getElementById('di-panel');
+  if (p) p.style.display = 'none';
+}
+
+// Auto-show when ?mode=analyze  (script is end-of-body so DOM is ready)
+(function(){
+  if (new URLSearchParams(window.location.search).get('mode') === 'analyze') {
+    diShowPanel();
+  }
+})();
+
+// Drag & drop
+(function(){
+  var area = document.getElementById('di-drop-area');
+  var panel = document.getElementById('di-panel');
+  if (!area) return;
+  area.addEventListener('dragover',  function(e){ e.preventDefault(); panel.classList.add('drag-over'); });
+  area.addEventListener('dragleave', function(){  panel.classList.remove('drag-over'); });
+  area.addEventListener('drop', function(e){
+    e.preventDefault(); panel.classList.remove('drag-over');
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) { try { var dt=new DataTransfer(); dt.items.add(f); document.getElementById('di-file-input').files=dt.files; } catch(x){} diSetFile(f); }
+  });
+})();
+
+function diOnFileSelected(inp) { if (inp.files && inp.files[0]) diSetFile(inp.files[0]); }
+
+function diSetFile(f) {
+  _diFile = f;
+  var panel = document.getElementById('di-panel');
+  if (panel) panel.classList.add('has-file');
+  var icon = document.getElementById('di-drop-icon');
+  if (icon) icon.className = 'bi bi-file-earmark-check-fill';
+  var title = document.getElementById('di-drop-title');
+  if (title) title.textContent = f.name;
+  var sub = document.getElementById('di-drop-sub');
+  if (sub) sub.textContent = (f.size/1024).toFixed(0) + ' KB — ready to analyze';
+  var btn = document.getElementById('di-analyze-btn');
+  if (btn) btn.disabled = false;
+  var clr = document.getElementById('di-clear-btn');
+  if (clr) clr.style.display = '';
+  var res = document.getElementById('di-result');
+  if (res) res.style.display = 'none';
+}
+
+function diClear() {
+  _diFile = null;
+  var panel = document.getElementById('di-panel');
+  if (panel) panel.classList.remove('has-file');
+  var icon = document.getElementById('di-drop-icon');
+  if (icon) icon.className = 'bi bi-cloud-arrow-up';
+  var title = document.getElementById('di-drop-title');
+  if (title) title.textContent = 'Click here or drag & drop your HVAC document';
+  var sub = document.getElementById('di-drop-sub');
+  if (sub) sub.textContent = 'Supports PDF, JPG, PNG, TIFF, DOCX, XLSX, HTML \u2022 Max 20 MB';
+  var btn = document.getElementById('di-analyze-btn');
+  if (btn) btn.disabled = true;
+  var clr = document.getElementById('di-clear-btn');
+  if (clr) clr.style.display = 'none';
+  var inp = document.getElementById('di-file-input');
+  if (inp) inp.value = '';
+  var pbar = document.getElementById('di-progress');
+  if (pbar) pbar.style.display = 'none';
+  var res = document.getElementById('di-result');
+  if (res) res.style.display = 'none';
+}
+
+function diAnalyze() {
+  if (!_diFile) return;
+  var btn   = document.getElementById('di-analyze-btn');
+  var label = document.getElementById('di-btn-label');
+  var bicon = document.getElementById('di-btn-icon');
+  var pbar  = document.getElementById('di-progress');
+  var pfill = document.getElementById('di-progress-fill');
+
+  btn.disabled = true;
+  label.textContent = 'Analyzing...';
+  bicon.className = 'bi bi-hourglass-split';
+  pbar.style.display = 'block';
+  pfill.style.width = '35%';
+
+  var fd = new FormData();
+  fd.append('document', _diFile);
+  fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+  fetch('{% url "procurement:hvac_analyze_document" %}', {
+    method: 'POST',
+    headers: {'X-Requested-With':'XMLHttpRequest'},
+    body: fd
+  })
+  .then(function(r){ pfill.style.width='75%'; return r.json().then(function(d){ return {ok:r.ok,d:d}; }); })
+  .then(function(p){
+    pfill.style.width = '100%';
+    setTimeout(function(){ pbar.style.display='none'; pfill.style.width='0%'; }, 700);
+    btn.disabled = false; label.textContent = 'Analyze & Fill Form'; bicon.className = 'bi bi-stars';
+
+    if (!p.ok || !p.d.success) {
+      Swal.fire({ icon:'error', title:'Extraction Failed', text: (p.d&&p.d.error)||'Unknown error', confirmButtonColor:'#4f46e5' });
+      return;
+    }
+
+    var filled = diApplyFields(p.d.fields || {});
+    var conf   = Math.round((p.d.confidence||0)*100);
+
+    var res = document.getElementById('di-result');
+    var txt = document.getElementById('di-result-text');
+    var bdg = document.getElementById('di-fields-badge');
+    if (res) res.style.display = 'flex';
+    if (txt) txt.textContent = filled + ' fields auto-filled \u2022 ' + conf + '% confidence \u2022 '+ ' \u2022 ' + (p.d.duration_ms||0) + 'ms';
+    if (bdg) bdg.textContent = filled + ' fields';
+
+    Swal.fire({
+      icon: 'success',
+      title: 'Form Auto-Filled!',
+      html: '<b>' + filled + '</b> fields populated at <b>' + conf + '% confidence</b>.<br><small style="color:#64748b;">Review the values below before submitting.</small>',
+      confirmButtonColor: '#4f46e5',
+      timer: 5000, timerProgressBar: true,
+    });
+  })
+  .catch(function(err){
+    pbar.style.display='none'; pfill.style.width='0%';
+    btn.disabled=false; label.textContent='Analyze & Fill Form'; bicon.className='bi bi-stars';
+    Swal.fire({ icon:'error', title:'Network Error', text: String(err), confirmButtonColor:'#4f46e5' });
+  });
+}
+
+function diFlash(el) {
+  el.classList.add('field-autofilled');
+  setTimeout(function(){ el.classList.remove('field-autofilled'); }, 1800);
+}
+
+function diApplyFields(fields) {
+  var count = 0;
+  function set(sel, val) {
+    if (!val && val !== 0) return;
+    var el = document.querySelector(sel);
+    if (!el) return;
+    el.value = String(val);
+    diFlash(el);
+    el.dispatchEvent(new Event('change', {bubbles:true}));
+    count++;
+  }
+  if (fields.title)        set('[name="title"]', fields.title);
+  if (fields.priority)     set('[name="priority"]', fields.priority);
+  if (fields.request_type) set('[name="request_type"]', fields.request_type);
+  if (fields.description)  set('[name="description"]', fields.description);
+  if (fields.currency)     set('[name="currency"]', fields.currency);
+  if (fields.f_brand)      set('[name="f_brand"]', fields.f_brand);
+  if (fields.f_store_type)     set('[name="f_store_type"]', fields.f_store_type);
+  if (fields.f_store_format)   set('[name="f_store_format"]', fields.f_store_format);
+  if (fields.f_area_sqft)      set('[name="f_area_sqft"]', fields.f_area_sqft);
+  if (fields.f_ceiling_height_ft)  set('[name="f_ceiling_height_ft"]', fields.f_ceiling_height_ft);
+  if (fields.f_operating_hours)    set('[name="f_operating_hours"]', fields.f_operating_hours);
+  if (fields.f_footfall_category)  set('[name="f_footfall_category"]', fields.f_footfall_category);
+  if (fields.f_ambient_temp_max)   set('[name="f_ambient_temp_max"]', fields.f_ambient_temp_max);
+  if (fields.f_humidity_level)     set('[name="f_humidity_level"]', fields.f_humidity_level);
+  if (fields.f_dust_exposure)      set('[name="f_dust_exposure"]', fields.f_dust_exposure);
+  if (fields.f_heat_load_category)     set('[name="f_heat_load_category"]', fields.f_heat_load_category);
+  if (fields.f_fresh_air_requirement) set('[name="f_fresh_air_requirement"]', fields.f_fresh_air_requirement);
+
+  // Commercial fields
+  if (fields.f_budget_level)               set('[name="f_budget_level"]', fields.f_budget_level);
+  if (fields.f_energy_efficiency_priority) set('[name="f_energy_efficiency_priority"]', fields.f_energy_efficiency_priority);
+  if (fields.f_maintenance_priority)       set('[name="f_maintenance_priority"]', fields.f_maintenance_priority);
+  if (fields.f_existing_hvac_type)         set('[name="f_existing_hvac_type"]', fields.f_existing_hvac_type);
+  if (fields.f_preferred_oems)             set('[name="f_preferred_oems"]', fields.f_preferred_oems);
+  if (fields.f_required_standards)         set('[name="f_required_standards"]', fields.f_required_standards);
+
+  // Country + city (city dropdown depends on country)
+  if (fields.f_country) {
+    set('[name="f_country"]', fields.f_country);
+    if (typeof onCountryChange === 'function') onCountryChange();
+    if (fields.f_city) {
+      setTimeout(function(){ set('[name="f_city"]', fields.f_city); }, 80);
+    }
+  } else if (fields.f_city) {
+    set('[name="f_city"]', fields.f_city);
+  }
+
+  // Store ID -- update hidden input AND create/select the Select2 option so it shows visually
+  if (fields.f_store_id) {
+    var sid = fields.f_store_id;
+    var hiddenSid = document.getElementById('f_store_id_value');
+    if (hiddenSid) { hiddenSid.value = sid; count++; }
+    try {
+      var $sel = window.$ && $('#f_store_id_select');
+      if ($sel && $sel.length) {
+        if (!$sel.find('option[value="' + sid + '"]').length) {
+          $sel.append(new Option(sid, sid, true, true));
+        } else {
+          $sel.val(sid).trigger('change');
+        }
+        $sel.trigger('change');
+      }
+    } catch(e) {}
+  }
+
+  // Landlord constraints -- try to match select, fall back to custom textarea
+  if (fields.f_landlord_constraint) {
+    var lc = fields.f_landlord_constraint;
+    var lSel = document.getElementById('f_landlord_select');
+    var lHid = document.getElementById('f_landlord_constraints');
+    var lCus = document.getElementById('f_landlord_custom');
+    if (lSel) {
+      var matched = false;
+      for (var i = 0; i < lSel.options.length; i++) {
+        if (lSel.options[i].value === lc) { lSel.value = lc; matched = true; break; }
+      }
+      if (!matched) {
+        lSel.value = 'OTHER';
+        if (lCus) { lCus.classList.remove('d-none'); lCus.value = lc; diFlash(lCus); }
+      } else {
+        diFlash(lSel);
+      }
+      count++;
+    }
+    if (lHid) lHid.value = lc;
+  }
+
+  return count;
+}
 
 </script>
 {% endblock %}

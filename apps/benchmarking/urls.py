@@ -26,4 +26,9 @@ urlpatterns = [
     path("reports/", views.reports, name="reports"),
     # Configurations
     path("configurations/", views.configurations, name="configurations"),
+    # Configurations -- AJAX API
+    path("configurations/api/categories/", views.api_bench_categories, name="api_bench_categories"),
+    path("configurations/api/corridors/", views.api_bench_corridors, name="api_bench_corridors"),
+    path("configurations/api/corridors/<int:pk>/", views.api_bench_corridor_detail, name="api_bench_corridor_detail"),
+    path("configurations/api/thresholds/", views.api_bench_thresholds, name="api_bench_thresholds"),
 ]

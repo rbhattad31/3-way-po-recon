@@ -6,14 +6,16 @@ from apps.benchmarking.models import (
     BenchmarkLineItem,
     BenchmarkCorridorRule,
     BenchmarkResult,
+    CategoryMaster,
+    VarianceThresholdConfig,
 )
 
 
 class BenchmarkQuotationInline(admin.TabularInline):
     model = BenchmarkQuotation
     extra = 0
-    readonly_fields = ("extraction_status", "extraction_error", "created_at")
-    fields = ("supplier_name", "quotation_ref", "document", "extraction_status", "created_at")
+    readonly_fields = ("extraction_status", "extraction_error", "blob_url", "created_at")
+    fields = ("supplier_name", "quotation_ref", "document", "blob_url", "extraction_status", "created_at")
 
 
 @admin.register(BenchmarkRequest)
@@ -27,19 +29,19 @@ class BenchmarkRequestAdmin(admin.ModelAdmin):
 
 @admin.register(BenchmarkQuotation)
 class BenchmarkQuotationAdmin(admin.ModelAdmin):
-    list_display = ("request", "supplier_name", "quotation_ref", "extraction_status", "created_at")
+    list_display = ("request", "supplier_name", "quotation_ref", "extraction_status", "blob_url", "created_at")
     list_filter = ("extraction_status",)
     search_fields = ("supplier_name", "quotation_ref")
-    readonly_fields = ("extracted_text", "created_at", "updated_at")
+    readonly_fields = ("extracted_text", "blob_url", "blob_name", "created_at", "updated_at")
 
 
 @admin.register(BenchmarkLineItem)
 class BenchmarkLineItemAdmin(admin.ModelAdmin):
     list_display = (
-        "quotation", "line_number", "description", "category",
+        "quotation", "line_number", "description", "category", "classification_source",
         "quoted_unit_rate", "variance_pct", "variance_status",
     )
-    list_filter = ("category", "variance_status")
+    list_filter = ("category", "variance_status", "classification_source")
     search_fields = ("description",)
     readonly_fields = ("created_at", "updated_at")
 
@@ -63,3 +65,25 @@ class BenchmarkResultAdmin(admin.ModelAdmin):
     )
     list_filter = ("overall_status",)
     readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(CategoryMaster)
+class CategoryMasterAdmin(admin.ModelAdmin):
+    list_display = ("code", "name", "sort_order", "is_active")
+    list_filter = ("is_active",)
+    search_fields = ("code", "name", "keywords_csv")
+    ordering = ("sort_order", "code")
+
+
+@admin.register(VarianceThresholdConfig)
+class VarianceThresholdConfigAdmin(admin.ModelAdmin):
+    list_display = (
+        "category", "geography",
+        "within_range_max_pct", "moderate_max_pct", "is_active",
+    )
+    list_filter = ("category", "geography", "is_active")
+    ordering = ("category", "geography")
+
+
+
+

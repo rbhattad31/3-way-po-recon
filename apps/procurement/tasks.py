@@ -208,7 +208,7 @@ def generate_market_intelligence_task(self, request_id: int) -> dict:
         return {"status": "skipped", "reason": "Request not found"}
 
     try:
-        result = MarketIntelligenceService.generate(proc_request, generated_by=None)
+        result = MarketIntelligenceService.generate_auto(proc_request, generated_by=None)
         logger.info(
             "generate_market_intelligence_task: completed for pk=%s, %d suggestions",
             request_id, len(result.get("suggestions", [])),

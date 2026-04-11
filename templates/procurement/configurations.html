@@ -35,30 +35,14 @@
     <div class="cfg-kpi-card-value">{{ stats.sources_total }}</div>
     <div class="cfg-kpi-card-active">Active: <span>{{ stats.sources_active }}</span></div>
   </div>
-  <div class="cfg-kpi-card {% if active_tab == 'rulesets' %}active{% endif %}" data-tab="rulesets">
-    <span class="cfg-kpi-card-icon"><i class="bi bi-card-checklist" style="font-size:1.25rem;color:#6366f1;"></i></span>
-    <div class="cfg-kpi-card-label">Rule Sets</div>
-    <div class="cfg-kpi-card-value">{{ stats.rulesets_total }}</div>
-    <div class="cfg-kpi-card-active">Active: <span>{{ stats.rulesets_active }}</span></div>
-  </div>
-  <div class="cfg-kpi-card {% if active_tab == 'products' %}active{% endif %}" data-tab="products">
-    <span class="cfg-kpi-card-icon"><i class="bi bi-box-seam" style="font-size:1.25rem;color:#0891b2;"></i></span>
-    <div class="cfg-kpi-card-label">Products</div>
-    <div class="cfg-kpi-card-value">{{ stats.products_total }}</div>
-    <div class="cfg-kpi-card-active">Active: <span>{{ stats.products_active }}</span></div>
-  </div>
-  <div class="cfg-kpi-card {% if active_tab == 'vendors' %}active{% endif %}" data-tab="vendors">
-    <span class="cfg-kpi-card-icon"><i class="bi bi-building" style="font-size:1.25rem;color:#d97706;"></i></span>
-    <div class="cfg-kpi-card-label">Vendors</div>
-    <div class="cfg-kpi-card-value">{{ stats.vendors_total }}</div>
-    <div class="cfg-kpi-card-active">Active: <span>{{ stats.vendors_active }}</span></div>
-  </div>
+  
   <div class="cfg-kpi-card {% if active_tab == 'rooms' %}active{% endif %}" data-tab="rooms">
-    <span class="cfg-kpi-card-icon"><i class="bi bi-door-open" style="font-size:1.25rem;color:#16a34a;"></i></span>
-    <div class="cfg-kpi-card-label">Rooms</div>
-    <div class="cfg-kpi-card-value">{{ stats.rooms_total }}</div>
-    <div class="cfg-kpi-card-active">Active: <span>{{ stats.rooms_active }}</span></div>
+    <span class="cfg-kpi-card-icon"><i class="bi bi-tools" style="font-size:1.25rem;color:#0891b2;"></i></span>
+    <div class="cfg-kpi-card-label">Services</div>
+    <div class="cfg-kpi-card-value">{{ stats.service_total }}</div>
+    <div class="cfg-kpi-card-active">Active: <span>{{ stats.service_active }}</span></div>
   </div>
+
   <div class="cfg-kpi-card {% if active_tab == 'hvacrules' %}active{% endif %}" data-tab="hvacrules">
     <span class="cfg-kpi-card-icon"><i class="bi bi-diagram-3" style="font-size:1.25rem;color:#7c3aed;"></i></span>
     <div class="cfg-kpi-card-label">HVAC Rules</div>
@@ -72,17 +56,9 @@
   <button class="cfg-tab-btn {% if active_tab == 'sources' %}active{% endif %}" data-tab="sources">
     <i class="bi bi-globe2"></i> External Sources
   </button>
-  <button class="cfg-tab-btn {% if active_tab == 'rulesets' %}active{% endif %}" data-tab="rulesets">
-    <i class="bi bi-card-checklist"></i> Validation Rules
-  </button>
-  <button class="cfg-tab-btn {% if active_tab == 'products' %}active{% endif %}" data-tab="products">
-    <i class="bi bi-box-seam"></i> Products
-  </button>
-  <button class="cfg-tab-btn {% if active_tab == 'vendors' %}active{% endif %}" data-tab="vendors">
-    <i class="bi bi-building"></i> Vendors
-  </button>
+
   <button class="cfg-tab-btn {% if active_tab == 'rooms' %}active{% endif %}" data-tab="rooms">
-    <i class="bi bi-door-open"></i> Rooms
+    <i class="bi bi-tools"></i> Services
   </button>
   <button class="cfg-tab-btn {% if active_tab == 'hvacrules' %}active{% endif %}" data-tab="hvacrules">
     <i class="bi bi-diagram-3"></i> HVAC Rules
@@ -93,162 +69,70 @@
   <div class="cfg-toolbar">
     <div class="cfg-search-box">
       <i class="bi bi-search"></i>
-      <input type="text" id="src-search" placeholder="Search source name, domain, type..." autocomplete="off">
+      <input type="text" id="src-search" placeholder="Search source name, domain..." autocomplete="off">
     </div>
     <span class="cfg-badge-count" id="src-count">--</span>
     <button class="btn-cfg-add" onclick="openAddModal('sources')">
       <i class="bi bi-plus-circle-fill"></i> Add Source
     </button>
   </div>
+  <!-- Matrix note -->
+  <p class="mb-2" style="font-size:.78rem;color:#6b7280;">
+    <i class="bi bi-info-circle me-1"></i>
+    Sources are grouped by HVAC product type. Perplexity will search <strong>only these sites</strong> when generating market intelligence for each product category.
+  </p>
   <div class="cfg-table-wrap">
-    <table class="cfg-table">
+    <table class="cfg-table" id="src-matrix-table">
       <thead>
         <tr>
-          <th>Source Name</th>
-          <th>Domain</th>
-          <th>Type</th>
-          <th>Priority</th>
-          <th>Trust</th>
-          <th>Discovery</th>
-          <th>Compliance</th>
-          <th>Mode</th>
-          <th>Status</th>
-          <th style="text-align:right">Actions</th>
+          <th style="width:180px;">HVAC System</th>
+          <th style="width:175px;">Equipment</th>
+          <th>Site 1</th>
+          <th>Site 2</th>
+          <th>Site 3</th>
+          <th>Site 4</th>
+          <th>Site 5</th>
+          <th style="width:44px;text-align:center;" title="Add source for this system">Add</th>
         </tr>
       </thead>
       <tbody id="src-tbody">
-        <tr><td colspan="10" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+        <tr><td colspan="7" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
       </tbody>
     </table>
   </div>
 </div>
 
-<div class="cfg-tab-pane {% if active_tab == 'rulesets' %}active{% endif %}" id="pane-rulesets">
-  <div class="cfg-toolbar">
-    <div class="cfg-search-box">
-      <i class="bi bi-search"></i>
-      <input type="text" id="rs-search" placeholder="Search rule sets..." autocomplete="off">
-    </div>
-    <span class="cfg-badge-count" id="rs-count">--</span>
-    <button class="btn-cfg-add" onclick="openAddModal('rulesets')">
-      <i class="bi bi-plus-circle-fill"></i> Add Rule Set
-    </button>
-  </div>
-  <div class="cfg-table-wrap">
-    <table class="cfg-table">
-      <thead>
-        <tr>
-          <th>Code</th>
-          <th>Name</th>
-          <th>Domain</th>
-          <th>Schema</th>
-          <th>Type</th>
-          <th>Priority</th>
-          <th>Status</th>
-          <th style="text-align:right">Actions</th>
-        </tr>
-      </thead>
-      <tbody id="rs-tbody">
-        <tr><td colspan="8" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
 
-<div class="cfg-tab-pane {% if active_tab == 'products' %}active{% endif %}" id="pane-products">
-  <div class="cfg-toolbar">
-    <div class="cfg-search-box">
-      <i class="bi bi-search"></i>
-      <input type="text" id="prod-search" placeholder="Search products..." autocomplete="off">
-    </div>
-    <span class="cfg-badge-count" id="prod-count">--</span>
-    <button class="btn-cfg-add" onclick="openAddModal('products')">
-      <i class="bi bi-plus-circle-fill"></i> Add Product
-    </button>
-  </div>
-  <div class="cfg-table-wrap">
-    <table class="cfg-table">
-      <thead>
-        <tr>
-          <th>SKU</th>
-          <th>Manufacturer</th>
-          <th>Product Name</th>
-          <th>System Type</th>
-          <th>Capacity (kW)</th>
-          <th>Refrigerant</th>
-          <th>Warranty</th>
-          <th>Status</th>
-          <th style="text-align:right">Actions</th>
-        </tr>
-      </thead>
-      <tbody id="prod-tbody">
-        <tr><td colspan="9" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
 
-<div class="cfg-tab-pane {% if active_tab == 'vendors' %}active{% endif %}" id="pane-vendors">
-  <div class="cfg-toolbar">
-    <div class="cfg-search-box">
-      <i class="bi bi-search"></i>
-      <input type="text" id="vend-search" placeholder="Search vendors..." autocomplete="off">
-    </div>
-    <span class="cfg-badge-count" id="vend-count">--</span>
-    <button class="btn-cfg-add" onclick="openAddModal('vendors')">
-      <i class="bi bi-plus-circle-fill"></i> Add Vendor
-    </button>
-  </div>
-  <div class="cfg-table-wrap">
-    <table class="cfg-table">
-      <thead>
-        <tr>
-          <th>Vendor Name</th>
-          <th>Country</th>
-          <th>City</th>
-          <th>Reliability</th>
-          <th>Lead Time</th>
-          <th>On-Time %</th>
-          <th>Preferred</th>
-          <th>Status</th>
-          <th style="text-align:right">Actions</th>
-        </tr>
-      </thead>
-      <tbody id="vend-tbody">
-        <tr><td colspan="9" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
+
 
 <div class="cfg-tab-pane {% if active_tab == 'rooms' %}active{% endif %}" id="pane-rooms">
   <div class="cfg-toolbar">
     <div class="cfg-search-box">
       <i class="bi bi-search"></i>
-      <input type="text" id="room-search" placeholder="Search rooms..." autocomplete="off">
+      <input type="text" id="room-search" placeholder="Search system type or scope..." autocomplete="off">
     </div>
     <span class="cfg-badge-count" id="room-count">--</span>
-    <button class="btn-cfg-add" onclick="openAddModal('rooms')">
-      <i class="bi bi-plus-circle-fill"></i> Add Room
-    </button>
   </div>
-  <div class="cfg-table-wrap">
-    <table class="cfg-table">
+  <p class="mb-2" style="font-size:.78rem;color:#6b7280;">
+    <i class="bi bi-info-circle me-1"></i>
+    Scope matrix: one row per HVAC system type showing the full installation work breakdown across 6 work categories.
+  </p>
+  <div class="cfg-table-wrap" style="overflow-x:auto;">
+    <table class="cfg-table" id="scope-matrix-table" style="min-width:900px;table-layout:auto;">
       <thead>
-        <tr>
-          <th>Code</th>
-          <th>Building</th>
-          <th>Floor</th>
-          <th>Usage</th>
-          <th>Area (m2)</th>
-          <th>Cooling (kW)</th>
-          <th>Contact</th>
-          <th>Status</th>
-          <th style="text-align:right">Actions</th>
+        <tr style="background:#f0f9ff;">
+          <th style="width:155px;font-weight:700;color:#0369a1;">Product Recommendation</th>
+          <th style="font-weight:700;color:#0369a1;">Equipment Scope</th>
+          <th style="font-weight:700;color:#0369a1;">Installation Services</th>
+          <th style="font-weight:700;color:#0369a1;">Piping / Ducting</th>
+          <th style="font-weight:700;color:#0369a1;">Electrical Works</th>
+          <th style="font-weight:700;color:#0369a1;">Controls &amp; Accessories</th>
+          <th style="font-weight:700;color:#0369a1;">Testing &amp; Commissioning</th>
         </tr>
       </thead>
       <tbody id="room-tbody">
-        <tr><td colspan="9" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
+        <tr><td colspan="7" class="cfg-loading"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -302,6 +186,14 @@
       </div>
       <div class="modal-body" style="padding:1.1rem 1.25rem;">
         <input type="hidden" id="srcId" value="">
+        <div class="mb-3">
+          <label class="form-label-cfg">HVAC System Type <span class="text-danger">*</span></label>
+          <input id="srcHvacSystem" class="form-control-cfg" type="text" placeholder="e.g. VRF, Chiller, Split AC, Heat Pump">
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Equipment <span class="text-danger">*</span></label>
+          <input id="srcEquipment" class="form-control-cfg" type="text" placeholder="e.g. VRF Outdoor Unit, Chiller Unit, FCU / AHU Units">
+        </div>
         <div class="cfg-form-row mb-3">
           <div>
             <label class="form-label-cfg">Source Name <span class="text-danger">*</span></label>
@@ -311,6 +203,18 @@
             <label class="form-label-cfg">Domain <span class="text-danger">*</span></label>
             <input id="srcDomain" class="form-control-cfg" type="text" placeholder="e.g. daikinmea.com">
           </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label-cfg">Full Page URL <small class="text-muted">(product-category or product-line page — auto-checked on blur)</small></label>
+          <div class="position-relative">
+            <input id="srcSourceUrl" class="form-control-cfg" type="url"
+                   placeholder="https://www.daikinmea.com/en/products/vrf"
+                   onblur="autoValidateSourceUrl()">
+            <span id="srcUrlSpinner" class="position-absolute top-50 end-0 translate-middle-y me-2" style="display:none;">
+              <span class="spinner-border spinner-border-sm text-secondary"></span>
+            </span>
+          </div>
+          <div id="srcUrlStatus" class="mt-1" style="font-size:.75rem;min-height:1.2rem;"></div>
         </div>
         <div class="cfg-form-row mb-3">
           <div>
@@ -980,7 +884,7 @@ function loadTab(tab) {
     rulesets: '{% url "procurement:api_config_rulesets" %}',
     products: '{% url "procurement:api_config_products" %}',
     vendors: '{% url "procurement:api_config_vendors" %}',
-    rooms: '{% url "procurement:api_config_rooms" %}',
+    rooms: '{% url "procurement:api_config_servicescopes" %}',
     hvacrules: '{% url "procurement:api_config_hvacrules" %}'
   };
   $.get(urlMap[tab] + '?q=' + encodeURIComponent(q), function(data) {
@@ -999,7 +903,7 @@ function renderTab(tab, items) {
   var prefix = {sources:'src', rulesets:'rs', products:'prod', vendors:'vend', rooms:'room', hvacrules:'hvac'}[tab];
   $('#' + prefix + '-count').text(items.length + ' record' + (items.length !== 1 ? 's' : ''));
   if (items.length === 0) {
-    var span = {sources:10, rulesets:8, products:9, vendors:9, rooms:9, hvacrules:12}[tab];
+    var span = {sources:8, rulesets:8, products:9, vendors:9, rooms:7, hvacrules:12}[tab];
     $('#' + prefix + '-tbody').html(
       '<tr><td colspan="' + span + '" class="cfg-empty">' +
       '<i class="bi bi-inbox"></i><p>No records found. Click "Add" to create the first one.</p></td></tr>'
@@ -1008,23 +912,86 @@ function renderTab(tab, items) {
   }
   var html = '';
   if (tab === 'sources') {
+    // Group sources by hvac_system_type then equipment -- 2-level product matrix
+    // systemEquipGroups[hvacSystem][equipment] = [source, ...]
+    var systemEquipGroups = {};
+    var systemOrder = [];
     $.each(items, function(i, s) {
-      html += '<tr data-id="' + s.id + '">';
-      html += '<td><strong>' + escHtml(s.source_name) + '</strong></td>';
-      html += '<td><code style="font-size:.74rem;background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;">' + escHtml(s.domain) + '</code></td>';
-      html += '<td><span style="font-size:.72rem;background:#eff6ff;color:#1665D8;padding:.12rem .4rem;border-radius:4px;font-weight:500;">' + escHtml(s.source_type_display) + '</span></td>';
-      html += '<td>' + s.priority + '</td>';
-      html += '<td>' + scoreBar(s.trust_score, 1) + '</td>';
-      html += '<td>' + boolIcon(s.allowed_for_discovery) + '</td>';
-      html += '<td>' + boolIcon(s.allowed_for_compliance) + '</td>';
-      html += '<td><span style="font-size:.72rem;">' + escHtml(s.fetch_mode) + '</span></td>';
-      html += '<td>' + badgeActive(s.is_active) + '</td>';
-      html += '<td class="cfg-col-actions">';
-      html += '<button class="btn-cfg-edit me-1" onclick="editSource(' + s.id + ')"><i class="bi bi-pencil"></i></button>';
-      html += '<button class="btn-cfg-toggle' + (s.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'sources\',' + s.id + ')" title="' + (s.is_active ? 'Deactivate' : 'Activate') + '"><i class="bi bi-' + (s.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
-      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'sources\',' + s.id + ',\'' + escJs(s.source_name) + '\')"><i class="bi bi-trash3"></i></button>';
-      html += '</td></tr>';
+      var sysKey = s.hvac_system_type || 'Generic';
+      var eqKey  = s.equipment || 'General';
+      if (!systemEquipGroups[sysKey]) {
+        systemEquipGroups[sysKey] = {};
+        systemOrder.push(sysKey);
+      }
+      if (!systemEquipGroups[sysKey][eqKey]) systemEquipGroups[sysKey][eqKey] = [];
+      systemEquipGroups[sysKey][eqKey].push(s);
     });
+    $.each(systemOrder, function(si, sysKey) {
+      var equipGroups = systemEquipGroups[sysKey];
+      var equipKeys = Object.keys(equipGroups);
+      var sysRowSpan = equipKeys.length;
+      $.each(equipKeys, function(ei, eqKey) {
+        var sources = equipGroups[eqKey];
+        html += '<tr data-system="' + escHtml(sysKey) + '" data-equipment="' + escHtml(eqKey) + '">';
+        // HVAC System cell -- only on first equipment row, spans all equipment sub-rows
+        if (ei === 0) {
+          html += '<td rowspan="' + sysRowSpan + '" style="vertical-align:middle;border-right:1px solid #e5e7eb;">';
+          html += '<strong style="font-size:.82rem;color:#111827;">' + escHtml(sysKey) + '</strong>';
+          var totalSrc = 0;
+          $.each(equipKeys, function(k, eq) { totalSrc += equipGroups[eq].length; });
+          html += '<div style="font-size:.68rem;color:#9ca3af;margin-top:.15rem;">' + totalSrc + ' source' + (totalSrc !== 1 ? 's' : '') + '</div>';
+          html += '</td>';
+        }
+        // Equipment sub-label cell
+        html += '<td style="vertical-align:middle;padding:.4rem .55rem;background:#f9fafb;">';
+        html += '<span style="font-size:.76rem;color:#374151;font-weight:500;">' + escHtml(eqKey) + '</span>';
+        html += '<div style="font-size:.66rem;color:#9ca3af;">' + sources.length + ' source' + (sources.length !== 1 ? 's' : '') + '</div>';
+        html += '</td>';
+        // 5 site cells
+        for (var j = 0; j < 5; j++) {
+          if (j < sources.length) {
+            var s = sources[j];
+            var faviconUrl = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(s.domain) + '&sz=16';
+            html += '<td style="vertical-align:middle;padding:.45rem .55rem;">';
+            html += '<div style="display:flex;align-items:flex-start;gap:.4rem;">';
+            html += '<img src="' + faviconUrl + '" width="16" height="16" style="margin-top:.1rem;flex-shrink:0;" onerror="this.style.display=\'none\'" alt="">';
+            html += '<div style="flex:1;min-width:0;">';
+            var linkHref = (s.source_url && s.source_url.length > 0) ? s.source_url : ('https://' + s.domain);
+            var linkLabel = (s.source_url && s.source_url.length > 0)
+              ? s.source_url.replace(/^https?:\/\//, '').replace(/\/$/, '')
+              : s.domain;
+            html += '<a href="' + escHtml(linkHref) + '" target="_blank" rel="noopener noreferrer" '
+                 +  'style="font-size:.76rem;font-weight:600;color:#1665D8;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:155px;display:inline-block;" '
+                 +  'title="' + escHtml(linkHref) + '">'
+                 +  escHtml(linkLabel)
+                 +  ' <i class="bi bi-box-arrow-up-right" style="font-size:.58rem;"></i>'
+                 +  '</a>';
+            html += '<div style="font-size:.67rem;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;">'
+                 +  escHtml(s.source_name) + '</div>';
+            html += '</div>';
+            html += '<div class="d-flex flex-column gap-1 ms-1">';
+            html += '<button class="btn-cfg-edit" style="padding:.1rem .22rem;font-size:.65rem;line-height:1;" onclick="editSource(' + s.id + ')" title="Edit"><i class="bi bi-pencil"></i></button>';
+            html += '<button class="btn-cfg-toggle' + (s.is_active ? '' : ' inactive') + '" style="padding:.1rem .22rem;font-size:.65rem;line-height:1;" onclick="toggleItem(\'sources\',' + s.id + ')" title="' + (s.is_active ? 'Deactivate' : 'Activate') + '"><i class="bi bi-' + (s.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
+            html += '</div>';
+            html += '</div>';
+            html += '</td>';
+          } else {
+            html += '<td style="color:#e5e7eb;text-align:center;vertical-align:middle;font-size:.8rem;">'
+                 +  '<i class="bi bi-dash-circle" style="opacity:.35;"></i></td>';
+          }
+        }
+        // + button to add a source for this HVAC system + equipment combo
+        html += '<td style="text-align:center;vertical-align:middle;padding:.35rem;">';
+        html += '<button class="btn btn-sm btn-outline-primary" style="padding:.15rem .45rem;font-size:.75rem;border-radius:6px;" '
+             +  'onclick="openAddSourceForSystem(\'' + escJs(sysKey) + '\', \'' + escJs(eqKey) + '\')" '
+             +  'title="Add source for ' + escHtml(eqKey) + '">'
+             +  '<i class="bi bi-plus-lg"></i>'
+             +  '</button>';
+        html += '</td>';
+        html += '</tr>';
+      });
+    });
+    // If no groups at all, handled by empty-state above
   } else if (tab === 'rulesets') {
     $.each(items, function(i, r) {
       html += '<tr data-id="' + r.id + '">';
@@ -1077,21 +1044,17 @@ function renderTab(tab, items) {
       html += '</td></tr>';
     });
   } else if (tab === 'rooms') {
-    $.each(items, function(i, r) {
-      html += '<tr data-id="' + r.id + '">';
-      html += '<td><code style="font-size:.74rem;background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;">' + escHtml(r.room_code) + '</code></td>';
-      html += '<td>' + escHtml(r.building_name) + '</td>';
-      html += '<td>' + r.floor_number + '</td>';
-      html += '<td><span style="font-size:.72rem;background:#f0fdf4;color:#16a34a;padding:.12rem .4rem;border-radius:4px;">' + escHtml(r.usage_type_display) + '</span></td>';
-      html += '<td>' + r.area_sqm + ' m2</td>';
-      html += '<td>' + r.design_cooling_load_kw + ' kW</td>';
-      html += '<td style="font-size:.76rem;">' + (r.contact_name ? escHtml(r.contact_name) : '-') + '</td>';
-      html += '<td>' + badgeActive(r.is_active) + '</td>';
-      html += '<td class="cfg-col-actions">';
-      html += '<button class="btn-cfg-edit me-1" onclick="editRoom(' + r.id + ')"><i class="bi bi-pencil"></i></button>';
-      html += '<button class="btn-cfg-toggle' + (r.is_active ? '' : ' inactive') + ' me-1" onclick="toggleItem(\'rooms\',' + r.id + ')"><i class="bi bi-' + (r.is_active ? 'eye-slash' : 'eye') + '"></i></button>';
-      html += '<button class="btn-cfg-delete" onclick="confirmDelete(\'rooms\',' + r.id + ',\'' + escJs(r.room_code) + '\')"><i class="bi bi-trash3"></i></button>';
-      html += '</td></tr>';
+    $.each(items, function(i, s) {
+      var rowBg = (i % 2 === 0) ? '' : 'style="background:#f8fafc;"';
+      html += '<tr ' + rowBg + ' data-id="' + s.id + '">';
+      html += '<td><strong style="font-size:.82rem;color:#0369a1;">' + escHtml(s.system_type_display) + '</strong></td>';
+      html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.equipment_scope) + '</td>';
+      html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.installation_services) + '</td>';
+      html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.piping_ducting) + '</td>';
+      html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.electrical_works) + '</td>';
+      html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.controls_accessories) + '</td>';
+      html += '<td style="font-size:.78rem;line-height:1.4;">' + escHtml(s.testing_commissioning) + '</td>';
+      html += '</tr>';
     });
   } else if (tab === 'hvacrules') {
     $.each(items, function(i, r) {
@@ -1136,6 +1099,8 @@ function openAddModal(tab) {
   // Reset form
   if (tab === 'sources') {
     $('#srcId').val(''); $('#srcName').val(''); $('#srcDomain').val('');
+    $('#srcHvacSystem').val(''); $('#srcEquipment').val(''); $('#srcSourceUrl').val('').removeClass('is-invalid');
+    $('#srcUrlStatus').html('').removeData('ok'); $('#srcUrlSpinner').hide();
     $('#srcType').val('OEM_OFFICIAL'); $('#srcFetchMode').val('PAGE');
     $('#srcPriority').val('10'); $('#srcTrustScore').val('0.8');
     $('#srcCountryScope').val(''); $('#srcNotes').val('');
@@ -1191,6 +1156,63 @@ function openAddModal(tab) {
   modal.show();
 }
 
+// Shortcut: open Add Source modal pre-filled with a specific HVAC system (+equipment)
+function openAddSourceForSystem(systemCode, equipmentName) {
+  openAddModal('sources');
+  if (systemCode) {
+    $('#srcHvacSystem').val(systemCode);
+    $('#modalSourceTitle').text('Add Source for ' + systemCode);
+  }
+  if (equipmentName) {
+    $('#srcEquipment').val(equipmentName);
+  }
+}
+
+// ── URL Auto-Validator (fires on blur) ───────────────────────────────────────
+var _validateUrl = '{% url "procurement:api_config_validate_url" %}';
+function autoValidateSourceUrl() {
+  var url = $('#srcSourceUrl').val().trim();
+  var $status = $('#srcUrlStatus');
+  var $spinner = $('#srcUrlSpinner');
+  var $input = $('#srcSourceUrl');
+
+  // Clear state
+  $status.html('');
+  $status.data('ok', false);
+
+  // Empty -- optional field, no error
+  if (!url) { $input.removeClass('is-invalid'); return; }
+
+  // Partial / no scheme -- immediate inline error
+  if (!/^https?:\/\/.{4,}/.test(url)) {
+    $input.addClass('is-invalid');
+    $status.html('<span class="text-danger"><i class="bi bi-exclamation-circle me-1"></i>Enter a complete URL starting with <b>https://</b> (e.g. https://www.brand.com/products)</span>');
+    return;
+  }
+
+  // Looks valid -- fire network check
+  $input.removeClass('is-invalid');
+  $spinner.show();
+  $status.html('<span class="text-muted" style="font-size:.73rem;">Checking link...</span>');
+  $.getJSON(_validateUrl + '?url=' + encodeURIComponent(url))
+    .done(function(r) {
+      if (r.ok) {
+        $status.html('<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>URL is valid and reachable (HTTP ' + (r.status_code || r.status) + ')</span>');
+        $status.data('ok', true);
+        $input.removeClass('is-invalid');
+      } else {
+        $input.addClass('is-invalid');
+        $status.html('<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>' + escHtml(r.error || ('Server returned HTTP ' + (r.status_code || r.status))) + ' &mdash; check the URL and try again.</span>');
+        $status.data('ok', false);
+      }
+    })
+    .fail(function() {
+      $status.html('<span class="text-warning"><i class="bi bi-wifi-off me-1"></i>Could not reach validation service &mdash; URL saved but not confirmed.</span>');
+      $status.data('ok', 'warn');
+    })
+    .always(function() { $spinner.hide(); });
+}
+
 // ── Edit handlers (load data then open modal) ────────────────────────────────
 var urlDetailMap = {
   sources: '{% url "procurement:api_config_source_detail" pk=0 %}'.replace('/0/', '/'),
@@ -1205,6 +1227,10 @@ function editSource(id) {
   $.get(urlDetailMap.sources + id + '/', function(d) {
     $('#srcId').val(d.id);
     $('#srcName').val(d.source_name); $('#srcDomain').val(d.domain);
+    $('#srcHvacSystem').val(d.hvac_system_type || '');
+    $('#srcEquipment').val(d.equipment || '');
+    $('#srcSourceUrl').val(d.source_url || '').removeClass('is-invalid');
+    $('#srcUrlStatus').html('').removeData('ok'); $('#srcUrlSpinner').hide();
     $('#srcType').val(d.source_type); $('#srcFetchMode').val(d.fetch_mode);
     $('#srcPriority').val(d.priority); $('#srcTrustScore').val(d.trust_score);
     $('#srcCountryScope').val(d.country_scope); $('#srcNotes').val(d.notes);
@@ -1305,8 +1331,23 @@ function editHvacRule(id) {
 // ── Save handlers ────────────────────────────────────────────────────────────
 function saveSource() {
   var id = $('#srcId').val();
+  var sourceUrl = $('#srcSourceUrl').val().trim();
+  var urlOk = $('#srcUrlStatus').data('ok');
+  // Block save if URL was entered but failed validation
+  if (sourceUrl && urlOk === false) {
+    toast('The Source URL is not reachable. Please fix the URL before saving.', 'error');
+    $('#srcSourceUrl').focus();
+    return;
+  }
+  // Warn if URL entered but never validated (data-ok not set yet)
+  if (sourceUrl && urlOk === undefined) {
+    if (!confirm('The Source URL has not been checked yet. Save without validating?')) { return; }
+  }
   var payload = {
     source_name: $('#srcName').val(), domain: $('#srcDomain').val(),
+    hvac_system_type: $('#srcHvacSystem').val(),
+    equipment: $('#srcEquipment').val(),
+    source_url: sourceUrl,
     source_type: $('#srcType').val(), fetch_mode: $('#srcFetchMode').val(),
     priority: parseInt($('#srcPriority').val()) || 10,
     trust_score: parseFloat($('#srcTrustScore').val()) || 0.8,

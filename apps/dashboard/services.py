@@ -205,7 +205,7 @@ class DashboardService:
                     (row["avg_confidence"] or 0) * 100, 1
                 ),
             }
-            for row in qs
+            for row in rows
         ]
 
     @staticmethod

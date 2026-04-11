@@ -57,6 +57,12 @@ class Command(BaseCommand):
             "--list", action="store_true", default=False,
             help="List requests missing MI data and exit without generating anything.",
         )
+        parser.add_argument(
+            "--replace", action="store_true", default=False,
+            help="Delete all existing MarketIntelligenceSuggestion records for the "
+                 "targeted requests before regenerating (implies --force). "
+                 "Use this to fully replace stale/bad-URL data with fresh Perplexity results.",
+        )
 
     def handle(self, *args, **options):
         from apps.procurement.models import MarketIntelligenceSuggestion, ProcurementRequest
@@ -67,6 +73,19 @@ class Command(BaseCommand):
             qs = qs.filter(pk=options["pk"])
         if options["domain"]:
             qs = qs.filter(domain_code__iexact=options["domain"])
+
+        # --replace implies --force; delete all existing MI records for targeted requests first
+        if options["replace"]:
+            options["force"] = True
+            target_pks = list(qs.values_list("pk", flat=True))
+            deleted_count, _ = MarketIntelligenceSuggestion.objects.filter(
+                request_id__in=target_pks
+            ).delete()
+            if deleted_count:
+                self.stdout.write(self.style.WARNING(
+                    f"  Deleted {deleted_count} existing MarketIntelligenceSuggestion record(s) "
+                    f"for {len(target_pks)} request(s) -- will regenerate fresh data."
+                ))
 
         if not options["force"]:
             already_done = MarketIntelligenceSuggestion.objects.filter(
@@ -117,10 +136,12 @@ class Command(BaseCommand):
             # Choose which generation method to use
             if options["perplexity"]:
                 gen_method = MarketIntelligenceService.generate_with_perplexity
-                method_name = "Perplexity (sonar-pro)"
+                method_name = "Perplexity (sonar-pro, forced)"
             else:
-                gen_method = MarketIntelligenceService.generate
-                method_name = "Azure OpenAI"
+                # generate_auto routes to Perplexity if PERPLEXITY_API_KEY is set,
+                # otherwise falls back to Azure OpenAI automatically.
+                gen_method = MarketIntelligenceService.generate_auto
+                method_name = "Perplexity (sonar) via generate_auto"
             
             for req in qs.iterator():
                 label = f"pk={req.pk}  {req.title[:55]}"

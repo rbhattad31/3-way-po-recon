@@ -158,6 +158,18 @@ class BenchmarkQuotation(BaseModel):
         help_text="Supplier quotation reference number",
     )
     document = models.FileField(upload_to="benchmarking/quotations/%Y/%m/")
+    blob_url = models.URLField(
+        max_length=512,
+        blank=True,
+        default="",
+        help_text="Azure Blob Storage URL after upload (set by BlobStorageService)",
+    )
+    blob_name = models.CharField(
+        max_length=512,
+        blank=True,
+        default="",
+        help_text="Blob name (path) within the benchmarking container",
+    )
     extracted_text = models.TextField(blank=True, default="")
     extraction_status = models.CharField(
         max_length=20,
@@ -169,6 +181,11 @@ class BenchmarkQuotation(BaseModel):
         default="PENDING",
     )
     extraction_error = models.TextField(blank=True, default="")
+    di_extraction_json = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Raw Azure Document Intelligence API response (tables, key-value pairs)",
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -201,6 +218,20 @@ class BenchmarkLineItem(BaseModel):
     extraction_confidence = models.FloatField(default=0.0)
 
     # Classification
+    CLASSIFICATION_SOURCE_KEYWORD = "KEYWORD"
+    CLASSIFICATION_SOURCE_AI = "AI"
+    CLASSIFICATION_SOURCE_MANUAL = "MANUAL"
+    CLASSIFICATION_SOURCE_CHOICES = [
+        ("KEYWORD", "Keyword Rule"),
+        ("AI", "AI (OpenAI)"),
+        ("MANUAL", "Manual Override"),
+    ]
+    classification_source = models.CharField(
+        max_length=20,
+        choices=CLASSIFICATION_SOURCE_CHOICES,
+        default="KEYWORD",
+        help_text="How this line item was classified",
+    )
     category = models.CharField(
         max_length=30,
         choices=LineCategory.CHOICES,
@@ -323,6 +354,109 @@ class BenchmarkCorridorRule(BaseModel):
         if not self.keywords:
             return []
         return [k.strip().lower() for k in self.keywords.split(",") if k.strip()]
+
+
+# ---------------------------------------------------------------------------
+# CategoryMaster
+# ---------------------------------------------------------------------------
+
+class CategoryMaster(BaseModel):
+    """
+    Platform-managed category definitions for HVAC line-item classification.
+    Administrators can add descriptions, additional keywords, and control which
+    categories are active.  The AI agent reads this table at classification time
+    so prompt tuning does not require code deployments.
+    """
+
+    code = models.CharField(
+        max_length=30,
+        unique=True,
+        help_text="e.g. EQUIPMENT, CONTROLS, DUCTING -- must match LineCategory constant",
+    )
+    name = models.CharField(max_length=100, help_text="Human-readable category name")
+    description = models.TextField(
+        blank=True,
+        default="",
+        help_text="Procurement definition used as AI context during classification",
+    )
+    keywords_csv = models.TextField(
+        blank=True,
+        default="",
+        help_text="Comma-separated classification keywords (augments built-in rules)",
+    )
+    sort_order = models.PositiveSmallIntegerField(default=100)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "code"]
+        verbose_name = "Category Master"
+        verbose_name_plural = "Category Master"
+
+    def __str__(self):
+        return f"{self.code} -- {self.name}"
+
+    def keyword_list(self) -> list:
+        """Return list of lowercase, stripped keywords."""
+        if not self.keywords_csv:
+            return []
+        return [k.strip().lower() for k in self.keywords_csv.split(",") if k.strip()]
+
+
+# ---------------------------------------------------------------------------
+# VarianceThresholdConfig
+# ---------------------------------------------------------------------------
+
+class VarianceThresholdConfig(BaseModel):
+    """
+    Configurable variance thresholds per category (or global default).
+    Loaded by the benchmark engine so thresholds can be tuned without code changes.
+
+    Priority:
+      1. category-specific, geography-specific
+      2. category-specific, ANY geography (geography='ALL')
+      3. global (category='ALL', geography='ALL')
+    """
+
+    category = models.CharField(
+        max_length=30,
+        choices=LineCategory.CHOICES + [("ALL", "All Categories")],
+        default="ALL",
+        db_index=True,
+        help_text="Category this rule applies to; ALL = global default",
+    )
+    geography = models.CharField(
+        max_length=20,
+        choices=Geography.CHOICES + [("ALL", "All Geographies")],
+        default="ALL",
+        db_index=True,
+    )
+    within_range_max_pct = models.FloatField(
+        default=5.0,
+        help_text="Max absolute variance% to be classified as WITHIN_RANGE",
+    )
+    moderate_max_pct = models.FloatField(
+        default=15.0,
+        help_text="Max absolute variance% to be classified as MODERATE (else HIGH)",
+    )
+    notes = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["category", "geography"]
+        verbose_name = "Variance Threshold Config"
+        verbose_name_plural = "Variance Threshold Configs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["category", "geography"],
+                name="uniq_variance_threshold_cat_geo",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"Threshold | {self.category} / {self.geography} | "
+            f"within={self.within_range_max_pct}% moderate={self.moderate_max_pct}%"
+        )
 
 
 class BenchmarkResult(BaseModel):

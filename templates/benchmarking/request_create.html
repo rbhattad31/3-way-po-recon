@@ -87,22 +87,63 @@
           {# -- Quotation Upload -- #}
           <div class="mb-4">
             <div class="mb-1" style="font-size:.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;">
-              SUPPLIER QUOTATION
+              RFQ (optional)
             </div>
-            <div class="row g-3">
-              <div class="col-12 col-md-6">
-                <label class="form-label fw-600" style="font-size:.82rem;">Supplier Name</label>
-                <input type="text" name="supplier_name" class="form-control"
-                       style="font-size:.85rem;"
-                       value="{{ posted.supplier_name|default:'' }}"
-                       placeholder="Supplier / contractor name">
-              </div>
-              <div class="col-12 col-md-6">
-                <label class="form-label fw-600" style="font-size:.82rem;">Quotation Reference</label>
-                <input type="text" name="quotation_ref" class="form-control"
-                       style="font-size:.85rem;"
-                       value="{{ posted.quotation_ref|default:'' }}"
-                       placeholder="Supplier quote ref number">
+            
+              <div class="col-12">
+                {# -- Has system-generated RFQ? -- #}
+                <label class="form-label fw-600 d-block" style="font-size:.82rem;">
+                  Is there an RFQ already generated from the system?
+                </label>
+                <div class="d-flex gap-3 align-items-center mt-1 mb-3">
+                  <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="radio" name="rfq_source" id="rfqSourceYes"
+                           value="system"
+                           {% if posted.rfq_source == 'system' %}checked{% endif %}
+                           onchange="toggleRfqSource('system')">
+                    <label class="form-check-label" for="rfqSourceYes" style="font-size:.82rem;cursor:pointer;">
+                      <i class="bi bi-check-circle-fill text-success me-1"></i>Yes &mdash; select from generated RFQs
+                    </label>
+                  </div>
+                  <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="radio" name="rfq_source" id="rfqSourceNo"
+                           value="manual"
+                           {% if not posted.rfq_source or posted.rfq_source == 'manual' %}checked{% endif %}
+                           onchange="toggleRfqSource('manual')">
+                    <label class="form-check-label" for="rfqSourceNo" style="font-size:.82rem;cursor:pointer;">
+                      <i class="bi bi-x-circle text-danger me-1"></i>No
+                    </label>
+                  </div>
+                </div>
+
+                {# -- Dropdown: system-generated RFQs -- #}
+                <div id="rfqSystemBlock" style="display:none;">
+                  <label class="form-label fw-600" style="font-size:.82rem;">Select RFQ Reference</label>
+                  <select name="rfq_system_ref" id="rfqSystemSelect" class="form-select" style="font-size:.85rem;">
+                    <option value="">-- Select a generated RFQ --</option>
+                    {% for rfq in generated_rfq_list %}
+                      <option value="{{ rfq.rfq_ref }}"
+                        {% if posted.rfq_system_ref == rfq.rfq_ref %}selected{% endif %}>
+                        {{ rfq.rfq_ref }}{% if rfq.system_label %} &mdash; {{ rfq.system_label }}{% endif %}{% if rfq.request__title %} ({{ rfq.request__title }}){% endif %}
+                      </option>
+                    {% endfor %}
+                  </select>
+                  {% if not generated_rfq_list %}
+                    <div class="mt-1" style="font-size:.75rem;color:#9ca3af;">
+                      <i class="bi bi-info-circle me-1"></i>
+                      No RFQs generated yet. Create one from the Procurement module first.
+                    </div>
+                  {% endif %}
+                </div>
+
+                {# -- Manual text input -- #}
+                <div id="rfqManualBlock">
+                  <label class="form-label fw-600" style="font-size:.82rem;">Quotation Reference</label>
+                  <input type="text" name="quotation_ref" class="form-control"
+                         style="font-size:.85rem;"
+                         value="{{ posted.quotation_ref|default:'' }}"
+                         placeholder="Supplier quote ref number">
+                </div>
               </div>
               <div class="col-12">
                 <label class="form-label fw-600" style="font-size:.82rem;">
@@ -153,6 +194,24 @@
 
 {% block extra_js %}
 <script>
+  // ── RFQ source toggle ────────────────────────────────────────────────────
+  function toggleRfqSource(val) {
+    var systemBlock = document.getElementById('rfqSystemBlock');
+    var manualBlock = document.getElementById('rfqManualBlock');
+    if (val === 'system') {
+      systemBlock.style.display = '';
+      manualBlock.style.display = 'none';
+    } else {
+      systemBlock.style.display = 'none';
+      manualBlock.style.display = 'none';
+    }
+  }
+  // Init on page load from the checked radio
+  (function () {
+    var checked = document.querySelector('input[name="rfq_source"]:checked');
+    if (checked) { toggleRfqSource(checked.value); }
+  })();
+
   document.getElementById('quotation_pdf').addEventListener('change', function() {
     const name = this.files[0] ? this.files[0].name : '';
     document.getElementById('fileNameDisplay').textContent = name ? 'Selected: ' + name : '';

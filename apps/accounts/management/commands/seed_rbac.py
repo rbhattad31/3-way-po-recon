@@ -62,6 +62,7 @@ PERMISSIONS = [
     {"code": "agents.run_grn_retrieval", "name": "Run GRN Retrieval Agent", "module": "agents", "action": "run_grn_retrieval", "description": "Execute GRN retrieval agent"},
     {"code": "agents.run_reconciliation_assist", "name": "Run Reconciliation Assist Agent", "module": "agents", "action": "run_reconciliation_assist", "description": "Execute reconciliation assist agent"},
     {"code": "agents.run_exception_analysis", "name": "Run Exception Analysis Agent", "module": "agents", "action": "run_exception_analysis", "description": "Execute exception analysis agent"},
+    {"code": "agents.run_compliance", "name": "Run Compliance Agent", "module": "agents", "action": "run_compliance", "description": "Execute compliance review agent for duplicate/tax/vendor/mandatory-field checks"},
     {"code": "agents.run_review_routing", "name": "Run Review Routing Agent", "module": "agents", "action": "run_review_routing", "description": "Execute review routing agent"},
     {"code": "agents.run_case_summary", "name": "Run Case Summary Agent", "module": "agents", "action": "run_case_summary", "description": "Execute case summary agent"},
     # System agents (deterministic)
@@ -138,6 +139,7 @@ ROLE_MATRIX = {
         "cases.add_comment", "cases.escalate",
         "reviews.view", "reviews.decide",
         "agents.view", "agents.use_copilot",
+        "agents.run_compliance",
         "governance.view",
         "purchase_orders.view", "grns.view", "vendors.view",
         "recommendations.route_review",
@@ -175,6 +177,7 @@ ROLE_MATRIX = {
         "reviews.view",
         "governance.view",
         "agents.view",
+        "agents.run_compliance",
         "purchase_orders.view", "grns.view", "vendors.view",
         # Procurement read-only
         "procurement.view", "procurement.view_results",
@@ -189,7 +192,7 @@ ROLE_MATRIX = {
         "agents.run_extraction", "agents.run_po_retrieval",
         "agents.run_grn_retrieval", "agents.run_reconciliation_assist",
         "agents.run_exception_analysis", "agents.run_review_routing",
-        "agents.run_case_summary",
+        "agents.run_case_summary", "agents.run_compliance",
         # Deterministic system agents
         "agents.run_system_review_routing", "agents.run_system_case_summary",
         "agents.run_system_bulk_extraction_intake", "agents.run_system_case_intake",

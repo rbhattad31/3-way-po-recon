@@ -9,30 +9,50 @@ from django.core.management.base import BaseCommand
 #  budget_level_filter, energy_priority_filter,
 #  recommended_system, alternate_system,
 #  rationale, priority)
+# Priority ordering (lower number = evaluated first, first match wins):
+#   10  R7  City-specific rule (Dubai UAE)               -- most specific
+#   20  R8  City + Country rule (Riyadh KSA)             -- very specific
+#   30  R3  Country-level rule (GCC standalone, high EE) -- medium specificity
+#   40  R4  Country-level rule (GCC standalone, low budget)
+#   50  R5  Generic condition (mid-size, hot, low budget)
+#   60  R6  Generic condition (mid-size, hot, med budget)
+#   70  R2  Small-store fallback
+#   80  R1  MALL generic (chiller)                       -- moved lower so city/
+#                                                           country rules win first
+#   90  R9  Extreme ambient temperature fallback
+#  999  R10 Default fallback
 RULES = [
+    # -------------------------------------------------------------------------
+    # Priority 10 -- most specific: city-level (Dubai, UAE)
+    # -------------------------------------------------------------------------
     (
-        "R1",
-        "Mall -- any configuration",
-        "", "", "MALL",
-        None, None, None,
-        "", "",
-        "CHILLER", "FCU",
-        "Mall tenancies use the landlord-provided chilled-water plant. "
-        "Fan coil units (FCUs) distribute chilled water from the central plant.",
+        "R7",
+        "Dubai UAE -- large, extreme heat, high energy priority",
+        "UAE", "Dubai", "",
+        3000.0, None, 45.0,
+        "", "HIGH",
+        "VRF", "",
+        "Dubai sites with large area and extreme heat benefit most from VRF inverter "
+        "efficiency where energy efficiency is the priority.",
         10,
     ),
+    # -------------------------------------------------------------------------
+    # Priority 20 -- very specific: city + country (Riyadh, KSA)
+    # -------------------------------------------------------------------------
     (
-        "R2",
-        "Small footprint -- under 2000 sq ft",
-        "", "", "",
-        None, 2000.0, None,
+        "R8",
+        "Riyadh KSA -- large, extreme heat",
+        "KSA", "Riyadh", "",
+        3000.0, None, 45.0,
         "", "",
-        "SPLIT_AC", "",
-        "Spaces under 2000 sq ft rarely justify complex systems. "
-        "A split AC (wall-mounted or multi-split) provides adequate capacity "
-        "with minimal installation complexity.",
+        "PACKAGED_DX", "VRF",
+        "Riyadh sites in extreme heat with large area: Packaged DX is the primary "
+        "recommendation for reliability; VRF is a viable high-efficiency alternative.",
         20,
     ),
+    # -------------------------------------------------------------------------
+    # Priority 30 -- country-level: GCC standalone, extreme heat, high EE
+    # -------------------------------------------------------------------------
     (
         "R3",
         "GCC standalone large -- extreme heat, high energy priority",
@@ -45,6 +65,9 @@ RULES = [
         "and staged compressor capacity.",
         30,
     ),
+    # -------------------------------------------------------------------------
+    # Priority 40 -- country-level: GCC standalone, extreme heat, low budget
+    # -------------------------------------------------------------------------
     (
         "R4",
         "GCC standalone large -- extreme heat, low/medium budget",
@@ -56,6 +79,9 @@ RULES = [
         "Low/medium budget rules out premium VRF investment.",
         40,
     ),
+    # -------------------------------------------------------------------------
+    # Priorities 50-60 -- generic conditions (mid-size, hot climate)
+    # -------------------------------------------------------------------------
     (
         "R5",
         "Mid-size -- hot climate, low budget",
@@ -78,28 +104,43 @@ RULES = [
         "VRF part-load efficiency to reduce operating costs over the lifecycle.",
         60,
     ),
+    # -------------------------------------------------------------------------
+    # Priority 70 -- small-store fallback
+    # -------------------------------------------------------------------------
     (
-        "R7",
-        "Dubai UAE -- large, extreme heat, high energy priority",
-        "UAE", "Dubai", "",
-        3000.0, None, 45.0,
-        "", "HIGH",
-        "VRF", "",
-        "Dubai sites with large area and extreme heat benefit most from VRF inverter "
-        "efficiency where energy efficiency is the priority.",
+        "R2",
+        "Small footprint -- under 2000 sq ft",
+        "", "", "",
+        None, 2000.0, None,
+        "", "",
+        "SPLIT_AC", "",
+        "Spaces under 2000 sq ft rarely justify complex systems. "
+        "A split AC (wall-mounted or multi-split) provides adequate capacity "
+        "with minimal installation complexity.",
         70,
     ),
+    # -------------------------------------------------------------------------
+    # Priority 80 -- MALL generic (chiller from landlord plant)
+    # INTENTIONALLY placed AFTER all city/country-specific rules so that a
+    # Riyadh KSA mall (R8, priority 20) or a Dubai UAE mall (R7, priority 10)
+    # are resolved before this catch-all fires.
+    # -------------------------------------------------------------------------
     (
-        "R8",
-        "Riyadh KSA -- large, extreme heat",
-        "KSA", "Riyadh", "",
-        3000.0, None, 45.0,
+        "R1",
+        "Mall -- any configuration",
+        "", "", "MALL",
+        None, None, None,
         "", "",
-        "PACKAGED_DX", "VRF",
-        "Riyadh sites in extreme heat with large area: Packaged DX is the primary "
-        "recommendation for reliability; VRF is a viable high-efficiency alternative.",
+        "CHILLER", "FCU",
+        "Mall tenancies use the landlord-provided chilled-water plant. "
+        "Fan coil units (FCUs) distribute chilled water from the central plant. "
+        "City- or country-specific rules (R7, R8) override this for markets where "
+        "packaged DX is the norm (e.g. Riyadh KSA).",
         80,
     ),
+    # -------------------------------------------------------------------------
+    # Priority 90 -- extreme ambient temperature (any store type)
+    # -------------------------------------------------------------------------
     (
         "R9",
         "Extreme ambient temperature -- any configuration",
@@ -112,6 +153,9 @@ RULES = [
         "sustained operation above this threshold.",
         90,
     ),
+    # -------------------------------------------------------------------------
+    # Priority 999 -- last-resort default
+    # -------------------------------------------------------------------------
     (
         "R10",
         "Default fallback -- any configuration",

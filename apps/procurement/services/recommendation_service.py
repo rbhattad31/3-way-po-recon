@@ -101,6 +101,9 @@ class RecommendationService:
             # Attach archetype to rule result so it propagates to output_payload
             rule_result["archetype"] = archetype
             source_classes.append("HVACRulesEngine")
+            # If the HVAC agent stepped in (no DB rule matched), record it separately
+            if (rule_result.get("reasoning_details") or {}).get("source") == "hvac_agent":
+                source_classes.append("HVACRecommendationAgent")
             thought_log.append({
                 "step": 3,
                 "stage": "DETERMINISTIC_RULES",
@@ -148,13 +151,74 @@ class RecommendationService:
             final = RecommendationService._merge_recommendation_result(rule_result, ai_result)
 
             # ── Step 5: Standards validation + compliance check ──────────────────
+            # Phase A: rule-based checks (always runs)
             compliance_status = ComplianceStatus.NOT_CHECKED
             compliance_data = None
+            ai_compliance_data = None
             if final.get("recommended_option"):
                 from apps.procurement.services.compliance_service import ComplianceService
                 compliance_data = ComplianceService.check_recommendation(request, final)
                 compliance_status = compliance_data.get("status", ComplianceStatus.NOT_CHECKED)
             source_classes.append("ComplianceService")
+
+            # Phase B: AI augmentation -- invoked when rule engine returns PARTIAL
+            # (some violations flagged but the recommendation is not outright rejected).
+            # The AI is asked to surface additional risks the deterministic rules miss.
+            if (
+                compliance_status == ComplianceStatus.PARTIAL
+                and use_ai
+                and final.get("recommended_option")
+            ):
+                try:
+                    from apps.procurement.agents.compliance_agent import ComplianceAgent
+
+                    ai_context = dict(final)
+                    ai_context["violations"] = (compliance_data or {}).get("violations") or []
+                    ai_compliance_data = ComplianceAgent.check(
+                        request=request,
+                        context=ai_context,
+                        attrs=attrs,  # attrs already fetched in step 1
+                    )
+                    # Merge AI findings into compliance_data
+                    if ai_compliance_data and compliance_data:
+                        compliance_data["rules_checked"] = (
+                            list(compliance_data.get("rules_checked") or [])
+                            + list(ai_compliance_data.get("rules_checked") or [])
+                        )
+                        compliance_data["violations"] = (
+                            list(compliance_data.get("violations") or [])
+                            + list(ai_compliance_data.get("violations") or [])
+                        )
+                        compliance_data["recommendations"] = list(
+                            dict.fromkeys(
+                                list(compliance_data.get("recommendations") or [])
+                                + [
+                                    str(r)
+                                    for r in (ai_compliance_data.get("recommendations") or [])
+                                ]
+                            )
+                        )
+                        compliance_data["ai_augmented"] = True
+                        compliance_data["domain_flags"] = ai_compliance_data.get("domain_flags") or []
+                        compliance_data["geography_flags"] = ai_compliance_data.get("geography_flags") or []
+
+                    # Re-evaluate overall status from merged violation count
+                    total_violations = len(compliance_data.get("violations") or [])
+                    if total_violations == 0:
+                        compliance_status = ComplianceStatus.PASS
+                    elif total_violations == 1:
+                        compliance_status = ComplianceStatus.PARTIAL
+                    else:
+                        compliance_status = ComplianceStatus.FAIL
+
+                    source_classes.append("ComplianceAgent")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "ComplianceAgent (AI) raised an error (non-fatal, keeping rule result): %s",
+                        exc,
+                    )
+
+            ai_violations_count = len((ai_compliance_data or {}).get("violations") or [])
             thought_log.append({
                 "step": 5,
                 "stage": "STANDARDS_VALIDATION",
@@ -162,8 +226,10 @@ class RecommendationService:
                 "reasoning": (
                     f"Compliance check: {compliance_status}. "
                     + (
-                        f"Violations: {len(compliance_data.get('violations') or [])}. "
-                        f"Standards checked: {len(compliance_data.get('rules_checked') or [])}."
+                        f"Violations: {len(compliance_data.get('violations') or [])} "
+                        f"(incl. {ai_violations_count} from AI). "
+                        f"Standards checked: {len(compliance_data.get('rules_checked') or [])}. "
+                        f"AI augmented: {bool(compliance_data and compliance_data.get('ai_augmented'))}."
                         if compliance_data else "No compliance data returned."
                     )
                 ),
@@ -444,21 +510,76 @@ class RecommendationService:
                     geography = request.geography_country
                 elif hasattr(request, "location") and request.location:
                     geography = str(request.location)
-                return HVACRulesEngine.evaluate(
+                rule_result = HVACRulesEngine.evaluate(
                     domain_code="HVAC",
                     attrs=attrs,
                     geography_country=geography,
                 )
             except Exception:
-                logger.exception("HVACRulesEngine.evaluate failed -- deferring to AI.")
-                return {
+                logger.exception("HVACRulesEngine.evaluate failed -- falling back to HVAC agent.")
+                rule_result = {
                     "recommended_option": "",
-                    "reasoning_summary": "Rules engine error -- deferring to AI.",
+                    "reasoning_summary": "Rules engine error -- invoking HVAC recommendation agent.",
                     "confident": False,
                     "confidence": 0.0,
                     "constraints": [],
                     "reasoning_details": {"source": "rules_engine_error"},
                 }
+
+            # -- Rules engine produced a confident match: return immediately -------
+            if rule_result.get("confident") and rule_result.get("recommended_option"):
+                return rule_result
+
+            # -- Rules engine was not confident: invoke HVACRecommendationAgent ----
+            # Only escalate to the agent when the attributes are present but no rule
+            # matched (missing_attrs means incomplete input -- the agent cannot help
+            # with missing data any better than the rules engine).
+            rd = rule_result.get("reasoning_details") or {}
+            has_missing_attrs = bool(rd.get("missing_attrs"))
+            if not has_missing_attrs:
+                logger.info(
+                    "RecommendationService: no DB rule matched for HVAC request pk=%s "
+                    "(%d rules evaluated) -- invoking HVACRecommendationAgent.recommend()",
+                    getattr(request, "pk", "?"),
+                    rd.get("rules_evaluated", 0),
+                )
+                try:
+                    from apps.procurement.agents.hvac_recommendation_agent import (
+                        HVACRecommendationAgent,
+                    )
+                    agent_result = HVACRecommendationAgent.recommend(
+                        attrs=attrs,
+                        no_match_context=rd,
+                        procurement_request_pk=getattr(request, "pk", None),
+                    )
+                    # If the agent produced a usable recommendation, return it.
+                    # Even a low-confidence agent result is preferable to an empty
+                    # rules result because it carries reasoning_summary + constraints.
+                    if agent_result.get("recommended_option"):
+                        logger.info(
+                            "HVACRecommendationAgent.recommend: returning system=%s "
+                            "confidence=%.2f for request pk=%s",
+                            agent_result.get("system_type_code"),
+                            agent_result.get("confidence", 0),
+                            getattr(request, "pk", "?"),
+                        )
+                        return agent_result
+                    # Agent returned empty -- fall through to original no-match result
+                    logger.warning(
+                        "HVACRecommendationAgent.recommend returned no system for pk=%s; "
+                        "returning original no-match result for orchestrator AI fallback.",
+                        getattr(request, "pk", "?"),
+                    )
+                except Exception:
+                    logger.exception(
+                        "HVACRecommendationAgent.recommend raised an exception for pk=%s; "
+                        "returning original no-match result.",
+                        getattr(request, "pk", "?"),
+                    )
+
+            # Fall through: return the rules engine no-match result so the
+            # orchestrator's generic AI step (RecommendationGraphService) picks it up.
+            return rule_result
 
         # Non-HVAC domain: no deterministic rules yet
         return {

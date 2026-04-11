@@ -76,12 +76,9 @@
     flex-shrink: 0;
   }
   .proc-brand-icon {
-    width: 40px; height: 40px;
-    border-radius: 12px;
-    background: linear-gradient(135deg, #6366f1, #7c3aed, #0ea5e9);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.2rem; color: #fff;
-    box-shadow: 0 4px 16px rgba(99,102,241,.4);
+    background: none;
+    box-shadow: none;
+    border: none;
     flex-shrink: 0;
   }
   .proc-brand-name {
@@ -427,9 +424,8 @@
 
     {# Brand #}
     <a class="proc-brand" href="{{ sidebar_brand.home_url|default:'/' }}">
-      <div class="proc-brand-icon">
-        <i class="bi {{ sidebar_brand.icon|default:'bi-wind' }}"></i>
-      </div>
+      <img src="{% static 'images/procurement-robot.png' %}" alt="AI Agent"
+           style="width:42px;height:42px;object-fit:contain;flex-shrink:0;">
       <div>
         <div class="proc-brand-name">{{ sidebar_brand.name|default:"LMG Procurement" }}</div>
         <div class="proc-brand-sub">{{ sidebar_brand.subtitle|default:"HVAC Intelligence" }}</div>

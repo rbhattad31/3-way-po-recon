@@ -158,6 +158,8 @@ class HVACRulesEngine:
 
         # â”€â”€ Normalise key inputs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         store_type = _get(attrs, "store_type", "")
+        country = str(attrs.get("country") or attrs.get("geography_country") or "").strip().upper()
+        city = str(attrs.get("city") or attrs.get("geography_city") or "").strip().upper()
         area_sqft_val: float = _get_num(attrs, "area_sqft", 0) or 0.0
         ambient_max: float = _get_num(attrs, "ambient_temp_max", 0) or 0.0
         budget_category = _get(attrs, "budget_level", "")
@@ -196,6 +198,8 @@ class HVACRulesEngine:
                     "rules_loaded": len(active_rules),
                     "rules_evaluated": rules_evaluated,
                     "inputs": {
+                        "country": country,
+                        "city": city,
                         "store_type": store_type,
                         "area_sqft": area_sqft_val,
                         "ambient_temp_max": ambient_max,
@@ -344,6 +348,58 @@ class HVACRulesEngine:
             or fresh_air_req in ("YES", "HIGH", "REQUIRED")
         )
 
+        # -- Build matched_condition_keys: only the input keys the rule actually tested --
+        _matched_keys: List[str] = []
+        if matched_rule.country_filter:
+            _matched_keys.append("country")
+        if matched_rule.city_filter:
+            _matched_keys.append("city")
+        if matched_rule.store_type_filter:
+            _matched_keys.append("store_type")
+        if matched_rule.area_sq_ft_min is not None or matched_rule.area_sq_ft_max is not None:
+            _matched_keys.append("area_sqft")
+            _matched_keys.append("area_sqm_derived")
+        if matched_rule.ambient_temp_min_c is not None:
+            _matched_keys.append("ambient_temp_max")
+        if matched_rule.budget_level_filter:
+            _matched_keys.append("budget_level")
+        if matched_rule.energy_priority_filter:
+            _matched_keys.append("energy_efficiency_priority")
+        # Derived conditions inferred from landlord text also count as matched
+        if outdoor_restriction:
+            _matched_keys.append("outdoor_restriction_derived")
+        if cw_available:
+            _matched_keys.append("chilled_water_derived")
+
+        # -- Build rule_conditions: ALL standard params with configured filter value or "Any"
+        # This allows the UI to show every parameter the rule can evaluate, even wildcards.
+        def _area_filter_label() -> str:
+            lo = matched_rule.area_sq_ft_min
+            hi = matched_rule.area_sq_ft_max
+            if lo is not None and hi is not None:
+                return f"{lo:,.0f} - {hi:,.0f} sqft"
+            if lo is not None:
+                return f">= {lo:,.0f} sqft"
+            if hi is not None:
+                return f"<= {hi:,.0f} sqft"
+            return "Any"
+
+        _rule_conditions: Dict[str, str] = {
+            "country":                    matched_rule.country_filter or "Any",
+            "city":                       matched_rule.city_filter or "Any",
+            "store_type":                 matched_rule.store_type_filter or "Any",
+            "area_sqft":                  _area_filter_label(),
+            "ambient_temp_max":           (
+                f">= {matched_rule.ambient_temp_min_c}C"
+                if matched_rule.ambient_temp_min_c is not None
+                else "Any"
+            ),
+            "budget_level":               matched_rule.budget_level_filter or "Any",
+            "energy_efficiency_priority": matched_rule.energy_priority_filter or "Any",
+            "outdoor_restriction_derived": "YES (required)" if outdoor_restriction else "Any",
+            "chilled_water_derived":       "YES (required)" if cw_available else "Any",
+        }
+
         return {
             "recommended_option": recommendation_text,
             "system_type_code": selected_option,
@@ -381,7 +437,11 @@ class HVACRulesEngine:
                     "alternate_system": matched_rule.alternate_system,
                     "rationale": matched_rule.rationale,
                 },
+                "matched_condition_keys": _matched_keys,
+                "rule_conditions": _rule_conditions,
                 "inputs": {
+                    "country": country,
+                    "city": city,
                     "store_type": store_type,
                     "area_sqft": area_sqft_val,
                     "area_sqm_derived": round(area_sqm, 1),

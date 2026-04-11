@@ -21,10 +21,9 @@
   <header class="proc-topbar">
     {# Brand #}
     <a class="proc-topbar-brand" href="{% url 'procurement:home' %}">
-      <div class="proc-topbar-brand-icon">
-        <i class="bi bi-wind"></i>
-      </div>
-      <span class="proc-topbar-brand-name">LMG Procurement</span>
+      <img src="{% static 'images/procurement-robot.png' %}" alt="AI Procurement Agent"
+           style="width:104px;height:104px;object-fit:contain;flex-shrink:0;">
+      <span class="proc-topbar-brand-name">Bradsol SmartProcure </span>
     </a>
     <div class="proc-topbar-brand-sep"></div>
     <span class="proc-topbar-module">HVAC Intelligence</span>
@@ -106,9 +105,7 @@
   <div class="offcanvas offcanvas-start" tabindex="-1" id="procMobileMenu" style="width:260px;background:#fff;">
     <div class="offcanvas-header" style="border-bottom:1px solid #e5e7eb;">
       <div class="d-flex align-items-center gap-2">
-        <div style="width:26px;height:26px;border-radius:6px;background:#1665D8;display:flex;align-items:center;justify-content:center;">
-          <i class="bi bi-wind text-white" style="font-size:.75rem;"></i>
-        </div>
+        <img src="{% static 'images/procurement-robot.png' %}" alt="AI Agent" style="width:32px;height:32px;object-fit:contain;">
         <span style="font-size:.88rem;font-weight:700;color:#111827;">LMG Procurement</span>
       </div>
       <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
@@ -117,6 +114,9 @@
       {% include "partials/proc_sidebar.html" %}
     </div>
   </div>
+
+  {# ── Page-level modals (rendered outside proc-layout so overflow-y:auto can't trap them) ── #}
+  {% block modals %}{% endblock %}
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>

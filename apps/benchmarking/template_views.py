@@ -13,14 +13,21 @@ from django.views.decorators.http import require_http_methods
 
 from apps.benchmarking.models import (
     BenchmarkCorridorRule,
+    BenchmarkLineItem,
     BenchmarkQuotation,
     BenchmarkRequest,
     Geography,
     LineCategory,
     ScopeType,
+    VarianceStatus,
 )
 from apps.benchmarking.services.benchmark_service import BenchmarkEngine
 from apps.benchmarking.services.export_service import ExportService
+
+try:
+    from apps.procurement.models import GeneratedRFQ as _GeneratedRFQ
+except ImportError:
+    _GeneratedRFQ = None
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +44,21 @@ def _base_ctx(**extra):
     }
     ctx.update(extra)
     return ctx
+
+
+def _get_generated_rfqs():
+    """Return list of all generated RFQ records for the create-request dropdown."""
+    if _GeneratedRFQ is None:
+        return []
+    try:
+        return list(
+            _GeneratedRFQ.objects
+            .select_related("request")
+            .order_by("-created_at")
+            .values("rfq_ref", "system_label", "request__title")
+        )
+    except Exception:
+        return []
 
 
 # --------------------------------------------------------------------------- #
@@ -96,7 +118,11 @@ def request_create(request):
         scope_type = request.POST.get("scope_type", "SITC")
         store_type = request.POST.get("store_type", "").strip()
         supplier_name = request.POST.get("supplier_name", "").strip()
-        quotation_ref = request.POST.get("quotation_ref", "").strip()
+        rfq_source = request.POST.get("rfq_source", "manual")
+        if rfq_source == "system":
+            quotation_ref = request.POST.get("rfq_system_ref", "").strip()
+        else:
+            quotation_ref = request.POST.get("quotation_ref", "").strip()
         notes = request.POST.get("notes", "").strip()
 
         errors = []
@@ -109,7 +135,9 @@ def request_create(request):
             for err in errors:
                 messages.error(request, err)
             return render(request, "benchmarking/request_create.html", _base_ctx(
-                posted=request.POST, page_title="New Benchmarking Request"
+                posted=request.POST,
+                page_title="New Benchmarking Request",
+                generated_rfq_list=_get_generated_rfqs(),
             ))
 
         # Create request
@@ -149,6 +177,7 @@ def request_create(request):
     return render(request, "benchmarking/request_create.html", _base_ctx(
         page_title="New Benchmarking Request",
         active_menu="request_list",
+        generated_rfq_list=_get_generated_rfqs(),
     ))
 
 
@@ -365,67 +394,249 @@ def reports(request):
 
 @login_required
 def configurations(request):
-    """Manage BenchmarkCorridorRule records."""
-    if request.method == "POST":
-        action = request.POST.get("action", "")
-
-        if action == "create":
-            try:
-                BenchmarkCorridorRule.objects.create(
-                    rule_code=request.POST["rule_code"].strip(),
-                    name=request.POST["name"].strip(),
-                    category=request.POST["category"],
-                    scope_type=request.POST.get("scope_type", "ALL"),
-                    geography=request.POST.get("geography", "ALL"),
-                    uom=request.POST.get("uom", "").strip(),
-                    min_rate=request.POST["min_rate"],
-                    mid_rate=request.POST["mid_rate"],
-                    max_rate=request.POST["max_rate"],
-                    currency=request.POST.get("currency", "AED").strip(),
-                    keywords=request.POST.get("keywords", "").strip(),
-                    notes=request.POST.get("notes", "").strip(),
-                    priority=int(request.POST.get("priority", 100)),
-                    created_by=request.user,
-                )
-                messages.success(request, "Corridor rule created.")
-            except Exception as exc:
-                messages.error(request, f"Failed to create rule: {exc}")
-
-        elif action == "toggle":
-            rule_pk = request.POST.get("rule_pk")
-            try:
-                rule = BenchmarkCorridorRule.objects.get(pk=rule_pk)
-                rule.is_active = not rule.is_active
-                rule.updated_by = request.user
-                rule.save(update_fields=["is_active", "updated_at", "updated_by"])
-                messages.success(request, f"Rule '{rule.rule_code}' {'enabled' if rule.is_active else 'disabled'}.")
-            except BenchmarkCorridorRule.DoesNotExist:
-                messages.error(request, "Rule not found.")
-
-        elif action == "delete":
-            rule_pk = request.POST.get("rule_pk")
-            try:
-                rule = BenchmarkCorridorRule.objects.get(pk=rule_pk)
-                rule.is_active = False
-                rule.save(update_fields=["is_active"])
-                messages.success(request, f"Rule '{rule.rule_code}' deactivated.")
-            except BenchmarkCorridorRule.DoesNotExist:
-                messages.error(request, "Rule not found.")
-
-        return redirect("benchmarking:configurations")
-
-    rules = BenchmarkCorridorRule.objects.all().order_by("category", "geography", "priority")
+    """Benchmark Configurations -- Category Master, Benchmark Table, Variance Thresholds."""
+    stats = {
+        "category_total": len(LineCategory.CHOICES),
+        "category_active": len(LineCategory.CHOICES),
+        "corridor_total": BenchmarkCorridorRule.objects.count(),
+        "corridor_active": BenchmarkCorridorRule.objects.filter(is_active=True).count(),
+        "threshold_total": 4,
+        "threshold_active": 4,
+    }
     scope_choices_with_all = ScopeType.CHOICES + [("ALL", "All Scopes")]
     geo_choices_with_all = Geography.CHOICES + [("ALL", "All Geographies")]
-
     ctx = _base_ctx(
-        corridor_rules=rules,
+        stats=stats,
         scope_choices_with_all=scope_choices_with_all,
         geo_choices_with_all=geo_choices_with_all,
         page_title="Benchmark Configurations",
         active_menu="configurations",
+        active_tab="categories",
     )
     return render(request, "benchmarking/configurations.html", ctx)
+
+
+# --------------------------------------------------------------------------- #
+# 8a. Configurations -- Category Master API
+# --------------------------------------------------------------------------- #
+
+_CAT_DESCRIPTIONS = {
+    "EQUIPMENT":     "Main HVAC units: VRF/VRV, Chillers, Split ACs, Packaged Units, FCUs, AHUs",
+    "CONTROLS":      "BMS/DDC controls, control panels, cabling, sensors, actuators",
+    "DUCTING":       "GI ductwork, flexible ducts, grilles, diffusers, louvres",
+    "INSULATION":    "Pipe insulation (Armaflex/NBR), duct insulation (glass wool, foam)",
+    "ACCESSORIES":   "Pipes, fittings, valves, dampers, supports, hangers, drain trays",
+    "INSTALLATION":  "Labour for mechanical installation, fix & fit, pipework, electrical works",
+    "TC":            "Testing, balancing, commissioning, startup, handover",
+    "UNCATEGORIZED": "Items not yet classified into a specific category",
+}
+
+
+@login_required
+def api_bench_categories(request):
+    """Return all LineCategory enum values with active corridor rule counts."""
+    from django.db.models import Count
+    q = request.GET.get("q", "").lower()
+    counts = dict(
+        BenchmarkCorridorRule.objects.filter(is_active=True)
+        .values_list("category")
+        .annotate(cnt=Count("id"))
+        .values_list("category", "cnt")
+    )
+    items = []
+    for code, label in LineCategory.CHOICES:
+        if q and q not in code.lower() and q not in label.lower():
+            continue
+        sample_kw_qs = list(
+            BenchmarkCorridorRule.objects.filter(category=code, is_active=True)
+            .exclude(keywords="")
+            .values_list("keywords", flat=True)[:3]
+        )
+        # flatten first ~6 keywords
+        all_kw = []
+        for kws in sample_kw_qs:
+            all_kw.extend([k.strip() for k in kws.split(",") if k.strip()])
+        sample_keywords = ", ".join(all_kw[:6]) if all_kw else ""
+        items.append({
+            "code": code,
+            "label": label,
+            "description": _CAT_DESCRIPTIONS.get(code, ""),
+            "rule_count": counts.get(code, 0),
+            "sample_keywords": sample_keywords,
+        })
+    return JsonResponse({"items": items})
+
+
+# --------------------------------------------------------------------------- #
+# 8b. Configurations -- Benchmark Table API (CRUD)
+# --------------------------------------------------------------------------- #
+
+def _corridor_to_dict(r):
+    # Build display labels manually (model uses plain str constants, not TextChoices)
+    cat_map = dict(LineCategory.CHOICES)
+    geo_map = dict(Geography.CHOICES + [("ALL", "All Geographies")])
+    scope_map = dict(ScopeType.CHOICES + [("ALL", "All Scopes")])
+    return {
+        "id": r.pk,
+        "rule_code": r.rule_code,
+        "name": r.name,
+        "category": r.category,
+        "category_display": cat_map.get(r.category, r.category),
+        "geography": r.geography,
+        "geography_display": geo_map.get(r.geography, r.geography),
+        "scope_type": r.scope_type,
+        "scope_display": scope_map.get(r.scope_type, r.scope_type),
+        "uom": r.uom,
+        "min_rate": str(r.min_rate),
+        "mid_rate": str(r.mid_rate),
+        "max_rate": str(r.max_rate),
+        "currency": r.currency,
+        "keywords": r.keywords,
+        "notes": r.notes,
+        "priority": r.priority,
+        "is_active": r.is_active,
+    }
+
+
+@login_required
+def api_bench_corridors(request):
+    """GET: list corridor rules. POST (JSON): create a new rule."""
+    import json as _json
+    if request.method == "POST":
+        try:
+            body = _json.loads(request.body)
+        except Exception:
+            return JsonResponse({"success": False, "message": "Invalid JSON"}, status=400)
+        try:
+            rule = BenchmarkCorridorRule.objects.create(
+                rule_code=body["rule_code"].strip(),
+                name=body["name"].strip(),
+                category=body["category"],
+                scope_type=body.get("scope_type", "ALL"),
+                geography=body.get("geography", "ALL"),
+                uom=body.get("uom", "").strip(),
+                min_rate=body.get("min_rate") or 0,
+                mid_rate=body.get("mid_rate") or 0,
+                max_rate=body.get("max_rate") or 0,
+                currency=(body.get("currency") or "AED").strip(),
+                keywords=body.get("keywords", "").strip(),
+                notes=body.get("notes", "").strip(),
+                priority=int(body.get("priority") or 100),
+                is_active=bool(body.get("is_active", True)),
+                created_by=request.user,
+            )
+            return JsonResponse({"success": True, "message": "Corridor rule created.", "id": rule.pk})
+        except Exception as exc:
+            return JsonResponse({"success": False, "message": str(exc)}, status=400)
+
+    # GET -- list with optional filters
+    q = request.GET.get("q", "").lower()
+    cat_filter = request.GET.get("category", "")
+    geo_filter = request.GET.get("geography", "")
+    from django.db.models import Q
+    qs = BenchmarkCorridorRule.objects.all().order_by("category", "geography", "priority")
+    if q:
+        qs = qs.filter(Q(rule_code__icontains=q) | Q(name__icontains=q) | Q(keywords__icontains=q))
+    if cat_filter:
+        qs = qs.filter(category=cat_filter)
+    if geo_filter:
+        qs = qs.filter(geography=geo_filter)
+    return JsonResponse({"items": [_corridor_to_dict(r) for r in qs]})
+
+
+@login_required
+def api_bench_corridor_detail(request, pk):
+    """GET: single rule detail. POST (JSON): update / toggle / delete."""
+    import json as _json
+    rule = get_object_or_404(BenchmarkCorridorRule, pk=pk)
+    if request.method == "GET":
+        return JsonResponse(_corridor_to_dict(rule))
+    if request.method == "POST":
+        try:
+            body = _json.loads(request.body)
+        except Exception:
+            return JsonResponse({"success": False, "message": "Invalid JSON"}, status=400)
+        action = body.get("_action", "update")
+        if action == "toggle":
+            rule.is_active = not rule.is_active
+            rule.save(update_fields=["is_active"])
+            return JsonResponse({"success": True, "message": f"Rule {'enabled' if rule.is_active else 'disabled'}."})
+        if action == "delete":
+            rule.is_active = False
+            rule.save(update_fields=["is_active"])
+            return JsonResponse({"success": True, "message": f"Rule '{rule.rule_code}' deactivated."})
+        if action == "update":
+            try:
+                rule.rule_code = (body.get("rule_code") or rule.rule_code).strip()
+                rule.name = (body.get("name") or rule.name).strip()
+                rule.category = body.get("category", rule.category)
+                rule.scope_type = body.get("scope_type", rule.scope_type)
+                rule.geography = body.get("geography", rule.geography)
+                rule.uom = (body.get("uom") or "").strip()
+                rule.min_rate = body.get("min_rate") or rule.min_rate
+                rule.mid_rate = body.get("mid_rate") or rule.mid_rate
+                rule.max_rate = body.get("max_rate") or rule.max_rate
+                rule.currency = ((body.get("currency") or "AED")).strip()
+                rule.keywords = (body.get("keywords") or "").strip()
+                rule.notes = (body.get("notes") or "").strip()
+                rule.priority = int(body.get("priority") or rule.priority)
+                rule.is_active = bool(body.get("is_active", rule.is_active))
+                rule.updated_by = request.user
+                rule.save()
+                return JsonResponse({"success": True, "message": "Corridor rule updated."})
+            except Exception as exc:
+                return JsonResponse({"success": False, "message": str(exc)}, status=400)
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+# --------------------------------------------------------------------------- #
+# 8c. Configurations -- Variance Thresholds API
+# --------------------------------------------------------------------------- #
+
+@login_required
+def api_bench_thresholds(request):
+    """Return the 4 variance bands with live line-item counts."""
+    from django.db.models import Count
+    counts = dict(
+        BenchmarkLineItem.objects.values_list("variance_status")
+        .annotate(cnt=Count("id"))
+        .values_list("variance_status", "cnt")
+    )
+    bands = [
+        {
+            "code": "WITHIN_RANGE",
+            "label": "Within Range",
+            "description": "Quoted rate is within benchmark corridor",
+            "range": "< 5% above mid",
+            "color": "success",
+            "count": counts.get("WITHIN_RANGE", 0),
+        },
+        {
+            "code": "MODERATE",
+            "label": "Moderate Variance",
+            "description": "Quoted rate slightly exceeds benchmark",
+            "range": "5% - 15% above mid",
+            "color": "warning",
+            "count": counts.get("MODERATE", 0),
+        },
+        {
+            "code": "HIGH",
+            "label": "High Variance",
+            "description": "Quoted rate significantly exceeds benchmark",
+            "range": "> 15% above mid",
+            "color": "danger",
+            "count": counts.get("HIGH", 0),
+        },
+        {
+            "code": "NEEDS_REVIEW",
+            "label": "Needs Review",
+            "description": "No benchmark corridor found for this line item",
+            "range": "No benchmark",
+            "color": "secondary",
+            "count": counts.get("NEEDS_REVIEW", 0),
+        },
+    ]
+    return JsonResponse({"items": bands})
 
 
 # --------------------------------------------------------------------------- #

@@ -109,8 +109,17 @@ def download_blob_to_tempfile(blob_path: str) -> str:
         raise
 
 
-def generate_blob_sas_url(blob_path: str, expiry_minutes: int = 30) -> str:
-    """Generate a time-limited SAS URL for reading a blob."""
+def generate_blob_sas_url(
+    blob_path: str,
+    expiry_minutes: int = 30,
+    content_disposition: str = None,
+) -> str:
+    """Generate a time-limited SAS URL for reading a blob.
+
+    Pass content_disposition (e.g. 'attachment; filename="file.pdf"') to
+    force the browser to download the file instead of opening it inline.
+    Azure embeds this as the ``rscd`` SAS query parameter.
+    """
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 
     conn_str, container = _get_blob_settings()
@@ -123,6 +132,10 @@ def generate_blob_sas_url(blob_path: str, expiry_minutes: int = 30) -> str:
     if not account_name or not account_key:
         raise ValueError("Cannot parse AccountName/AccountKey from connection string")
 
+    sas_kwargs = {}
+    if content_disposition:
+        sas_kwargs["content_disposition"] = content_disposition
+
     sas_token = generate_blob_sas(
         account_name=account_name,
         container_name=container,
@@ -130,6 +143,7 @@ def generate_blob_sas_url(blob_path: str, expiry_minutes: int = 30) -> str:
         account_key=account_key,
         permission=BlobSasPermissions(read=True),
         expiry=datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes),
+        **sas_kwargs,
     )
 
     return f"https://{account_name}.blob.core.windows.net/{container}/{blob_path}?{sas_token}"
