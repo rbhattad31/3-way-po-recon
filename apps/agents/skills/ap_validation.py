@@ -24,11 +24,17 @@ ap_validation_skill = register_skill(Skill(
         "check_duplicate",
         "verify_vendor",
         "verify_tax_computation",
+        "detect_self_company",
+        "check_approval_status",
     ],
     decision_hints=[
         "If duplicate is detected, recommend SEND_TO_AP_REVIEW with evidence.",
         "If vendor verification fails by tax ID, do NOT auto-close.",
         "If validation finds critical missing fields, attempt re_extract_field "
         "before recommending REPROCESS_EXTRACTION.",
+        "If vendor verification fails unexpectedly, call detect_self_company "
+        "to check if vendor and buyer names are swapped.",
+        "Call check_approval_status to verify extraction has been approved "
+        "before proceeding to matching phase.",
     ],
 ))

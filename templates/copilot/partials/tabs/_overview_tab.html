@@ -140,5 +140,70 @@
     </div>
     {% endif %}
 
+    {# ── Extraction Approval Card ── #}
+    {% if ctx.extraction_approval %}
+    <div class="col-md-6 col-xl-4">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-clipboard-check text-{% if ctx.extraction_approval.status == 'APPROVED' or ctx.extraction_approval.status == 'AUTO_APPROVED' %}success{% elif ctx.extraction_approval.status == 'REJECTED' %}danger{% else %}warning{% endif %} me-2"></i>Extraction Approval
+        </div>
+        <div class="case-card-body">
+          <div class="case-kv">
+            <span class="case-kv-k">Status</span>
+            <span class="case-kv-v">
+              <span class="badge {% if ctx.extraction_approval.status == 'APPROVED' or ctx.extraction_approval.status == 'AUTO_APPROVED' %}bg-success-subtle text-success-emphasis{% elif ctx.extraction_approval.status == 'REJECTED' %}bg-danger-subtle text-danger-emphasis{% else %}bg-warning-subtle text-warning-emphasis{% endif %}">
+                {{ ctx.extraction_approval.status }}
+              </span>
+            </span>
+          </div>
+          {% if ctx.extraction_approval.is_touchless %}
+          <div class="case-kv"><span class="case-kv-k">Touchless</span><span class="case-kv-v"><span class="badge bg-success-subtle text-success-emphasis">Yes</span></span></div>
+          {% endif %}
+          {% if ctx.extraction_approval.confidence_at_review %}
+          <div class="case-kv">
+            <span class="case-kv-k">Confidence at Review</span>
+            <span class="case-kv-v">
+              <div class="progress" style="width:80px;height:6px;display:inline-flex;vertical-align:middle;">
+                <div class="progress-bar {% if ctx.extraction_approval.confidence_at_review >= 0.8 %}bg-success{% elif ctx.extraction_approval.confidence_at_review >= 0.5 %}bg-warning{% else %}bg-danger{% endif %}" style="width:{{ ctx.extraction_approval.confidence_at_review|floatformat:0 }}%"></div>
+              </div>
+              <span class="small text-muted ms-1">{{ ctx.extraction_approval.confidence_at_review }}%</span>
+            </span>
+          </div>
+          {% endif %}
+          {% if ctx.extraction_approval.reviewed_by %}
+          <div class="case-kv"><span class="case-kv-k">Reviewed By</span><span class="case-kv-v">{{ ctx.extraction_approval.reviewed_by }}</span></div>
+          {% endif %}
+          {% if ctx.extraction_approval.fields_corrected_count %}
+          <div class="case-kv"><span class="case-kv-k">Fields Corrected</span><span class="case-kv-v"><span class="badge bg-info-subtle text-info-emphasis">{{ ctx.extraction_approval.fields_corrected_count }}</span></span></div>
+          {% endif %}
+          {% if ctx.extraction_approval.rejection_reason %}
+          <div class="case-kv"><span class="case-kv-k">Rejection Reason</span><span class="case-kv-v text-danger">{{ ctx.extraction_approval.rejection_reason }}</span></div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Decision Codes Card ── #}
+    {% if ctx.decision_codes %}
+    <div class="col-md-6 col-xl-4">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-tags text-secondary me-2"></i>Quality Flags
+          <span class="badge bg-secondary-subtle text-secondary-emphasis ms-auto">{{ ctx.decision_codes|length }}</span>
+        </div>
+        <div class="case-card-body">
+          <div class="d-flex flex-wrap gap-1">
+            {% for code in ctx.decision_codes %}
+            <span class="badge {% if 'MISSING' in code or 'BELOW_MIN' in code or 'DUPLICATE' in code %}bg-danger-subtle text-danger-emphasis{% elif 'LOW' in code or 'MISMATCH' in code or 'AMBIGUOUS' in code %}bg-warning-subtle text-warning-emphasis{% else %}bg-info-subtle text-info-emphasis{% endif %}">
+              {{ code }}
+            </span>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
   </div>
 </div>

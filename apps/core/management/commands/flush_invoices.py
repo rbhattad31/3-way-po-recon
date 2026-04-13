@@ -83,12 +83,12 @@ class Command(BaseCommand):
 
         # --- Agents ---
         from apps.agents.models import (
-            AgentRun, AgentRecommendation, AgentStep,
+            AgentOrchestrationRun, AgentRun, AgentRecommendation, AgentStep,
             AgentMessage, DecisionLog, AgentEscalation,
         )
         for model in [
             AgentEscalation, AgentRecommendation, DecisionLog,
-            AgentMessage, AgentStep, AgentRun,
+            AgentMessage, AgentStep, AgentRun, AgentOrchestrationRun,
         ]:
             _delete(model)
 
@@ -141,6 +141,56 @@ class Command(BaseCommand):
         from apps.copilot.models import CopilotSessionArtifact, CopilotMessage, CopilotSession
         for model in [CopilotSessionArtifact, CopilotMessage, CopilotSession]:
             _delete(model)
+
+        # --- Posting (children first) ---
+        try:
+            from apps.posting.models import InvoicePostingFieldCorrection, InvoicePosting
+            _delete(InvoicePostingFieldCorrection)
+            _delete(InvoicePosting)
+        except ImportError:
+            pass
+
+        # --- Posting Core (children first) ---
+        try:
+            from apps.posting_core.models import (
+                PostingApprovalRecord, PostingEvidence, PostingIssue,
+                PostingLineItem, PostingFieldValue, PostingRun,
+            )
+            for model in [
+                PostingApprovalRecord, PostingEvidence, PostingIssue,
+                PostingLineItem, PostingFieldValue, PostingRun,
+            ]:
+                _delete(model)
+        except ImportError:
+            pass
+
+        # --- ERP Integration (logs + cache, NOT connections) ---
+        try:
+            from apps.erp_integration.models import (
+                ERPSubmissionLog, ERPResolutionLog, ERPReferenceCacheRecord,
+            )
+            for model in [ERPSubmissionLog, ERPResolutionLog, ERPReferenceCacheRecord]:
+                _delete(model)
+        except ImportError:
+            pass
+
+        # --- Extraction Core (children first) ---
+        try:
+            from apps.extraction_core.models import (
+                ExtractionCorrection, ExtractionApprovalRecord,
+                ExtractionAnalyticsSnapshot, ExtractionEvidence,
+                ExtractionIssue, ExtractionLineItem, ExtractionFieldValue,
+                ExtractionOCRText, ExtractionRun,
+            )
+            for model in [
+                ExtractionCorrection, ExtractionApprovalRecord,
+                ExtractionAnalyticsSnapshot, ExtractionEvidence,
+                ExtractionIssue, ExtractionLineItem, ExtractionFieldValue,
+                ExtractionOCRText, ExtractionRun,
+            ]:
+                _delete(model)
+        except ImportError:
+            pass
 
         # --- Invoices + document uploads (NOT POs, GRNs, vendors) ---
         from apps.documents.models import InvoiceLineItem, Invoice, DocumentUpload

@@ -504,6 +504,7 @@ class ReconciliationRunnerService:
             exceptions=[],  # Build separately below to get result_line references
             reconciliation_mode=reconciliation_mode,
             mode_resolution=mode_resolution,
+            tenant=run.tenant,
         )
 
         # Build result_line map from saved result

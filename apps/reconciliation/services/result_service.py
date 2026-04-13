@@ -103,6 +103,7 @@ class ReconciliationResultService:
             # Attach result_line references where possible
             for exc in exceptions:
                 exc.result = result
+                exc.tenant = result.tenant
             ReconciliationException.objects.bulk_create(exceptions)
 
         logger.info(
@@ -165,6 +166,7 @@ class ReconciliationResultService:
                     result=result,
                     invoice_line=inv_line,
                     match_status=MatchStatus.UNMATCHED,
+                    tenant=result.tenant,
                 ))
 
         created = ReconciliationResultLine.objects.bulk_create(objs)
@@ -197,6 +199,7 @@ class ReconciliationResultService:
             po_line=pair.po_line,
             match_status=status,
             description_similarity=pair.description_similarity,
+            tenant=result.tenant,
         )
 
         # --- v2: persist deterministic scorer metadata ---

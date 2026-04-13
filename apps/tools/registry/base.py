@@ -71,9 +71,15 @@ class BaseTool(ABC):
 
         The ``tenant`` kwarg is extracted and stored on ``self._tenant``
         so subclass ``run()`` methods can apply tenant-scoped queries.
-        It is removed from kwargs before forwarding to ``run()``.
+        The ``parent_run_id`` kwarg is extracted and stored on
+        ``self._parent_run_id`` so delegation tools can link child runs.
+        The ``lf_parent_span`` kwarg is extracted and stored on
+        ``self._lf_parent_span`` so delegation tools can propagate tracing.
+        All are removed from kwargs before forwarding to ``run()``.
         """
         self._tenant = kwargs.pop("tenant", None)
+        self._parent_run_id = kwargs.pop("parent_run_id", None)
+        self._lf_parent_span = kwargs.pop("lf_parent_span", None)
         start = time.monotonic()
         try:
             result = self.run(**kwargs)
@@ -85,6 +91,8 @@ class BaseTool(ABC):
             return ToolResult(success=False, error=str(exc), duration_ms=duration)
         finally:
             self._tenant = None
+            self._parent_run_id = None
+            self._lf_parent_span = None
 
     @abstractmethod
     def run(self, **kwargs) -> ToolResult:

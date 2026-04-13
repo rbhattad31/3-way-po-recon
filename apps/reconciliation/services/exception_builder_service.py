@@ -597,4 +597,5 @@ class ExceptionBuilderService:
             severity=severity,
             message=message,
             details=details,
+            tenant=result.tenant,
         )

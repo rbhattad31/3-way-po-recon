@@ -155,7 +155,8 @@ The platform uses **shared-database multi-tenancy** with row-level isolation via
 | Observability | `apps/core/trace.py`, `apps/core/logging_utils.py`, `apps/core/metrics.py`, `apps/core/decorators.py` |
 | Utilities | `apps/core/utils.py` |
 | Seed Commands | `apps/core/management/commands/seed_all.py` (unified), `seed_config.py`, `seed_prompts.py`; `apps/accounts/.../seed_rbac.py`; `apps/agents/.../seed_agent_contracts.py`; `apps/extraction_core/.../seed_extraction_config.py`, `seed_control_center.py`; `apps/extraction/.../seed_credits.py` |
-| Flush Command | `apps/core/management/commands/flush_test_data.py` (deletes transactional data, preserves config/users/RBAC) |
+| Flush Invoice Data | `apps/core/management/commands/flush_invoices.py` (deletes invoices + cases/recon/agents/reviews, **preserves POs/GRNs/vendors**/config/users/RBAC) |
+| Flush ALL Test Data | `apps/core/management/commands/flush_test_data.py` (deletes **everything** incl. POs/GRNs/vendors, preserves config/users/RBAC) |
 | Admin | `apps/<app>/admin.py` |
 | Templates | `templates/<app>/` (also `templates/governance/` for audit/governance views, `templates/vendors/` for vendor UI) |
 | ERP Connectors | `apps/erp_integration/services/connectors/` |
@@ -433,7 +434,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - Observability decorators: `@observed_service`, `@observed_action`, `@observed_task` — 10 instrumented service/view/task entry points
 - Enhanced governance API: 9 endpoints (audit-history, agent-trace, recommendations, timeline, access-history, stage-timeline, permission-denials, rbac-activity, agent-performance)
 - **Unified seed**: `python manage.py seed_all [--flush] [--skip STEP]` runs 7 steps in order: seed_config -> seed_rbac -> seed_prompts -> seed_agent_contracts -> seed_extraction_config -> seed_control_center -> seed_credits
-- **Flush transactional data**: `python manage.py flush_test_data [--confirm]` deletes invoices, POs, GRNs, cases, agents, reviews, vendors, audit events, extraction results, copilot sessions, bulk jobs, credit transactions. Resets credit account balances to 100. Preserves users, RBAC, agent/tool definitions, recon config/policies, prompts, extraction configs, control center settings, credit accounts (reset to seed defaults).
+- **Flush invoice data** (default): `python manage.py flush_invoices [--confirm]` deletes invoices, cases, reconciliation runs/results/exceptions, extraction results, agent runs, reviews, audit events, copilot sessions, posting data, eval/learning data, credit transactions. **Preserves POs, GRNs, vendors**, users, RBAC, config, agent/tool definitions. Use this when the user says "flush invoice data".
+- **Flush ALL test data** (nuclear): `python manage.py flush_test_data [--confirm]` deletes **everything** including POs, GRNs, vendors, in addition to all the above. Only use when the user explicitly asks to flush "all data" or "test data".
 - Windows dev mode: `CELERY_TASK_ALWAYS_EAGER=True` (default) for synchronous execution without Redis
 - Root URL (`/`) redirects to `/dashboard/`; `LOGIN_URL = /accounts/login/`
 
@@ -474,7 +476,8 @@ PENDING → RUNNING → COMPLETED | FAILED | SKIPPED
 - **Posting stuck in MAPPING_IN_PROGRESS?** Check `PostingRun` for `error_code`; inspect `PostingIssue` records with `severity=ERROR`. Also verify ERP reference tables are populated via `/posting/imports/`.
 - **ERP cache stale?** `ERPReferenceCacheRecord` entries expire per `ERP_CACHE_TTL_SECONDS` (default 3600s). Delete cache records or reduce TTL to force re-resolution.
 - **`PostingMappingEngine` not using ERP?** Confirm `PostingPipeline._get_erp_connector()` returns a non-None connector — requires at least one active default `ERPConnection` record.
-- **Need a clean slate?** `python manage.py flush_test_data --confirm` deletes all transactional data while preserving config, users, and RBAC. Then `python manage.py seed_all` to re-seed platform config.
+- **Need to re-test invoices?** `python manage.py flush_invoices --confirm` deletes invoice-related data while preserving POs, GRNs, vendors, config, users, and RBAC.
+- **Need a full clean slate?** `python manage.py flush_test_data --confirm` deletes ALL transactional data (including POs, GRNs, vendors). Then re-seed vendor/PO data with `python manage.py seed_vendor_case_0001` or similar.
 
 ---
 

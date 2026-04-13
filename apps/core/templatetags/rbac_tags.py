@@ -135,3 +135,27 @@ def do_if_can(parser, token):
         nodelist_false = parser.parse(("end_if_can",))
         parser.delete_first_token()
     return IfCanNode(permission_code, nodelist_true, nodelist_false)
+
+
+# ---------------------------------------------------------------------------
+# Utility filters
+# ---------------------------------------------------------------------------
+
+@register.filter(name="to_json")
+def to_json(value):
+    """Serialize a Python value to a JSON string safe for embedding in
+    ``<script type="application/json">`` blocks.
+
+    Escapes ``<``, ``>``, and ``&`` so that ``</script>`` injection is
+    impossible (same approach Django's ``json_script`` filter uses).
+
+    Usage: {{ msg.structured_payload_json|to_json }}
+    """
+    import json
+    from django.utils.safestring import mark_safe
+    if value is None:
+        return mark_safe("null")
+    raw = json.dumps(value)
+    # Prevent </script> injection and HTML entity issues
+    raw = raw.replace("<", "\\u003C").replace(">", "\\u003E").replace("&", "\\u0026")
+    return mark_safe(raw)

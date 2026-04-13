@@ -360,10 +360,11 @@ def invoice_detail(request, pk):
         from django.shortcuts import redirect
         return redirect("extraction:console", pk=ext.pk)
 
-    invoice = get_object_or_404(
-        Invoice.objects.select_related("vendor", "document_upload", "document_upload__uploaded_by", "duplicate_of", "reprocessed_from").prefetch_related("line_items"),
-        pk=pk,
-    )
+    tenant = getattr(request, 'tenant', None)
+    _inv_qs = Invoice.objects.select_related("vendor", "document_upload", "document_upload__uploaded_by", "duplicate_of", "reprocessed_from").prefetch_related("line_items")
+    if tenant is not None:
+        _inv_qs = _inv_qs.filter(tenant=tenant)
+    invoice = get_object_or_404(_inv_qs, pk=pk)
     recon_results = invoice.recon_results.select_related("purchase_order").prefetch_related("exceptions").order_by("-created_at")
 
     # Check if an AP Case already exists for this invoice
@@ -419,17 +420,22 @@ def po_list(request):
             | Q(department__icontains=q)
         )
 
-    # Distinct status values for the filter dropdown
+    # Distinct status values for the filter dropdown (tenant-scoped)
+    _filter_qs = PurchaseOrder.objects.all()
+    if tenant is not None:
+        _filter_qs = _filter_qs.filter(tenant=tenant)
     status_choices = (
-        PurchaseOrder.objects.order_by("status")
+        _filter_qs.order_by("status")
         .values_list("status", flat=True)
         .distinct()
     )
-    # Vendors that have POs
+    # Vendors that have POs (tenant-scoped)
     from apps.vendors.models import Vendor
+    _vendor_qs = Vendor.objects.filter(purchase_orders__isnull=False)
+    if tenant is not None:
+        _vendor_qs = _vendor_qs.filter(tenant=tenant)
     vendor_choices = (
-        Vendor.objects.filter(purchase_orders__isnull=False)
-        .distinct()
+        _vendor_qs.distinct()
         .order_by("name")
         .values_list("pk", "name")
     )
@@ -444,45 +450,53 @@ def po_list(request):
     })
 
 
-def _vendors_meta_json():
-    """Build a JSON-serialisable dict of vendor PK → {country, tax_id}."""
+def _vendors_meta_json(tenant=None):
+    """Build a JSON-serialisable dict of vendor PK -> {country, tax_id}."""
     from apps.vendors.models import Vendor as VendorModel
+    qs = VendorModel.objects.only("pk", "country", "tax_id")
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
     return json.dumps({
         str(v.pk): {"country": v.country or "", "tax_id": v.tax_id or ""}
-        for v in VendorModel.objects.only("pk", "country", "tax_id")
+        for v in qs
     })
 
 
 @login_required
 @permission_required_code("purchase_orders.create")
 def po_create(request):
+    tenant = getattr(request, 'tenant', None)
     if request.method == "POST":
-        form = PurchaseOrderForm(request.POST)
+        form = PurchaseOrderForm(request.POST, tenant=tenant)
         formset = POLineItemFormSet(request.POST)
         if form.is_valid() and formset.is_valid():
             po = form.save(commit=False)
-            po.tenant = getattr(request, 'tenant', None)
+            po.tenant = tenant
             po.save()
             formset.instance = po
             formset.save()
             messages.success(request, f"Purchase Order '{po.po_number}' created successfully.")
             return redirect("po_detail", pk=po.pk)
     else:
-        form = PurchaseOrderForm()
+        form = PurchaseOrderForm(tenant=tenant)
         formset = POLineItemFormSet()
     return render(request, "documents/po_create.html", {
         "form": form,
         "formset": formset,
-        "vendors_meta_json": _vendors_meta_json(),
+        "vendors_meta_json": _vendors_meta_json(tenant=tenant),
     })
 
 
 @login_required
 @permission_required_code("purchase_orders.edit")
 def po_edit(request, pk):
-    po = get_object_or_404(PurchaseOrder, pk=pk)
+    tenant = getattr(request, 'tenant', None)
+    _po_qs = PurchaseOrder.objects.all()
+    if tenant is not None:
+        _po_qs = _po_qs.filter(tenant=tenant)
+    po = get_object_or_404(_po_qs, pk=pk)
     if request.method == "POST":
-        form = PurchaseOrderForm(request.POST, instance=po)
+        form = PurchaseOrderForm(request.POST, instance=po, tenant=tenant)
         formset = POLineItemFormSet(request.POST, instance=po)
         if form.is_valid() and formset.is_valid():
             form.save()
@@ -490,25 +504,26 @@ def po_edit(request, pk):
             messages.success(request, f"Purchase Order '{po.po_number}' updated successfully.")
             return redirect("po_detail", pk=po.pk)
     else:
-        form = PurchaseOrderForm(instance=po)
+        form = PurchaseOrderForm(instance=po, tenant=tenant)
         formset = POLineItemFormSet(instance=po)
     return render(request, "documents/po_edit.html", {
         "form": form,
         "po": po,
         "formset": formset,
-        "vendors_meta_json": _vendors_meta_json(),
+        "vendors_meta_json": _vendors_meta_json(tenant=tenant),
     })
 
 
 @login_required
 @permission_required_code("purchase_orders.view")
 def po_detail(request, pk):
-    po = get_object_or_404(
-        PurchaseOrder.objects.select_related("vendor").prefetch_related(
-            "line_items", "grns__line_items",
-        ),
-        pk=pk,
+    tenant = getattr(request, 'tenant', None)
+    _po_qs = PurchaseOrder.objects.select_related("vendor").prefetch_related(
+        "line_items", "grns__line_items",
     )
+    if tenant is not None:
+        _po_qs = _po_qs.filter(tenant=tenant)
+    po = get_object_or_404(_po_qs, pk=pk)
     recon_results = po.recon_results.select_related("invoice").prefetch_related("exceptions").order_by("-created_at")
     return render(request, "documents/po_detail.html", {
         "po": po,
@@ -544,15 +559,20 @@ def grn_list(request):
             | Q(receiver_name__icontains=q)
         )
 
+    _filter_qs = GoodsReceiptNote.objects.all()
+    if tenant is not None:
+        _filter_qs = _filter_qs.filter(tenant=tenant)
     status_choices = (
-        GoodsReceiptNote.objects.order_by("status")
+        _filter_qs.order_by("status")
         .values_list("status", flat=True)
         .distinct()
     )
     from apps.vendors.models import Vendor
+    _vendor_qs = Vendor.objects.filter(grns__isnull=False)
+    if tenant is not None:
+        _vendor_qs = _vendor_qs.filter(tenant=tenant)
     vendor_choices = (
-        Vendor.objects.filter(grns__isnull=False)
-        .distinct()
+        _vendor_qs.distinct()
         .order_by("name")
         .values_list("pk", "name")
     )
@@ -570,11 +590,12 @@ def grn_list(request):
 @login_required
 @permission_required_code("grns.create")
 def grn_create(request):
+    tenant = getattr(request, 'tenant', None)
     if request.method == "POST":
-        form = GoodsReceiptNoteForm(request.POST)
+        form = GoodsReceiptNoteForm(request.POST, tenant=tenant)
         if form.is_valid():
             grn = form.save(commit=False)
-            grn.tenant = getattr(request, 'tenant', None)
+            grn.tenant = tenant
             # Auto-set vendor from PO
             if grn.purchase_order and grn.purchase_order.vendor:
                 grn.vendor = grn.purchase_order.vendor
@@ -608,34 +629,39 @@ def grn_create(request):
             messages.success(request, f"GRN '{grn.grn_number}' created successfully.")
             return redirect("grn_detail", pk=grn.pk)
     else:
-        form = GoodsReceiptNoteForm()
+        form = GoodsReceiptNoteForm(tenant=tenant)
     return render(request, "documents/grn_create.html", {"form": form})
 
 
 @login_required
 @permission_required_code("grns.edit")
 def grn_edit(request, pk):
-    grn = get_object_or_404(GoodsReceiptNote, pk=pk)
+    tenant = getattr(request, 'tenant', None)
+    _grn_qs = GoodsReceiptNote.objects.all()
+    if tenant is not None:
+        _grn_qs = _grn_qs.filter(tenant=tenant)
+    grn = get_object_or_404(_grn_qs, pk=pk)
     if request.method == "POST":
-        form = GoodsReceiptNoteForm(request.POST, instance=grn)
+        form = GoodsReceiptNoteForm(request.POST, instance=grn, tenant=tenant)
         if form.is_valid():
             form.save()
             messages.success(request, f"GRN '{grn.grn_number}' updated successfully.")
             return redirect("grn_detail", pk=grn.pk)
     else:
-        form = GoodsReceiptNoteForm(instance=grn)
+        form = GoodsReceiptNoteForm(instance=grn, tenant=tenant)
     return render(request, "documents/grn_edit.html", {"form": form, "grn": grn})
 
 
 @login_required
 @permission_required_code("grns.view")
 def grn_detail(request, pk):
-    grn = get_object_or_404(
-        GoodsReceiptNote.objects.select_related(
-            "purchase_order", "purchase_order__vendor", "vendor",
-        ).prefetch_related("line_items"),
-        pk=pk,
-    )
+    tenant = getattr(request, 'tenant', None)
+    _grn_qs = GoodsReceiptNote.objects.select_related(
+        "purchase_order", "purchase_order__vendor", "vendor",
+    ).prefetch_related("line_items")
+    if tenant is not None:
+        _grn_qs = _grn_qs.filter(tenant=tenant)
+    grn = get_object_or_404(_grn_qs, pk=pk)
     return render(request, "documents/grn_detail.html", {
         "grn": grn,
     })
@@ -644,7 +670,11 @@ def grn_detail(request, pk):
 @login_required
 def document_download(request, pk):
     """Serve the original uploaded document from Azure Blob Storage."""
-    upload = get_object_or_404(DocumentUpload, pk=pk)
+    tenant = getattr(request, 'tenant', None)
+    _doc_qs = DocumentUpload.objects.all()
+    if tenant is not None:
+        _doc_qs = _doc_qs.filter(tenant=tenant)
+    upload = get_object_or_404(_doc_qs, pk=pk)
 
     if not upload.blob_path:
         raise Http404("No document available — blob_path not set.")

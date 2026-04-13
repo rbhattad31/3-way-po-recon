@@ -11,9 +11,50 @@
         </div>
         <div class="case-card-body">
           <div class="case-kv"><span class="case-kv-k">Invoice Number</span><span class="case-kv-v fw-semibold">{{ ctx.invoice.invoice_number|default:"-" }}</span></div>
-          <div class="case-kv"><span class="case-kv-k">Amount</span><span class="case-kv-v fw-semibold">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.amount|default:"-" }}</span></div>
           <div class="case-kv"><span class="case-kv-k">Invoice Date</span><span class="case-kv-v">{{ ctx.invoice.invoice_date|default:"-" }}</span></div>
+          {% if ctx.invoice.due_date %}
+          <div class="case-kv"><span class="case-kv-k">Due Date</span><span class="case-kv-v">{{ ctx.invoice.due_date }}</span></div>
+          {% endif %}
+          {% if ctx.invoice.po_number %}
+          <div class="case-kv"><span class="case-kv-k">PO Number</span><span class="case-kv-v">{{ ctx.invoice.po_number }}</span></div>
+          {% endif %}
+          {% if ctx.invoice.buyer_name %}
+          <div class="case-kv"><span class="case-kv-k">Bill To</span><span class="case-kv-v">{{ ctx.invoice.buyer_name }}</span></div>
+          {% endif %}
           <div class="case-kv"><span class="case-kv-k">Status</span><span class="case-kv-v">{{ ctx.invoice.status|default:"-" }}</span></div>
+        </div>
+      </div>
+    </div>
+
+    {# Financials #}
+    <div class="col-lg-6">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-cash-stack text-success me-2"></i>Financials
+        </div>
+        <div class="case-card-body">
+          {% if ctx.invoice.subtotal %}
+          <div class="case-kv"><span class="case-kv-k">Subtotal</span><span class="case-kv-v">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.subtotal }}</span></div>
+          {% endif %}
+          {% if ctx.invoice.tax_percentage %}
+          <div class="case-kv"><span class="case-kv-k">Tax Rate</span><span class="case-kv-v">{{ ctx.invoice.tax_percentage }}%</span></div>
+          {% endif %}
+          {% if ctx.invoice.tax_amount %}
+          <div class="case-kv"><span class="case-kv-k">Tax Amount</span><span class="case-kv-v">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.tax_amount }}</span></div>
+          {% endif %}
+          {% if ctx.invoice.tax_breakdown %}
+          <div class="case-kv align-items-start">
+            <span class="case-kv-k">Tax Breakdown</span>
+            <span class="case-kv-v">
+              {% for key, val in ctx.invoice.tax_breakdown.items %}
+              {% if val %}
+              <span class="badge bg-secondary-subtle text-secondary-emphasis me-1">{{ key|upper }}: {{ ctx.invoice.currency }} {{ val }}</span>
+              {% endif %}
+              {% endfor %}
+            </span>
+          </div>
+          {% endif %}
+          <div class="case-kv"><span class="case-kv-k">Total Amount</span><span class="case-kv-v fw-semibold text-primary">{{ ctx.invoice.currency|default:"" }} {{ ctx.invoice.amount|default:"-" }}</span></div>
           {% if ctx.invoice.extraction_confidence %}
           <div class="case-kv">
             <span class="case-kv-k">Extraction Confidence</span>
@@ -22,6 +63,18 @@
                 <div class="progress-bar {% if ctx.invoice.extraction_confidence >= 0.8 %}bg-success{% elif ctx.invoice.extraction_confidence >= 0.5 %}bg-warning{% else %}bg-danger{% endif %}" style="width:{% widthratio ctx.invoice.extraction_confidence 1 100 %}%"></div>
               </div>
               <span class="small text-muted ms-1">{% widthratio ctx.invoice.extraction_confidence 1 100 %}%</span>
+            </span>
+          </div>
+          {% endif %}
+          {% if ctx.extraction_approval %}
+          <div class="case-kv">
+            <span class="case-kv-k">Approval</span>
+            <span class="case-kv-v">
+              <span class="badge {% if ctx.extraction_approval.status == 'APPROVED' or ctx.extraction_approval.status == 'AUTO_APPROVED' %}bg-success-subtle text-success-emphasis{% elif ctx.extraction_approval.status == 'REJECTED' %}bg-danger-subtle text-danger-emphasis{% else %}bg-warning-subtle text-warning-emphasis{% endif %}">
+                {{ ctx.extraction_approval.status }}
+              </span>
+              {% if ctx.extraction_approval.is_touchless %}<span class="badge bg-success-subtle text-success-emphasis ms-1">Touchless</span>{% endif %}
+              {% if ctx.extraction_approval.fields_corrected_count %}<span class="small text-muted ms-1">({{ ctx.extraction_approval.fields_corrected_count }} fields corrected)</span>{% endif %}
             </span>
           </div>
           {% endif %}
@@ -39,11 +92,27 @@
           {% if ctx.vendor %}
           <div class="case-kv"><span class="case-kv-k">Name</span><span class="case-kv-v fw-semibold">{{ ctx.vendor.name }}</span></div>
           <div class="case-kv"><span class="case-kv-k">Code</span><span class="case-kv-v">{{ ctx.vendor.vendor_code|default:"-" }}</span></div>
-          <div class="case-kv"><span class="case-kv-k">Tax ID</span><span class="case-kv-v">{{ ctx.vendor.tax_id|default:"-" }}</span></div>
+          <div class="case-kv"><span class="case-kv-k">Tax ID (Vendor)</span><span class="case-kv-v">{{ ctx.vendor.tax_id|default:"-" }}</span></div>
           <div class="case-kv"><span class="case-kv-k">Address</span><span class="case-kv-v">{{ ctx.vendor.address|default:"-" }}</span></div>
           <div class="case-kv"><span class="case-kv-k">Contact</span><span class="case-kv-v">{{ ctx.vendor.contact_email|default:"-" }}</span></div>
+          {% if ctx.vendor.payment_terms %}
+          <div class="case-kv"><span class="case-kv-k">Payment Terms</span><span class="case-kv-v">{{ ctx.vendor.payment_terms }}</span></div>
+          {% endif %}
           {% else %}
-          <p class="text-muted small mb-0">No vendor data available.</p>
+          <p class="text-muted small mb-0">No matched vendor record.</p>
+          {% endif %}
+          {# From-invoice extracted fields #}
+          {% if ctx.invoice.vendor_tax_id %}
+          <div class="case-kv mt-2 pt-2 border-top">
+            <span class="case-kv-k">GSTIN / VAT (on invoice)</span>
+            <span class="case-kv-v font-monospace">{{ ctx.invoice.vendor_tax_id }}</span>
+          </div>
+          {% endif %}
+          {% if ctx.invoice.raw_vendor_name and ctx.invoice.raw_vendor_name != ctx.vendor.name %}
+          <div class="case-kv">
+            <span class="case-kv-k">As Extracted</span>
+            <span class="case-kv-v text-muted">{{ ctx.invoice.raw_vendor_name }}</span>
+          </div>
           {% endif %}
         </div>
       </div>
@@ -64,8 +133,8 @@
                   <th>Description</th>
                   <th>Item Code</th>
                   <th class="text-end">Qty</th>
-                  <th>UOM</th>
                   <th class="text-end">Unit Price</th>
+                  <th class="text-end">Tax Amt</th>
                   <th class="text-end">Amount</th>
                 </tr>
               </thead>
@@ -81,6 +150,42 @@
         </div>
       </div>
     </div>
+
+    {# Decision codes & validation issues #}
+    {% if ctx.decision_codes or ctx.validation_issues %}
+    <div class="col-12">
+      <div class="case-card">
+        <div class="case-card-header">
+          <i class="bi bi-shield-exclamation text-warning me-2"></i>Quality Flags & Validation
+        </div>
+        <div class="case-card-body">
+          {% if ctx.decision_codes %}
+          <div class="mb-2">
+            <span class="small fw-semibold text-muted d-block mb-1">Decision Codes</span>
+            <div class="d-flex flex-wrap gap-1">
+              {% for code in ctx.decision_codes %}
+              <span class="badge {% if 'MISSING' in code or 'BELOW_MIN' in code or 'DUPLICATE' in code %}bg-danger-subtle text-danger-emphasis{% elif 'LOW' in code or 'MISMATCH' in code or 'AMBIGUOUS' in code %}bg-warning-subtle text-warning-emphasis{% else %}bg-info-subtle text-info-emphasis{% endif %}">
+                {{ code }}
+              </span>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+          {% if ctx.validation_issues %}
+          <div>
+            <span class="small fw-semibold text-muted d-block mb-1">Validation Issues</span>
+            {% for issue in ctx.validation_issues %}
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <span class="badge {% if issue.status == 'FAIL' %}bg-danger-subtle text-danger-emphasis{% else %}bg-warning-subtle text-warning-emphasis{% endif %}">{{ issue.status }}</span>
+              <span class="small">{{ issue.check_name }}: {{ issue.message }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
 
     {# Document link #}
     {% if ctx.invoice.id %}

@@ -159,9 +159,14 @@
       </thead>
       <tbody>
         {% for run in runs %}
-        <tr>
+        <tr{% if run.parent_run_id %} class="table-light"{% endif %}>
           <td>
             <a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a>
+            {% if run.parent_run_id %}
+              <a href="{% url 'agents:agent_run_detail' run.parent_run_id %}" class="badge bg-info bg-opacity-25 text-info ms-1" title="Spawned by supervisor run #{{ run.parent_run_id }}" style="font-size:.6em;text-decoration:none">
+                <i class="bi bi-diagram-2"></i> #{{ run.parent_run_id }}
+              </a>
+            {% endif %}
           </td>
           <td>
             <span class="ap-badge {% if 'SYSTEM_' in run.agent_type %}ap-badge-muted{% else %}ap-badge-info{% endif %}">
