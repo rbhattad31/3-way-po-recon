@@ -562,6 +562,7 @@ class BenchmarkDocumentExtractorAgent:
 
             item = BenchmarkLineItem(
                 quotation=quotation,
+                tenant=bench_request.tenant,
                 line_number=ln,
                 description=raw.get("description", ""),
                 uom=raw.get("uom", ""),

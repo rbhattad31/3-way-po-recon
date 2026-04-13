@@ -145,6 +145,7 @@ class ProcurementRequestViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
             request=proc_request,
             run_type=run_type,
             triggered_by=request.user,
+            tenant=proc_request.tenant,
         )
         # Fire Celery task
         run_analysis_task.delay(request.tenant.pk if request.tenant else None, run.pk)
@@ -188,6 +189,7 @@ class ProcurementRequestViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
             request=proc_request,
             run_type=AnalysisRunType.VALIDATION,
             triggered_by=request.user,
+            tenant=proc_request.tenant,
         )
         run_validation_task.delay(request.tenant.pk if request.tenant else None, run.pk, agent_enabled=agent_enabled)
 

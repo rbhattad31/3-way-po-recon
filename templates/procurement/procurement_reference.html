@@ -1,0 +1,2267 @@
+{% extends "procurement/proc_base.html" %}
+{% load rbac_tags %}
+{% block title %}Platform Reference -- Procurement Intelligence (HVAC GenAI){% endblock %}
+
+{% block extra_css %}
+<style>
+/* =================================================================
+   PLATFORM REFERENCE -- ENHANCED STYLES
+   ================================================================= */
+
+/* ── Diagram zoom ── */
+.diagram-zoom-wrap {
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  background: #f8faff;
+  border-radius: .375rem;
+  min-height: 220px;
+  height: 520px;
+}
+.diagram-zoom-wrap.is-grabbing { cursor: grabbing; }
+.diagram-zoom-wrap .mermaid {
+  display: inline-block;
+  transform-origin: top left;
+  transition: none;
+  user-select: none;
+}
+.diagram-zoom-wrap svg { display: block; max-width: none !important; height: auto; }
+.diagram-zoom-toolbar {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .35rem .5rem;
+  border-bottom: 1px solid #dee2e6;
+  background: linear-gradient(90deg,#f8f9fa,#fff);
+  border-radius: .375rem .375rem 0 0;
+}
+.diagram-zoom-toolbar .zoom-level { font-size: .7rem; color: #6c757d; min-width: 3rem; text-align: center; }
+.diagram-fs-overlay {
+  position: fixed; inset: 0; z-index: 1055; background: #fff;
+  display: flex; flex-direction: column;
+}
+.diagram-fs-overlay .diagram-zoom-toolbar { flex: 0 0 auto; border-radius: 0; border-bottom: 1px solid #dee2e6; padding: .5rem .75rem; }
+.diagram-fs-overlay .diagram-zoom-wrap {
+  flex: 1 1 0%; min-height: 0; height: auto !important; max-height: none !important;
+  overflow: auto; border-radius: 0; background: #fff; cursor: default;
+}
+
+/* ── Documentation chrome ── */
+.docs-toc {
+  position: sticky; top: 70px;
+  max-height: calc(100vh - 90px); overflow-y: auto;
+  font-size: .8rem; padding-bottom: 2rem;
+}
+.docs-toc .toc-group-label {
+  font-size: .65rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: #adb5bd; padding: .6rem .75rem .15rem; margin-top: .25rem;
+}
+.docs-toc .nav-link { padding: .2rem .75rem; color: #6c757d; border-left: 2px solid transparent; border-radius: 0; line-height: 1.4; }
+.docs-toc .nav-link:hover  { color: #6366f1; border-left-color: #c7d2fe; background: none; }
+.docs-toc .nav-link.active { color: #6366f1; font-weight: 600; border-left-color: #6366f1; background: none; }
+.docs-toc .toc-child { padding-left: 1.5rem; font-size: .76rem; }
+
+/* ── Section spacing ── */
+.docs-section { scroll-margin-top: 70px; padding-top: 2.5rem; }
+.docs-section + .docs-section { border-top: 1px solid #e9ecef; margin-top: 1rem; }
+.docs-section-title { font-size: 1.4rem; font-weight: 700; color: #111827; margin-bottom: 1rem; }
+.docs-section-title .badge-new {
+  font-size: .6rem; font-weight: 700; background: #d1e7dd; color: #0a3622;
+  padding: .2rem .5rem; border-radius: 4px; vertical-align: middle; margin-left: .5rem;
+}
+.docs-h3 {
+  font-size: 1rem; font-weight: 600; color: #374151;
+  margin-top: 1.75rem; margin-bottom: .75rem; padding-bottom: .35rem; border-bottom: 1px solid #f3f4f6;
+}
+
+/* ── HERO BANNER ── */
+.ref-hero {
+  background: linear-gradient(135deg, #0f0c2e 0%, #1e1354 40%, #312475 70%, #0ea5e9 100%);
+  border-radius: 16px;
+  padding: 2.5rem 2rem;
+  margin-bottom: 1.75rem;
+  position: relative;
+  overflow: hidden;
+}
+.ref-hero::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 80% 50%, rgba(99,102,241,.25) 0%, transparent 60%),
+              radial-gradient(ellipse at 20% 80%, rgba(14,165,233,.2) 0%, transparent 50%);
+  pointer-events: none;
+}
+.ref-hero-grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+}
+.ref-hero-title {
+  font-size: 2rem; font-weight: 800; color: #fff;
+  line-height: 1.15; letter-spacing: -.02em;
+}
+.ref-hero-title span {
+  background: linear-gradient(90deg, #a5b4fc, #7dd3fc, #6ee7b7);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.ref-hero-sub { color: rgba(255,255,255,.68); font-size: .92rem; line-height: 1.6; max-width: 540px; }
+.ref-hero-robot {
+  width: 130px; height: 130px; object-fit: contain;
+  filter: drop-shadow(0 8px 24px rgba(99,102,241,.5));
+  animation: hero-float 4s ease-in-out infinite;
+}
+@keyframes hero-float {
+  0%,100% { transform: translateY(0); }
+  50%      { transform: translateY(-10px); }
+}
+.ref-hero-chip {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .25rem .75rem; border-radius: 20px;
+  background: rgba(99,102,241,.25); border: 1px solid rgba(99,102,241,.4);
+  color: #a5b4fc; font-size: .72rem; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; margin-bottom: .8rem;
+}
+.ref-hero-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: #6ee7b7; animation: pulse-dot 2s ease-in-out infinite; }
+@keyframes pulse-dot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .6; transform: scale(1.4); } }
+
+/* ── KPI cards ── */
+.ref-kpi-card {
+  border-radius: 14px; padding: 1.1rem 1rem; text-align: center;
+  border: 1px solid transparent; transition: transform .2s, box-shadow .2s;
+  background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.ref-kpi-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.1); }
+.ref-kpi-icon {
+  width: 44px; height: 44px; border-radius: 12px; margin: 0 auto .65rem;
+  display: flex; align-items: center; justify-content: center; font-size: 1.25rem;
+}
+.ref-kpi-val { font-size: 1.75rem; font-weight: 800; line-height: 1; }
+.ref-kpi-label { font-size: .73rem; color: #6b7280; margin-top: .25rem; }
+
+/* ── Tech stack badges ── */
+.tech-badge {
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .35rem .8rem; border-radius: 8px; font-size: .76rem; font-weight: 600;
+  border: 1px solid rgba(0,0,0,.08); background: #fff; color: #374151;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.tech-badge .tech-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Agent cards ── */
+.agent-ref-card {
+  border-radius: 14px; border: 1px solid #e2e8f0;
+  transition: transform .2s, box-shadow .2s;
+  overflow: hidden; background: #fff;
+}
+.agent-ref-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.1); }
+.agent-ref-card .agent-card-header {
+  padding: .85rem 1rem .7rem;
+  display: flex; align-items: center; gap: .7rem;
+}
+.agent-icon-wrap {
+  width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.2rem;
+}
+.agent-icon-wrap.flow-a { background: linear-gradient(135deg,#dbeafe,#c7d2fe); color: #4f46e5; }
+.agent-icon-wrap.flow-b { background: linear-gradient(135deg,#d1fae5,#a7f3d0); color: #059669; }
+.agent-icon-wrap.flow-both { background: linear-gradient(135deg,#fef3c7,#fde68a); color: #d97706; }
+.agent-io-block {
+  font-size: .76rem; background: #f8faff; border: 1px solid #e0e7ff;
+  border-radius: 8px; padding: .5rem .75rem; font-family: 'Courier New', monospace;
+  color: #374151; white-space: pre-wrap; word-break: break-all;
+}
+
+/* ── Pipeline steps ── */
+.stage-row { display: flex; gap: .85rem; align-items: flex-start; padding: .75rem 0; border-bottom: 1px solid #f3f4f6; }
+.stage-row:last-child { border-bottom: none; }
+.stage-num {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: .82rem; flex-shrink: 0; color: #fff;
+}
+.stage-num-secondary { background: #6c757d; }
+.stage-num-info      { background: #0dcaf0; color: #000; }
+.stage-num-primary   { background: #6366f1; }
+.stage-num-warning   { background: #ffc107; color: #000; }
+.stage-num-success   { background: #10b981; }
+.stage-num-danger    { background: #ef4444; }
+.stage-num-dark      { background: #1e293b; }
+
+/* ── ERP / resolution steps ── */
+.resolution-step { display: flex; gap: .85rem; align-items: flex-start; padding: .6rem 0; }
+.res-step-num {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: .8rem; flex-shrink: 0;
+}
+
+/* ── Confidence bars ── */
+.conf-bar-wrap { height: 8px; border-radius: 4px; background: #e9ecef; margin: .3rem 0 .15rem; }
+.conf-bar      { height: 8px; border-radius: 4px; background: linear-gradient(90deg,#6366f1,#0ea5e9); }
+
+/* ── Code ── */
+code { background: #f3f4f6; border-radius: 4px; padding: .05rem .35rem; font-size: .83em; color: #dc3545; }
+pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+
+/* ── Gradient section titles ── */
+.flow-a-title { background: linear-gradient(90deg,#4f46e5,#6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.flow-b-title { background: linear-gradient(90deg,#059669,#0ea5e9); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+
+/* ── flow arrow ── */
+.flow-step { border-radius: .4rem; padding: .5rem .8rem; text-align: center; font-size: .78rem; font-weight: 500; }
+.flow-arrow { font-size: 1.1rem; color: #adb5bd; align-self: center; }
+
+/* ── Agent role pills ── */
+.agent-role-pill {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .18rem .6rem; border-radius: 20px; font-size: .7rem; font-weight: 600;
+}
+.pill-flow-a { background: #dbeafe; color: #1e40af; }
+.pill-flow-b { background: #d1fae5; color: #065f46; }
+.pill-both   { background: #fef3c7; color: #78350f; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active">Platform Reference</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="row gx-4 mt-2">
+
+  <!-- ════════════════════════════════ MAIN CONTENT ════════════════════════════════ -->
+  <div class="col-xl-9 col-lg-8" id="docs-content">
+
+    <!-- ── OVERVIEW ── -->
+    <div id="overview" class="docs-section" style="padding-top:.25rem;border-top:none">
+
+      <!-- HERO BANNER -->
+      <div class="ref-hero mb-4">
+        <div class="ref-hero-grid"></div>
+        <div class="row align-items-center g-0 position-relative">
+          <div class="col-lg-8">
+            <div class="ref-hero-chip">
+              <span class="dot"></span>
+              Landmark Group &mdash; GCC HVAC Intelligence Platform &mdash; v{{ page_version }}
+            </div>
+            <h1 class="ref-hero-title mb-2">
+              <span>Procurement Intelligence</span><br>
+              HVAC GenAI Platform
+            </h1>
+            <p class="ref-hero-sub mb-3">
+              Enterprise AI platform for HVAC product selection &amp; should-cost benchmarking.
+              Deterministic rules run first &mdash; AI reasoning handles edge cases.
+              Full RBAC, audit trail, and Langfuse observability built in.
+            </p>
+            <div class="d-flex flex-wrap gap-2">
+              <span class="tech-badge"><span class="tech-dot" style="background:#6366f1"></span>Django 4.2</span>
+              <span class="tech-badge"><span class="tech-dot" style="background:#0ea5e9"></span>Azure OpenAI GPT-4o</span>
+              <span class="tech-badge"><span class="tech-dot" style="background:#10b981"></span>Azure Document Intelligence</span>
+              <span class="tech-badge"><span class="tech-dot" style="background:#f59e0b"></span>LangGraph ReAct</span>
+              <span class="tech-badge"><span class="tech-dot" style="background:#8b5cf6"></span>Langfuse Observability</span>
+            </div>
+          </div>
+          <div class="col-lg-4 text-center d-none d-lg-block">
+            {% load static %}
+            <img src="{% static 'images/procurement-robot.png' %}" alt="AI Procurement Agent" class="ref-hero-robot">
+            <div style="color:rgba(255,255,255,.5);font-size:.7rem;margin-top:.5rem;letter-spacing:.05em;">AI REASONING ENGINE</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI row -->
+      <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-md-3">
+          <div class="ref-kpi-card">
+            <div class="ref-kpi-icon" style="background:linear-gradient(135deg,#dbeafe,#c7d2fe);">
+              <i class="bi bi-diagram-3 text-primary"></i>
+            </div>
+            <div class="ref-kpi-val text-primary">2</div>
+            <div class="ref-kpi-label">Business Flows</div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-md-3">
+          <div class="ref-kpi-card">
+            <div class="ref-kpi-icon" style="background:linear-gradient(135deg,#d1fae5,#a7f3d0);">
+              <i class="bi bi-robot" style="color:#059669;"></i>
+            </div>
+            <div class="ref-kpi-val" style="color:#059669;">10</div>
+            <div class="ref-kpi-label">AI Agents</div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-md-3">
+          <div class="ref-kpi-card">
+            <div class="ref-kpi-icon" style="background:linear-gradient(135deg,#fef3c7,#fde68a);">
+              <i class="bi bi-check2-circle" style="color:#d97706;"></i>
+            </div>
+            <div class="ref-kpi-val" style="color:#d97706;">7</div>
+            <div class="ref-kpi-label">Rule Conditions (POC)</div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-md-3">
+          <div class="ref-kpi-card">
+            <div class="ref-kpi-icon" style="background:linear-gradient(135deg,#e0f2fe,#bae6fd);">
+              <i class="bi bi-shield-check" style="color:#0ea5e9;"></i>
+            </div>
+            <div class="ref-kpi-val" style="color:#0ea5e9;">100%</div>
+            <div class="ref-kpi-label">Traceable Outputs</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick flow explanation -->
+      <div class="row g-3 mb-4">
+        <div class="col-md-6">
+          <div class="card h-100 border-0 shadow-sm" style="border-radius:14px;overflow:hidden;">
+            <div style="background:linear-gradient(135deg,#4f46e5,#6366f1);padding:1rem 1.25rem .8rem;">
+              <div class="d-flex align-items-center gap-2">
+                <div style="width:36px;height:36px;background:rgba(255,255,255,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;">
+                  <i class="bi bi-buildings text-white"></i>
+                </div>
+                <div>
+                  <div class="fw-bold text-white" style="font-size:.92rem;">Flow A &mdash; Product Selection</div>
+                  <div style="color:rgba(255,255,255,.65);font-size:.72rem;">Engineering-oriented recommendation</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-body py-3 px-3">
+              <div class="d-flex align-items-center gap-2 mb-2">
+                <span class="badge rounded-pill" style="background:#eef2ff;color:#4f46e5;">Store Form</span>
+                <i class="bi bi-arrow-right text-muted"></i>
+                <span class="badge rounded-pill" style="background:#eef2ff;color:#4f46e5;">Rules Engine</span>
+                <i class="bi bi-arrow-right text-muted"></i>
+                <span class="badge rounded-pill" style="background:#dcfce7;color:#166534;">AI Fallback</span>
+                <i class="bi bi-arrow-right text-muted"></i>
+                <span class="badge rounded-pill" style="background:#f0fdf4;color:#166534;">Recommendation</span>
+              </div>
+              <p class="small text-muted mb-0">
+                25+ store parameters &rarr; <code>HVACRulesEngine</code> (7 rules) &rarr; GPT-4o reasoning when <code>confident=False</code>. Compliance validated against ASHRAE / UAE MoIAT standards.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card h-100 border-0 shadow-sm" style="border-radius:14px;overflow:hidden;">
+            <div style="background:linear-gradient(135deg,#059669,#0ea5e9);padding:1rem 1.25rem .8rem;">
+              <div class="d-flex align-items-center gap-2">
+                <div style="width:36px;height:36px;background:rgba(255,255,255,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;">
+                  <i class="bi bi-file-earmark-bar-graph text-white"></i>
+                </div>
+                <div>
+                  <div class="fw-bold text-white" style="font-size:.92rem;">Flow B &mdash; Should-Cost Benchmarking</div>
+                  <div style="color:rgba(255,255,255,.65);font-size:.72rem;">Procurement-oriented cost intelligence</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-body py-3 px-3">
+              <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                <span class="badge rounded-pill" style="background:#d1fae5;color:#065f46;">Quotation PDF</span>
+                <i class="bi bi-arrow-right text-muted"></i>
+                <span class="badge rounded-pill" style="background:#d1fae5;color:#065f46;">Azure DI OCR</span>
+                <i class="bi bi-arrow-right text-muted"></i>
+                <span class="badge rounded-pill" style="background:#e0f2fe;color:#0c4a6e;">Benchmark Engine</span>
+                <i class="bi bi-arrow-right text-muted"></i>
+                <span class="badge rounded-pill" style="background:#fef3c7;color:#78350f;">Variance + Risk</span>
+              </div>
+              <p class="small text-muted mb-0">
+                Supplier BOQ PDF &rarr; Azure DI extraction &rarr; line classification &rarr; 3-tier benchmark resolution (DB &rarr; AI &rarr; WebSearch). Risk scored LOW / MEDIUM / HIGH / CRITICAL.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Platform Overview Diagram -->
+      <div class="card mb-3">
+        <div class="card-header bg-white pb-0">
+          <ul class="nav nav-tabs card-header-tabs" id="diagramTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">
+                <i class="bi bi-diagram-3 me-1"></i>Platform Overview
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-flow-a" type="button" role="tab">
+                <i class="bi bi-buildings me-1"></i>Flow A: Recommendation
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-flow-b" type="button" role="tab">
+                <i class="bi bi-file-earmark-bar-graph me-1"></i>Flow B: Benchmarking
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link fw-semibold small" data-bs-toggle="tab" data-bs-target="#tab-agents-overview" type="button" role="tab">
+                <i class="bi bi-robot me-1"></i>Agent Pipeline
+              </button>
+            </li>
+          </ul>
+        </div>
+        <div class="tab-content">
+
+          <!-- Tab 1: Platform Overview -->
+          <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart LR
+    UI(["User Interface\nProcurement Dashboard\nRequest Forms | Cases | Reports"])
+    A(["Flow A\u00a0 Product Selection\nStore params + constraints\nEngineering recommendation"])
+    B(["Flow B\u00a0 Should-Cost\nSupplier quotation PDF\nProcurement benchmarking"])
+    RULES["Deterministic Rule Engine\nHVACRulesEngine - 7 POC rules\nBusiness logic-first execution"]
+    AI["AI Reasoning Layer\nAzure OpenAI GPT-4o\nEdge-case + tradeoff narrative\nMarket intelligence context"]
+    EXT["Azure DI Extraction\nOCR + layout analysis\nLine items + KV pairs\nDoc type auto-detection"]
+    BM["Benchmark Engine\n3-tier resolution chain\nDB catalogue -> AI -> WebSearch\nShould-cost corridors"]
+    OUT_A(["Recommendation\nSystem type + capacity band\nCompliance alignment\nConfidence 0.0-1.0"])
+    OUT_B(["Benchmark Report\nLine-wise % deviation\nRisk: LOW/MED/HIGH/CRITICAL\nNegotiation talking points"])
+    AUDIT["Governance Layer\nAuditEvent + TraceContext\nRBAC guardrails\nLangfuse trace per run"]
+
+    UI --> A & B
+    A --> RULES
+    RULES -- "confident=True" --> OUT_A
+    RULES -- "confident=False\nedge case" --> AI --> OUT_A
+    B --> EXT --> BM --> OUT_B
+    OUT_A & OUT_B --> AUDIT
+
+    classDef ui fill:#1e1b4b,stroke:#6366f1,color:#e0e7ff,font-weight:bold,rx:8
+    classDef flow fill:#7c3aed,stroke:#6d28d9,color:#fff,font-weight:bold
+    classDef engine fill:#065f46,stroke:#059669,color:#d1fae5,font-weight:bold
+    classDef out fill:#1e3a5f,stroke:#0ea5e9,color:#bae6fd
+    classDef gov fill:#374151,stroke:#9ca3af,color:#f3f4f6
+    class UI ui
+    class A,B flow
+    class RULES,BM,EXT engine
+    class AI engine
+    class OUT_A,OUT_B out
+    class AUDIT gov
+            </div>
+            </div>
+            <p class="small text-muted border-top pt-2 px-3 pb-2 mb-0">
+              <i class="bi bi-info-circle me-1"></i>
+              Deterministic rules always run first. AI reasoning is invoked only when <code>confident=False</code>. Every output is linked to its source class, RBAC actor, and Langfuse trace ID.
+            </p>
+          </div>
+
+          <!-- Tab 2: Flow A Diagram -->
+          <div class="tab-pane fade" id="tab-flow-a" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart TD
+    IN(["Store Parameter Input\n25+ fields: area, zones, climate\nfacade type, occupancy, kW load"])
+    VAL{"Validate &\nNormalize fields"}
+    ERR(["Validation Errors\nHighlight missing fields\nUser corrects and resubmits"])
+    ARCH["Archetype Detection\nMall-interface / Standalone\nHigh-load / Retrofit / Mixed-use"]
+    MI["Market Intelligence\nPerplexity sonar-pro API\nReal product data + URLs\nauto-fallback: Playwright scraper"]
+    RULE["Deterministic Rule Engine\nHVACRulesEngine.evaluate()\n7 POC rule conditions\nSection 5.4 priority-ordered"]
+    AI["AI Reasoning Agent\nGPT-4o via ProcurementAgentOrchestrator\nrecommend() + explain() paths\nGCC climate + standards context"]
+    COMP["Compliance Validation\nASHRAE 90.1/62.1/55, CIBSE\nUAE MoIAT, SASO, Oman DPAA\nGeography-specific rule set"]
+    PERSIST["Persist RecommendationResult\nSystem type, capacity band, confidence\nSource class + RBAC actor logged\nLangfuse trace_id attached"]
+    DISPLAY(["Final Output\nSystem type + capacity band\nTop drivers, constraints, standards\nAlternate option + confidence score\nFlagged for human review if needed"])
+
+    IN --> VAL
+    VAL -- "Missing required fields" --> ERR
+    VAL -- "All valid" --> ARCH
+    ARCH --> MI
+    MI --> RULE
+    RULE -- "confident=True\nconf >= 0.88" --> COMP
+    RULE -- "confident=False\nedge-case / multi-option" --> AI
+    AI --> COMP
+    COMP --> PERSIST --> DISPLAY
+
+    classDef input fill:#1e1b4b,stroke:#6366f1,color:#e0e7ff,font-weight:bold
+    classDef rule fill:#78350f,stroke:#d97706,color:#fef3c7,font-weight:bold
+    classDef ai fill:#065f46,stroke:#059669,color:#d1fae5,font-weight:bold
+    classDef check fill:#374151,stroke:#9ca3af,color:#f3f4f6
+    classDef bad fill:#7f1d1d,stroke:#ef4444,color:#fee2e2
+    classDef out fill:#1e3a5f,stroke:#0ea5e9,color:#bae6fd
+    class IN,DISPLAY input
+    class RULE rule
+    class AI,COMP,MI ai
+    class VAL,ARCH,PERSIST check
+    class ERR bad
+            </div>
+            </div>
+            <p class="small text-muted border-top pt-2 px-3 pb-2 mb-0">
+              <i class="bi bi-info-circle me-1"></i>
+              <strong>HVACRulesEngine</strong> lives at <code>apps/procurement/hvac/rules_engine.py</code>.
+              AI path: <code>ProcurementAgentOrchestrator</code> &rarr; <code>RecommendationGraphService</code> (LangGraph). Market intelligence fetched via <code>MarketIntelligenceService</code> before rule evaluation.
+            </p>
+          </div>
+
+          <!-- Tab 3: Flow B Diagram -->
+          <div class="tab-pane fade" id="tab-flow-b" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart TD
+    UP(["Quotation PDF Upload\nSupplier BOQ / SITC / ITC\nGeography + scope type selected"])
+    OCR["Azure DI OCR + Blob Store\nHash + store in Azure Blob\nprebuilt-layout model\nTables + key-value pairs extracted"]
+    EXTRACT["Structured Extraction\nBenchmarkDocumentExtractorAgent\nMetadata: vendor, date, currency\nLine items: UOM, qty, unit rate, total"]
+    CLASS["Line Classification\nMap line descriptions to 6 categories\nEquipment / Controls / Ducting\nInsulation / Installation / Testing"]
+    BM["3-Tier Benchmark Resolution\nTier 1: Internal catalogue DB lookup\nTier 2: AI estimate - GPT-4o BenchmarkAgent\nTier 3: Web search - DuckDuckGo / Bing\nShould-cost corridor per line item"]
+    VAR["Variance Computation\nQuoted price vs benchmark average\n% deviation per line calculated\nAggregate weighted risk score"]
+    RISK{"Risk\nBand?"}
+    LOW(["LOW  < 5% over\nWithin acceptable range\nNo action needed"])
+    MED(["MEDIUM  5-15% over\nBundle opportunity\nNote in scope review"])
+    HIGH(["HIGH / CRITICAL  > 15%\nNegotiation required\nAuto review assignment"])
+    PERSIST["Persist Results\nBenchmarkResult + BenchmarkResultLines\nSource field: internal/AI/WEB_SEARCH\nConfidence score + audit trail"]
+    OUT(["Benchmark Report Output\nLine-wise deviation table\nTop negotiation targets flagged\nCommercial summary + risk badge"])
+
+    UP --> OCR --> EXTRACT --> CLASS --> BM --> VAR --> RISK
+    RISK -- "< 5%" --> LOW
+    RISK -- "5-15%" --> MED
+    RISK -- "> 15%" --> HIGH
+    LOW & MED & HIGH --> PERSIST --> OUT
+
+    classDef input fill:#1e1b4b,stroke:#6366f1,color:#e0e7ff,font-weight:bold
+    classDef ocr fill:#374151,stroke:#9ca3af,color:#f3f4f6
+    classDef engine fill:#065f46,stroke:#059669,color:#d1fae5,font-weight:bold
+    classDef var fill:#78350f,stroke:#d97706,color:#fef3c7
+    classDef ok fill:#14532d,stroke:#16a34a,color:#dcfce7
+    classDef warn fill:#92400e,stroke:#f59e0b,color:#fef3c7
+    classDef bad fill:#7f1d1d,stroke:#ef4444,color:#fee2e2
+    classDef out fill:#1e3a5f,stroke:#0ea5e9,color:#bae6fd
+    class UP,OUT input
+    class OCR,EXTRACT,RISK,PERSIST ocr
+    class CLASS,BM,VAR engine
+    class LOW ok
+    class MED warn
+    class HIGH bad
+            </div>
+            </div>
+            <p class="small text-muted border-top pt-2 px-3 pb-2 mb-0">
+              <i class="bi bi-info-circle me-1"></i>
+              Benchmark resolution chain: DB catalogue &rarr; <code>BenchmarkAgent</code> (GPT-4o) &rarr; <code>WebSearchService</code>.
+              Web-sourced results tagged <code>source=&quot;WEB_SEARCH&quot;</code> with confidence capped at 0.35. HIGH/CRITICAL lines auto-create review assignments.
+            </p>
+          </div>
+
+          <!-- Tab 4: Agent Pipeline -->
+          <div class="tab-pane fade" id="tab-agents-overview" role="tabpanel">
+            <div class="diagram-zoom-toolbar">
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in"><i class="bi bi-zoom-in"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out"><i class="bi bi-zoom-out"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset"><i class="bi bi-aspect-ratio"></i></button>
+              <span class="zoom-level">100%</span>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen"><i class="bi bi-fullscreen"></i></button>
+            </div>
+            <div class="diagram-zoom-wrap p-3">
+            <div class="mermaid">
+flowchart LR
+    subgraph SHARED ["Shared Infrastructure"]
+      ADIE["AzureDIExtractorAgent\nUniversal document OCR\nDI-as-tool ReAct pattern\nAny doc type - Both flows"]
+    end
+    subgraph MKT ["Market Intelligence"]
+      PERP["PerplexityMarketResearchAnalystAgent\nLive web search - sonar-pro\nReal product URLs from citations\nFlow A"]
+      FALLBACK["FallbackWebscraperAgent\nPlaywright + GPT-4o\nAuto-triggered on Perplexity fail\nFlow A fallback"]
+      MIS["MarketIntelligenceService\nFacade - Perplexity primary\nauto-fallback to Playwright\nUnified interface"]
+    end
+    subgraph FLOWA ["Flow A - Product Selection"]
+      REQEXT["RequestExtractionAgent\nProcurement doc parsing\nForm + uploaded file support"]
+      HVAC["HVACRecommendationAgent\nGPT-4o - recommend + explain\nGCC HVAC expertise\nEdge-case reasoning"]
+      COMP["ComplianceAgent\nStandards: ASHRAE/MoIAT/SASO\nGeography-specific rules\nGreen building alignment"]
+      REASON["ReasonSummaryAgent\nHybrid LLM + deterministic\nWorkspace plain-language output"]
+      RFQ["RFQGeneratorAgent\nRFQ Excel + PDF generation\nAzure Blob upload\nSupplier-ready document"]
+    end
+    subgraph FLOWB ["Flow B - Benchmarking"]
+      BDEA["BenchmarkDocumentExtractorAgent\n5-stage deterministic pipeline\nBlob + DI + AI + Variance + DB"]
+    end
+
+    PERP --> MIS
+    FALLBACK --> MIS
+    MIS --> HVAC
+    ADIE --> REQEXT
+    ADIE --> BDEA
+    REQEXT --> HVAC
+    HVAC --> REASON
+    HVAC --> COMP
+    REASON --> RFQ
+
+    classDef shared fill:#1e1b4b,stroke:#6366f1,color:#e0e7ff,font-weight:bold
+    classDef mkt fill:#1e3a2f,stroke:#059669,color:#d1fae5
+    classDef facade fill:#065f46,stroke:#10b981,color:#d1fae5,font-weight:bold
+    classDef flowaStyle fill:#1e1b4b,stroke:#4f46e5,color:#c7d2fe
+    classDef flowbStyle fill:#1c1917,stroke:#d97706,color:#fde68a
+    classDef out fill:#1e3a5f,stroke:#0ea5e9,color:#bae6fd
+    class ADIE shared
+    class PERP,FALLBACK mkt
+    class MIS facade
+    class REQEXT,HVAC,COMP,REASON,RFQ flowaStyle
+    class BDEA flowbStyle
+            </div>
+            </div>
+            <p class="small text-muted border-top pt-2 px-3 pb-2 mb-0">
+              <i class="bi bi-info-circle me-1"></i>
+              10 agents total: 9 Procurement + 1 Benchmarking. <code>MarketIntelligenceService</code> manages Perplexity &rarr; Playwright fallback. <code>AzureDIExtractorAgent</code> is the shared universal OCR gateway for both flows.
+            </p>
+          </div>
+
+        </div>
+      </div>
+    </div><!-- /overview -->
+
+    <!-- ======================================================================== -->
+    <!-- FLOW A: PRODUCT SELECTION RECOMMENDATION                                  -->
+    <!-- ======================================================================== -->
+    <div id="sec-flow-a" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-buildings me-2 text-primary"></i><span class="flow-a-title">Flow A &mdash; Product Selection Recommendation</span></h2>
+      <p class="text-muted mb-4">
+        Engineering-oriented flow. Given a store&rsquo;s physical parameters and operational constraints, the platform recommends
+        the most suitable HVAC system category, indicative capacity band, compliance alignment, and commercial constraints.
+        The deterministic rule engine runs first; AI reasoning is only invoked when rules cannot reach a confident decision.
+      </p>
+
+      <h3 class="docs-h3" id="flow-a-params">Required Store Parameters</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Category</th><th>Field</th><th>Type</th><th>Mandatory</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Identification</td><td>Store ID / Brand</td><td>Text</td><td><span class="badge bg-danger">Yes</span></td><td>Unique reference and typology comparisons</td></tr>
+            <tr><td>Location</td><td>Country / City</td><td>Dropdown / Text</td><td><span class="badge bg-danger">Yes</span></td><td>Determines climate, compliance standards, and market context</td></tr>
+            <tr><td>Store</td><td>Store Type</td><td>Dropdown: Mall / Standalone</td><td><span class="badge bg-danger">Yes</span></td><td>Primary driver of system family feasibility (Rule M1&ndash;M3 vs S1&ndash;S6)</td></tr>
+            <tr><td>Store</td><td>Store Format</td><td>Dropdown: Retail / Hypermarket / Furniture</td><td><span class="badge bg-danger">Yes</span></td><td>Influences airflow profile and occupancy load</td></tr>
+            <tr><td>Physical</td><td>Area (sqm) / Ceiling Height (ft)</td><td>Number</td><td><span class="badge bg-danger">Yes</span></td><td>Capacity sizing &mdash; rule engine derives TR estimate from area</td></tr>
+            <tr><td>Environment</td><td>Ambient Temp Max (&deg;C)</td><td>Number</td><td><span class="badge bg-danger">Yes</span></td><td>GCC selection logic (rules fire at &ge;45&deg;C and &ge;46&deg;C thresholds)</td></tr>
+            <tr><td>Environment</td><td>Humidity Level / Dust Exposure</td><td>Dropdown: Low / Medium / High</td><td><span class="badge bg-danger">Yes</span></td><td>Anti-corrosion and filtration constraint flags</td></tr>
+            <tr><td>HVAC Context</td><td>Zone Count / Heat Load Category</td><td>Number / Dropdown</td><td><span class="badge bg-danger">Yes</span></td><td>Multi-zone routing (VRF threshold: &ge;3 zones)</td></tr>
+            <tr><td>Constraints</td><td>Chilled Water Available</td><td>YES / NO / UNKNOWN</td><td><span class="badge bg-danger">Yes</span></td><td>Mall FCU path trigger (Rule M1)</td></tr>
+            <tr><td>Constraints</td><td>Outdoor Unit Restriction</td><td>YES / NO</td><td><span class="badge bg-danger">Yes</span></td><td>Eliminates condenser-based systems in restricted malls</td></tr>
+            <tr><td>Business</td><td>Budget Level / Efficiency Priority</td><td>Dropdown: Low / Medium / High</td><td><span class="badge bg-warning text-dark">Rec.</span></td><td>Budget override reduces confidence; efficiency flags VRF preference</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="flow-a-steps">Recommendation Logic &mdash; 6 Steps</h3>
+      <div class="mb-4">
+        {% for item in flow_a_steps %}
+        <div class="stage-row">
+          <div class="stage-num stage-num-{{ item.color }}">{{ forloop.counter }}</div>
+          <div>
+            <div class="fw-semibold small">{{ item.label }}</div>
+            <div class="text-muted" style="font-size:.82rem">{{ item.description }}</div>
+          </div>
+        </div>
+        {% empty %}
+        <div class="stage-row">
+          <div class="stage-num stage-num-secondary">1</div>
+          <div><div class="fw-semibold small">Validate Input Completeness &amp; Normalize</div>
+          <div class="text-muted" style="font-size:.82rem">Check all required parameters. Normalize categorical values (uppercase, strip). Derive TR estimate from area if <code>cooling_load_tr</code> not provided (130&nbsp;W/sqm GCC rule).</div></div>
+        </div>
+        <div class="stage-row">
+          <div class="stage-num stage-num-info">2</div>
+          <div><div class="fw-semibold small">Detect Project Archetype</div>
+          <div class="text-muted" style="font-size:.82rem">Mall-interface, standalone-retail, high-load large-format, warehouse, data centre, restaurant, or retrofit/replacement. Archetype determines which rule branch fires.</div></div>
+        </div>
+        <div class="stage-row">
+          <div class="stage-num stage-num-primary">3</div>
+          <div><div class="fw-semibold small">Run Deterministic Rule Engine (<code>HVACRulesEngine</code>)</div>
+          <div class="text-muted" style="font-size:.82rem">Evaluates 7 POC rule conditions against store type, area, zone count, ambient temp, CW availability, outdoor restriction, efficiency, dust, humidity, and budget. Returns <code>confident</code> flag + confidence score.</div></div>
+        </div>
+        <div class="stage-row">
+          <div class="stage-num stage-num-warning">4</div>
+          <div><div class="fw-semibold small">AI Reasoning (conditional &mdash; <code>confident=False</code> only)</div>
+          <div class="text-muted" style="font-size:.82rem">Routes through <code>ProcurementAgentOrchestrator</code> &rarr; <code>RecommendationGraphService</code> (LangGraph 7-node pipeline) &rarr; <code>RecommendationAgent</code> (Azure OpenAI GPT-4o). Handles edge cases and trade-off narrative.</div></div>
+        </div>
+        <div class="stage-row">
+          <div class="stage-num stage-num-success">5</div>
+          <div><div class="fw-semibold small">Compliance Validation (<code>ComplianceService</code>)</div>
+          <div class="text-muted" style="font-size:.82rem">Validates recommended system against geography-specific standards (ASHRAE 90.1, UAE MoIAT, SASO, CIBSE). Sets <code>ComplianceStatus</code>: PASS / PARTIAL / FAIL / NOT_CHECKED.</div></div>
+        </div>
+        <div class="stage-row">
+          <div class="stage-num stage-num-dark">6</div>
+          <div><div class="fw-semibold small">Persist &amp; Finalize</div>
+          <div class="text-muted" style="font-size:.82rem">Creates <code>RecommendationResult</code> and optional <code>ComplianceResult</code>. Finalizes <code>AnalysisRun</code>. Updates request status: COMPLETED or REVIEW_REQUIRED (if compliance FAIL).</div></div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="flow-a-rules">Deterministic Rule Library &mdash; POC (Section 5.4)</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th style="width:35%">Condition Set</th><th>Recommendation</th><th>Confidence</th><th>Rule Code</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Mall store + chilled water available (<code>YES</code>)</td>
+              <td><span class="badge bg-primary">FCU_CHILLED_WATER</span> &mdash; Fan Coil Unit on chilled water backbone</td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar" style="width:95%"></div></div>0.95</td>
+              <td><code>RULE_M1_MALL_FCU_CW</code></td>
+              <td>Outdoor units not required; maximises central plant efficiency</td>
+            </tr>
+            <tr>
+              <td>Mall store + no CW + zone count &ge; 3</td>
+              <td><span class="badge bg-info text-dark">VRF_SYSTEM</span> &mdash; Variable Refrigerant Flow</td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar" style="width:82%"></div></div>0.82</td>
+              <td><code>RULE_M2_MALL_NO_CW_VRF</code></td>
+              <td>Single outdoor unit minimises mall install footprint</td>
+            </tr>
+            <tr>
+              <td>Standalone + ambient &ge; 46&deg;C + zones &ge; 3 + efficiency priority or load &gt; 15 TR</td>
+              <td><span class="badge bg-info text-dark">VRF_SYSTEM</span></td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar" style="width:92%"></div></div>0.92</td>
+              <td><code>RULE_S1_STANDALONE_HIGH_AMB_VRF</code></td>
+              <td>Superior performance at high GCC ambient; IPLV &ge; 4.5</td>
+            </tr>
+            <tr>
+              <td>Standalone + normal ambient + zones &ge; 4</td>
+              <td><span class="badge bg-info text-dark">VRF_SYSTEM</span></td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar" style="width:85%"></div></div>0.85</td>
+              <td><code>RULE_S4_STANDALONE_MULTI_VRF</code></td>
+              <td>Individual zone control, reduced refrigerant piping vs multiple splits</td>
+            </tr>
+            <tr>
+              <td>Small standalone / isolated room / 1 zone</td>
+              <td><span class="badge bg-secondary">SPLIT_SYSTEM</span> &mdash; Wall-mounted or cassette split</td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar" style="width:88%"></div></div>0.88</td>
+              <td><code>RULE_S6_STANDALONE_1ZONE_SPLIT</code></td>
+              <td>Cost-effective for small to medium standalone spaces up to 2 zones</td>
+            </tr>
+            <tr>
+              <td>Warehouse + load &gt; 200 TR</td>
+              <td><span class="badge bg-danger">CHILLER_PLANT</span> &mdash; Air-cooled central chiller</td>
+              <td><div class="conf-bar-wrap"><div class="conf-bar" style="width:90%"></div></div>0.90</td>
+              <td><code>RULE_W1_WAREHOUSE_CHILLER</code></td>
+              <td>Optimal lifecycle cost for large-format logistics and distribution</td>
+            </tr>
+            <tr>
+              <td>High dust exposure (any archetype)</td>
+              <td colspan="2"><em>Modifier &mdash; does not change system type</em></td>
+              <td><code>RULE_04_HIGH_DUST</code></td>
+              <td>Adds constraint: ASHRAE MERV 11+ or G4/F7 pre-filter mandatory</td>
+            </tr>
+            <tr>
+              <td>High humidity / coastal GCC environment</td>
+              <td colspan="2"><em>Modifier &mdash; adds anti-corrosion constraint</em></td>
+              <td><code>RULE_05_HIGH_HUMIDITY</code></td>
+              <td>Epoxy-coated or blue-fin coil treatment required</td>
+            </tr>
+            <tr>
+              <td>Budget category LOW + expensive system selected</td>
+              <td colspan="2"><em>Budget caveat &mdash; confidence &minus;0.08, minimum floor 0.60</em></td>
+              <td><code>RULE_BUDGET_LOW_ADJUSTMENT</code></td>
+              <td>Does not downgrade to non-compliant option; adds budget risk note</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="flow-a-output">Output Specification</h3>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Field</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>recommended_option</code></td><td>System type name + capacity band (e.g. &ldquo;VRF System &mdash; 35&ndash;45 TR&rdquo;)</td></tr>
+            <tr><td><code>capacity_band</code></td><td>Indicative tonnage range; not a final engineering load &mdash; requires HVAC designer validation</td></tr>
+            <tr><td><code>top_drivers</code></td><td>3&ndash;6 explicit decision drivers that influenced the rule fired</td></tr>
+            <tr><td><code>constraints</code></td><td>Landlord, environmental, operational, budget, and compliance assumptions captured as structured list</td></tr>
+            <tr><td><code>compliance_status</code></td><td>PASS / PARTIAL / FAIL / NOT_CHECKED against geography-applicable standards</td></tr>
+            <tr><td><code>alternate_option</code></td><td>Second-best option with rationale where technically or commercially relevant</td></tr>
+            <tr><td><code>confidence_score</code></td><td>0.0&ndash;1.0 (displayed as %). Rule-only: 0.75&ndash;0.95. AI-supplemented: typically 0.60&ndash;0.85.</td></tr>
+            <tr><td><code>human_validation_required</code></td><td>True when confidence &lt; 0.88 or multiple options remain feasible or normalization issues detected</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- FLOW B: SHOULD-COST BENCHMARKING                                          -->
+    <!-- ======================================================================== -->
+    <div id="sec-flow-b" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-file-earmark-bar-graph me-2 text-success"></i><span class="flow-b-title">Flow B &mdash; Should-Cost Benchmarking</span></h2>
+      <p class="text-muted mb-4">
+        Procurement-oriented flow. Extracts supplier quotation lines from uploaded PDFs, classifies them into commercial categories,
+        compares quoted rates against should-cost corridors, and produces a negotiation-focused commercial view with line-wise deviation analysis.
+      </p>
+
+      <h3 class="docs-h3" id="flow-b-inputs">Inputs</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Input</th><th>Type</th><th>Mandatory</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Supplier Quotation / BOQ</td><td>PDF upload</td><td><span class="badge bg-danger">Yes</span></td><td>Primary source. OCR&rsquo;d by Azure DI and hashed for deduplication</td></tr>
+            <tr><td>Project Geography</td><td>Dropdown: UAE / KSA / Qatar / Kuwait / Bahrain / Oman</td><td><span class="badge bg-danger">Yes</span></td><td>Applies market multipliers and geography-specific rate factors</td></tr>
+            <tr><td>Commercial Scope Type</td><td>Dropdown: SITC / ITC / Equipment Only</td><td><span class="badge bg-danger">Yes</span></td><td>Prevents false comparisons across different commercial bundles</td></tr>
+            <tr><td>Store / Project Type</td><td>Dropdown: Mall / Standalone</td><td><span class="badge bg-warning text-dark">Rec.</span></td><td>Useful for certain line-item validations</td></tr>
+            <tr><td>Historical Awarded Rate Pack</td><td>Structured internal data</td><td><span class="badge bg-secondary">Optional</span></td><td>Improves reference quality beyond public corridors</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="flow-b-extraction">Document Extraction &amp; Line Classification</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-md-6">
+          <div class="card h-100 border-0 bg-light">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-file-earmark-text text-primary me-1"></i>Extraction Steps</h6>
+              <ol class="small text-muted mb-0 ps-3">
+                <li>Upload &amp; hash &rarr; store in Azure Blob Storage</li>
+                <li>Azure Document Intelligence OCR &rarr; text + layout</li>
+                <li>Structured extraction &rarr; document metadata + line items</li>
+                <li>Each line: description / UOM / qty / unit rate / total / extraction confidence</li>
+                <li>Low-confidence or missing commercial values &rarr; review flags</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card h-100 border-0 bg-light">
+            <div class="card-body">
+              <h6 class="card-title"><i class="bi bi-tags text-success me-1"></i>Line Categories</h6>
+              <div class="d-flex flex-wrap gap-1 mt-2">
+                <span class="badge bg-primary">Equipment</span>
+                <span class="badge bg-info text-dark">Controls</span>
+                <span class="badge bg-secondary">Ducting</span>
+                <span class="badge bg-warning text-dark">Insulation</span>
+                <span class="badge bg-success">Accessories</span>
+                <span class="badge bg-dark">Installation</span>
+                <span class="badge bg-danger">Testing &amp; Commissioning</span>
+              </div>
+              <p class="small text-muted mt-2 mb-0">Raw descriptions are normalized and mapped to benchmark categories by the Line Classification Agent.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="flow-b-benchmark">Benchmark Resolution Chain</h3>
+      <div class="mb-4">
+        <div class="resolution-step">
+          <div class="res-step-num bg-success text-white">1</div>
+          <div><div class="fw-semibold small">Internal Catalogue Lookup <span class="badge bg-success ms-1">Highest priority</span></div>
+          <div class="text-muted" style="font-size:.82rem">Direct DB lookup against <code>BenchmarkCatalogue</code> or imported historical awarded rates. Returns full min/avg/max corridor. Confidence: 0.90+.</div></div>
+        </div>
+        <div class="resolution-step">
+          <div class="res-step-num bg-primary text-white">2</div>
+          <div><div class="fw-semibold small">AI Benchmark Agent (<code>BenchmarkAgent</code>)</div>
+          <div class="text-muted" style="font-size:.82rem">Routes through <code>ProcurementAgentOrchestrator</code>. AI estimates should-cost from known product family pricing corridors, OEM catalogue positioning, and geography factors. Confidence: 0.60&ndash;0.80.</div></div>
+        </div>
+        <div class="resolution-step">
+          <div class="res-step-num bg-warning text-dark">3</div>
+          <div><div class="fw-semibold small">Web Search Fallback (<code>WebSearchService</code>) <span class="badge bg-warning text-dark ms-1">Last resort</span></div>
+          <div class="text-muted" style="font-size:.82rem">DuckDuckGo Instant Answer API first; Bing search scrape as secondary. Extracts price points from public text (AED/USD/SAR patterns). Always marked <code>source=&quot;WEB_SEARCH&quot;</code>. Confidence capped at 0.35. Requires manual validation.</div></div>
+        </div>
+        <div class="resolution-step">
+          <div class="res-step-num bg-secondary text-white">4</div>
+          <div><div class="fw-semibold small">No Benchmark Available</div>
+          <div class="text-muted" style="font-size:.82rem">If all three sources return no data, line is marked <code>VarianceStatus.WITHIN_RANGE</code> with remark &ldquo;No benchmark data available&rdquo;. Flagged for manual review.</div></div>
+        </div>
+      </div>
+
+      <h3 class="docs-h3" id="flow-b-variance">Variance Classification</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Variance vs Benchmark Avg</th><th>Status</th><th>Commercial Interpretation</th><th>Action</th></tr>
+          </thead>
+          <tbody>
+            <tr class="table-success">
+              <td>&lt; 5%</td>
+              <td><span class="badge bg-success">Within Range</span></td>
+              <td>Commercially normal</td>
+              <td>No action required</td>
+            </tr>
+            <tr class="table-warning">
+              <td>5% &ndash; 15%</td>
+              <td><span class="badge bg-warning text-dark">Moderate Variance</span></td>
+              <td>Review context &mdash; possible bundled scope or vendor note</td>
+              <td>Commercial comment required</td>
+            </tr>
+            <tr class="table-danger">
+              <td>&gt; 15%</td>
+              <td><span class="badge bg-danger">High Variance</span></td>
+              <td>Negotiation or deeper validation required</td>
+              <td>Review assignment created</td>
+            </tr>
+            <tr>
+              <td>No benchmark source</td>
+              <td><span class="badge bg-secondary">Needs Review</span></td>
+              <td>No reliable corridor available</td>
+              <td>Manual benchmark required</td>
+            </tr>
+            <tr>
+              <td>Scope ambiguity detected</td>
+              <td><span class="badge bg-secondary">Needs Review</span></td>
+              <td>Benchmark may be invalid until scope is normalized</td>
+              <td>Scope clarification before benchmarking</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="flow-b-output">Output Specification</h3>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Field</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Line item category</td><td>Commercial category used for benchmarking (Equipment / Controls / Ducting / etc.)</td></tr>
+            <tr><td>Quoted unit rate / total</td><td>Values extracted from vendor quotation (OCR-sourced)</td></tr>
+            <tr><td>Benchmark corridor</td><td>Min / mid / max should-cost range with source indicator</td></tr>
+            <tr><td>Variance percentage</td><td>Quoted vs benchmark average with sign (positive = above benchmark)</td></tr>
+            <tr><td>Status</td><td>Within Range / Moderate / High Variance / Needs Review</td></tr>
+            <tr><td>Commercial summary</td><td>Total quoted value, benchmarked value, overall deviation, and risk level</td></tr>
+            <tr><td>Negotiation view</td><td>Key outlier lines ranked by deviation magnitude with suggested talking points</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- AGENT SYSTEM                                                               -->
+    <!-- ======================================================================== -->
+    <div id="sec-agents" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-robot me-2"></i><span class="flow-a-title">Procurement Agent System</span></h2>
+      <p class="text-muted mb-4">
+        All AI calls route through <code>ProcurementAgentOrchestrator</code>. Every agent creates an <code>AgentRun</code>
+        with full RBAC fields, Langfuse traces, and <code>DecisionLog</code> entries. The 9 procurement agents are shown below.
+        The 1 benchmarking-specific agent (<code>BenchmarkDocumentExtractorAgent</code>) is in the Benchmarking Pipeline section.
+      </p>
+
+
+      <!-- Full Architecture Diagram -->
+      <h3 class="docs-h3" id="supervisor-architecture">Architecture &amp; Framework</h3>
+      <p class="text-muted small mb-3">
+        Complete supervisor architecture: initialization, skill loading, prompt composition, ReAct loop,
+        tool execution with RBAC enforcement and ERP routing, output interpretation, and persistence.
+      </p>
+
+      <div class="diagram-zoom-toolbar">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+        <span class="zoom-level">100%</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+      </div>
+      <div class="diagram-zoom-wrap p-3" style="height:620px">
+      <div class="mermaid">
+flowchart TD
+    %% ── Entry ──
+    TRIGGER(["Caller invokes\nSupervisorAgent(skill_names).run(ctx)"])
+    TRIGGER --> CTXBUILD
+
+    subgraph INIT ["Initialization"]
+        direction TB
+        CTXBUILD["build_supervisor_context()\nPopulates AgentContext:\ninvoice_id, po_number, mode,\nexceptions, RBAC snapshot,\ntrace_id, tenant, AgentMemory"]
+        CTXBUILD --> RBAC_ORCH{"AgentGuardrailsService\n.authorize_orchestration()\nagents.orchestrate"}
+        RBAC_ORCH -->|"Denied"| DENIED(["AuditEvent: GUARDRAIL_DENIED\nRun aborted"])
+        RBAC_ORCH -->|"Granted"| RBAC_AGENT{"authorize_agent()\nagents.run_supervisor"}
+        RBAC_AGENT -->|"Denied"| DENIED
+        RBAC_AGENT -->|"Granted"| LOAD
+    end
+
+    subgraph SKILLS ["Skill Loading & Prompt Assembly"]
+        direction TB
+        LOAD["_ensure_skills_loaded()\nImport 5 skill modules\nRegister into SkillRegistry singleton"]
+        LOAD --> S1["invoice_extraction\n6 tools, UNDERSTAND phase"]
+        LOAD --> S2["ap_validation\n7 tools, VALIDATE phase"]
+        LOAD --> S3["ap_3way_matching\n6 tools, MATCH phase"]
+        LOAD --> S4["ap_investigation\n6 tools, INVESTIGATE phase"]
+        LOAD --> S5["ap_review_routing\n9 tools, DECIDE phase"]
+        S1 & S2 & S3 & S4 & S5 --> MERGE["Merge all tools via\nSkillRegistry.all_tools()"]
+        MERGE --> PROMPT["build_supervisor_prompt()"]
+        PROMPT --> PR["1. PromptRegistry.get_or_default()\nagent.supervisor_ap_lifecycle\nLangfuse → DB → hardcoded"]
+        PR --> BASE["2. Base prompt:\nRole, reasoning framework,\ndecision rules, output JSON format,\nmax 15 tool rounds"]
+        BASE --> SKILL_EXT["3. SkillRegistry.compose_prompt()\nAppend 5 phase-specific\nprompt extensions"]
+        SKILL_EXT --> HINTS["4. SkillRegistry.compose_hints()\nNumbered decision hint list"]
+    end
+
+    subgraph REACT ["ReAct Loop (max 15 rounds)"]
+        direction TB
+        USER_MSG["build_user_message(ctx)\nMode, invoice details,\nexceptions, vendor info"]
+        USER_MSG --> LLM["LLMClient.chat()\nGPT-4o, temp=0,\nresponse_format=json_object\nMessages + tool_specs"]
+        LLM --> RESP{"LLM Response"}
+        RESP -->|"Has tool_calls"| TOOLEXEC
+        RESP -->|"No tool_calls\n(reasoning complete)"| INTERP
+        TOOLEXEC --> LLM
+    end
+
+    HINTS --> USER_MSG
+
+    subgraph TOOLEXEC ["Tool Execution Pipeline"]
+        direction TB
+        TC["For each tool_call\nin LLM response"]
+        TC --> RBAC_TOOL{"authorize_tool()\nTOOL_PERMISSIONS map\ne.g. po_lookup → purchase_orders.view"}
+        RBAC_TOOL -->|"Denied"| TOOL_DENY["ToolResult(success=False)\nAuditEvent logged\nLangfuse score = 0.0"]
+        RBAC_TOOL -->|"Granted"| ROUTE{"PluginToolRouter\nIs tool ERP-routable?"}
+        ROUTE -->|"Yes + connector active"| ERP_EXEC["ERPResolutionService\nCache → Live API → DB Fallback\nDynamics / Zoho / Salesforce / SQL"]
+        ROUTE -->|"No or no connector"| TOOL_REG["ToolRegistry.get(name)\nDeterministic service wrapper\nTenant-scoped via _scoped()"]
+        ERP_EXEC --> RESULT["ToolResult\nsuccess, data, _source"]
+        TOOL_REG --> RESULT
+        RESULT --> LOG["ToolCallLogger.log()\nAgentStep record\nLangfuse tool span"]
+        TOOL_DENY --> APPEND
+        LOG --> APPEND["Append result to\nmessage history"]
+    end
+
+    subgraph OUTPUT ["Output Interpretation & Persistence"]
+        direction TB
+        INTERP["interpret_supervisor_output()\n1. Strip markdown fences\n2. Parse JSON\n3. Validate via AgentOutputSchema\n4. Enforce submit_recommendation"]
+        INTERP --> CONF["_compute_composite_confidence()\nLLM confidence\nminus 0.1 per failed tool (max -0.3)\nCap if no evidence or min_tool_calls unmet"]
+        CONF --> FINAL["_finalise_run()\nCheck allowed_recs\nCheck prohibited_actions\nPersist AgentRun"]
+        FINAL --> PERSIST["AgentRun record:\nstatus, recommendation_type,\nconfidence, evidence, tools_used,\ntokens, duration_ms,\nRBAC snapshot"]
+        FINAL --> LF_SCORE["Langfuse Scores:\nsupervisor_confidence\nsupervisor_recommendation_present\nsupervisor_tools_used_count\nsupervisor_recovery_used\nsupervisor_auto_close_candidate"]
+    end
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LEG1["Initialization & RBAC"]
+        LEG2["Skill & Prompt Assembly"]
+        LEG3["ReAct Loop"]
+        LEG4["Tool Execution"]
+        LEG5["Output & Persistence"]
+        LEG6["ERP Connector"]
+    end
+
+    classDef init fill:#f3f4f6,stroke:#6b7280,color:#1f2937,font-weight:bold
+    classDef skill fill:#ede9fe,stroke:#8b5cf6,color:#4c1d95
+    classDef react fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a,font-weight:bold
+    classDef tool fill:#d1fae5,stroke:#059669,color:#065f46
+    classDef erp fill:#ecfdf5,stroke:#10b981,color:#064e3b
+    classDef output fill:#fef3c7,stroke:#d97706,color:#78350f,font-weight:bold
+    classDef denied fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    classDef neutral fill:#f9fafb,stroke:#9ca3af,color:#374151
+
+    class TRIGGER,CTXBUILD,RBAC_ORCH,RBAC_AGENT init
+    class LOAD,S1,S2,S3,S4,S5,MERGE,PROMPT,PR,BASE,SKILL_EXT,HINTS skill
+    class USER_MSG,LLM,RESP react
+    class TC,RBAC_TOOL,ROUTE,TOOL_REG,RESULT,LOG,APPEND tool
+    class ERP_EXEC erp
+    class INTERP,CONF,FINAL,PERSIST,LF_SCORE output
+    class DENIED,TOOL_DENY denied
+    class LEG1 init
+    class LEG2 skill
+    class LEG3 react
+    class LEG4 tool
+    class LEG5 output
+    class LEG6 erp
+      </div>{# /mermaid #}
+      </div>{# /diagram-zoom-wrap #}
+      <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-3">
+        <i class="bi bi-info-circle me-1"></i>
+        <strong>End-to-end flow:</strong> Caller &rarr; context build &rarr; RBAC (orchestration + agent) &rarr;
+        load 5 skills from SkillRegistry &rarr; compose prompt (PromptRegistry + skill extensions + hints) &rarr;
+        ReAct loop (LLM &harr; tool execution, up to 15 rounds) &rarr; interpret JSON output &rarr; compute composite confidence
+        &rarr; persist AgentRun + Langfuse scores. Every tool call goes through RBAC check and optional ERP routing.
+      </p>
+
+      <!-- 5-Phase Lifecycle Diagram -->
+      <h3 class="docs-h3 mt-4" id="supervisor-phase-flow">Phase Flow &amp; Backtracking</h3>
+      <p class="text-muted small mb-3">
+        Non-linear phase progression within the ReAct loop. The LLM decides which phase to enter next
+        based on tool results. Backtracking from INVESTIGATE to MATCH or UNDERSTAND is supported.
+      </p>
+
+      <div class="diagram-zoom-toolbar">
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-in" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-out" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 zoom-reset" title="Reset"><i class="bi bi-aspect-ratio"></i></button>
+        <span class="zoom-level">100%</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2 ms-auto zoom-fullscreen" title="Fullscreen"><i class="bi bi-fullscreen"></i></button>
+      </div>
+      <div class="diagram-zoom-wrap p-3">
+      <div class="mermaid">
+flowchart TD
+    START(["Invoice received\nbuild_user_message(ctx)"])
+
+    START --> U
+
+    subgraph U ["UNDERSTAND — invoice_extraction skill"]
+        direction LR
+        U1["get_ocr_text"] --> U2["classify_document"]
+        U2 --> U3["extract_invoice_fields"]
+        U3 --> U4{"confidence\n>= 0.7?"}
+        U4 -->|"No"| U5["re_extract_field\nget_field_confidence\nget_decision_codes"]
+        U4 -->|"Yes"| U_OK(["Fields extracted"])
+        U5 --> U_OK
+    end
+
+    U_OK --> V
+
+    subgraph V ["VALIDATE — ap_validation skill"]
+        direction LR
+        V1["validate_extraction"] --> V2["check_duplicate"]
+        V2 --> V3["verify_vendor\n(by tax ID)"]
+        V3 --> V4["verify_tax_computation"]
+        V4 --> V5{"repair\nneeded?"}
+        V5 -->|"Yes"| V6["repair_extraction\ndetect_self_company\ncheck_approval_status"]
+        V5 -->|"No"| V_OK(["Validation passed"])
+        V6 --> V_OK
+    end
+
+    V_OK --> M
+
+    subgraph M ["MATCH — ap_3way_matching skill"]
+        direction LR
+        M1["get_tolerance_config"] --> M2["po_lookup"]
+        M2 --> M3["run_header_match"]
+        M3 --> M4["run_line_match"]
+        M4 --> M5{"3-way\nmode?"}
+        M5 -->|"Yes"| M6["grn_lookup\nrun_grn_match"]
+        M5 -->|"No (2-way)"| M_EVAL
+        M6 --> M_EVAL{"All lines\nwithin tolerance?"}
+    end
+
+    M_EVAL -->|"Yes"| D
+    M_EVAL -->|"PO not found\nor partial match"| I
+
+    subgraph I ["INVESTIGATE — ap_investigation skill"]
+        direction LR
+        I1["re_extract_field\n(suspected PO number)"]
+        I2["invoke_po_retrieval_agent\n(broader fuzzy search)"]
+        I3["invoke_grn_retrieval_agent\n(find receipts)"]
+        I4["get_vendor_history\nget_case_history\ninvoice_details"]
+        I1 --> I2
+        I2 --> I3
+        I3 --> I4
+        I4 --> I_EVAL{"New data\nrecovered?"}
+    end
+
+    I_EVAL -->|"Yes — retry matching"| M
+    I_EVAL -->|"No — recovery exhausted"| D
+
+    subgraph D ["DECIDE — ap_review_routing skill"]
+        direction LR
+        D1["persist_invoice\ncreate_case"]
+        D1 --> D2["exception_list\nreconciliation_summary"]
+        D2 --> D3["submit_recommendation\n(MANDATORY)"]
+        D3 --> D4{"Recommendation\ntype?"}
+        D4 -->|"AUTO_CLOSE"| D5["auto_close_case"]
+        D4 -->|"SEND_TO_*"| D6["assign_reviewer\n(queue + priority)"]
+        D4 -->|"ESCALATE"| D7["escalate_case\n(severity)"]
+        D4 -->|"REPROCESS"| D8(["Mark for\nre-extraction"])
+        D5 & D6 & D7 --> D9["generate_case_summary"]
+        D8 --> D9
+    end
+
+    D9 --> DONE(["AgentOutput returned\nrecommendation_type\nconfidence\nevidence + case_summary"])
+
+    U5 -.->|"Low confidence\nre-extract fields"| U3
+
+    subgraph LEGEND [" Legend"]
+        direction TB
+        LP1["Tool call step"]
+        LP2["Decision gate"]
+        LP3["Phase boundary"]
+        LP4["Backtrack path"]
+    end
+
+    classDef phase fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef gate fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef ok fill:#d1fae5,stroke:#059669,color:#065f46
+    classDef done fill:#f3f4f6,stroke:#6b7280,color:#1f2937,font-weight:bold
+    classDef tool fill:#eff6ff,stroke:#93c5fd,color:#1e40af
+
+    class U1,U2,U3,U5,V1,V2,V3,V4,V6,M1,M2,M3,M4,M6,I1,I2,I3,I4,D1,D2,D3,D5,D6,D7,D8,D9 tool
+    class U4,V5,M5,M_EVAL,I_EVAL,D4 gate
+    class U_OK,V_OK ok
+    class START,DONE done
+    class LP1 tool
+    class LP2 gate
+    class LP3 ok
+    class LP4 done
+      </div>{# /mermaid #}
+      </div>{# /diagram-zoom-wrap #}
+      <p class="small text-muted mt-2 mb-0 border-top pt-2 px-3 pb-3">
+        <i class="bi bi-info-circle me-1"></i>
+        <strong>Backtracking:</strong> INVESTIGATE &rarr; MATCH (when PO/GRN recovered) or UNDERSTAND &rarr; re-extract fields (when confidence low).
+        <strong>Mandatory:</strong> <code>submit_recommendation</code> must be called in DECIDE phase; defaults to <code>SEND_TO_AP_REVIEW</code> (conf 0.3) if omitted.
+        Each tool call in every phase is RBAC-checked and Langfuse-traced.
+      </p>
+
+      <!-- 5-Phase Lifecycle Cards -->
+      <h3 class="docs-h3" id="supervisor-phases">5-Phase Lifecycle</h3>
+      <p class="text-muted small mb-3">
+        Non-linear progression &mdash; the supervisor can backtrack between phases based on findings
+        (e.g., PO not found &rarr; INVESTIGATE &rarr; re-extract PO &rarr; MATCH retry).
+      </p>
+
+      <div class="row g-3 mb-4">
+        {% for phase in supervisor_phases %}
+        <div class="col-12 col-md-6 col-lg">
+          <div class="card h-100 border-{{ phase.color }}">
+            <div class="card-header bg-{{ phase.color }} bg-opacity-10 py-2">
+              <i class="bi {{ phase.icon }} me-1 text-{{ phase.color }}"></i>
+              <strong>{{ phase.name }}</strong>
+              <span class="badge bg-{{ phase.color }} bg-opacity-25 text-{{ phase.color }} float-end">{{ phase.tools|length }} tools</span>
+            </div>
+            <div class="card-body py-2">
+              <p class="small text-muted mb-2">{{ phase.description }}</p>
+              <div class="small">
+                <strong class="text-uppercase" style="font-size:.65rem;letter-spacing:.5px">Skill:</strong>
+                <code class="small">{{ phase.skill }}</code>
+              </div>
+              <div class="flex-grow-1 overflow-hidden">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <span class="fw-semibold text-truncate">{{ agent.name }}</span>
+                  <span class="agent-role-pill {% if agent.flow == 'Flow A' %}pill-flow-a{% elif agent.flow == 'Flow B' %}pill-flow-b{% else %}pill-both{% endif %} ms-auto">{{ agent.flow }}</span>
+                </div>
+                <div class="d-flex align-items-center gap-2 mt-1">
+                  <code class="small text-secondary text-truncate">{{ agent.module }}</code>
+                  <span class="badge bg-light text-dark border small ms-auto text-nowrap">{{ agent.type }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="px-3 py-2">
+              <div class="text-muted small mb-2">{{ agent.description }}</div>
+              <div class="small mb-1">
+                <span class="fw-semibold text-muted">Entry:</span> <code class="small">{{ agent.entry_point }}</code>
+              </div>
+              {% if agent.model %}
+              <div class="small mb-1"><span class="fw-semibold text-muted">Model:</span> <code class="small">{{ agent.model }}</code></div>
+              {% endif %}
+              {% if agent.inputs %}
+              <div class="small mt-2">
+                <div class="small fw-semibold text-muted mb-1"><i class="bi bi-arrow-right-circle me-1 text-primary"></i>Inputs</div>
+                <div class="agent-io-block">{{ agent.inputs }}</div>
+              </div>
+              {% endif %}
+              {% if agent.outputs %}
+              <div class="small mt-2">
+                <div class="small fw-semibold text-muted mb-1"><i class="bi bi-arrow-left-circle me-1 text-success"></i>Outputs</div>
+                <div class="agent-io-block">{{ agent.outputs }}</div>
+              </div>
+              {% endif %}
+              {% if agent.fallback %}
+              <div class="small mt-2"><span class="badge bg-warning text-dark me-1">Fallback</span><span class="text-muted">{{ agent.fallback }}</span></div>
+              {% endif %}
+              {% if agent.requires_key %}
+              <div class="small mt-1"><span class="badge bg-danger me-1">Requires Key</span><code class="small">{{ agent.requires_key }}</code></div>
+              {% endif %}
+            </div>
+            {% if agent.key_rules %}
+            <div class="bg-light border-top py-2 px-3" style="border-bottom-left-radius:14px;border-bottom-right-radius:14px">
+              <div class="small fw-semibold text-muted mb-1"><i class="bi bi-card-checklist me-1"></i>Key Rules / Notes</div>
+              <ul class="mb-0 ps-3" style="font-size:.78rem">
+                {% for rule in agent.key_rules %}<li>{{ rule }}</li>{% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% empty %}
+        <div class="col-12"><div class="alert alert-warning">No procurement agents found in context.</div></div>
+        {% endfor %}
+      </div>
+
+      <div class="alert alert-info small mb-0">
+        <i class="bi bi-info-circle me-1"></i>
+        All agents create <code>AgentRun</code> records with full RBAC fields (<code>actor_primary_role</code>, <code>permission_source</code>, <code>access_granted</code>).
+        Every LLM call is traced in Langfuse with <code>start_trace</code> / <code>log_generation</code> / <code>score_trace</code> instrumentation.
+      </div>
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- MARKET INTELLIGENCE + PERPLEXITY FALLBACK                                 -->
+    <!-- ======================================================================== -->
+    <div id="sec-market-intel" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-search me-2 text-primary"></i>Market Intelligence &amp; Perplexity Fallback</h2>
+      <p class="text-muted mb-3">
+        Live market product data is retrieved via <strong>Perplexity sonar-pro</strong>. If the API key is missing or the call
+        fails, the system auto-falls back to <strong>Playwright</strong> headless scraping. A compatibility facade
+        (<code>MarketIntelligenceService</code>) ensures all callers use a single stable interface.
+      </p>
+
+      {% if market_intelligence_service_info %}
+      <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary bg-opacity-10 fw-semibold">
+          <i class="bi bi-box-seam me-1"></i> {{ market_intelligence_service_info.class }}
+          <span class="badge bg-secondary ms-2 fw-normal">Compatibility Facade</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-2">
+            <div class="col-md-6">
+              <div class="small text-muted mb-1">Module</div>
+              <code class="small">{{ market_intelligence_service_info.module }}</code>
+            </div>
+            <div class="col-md-6">
+              <div class="small text-muted mb-1">Role</div>
+              <div class="small">{{ market_intelligence_service_info.role }}</div>
+            </div>
+          </div>
+          <div class="alert alert-warning py-2 mb-3 small">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            <strong>Important:</strong> {{ market_intelligence_service_info.important_note }}
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered mb-0" style="font-size:.82rem">
+              <thead class="table-light"><tr><th>Method</th><th>Description</th></tr></thead>
+              <tbody>
+                {% for method in market_intelligence_service_info.methods %}
+                <tr><td><code>{{ method.name }}</code></td><td>{{ method.description }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <h3 class="docs-h3" id="sec-market-fallback-chain">Fallback Resolution Chain</h3>
+      <div class="row g-3 mb-4">
+        {% for step in market_intelligence_chain %}
+        <div class="col-md-4">
+          <div class="card h-100 border-start border-3 {% if forloop.first %}border-primary{% elif forloop.last %}border-danger{% else %}border-warning{% endif %}">
+            <div class="card-header bg-light py-2 d-flex justify-content-between align-items-center">
+              <span class="badge {% if forloop.first %}bg-primary{% elif forloop.last %}bg-danger{% else %}bg-warning text-dark{% endif %}">Step {{ forloop.counter }}</span>
+              <span class="fw-semibold small">{{ step.agent }}</span>
+            </div>
+            <div class="card-body py-2">
+              <div class="small text-muted mb-1">{{ step.description }}</div>
+              {% if step.trigger_condition %}
+              <div class="small"><span class="text-muted fw-semibold">Trigger:</span> {{ step.trigger_condition }}</div>
+              {% endif %}
+              {% if step.api_model %}
+              <div class="small"><span class="text-muted fw-semibold">Model:</span> <code>{{ step.api_model }}</code></div>
+              {% endif %}
+              {% if step.sites_scraped %}
+              <div class="small"><span class="text-muted fw-semibold">Sites:</span> {{ step.sites_scraped }}</div>
+              {% endif %}
+              {% if step.page_char_cap %}
+              <div class="small"><span class="text-muted fw-semibold">Char cap:</span> {{ step.page_char_cap }}</div>
+              {% endif %}
+              {% if step.citation_rule %}
+              <div class="small mt-1 text-info"><i class="bi bi-link-45deg me-1"></i>{{ step.citation_rule }}</div>
+              {% endif %}
+              {% if step.install_note %}
+              <div class="small mt-1 text-warning"><i class="bi bi-tools me-1"></i>{{ step.install_note }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- AZURE DI INTELLIGENCE                                                     -->
+    <!-- ======================================================================== -->
+    <div id="sec-azure-di" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-file-earmark-text me-2 text-info"></i>Azure Document Intelligence</h2>
+      <p class="text-muted mb-3">
+        Azure Document Intelligence (Azure DI) is used in <strong>three distinct ways</strong> across the platform.
+        Each use case has its own agent or service layer; fallback behavior differs per use case.
+      </p>
+
+      {% if azure_di_use_cases %}
+      <div class="row g-3 mb-4">
+        {% for uc in azure_di_use_cases %}
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header bg-light fw-semibold py-2">
+              <i class="bi bi-file-earmark-text me-1 text-info"></i> {{ uc.use_case }}
+            </div>
+            <div class="card-body py-2">
+              <div class="small mb-1"><span class="text-muted fw-semibold">Agent/Service:</span> <code>{{ uc.agent_or_service }}</code></div>
+              <div class="small mb-1"><span class="text-muted fw-semibold">Input:</span> {{ uc.input }}</div>
+              <div class="small mb-1"><span class="text-muted fw-semibold">Output:</span> {{ uc.output }}</div>
+              {% if uc.fallback %}
+              <div class="small mb-1"><span class="badge bg-warning text-dark me-1">Fallback</span>{{ uc.fallback }}</div>
+              {% endif %}
+              {% if uc.notes %}
+              <div class="small text-muted mt-2 border-top pt-2">{{ uc.notes }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- AZURE BLOB STORAGE                                                        -->
+    <!-- ======================================================================== -->
+    <div id="sec-azure-blob" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-cloud-arrow-up me-2 text-secondary"></i>Azure Blob Storage</h2>
+      <p class="text-muted mb-3">
+        <code>BlobStorageService</code> handles all PDF uploads to Azure Blob Storage. It is designed to be fully
+        fail-silent &mdash; a blob upload failure never blocks the main pipeline workflow.
+        The platform uses a single container (<code>{{ azure_blob_info.container }}</code>) on
+        <code>{{ azure_blob_info.account }}</code> with distinct folder prefixes per upload type.
+      </p>
+
+      {% if azure_blob_info %}
+      <div class="row g-3 mb-3">
+        <div class="col-md-5">
+          <div class="card h-100">
+            <div class="card-header bg-light fw-semibold py-2">Configuration &amp; Auth</div>
+            <div class="card-body py-2">
+              <div class="small mb-1"><span class="text-muted fw-semibold">Class:</span> <code>{{ azure_blob_info.class }}</code></div>
+              <div class="small mb-1"><span class="text-muted fw-semibold">Module:</span> <code>{{ azure_blob_info.module }}</code></div>
+              <div class="small mb-1"><span class="text-muted fw-semibold">Account:</span> <code>{{ azure_blob_info.account }}</code></div>
+              <div class="small mb-1"><span class="text-muted fw-semibold">Container:</span> <code>{{ azure_blob_info.container }}</code></div>
+              <div class="small mb-1"><span class="text-muted fw-semibold">BM Prefix:</span> <code>{{ azure_blob_info.prefix }}</code></div>
+              <div class="small mb-1"><span class="text-muted fw-semibold">Auth:</span> <span class="text-muted">{{ azure_blob_info.auth }}</span></div>
+              <div class="small mt-2 text-success"><i class="bi bi-shield-check me-1"></i>{{ azure_blob_info.failsafe_description }}</div>
+              {% if azure_blob_info.also_used_by %}
+              <div class="small mt-3 text-muted fw-semibold mb-1">Also used by:</div>
+              {% for u in azure_blob_info.also_used_by %}
+              <div class="small text-muted">&bull; {{ u }}</div>
+              {% endfor %}
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="col-md-7">
+          <div class="card h-100">
+            <div class="card-header bg-light fw-semibold py-2">Public Methods</div>
+            <div class="card-body py-2">
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0" style="font-size:.81rem">
+                  <thead class="table-light">
+                    <tr><th>Method</th><th>Description</th><th>Returns</th></tr>
+                  </thead>
+                  <tbody>
+                    {% for method in azure_blob_info.methods %}
+                    <tr>
+                      <td><code>{{ method.name }}</code></td>
+                      <td class="text-muted">{{ method.description }}</td>
+                      <td><code class="small">{{ method.returns }}</code></td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real Blob Folder Structure -->
+      {% if azure_blob_info.blob_folders %}
+      <h3 class="docs-h3" id="sec-blob-folders">Real Blob Folder Structure (Container: <code>{{ azure_blob_info.container }}</code>)</h3>
+      <p class="text-muted small mb-2">
+        All files are stored in the <strong>{{ azure_blob_info.container }}</strong> container on
+        <code>{{ azure_blob_info.account }}</code>. Each pipeline writes to a distinct folder prefix.
+        The DB fields below are populated on every successful upload.
+      </p>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr>
+              <th style="width:30%">Blob Path Pattern</th>
+              <th>Service / Writer</th>
+              <th>Used By / DB Field</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for folder in azure_blob_info.blob_folders %}
+            <tr>
+              <td><span class="badge bg-{{ folder.color }} bg-opacity-75 text-dark fw-normal font-monospace" style="font-size:.76rem;white-space:normal;word-break:break-all;">{{ folder.folder }}</span></td>
+              <td><code class="small">{{ folder.service }}</code></td>
+              <td class="text-muted small">{{ folder.used_by }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- BENCHMARKING PIPELINE                                                     -->
+    <!-- ======================================================================== -->
+    <div id="sec-bench-pipeline" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-bar-chart-steps me-2 text-warning"></i>Benchmarking Pipeline &amp; BenchmarkDocumentExtractorAgent</h2>
+      <p class="text-muted mb-3">
+        The benchmarking pipeline is driven by <code>BenchmarkDocumentExtractorAgent</code> — a <strong>5-stage deterministic
+        pipeline</strong> (not a ReAct loop). Each stage has explicit fallback handling. The agent lives in
+        <code>apps/benchmarking/agents/document_extractor_agent.py</code>.
+      </p>
+
+      {% if benchmarking_agents %}
+      {% for agent in benchmarking_agents %}
+      <div class="agent-ref-card mb-4">
+        <div class="agent-card-header" style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border-bottom:1px solid #fde68a">
+          <div class="agent-icon-wrap flow-both">
+            <i class="bi bi-graph-up-arrow fs-5"></i>
+          </div>
+          <div class="flex-grow-1 overflow-hidden">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <span class="fw-semibold">{{ agent.name }}</span>
+              <span class="agent-role-pill pill-both ms-auto">{{ agent.flow }}</span>
+            </div>
+            <code class="small text-secondary">{{ agent.module }}</code>
+          </div>
+        </div>
+        <div class="px-3 py-2">
+          <div class="row g-3 mb-2">
+            <div class="col-md-4">
+              <div class="small text-muted fw-semibold mb-1">Type</div>
+              <div class="small">{{ agent.type }}</div>
+            </div>
+            <div class="col-md-8">
+              <div class="small text-muted fw-semibold mb-1">Entry Point</div>
+              <code class="small">{{ agent.entry_point }}</code>
+            </div>
+          </div>
+          <div class="text-muted small mb-3">{{ agent.description }}</div>
+          {% if agent.inputs or agent.outputs %}
+          <div class="row g-2 mb-3">
+            {% if agent.inputs %}
+            <div class="col-12">
+              <div class="small fw-semibold text-muted mb-1"><i class="bi bi-arrow-right-circle me-1 text-primary"></i>Inputs</div>
+              <div class="agent-io-block">{{ agent.inputs }}</div>
+            </div>
+            {% endif %}
+            {% if agent.outputs %}
+            <div class="col-12">
+              <div class="small fw-semibold text-muted mb-1"><i class="bi bi-arrow-left-circle me-1 text-success"></i>Outputs</div>
+              <div class="agent-io-block">{{ agent.outputs }}</div>
+            </div>
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+      {% endif %}
+
+      <h3 class="docs-h3" id="sec-bench-stages">5-Stage Pipeline</h3>
+      <div class="row g-3 mb-4">
+        {% for stage in benchmarking_pipeline_stages %}
+        <div class="col-12">
+          <div class="card border-start border-3 border-{{ stage.color }}">
+            <div class="card-header bg-light py-2 d-flex align-items-center gap-2">
+              <span class="badge bg-{{ stage.color }}{% if stage.color == 'warning' %} text-dark{% endif %}">Stage {{ stage.stage }}</span>
+              <span class="fw-semibold">{{ stage.name }}</span>
+              <code class="small text-secondary ms-auto">{{ stage.service_or_agent }}</code>
+            </div>
+            <div class="card-body py-2">
+              <div class="row g-2">
+                <div class="col-md-4 small"><span class="text-muted fw-semibold">Input:</span> {{ stage.input }}</div>
+                <div class="col-md-4 small"><span class="text-muted fw-semibold">Output:</span> {{ stage.output }}</div>
+                <div class="col-md-4 small"><span class="text-muted fw-semibold">Fallback:</span>
+                  <span class="{% if stage.fallback == 'None' %}text-danger{% else %}text-warning{% endif %}">{{ stage.fallback }}</span>
+                </div>
+              </div>
+              <div class="text-muted small mt-1">{{ stage.description }}</div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {% if web_search_info %}
+      <h3 class="docs-h3" id="sec-web-search">Web Search Fallback ({{ web_search_info.class }})</h3>
+      <p class="text-muted small mb-3">{{ web_search_info.description }}</p>
+      <div class="row g-3 mb-3">
+        {% for step in web_search_info.resolution_chain %}
+        <div class="col-md-4">
+          <div class="card border-start border-3 {% if forloop.first %}border-success{% elif forloop.last %}border-danger{% else %}border-warning{% endif %} h-100">
+            <div class="card-header bg-light py-2 d-flex gap-2 align-items-center">
+              <span class="badge {% if forloop.first %}bg-success{% elif forloop.last %}bg-danger{% else %}bg-warning text-dark{% endif %}">Step {{ forloop.counter }}</span>
+              <span class="small fw-semibold">{{ step.source }}</span>
+            </div>
+            <div class="card-body py-2 small">
+              {{ step.description }}
+              {% if step.confidence_cap %}
+              <div class="mt-1 text-warning fw-semibold">Confidence cap: {{ step.confidence_cap }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="small text-muted">
+        Module: <code>{{ web_search_info.module }}</code> &bull;
+        Method: <code>{{ web_search_info.method }}</code>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- ARCHITECTURE                                                               -->
+    <!-- ======================================================================== -->
+    <div id="sec-architecture" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-layers me-2 text-info"></i>Architecture &mdash; Adaptation from Base Platform</h2>
+      <p class="text-muted mb-3">
+        The HVAC platform reuses the enterprise Django backbone and replaces AP-specific domain logic with HVAC domain services.
+        The governance, observability, and RBAC infrastructure is shared and unchanged.
+      </p>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Base Platform Construct</th><th>HVAC Procurement Adaptation</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Invoice / PO / GRN processing</td><td>Store profile / quotation PDF / reference pack processing</td></tr>
+            <tr><td>Reconciliation result</td><td>Recommendation result or benchmark result</td></tr>
+            <tr><td>Reconciliation exceptions</td><td>HVAC review issues, benchmark gaps, compliance gaps, extraction gaps</td></tr>
+            <tr><td><code>APCase</code></td><td><code>ProcurementRequest</code> (HVAC analysis case)</td></tr>
+            <tr><td>Reconciliation policies</td><td>Recommendation rules, benchmark policies, geography rules</td></tr>
+            <tr><td>Review assignment</td><td>Engineering review or procurement review assignment</td></tr>
+            <tr><td>Governance timeline</td><td>HVAC case timeline with agent and rule traces</td></tr>
+            <tr><td><code>ReconciliationRunnerService</code></td><td><code>RecommendationService</code> + <code>BenchmarkService</code></td></tr>
+            <tr><td>Invoice Extraction Agent</td><td>Quotation Extraction Agent (Azure DI + LLM)</td></tr>
+            <tr><td>PO / GRN Retrieval Agents</td><td>Store Understanding Agent + Line Classification Agent</td></tr>
+            <tr><td>Exception Analysis Agent</td><td>Should-Cost Benchmark Agent + Summary Agent</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="sec-tech-stack">Technology Stack</h3>
+      <div class="row g-2 mb-3">
+        <div class="col-md-6"><div class="p-3 border rounded small"><strong>Backend</strong><br>Django 4.2 &bull; MySQL (utf8mb4) &bull; Celery + Redis &bull; Django REST Framework</div></div>
+        <div class="col-md-6"><div class="p-3 border rounded small"><strong>AI / Extraction</strong><br>Azure OpenAI GPT-4o &bull; Azure Document Intelligence &bull; LangGraph state machine &bull; DuckDuckGo / Bing web search fallback</div></div>
+        <div class="col-md-6"><div class="p-3 border rounded small"><strong>Storage / Infra</strong><br>Azure Blob Storage (quotation PDFs) &bull; MySQL (all structured data) &bull; Redis (Celery broker + cache)</div></div>
+        <div class="col-md-6"><div class="p-3 border rounded small"><strong>Observability</strong><br>Langfuse (LLM traces + scores) &bull; TraceContext (distributed trace IDs) &bull; JSONLogFormatter &bull; MetricsService</div></div>
+      </div>
+
+      <h3 class="docs-h3" id="langfuse-scores">Langfuse Evaluation Score Catalog ({{ langfuse_total_scores }}+ constants)</h3>
+      <div class="alert alert-info border-0 py-2 mb-3 small">
+        <i class="bi bi-info-circle me-1"></i>
+        All score names are defined in <code>apps/core/evaluation_constants.py</code>.
+        Services import constants instead of using raw strings. Scores span {{ langfuse_score_domains|length }} domains.
+      </div>
+      <div class="row g-3 mb-4">
+        {% for domain in langfuse_score_domains %}
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100 border-start border-4 border-{{ domain.color }}">
+            <div class="card-body small">
+              <div class="fw-semibold mb-1">
+                <i class="bi {{ domain.icon }} me-1 text-{{ domain.color }}"></i>{{ domain.domain }}
+                <span class="badge bg-{{ domain.color }} ms-1">{{ domain.count }}</span>
+              </div>
+              <div class="text-muted" style="font-size:.75rem">
+                {% for ex in domain.examples %}<code class="me-1">{{ ex }}</code>{% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 class="docs-h3" id="latency-thresholds">Latency Thresholds</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered table-hover mb-0">
+          <thead class="table-light"><tr><th>Operation</th><th>Threshold</th></tr></thead>
+          <tbody>
+            {% for lt in langfuse_latency_thresholds %}
+            <tr><td class="small">{{ lt.operation }}</td><td class="small"><code>{{ lt.threshold_label }}</code> ({{ lt.threshold_ms }}ms)</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="root-traces">Root Trace Names ({{ langfuse_root_traces|length }})</h3>
+      <div class="card mb-4">
+        <div class="card-body small">
+          {% for trace in langfuse_root_traces %}
+          <code class="me-2 mb-1 d-inline-block">{{ trace }}</code>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CELERY TASKS ── -->
+    <div id="celery-tasks" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-arrow-repeat me-2 text-success"></i>Celery Tasks &amp; Async Flows</h2>
+
+      <div class="alert alert-success border-0 py-2 mb-4 small">
+        <i class="bi bi-info-circle me-1"></i>
+        {{ celery_tasks|length }} registered tasks. Broker: <strong>Redis</strong>. Result backend: <strong>django-db</strong>.
+        Actor identity propagated via <code>.as_celery_headers()</code> / <code>.from_celery_headers()</code>.
+        Only <strong>process_approved_learning_actions</strong> runs on Beat (every 30 min) -- all others are on-demand.
+      </div>
+
+      <h3 class="docs-h3" id="task-inventory">Task Inventory</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered table-hover mb-0">
+          <thead class="table-light"><tr><th>Task</th><th>Trigger</th><th>Retries</th><th>Delay</th><th>acks_late</th><th>Description</th></tr></thead>
+          <tbody>
+            {% for t in celery_tasks %}
+            <tr>
+              <td class="small"><code>{{ t.task }}</code></td>
+              <td class="small">{{ t.trigger }}</td>
+              <td class="small text-center">{{ t.max_retries }}</td>
+              <td class="small text-center">{{ t.retry_delay }}</td>
+              <td class="small text-center">{{ t.acks_late }}</td>
+              <td class="small text-muted">{{ t.description }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="task-chain">Task Chain</h3>
+      <div class="card mb-4">
+        <div class="card-body small">
+          <p class="mb-1"><strong>Auto-chain:</strong> {{ celery_task_chain.description }}</p>
+          <p class="mb-0 text-muted"><strong>Actor propagation:</strong> {{ celery_task_chain.actor_propagation }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── REVIEW WORKFLOW ── -->
+    <div id="review-workflow" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-people me-2 text-info"></i>Review Workflow</h2>
+
+      <h3 class="docs-h3" id="review-actions">Review Action Types</h3>
+      <div class="row g-3 mb-4">
+        {% for ra in review_action_types %}
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100 border-start border-4 border-{{ ra.color }}">
+            <div class="card-body py-2">
+              <div class="fw-semibold"><i class="bi {{ ra.icon }} text-{{ ra.color }} me-1"></i>{{ ra.action }}</div>
+              <div class="small text-muted">{{ ra.description }}</div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- REFERENCE STANDARDS                                                        -->
+    <!-- ======================================================================== -->
+    <div id="sec-standards" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-journal-check me-2 text-warning"></i>Reference Standards &amp; Sources</h2>
+      <p class="text-muted mb-3">
+        Recommendations must prioritize authoritative standards over commercial source data where conflicts arise.
+        Commercial references inform should-cost; they do not override compliance.
+      </p>
+
+      <h3 class="docs-h3" id="sec-standards-auth">Authoritative Standards</h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Standard</th><th>Use in Platform</th><th>Geography</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>ASHRAE 55</strong></td><td>Thermal comfort suitability validation</td><td>All GCC</td></tr>
+            <tr><td><strong>ASHRAE 62.1</strong></td><td>Ventilation and acceptable indoor air quality (restaurant / F&amp;B rules &sect;6.4)</td><td>All GCC</td></tr>
+            <tr><td><strong>ASHRAE 90.1</strong></td><td>Energy efficiency validation; minimum SEER/IPLV thresholds per system type</td><td>All GCC</td></tr>
+            <tr><td><strong>ISO 16813</strong></td><td>Indoor environment design principles</td><td>All GCC</td></tr>
+            <tr><td><strong>ISO 50001</strong></td><td>Energy management posture check</td><td>All GCC</td></tr>
+            <tr><td><strong>UAE MoIAT</strong></td><td>Equipment efficiency and conformity context (UAE market)</td><td>UAE</td></tr>
+            <tr><td><strong>Saudi SASO</strong></td><td>Equipment efficiency and certifications (KSA market)</td><td>KSA</td></tr>
+            <tr><td><strong>CIBSE Commissioning Codes</strong></td><td>Testing and commissioning expectations</td><td>All GCC</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="sec-standards-commercial">Commercial &amp; Market References</h3>
+      <ul class="small text-muted mb-0">
+        <li>OEM catalogues and technical datasheets from Daikin, Carrier, Trane, LG, Mitsubishi Electric, and approved manufacturers</li>
+        <li>GCC distributor and supplier catalogues for local availability and price posture</li>
+        <li>Commodity references: copper, steel, refrigerants (R-32, R-410A)</li>
+        <li>Landlord and mall fit-out guides, municipality notes, and project-specific TRDs</li>
+        <li>Internal historical awarded rates, contracts, RFQs, BOQs, and vendor performance records</li>
+      </ul>
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- DATA MODEL                                                                 -->
+    <!-- ======================================================================== -->
+    <div id="sec-data-model" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-database me-2 text-secondary"></i>Data Model</h2>
+      <p class="text-muted mb-3">
+        Two Django apps hold the procurement platform's DB tables. <strong><code>procurement</code></strong> owns
+        the request lifecycle, analysis runs, recommendations, compliance, and RFQ generation.
+        <strong><code>benchmarking</code></strong> owns the dedicated should-cost corridor database and its
+        extraction / variance pipeline. Both extend <code>BaseModel</code> (TimestampMixin + AuditMixin).
+      </p>
+
+      <!-- ── App: procurement ── -->
+      <h3 class="docs-h3" id="sec-dm-procurement">App: <code>procurement</code></h3>
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Model</th><th>Purpose</th><th>Key Fields</th><th>DB Table</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ProcurementRequest</code></td>
+              <td>Top-level HVAC analysis case &mdash; one record per recommendation or benchmarking exercise</td>
+              <td><code>request_id</code> (UUID), <code>title</code>, <code>domain_code</code>, <code>request_type</code> (RECOMMENDATION / BENCHMARK / BOTH), <code>status</code>, <code>priority</code>, <code>schema_code</code>, <code>prefill_status</code>, <code>prefill_confidence</code>, <code>prefill_payload_json</code>, <code>trace_id</code>, <code>uploaded_document</code> FK</td>
+              <td><code>procurement_request</code></td>
+            </tr>
+            <tr>
+              <td><code>ProcurementRequestAttribute</code></td>
+              <td>Dynamic key-value store for the 25+ HVAC store parameters (room area, cooling load, occupancy type, etc.)</td>
+              <td><code>request</code> FK, <code>attribute_code</code>, <code>attribute_label</code>, <code>data_type</code>, <code>value_text</code>, <code>value_number</code>, <code>value_json</code>, <code>is_required</code>, <code>extraction_source</code>, <code>confidence_score</code>, <code>normalized_value</code></td>
+              <td><code>procurement_request_attribute</code></td>
+            </tr>
+            <tr>
+              <td><code>SupplierQuotation</code></td>
+              <td>Supplier quotation uploaded against a ProcurementRequest (Flow B)</td>
+              <td><code>request</code> FK, <code>vendor_name</code>, <code>quotation_number</code>, <code>quotation_date</code>, <code>total_amount</code>, <code>currency</code>, <code>extraction_status</code>, <code>extraction_confidence</code>, <code>uploaded_document</code> FK, <code>prefill_status</code>, <code>prefill_payload_json</code></td>
+              <td><code>procurement_supplier_quotation</code></td>
+            </tr>
+            <tr>
+              <td><code>QuotationLineItem</code></td>
+              <td>Individual line item extracted from a SupplierQuotation</td>
+              <td><code>quotation</code> FK, <code>line_number</code>, <code>description</code>, <code>normalized_description</code>, <code>category_code</code>, <code>quantity</code>, <code>unit</code>, <code>unit_rate</code>, <code>total_amount</code>, <code>brand</code>, <code>model</code>, <code>extraction_confidence</code>, <code>extraction_source</code></td>
+              <td><code>procurement_quotation_line_item</code></td>
+            </tr>
+            <tr>
+              <td><code>AnalysisRun</code></td>
+              <td>One execution of recommendation or benchmark logic; parent for all result records</td>
+              <td><code>run_id</code> (UUID), <code>request</code> FK, <code>run_type</code> (RECOMMENDATION / BENCHMARK), <code>status</code>, <code>started_at</code>, <code>completed_at</code>, <code>confidence_score</code>, <code>triggered_by</code> FK, <code>input_snapshot_json</code>, <code>output_summary</code>, <code>thought_process_log</code> (JSON reasoning steps), <code>trace_id</code>, <code>error_message</code></td>
+              <td><code>procurement_analysis_run</code></td>
+            </tr>
+            <tr>
+              <td><code>RecommendationResult</code></td>
+              <td>Output of a recommendation analysis run (1:1 with AnalysisRun for RECOMMENDATION type)</td>
+              <td><code>run</code> OneToOne, <code>recommended_option</code>, <code>reasoning_summary</code>, <code>reasoning_details_json</code>, <code>confidence_score</code>, <code>constraints_json</code>, <code>compliance_status</code>, <code>output_payload_json</code>, <code>reason_summary_json</code> (cached ReasonSummaryAgent output)</td>
+              <td><code>procurement_recommendation_result</code></td>
+            </tr>
+            <tr>
+              <td><code>BenchmarkResult</code> <span class="badge bg-secondary" style="font-size:.65rem">procurement</span></td>
+              <td>Header-level benchmark output per quotation under an AnalysisRun</td>
+              <td><code>run</code> FK, <code>quotation</code> FK, <code>total_quoted_amount</code>, <code>total_benchmark_amount</code>, <code>variance_pct</code>, <code>risk_level</code> (LOW / MEDIUM / HIGH / CRITICAL), <code>summary_json</code></td>
+              <td><code>procurement_benchmark_result</code></td>
+            </tr>
+            <tr>
+              <td><code>BenchmarkResultLine</code></td>
+              <td>Per-line benchmark comparison record</td>
+              <td><code>benchmark_result</code> FK, <code>quotation_line</code> FK, <code>benchmark_min</code>, <code>benchmark_avg</code>, <code>benchmark_max</code>, <code>quoted_value</code>, <code>variance_pct</code>, <code>variance_status</code> (WITHIN_RANGE / MODERATE / HIGH / NEEDS_REVIEW), <code>remarks</code></td>
+              <td><code>procurement_benchmark_result_line</code></td>
+            </tr>
+            <tr>
+              <td><code>ComplianceResult</code></td>
+              <td>Standards compliance check (ASHRAE / UAE MoIAT) output per AnalysisRun</td>
+              <td><code>run</code> OneToOne, <code>compliance_status</code>, <code>rules_checked_json</code>, <code>violations_json</code>, <code>recommendations_json</code></td>
+              <td><code>procurement_compliance_result</code></td>
+            </tr>
+            <tr>
+              <td><code>ProcurementAgentExecutionRecord</code></td>
+              <td>Per-agent execution log linked to an AnalysisRun (agentic bridge; mirrors AgentRun for reconciliation agents)</td>
+              <td><code>run</code> FK, <code>agent_type</code>, <code>status</code>, <code>started_at</code>, <code>completed_at</code>, <code>confidence_score</code>, <code>reasoning_summary</code>, <code>input_snapshot</code>, <code>output_snapshot</code>, <code>error_message</code>, <code>trace_id</code>, <code>actor_primary_role</code></td>
+              <td><code>procurement_agent_execution_record</code></td>
+            </tr>
+            <tr>
+              <td><code>GeneratedRFQ</code></td>
+              <td>Generated RFQ document record (Excel + PDF) created by RFQGeneratorAgent. Stores blob paths for download.</td>
+              <td><code>request</code> FK, <code>rfq_ref</code>, <code>system_code</code>, <code>system_label</code>, <code>qty_json</code>, <code>xlsx_blob_path</code>, <code>pdf_blob_path</code>, <code>generated_by</code> FK</td>
+              <td><code>procurement_generated_rfq</code></td>
+            </tr>
+            <tr>
+              <td><code>ValidationRuleSet</code> / <code>ValidationRule</code></td>
+              <td>Configurable validation framework for document completeness and mandatory field checks</td>
+              <td>rule_set: <code>name</code>, <code>domain_code</code>, <code>is_active</code>, <code>priority</code>. rule: <code>rule_set</code> FK, <code>rule_type</code>, <code>attribute_code</code>, <code>condition_json</code>, <code>severity</code></td>
+              <td><code>procurement_validation_rule_set</code>, <code>procurement_validation_rule</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── App: benchmarking ── -->
+      <h3 class="docs-h3" id="sec-dm-benchmarking">App: <code>benchmarking</code></h3>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Model</th><th>Purpose</th><th>Key Fields</th><th>DB Table</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>BenchmarkRequest</code></td>
+              <td>Top-level should-cost analysis request (standalone legacy flow)</td>
+              <td><code>title</code>, <code>project_name</code>, <code>geography</code> (UAE / KSA / KWT / BHR / QTR / OMN), <code>scope_type</code> (SITC / SUPPLY_ONLY / ASSET_ONLY), <code>store_type</code>, <code>status</code>, <code>submitted_by</code> FK</td>
+              <td><code>benchmarking_benchmarkrequest</code></td>
+            </tr>
+            <tr>
+              <td><code>BenchmarkQuotation</code></td>
+              <td>Uploaded supplier quotation PDF attached to a BenchmarkRequest</td>
+              <td><code>request</code> FK, <code>supplier_name</code>, <code>quotation_ref</code>, <code>document</code> (FileField upload_to=benchmarking/quotations/%Y/%m/), <code>blob_url</code>, <code>blob_name</code>, <code>extracted_text</code>, <code>extraction_status</code>, <code>di_extraction_json</code></td>
+              <td><code>benchmarking_benchmarkquotation</code></td>
+            </tr>
+            <tr>
+              <td><code>BenchmarkLineItem</code></td>
+              <td>Single extracted line from a BenchmarkQuotation; carries classification + corridor comparison</td>
+              <td><code>quotation</code> FK, <code>description</code>, <code>uom</code>, <code>quantity</code>, <code>quoted_unit_rate</code>, <code>line_amount</code>, <code>category</code> (EQUIPMENT / CONTROLS / DUCTING / INSULATION / ACCESSORIES / INSTALLATION / T&amp;C / ...), <code>classification_source</code> (KEYWORD / AI / MANUAL), <code>classification_confidence</code>, <code>benchmark_min/mid/max</code>, <code>variance_pct</code>, <code>variance_status</code>, <code>benchmark_source</code> (CORRIDOR_DB / PERPLEXITY_LIVE / MANUAL / NONE), <code>live_price_json</code></td>
+              <td><code>benchmarking_benchmarklineitem</code></td>
+            </tr>
+            <tr>
+              <td><code>BenchmarkCorridorRule</code></td>
+              <td>Reference benchmark price corridor per category + scope + geography. Seeded via management command; tunable via Configurations UI.</td>
+              <td><code>rule_code</code> (unique), <code>name</code>, <code>category</code>, <code>scope_type</code>, <code>geography</code>, <code>uom</code>, <code>min_rate</code>, <code>mid_rate</code>, <code>max_rate</code>, <code>currency</code>, <code>keywords</code> (comma-separated for matching), <code>priority</code>, <code>is_active</code></td>
+              <td><code>benchmarking_benchmarkcorridorrule</code></td>
+            </tr>
+            <tr>
+              <td><code>CategoryMaster</code></td>
+              <td>Platform-managed HVAC line-item category definitions. Read by AI classification agent at runtime &mdash; tune prompts without code deploys.</td>
+              <td><code>code</code> (unique, e.g. EQUIPMENT), <code>name</code>, <code>description</code> (AI context for classification), <code>keywords_csv</code> (augments built-in keyword rules), <code>sort_order</code>, <code>is_active</code></td>
+              <td><code>benchmarking_categorymaster</code></td>
+            </tr>
+            <tr>
+              <td><code>VarianceThresholdConfig</code></td>
+              <td>Configurable variance thresholds per category + geography. Priority: category+geo &gt; category+ALL &gt; global (ALL+ALL).</td>
+              <td><code>category</code> (EQUIPMENT / ALL / ...), <code>geography</code> (UAE / ALL / ...), <code>within_range_max_pct</code> (default 5%), <code>moderate_max_pct</code> (default 15%), <code>notes</code>, <code>is_active</code></td>
+              <td><code>benchmarking_variancethresholdconfig</code></td>
+            </tr>
+            <tr>
+              <td><code>BenchmarkResult</code> <span class="badge bg-secondary" style="font-size:.65rem">benchmarking</span></td>
+              <td>Aggregated should-cost result for a BenchmarkRequest (one per request, updated after line-item processing)</td>
+              <td><code>request</code> OneToOne, <code>total_quoted</code>, <code>total_benchmark_mid</code>, <code>overall_deviation_pct</code>, <code>overall_status</code>, <code>category_summary_json</code>, <code>negotiation_notes_json</code>, <code>lines_within_range / _moderate / _high / _needs_review</code> counts, <code>live_enriched_at</code>, <code>live_enrichment_json</code> (Perplexity citations)</td>
+              <td><code>benchmarking_benchmarkresult</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="alert alert-info d-flex gap-2 py-2 mt-1" style="font-size:.82rem">
+        <i class="bi bi-info-circle-fill flex-shrink-0 mt-1"></i>
+        <span>
+          <strong>Naming note:</strong> <code>BenchmarkResult</code> exists in both apps with different schemas &mdash;
+          <code>procurement.BenchmarkResult</code> is per-quotation under an <code>AnalysisRun</code> (Flow B recommendation pipeline),
+          while <code>benchmarking.BenchmarkResult</code> is the aggregated should-cost summary for a standalone <code>BenchmarkRequest</code>.
+          Both extend <code>BaseModel</code> and use distinct DB tables.
+        </span>
+      </div>
+    </div>
+
+    <!-- ======================================================================== -->
+    <!-- AUDIT & GOVERNANCE  (ADMIN + FINANCE_MANAGER only)                        -->
+    <!-- ======================================================================== -->
+    {% has_role "ADMIN" as is_admin %}
+    {% has_role "FINANCE_MANAGER" as is_finance_manager %}
+    {% if is_admin or is_finance_manager %}
+    <div id="sec-audit" class="docs-section">
+      <h2 class="docs-section-title"><i class="bi bi-shield-lock me-2 text-danger"></i>Audit &amp; Governance</h2>
+      <p class="text-muted mb-3">
+        The procurement platform shares the same audit backbone as the parent platform. Every recommendation, benchmark run,
+        agent invocation, and RBAC decision is logged as an <code>AuditEvent</code> record with full trace context and RBAC snapshot.
+      </p>
+
+      <h3 class="docs-h3" id="sec-rbac">RBAC Roles</h3>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr><th>Role</th><th>Procurement Permissions</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="badge bg-danger">ADMIN</span></td><td>Full access &mdash; all flows, all governance, configuration, user management</td></tr>
+            <tr><td><span class="badge bg-warning text-dark">FINANCE_MANAGER</span></td><td>Flow B benchmarking review, commercial approval, export</td></tr>
+            <tr><td><span class="badge bg-info text-dark">REVIEWER</span></td><td>Engineering review of Flow A recommendations; sign-off on compliance</td></tr>
+            <tr><td><span class="badge bg-primary">AP_PROCESSOR</span></td><td>Create requests, upload quotations, run analyses &mdash; scoped to own submissions</td></tr>
+            <tr><td><span class="badge bg-secondary">AUDITOR</span></td><td>Read-only access to all records, governance timeline, and audit log</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="docs-h3" id="sec-traceability">End-to-End Traceability</h3>
+      <ul class="small text-muted mb-0">
+        <li>Every <code>AnalysisRun</code> carries a <code>trace_id</code> propagated through all service calls via <code>TraceContext</code></li>
+        <li>Every <code>RecommendationResult</code> stores <code>output_payload_json</code> capturing the full rule engine + AI merge result</li>
+        <li>Every <code>BenchmarkResultLine</code> stores the benchmark source (<code>source</code> field: internal / AI / WEB_SEARCH) and confidence</li>
+        <li>Every agent invocation creates <code>AgentRun</code> + <code>AgentStep</code> + <code>DecisionLog</code> records with RBAC snapshot</li>
+        <li>Langfuse traces link every LLM generation to its parent <code>AnalysisRun</code> trace ID with per-flow scores</li>
+        <li>100% of outputs are traceable to their source class: rules engine, AI reasoning, or external reference</li>
+      </ul>
+    </div>
+    {% else %}
+    <div id="sec-audit" class="docs-section">
+      <div class="alert alert-secondary d-flex align-items-center" role="alert">
+        <i class="bi bi-lock-fill me-2 text-muted"></i>
+        <span class="text-muted small">Audit &amp; Governance details are restricted to procurement management roles.</span>
+      </div>
+    </div>
+    {% endif %}
+
+  </div><!-- /col-xl-9 -->
+
+  <!-- ════════════════════════════════ TABLE OF CONTENTS ════════════════════════════════ -->
+  <div class="col-xl-3 col-lg-4 d-none d-lg-block">
+    <nav id="docs-toc" class="docs-toc ps-2 border-start">
+      <div class="toc-group-label">On this page</div>
+      <nav class="nav flex-column">
+        <a class="nav-link" href="#overview">Overview</a>
+
+        <div class="toc-group-label">Flow A: Recommendation</div>
+        <a class="nav-link toc-child" href="#flow-a-params">Store Parameters</a>
+        <a class="nav-link toc-child" href="#flow-a-steps">Recommendation Steps</a>
+        <a class="nav-link toc-child" href="#flow-a-rules">Rule Library (Section 5.4)</a>
+        <a class="nav-link toc-child" href="#flow-a-output">Output Spec</a>
+
+        <div class="toc-group-label">Flow B: Benchmarking</div>
+        <a class="nav-link toc-child" href="#flow-b-inputs">Inputs</a>
+        <a class="nav-link toc-child" href="#flow-b-extraction">Extraction &amp; Classification</a>
+        <a class="nav-link toc-child" href="#flow-b-benchmark">Benchmark Resolution Chain</a>
+        <a class="nav-link toc-child" href="#flow-b-variance">Variance Classification</a>
+        <a class="nav-link toc-child" href="#flow-b-output">Output Spec</a>
+
+        <div class="toc-group-label">Agent System</div>
+        <a class="nav-link toc-child" href="#sec-agents">Procurement Agents (9)</a>
+
+        <div class="toc-group-label">Market Intelligence</div>
+        <a class="nav-link toc-child" href="#sec-market-intel">Perplexity &amp; Fallback</a>
+        <a class="nav-link toc-child" href="#sec-market-fallback-chain">Fallback Chain</a>
+
+        <div class="toc-group-label">Azure DI &amp; Blob</div>
+        <a class="nav-link toc-child" href="#sec-azure-di">Azure DI (3 use cases)</a>
+        <a class="nav-link toc-child" href="#sec-azure-blob">Blob Storage</a>
+        <a class="nav-link toc-child" href="#sec-blob-folders">Blob Folder Structure</a>
+
+        <div class="toc-group-label">Benchmarking Pipeline</div>
+        <a class="nav-link toc-child" href="#sec-bench-pipeline">BenchmarkDocumentExtractorAgent</a>
+        <a class="nav-link toc-child" href="#sec-bench-stages">5-Stage Pipeline</a>
+        <a class="nav-link toc-child" href="#sec-web-search">Web Search Fallback</a>
+
+        <div class="toc-group-label">Architecture</div>
+        <a class="nav-link toc-child" href="#sec-architecture">Base Adaptation</a>
+        <a class="nav-link toc-child" href="#sec-tech-stack">Technology Stack</a>
+
+        <div class="toc-group-label">Reference Standards</div>
+        <a class="nav-link toc-child" href="#sec-standards-auth">ASHRAE / ISO / MoIAT</a>
+        <a class="nav-link toc-child" href="#sec-standards-commercial">Commercial Sources</a>
+
+        <div class="toc-group-label">Data Model</div>
+        <a class="nav-link toc-child" href="#sec-data-model">Overview</a>
+        <a class="nav-link toc-child" href="#sec-dm-procurement">procurement app (11 models)</a>
+        <a class="nav-link toc-child" href="#sec-dm-benchmarking">benchmarking app (7 models)</a>
+
+        {% if is_admin or is_finance_manager %}
+        <div class="toc-group-label">Audit &amp; Governance</div>
+        <a class="nav-link toc-child" href="#sec-rbac">RBAC Roles</a>
+        <a class="nav-link toc-child" href="#sec-traceability">Traceability</a>
+        {% endif %}
+      </nav>
+    </nav>
+  </div><!-- /col-xl-3 -->
+
+</div><!-- /row -->
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js?v={{ page_version }}"></script>
+<script>
+// Initialize Mermaid for all .mermaid blocks.
+// Re-run on Bootstrap tab shown so diagrams in hidden tabs render correctly.
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: 'loose',
+  theme: 'base',
+  themeVariables: {
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    fontSize: '16px',
+  },
+  flowchart: { curve: 'basis', useMaxWidth: false, nodeSpacing: 55, rankSpacing: 65 },
+  graph: { useMaxWidth: false, nodeSpacing: 55, rankSpacing: 65 },
+});
+
+// Mermaid click callback -- switches the diagram tab (called via: click NODE call switchTab(...))
+window.switchTab = function(tabId) {
+  var btn = document.querySelector('#diagramTabs button[data-bs-target="#' + tabId + '"]');
+  if (btn) { bootstrap.Tab.getOrCreateInstance(btn).show(); }
+};
+
+// Render mermaid diagrams inside a given pane element (or all panes on first load).
+// Resetting _zoomReady ensures auto-fit is re-applied when a tab is shown.
+function renderMermaid(pane) {
+  var nodes = Array.from((pane || document).querySelectorAll('.mermaid'));
+  nodes.forEach(function(el) {
+    if (el.hasAttribute('data-processed')) {
+      el.removeAttribute('data-processed');
+      var src = el.getAttribute('data-mermaid-src');
+      if (src) { el.textContent = src; }
+    }
+    // Allow zoom to re-initialize with fresh auto-fit after re-render
+    var wrap = el.closest('.diagram-zoom-wrap');
+    if (wrap) wrap._zoomReady = false;
+  });
+  if (nodes.length) { mermaid.run({ nodes: nodes }); }
+}
+
+// Stash original source before first run so we can restore on repeated renders
+document.querySelectorAll('.mermaid').forEach(function(el) {
+  el.setAttribute('data-mermaid-src', el.textContent.trim());
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Initial render: all tabs
+  renderMermaid();
+  function attachTabRenderListener(navId) {
+    document.querySelectorAll('#' + navId + ' button[data-bs-toggle="tab"]').forEach(function(btn) {
+      btn.addEventListener('shown.bs.tab', function() {
+        // Only re-render the newly shown tab -- avoid disturbing other tabs that are animating out
+        var paneId = btn.getAttribute('data-bs-target');
+        var pane = paneId ? document.querySelector(paneId) : null;
+        renderMermaid(pane || undefined);
+      });
+    });
+  }
+  attachTabRenderListener('diagramTabs');
+  attachTabRenderListener('agentDiagramTabs');
+  // Bind zoom controls after every mermaid render (watch body so both tab groups are covered)
+  var observer = new MutationObserver(function() { initZoomControls(); });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+  setTimeout(initZoomControls, 600);
+});
+
+// -- Diagram pan/zoom engine --
+function initZoomControls() {
+  document.querySelectorAll('.diagram-zoom-wrap').forEach(function(wrap) {
+    if (wrap._zoomReady) return;
+    var target = wrap.querySelector('.mermaid');
+    if (!target || !target.querySelector('svg')) return;
+    wrap._zoomReady = true;
+
+    var scale = 1, ox = 0, oy = 0;
+    var toolbar = wrap.parentElement.querySelector('.diagram-zoom-toolbar');
+    var levelEl = toolbar ? toolbar.querySelector('.zoom-level') : null;
+
+    function applyTransform() {
+      target.style.transform = 'translate(' + ox + 'px,' + oy + 'px) scale(' + scale + ')';
+      if (levelEl) levelEl.textContent = Math.round(scale * 100) + '%';
+    }
+
+    function clampScale(s) { return Math.min(Math.max(s, 0.2), 5); }
+
+    function calcFitScale() {
+      var svgEl = target.querySelector('svg');
+      if (!svgEl) return 1;
+      var svgW = parseFloat(svgEl.getAttribute('width')) || svgEl.getBoundingClientRect().width;
+      var wrapW = wrap.clientWidth - 24;
+      return (wrapW > 0 && svgW > wrapW) ? wrapW / svgW : 1;
+    }
+
+    // Auto-fit on first render
+    scale = calcFitScale(); ox = 0; oy = 0;
+    applyTransform();
+
+    // Mouse wheel zoom toward cursor position
+    wrap.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var rect = wrap.getBoundingClientRect();
+      var mx = e.clientX - rect.left;
+      var my = e.clientY - rect.top;
+      var delta = e.deltaY < 0 ? 1.12 : 0.89;
+      var newScale = clampScale(scale * delta);
+      ox = mx - (mx - ox) * (newScale / scale);
+      oy = my - (my - oy) * (newScale / scale);
+      scale = newScale;
+      applyTransform();
+    }, { passive: false });
+
+    // Drag to pan
+    var dragging = false, startX, startY, startOx, startOy;
+    wrap.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;
+      dragging = true; startX = e.clientX; startY = e.clientY; startOx = ox; startOy = oy;
+      wrap.classList.add('is-grabbing');
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      ox = startOx + (e.clientX - startX);
+      oy = startOy + (e.clientY - startY);
+      applyTransform();
+    });
+    document.addEventListener('mouseup', function() {
+      dragging = false;
+      wrap.classList.remove('is-grabbing');
+    });
+
+    // Touch pinch + pan
+    var lastDist = null, lastTx, lastTy;
+    wrap.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 2) {
+        lastDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      } else if (e.touches.length === 1) {
+        lastTx = e.touches[0].clientX; lastTy = e.touches[0].clientY;
+      }
+    }, { passive: true });
+    wrap.addEventListener('touchmove', function(e) {
+      if (e.touches.length === 2 && lastDist) {
+        var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        scale = clampScale(scale * (d / lastDist)); lastDist = d; applyTransform();
+      } else if (e.touches.length === 1 && lastTx != null) {
+        ox += e.touches[0].clientX - lastTx; oy += e.touches[0].clientY - lastTy;
+        lastTx = e.touches[0].clientX; lastTy = e.touches[0].clientY; applyTransform();
+      }
+    }, { passive: true });
+
+    // Toolbar buttons
+    if (toolbar) {
+      toolbar.querySelector('.zoom-in').addEventListener('click', function() { scale = clampScale(scale * 1.25); applyTransform(); });
+      toolbar.querySelector('.zoom-out').addEventListener('click', function() { scale = clampScale(scale * 0.8); applyTransform(); });
+      toolbar.querySelector('.zoom-reset').addEventListener('click', function() { scale = calcFitScale(); ox = 0; oy = 0; applyTransform(); });
+      var fsBtn = toolbar.querySelector('.zoom-fullscreen');
+      var fsOverlay = null;
+      // Save original DOM position so we can restore on exit
+      var origParent = toolbar.parentElement;
+      var origToolbarNext = toolbar.nextSibling;
+      var origWrapNext = wrap.nextSibling;
+      fsBtn.addEventListener('click', function() {
+        if (fsOverlay) {
+          // Exit: restore toolbar + wrap to original positions
+          origParent.insertBefore(toolbar, origToolbarNext);
+          origParent.insertBefore(wrap, origWrapNext);
+          document.body.removeChild(fsOverlay);
+          fsOverlay = null;
+          fsBtn.innerHTML = '<i class="bi bi-fullscreen"></i>';
+          scale = 1; ox = 0; oy = 0; applyTransform();
+        } else {
+          // Enter: move toolbar + wrap into a fixed overlay on body
+          fsOverlay = document.createElement('div');
+          fsOverlay.className = 'diagram-fs-overlay';
+          fsOverlay.appendChild(toolbar);
+          fsOverlay.appendChild(wrap);
+          document.body.appendChild(fsOverlay);
+          fsBtn.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+        }
+      });
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && fsOverlay) { fsBtn.click(); }
+      });
+    }
+  });
+}
+</script>
+<script>
+(function () {
+  // Bootstrap ScrollSpy on document.body targeting the docs TOC
+  var bodySpy = new bootstrap.ScrollSpy(document.body, {
+    target: '#docs-toc',
+    offset: 80,
+    method: 'offset',
+  })
+
+  // Smooth scroll when a TOC link is clicked
+  document.querySelectorAll('#docs-toc a[href^="#"]').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault()
+      var target = document.querySelector(this.getAttribute('href'))
+      if (target) {
+        var y = target.getBoundingClientRect().top + window.scrollY - 75
+        window.scrollTo({ top: y, behavior: 'smooth' })
+      }
+    })
+  })
+}())
+</script>
+{% endblock %}

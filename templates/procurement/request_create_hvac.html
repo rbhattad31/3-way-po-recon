@@ -679,6 +679,7 @@ function setFieldValue(fieldName, value) {
 }
 
 function applyStoreProfile(profile) {
+  console.log('applyStoreProfile called with:', profile);
   setFieldValue('f_brand',                     (profile && profile.brand)                     || '');
   setFieldValue('f_country',                   (profile && profile.country)                   || '');
   onCountryChange();  // populate city options before setting city value
@@ -694,8 +695,14 @@ function applyStoreProfile(profile) {
   setFieldValue('f_dust_exposure',             (profile && profile.dust_exposure)             || '');
   setFieldValue('f_heat_load_category',        (profile && profile.heat_load_category)        || '');
   setFieldValue('f_fresh_air_requirement',     (profile && profile.fresh_air_requirement)     || '');
-  setFieldValue('f_budget_level',              (profile && profile.budget_level)              || '');
-  setFieldValue('f_energy_efficiency_priority',(profile && profile.energy_efficiency_priority)|| '');
+  
+  // CRITICAL: Budget Level and Energy Efficiency Priority
+  const budgetVal = profile && profile.budget_level;
+  const energyVal = profile && profile.energy_efficiency_priority;
+  console.log('Budget Level from profile:', budgetVal, 'Energy Efficiency from profile:', energyVal);
+  setFieldValue('f_budget_level',              budgetVal || '');
+  setFieldValue('f_energy_efficiency_priority',energyVal || '');
+  
   setFieldValue('f_existing_hvac_type',        (profile && profile.existing_hvac_type)        || '');
 
   // Landlord constraints: try to match a select option, else show custom textarea
@@ -791,6 +798,7 @@ function initStoreSelect2(results) {
     var isNew = e.params.data.newTag === true || !storeProfilesById[val];
     var hidden = document.getElementById('f_store_id_value');
     var hint   = document.getElementById('store-id-hint');
+    console.log('Store selected:', val, 'isNew:', isNew, 'profile found:', !!storeProfilesById[val], 'profile data:', storeProfilesById[val]);
     if (hidden) hidden.value = val;
     if (isNew) {
       if (hint) hint.innerHTML = '<span class="text-info"><i class="bi bi-plus-circle me-1"></i>New Store ID <strong>' + val + '</strong> will be saved when you submit.</span>';
@@ -818,6 +826,10 @@ function initStoreSelect2(results) {
     return r.json();
   }).then(function(payload) {
     var results = payload.results || [];
+    console.log('Store profiles loaded from API:', results.length, 'records');
+    if (results.length > 0) {
+      console.log('First profile sample:', results[0]);
+    }
     results.forEach(function(p) { storeProfilesById[p.store_id] = p; });
     initStoreSelect2(results);
   }).catch(function(e) {

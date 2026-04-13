@@ -97,6 +97,90 @@
   </div>
 </div>
 
+<div class="row g-3 mb-3">
+  <div class="col-xl-6">
+    <div class="ap-card h-100">
+      <div class="ap-card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-2"></i>Procurement Timeline</span>
+        <span class="small text-muted">Latest request activity</span>
+      </div>
+      <div class="ap-card-body">
+        {% if procurement_timeline %}
+        <div class="proc-dashboard-timeline">
+          {% for item in procurement_timeline %}
+          <div class="proc-dashboard-timeline-item">
+            <div class="proc-dashboard-timeline-marker proc-dashboard-timeline-marker--{{ item.tone }}">
+              <i class="bi {{ item.icon }}"></i>
+            </div>
+            <div class="proc-dashboard-timeline-content">
+              <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                  <div class="proc-dashboard-timeline-title">{{ item.title }}</div>
+                  <div class="proc-dashboard-timeline-meta">{{ item.detail }}</div>
+                </div>
+                <span class="badge text-bg-{{ item.tone }}">{{ item.status_label }}</span>
+              </div>
+              <div class="proc-dashboard-timeline-desc">{{ item.action_text }}</div>
+              <div class="proc-dashboard-timeline-time">
+                {{ item.timestamp|date:"d M Y, H:i" }}
+                <span class="text-muted">({{ item.timestamp|timesince }} ago)</span>
+              </div>
+              <div class="mt-2">
+                <a href="{% url 'procurement:request_workspace' item.pk %}" class="btn btn-xs btn-outline-primary">Open request</a>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-muted small">No procurement activity yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="ap-card h-100">
+      <div class="ap-card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-graph-up-arrow me-2"></i>Benchmark Timeline</span>
+        <span class="small text-muted">Recent should-cost progress</span>
+      </div>
+      <div class="ap-card-body">
+        {% if benchmark_timeline %}
+        <div class="proc-dashboard-timeline">
+          {% for item in benchmark_timeline %}
+          <div class="proc-dashboard-timeline-item">
+            <div class="proc-dashboard-timeline-marker proc-dashboard-timeline-marker--{{ item.tone }}">
+              <i class="bi {{ item.icon }}"></i>
+            </div>
+            <div class="proc-dashboard-timeline-content">
+              <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                  <div class="proc-dashboard-timeline-title">{{ item.title }}</div>
+                  <div class="proc-dashboard-timeline-meta">{{ item.detail }}</div>
+                </div>
+                <span class="badge text-bg-{{ item.tone }}">{{ item.status_label }}</span>
+              </div>
+              <div class="proc-dashboard-timeline-desc">{{ item.action_text }}</div>
+              <div class="proc-dashboard-timeline-time">
+                {{ item.timestamp|date:"d M Y, H:i" }}
+                <span class="text-muted">({{ item.timestamp|timesince }} ago)</span>
+              </div>
+              <div class="mt-2">
+                <a href="{% url 'benchmarking:request_detail' item.pk %}" class="btn btn-xs btn-outline-warning">Open benchmark</a>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-muted small">No benchmark activity yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- RECENT -->
 <div class="ap-card">
   <div class="ap-card-header">Recent Requests</div>

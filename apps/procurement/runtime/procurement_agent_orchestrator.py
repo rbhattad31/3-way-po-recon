@@ -35,12 +35,16 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from django.utils import timezone
+from django.core.exceptions import PermissionDenied
 
 from apps.core.decorators import observed_service
 from apps.core.enums import AnalysisRunStatus
 from apps.core.trace import TraceContext
+from apps.agents.services.base_agent import BaseAgent
+from apps.agents.services.guardrails_service import AgentGuardrailsService
 from apps.procurement.runtime.procurement_agent_context import ProcurementAgentContext
 from apps.procurement.runtime.procurement_agent_memory import ProcurementAgentMemory
+from apps.procurement.runtime.procurement_planner import ProcurementPlanner
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +121,58 @@ class ProcurementAgentOrchestrator:
         start_time = time.monotonic()
         result = ProcurementOrchestrationResult(agent_type=agent_type)
 
+        # ------------------------------------------------------------------
+        # Centralized authorization (fail-closed)
+        # ------------------------------------------------------------------
+        actor = AgentGuardrailsService.resolve_actor(request_user)
+        orchestrate_allowed = (
+            AgentGuardrailsService.authorize_orchestration(actor)
+            or actor.has_permission("procurement.orchestrate")
+            or actor.has_permission("procurement.run_analysis")
+        )
+        if self._is_admin_bypass(actor):
+            orchestrate_allowed = True
+        # Compatibility path for fresh/dev/test databases before RBAC seed runs.
+        if not orchestrate_allowed and self._allow_unseeded_rbac_fallback(actor):
+            orchestrate_allowed = True
+        AgentGuardrailsService.log_guardrail_decision(
+            user=actor,
+            action="procurement_orchestrate",
+            permission_code="agents.orchestrate|procurement.orchestrate|procurement.run_analysis",
+            granted=orchestrate_allowed,
+            entity_type="AnalysisRun",
+            entity_id=getattr(run, "pk", None),
+            metadata={"agent_type": agent_type},
+        )
+        if not orchestrate_allowed:
+            raise PermissionDenied("Permission denied: procurement orchestration is not authorized.")
+
+        permission_agent_type = self._resolve_guardrail_agent_type(agent_type)
+        per_agent_allowed = AgentGuardrailsService.authorize_agent(actor, permission_agent_type)
+        if self._is_admin_bypass(actor):
+            per_agent_allowed = True
+        if not per_agent_allowed and self._allow_unseeded_rbac_fallback(actor):
+            per_agent_allowed = True
+        AgentGuardrailsService.log_guardrail_decision(
+            user=actor,
+            action="procurement_agent_execute",
+            permission_code=f"agents.run_{permission_agent_type.lower()}",
+            granted=per_agent_allowed,
+            entity_type="AnalysisRun",
+            entity_id=getattr(run, "pk", None),
+            metadata={"agent_type": agent_type, "mapped_agent_type": permission_agent_type},
+        )
+        if not per_agent_allowed:
+            raise PermissionDenied(f"Permission denied: execution of agent '{permission_agent_type}' is not authorized.")
+
+        scope_allowed = self._authorize_procurement_scope(
+            actor=actor,
+            run=run,
+            extra_context=extra_context or {},
+        )
+        if not scope_allowed:
+            raise PermissionDenied("Permission denied: request is outside actor data scope.")
+
         # Resolve trace context
         trace_ctx = TraceContext.get_current()
         trace_id = (getattr(run, "trace_id", "") or "") or (trace_ctx.trace_id if trace_ctx else "")
@@ -126,13 +182,32 @@ class ProcurementAgentOrchestrator:
         if memory is None:
             memory = ProcurementAgentMemory()
 
+        # Duplicate-run guard: prevent concurrent execution of same agent for the same AnalysisRun.
+        try:
+            from apps.procurement.models import ProcurementAgentExecutionRecord
+
+            duplicate_running = ProcurementAgentExecutionRecord.objects.filter(
+                run=run,
+                agent_type=agent_type,
+                status=AnalysisRunStatus.RUNNING,
+            ).exists()
+            if duplicate_running:
+                result.status = "skipped"
+                result.error = (
+                    f"Duplicate run guard: agent '{agent_type}' is already running "
+                    f"for AnalysisRun {getattr(run, 'pk', '?')}."
+                )
+                return result
+        except Exception:
+            logger.debug("Duplicate-run guard failed open (non-fatal)", exc_info=True)
+
         # Build context
         ctx = self._build_context(
             run=run,
             memory=memory,
             trace_id=trace_id,
             span_id=span_id,
-            request_user=request_user,
+            request_user=actor,
             extra_context=extra_context or {},
         )
 
@@ -140,11 +215,18 @@ class ProcurementAgentOrchestrator:
         lf_span = self._start_trace_span(
             run=run, agent_type=agent_type, trace_id=trace_id, ctx=ctx,
         )
-        self._audit_start(run=run, agent_type=agent_type, ctx=ctx, user=request_user)
+        self._audit_start(run=run, agent_type=agent_type, ctx=ctx, user=actor)
 
         # Create execution record (best-effort)
         exec_record_id = self._create_execution_record(run=run, agent_type=agent_type, ctx=ctx)
         result.execution_record_id = exec_record_id
+        agent_run_id = self._create_agent_run_mirror(
+            run=run,
+            requested_agent_type=agent_type,
+            mapped_agent_type=permission_agent_type,
+            ctx=ctx,
+            actor=actor,
+        )
 
         try:
             # ==============================================================
@@ -174,7 +256,8 @@ class ProcurementAgentOrchestrator:
                 run=run,
                 result=result,
             )
-            self._audit_complete(run=run, agent_type=agent_type, result=result, user=request_user)
+            self._complete_agent_run_mirror(agent_run_id=agent_run_id, result=result)
+            self._audit_complete(run=run, agent_type=agent_type, result=result, user=actor)
 
         except Exception as exc:
             logger.exception(
@@ -187,13 +270,75 @@ class ProcurementAgentOrchestrator:
             self._fail_execution_record(
                 exec_record_id=exec_record_id, run=run, error=result.error,
             )
-            self._audit_failure(run=run, agent_type=agent_type, error=result.error, user=request_user)
+            self._fail_agent_run_mirror(agent_run_id=agent_run_id, error=result.error)
+            self._audit_failure(run=run, agent_type=agent_type, error=result.error, user=actor)
 
         finally:
             result.duration_ms = int((time.monotonic() - start_time) * 1000)
+            self._update_agent_run_duration(agent_run_id=agent_run_id, duration_ms=result.duration_ms)
             self._end_trace_span(lf_span=lf_span, result=result)
 
         return result
+
+    def run_planned(
+        self,
+        *,
+        run: Any,
+        agent_fn_map: Dict[str, Callable[[ProcurementAgentContext], Any]],
+        memory: Optional[ProcurementAgentMemory] = None,
+        extra_context: Optional[Dict[str, Any]] = None,
+        request_user: Any = None,
+    ) -> List[ProcurementOrchestrationResult]:
+        """Execute a planner-produced sequence of procurement agents.
+
+        This is a deterministic planner-enabled path that can be used by services
+        and tasks to run multi-agent flows in a single orchestration call.
+        """
+        if memory is None:
+            memory = ProcurementAgentMemory()
+
+        trace_ctx = TraceContext.get_current()
+        trace_id = (getattr(run, "trace_id", "") or "") or (trace_ctx.trace_id if trace_ctx else "")
+        span_id = trace_ctx.span_id if trace_ctx else ""
+        actor = AgentGuardrailsService.resolve_actor(request_user)
+
+        plan_ctx = self._build_context(
+            run=run,
+            memory=memory,
+            trace_id=trace_id,
+            span_id=span_id,
+            request_user=actor,
+            extra_context=extra_context or {},
+        )
+
+        # Phase 5: delegate to real standalone ProcurementPlanner
+        _plan = ProcurementPlanner.plan_for_context(plan_ctx)
+        planned_agents = _plan.agents
+        outputs: List[ProcurementOrchestrationResult] = []
+        for planned_agent in planned_agents:
+            agent_fn = agent_fn_map.get(planned_agent)
+            if not agent_fn:
+                outputs.append(
+                    ProcurementOrchestrationResult(
+                        agent_type=planned_agent,
+                        status="skipped",
+                        error=f"No agent function mapped for '{planned_agent}'.",
+                    )
+                )
+                continue
+
+            outputs.append(
+                self.run(
+                    run=run,
+                    agent_type=planned_agent,
+                    agent_fn=agent_fn,
+                    memory=memory,
+                    extra_context=extra_context or {},
+                    request_user=request_user,
+                )
+            )
+
+        return outputs
 
     # -----------------------------------------------------------------------
     # Context builder
@@ -301,6 +446,149 @@ class ProcurementAgentOrchestrator:
             "recommendation_type": getattr(raw_output, "recommendation_type", None),
         }
 
+    @staticmethod
+    def _resolve_guardrail_agent_type(agent_type: str) -> str:
+        """Map procurement runtime labels to centralized guardrail agent names."""
+        lowered = (agent_type or "").lower()
+        if lowered.startswith("benchmark_item_"):
+            return "PROCUREMENT_BENCHMARK"
+        if "recommendation" in lowered:
+            return "PROCUREMENT_RECOMMENDATION"
+        if "validation" in lowered:
+            return "PROCUREMENT_VALIDATION"
+        if "compliance" in lowered:
+            return "PROCUREMENT_COMPLIANCE"
+        if "market" in lowered:
+            return "PROCUREMENT_MARKET_INTELLIGENCE"
+        return "PROCUREMENT_RECOMMENDATION"
+
+    @staticmethod
+    def _authorize_procurement_scope(*, actor: Any, run: Any, extra_context: Dict[str, Any]) -> bool:
+        """Enforce tenant and scope_json dimensions for procurement runs.
+
+        Procurement currently does not persist business_unit/vendor_id directly on
+        ProcurementRequest, so this method uses:
+        - tenant from request.tenant
+        - optional business_unit/vendor_id from extra_context when available
+        """
+        request_obj = getattr(run, "request", None)
+        request_tenant_id = getattr(request_obj, "tenant_id", None)
+        actor_company_id = getattr(actor, "company_id", None)
+
+        # Tenant isolation check for non-platform-admin users.
+        if not getattr(actor, "is_platform_admin", False):
+            if request_tenant_id and actor_company_id and request_tenant_id != actor_company_id:
+                AgentGuardrailsService.log_guardrail_decision(
+                    user=actor,
+                    action="procurement_data_scope_check",
+                    permission_code="agents.data_scope",
+                    granted=False,
+                    entity_type="AnalysisRun",
+                    entity_id=getattr(run, "pk", None),
+                    metadata={
+                        "reason": "tenant_mismatch",
+                        "request_tenant_id": request_tenant_id,
+                        "actor_company_id": actor_company_id,
+                    },
+                )
+                return False
+
+        actor_scope = AgentGuardrailsService.get_actor_scope(actor)
+        requested_business_unit = extra_context.get("business_unit")
+        requested_vendor_id = extra_context.get("vendor_id")
+
+        allowed_business_units = actor_scope.get("allowed_business_units")
+        allowed_vendor_ids = actor_scope.get("allowed_vendor_ids")
+
+        if allowed_business_units is not None and requested_business_unit is not None:
+            if requested_business_unit not in allowed_business_units:
+                AgentGuardrailsService.log_guardrail_decision(
+                    user=actor,
+                    action="procurement_data_scope_check",
+                    permission_code="agents.data_scope",
+                    granted=False,
+                    entity_type="AnalysisRun",
+                    entity_id=getattr(run, "pk", None),
+                    metadata={
+                        "reason": "business_unit_out_of_scope",
+                        "requested_business_unit": requested_business_unit,
+                        "allowed_business_units": allowed_business_units,
+                    },
+                )
+                return False
+
+        if allowed_vendor_ids is not None and requested_vendor_id is not None:
+            if requested_vendor_id not in allowed_vendor_ids:
+                AgentGuardrailsService.log_guardrail_decision(
+                    user=actor,
+                    action="procurement_data_scope_check",
+                    permission_code="agents.data_scope",
+                    granted=False,
+                    entity_type="AnalysisRun",
+                    entity_id=getattr(run, "pk", None),
+                    metadata={
+                        "reason": "vendor_out_of_scope",
+                        "requested_vendor_id": requested_vendor_id,
+                        "allowed_vendor_ids": allowed_vendor_ids,
+                    },
+                )
+                return False
+
+        AgentGuardrailsService.log_guardrail_decision(
+            user=actor,
+            action="procurement_data_scope_check",
+            permission_code="agents.data_scope",
+            granted=True,
+            entity_type="AnalysisRun",
+            entity_id=getattr(run, "pk", None),
+            metadata={
+                "request_tenant_id": request_tenant_id,
+                "actor_company_id": actor_company_id,
+                "requested_business_unit": requested_business_unit,
+                "requested_vendor_id": requested_vendor_id,
+            },
+        )
+        return True
+
+    @staticmethod
+    def _allow_unseeded_rbac_fallback(actor: Any) -> bool:
+        """Return True only when RBAC catalog appears unseeded.
+
+        This keeps fail-closed behavior in real environments while preventing
+        false denials in test/bootstrap databases where permission rows are not
+        loaded yet.
+        """
+        try:
+            from apps.accounts.rbac_models import Permission
+
+            # If RBAC has at least one permission row, enforce strict checks.
+            if Permission.objects.exists():
+                return False
+        except Exception:
+            return False
+
+        # No seeded permissions: allow only authenticated/synthetic system actors.
+        return bool(getattr(actor, "is_authenticated", False) or getattr(actor, "email", "") == "system-agent@internal")
+
+    @staticmethod
+    def _is_admin_bypass(actor: Any) -> bool:
+        """Return True for platform/admin/system-agent actors with bypass semantics.
+
+        SYSTEM_AGENT is a least-privilege identity designed to run procurement
+        pipelines autonomously from Celery tasks.  It already has scoped permissions
+        seeded by seed_rbac, but we bypass the per-agent check here to avoid
+        needing a DB round-trip just to confirm the role that is always granted.
+        """
+        if getattr(actor, "is_platform_admin", False):
+            return True
+        role_code = str(getattr(actor, "role", "") or "").upper()
+        if role_code in {"ADMIN", "SUPER_ADMIN", "SYSTEM_AGENT"}:
+            return True
+        # Also match by email for safety (guards against stale .role field)
+        if getattr(actor, "email", "") == "system-agent@internal":
+            return True
+        return False
+
     # -----------------------------------------------------------------------
     # Execution record management (additive DB record on AnalysisRun)
     # -----------------------------------------------------------------------
@@ -332,6 +620,89 @@ class ProcurementAgentOrchestrator:
             return None
 
     @staticmethod
+    def _create_agent_run_mirror(
+        *,
+        run: Any,
+        requested_agent_type: str,
+        mapped_agent_type: str,
+        ctx: ProcurementAgentContext,
+        actor: Any,
+    ) -> Optional[int]:
+        """Create a tenant-scoped AgentRun mirror for `/agents/runs/` observability."""
+        try:
+            from apps.agents.models import AgentRun
+            from apps.core.enums import AgentRunStatus
+
+            agent_run = AgentRun.objects.create(
+                tenant=getattr(run, "tenant", None) or getattr(getattr(run, "request", None), "tenant", None),
+                agent_type=mapped_agent_type,
+                status=AgentRunStatus.RUNNING,
+                input_payload={
+                    "source": "procurement_orchestrator",
+                    "analysis_run_id": str(getattr(run, "run_id", "")),
+                    "analysis_run_pk": getattr(run, "pk", None),
+                    "procurement_request_id": str(getattr(getattr(run, "request", None), "request_id", "")),
+                    "requested_agent_type": requested_agent_type,
+                },
+                trace_id=ctx.trace_id,
+                span_id=ctx.span_id,
+                invocation_reason=f"Procurement orchestrator: {requested_agent_type}",
+                actor_user_id=ctx.actor_user_id,
+                actor_primary_role=ctx.actor_primary_role,
+                access_granted=True,
+                started_at=timezone.now(),
+            )
+            return agent_run.pk
+        except Exception as exc:
+            logger.debug("Could not create AgentRun mirror for procurement orchestrator: %s", exc)
+            return None
+
+    @staticmethod
+    def _complete_agent_run_mirror(*, agent_run_id: Optional[int], result: ProcurementOrchestrationResult) -> None:
+        if not agent_run_id:
+            return
+        try:
+            from apps.agents.models import AgentRun
+            from apps.core.enums import AgentRunStatus
+
+            AgentRun.objects.filter(pk=agent_run_id).update(
+                status=AgentRunStatus.COMPLETED,
+                confidence=result.confidence,
+                output_payload=result.output,
+                summarized_reasoning=BaseAgent._sanitise_text(result.reasoning_summary)[:2000],
+                completed_at=timezone.now(),
+            )
+        except Exception as exc:
+            logger.debug("Could not complete AgentRun mirror %s: %s", agent_run_id, exc)
+
+    @staticmethod
+    def _fail_agent_run_mirror(*, agent_run_id: Optional[int], error: str) -> None:
+        if not agent_run_id:
+            return
+        try:
+            from apps.agents.models import AgentRun
+            from apps.core.enums import AgentRunStatus
+
+            AgentRun.objects.filter(pk=agent_run_id).update(
+                status=AgentRunStatus.FAILED,
+                error_message=error,
+                completed_at=timezone.now(),
+            )
+        except Exception as exc:
+            logger.debug("Could not fail AgentRun mirror %s: %s", agent_run_id, exc)
+
+    @staticmethod
+    def _update_agent_run_duration(*, agent_run_id: Optional[int], duration_ms: int) -> None:
+        if not agent_run_id:
+            return
+        try:
+            from apps.agents.models import AgentRun
+
+            AgentRun.objects.filter(pk=agent_run_id).update(duration_ms=duration_ms)
+        except Exception as exc:
+            logger.debug("Could not update AgentRun mirror duration %s: %s", agent_run_id, exc)
+
+    @staticmethod
     def _complete_execution_record(
         *,
         exec_record_id: Optional[int],
@@ -346,7 +717,7 @@ class ProcurementAgentOrchestrator:
             ProcurementAgentExecutionRecord.objects.filter(pk=exec_record_id).update(
                 status=AnalysisRunStatus.COMPLETED,
                 confidence_score=result.confidence,
-                reasoning_summary=result.reasoning_summary[:2000],
+                reasoning_summary=BaseAgent._sanitise_text(result.reasoning_summary)[:2000],
                 output_snapshot=result.output,
                 completed_at=timezone.now(),
             )
@@ -500,25 +871,43 @@ class ProcurementAgentOrchestrator:
 # ---------------------------------------------------------------------------
 
 class _ProcurementPlannerStub:
-    """Placeholder for future ReasoningPlanner integration.
+    """Deterministic baseline planner for procurement agent sequencing.
 
-    In Phase 2, replace this with a real planner that:
-    - Calls the shared ReasoningPlanner / PolicyEngine
-    - Decides which procurement agents to run and in what order
-    - Supports multi-agent chaining (recommendation + compliance + benchmark)
-
-    For Phase 1, the orchestrator always runs a single agent_fn per .run() call.
-    The caller (service) decides what to call.
+    This replaces the hard NotImplementedError path with a safe fallback plan
+    until full shared ReasoningPlanner/PolicyEngine integration is completed.
     """
+
+    PLAN_BY_ANALYSIS_TYPE: Dict[str, List[str]] = {
+        "RECOMMENDATION": ["recommendation", "compliance", "market_intelligence"],
+        "BENCHMARK": ["benchmark"],
+        "VALIDATION": ["validation_augmentation"],
+    }
 
     @staticmethod
     def plan(ctx: ProcurementAgentContext) -> List[str]:  # noqa: F821
         """Return ordered list of agent_type strings to execute.
 
-        Phase 1: not implemented -- services call orchestrator.run() directly.
-        Phase 2: replace with LLM-driven or policy-driven multi-agent plan.
+        Selection order:
+        1) Explicit sequence from context (if provided)
+        2) Deterministic mapping by analysis type
+        3) Safe fallback to recommendation
         """
-        raise NotImplementedError("ProcurementPlanner is a Phase 2 feature")
+        explicit = (ctx.extra_context or {}).get("planned_agents")
+        if isinstance(explicit, list) and explicit:
+            deduped: List[str] = []
+            for value in explicit:
+                name = str(value or "").strip().lower()
+                if name and name not in deduped:
+                    deduped.append(name)
+            if deduped:
+                return deduped
+
+        analysis_type = str(getattr(ctx, "analysis_type", "") or "").upper()
+        mapped = _ProcurementPlannerStub.PLAN_BY_ANALYSIS_TYPE.get(analysis_type)
+        if mapped:
+            return list(mapped)
+
+        return ["recommendation"]
 
 
 class _ProcurementToolRegistryStub:
@@ -543,15 +932,39 @@ class _ProcurementToolRegistryStub:
 
     @staticmethod
     def execute(tool_name: str, params: Dict[str, Any]) -> Any:
-        """Phase 1 stub -- tools not yet wired.
+        """Execute registered procurement tool with standard permission gating."""
+        from apps.tools.registry.base import ToolRegistry
 
-        To enable a tool:
-        1. Create a class in apps/tools/registry/tools.py extending BaseTool
-        2. Decorate with @register_tool
-        3. Set required_permission
-        4. Replace this stub call with ToolRegistry.execute(tool_name, params)
-        """
-        raise NotImplementedError(
-            f"Tool '{tool_name}' is defined as a Phase 2 extension point. "
-            "Implement in apps/tools/registry/tools.py and wire to ToolRegistry."
+        tool = ToolRegistry.get(tool_name)
+        if tool is None:
+            raise NotImplementedError(f"Tool '{tool_name}' is not registered in ToolRegistry.")
+
+        actor = AgentGuardrailsService.resolve_actor(params.get("request_user"))
+        if not AgentGuardrailsService.authorize_tool(actor, tool_name):
+            AgentGuardrailsService.log_guardrail_decision(
+                user=actor,
+                action="procurement_tool_execute",
+                permission_code=f"tool:{tool_name}",
+                granted=False,
+                entity_type="ToolCall",
+                entity_id=None,
+                metadata={"tool_name": tool_name},
+            )
+            raise PermissionDenied(f"Permission denied: tool '{tool_name}' is not authorized.")
+
+        AgentGuardrailsService.log_guardrail_decision(
+            user=actor,
+            action="procurement_tool_execute",
+            permission_code=f"tool:{tool_name}",
+            granted=True,
+            entity_type="ToolCall",
+            entity_id=None,
+            metadata={"tool_name": tool_name},
         )
+
+        safe_params = dict(params)
+        safe_params.pop("request_user", None)
+        result = tool.execute(**safe_params)
+        if not result.success:
+            raise RuntimeError(result.error or f"Tool '{tool_name}' execution failed")
+        return result.data

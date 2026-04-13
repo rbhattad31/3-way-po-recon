@@ -324,8 +324,13 @@
       var barColor = successRate >= 80 ? "var(--ap-success)" : successRate >= 50 ? "var(--ap-warning)" : "var(--ap-danger)";
 
       html += '<div class="cc-agent-card cc-fade-in">'
-        + '  <div class="cc-agent-card-icon ' + info.iconClass + '"><i class="bi ' + info.icon + '"></i></div>'
-        + '  <div class="cc-agent-card-name">' + info.label + '</div>'
+        + '  <div class="cc-agent-card-top">'
+        + '    <div class="cc-agent-card-icon ' + info.iconClass + '"><i class="bi ' + info.icon + '"></i></div>'
+        + '    <div class="cc-agent-card-head">'
+        + '      <div class="cc-agent-card-name">' + info.label + '</div>'
+        + '      <div class="cc-agent-card-subtitle">Agentic workflow</div>'
+        + '    </div>'
+        + '  </div>'
         + '  <div class="cc-agent-card-stats">'
         + '    <div class="cc-agent-card-stat"><span class="cc-agent-card-stat-val">' + (a.total_runs || 0) + '</span><span class="cc-agent-card-stat-lbl">Runs</span></div>'
         + '    <div class="cc-agent-card-stat"><span class="cc-agent-card-stat-val" style="color:' + barColor + '">' + successRate + '%</span><span class="cc-agent-card-stat-lbl">Success</span></div>'

@@ -14,7 +14,7 @@ body { background: #f4f6f9; }
   padding: 1.5rem 1.75rem;
   box-shadow: 0 8px 20px rgba(0,0,0,.15);
 }
-.lmg-banner .fw-bold { font-size: 1.4rem; }
+.lmg-banner .fw-bold { font-size: 1.4rem; }5
 .lmg-brand-pills .badge {
   font-size: .75rem;
   padding: .35rem .55rem;
@@ -67,3 +67,80 @@ td { color: #111827; }
 
 /* ---- Country flags ---- */
 .country-flag { font-size: 1.2rem; margin-right: .4rem; }
+
+/* ---- Timeline cards ---- */
+.proc-dashboard-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.proc-dashboard-timeline-item {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: .9rem;
+  align-items: flex-start;
+}
+
+.proc-dashboard-timeline-marker {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 1rem;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, .12);
+}
+
+.proc-dashboard-timeline-marker--secondary { background: #6b7280; }
+.proc-dashboard-timeline-marker--primary { background: #2563eb; }
+.proc-dashboard-timeline-marker--info { background: #0891b2; }
+.proc-dashboard-timeline-marker--success { background: #16a34a; }
+.proc-dashboard-timeline-marker--warning { background: #ea580c; }
+.proc-dashboard-timeline-marker--danger { background: #dc2626; }
+
+.proc-dashboard-timeline-content {
+  position: relative;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: .85rem 1rem;
+}
+
+.proc-dashboard-timeline-title {
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: .15rem;
+}
+
+.proc-dashboard-timeline-meta {
+  font-size: .78rem;
+  color: #6b7280;
+}
+
+.proc-dashboard-timeline-desc {
+  margin-top: .45rem;
+  color: #374151;
+  font-size: .84rem;
+}
+
+.proc-dashboard-timeline-time {
+  margin-top: .45rem;
+  font-size: .75rem;
+  color: #6b7280;
+}
+
+@media (max-width: 767.98px) {
+  .proc-dashboard-timeline-item {
+    grid-template-columns: 36px 1fr;
+    gap: .75rem;
+  }
+
+  .proc-dashboard-timeline-marker {
+    width: 36px;
+    height: 36px;
+    font-size: .9rem;
+  }
+}

@@ -92,6 +92,12 @@ class AgentType(models.TextChoices):
     SYSTEM_POSTING_PREPARATION = "SYSTEM_POSTING_PREPARATION", "System Posting Preparation"
     # Supervisor agent -- full lifecycle orchestrator
     SUPERVISOR = "SUPERVISOR", "Supervisor"
+    # Procurement runtime convergence agents
+    PROCUREMENT_RECOMMENDATION = "PROCUREMENT_RECOMMENDATION", "Procurement Recommendation"
+    PROCUREMENT_BENCHMARK = "PROCUREMENT_BENCHMARK", "Procurement Benchmark"
+    PROCUREMENT_VALIDATION = "PROCUREMENT_VALIDATION", "Procurement Validation"
+    PROCUREMENT_COMPLIANCE = "PROCUREMENT_COMPLIANCE", "Procurement Compliance"
+    PROCUREMENT_MARKET_INTELLIGENCE = "PROCUREMENT_MARKET_INTELLIGENCE", "Procurement Market Intelligence"
 
 
 class ToolCallStatus(models.TextChoices):

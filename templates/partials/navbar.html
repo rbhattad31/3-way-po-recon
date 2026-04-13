@@ -1,10 +1,13 @@
 {# ── AP Operations Topbar with Navigation ── #}
+{% load static %}
 {% load rbac_tags %}
 <nav class="ap-topbar">
   {# Brand #}
   <a class="ap-topbar-brand" href="{% url 'procurement:home' %}">
-    <span class="ap-topbar-brand-icon" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);"><i class="bi bi-wind"></i></span>
-    LMG Procurement
+    <span class="ap-topbar-brand-logo-wrap">
+      <img src="{% static 'images/landmark-logo.svg' %}" alt="Bradsol" class="ap-topbar-brand-logo">
+    </span>
+    Bradsol ProcureAI
   </a>
 
   {# ── Main Navigation (dropdowns) ── #}

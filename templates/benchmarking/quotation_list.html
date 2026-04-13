@@ -1,6 +1,37 @@
 {% extends "procurement/proc_base.html" %}
 {% block title %}Quotations | Benchmarking{% endblock %}
 
+{% block extra_head %}
+<style>
+  .q-folder-grid { display:flex; flex-wrap:wrap; gap:1rem; }
+  .q-folder-card {
+    width:190px; cursor:pointer; user-select:none;
+    border-radius:0 12px 12px 12px;
+    border:1.5px solid #e5e7eb;
+    background:#fffdf7;
+    transition:box-shadow .15s, border-color .15s;
+  }
+  .q-folder-card:hover { box-shadow:0 6px 16px rgba(0,0,0,.1); border-color:#facc15; }
+  .q-folder-card.q-folder-open { border-color:#3b82f6; box-shadow:0 0 0 3px #bfdbfe; }
+  .q-folder-tab {
+    height:10px; width:60%; border-radius:6px 6px 0 0;
+    background:#facc15; margin-bottom:-2px;
+  }
+  .q-folder-card.q-folder-open .q-folder-tab { background:#3b82f6; }
+  .q-folder-body { padding:.72rem .82rem; }
+  .q-folder-icon { font-size:2rem; line-height:1; }
+  .q-folder-name { font-size:.79rem; font-weight:700; color:#111827; margin-top:.35rem; }
+  .q-folder-sub { font-size:.69rem; color:#6b7280; }
+  .q-folder-chip {
+    display:inline-flex; align-items:center; gap:.3rem;
+    font-size:.67rem; background:#f3f4f6; border-radius:18px;
+    padding:.14em .62em; color:#374151; font-weight:600; margin-top:.45rem;
+  }
+  .q-folder-status { margin-top:.45rem; display:flex; gap:.35rem; flex-wrap:wrap; }
+  .q-folder-table { border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
+</style>
+{% endblock %}
+
 {% block breadcrumb %}
 <nav aria-label="breadcrumb" class="mb-3">
   <ol class="breadcrumb mb-0" style="font-size:.8rem;">
@@ -35,9 +66,7 @@
     <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
       <div class="card-body py-3 px-3">
         <div style="font-size:.72rem;font-weight:600;color:#059669;text-transform:uppercase;">Extraction Done</div>
-        <div class="fs-3 fw-bold mt-1" style="color:#059669;">
-          {% with done_count=0 %}{{ quotations|length }}{% endwith %}
-        </div>
+        <div class="fs-3 fw-bold mt-1" style="color:#059669;">{{ done_count }}</div>
       </div>
     </div>
   </div>
@@ -45,7 +74,7 @@
     <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
       <div class="card-body py-3 px-3">
         <div style="font-size:.72rem;font-weight:600;color:#d97706;text-transform:uppercase;">Pending</div>
-        <div class="fs-3 fw-bold mt-1" style="color:#d97706;"></div>
+        <div class="fs-3 fw-bold mt-1" style="color:#d97706;">{{ pending_count }}</div>
       </div>
     </div>
   </div>
@@ -53,7 +82,7 @@
     <div class="card border-0 shadow-sm h-100" style="border-radius:10px;">
       <div class="card-body py-3 px-3">
         <div style="font-size:.72rem;font-weight:600;color:#dc2626;text-transform:uppercase;">Failed</div>
-        <div class="fs-3 fw-bold mt-1" style="color:#dc2626;"></div>
+        <div class="fs-3 fw-bold mt-1" style="color:#dc2626;">{{ failed_count }}</div>
       </div>
     </div>
   </div>
@@ -81,69 +110,121 @@
   </div>
 </div>
 
-<div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
-  <div class="table-responsive">
-    <table class="table table-sm table-hover mb-0" style="font-size:.82rem;">
-      <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
-        <tr>
-          <th class="px-3 py-2 fw-600" style="color:#6b7280;">Supplier</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Quote Ref</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Request</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Geography</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Extraction</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Lines</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Uploaded</th>
-          <th class="py-2"></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for q in quotations %}
-        <tr>
-          <td class="px-3 py-2 fw-600" style="color:#111827;">
-            <a href="{% url 'benchmarking:quotation_detail' q.pk %}"
-               class="text-decoration-none fw-600" style="color:#111827;">
-              {{ q.supplier_name|default:"Unknown Supplier" }}
-            </a>
-          </td>
-          <td class="py-2 text-muted">{{ q.quotation_ref|default:"--" }}</td>
-          <td class="py-2">
-            <a href="{% url 'benchmarking:request_detail' q.request.pk %}"
-               class="text-decoration-none" style="color:#1665D8;">
-              {{ q.request.title|truncatechars:35 }}
-            </a>
-          </td>
-          <td class="py-2"><span class="badge bg-light text-dark border">{{ q.request.geography }}</span></td>
-          <td class="py-2">
-            <span class="badge bg-{% if q.extraction_status == 'DONE' %}success{% elif q.extraction_status == 'FAILED' %}danger{% else %}secondary{% endif %}">
-              {{ q.extraction_status }}
-            </span>
-          </td>
-          <td class="py-2">{{ q.line_items.count }}</td>
-          <td class="py-2 text-muted">{{ q.created_at|date:"d M Y" }}</td>
-          <td class="py-2">
-            <div class="d-flex gap-1">
-              <a href="{% url 'benchmarking:quotation_detail' q.pk %}"
-                 class="btn btn-xs btn-outline-primary" style="font-size:.72rem;padding:2px 8px;">
-                <i class="bi bi-list-columns me-1"></i>Lines
-              </a>
-              <a href="{% url 'benchmarking:request_detail' q.request.pk %}"
-                 class="btn btn-xs btn-outline-secondary" style="font-size:.72rem;padding:2px 8px;">
-                <i class="bi bi-diagram-3 me-1"></i>Request
-              </a>
-            </div>
-          </td>
-        </tr>
-        {% empty %}
-        <tr>
-          <td colspan="8" class="text-center py-5 text-muted">
-            <i class="bi bi-folder2-open fs-3 d-block mb-2"></i>
-            No quotations uploaded yet.
-            <a href="{% url 'benchmarking:request_create' %}">Upload the first one.</a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{% if request_folders %}
+<div class="card border-0 shadow-sm mb-3" style="border-radius:10px;">
+  <div class="card-header bg-white border-bottom py-2 px-3 d-flex align-items-center justify-content-between">
+    <span class="fw-bold" style="font-size:.9rem;color:#111827;">
+      <i class="bi bi-folder2-open text-warning me-1"></i>Request Folders
+    </span>
+    <span class="badge bg-light text-dark border" style="font-size:.72rem;">{{ total_folders }} folder{% if total_folders != 1 %}s{% endif %}</span>
+  </div>
+  <div class="card-body px-3 pt-3 pb-2">
+    <div class="q-folder-grid" id="qFolderGrid">
+      {% for folder in request_folders %}
+      <div class="q-folder-card" onclick="toggleQuotationFolder('q-folder-{{ forloop.counter }}', this)" title="{{ folder.request.title }}">
+        <div class="q-folder-tab"></div>
+        <div class="q-folder-body">
+          <div class="q-folder-icon"><i class="bi bi-folder-fill text-warning"></i></div>
+          <div class="q-folder-name">{{ folder.request.title|truncatechars:28 }}</div>
+          <div class="q-folder-sub">{{ folder.request.geography }} &middot; {{ folder.request.scope_type }}</div>
+          <span class="q-folder-chip"><i class="bi bi-file-earmark-text"></i>{{ folder.file_count }} file{% if folder.file_count != 1 %}s{% endif %}</span>
+          <div class="q-folder-status">
+            <span class="badge bg-success" style="font-size:.62rem;">Done {{ folder.done_count }}</span>
+            <span class="badge bg-secondary" style="font-size:.62rem;">Pending {{ folder.pending_count }}</span>
+            <span class="badge bg-danger" style="font-size:.62rem;">Failed {{ folder.failed_count }}</span>
+          </div>
+          <div class="text-muted" style="font-size:.69rem;margin-top:.35rem;"><i class="bi bi-chevron-down" id="q-chevron-q-folder-{{ forloop.counter }}"></i> Open</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
 </div>
+
+<div id="qFolderPanels">
+  {% for folder in request_folders %}
+  <div class="collapse q-folder-table mb-3" id="q-folder-{{ forloop.counter }}">
+    <div class="d-flex align-items-center justify-content-between px-3 py-2 bg-white border-bottom">
+      <div class="fw-semibold" style="font-size:.84rem;color:#111827;">
+        <i class="bi bi-folder2-open text-warning me-1"></i>{{ folder.request.title }}
+      </div>
+      <div class="d-flex gap-2">
+        <a href="{% url 'benchmarking:request_detail' folder.request.pk %}" class="btn btn-sm btn-outline-secondary" style="font-size:.72rem;padding:2px 10px;">
+          <i class="bi bi-diagram-3 me-1"></i>Open Request
+        </a>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" style="font-size:.82rem;">
+        <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
+          <tr>
+            <th class="px-3 py-2 fw-600" style="color:#6b7280;">Supplier</th>
+            <th class="py-2 fw-600" style="color:#6b7280;">Quote Ref</th>
+            <th class="py-2 fw-600" style="color:#6b7280;">Extraction</th>
+            <th class="py-2 fw-600" style="color:#6b7280;">Lines</th>
+            <th class="py-2 fw-600" style="color:#6b7280;">Uploaded</th>
+            <th class="py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for q in folder.quotations %}
+          <tr>
+            <td class="px-3 py-2 fw-600" style="color:#111827;">{{ q.supplier_name|default:"Unknown Supplier" }}</td>
+            <td class="py-2 text-muted">{{ q.quotation_ref|default:"--" }}</td>
+            <td class="py-2">
+              <span class="badge bg-{% if q.extraction_status == 'DONE' %}success{% elif q.extraction_status == 'FAILED' %}danger{% else %}secondary{% endif %}">
+                {{ q.extraction_status }}
+              </span>
+            </td>
+            <td class="py-2">{{ q.line_items.count }}</td>
+            <td class="py-2 text-muted">{{ q.created_at|date:"d M Y" }}</td>
+            <td class="py-2">
+              <a href="{% url 'benchmarking:quotation_detail' q.pk %}" class="btn btn-xs btn-outline-primary" style="font-size:.72rem;padding:2px 8px;">
+                <i class="bi bi-list-columns me-1"></i>Lines
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+function toggleQuotationFolder(panelId, cardEl) {
+  var panel = document.getElementById(panelId);
+  if (!panel) return;
+  var isOpen = panel.classList.contains('show');
+
+  document.querySelectorAll('#qFolderPanels .collapse').forEach(function(p){ p.classList.remove('show'); });
+  document.querySelectorAll('#qFolderGrid .q-folder-card').forEach(function(c){ c.classList.remove('q-folder-open'); });
+  document.querySelectorAll('[id^="q-chevron-"]').forEach(function(ch){
+    ch.className = 'bi bi-chevron-down';
+    if (ch.parentNode) {
+      ch.parentNode.innerHTML = '<i class="bi bi-chevron-down" id="' + ch.id + '"></i> Open';
+    }
+  });
+
+  if (!isOpen) {
+    panel.classList.add('show');
+    cardEl.classList.add('q-folder-open');
+    var chev = document.getElementById('q-chevron-' + panelId);
+    if (chev && chev.parentNode) {
+      chev.parentNode.innerHTML = '<i class="bi bi-chevron-up" id="q-chevron-' + panelId + '"></i> Close';
+    }
+    setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 120);
+  }
+}
+</script>
+{% else %}
+<div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
+  <div class="text-center py-5 text-muted">
+    <i class="bi bi-folder2-open fs-3 d-block mb-2"></i>
+    No quotations uploaded yet.
+    <a href="{% url 'benchmarking:request_create' %}">Upload the first one.</a>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

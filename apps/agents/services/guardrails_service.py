@@ -49,6 +49,12 @@ AGENT_PERMISSIONS: Dict[str, str] = {
     "SYSTEM_POSTING_PREPARATION": "agents.run_system_posting_preparation",
     # Supervisor agent
     "SUPERVISOR": "agents.run_supervisor",
+    # Procurement agents
+    "PROCUREMENT_RECOMMENDATION": "agents.run_procurement_recommendation",
+    "PROCUREMENT_BENCHMARK": "agents.run_procurement_benchmark",
+    "PROCUREMENT_VALIDATION": "agents.run_procurement_validation",
+    "PROCUREMENT_COMPLIANCE": "agents.run_procurement_compliance",
+    "PROCUREMENT_MARKET_INTELLIGENCE": "agents.run_procurement_market_intelligence",
 }
 
 TOOL_PERMISSIONS: Dict[str, str] = {
@@ -87,6 +93,12 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "generate_case_summary": "cases.view",
     "auto_close_case": "recommendations.auto_close",
     "escalate_case": "cases.escalate",
+    # Procurement tools
+    "market_benchmark_lookup": "procurement.view_results",
+    "vendor_catalog_lookup": "procurement.view",
+    "standards_compliance_lookup": "procurement.view_results",
+    "quotation_evidence_lookup": "procurement.view_results",
+    "regional_regulation_lookup": "procurement.view_results",
 }
 
 RECOMMENDATION_PERMISSIONS: Dict[str, str] = {

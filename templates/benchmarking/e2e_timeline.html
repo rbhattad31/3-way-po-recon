@@ -1,0 +1,536 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}E2E Timeline -- {{ bench_request.title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ======== E2E TIMELINE STYLES (Benchmarking variant) ======== */
+.e2e-hero {
+  background: linear-gradient(135deg, #78350f 0%, #b45309 50%, #d97706 100%);
+  border-radius: 14px;
+  color: #fff;
+  padding: 1.5rem 2rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.e2e-hero-title { font-size: 1.25rem; font-weight: 700; margin-bottom: .2rem; }
+.e2e-hero-sub { font-size: .82rem; opacity: .85; }
+.e2e-hdr-kpi { background: rgba(255,255,255,.15); border-radius: 8px; padding: .4rem .85rem; min-width: 80px; text-align: center; }
+.e2e-hdr-kpi-val { font-size: 1.1rem; font-weight: 700; }
+.e2e-hdr-kpi-lbl { font-size: .65rem; opacity: .85; text-transform: uppercase; letter-spacing: .05em; }
+
+.e2e-kpi-strip { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.e2e-kpi {
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+  padding: .75rem 1.25rem; min-width: 130px; flex: 1;
+}
+.e2e-kpi-value { font-size: 1.5rem; font-weight: 700; color: #78350f; line-height: 1.2; }
+.e2e-kpi-label { font-size: .72rem; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
+
+/* Timeline */
+.e2e-timeline { position: relative; padding-left: 2.5rem; }
+.e2e-timeline::before {
+  content: "";
+  position: absolute;
+  left: 0.62rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, #d97706 0%, #e2e8f0 100%);
+}
+.e2e-event {
+  position: relative;
+  margin-bottom: 1.25rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: box-shadow .15s;
+}
+.e2e-event:hover { box-shadow: 0 4px 16px rgba(217,119,6,.10); }
+.e2e-dot {
+  position: absolute;
+  left: -2.02rem;
+  top: 1.1rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .6rem;
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(217,119,6,.15);
+}
+.e2e-dot-primary   { background: #3b82f6; }
+.e2e-dot-info      { background: #0ea5e9; }
+.e2e-dot-success   { background: #22c55e; }
+.e2e-dot-warning   { background: #f59e0b; }
+.e2e-dot-danger    { background: #ef4444; }
+.e2e-dot-secondary { background: #94a3b8; }
+
+.e2e-event-header {
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+  padding: .85rem 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+.e2e-event-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.icon-primary   { background: #dbeafe; color: #1d4ed8; }
+.icon-info      { background: #e0f2fe; color: #0369a1; }
+.icon-success   { background: #dcfce7; color: #15803d; }
+.icon-warning   { background: #fef3c7; color: #92400e; }
+.icon-danger    { background: #fee2e2; color: #991b1b; }
+.icon-secondary { background: #f1f5f9; color: #475569; }
+
+.e2e-event-meta { flex: 1; min-width: 0; }
+.e2e-event-title { font-size: .9rem; font-weight: 600; color: #1e293b; margin-bottom: .1rem; }
+.e2e-event-detail { font-size: .78rem; color: #64748b; word-break: break-word; }
+.e2e-event-right {
+  display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; gap: .2rem;
+}
+.e2e-ts { font-size: .72rem; color: #94a3b8; font-family: monospace; white-space: nowrap; }
+.e2e-actor { font-size: .72rem; color: #64748b; }
+.e2e-expand-btn { font-size: .72rem; color: #94a3b8; background: none; border: none; padding: 0; cursor: pointer; transition: color .15s; }
+.e2e-expand-btn:hover { color: #d97706; }
+.e2e-event-body { padding: 0 1rem 1rem 1rem; border-top: 1px dashed #e2e8f0; }
+.e2e-event-body.collapse:not(.show) { display: none; }
+
+/* Stage badge */
+.stage-badge {
+  display: inline-block; font-size: .62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; padding: .15em .55em; border-radius: 4px; margin-right: .35rem;
+}
+.stage-REQUEST_CREATED      { background: #fef3c7; color: #78350f; }
+.stage-RFQ_UPLOADED         { background: #f1f5f9; color: #475569; }
+.stage-QUOTATION_UPLOADED   { background: #e0f2fe; color: #0369a1; }
+.stage-OCR_EXTRACTED        { background: #f1f5f9; color: #475569; }
+.stage-LINES_CLASSIFIED     { background: #e0f2fe; color: #0369a1; }
+.stage-BENCHMARK_MATCHED    { background: #dbeafe; color: #1d4ed8; }
+.stage-BENCHMARK_STARTED    { background: #dbeafe; color: #1d4ed8; }
+.stage-VENDOR_RECOMMENDATION{ background: #dcfce7; color: #15803d; }
+.stage-LIVE_ENRICHMENT      { background: #fef3c7; color: #92400e; }
+.stage-BENCHMARK_RESULT     { background: #dcfce7; color: #15803d; }
+.stage-ERROR                { background: #fee2e2; color: #991b1b; }
+.stage-CURRENT_STATUS       { background: #ede9fe; color: #6d28d9; }
+
+/* Line table */
+.line-table { font-size: .78rem; }
+.line-table thead th { font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; color: #64748b; background: #f8fafc; }
+.variance-badge { font-size: .65rem; padding: .15em .5em; border-radius: 4px; }
+.v-WITHIN_RANGE { background: #dcfce7; color: #15803d; }
+.v-MODERATE     { background: #fef3c7; color: #92400e; }
+.v-HIGH         { background: #fee2e2; color: #991b1b; }
+.v-NEEDS_REVIEW { background: #f1f5f9; color: #475569; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb mb-0" style="font-size:.78rem">
+    <li class="breadcrumb-item"><a href="{% url 'benchmarking:request_list' %}" class="text-decoration-none">Benchmarks</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'benchmarking:request_detail' bench_request.pk %}" class="text-decoration-none">{{ bench_request.title|truncatechars:30 }}</a></li>
+    <li class="breadcrumb-item active">E2E Timeline</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+
+{# ── HERO ── #}
+<div class="e2e-hero">
+  <div>
+    <div class="e2e-hero-title">
+      <i class="bi bi-bar-chart-steps me-2"></i>End-to-End Lifecycle Timeline
+    </div>
+    <div class="e2e-hero-sub mb-2">{{ bench_request.title }}</div>
+    <div class="d-flex gap-2 flex-wrap">
+      <span class="badge bg-light text-dark">{{ bench_request.geography }}</span>
+      <span class="badge bg-light text-dark">{{ bench_request.scope_type }}</span>
+      {% if bench_request.store_type %}<span class="badge bg-light text-dark">{{ bench_request.store_type }}</span>{% endif %}
+      <span class="badge bg-{% if bench_request.status == 'COMPLETED' %}success{% elif bench_request.status == 'FAILED' %}danger{% elif bench_request.status == 'PROCESSING' %}warning{% else %}secondary{% endif %}">
+        {{ bench_request.status }}
+      </span>
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <div class="e2e-hdr-kpi">
+      <div class="e2e-hdr-kpi-val">{{ timeline_events|length }}</div>
+      <div class="e2e-hdr-kpi-lbl">Events</div>
+    </div>
+    <div class="e2e-hdr-kpi">
+      <div class="e2e-hdr-kpi-val">{{ quotations|length }}</div>
+      <div class="e2e-hdr-kpi-lbl">Quotations</div>
+    </div>
+    <div class="e2e-hdr-kpi">
+      <div class="e2e-hdr-kpi-val">{{ total_lines }}</div>
+      <div class="e2e-hdr-kpi-lbl">Lines</div>
+    </div>
+    <div class="e2e-hdr-kpi">
+      <div class="e2e-hdr-kpi-val">{{ total_duration_s|floatformat:0 }}s</div>
+      <div class="e2e-hdr-kpi-lbl">Total Time</div>
+    </div>
+  </div>
+</div>
+
+{# ── ACTIONS ── #}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div class="d-flex gap-2 align-items-center">
+    <a href="{% url 'benchmarking:request_detail' bench_request.pk %}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back to Benchmark Detail
+    </a>
+    <span class="text-muted" style="font-size:.78rem">
+      <i class="bi bi-calendar3 me-1"></i>Created {{ bench_request.created_at|date:"d M Y H:i" }}
+      {% if bench_request.submitted_by %}by {{ bench_request.submitted_by.get_full_name|default:bench_request.submitted_by.email }}{% endif %}
+    </span>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-warning" onclick="expandAll()">
+      <i class="bi bi-arrows-expand me-1"></i>Expand All
+    </button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="collapseAll()">
+      <i class="bi bi-arrows-collapse me-1"></i>Collapse All
+    </button>
+  </div>
+</div>
+
+{# ── KPI STRIP ── #}
+<div class="e2e-kpi-strip mb-4">
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">{{ quotations|length }}</div>
+    <div class="e2e-kpi-label">Quotations Uploaded</div>
+  </div>
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">{{ total_lines }}</div>
+    <div class="e2e-kpi-label">Lines Analyzed</div>
+  </div>
+  {% if result %}
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value {% if result.overall_status == 'WITHIN_RANGE' %}text-success{% elif result.overall_status == 'HIGH' %}text-danger{% else %}text-warning{% endif %}">
+      {% if result.overall_deviation_pct is not None %}{{ result.overall_deviation_pct|floatformat:1 }}%{% else %}N/A{% endif %}
+    </div>
+    <div class="e2e-kpi-label">Overall Deviation</div>
+  </div>
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">{{ result.lines_within_range }}</div>
+    <div class="e2e-kpi-label">Lines In Range</div>
+  </div>
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value text-danger">{{ result.lines_high }}</div>
+    <div class="e2e-kpi-label">High Variance Lines</div>
+  </div>
+  {% else %}
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value text-muted">--</div>
+    <div class="e2e-kpi-label">Overall Deviation</div>
+  </div>
+  {% endif %}
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">{{ total_duration_s|floatformat:0 }}s</div>
+    <div class="e2e-kpi-label">Total Elapsed</div>
+  </div>
+</div>
+
+{# ── TIMELINE ── #}
+<div class="e2e-timeline" id="e2e-timeline-root">
+  {% for event in timeline_events %}
+  <div class="e2e-event" id="evt-{{ forloop.counter }}">
+    <div class="e2e-dot e2e-dot-{{ event.tone }}">
+      <i class="bi {{ event.icon }}" style="font-size:.55rem"></i>
+    </div>
+
+    {% if event.extra %}
+    <div class="e2e-event-header" data-bs-toggle="collapse" data-bs-target="#evt-body-{{ forloop.counter }}" aria-expanded="false">
+    {% else %}
+    <div class="e2e-event-header" style="cursor:default">
+    {% endif %}
+      <div class="e2e-event-icon icon-{{ event.tone }}">
+        <i class="bi {{ event.icon }}"></i>
+      </div>
+      <div class="e2e-event-meta">
+        <div class="e2e-event-title">
+          <span class="stage-badge stage-{{ event.stage }}">{{ event.stage|lower|truncatechars:14 }}</span>
+          {{ event.title }}
+        </div>
+        <div class="e2e-event-detail">{{ event.detail }}</div>
+      </div>
+      <div class="e2e-event-right">
+        {% if event.timestamp %}
+        <div class="e2e-ts">{{ event.timestamp|date:"H:i:s" }}</div>
+        <div class="e2e-ts" style="font-size:.65rem;opacity:.7">{{ event.timestamp|date:"d M Y" }}</div>
+        {% else %}
+        <div class="e2e-ts">--</div>
+        {% endif %}
+        <div class="e2e-actor"><i class="bi bi-person me-1"></i>{{ event.actor }}</div>
+        {% if event.extra %}
+        <button class="e2e-expand-btn mt-1" type="button">
+          <i class="bi bi-chevron-down toggle-chevron"></i>
+        </button>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if event.extra %}
+    <div class="collapse e2e-event-body" id="evt-body-{{ forloop.counter }}">
+
+      {# REQUEST CREATED details #}
+      {% if event.stage == "REQUEST_CREATED" %}
+      <div class="mt-2">
+        <div class="row g-2" style="font-size:.82rem">
+          <div class="col-sm-6">
+            <div class="p-2 rounded" style="background:#fafafa;border:1px solid #e2e8f0">
+              <div class="text-muted mb-1" style="font-size:.7rem;font-weight:700;text-transform:uppercase">Geography</div>
+              <div>{{ event.extra.geography }} | {{ event.extra.scope_type }}</div>
+            </div>
+          </div>
+          <div class="col-sm-6">
+            <div class="p-2 rounded" style="background:#fafafa;border:1px solid #e2e8f0">
+              <div class="text-muted mb-1" style="font-size:.7rem;font-weight:700;text-transform:uppercase">Store Type</div>
+              <div>{{ event.extra.store_type|default:"N/A" }}</div>
+            </div>
+          </div>
+          {% if event.extra.project_name %}
+          <div class="col-sm-12">
+            <div class="p-2 rounded" style="background:#fafafa;border:1px solid #e2e8f0">
+              <div class="text-muted mb-1" style="font-size:.7rem;font-weight:700;text-transform:uppercase">Project Name</div>
+              <div>{{ event.extra.project_name }}</div>
+            </div>
+          </div>
+          {% endif %}
+          {% if event.extra.notes %}
+          <div class="col-12">
+            <div class="p-2 rounded" style="background:#fffbeb;border:1px solid #fde68a">
+              <div class="text-muted mb-1" style="font-size:.7rem;font-weight:700;text-transform:uppercase">Notes</div>
+              <div>{{ event.extra.notes }}</div>
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# QUOTATION UPLOADED #}
+      {% if event.stage == "QUOTATION_UPLOADED" %}
+      <div class="mt-2" style="font-size:.82rem">
+        <div class="d-flex gap-3 flex-wrap">
+          <div><span class="text-muted me-1">Supplier:</span><strong>{{ event.extra.supplier|default:"Unknown" }}</strong></div>
+          <div><span class="text-muted me-1">Ref:</span>{{ event.extra.ref|default:"N/A" }}</div>
+          <div><span class="text-muted me-1">Extraction:</span>
+            <span class="badge bg-{% if event.extra.extraction_status == 'DONE' %}success{% elif event.extra.extraction_status == 'FAILED' %}danger{% else %}secondary{% endif %}">
+              {{ event.extra.extraction_status }}
+            </span>
+          </div>
+          <div><span class="text-muted me-1">Lines:</span><strong>{{ event.extra.line_count }}</strong></div>
+        </div>
+      </div>
+      {% endif %}
+
+      {# OCR EXTRACTED #}
+      {% if event.stage == "OCR_EXTRACTED" %}
+      <div class="mt-2" style="font-size:.82rem">
+        {% if event.extra.error %}
+        <div class="alert alert-danger py-2 mb-2" style="font-size:.78rem">{{ event.extra.error }}</div>
+        {% endif %}
+        <div class="d-flex gap-3">
+          <div><span class="text-muted me-1">Tables detected:</span><strong>{{ event.extra.tables_count }}</strong></div>
+          <div><span class="text-muted me-1">KV pairs:</span><strong>{{ event.extra.kv_count }}</strong></div>
+        </div>
+      </div>
+      {% endif %}
+
+      {# LINES CLASSIFIED #}
+      {% if event.stage == "LINES_CLASSIFIED" and event.extra.lines %}
+      <div class="mt-2">
+        <div class="text-muted mb-2" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+          <i class="bi bi-tags me-1"></i>Line Item Classification (top 20)
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm line-table mb-0">
+            <thead>
+              <tr><th>#</th><th>Description</th><th>Category</th><th>Source</th><th>Confidence</th><th>Quoted Rate</th><th>Amount</th></tr>
+            </thead>
+            <tbody>
+              {% for ln in event.extra.lines %}
+              <tr>
+                <td>{{ forloop.counter }}</td>
+                <td style="max-width:220px;word-break:break-word">{{ ln.description }}</td>
+                <td><span class="badge bg-secondary" style="font-size:.65rem">{{ ln.category }}</span></td>
+                <td><span class="badge bg-light text-dark" style="font-size:.65rem">{{ ln.source }}</span></td>
+                <td>{% if ln.confidence %}{{ ln.confidence|floatformat:0 }}%{% else %}--{% endif %}</td>
+                <td>{{ ln.quoted_rate|default:"--" }}</td>
+                <td>{{ ln.line_amount|default:"--" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {# BENCHMARK RESULT #}
+      {% if event.stage == "BENCHMARK_RESULT" %}
+      <div class="mt-2">
+        <div class="row g-3 mb-3">
+          <div class="col-sm-4">
+            <div class="p-2 rounded text-center" style="background:#f0fdf4;border:1px solid #bbf7d0">
+              <div style="font-size:1.3rem;font-weight:700;color:#15803d">{{ event.extra.lines_within_range }}</div>
+              <div style="font-size:.72rem;color:#64748b">Within Range</div>
+            </div>
+          </div>
+          <div class="col-sm-4">
+            <div class="p-2 rounded text-center" style="background:#fffbeb;border:1px solid #fde68a">
+              <div style="font-size:1.3rem;font-weight:700;color:#92400e">{{ event.extra.lines_moderate }}</div>
+              <div style="font-size:.72rem;color:#64748b">Moderate Variance</div>
+            </div>
+          </div>
+          <div class="col-sm-4">
+            <div class="p-2 rounded text-center" style="background:#fff5f5;border:1px solid #fca5a5">
+              <div style="font-size:1.3rem;font-weight:700;color:#991b1b">{{ event.extra.lines_high }}</div>
+              <div style="font-size:.72rem;color:#64748b">High Variance</div>
+            </div>
+          </div>
+        </div>
+
+        {% if event.extra.category_summary %}
+        <div class="mb-3">
+          <div class="text-muted mb-2" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+            <i class="bi bi-pie-chart me-1"></i>Category Summary
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm line-table mb-0">
+              <thead><tr><th>Category</th><th>Quoted (AED)</th><th>Benchmark (AED)</th><th>Variance</th></tr></thead>
+              <tbody>
+                {% for cat, vals in event.extra.category_summary.items %}
+                <tr>
+                  <td>{{ cat }}</td>
+                  <td>{{ vals.quoted|default:"--" }}</td>
+                  <td>{{ vals.benchmark|default:"--" }}</td>
+                  <td>
+                    {% if vals.variance_pct is not None %}
+                    <span class="variance-badge v-{% if vals.variance_pct < 5 %}WITHIN_RANGE{% elif vals.variance_pct < 15 %}MODERATE{% else %}HIGH{% endif %}">
+                      {{ vals.variance_pct|floatformat:1 }}%
+                    </span>
+                    {% else %}--{% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if event.extra.negotiation_notes %}
+        <div>
+          <div class="text-muted mb-2" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+            <i class="bi bi-chat-quote me-1"></i>Negotiation Talking Points
+          </div>
+          <ul style="font-size:.82rem;color:#374151;margin-bottom:0">
+            {% for note in event.extra.negotiation_notes %}
+            <li>{{ note }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# LIVE ENRICHMENT #}
+      {% if event.stage == "LIVE_ENRICHMENT" and event.extra.enrichment_metadata %}
+      <details class="mt-2">
+        <summary style="font-size:.75rem;cursor:pointer;color:#d97706">
+          <i class="bi bi-code-square me-1"></i>View raw enrichment metadata
+        </summary>
+        <pre style="font-size:.72rem;background:#fffbeb;border-radius:8px;padding:.75rem;margin-top:.5rem;overflow:auto;max-height:200px;border:1px solid #fde68a">{{ event.extra.enrichment_metadata|pprint }}</pre>
+      </details>
+      {% endif %}
+
+    </div>{# /e2e-event-body #}
+    {% endif %}
+  </div>{# /e2e-event #}
+  {% empty %}
+  <div class="text-center text-muted py-5">
+    <i class="bi bi-bar-chart-steps" style="font-size:2rem"></i>
+    <div class="mt-2">No timeline events yet for this benchmark.</div>
+  </div>
+  {% endfor %}
+</div>
+
+{# ── SUMMARY at bottom ── #}
+{% if result %}
+<div class="ap-card mt-4">
+  <div class="ap-card-header">
+    <i class="bi bi-graph-up-arrow me-1"></i> Final Benchmark Summary
+    <a href="{% url 'benchmarking:request_detail' bench_request.pk %}" class="btn btn-sm btn-outline-warning ms-auto">
+      View Full Results <i class="bi bi-arrow-right ms-1"></i>
+    </a>
+  </div>
+  <div class="ap-card-body">
+    <div class="row g-3">
+      <div class="col-sm-3 text-center">
+        <div style="font-size:1.5rem;font-weight:700;color:{% if result.overall_status == 'WITHIN_RANGE' %}#15803d{% elif result.overall_status == 'HIGH' %}#991b1b{% else %}#92400e{% endif %}">
+          {% if result.overall_deviation_pct is not None %}
+          {{ result.overall_deviation_pct|floatformat:1 }}%
+          {% else %}N/A{% endif %}
+        </div>
+        <div class="text-muted" style="font-size:.72rem">Overall Deviation</div>
+      </div>
+      <div class="col-sm-3 text-center">
+        <div style="font-size:1.5rem;font-weight:700">{{ result.overall_status|default:"N/A" }}</div>
+        <div class="text-muted" style="font-size:.72rem">Overall Status</div>
+      </div>
+      <div class="col-sm-3 text-center">
+        <div style="font-size:1.5rem;font-weight:700">{{ result.total_quoted|default:"--" }}</div>
+        <div class="text-muted" style="font-size:.72rem">Total Quoted (AED)</div>
+      </div>
+      <div class="col-sm-3 text-center">
+        <div style="font-size:1.5rem;font-weight:700">{{ result.total_benchmark_mid|default:"--" }}</div>
+        <div class="text-muted" style="font-size:.72rem">Benchmark Mid (AED)</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+  document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(function (el) {
+    el.addEventListener('click', function () {
+      var chevron = el.querySelector('.toggle-chevron');
+      if (!chevron) return;
+      var expanded = el.getAttribute('aria-expanded') === 'true';
+      chevron.style.transform = expanded ? '' : 'rotate(180deg)';
+    });
+  });
+  window.expandAll = function () {
+    document.querySelectorAll('.e2e-event-body').forEach(function (el) { el.classList.add('show'); });
+    document.querySelectorAll('.toggle-chevron').forEach(function (el) { el.style.transform = 'rotate(180deg)'; });
+  };
+  window.collapseAll = function () {
+    document.querySelectorAll('.e2e-event-body').forEach(function (el) { el.classList.remove('show'); });
+    document.querySelectorAll('.toggle-chevron').forEach(function (el) { el.style.transform = ''; });
+  };
+})();
+</script>
+{% endblock %}

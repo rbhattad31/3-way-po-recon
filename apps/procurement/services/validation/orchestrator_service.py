@@ -78,6 +78,8 @@ class ValidationOrchestratorService:
           6. Update run status
         """
         ctx = TraceContext.get_current()
+        # Tenant propagation is explicit for multi-tenant safety.
+        tenant = request.tenant
 
         # Mark run as started
         AnalysisRunService.start_run(run)

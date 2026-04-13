@@ -733,7 +733,8 @@ class BaseAgent(ABC):
                 arguments["tenant"] = self._agent_context.tenant
             # Inject parent_run_id so delegation tools can link child runs.
             arguments["parent_run_id"] = agent_run.pk
-            result = tool.execute(**arguments)
+            from apps.agents.plugins.plugin_router import PluginToolRouter
+            result = PluginToolRouter.execute(tool_name, **arguments)
             # Remove non-serialisable span before audit persistence.
             arguments.pop("lf_parent_span", None)
             arguments.pop("tenant", None)

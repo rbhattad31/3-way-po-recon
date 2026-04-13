@@ -73,7 +73,8 @@ class AnalysisRunService:
             triggered_by=triggered_by,
             input_snapshot_json=input_snapshot,
             trace_id=ctx.trace_id if ctx else "",
-            tenant=tenant,
+            # Auto-derive tenant from the request when not explicitly passed
+            tenant=tenant if tenant is not None else request.tenant,
         )
 
         AuditService.log_event(

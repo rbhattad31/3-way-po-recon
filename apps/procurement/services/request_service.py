@@ -53,7 +53,8 @@ class ProcurementRequestService:
                 created_by=created_by,
                 assigned_to=assigned_to,
                 trace_id=ctx.trace_id if ctx else "",
-                tenant=tenant,
+                # Auto-derive tenant from the creating user when not explicitly passed
+                tenant=tenant if tenant is not None else (created_by.company if created_by else None),
             )
             if attributes:
                 AttributeService.bulk_set_attributes(request, attributes)

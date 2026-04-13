@@ -1,0 +1,598 @@
+{% extends "procurement/proc_base.html" %}
+{% load static %}
+
+{% block title %}E2E Timeline -- {{ proc_request.title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ======== E2E TIMELINE STYLES ======== */
+.e2e-hero {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 60%, #3b82f6 100%);
+  border-radius: 14px;
+  color: #fff;
+  padding: 1.5rem 2rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.e2e-hero-title { font-size: 1.25rem; font-weight: 700; margin-bottom: .2rem; }
+.e2e-hero-sub { font-size: .82rem; opacity: .85; }
+.e2e-kpi-strip {
+  display: flex;
+  gap: .75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+.e2e-kpi {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: .75rem 1.25rem;
+  min-width: 130px;
+  flex: 1;
+}
+.e2e-kpi-value { font-size: 1.5rem; font-weight: 700; color: #1e3a8a; line-height: 1.2; }
+.e2e-kpi-label { font-size: .72rem; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
+
+/* Timeline */
+.e2e-timeline { position: relative; padding-left: 2.5rem; }
+.e2e-timeline::before {
+  content: "";
+  position: absolute;
+  left: 0.62rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, #3b82f6 0%, #e2e8f0 100%);
+}
+.e2e-event {
+  position: relative;
+  margin-bottom: 1.25rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: box-shadow .15s;
+}
+.e2e-event:hover { box-shadow: 0 4px 16px rgba(59,130,246,.10); }
+.e2e-dot {
+  position: absolute;
+  left: -2.02rem;
+  top: 1.1rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .6rem;
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+}
+.e2e-dot-primary   { background: #3b82f6; }
+.e2e-dot-info      { background: #0ea5e9; }
+.e2e-dot-success   { background: #22c55e; }
+.e2e-dot-warning   { background: #f59e0b; }
+.e2e-dot-danger    { background: #ef4444; }
+.e2e-dot-secondary { background: #94a3b8; }
+
+.e2e-event-header {
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+  padding: .85rem 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+.e2e-event-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.icon-primary   { background: #dbeafe; color: #1d4ed8; }
+.icon-info      { background: #e0f2fe; color: #0369a1; }
+.icon-success   { background: #dcfce7; color: #15803d; }
+.icon-warning   { background: #fef3c7; color: #92400e; }
+.icon-danger    { background: #fee2e2; color: #991b1b; }
+.icon-secondary { background: #f1f5f9; color: #475569; }
+
+.e2e-event-meta { flex: 1; min-width: 0; }
+.e2e-event-title { font-size: .9rem; font-weight: 600; color: #1e293b; margin-bottom: .1rem; }
+.e2e-event-detail { font-size: .78rem; color: #64748b; white-space: pre-wrap; word-break: break-word; }
+.e2e-event-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+  gap: .2rem;
+}
+.e2e-ts { font-size: .72rem; color: #94a3b8; font-family: var(--ap-font-mono, monospace); white-space: nowrap; }
+.e2e-actor { font-size: .72rem; color: #64748b; }
+.e2e-expand-btn {
+  font-size: .72rem; color: #94a3b8; background: none; border: none; padding: 0; cursor: pointer;
+  transition: color .15s;
+}
+.e2e-expand-btn:hover { color: #3b82f6; }
+
+.e2e-event-body {
+  padding: 0 1rem 1rem 1rem;
+  border-top: 1px dashed #e2e8f0;
+}
+.e2e-event-body.collapse:not(.show) { display: none; }
+
+/* Thought steps */
+.thought-step {
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: .5rem;
+  align-items: baseline;
+  padding: .45rem 0;
+  border-bottom: 1px dashed #f1f5f9;
+  font-size: .8rem;
+}
+.thought-step:last-child { border-bottom: none; }
+.thought-step-num {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: #eff6ff;
+  color: #3b82f6;
+  font-weight: 700;
+  font-size: .7rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.thought-stage { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
+.thought-decision { font-weight: 600; color: #1e293b; }
+.thought-reasoning { color: #475569; }
+
+/* Attribute table */
+.attr-row { display: flex; justify-content: space-between; align-items: baseline; padding: .25rem 0; border-bottom: 1px solid #f8fafc; font-size: .8rem; }
+.attr-label { color: #64748b; font-size: .75rem; }
+.attr-val { font-weight: 500; color: #1e293b; text-align: right; max-width: 60%; word-break: break-word; }
+
+/* KPI cards in header */
+.e2e-hdr-kpi { background: rgba(255,255,255,.15); border-radius: 8px; padding: .4rem .85rem; min-width: 80px; text-align: center; }
+.e2e-hdr-kpi-val { font-size: 1.1rem; font-weight: 700; }
+.e2e-hdr-kpi-lbl { font-size: .65rem; opacity: .85; text-transform: uppercase; letter-spacing: .05em; }
+
+/* Stage badge */
+.stage-badge {
+  display: inline-block;
+  font-size: .62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: .15em .55em;
+  border-radius: 4px;
+  margin-right: .35rem;
+}
+.stage-REQUEST_CREATED   { background: #dbeafe; color: #1d4ed8; }
+.stage-FORM_FILLED        { background: #e0f2fe; color: #0369a1; }
+.stage-DOCUMENT_UPLOADED  { background: #f1f5f9; color: #475569; }
+.stage-ANALYSIS_QUEUED    { background: #f1f5f9; color: #475569; }
+.stage-ANALYSIS_STARTED   { background: #dbeafe; color: #1d4ed8; }
+.stage-AGENT_EXECUTED     { background: #dcfce7; color: #15803d; }
+.stage-THOUGHT_PROCESS    { background: #fef3c7; color: #92400e; }
+.stage-RECOMMENDATION_GENERATED { background: #dcfce7; color: #15803d; }
+.stage-COMPLIANCE_CHECKED { background: #f1f5f9; color: #475569; }
+.stage-ANALYSIS_COMPLETED { background: #dcfce7; color: #15803d; }
+.stage-CURRENT_STATUS     { background: #ede9fe; color: #6d28d9; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb mb-0" style="font-size:.78rem">
+    <li class="breadcrumb-item"><a href="{% url 'procurement:procurement_dashboard' %}" class="text-decoration-none">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_list' %}" class="text-decoration-none">HVAC Requests</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'procurement:request_workspace' proc_request.pk %}" class="text-decoration-none">{{ proc_request.title|truncatechars:30 }}</a></li>
+    <li class="breadcrumb-item active">E2E Timeline</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+
+{# ── HERO ── #}
+<div class="e2e-hero">
+  <div>
+    <div class="e2e-hero-title">
+      <i class="bi bi-clock-history me-2"></i>End-to-End Lifecycle Timeline
+    </div>
+    <div class="e2e-hero-sub mb-2">{{ proc_request.title }}</div>
+    <div class="d-flex gap-2 flex-wrap">
+      <span class="badge bg-light text-dark">{{ proc_request.domain_code }}</span>
+      <span class="badge bg-light text-dark">{{ proc_request.request_type }}</span>
+      <span class="badge bg-{% if proc_request.status == 'COMPLETED' %}success{% elif proc_request.status == 'FAILED' %}danger{% elif proc_request.status == 'PROCESSING' %}info{% else %}secondary{% endif %}">
+        {{ proc_request.status }}
+      </span>
+      {% if proc_request.priority == 'HIGH' or proc_request.priority == 'CRITICAL' %}
+      <span class="badge bg-warning text-dark">{{ proc_request.priority }}</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <div class="e2e-hdr-kpi">
+      <div class="e2e-hdr-kpi-val">{{ timeline_events|length }}</div>
+      <div class="e2e-hdr-kpi-lbl">Events</div>
+    </div>
+    <div class="e2e-hdr-kpi">
+      <div class="e2e-hdr-kpi-val">{{ total_agents }}</div>
+      <div class="e2e-hdr-kpi-lbl">AI Agents</div>
+    </div>
+    <div class="e2e-hdr-kpi">
+      <div class="e2e-hdr-kpi-val">{{ total_llm_steps }}</div>
+      <div class="e2e-hdr-kpi-lbl">LLM Steps</div>
+    </div>
+    <div class="e2e-hdr-kpi">
+      {% if total_duration_s < 60 %}
+      <div class="e2e-hdr-kpi-val">{{ total_duration_s|floatformat:0 }}s</div>
+      {% elif total_duration_s < 3600 %}
+      <div class="e2e-hdr-kpi-val">{{ total_duration_s|divisibleby:60 }}m</div>
+      {% else %}
+      <div class="e2e-hdr-kpi-val">{{ total_duration_s|floatformat:0 }}s</div>
+      {% endif %}
+      <div class="e2e-hdr-kpi-lbl">Total Time</div>
+    </div>
+  </div>
+</div>
+
+{# ── ACTIONS ── #}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div class="d-flex gap-2 align-items-center">
+    <a href="{% url 'procurement:request_workspace' proc_request.pk %}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back to Workspace
+    </a>
+    <span class="text-muted" style="font-size:.78rem">
+      <i class="bi bi-calendar3 me-1"></i>Created {{ proc_request.created_at|date:"d M Y H:i" }}
+      {% if proc_request.created_by %}by {{ proc_request.created_by.get_full_name|default:proc_request.created_by.email }}{% endif %}
+    </span>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" onclick="expandAll()">
+      <i class="bi bi-arrows-expand me-1"></i>Expand All
+    </button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="collapseAll()">
+      <i class="bi bi-arrows-collapse me-1"></i>Collapse All
+    </button>
+  </div>
+</div>
+
+{# ── KPI STRIP ── #}
+<div class="e2e-kpi-strip mb-4">
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">{{ runs|length }}</div>
+    <div class="e2e-kpi-label">Analysis Runs</div>
+  </div>
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">{{ attributes|length }}</div>
+    <div class="e2e-kpi-label">Form Fields</div>
+  </div>
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">{{ total_agents }}</div>
+    <div class="e2e-kpi-label">AI Agents Invoked</div>
+  </div>
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">{{ total_llm_steps }}</div>
+    <div class="e2e-kpi-label">LLM Reasoning Steps</div>
+  </div>
+  <div class="e2e-kpi">
+    {% if recommendation %}
+    <div class="e2e-kpi-value" style="color:#15803d">
+      {% if recommendation.confidence_score %}{{ recommendation.confidence_score|floatformat:0 }}%{% else %}N/A{% endif %}
+    </div>
+    <div class="e2e-kpi-label">Recommendation Confidence</div>
+    {% else %}
+    <div class="e2e-kpi-value" style="color:#94a3b8">--</div>
+    <div class="e2e-kpi-label">Recommendation Confidence</div>
+    {% endif %}
+  </div>
+  <div class="e2e-kpi">
+    <div class="e2e-kpi-value">
+      {% if total_duration_s >= 3600 %}
+        {{ total_duration_s|floatformat:0 }}s
+      {% elif total_duration_s >= 60 %}
+        {{ total_duration_s|floatformat:0 }}s
+      {% else %}
+        {{ total_duration_s|floatformat:1 }}s
+      {% endif %}
+    </div>
+    <div class="e2e-kpi-label">Total Elapsed</div>
+  </div>
+</div>
+
+{# ── TIMELINE ── #}
+<div class="e2e-timeline" id="e2e-timeline-root">
+  {% for event in timeline_events %}
+  <div class="e2e-event" id="evt-{{ forloop.counter }}">
+    <div class="e2e-dot e2e-dot-{{ event.tone }}">
+      <i class="bi {{ event.icon }}" style="font-size:.55rem"></i>
+    </div>
+
+    {# Expandable header -- only show chevron if there's extra data #}
+    {% if event.extra %}
+    <div class="e2e-event-header" data-bs-toggle="collapse" data-bs-target="#evt-body-{{ forloop.counter }}" aria-expanded="false">
+    {% else %}
+    <div class="e2e-event-header" style="cursor:default">
+    {% endif %}
+      <div class="e2e-event-icon icon-{{ event.tone }}">
+        <i class="bi {{ event.icon }}"></i>
+      </div>
+      <div class="e2e-event-meta">
+        <div class="e2e-event-title">
+          <span class="stage-badge stage-{{ event.stage }}">{{ event.stage|lower|truncatechars:16 }}</span>
+          {{ event.title }}
+        </div>
+        <div class="e2e-event-detail">{{ event.detail }}</div>
+      </div>
+      <div class="e2e-event-right">
+        {% if event.timestamp %}
+        <div class="e2e-ts">{{ event.timestamp|date:"H:i:s" }}</div>
+        <div class="e2e-ts" style="font-size:.65rem;opacity:.7">{{ event.timestamp|date:"d M Y" }}</div>
+        {% else %}
+        <div class="e2e-ts">--</div>
+        {% endif %}
+        <div class="e2e-actor"><i class="bi bi-person me-1"></i>{{ event.actor }}</div>
+        {% if event.extra %}
+        <button class="e2e-expand-btn mt-1" type="button">
+          <i class="bi bi-chevron-down toggle-chevron"></i>
+        </button>
+        {% endif %}
+      </div>
+    </div>{# /header #}
+
+    {% if event.extra %}
+    <div class="collapse e2e-event-body" id="evt-body-{{ forloop.counter }}">
+
+      {# ── FORM ATTRIBUTES ── #}
+      {% if event.stage == "FORM_FILLED" and event.extra.attributes %}
+      <div class="mt-2">
+        <div class="text-muted mb-2" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+          <i class="bi bi-ui-checks me-1"></i>Form Fields Captured
+        </div>
+        {% for a in event.extra.attributes %}
+        <div class="attr-row">
+          <div class="attr-label">
+            {{ a.label }}
+            {% if a.source and a.source != 'MANUAL' %}
+            <span class="badge bg-secondary ms-1" style="font-size:.6rem">{{ a.source }}</span>
+            {% endif %}
+            {% if a.confidence %}
+            <span class="badge bg-light text-dark ms-1" style="font-size:.6rem">{{ a.confidence|floatformat:0 }}%</span>
+            {% endif %}
+          </div>
+          <div class="attr-val">{{ a.value|default:"—" }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# ── AI AGENT DETAILS ── #}
+      {% if event.stage == "AGENT_EXECUTED" %}
+      <div class="mt-2">
+        {% if event.extra.trace_id %}
+        <div class="mb-2" style="font-size:.75rem;color:#64748b">
+          <i class="bi bi-diagram-2 me-1"></i>Trace ID: <code>{{ event.extra.trace_id }}</code>
+        </div>
+        {% endif %}
+        {% if event.extra.duration_s %}
+        <div class="mb-2">
+          <span class="badge bg-light text-dark"><i class="bi bi-stopwatch me-1"></i>{{ event.extra.duration_s|floatformat:2 }}s</span>
+        </div>
+        {% endif %}
+        {% if event.extra.reasoning %}
+        <div class="mb-2">
+          <div class="text-muted mb-1" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+            <i class="bi bi-chat-text me-1"></i>Agent Reasoning Summary
+          </div>
+          <div style="font-size:.82rem;color:#374151;background:#f8fafc;border-radius:8px;padding:.75rem;border:1px solid #e2e8f0">
+            {{ event.extra.reasoning }}
+          </div>
+        </div>
+        {% endif %}
+        {% if event.extra.error_message %}
+        <div class="alert alert-danger py-2 mb-0" style="font-size:.8rem">
+          <i class="bi bi-exclamation-triangle me-1"></i>{{ event.extra.error_message }}
+        </div>
+        {% endif %}
+        {% if event.extra.output_snapshot %}
+        <details class="mt-2">
+          <summary style="font-size:.75rem;cursor:pointer;color:#3b82f6">
+            <i class="bi bi-code-square me-1"></i>View output snapshot
+          </summary>
+          <pre style="font-size:.72rem;background:#f8fafc;border-radius:8px;padding:.75rem;margin-top:.5rem;overflow:auto;max-height:300px;border:1px solid #e2e8f0">{{ event.extra.output_snapshot|pprint }}</pre>
+        </details>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# ── THOUGHT PROCESS STEPS ── #}
+      {% if event.stage == "THOUGHT_PROCESS" and event.extra.thought_steps %}
+      <div class="mt-2">
+        <div class="text-muted mb-2" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+          <i class="bi bi-lightbulb me-1"></i>LLM Reasoning Trace
+        </div>
+        {% for step in event.extra.thought_steps %}
+        <div class="thought-step">
+          <div class="thought-step-num">{{ step.step|default:forloop.counter }}</div>
+          <div>
+            {% if step.stage %}<div class="thought-stage">{{ step.stage }}</div>{% endif %}
+            {% if step.decision %}<div class="thought-decision">{{ step.decision }}</div>{% endif %}
+            {% if step.reasoning %}<div class="thought-reasoning mt-1">{{ step.reasoning }}</div>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# ── RECOMMENDATION DETAILS ── #}
+      {% if event.stage == "RECOMMENDATION_GENERATED" %}
+      <div class="mt-2">
+        {% if event.extra.recommended_option %}
+        <div class="mb-2">
+          <div class="text-muted mb-1" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+            <i class="bi bi-trophy me-1"></i>Recommended Option
+          </div>
+          <div style="font-size:.85rem;font-weight:600;color:#15803d;background:#f0fdf4;border-radius:8px;padding:.65rem;border:1px solid #bbf7d0">
+            {{ event.extra.recommended_option }}
+          </div>
+        </div>
+        {% endif %}
+        {% if event.extra.reasoning_summary %}
+        <div class="mb-2">
+          <div class="text-muted mb-1" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+            <i class="bi bi-chat-text me-1"></i>Reasoning Summary
+          </div>
+          <div style="font-size:.82rem;color:#374151;background:#f8fafc;border-radius:8px;padding:.75rem;border:1px solid #e2e8f0">
+            {{ event.extra.reasoning_summary }}
+          </div>
+        </div>
+        {% endif %}
+        {% if event.extra.confidence_score %}
+        <div>
+          <span class="badge bg-success">
+            <i class="bi bi-speedometer2 me-1"></i>Confidence: {{ event.extra.confidence_score|floatformat:1 }}
+          </span>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# ── COMPLIANCE DETAILS ── #}
+      {% if event.stage == "COMPLIANCE_CHECKED" %}
+      <div class="mt-2">
+        {% if event.extra.violations %}
+        <div class="mb-2">
+          <div class="text-muted mb-1" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em">
+            <i class="bi bi-exclamation-diamond me-1"></i>Violations
+          </div>
+          <pre style="font-size:.75rem;background:#fff5f5;border-radius:8px;padding:.65rem;border:1px solid #fca5a5;overflow:auto;max-height:200px">{{ event.extra.violations|pprint }}</pre>
+        </div>
+        {% endif %}
+        {% if event.extra.rules_checked %}
+        <details>
+          <summary style="font-size:.75rem;cursor:pointer;color:#3b82f6">
+            <i class="bi bi-code-square me-1"></i>Rules checked
+          </summary>
+          <pre style="font-size:.72rem;background:#f8fafc;border-radius:8px;padding:.75rem;margin-top:.5rem;overflow:auto;max-height:200px;border:1px solid #e2e8f0">{{ event.extra.rules_checked|pprint }}</pre>
+        </details>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    </div>{# /e2e-event-body #}
+    {% endif %}
+  </div>{# /e2e-event #}
+  {% empty %}
+  <div class="text-center text-muted py-5">
+    <i class="bi bi-clock-history" style="font-size:2rem"></i>
+    <div class="mt-2">No timeline events yet for this request.</div>
+  </div>
+  {% endfor %}
+</div>{# /e2e-timeline #}
+
+{# ── SUMMARY CARDS ── #}
+{% if recommendation or compliance or validation %}
+<div class="row g-3 mt-3">
+  {% if recommendation %}
+  <div class="col-md-4">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-trophy-fill me-1 text-success"></i> Final Recommendation
+      </div>
+      <div class="ap-card-body">
+        <div style="font-size:.85rem;font-weight:600;color:#15803d">{{ recommendation.recommended_option|truncatechars:140 }}</div>
+        {% if recommendation.confidence_score %}
+        <div class="mt-2">
+          <div class="progress" style="height:6px">
+            <div class="progress-bar bg-success" style="width:{% widthratio recommendation.confidence_score 1 100 %}%"></div>
+          </div>
+          <div class="text-muted mt-1" style="font-size:.72rem">Confidence: {% widthratio recommendation.confidence_score 1 100 %}%</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if compliance %}
+  <div class="col-md-4">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-shield-check me-1"></i> Compliance Status
+      </div>
+      <div class="ap-card-body">
+        <span class="badge bg-{% if compliance.compliance_status == 'COMPLIANT' %}success{% elif compliance.compliance_status == 'NON_COMPLIANT' %}danger{% else %}warning{% endif %} fs-6">
+          {{ compliance.compliance_status }}
+        </span>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if validation %}
+  <div class="col-md-4">
+    <div class="ap-card h-100">
+      <div class="ap-card-header">
+        <i class="bi bi-check2-all me-1"></i> Validation
+      </div>
+      <div class="ap-card-body">
+        <div class="text-muted" style="font-size:.82rem">
+          {{ validation.items.count }} validation item(s) checked.
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  // Rotate chevron on collapse toggle
+  document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(function (el) {
+    el.addEventListener('click', function () {
+      var chevron = el.querySelector('.toggle-chevron');
+      if (!chevron) return;
+      var expanded = el.getAttribute('aria-expanded') === 'true';
+      chevron.style.transform = expanded ? '' : 'rotate(180deg)';
+    });
+  });
+
+  window.expandAll = function () {
+    document.querySelectorAll('.e2e-event-body').forEach(function (el) {
+      el.classList.add('show');
+    });
+    document.querySelectorAll('.toggle-chevron').forEach(function (el) {
+      el.style.transform = 'rotate(180deg)';
+    });
+  };
+
+  window.collapseAll = function () {
+    document.querySelectorAll('.e2e-event-body').forEach(function (el) {
+      el.classList.remove('show');
+    });
+    document.querySelectorAll('.toggle-chevron').forEach(function (el) {
+      el.style.transform = '';
+    });
+  };
+})();
+</script>
+{% endblock %}

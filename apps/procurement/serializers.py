@@ -220,6 +220,7 @@ class ProcurementRequestWriteSerializer(serializers.ModelSerializer):
         user = self.context["request"].user
         return ProcurementRequestService.create_request(
             created_by=user,
+            tenant=getattr(user, "company", None),
             attributes=attrs,
             **validated_data,
         )

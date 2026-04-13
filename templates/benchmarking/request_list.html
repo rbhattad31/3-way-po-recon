@@ -104,7 +104,7 @@
       <tbody>
         {% for req in bench_requests %}
         <tr>
-          <td class="px-3 py-2 text-muted">{{ req.pk }}</td>
+          <td class="px-3 py-2 text-muted">{{ forloop.counter }}</td>
           <td class="py-2">
             <a href="{% url 'benchmarking:request_detail' req.pk %}"
                class="fw-600 text-decoration-none" style="color:#1665D8;">{{ req.title }}</a>

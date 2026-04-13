@@ -346,7 +346,18 @@ _POLICY_ENGINE_RULES = [
 
 @login_required
 def agent_reference(request):
-    """Shows agents, tools, case lifecycle, prompts, and how they work."""
+    """Global platform reference page (admin / overall view)."""
+    return _render_agent_reference_page(request, "agents/reference.html")
+
+
+@login_required
+def procurement_agent_reference(request):
+    """Procurement-specific platform reference page."""
+    return _render_agent_reference_page(request, "procurement/procurement_reference.html")
+
+
+def _render_agent_reference_page(request, template_name):
+    """Build and render agent/platform reference context."""
     agents_info = []
     for agent_type_val, agent_cls in AGENT_CLASS_REGISTRY.items():
         instance = agent_cls()
@@ -1626,7 +1637,7 @@ def agent_reference(request):
         "note": "Prices from web search are INDICATIVE ESTIMATES only and require manual validation before use in negotiations.",
     }
 
-    response = render(request, "agents/reference.html", {
+    response = render(request, template_name, {
         "page_version": _PAGE_VERSION,
         "agents_info": agents_info,
         "react_agent_count": len(agents_info) - len(_PIPELINE_AGENT_TYPES),

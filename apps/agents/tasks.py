@@ -300,6 +300,7 @@ def run_supervisor_pipeline_task(
     from apps.agents.services.supervisor_agent import SupervisorAgent
     from apps.agents.services.supervisor_context_builder import build_supervisor_context
     from apps.core.enums import AgentRunStatus
+    from django.core.cache import cache
 
     tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
 
@@ -322,6 +323,21 @@ def run_supervisor_pipeline_task(
     if not invoice_id:
         logger.error("run_supervisor_pipeline_task: invoice_id is required")
         return {"error": "invoice_id is required"}
+
+    lock_key = f"supervisor:run:{tenant_id or 'global'}:{invoice_id}"
+    lock_acquired = cache.add(lock_key, "1", timeout=600)
+    if not lock_acquired:
+        logger.info(
+            "Skipping supervisor run due to active lock tenant=%s invoice=%s",
+            tenant_id,
+            invoice_id,
+        )
+        return {
+            "invoice_id": invoice_id,
+            "status": "SKIPPED",
+            "reason": "supervisor_run_in_progress",
+            "shadow_mode": shadow_mode,
+        }
 
     # Resolve requesting user
     request_user = None
@@ -445,6 +461,7 @@ def run_supervisor_pipeline_task(
             pass
         from apps.core.utils import safe_retry
         safe_retry(self, exc)
+        cache.delete(lock_key)
         return {"error": str(exc)[:200], "invoice_id": invoice_id}
 
     # -- Eval & Learning integration --
@@ -528,6 +545,7 @@ def run_supervisor_pipeline_task(
     except Exception:
         pass
 
+    cache.delete(lock_key)
     return {
         "invoice_id": invoice_id,
         "agent_run_id": agent_run.pk,

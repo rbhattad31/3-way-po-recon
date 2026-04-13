@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import HasPermissionCode
+from apps.core.tenant_utils import TenantQuerysetMixin
 from apps.extraction_core.extraction_serializers import (
     ApproveRejectRequestSerializer,
     CorrectFieldRequestSerializer,
@@ -46,7 +47,7 @@ from apps.extraction_core.models import (
 # ---------------------------------------------------------------------------
 
 
-class ExtractionRunViewSet(viewsets.ReadOnlyModelViewSet):
+class ExtractionRunViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     """
     Read-only ViewSet for ExtractionRun with nested actions:
 

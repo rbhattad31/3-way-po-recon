@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import List, Optional
 
+from django.db.models import Case, IntegerField, Q, Value, When
+
 from apps.core.enums import ReconciliationMode
 from apps.documents.models import Invoice, InvoiceLineItem, PurchaseOrder
 from apps.reconciliation.models import ReconciliationConfig, ReconciliationPolicy
@@ -79,6 +81,9 @@ class ReconciliationModeResolver:
         Returns:
             ModeResolutionResult with mode, policy, reason, and GRN flag.
         """
+        tenant_id = self._extract_tenant_id(invoice)
+        self._ensure_tenant_config(tenant_id)
+
         if not self.config.enable_mode_resolver:
             return self._fallback_default(
                 reason="Mode resolver disabled in config -- using default mode",
@@ -99,7 +104,7 @@ class ReconciliationModeResolver:
             )
 
         # 1. Try explicit policy rules
-        policy_result = self._resolve_from_policies(invoice, purchase_order)
+        policy_result = self._resolve_from_policies(invoice, purchase_order, tenant_id=tenant_id)
         if policy_result is not None:
             return policy_result
 
@@ -131,6 +136,7 @@ class ReconciliationModeResolver:
         self,
         invoice: Invoice,
         purchase_order: Optional[PurchaseOrder],
+        tenant_id: Optional[int] = None,
     ) -> Optional[ModeResolutionResult]:
         """Evaluate active policies in priority order; return first match."""
         today = date.today()
@@ -138,7 +144,19 @@ class ReconciliationModeResolver:
         policies = (
             ReconciliationPolicy.objects
             .filter(is_active=True)
-            .order_by("priority", "policy_code")
+            .filter(
+                Q(tenant_id=tenant_id) | Q(tenant__isnull=True)
+                if tenant_id
+                else Q(tenant__isnull=True)
+            )
+            .annotate(
+                _tenant_rank=Case(
+                    When(tenant_id=tenant_id, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            )
+            .order_by("_tenant_rank", "priority", "policy_code")
         )
 
         for policy in policies:
@@ -451,10 +469,43 @@ class ReconciliationModeResolver:
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _default_config() -> ReconciliationConfig:
-        config = ReconciliationConfig.objects.filter(is_default=True).first()
+    def _default_config(tenant=None) -> ReconciliationConfig:
+        config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant=tenant,
+        ).first()
+        if config:
+            return config
+        config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant__isnull=True,
+        ).first()
         if config:
             return config
         return ReconciliationConfig.objects.create(
-            name="Default", is_default=True,
+            name="Default", is_default=True, tenant=tenant,
         )
+
+    def _ensure_tenant_config(self, tenant_id: Optional[int]) -> None:
+        if tenant_id is None:
+            return
+        if getattr(self.config, "tenant_id", None) == tenant_id:
+            return
+        tenant_config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant_id=tenant_id,
+        ).first()
+        if tenant_config:
+            self.config = tenant_config
+
+    @staticmethod
+    def _extract_tenant_id(invoice: Invoice) -> Optional[int]:
+        tenant_id = getattr(invoice, "tenant_id", None)
+        if isinstance(tenant_id, int):
+            return tenant_id
+
+        tenant_obj = getattr(invoice, "tenant", None)
+        tenant_pk = getattr(tenant_obj, "pk", None)
+        if isinstance(tenant_pk, int):
+            return tenant_pk
+        return None

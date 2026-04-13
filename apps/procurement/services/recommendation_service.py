@@ -12,6 +12,7 @@ from typing import Any, Dict
 from django.db import transaction
 
 from apps.auditlog.services import AuditService
+from apps.agents.services.base_agent import BaseAgent
 from apps.core.decorators import observed_service
 from apps.core.enums import (
     AnalysisRunStatus,
@@ -65,6 +66,8 @@ class RecommendationService:
         request_user: Any = None,
     ) -> RecommendationResult:
         AnalysisRunService.start_run(run)
+        # Tenant propagation is explicit for multi-tenant safety.
+        tenant = request.tenant
 
         thought_log: list = []
         source_classes: list = []
@@ -240,10 +243,13 @@ class RecommendationService:
             final["archetype"] = archetype
 
             with transaction.atomic():
+                safe_reasoning_summary = BaseAgent._sanitise_text(
+                    str(final.get("reasoning_summary", ""))
+                )
                 result = RecommendationResult.objects.create(
                     run=run,
                     recommended_option=final.get("recommended_option", "No recommendation"),
-                    reasoning_summary=final.get("reasoning_summary", ""),
+                    reasoning_summary=safe_reasoning_summary,
                     reasoning_details_json=final.get("reasoning_details"),
                     confidence_score=RecommendationService._normalize_confidence(final.get("confidence", 0.0)),
                     constraints_json=final.get("constraints"),

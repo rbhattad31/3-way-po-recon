@@ -307,6 +307,7 @@ class PerplexityMarketResearchAnalystAgent:
             "market_context": data.get("market_context", ""),
             "suggestions": suggestions,
             "perplexity_citations": perplexity_citations,
+            "source_reference_label": "Perplexity Source References",
         }
 
     # ------------------------------------------------------------------
@@ -664,18 +665,23 @@ class PerplexityMarketResearchAnalystAgent:
     ) -> None:
         """Save MarketIntelligenceSuggestion to DB (fail-silent on error)."""
         from apps.procurement.models import MarketIntelligenceSuggestion
+        from apps.agents.services.base_agent import BaseAgent
         try:
+            # Phase 1C: sanitize LLM-generated text before DB persistence (ASCII-safe)
+            safe_ai_summary = BaseAgent._sanitise_text(data.get("ai_summary", ""))
+            safe_market_context = BaseAgent._sanitise_text(data.get("market_context", ""))
             MarketIntelligenceSuggestion.objects.create(
                 request=proc_request,
                 generated_by=generated_by,
                 rephrased_query=data.get("rephrased_query", ""),
-                ai_summary=data.get("ai_summary", ""),
-                market_context=data.get("market_context", ""),
+                ai_summary=safe_ai_summary,
+                market_context=safe_market_context,
                 system_code=system_code,
                 system_name=system_name,
                 suggestions_json=suggestions,
                 suggestion_count=len(suggestions),
                 perplexity_citations_json=perplexity_citations,
+                source_reference_label="Perplexity Source References",
             )
         except Exception as exc:
             logger.warning(

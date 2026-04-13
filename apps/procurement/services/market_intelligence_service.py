@@ -9,6 +9,7 @@ continue to import MarketIntelligenceService without modification.
 from __future__ import annotations
 
 import logging
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,65 @@ class MarketIntelligenceService:
         return cls._get_agent().run(proc_request, generated_by=generated_by)
 
     @classmethod
-    def generate_auto(cls, proc_request, generated_by=None) -> dict:
+    def generate_auto(
+        cls,
+        proc_request,
+        generated_by=None,
+        *,
+        run: Optional[Any] = None,
+        request_user: Any = None,
+    ) -> dict:
+        """Generate market intelligence.
+
+        If an AnalysisRun is provided, execution is routed through
+        ProcurementAgentOrchestrator for centralized guardrails, audit, trace,
+        and AgentRun mirror persistence. On orchestrator failure, the service
+        safely falls back to direct execution.
+        """
+        if run is not None:
+            try:
+                from apps.procurement.runtime import ProcurementAgentMemory, ProcurementAgentOrchestrator
+
+                orchestrator = ProcurementAgentOrchestrator()
+                memory = ProcurementAgentMemory()
+
+                def _agent_fn(ctx):  # noqa: ANN001
+                    return cls._generate_auto_core(proc_request, generated_by=generated_by)
+
+                orch_result = orchestrator.run(
+                    run=run,
+                    agent_type="market_intelligence",
+                    agent_fn=_agent_fn,
+                    memory=memory,
+                    extra_context={
+                        "request_id": getattr(proc_request, "request_id", ""),
+                        "request_pk": getattr(proc_request, "pk", None),
+                    },
+                    request_user=request_user or generated_by,
+                )
+
+                if orch_result.status == "completed" and orch_result.output:
+                    return orch_result.output
+
+                logger.warning(
+                    "MarketIntelligenceService.generate_auto: orchestrator path did not complete "
+                    "for request pk=%s, using direct fallback path. status=%s error=%s",
+                    getattr(proc_request, "pk", None),
+                    orch_result.status,
+                    orch_result.error,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "MarketIntelligenceService.generate_auto: orchestrator routing failed "
+                    "for request pk=%s, using direct fallback path. error=%s",
+                    getattr(proc_request, "pk", None),
+                    exc,
+                )
+
+        return cls._generate_auto_core(proc_request, generated_by=generated_by)
+
+    @classmethod
+    def _generate_auto_core(cls, proc_request, generated_by=None) -> dict:
         """Generate market intelligence.
 
         Primary path  : Perplexity live web search (if PERPLEXITY_API_KEY is set).

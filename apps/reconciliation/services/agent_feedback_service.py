@@ -59,6 +59,8 @@ class AgentFeedbackService:
 
         Returns the new match status after re-reconciliation.
         """
+        self._ensure_tenant_config(getattr(result, "tenant", None))
+
         invoice = result.invoice
 
         # 1. Link PO to result and invoice
@@ -181,11 +183,39 @@ class AgentFeedbackService:
         return new_status
 
     @staticmethod
-    def _default_config() -> ReconciliationConfig:
-        config = ReconciliationConfig.objects.filter(is_default=True).first()
+    def _default_config(tenant=None) -> ReconciliationConfig:
+        config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant=tenant,
+        ).first()
+        if config:
+            return config
+        config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant__isnull=True,
+        ).first()
         if config:
             return config
         return ReconciliationConfig.objects.create(
             name="Default",
             is_default=True,
+            tenant=tenant,
         )
+
+    def _ensure_tenant_config(self, tenant) -> None:
+        if tenant is None:
+            return
+        if getattr(self.config, "tenant_id", None) == tenant.pk:
+            return
+
+        tenant_config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant=tenant,
+        ).first()
+        if not tenant_config:
+            return
+
+        self.config = tenant_config
+        self.tolerance = ToleranceEngine(self.config)
+        self.header_match = HeaderMatchService(self.tolerance)
+        self.line_match = LineMatchService(self.tolerance)

@@ -69,6 +69,8 @@ class BenchmarkService:
         request_user: Any = None,
     ) -> BenchmarkResult:
         AnalysisRunService.start_run(run)
+        # Tenant propagation is explicit for multi-tenant safety.
+        tenant = request.tenant
 
         # Shared memory for this run -- benchmark agents write findings here
         memory = ProcurementAgentMemory()

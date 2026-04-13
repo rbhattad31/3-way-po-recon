@@ -8,6 +8,31 @@
   .variance-high { color:#dc2626; font-weight:600; }
   .variance-review { color:#6b7280; }
   .stat-card { border-radius:10px;background:#fff;border:1px solid #e5e7eb;padding:1rem 1.2rem; }
+  /* ---- Folder cards ---- */
+  .folder-grid { display:flex; flex-wrap:wrap; gap:1rem; }
+  .folder-card {
+    width:155px; cursor:pointer; user-select:none;
+    border-radius:0 10px 10px 10px;
+    border:1.5px solid #e5e7eb;
+    background:#fffdf7;
+    transition:box-shadow .15s, border-color .15s;
+  }
+  .folder-card:hover { box-shadow:0 4px 14px rgba(0,0,0,.1); border-color:#facc15; }
+  .folder-card.folder-best { border-color:#22c55e!important; background:#f0fdf4; }
+  .folder-card.folder-open { border-color:#3b82f6; box-shadow:0 0 0 3px #bfdbfe; }
+  .folder-tab {
+    height:10px; width:58%; border-radius:6px 6px 0 0;
+    background:#facc15; margin-bottom:-2px;
+  }
+  .folder-card.folder-best .folder-tab { background:#22c55e; }
+  .folder-card.folder-open .folder-tab { background:#3b82f6; }
+  .folder-body { padding:.65rem .75rem; }
+  .folder-icon { font-size:2.1rem; line-height:1; }
+  .folder-vendor { font-size:.78rem; font-weight:700; color:#111827; margin-top:.3rem; word-break:break-word; }
+  .folder-ref { font-size:.68rem; color:#6b7280; }
+  .folder-count { font-size:.68rem; background:#f3f4f6; border-radius:20px; padding:.15em .65em; color:#374151; font-weight:600; display:inline-flex; align-items:center; gap:.25rem; margin-top:.4rem; }
+  .folder-chevron { font-size:.75rem; color:#9ca3af; margin-top:.35rem; }
+  .folder-detail-panel { background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; overflow:hidden; }
 </style>
 {% endblock %}
 
@@ -48,15 +73,6 @@
         <i class="bi bi-arrow-repeat me-1"></i>Reprocess
       </button>
     </form>
-    <form method="post" action="{% url 'benchmarking:request_live_enrich' bench_request.pk %}"
-          class="d-inline" id="liveEnrichForm"
-          onsubmit="return confirm('Fetch live market pricing from Perplexity AI? This will update all benchmark rates with real market data.');">
-      {% csrf_token %}
-      <button type="submit" class="btn btn-sm btn-outline-primary" id="liveEnrichBtn">
-        <i class="bi bi-globe2 me-1"></i>Live Pricing
-        <span class="badge bg-primary ms-1" style="font-size:.6rem;">AI</span>
-      </button>
-    </form>
   </div>
 </div>
 
@@ -92,6 +108,194 @@
   <i class="bi bi-hourglass-split me-1"></i>
   Analysis is in progress. Refresh to see results.
 </div>
+{% endif %}
+
+<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;">
+  <div class="card-header bg-white border-bottom py-2 px-3">
+    <span class="fw-bold" style="font-size:.9rem;color:#111827;">
+      <i class="bi bi-cloud-upload me-1 text-primary"></i>Upload Vendor Quotation(s)
+    </span>
+  </div>
+  <div class="card-body p-3">
+    <form method="post" action="{% url 'benchmarking:request_add_quotations' bench_request.pk %}" enctype="multipart/form-data" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <div class="col-12 col-md-4">
+        <label class="form-label" style="font-size:.78rem;">Vendor Name</label>
+        <input type="text" name="supplier_name" class="form-control form-control-sm" placeholder="Vendor / Supplier name">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label" style="font-size:.78rem;">Quotation Ref</label>
+        <input type="text" name="quotation_ref" class="form-control form-control-sm" placeholder="Quote reference">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label" style="font-size:.78rem;">PDF or ZIP</label>
+        <input type="file" name="quotation_pdf" accept=".pdf,.zip" class="form-control form-control-sm" required>
+      </div>
+      <div class="col-12 col-md-2 d-grid">
+        <button type="submit" class="btn btn-sm btn-primary">
+          <i class="bi bi-cpu me-1"></i>Analyse
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if vendor_cards or quotation_summaries %}
+<div class="card border-0 shadow-sm mb-4" style="border-radius:10px;">
+  <div class="card-header bg-white border-bottom py-2 px-3 d-flex align-items-center justify-content-between">
+    <span class="fw-bold" style="font-size:.9rem;color:#111827;">
+      <i class="bi bi-folder2-open text-warning me-1"></i>Vendor Quotations
+    </span>
+    <div class="d-flex gap-2 align-items-center">
+      {% if vendor_recommendation.recommended %}
+        <span class="badge bg-success" style="font-size:.72rem;"><i class="bi bi-star-fill me-1"></i>Best: {{ vendor_recommendation.best_vendor_name }}</span>
+      {% elif vendor_recommendation %}
+        <span class="badge bg-danger" style="font-size:.72rem;">No Vendor Recommended</span>
+      {% elif best_vendor_summary %}
+        <span class="badge bg-success" style="font-size:.72rem;">Best Vendor: {{ best_vendor_summary.quotation.supplier_name|default:"Unnamed Vendor" }}</span>
+      {% endif %}
+      <span class="badge bg-light text-muted border" style="font-size:.7rem;">{{ vendor_cards|length }} vendor{% if vendor_cards|length != 1 %}s{% endif %}</span>
+    </div>
+  </div>
+  <div class="card-body px-3 pt-3 pb-3">
+
+  {# ---- Recommendation summary strip ---- #}
+    {% if vendor_recommendation.summary %}
+    <div class="alert alert-light border mb-3 py-2 px-3" style="font-size:.79rem;">
+      <strong class="text-dark">Analysis:</strong> {{ vendor_recommendation.summary }}
+      {% if vendor_recommendation.market_standards %}
+        <span class="ms-2 text-muted">&mdash;
+          {% for std in vendor_recommendation.market_standards %}{{ std }}{% if not forloop.last %}, {% endif %}{% endfor %}
+        </span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# ---- Folder grid ---- #}
+    <div class="folder-grid mb-3" id="folderGrid">
+      {% for card in vendor_cards %}
+      <div class="folder-card {% if vendor_recommendation.best_vendor_name and vendor_recommendation.best_vendor_name == card.supplier_name %}folder-best{% endif %}"
+           onclick="toggleFolder('folder-{{ forloop.counter }}', this)"
+           title="Click to view line items for {{ card.supplier_name }}">
+        <div class="folder-tab"></div>
+        <div class="folder-body">
+          <div class="folder-icon">
+            {% if vendor_recommendation.best_vendor_name and vendor_recommendation.best_vendor_name == card.supplier_name %}
+              <i class="bi bi-folder-fill text-success"></i>
+            {% else %}
+              <i class="bi bi-folder-fill text-warning"></i>
+            {% endif %}
+          </div>
+          <div class="folder-vendor">{{ card.supplier_name|default:"Unnamed Vendor" }}</div>
+          <div class="folder-ref">{{ card.quotation_ref|default:"No ref" }}</div>
+          <div class="folder-count">
+            <i class="bi bi-file-earmark-text" style="font-size:.72rem;"></i>
+            {{ card.line_count }} item{% if card.line_count != 1 %}s{% endif %}
+          </div>
+          <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
+            <span class="badge bg-{% if card.status == 'WITHIN_RANGE' %}success{% elif card.status == 'MODERATE' %}warning text-dark{% elif card.status == 'HIGH' %}danger{% else %}secondary{% endif %}" style="font-size:.62rem;">{{ card.status|cut:"_" }}</span>
+            {% if card.deviation_pct is not None %}
+              <span class="badge bg-info text-dark" style="font-size:.62rem;">{{ card.deviation_pct|floatformat:1 }}%</span>
+            {% endif %}
+            {% if vendor_recommendation.best_vendor_name and vendor_recommendation.best_vendor_name == card.supplier_name %}
+              <i class="bi bi-star-fill text-success" style="font-size:.7rem;" title="Best Vendor"></i>
+            {% endif %}
+          </div>
+          <div class="folder-chevron"><i class="bi bi-chevron-down" id="chevron-folder-{{ forloop.counter }}"></i> Open</div>
+        </div>
+      </div>
+      {% empty %}
+      <div class="text-muted" style="font-size:.82rem;"><i class="bi bi-info-circle me-1"></i>No vendor quotations found for this request.</div>
+      {% endfor %}
+    </div>
+
+    {# ---- Expandable line-item panels (one per vendor) ---- #}
+    <div id="folderPanels">
+      {% for card in vendor_cards %}
+      <div class="collapse folder-detail-panel mb-3" id="folder-{{ forloop.counter }}">
+        <div class="px-3 pt-2 pb-1 d-flex align-items-center justify-content-between border-bottom">
+          <span class="fw-semibold" style="font-size:.83rem;color:#111827;">
+            <i class="bi bi-folder2-open text-warning me-1"></i>{{ card.supplier_name }}
+            {% if vendor_recommendation.best_vendor_name and vendor_recommendation.best_vendor_name == card.supplier_name %}
+              <span class="badge bg-success ms-1" style="font-size:.65rem;"><i class="bi bi-star-fill me-1"></i>Best Vendor</span>
+            {% endif %}
+          </span>
+          <span class="text-muted" style="font-size:.72rem;">
+            {{ card.line_count }} item{% if card.line_count != 1 %}s{% endif %}
+            &middot; Ref: {{ card.quotation_ref|default:"--" }}
+            {% if card.deviation_pct is not None %}&middot; Dev: {{ card.deviation_pct|floatformat:1 }}%{% endif %}
+          </span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0" style="font-size:.78rem;">
+            <thead style="background:#f1f5f9;">
+              <tr>
+                <th class="px-3 py-2">#</th>
+                <th class="py-2">Description</th>
+                <th class="py-2">Category</th>
+                <th class="py-2 text-end">Quoted</th>
+                <th class="py-2 text-end">Bench Mid</th>
+                <th class="py-2 text-end">Variance</th>
+                <th class="py-2">Market Ref</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in card.line_items %}
+              <tr>
+                <td class="px-3 py-1 text-muted">{{ item.line_number }}</td>
+                <td class="py-1" style="max-width:260px;"><span title="{{ item.description }}">{{ item.description|truncatechars:80 }}</span></td>
+                <td class="py-1"><span class="badge bg-light text-dark border" style="font-size:.67rem;">{{ item.category }}</span></td>
+                <td class="py-1 text-end">{% if item.quoted_unit_rate %}{{ item.quoted_unit_rate|floatformat:2 }}{% else %}--{% endif %}</td>
+                <td class="py-1 text-end">{% if item.benchmark_mid %}{{ item.benchmark_mid|floatformat:2 }}{% else %}--{% endif %}</td>
+                <td class="py-1 text-end {% if item.variance_status == 'WITHIN_RANGE' %}variance-within{% elif item.variance_status == 'MODERATE' %}variance-moderate{% elif item.variance_status == 'HIGH' %}variance-high{% else %}variance-review{% endif %}">{{ item.get_variance_display }}</td>
+                <td class="py-1">
+                  {% with lp=item.live_price_json %}
+                    {% if lp and lp.citations %}
+                      {% for url in lp.citations|slice:":2" %}
+                        <a href="{{ url }}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:.62rem;">Ref {{ forloop.counter }}</a>
+                      {% endfor %}
+                    {% elif item.corridor_rule_code %}
+                      <span class="text-muted" style="font-size:.7rem;">{{ item.corridor_rule_code }}</span>
+                    {% else %}
+                      <span class="text-muted" style="font-size:.7rem;">--</span>
+                    {% endif %}
+                  {% endwith %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="7" class="text-center text-muted py-3" style="font-size:.78rem;"><i class="bi bi-inbox me-1"></i>No line items extracted yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+  </div>
+</div>
+
+<script>
+function toggleFolder(panelId, cardEl) {
+  var panel = document.getElementById(panelId);
+  if (!panel) return;
+  var isOpen = panel.classList.contains('show');
+  // close all panels + reset all cards
+  document.querySelectorAll('#folderPanels .collapse').forEach(function(p){ p.classList.remove('show'); });
+  document.querySelectorAll('#folderGrid .folder-card').forEach(function(c){ c.classList.remove('folder-open'); });
+  document.querySelectorAll('[id^="chevron-folder-"]').forEach(function(ch){ ch.className = 'bi bi-chevron-down'; ch.nextSibling && (ch.parentNode.lastChild.textContent = ' Open'); });
+  // toggle open if was closed
+  if (!isOpen) {
+    panel.classList.add('show');
+    cardEl.classList.add('folder-open');
+    var chev = document.getElementById('chevron-' + panelId);
+    if (chev) { chev.className = 'bi bi-chevron-up'; }
+    var chevDiv = cardEl.querySelector('.folder-chevron');
+    if (chevDiv) chevDiv.innerHTML = '<i class="bi bi-chevron-up" id="chevron-' + panelId + '"></i> Close';
+    setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 150);
+  }
+}
+</script>
 {% endif %}
 
 {% if result %}
@@ -242,94 +446,5 @@
 
 {% endif %}{# end if result #}
 
-{# ---- LINE ITEMS TABLE ---- #}
-<div class="card border-0 shadow-sm" style="border-radius:10px;overflow:hidden;">
-  <div class="card-header bg-white border-bottom d-flex align-items-center justify-content-between py-2 px-3">
-    <span class="fw-bold" style="font-size:.9rem;color:#111827;">Line-wise Analysis</span>
-    <form method="get" class="d-flex gap-2 align-items-center">
-      <select name="category" class="form-select form-select-sm" style="font-size:.77rem;width:auto;">
-        <option value="">All Categories</option>
-        {% for val, label in category_choices %}<option value="{{ val }}" {% if cat_filter == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
-      </select>
-      <select name="variance" class="form-select form-select-sm" style="font-size:.77rem;width:auto;">
-        <option value="">All Statuses</option>
-        {% for val, label in variance_choices %}<option value="{{ val }}" {% if var_filter == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
-      </select>
-      <button type="submit" class="btn btn-sm btn-primary">Filter</button>
-      <a href="{% url 'benchmarking:request_detail' bench_request.pk %}" class="btn btn-sm btn-outline-secondary">Clear</a>
-    </form>
-  </div>
-  <div class="table-responsive">
-    <table class="table table-sm table-hover mb-0" style="font-size:.79rem;">
-      <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">
-        <tr>
-          <th class="px-3 py-2 fw-600" style="color:#6b7280;">#</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Description</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Category</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">UOM</th>
-          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Qty</th>
-          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Quoted Rate</th>
-          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Bench Min</th>
-          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Bench Mid</th>
-          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Bench Max</th>
-          <th class="py-2 fw-600 text-end" style="color:#6b7280;">Variance</th>
-          <th class="py-2 fw-600" style="color:#6b7280;">Status</th>
-          <th class="py-2 fw-600 text-center" style="color:#6b7280;">Source</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in line_items %}
-        <tr title="{{ item.variance_note }}">
-          <td class="px-3 py-1 text-muted">{{ item.line_number }}</td>
-          <td class="py-1" style="max-width:260px;">
-            <span title="{{ item.description }}">{{ item.description|truncatechars:80 }}</span>
-          </td>
-          <td class="py-1">
-            <span class="badge bg-light text-dark border" style="font-size:.7rem;">{{ item.category }}</span>
-          </td>
-          <td class="py-1 text-muted">{{ item.uom|default:"--" }}</td>
-          <td class="py-1 text-end">{% if item.quantity %}{{ item.quantity|floatformat:2 }}{% else %}--{% endif %}</td>
-          <td class="py-1 text-end fw-600">{% if item.quoted_unit_rate %}{{ item.quoted_unit_rate|floatformat:2 }}{% else %}--{% endif %}</td>
-          <td class="py-1 text-end text-muted">{% if item.benchmark_min %}{{ item.benchmark_min|floatformat:2 }}{% else %}--{% endif %}</td>
-          <td class="py-1 text-end">{% if item.benchmark_mid %}<strong>{{ item.benchmark_mid|floatformat:2 }}</strong>{% else %}--{% endif %}</td>
-          <td class="py-1 text-end text-muted">{% if item.benchmark_max %}{{ item.benchmark_max|floatformat:2 }}{% else %}--{% endif %}</td>
-          <td class="py-1 text-end
-            {% if item.variance_status == 'WITHIN_RANGE' %}variance-within
-            {% elif item.variance_status == 'MODERATE' %}variance-moderate
-            {% elif item.variance_status == 'HIGH' %}variance-high
-            {% else %}variance-review{% endif %}">
-            {{ item.get_variance_display }}
-          </td>
-          <td class="py-1">
-            <span class="badge bg-{{ item.get_variance_badge_class }}" style="font-size:.7rem;">
-              {{ item.variance_status|cut:"_" }}
-            </span>
-          </td>
-          <td class="py-1 text-center">
-            {% if item.benchmark_source == 'PERPLEXITY_LIVE' %}
-              <span class="badge" style="background:#7c3aed;font-size:.65rem;" title="Live market data from Perplexity AI">
-                <i class="bi bi-globe2"></i> LIVE
-              </span>
-            {% elif item.benchmark_source == 'CORRIDOR_DB' %}
-              <span class="badge bg-secondary" style="font-size:.65rem;" title="Internal corridor database">
-                <i class="bi bi-database"></i> DB
-              </span>
-            {% else %}
-              <span class="text-muted" style="font-size:.7rem;">--</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% empty %}
-        <tr>
-          <td colspan="12" class="text-center py-4 text-muted">
-            <i class="bi bi-table d-block mb-1 fs-4"></i>
-            No line items found{% if cat_filter or var_filter %} matching filters{% endif %}.
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
+{# ---- CARD-WISE VENDOR LINE ITEMS ---- #}
 {% endblock %}

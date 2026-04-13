@@ -22,6 +22,7 @@ urlpatterns = [
     path("<int:pk>/quotation/", template_views.upload_quotation, name="upload_quotation"),
     path("<int:pk>/validate/", template_views.trigger_validation, name="trigger_validation"),
     path("<int:pk>/external-suggestions/", template_views.api_external_suggestions, name="api_external_suggestions"),
+    path("<int:pk>/rerun-recommendation/", template_views.api_rerun_internal_recommendation, name="api_rerun_internal_recommendation"),
     # AI Market Intelligence -- direct LLM suggestions, cached in DB
     path("<int:pk>/market-intelligence/", template_views.market_intelligence_page, name="market_intelligence"),
     path("<int:pk>/market-intelligence/research/", template_views.api_perplexity_research, name="api_perplexity_research"),
@@ -64,4 +65,6 @@ urlpatterns = [
     path("api/config/hvacrules/<int:pk>/", template_views.api_config_hvacrule_detail, name="api_config_hvacrule_detail"),
     # AJAX API -- HVAC Service Scope (read-only reference table)
     path("api/config/servicescopes/", template_views.api_config_servicescopes, name="api_config_servicescopes"),
+    # End-to-End lifecycle timeline
+    path("<int:pk>/e2e-timeline/", template_views.procurement_e2e_timeline, name="e2e_timeline"),
 ]

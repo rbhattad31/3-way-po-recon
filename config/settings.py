@@ -211,9 +211,9 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_DEFAULT_QUEUE = "default"
-# Run tasks synchronously — disabled in production; override via CELERY_TASK_ALWAYS_EAGER=true
-# for local dev or test_settings.py (which forces True unconditionally).
-CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "False").lower() in ("true", "1", "yes")
+# Run tasks synchronously — enabled by default in dev/test; disabled in production.
+# Override via CELERY_TASK_ALWAYS_EAGER env var if needed.
+CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "True").lower() in ("true", "1", "yes")
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 
 # ---------------------------------------------------------------------------

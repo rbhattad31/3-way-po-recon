@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% load static %}
+{% load rbac_tags %}
 
 {% block title %}Command Center — AP Operations{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/agentic-dashboard.css' %}?v=20260314b" rel="stylesheet">
+<link href="{% static 'css/agentic-dashboard.css' %}?v=20260413d" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -13,24 +14,33 @@
   <!-- ═══════════════════════════════════════════════════════════════
        COMMAND BAR
        ═══════════════════════════════════════════════════════════════ -->
-  <div class="cc-command-bar">
-    <i class="bi bi-terminal-fill" style="color:var(--ap-primary);font-size:1.25rem"></i>
-    <span class="fw-bold" style="font-size:var(--ap-font-size-lg);white-space:nowrap">
-      <i class="bi bi-cpu"></i> LMG  Command Center
-    </span>
-    <div class="flex-grow-1 mx-2">
-      <input type="text" id="cc-search" class="form-control form-control-sm"
-             placeholder="Search invoices, vendors, case IDs…"
-             autocomplete="off">
-    </div>
-    <div class="d-flex align-items-center gap-3">
-      <span class="d-flex align-items-center gap-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
-        <span class="cc-status-dot"></span> System Online
-      </span>
-      <span id="last-refresh" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);font-family:var(--ap-font-mono)">—</span>
-      <button class="btn btn-sm btn-outline-primary" onclick="location.reload()" title="Refresh now">
-        <i class="bi bi-arrow-clockwise"></i>
-      </button>
+  <div class="cc-command-bar-wrap">
+    <div class="cc-command-bar">
+      <div class="cc-brand-block">
+        <span class="cc-brand-logo-shell cc-brand-logo-shell-ai" aria-hidden="true">
+          <i class="bi bi-cpu-fill cc-brand-ai-core"></i>
+          <span class="cc-brand-ai-pulse"></span>
+        </span>
+        <div class="cc-brand-text">
+          <span class="cc-brand-title"><i class="bi bi-stars"></i> LMG Agentic AI Command Center</span>
+          <span class="cc-brand-subtitle">Multi-agent orchestration for extraction, reconciliation, posting, and exception handling</span>
+        </div>
+        <span class="cc-brand-badge">Agent Mesh</span>
+      </div>
+      <div class="cc-search-wrap flex-grow-1 mx-2">
+        <input type="text" id="cc-search" class="form-control form-control-sm"
+               placeholder="Search invoices, vendors, case IDs..."
+               autocomplete="off">
+      </div>
+      <div class="d-flex align-items-center gap-3 cc-command-meta">
+        <span class="d-flex align-items-center gap-1" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">
+          <span class="cc-status-dot"></span> System Online
+        </span>
+        <span id="last-refresh" style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);font-family:var(--ap-font-mono)">—</span>
+        <button class="btn btn-sm btn-outline-primary cc-refresh-btn" onclick="location.reload()" title="Refresh now">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -145,6 +155,7 @@
   </div>
   {% endif %}
 
+  
 
   <!-- ═══════════════════════════════════════════════════════════════
        SECTION 3 + 4: TWO-COLUMN MAIN GRID
@@ -382,10 +393,94 @@
     </div>
   </div>
 
+  <div class="cc-timeline-card">
+    <div class="cc-panel-header" style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#procTimelineCollapse" aria-expanded="false">
+      <span class="cc-panel-title"><i class="bi bi-tools"></i> Procurement Timeline</span>
+      <span class="d-flex align-items-center gap-2">
+        <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Latest procurement request activity</span>
+        <i class="bi bi-chevron-down" style="font-size:0.8rem;color:var(--ap-text-muted);transition:transform 0.2s"></i>
+      </span>
+    </div>
+    <div class="collapse" id="procTimelineCollapse">
+      <div class="cc-timeline">
+        {% for event in procurement_timeline %}
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--{{ event.dot }}"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">{{ event.title }}</div>
+            <div class="cc-timeline-desc">{{ event.detail }}</div>
+            <div class="mt-1 d-flex gap-1 flex-wrap">
+              <a href="{% url 'procurement:request_workspace' event.pk %}" class="btn btn-xs btn-outline-primary">Open request</a>
+              <a href="{% url 'procurement:e2e_timeline' event.pk %}" class="btn btn-xs btn-outline-warning">
+                <i class="bi bi-clock-history me-1"></i>E2E Timeline
+              </a>
+            </div>
+          </div>
+          <div class="cc-timeline-time">
+            {{ event.time }}
+            <div style="font-size:10px;opacity:.8">{{ event.time_ago }}</div>
+          </div>
+        </div>
+        {% empty %}
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--pending"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">No procurement activity yet</div>
+            <div class="cc-timeline-desc">Create a procurement request to see timeline events here.</div>
+          </div>
+          <div class="cc-timeline-time">--</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="cc-timeline-card">
+    <div class="cc-panel-header" style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#benchTimelineCollapse" aria-expanded="false">
+      <span class="cc-panel-title"><i class="bi bi-bar-chart-line"></i> Benchmark Timeline</span>
+      <span class="d-flex align-items-center gap-2">
+        <span style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted)">Latest should-cost benchmark activity</span>
+        <i class="bi bi-chevron-down" style="font-size:0.8rem;color:var(--ap-text-muted);transition:transform 0.2s"></i>
+      </span>
+    </div>
+    <div class="collapse" id="benchTimelineCollapse">
+      <div class="cc-timeline">
+        {% for event in benchmark_timeline %}
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--{{ event.dot }}"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">{{ event.title }}</div>
+            <div class="cc-timeline-desc">{{ event.detail }}</div>
+            <div class="mt-1 d-flex gap-1 flex-wrap">
+              <a href="{% url 'benchmarking:request_detail' event.pk %}" class="btn btn-xs btn-outline-warning">Open benchmark</a>
+              <a href="{% url 'benchmarking:e2e_timeline' event.pk %}" class="btn btn-xs btn-outline-info">
+                <i class="bi bi-clock-history me-1"></i>E2E Timeline
+              </a>
+            </div>
+          </div>
+          <div class="cc-timeline-time">
+            {{ event.time }}
+            <div style="font-size:10px;opacity:.8">{{ event.time_ago }}</div>
+          </div>
+        </div>
+        {% empty %}
+        <div class="cc-timeline-item">
+          <div class="cc-timeline-dot cc-timeline-dot--pending"></div>
+          <div class="cc-timeline-content">
+            <div class="cc-timeline-title">No benchmark activity yet</div>
+            <div class="cc-timeline-desc">Create a benchmark request to see timeline events here.</div>
+          </div>
+          <div class="cc-timeline-time">--</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
 </div><!-- /cc-page -->
 {% endblock %}
 
 {% block extra_js %}
 <script>window.CC_ROLE = "{{ user_role|escapejs }}";</script>
-<script src="{% static 'js/agentic-dashboard.js' %}?v=20260314b"></script>
+<script src="{% static 'js/agentic-dashboard.js' %}?v=20260413e"></script>
 {% endblock %}
