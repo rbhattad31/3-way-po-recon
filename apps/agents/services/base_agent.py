@@ -731,10 +731,13 @@ class BaseAgent(ABC):
             # Inject tenant from AgentContext so tools scope queries.
             if hasattr(self, "_agent_context") and getattr(self._agent_context, "tenant", None):
                 arguments["tenant"] = self._agent_context.tenant
+            # Inject parent_run_id so delegation tools can link child runs.
+            arguments["parent_run_id"] = agent_run.pk
             result = tool.execute(**arguments)
             # Remove non-serialisable span before audit persistence.
             arguments.pop("lf_parent_span", None)
             arguments.pop("tenant", None)
+            arguments.pop("parent_run_id", None)
 
         # Audit log
         ToolCallLogger.log(agent_run, tool_name, arguments, result)

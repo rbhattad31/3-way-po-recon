@@ -3,7 +3,7 @@ from django.conf import settings
 
 from apps.core.enums import ProcurementRequestStatus, ReviewStatus
 from apps.procurement.models import ProcurementRequest
-from apps.reviews.models import ReviewAssignment
+from apps.cases.models import ReviewAssignment
 
 
 def static_version(request):

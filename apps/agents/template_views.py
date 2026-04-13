@@ -1708,7 +1708,7 @@ def agent_runs_list(request):
     tenant = require_tenant(request)
     qs = AgentRun.objects.select_related(
         "reconciliation_result", "reconciliation_result__invoice",
-        "agent_definition", "document_upload",
+        "agent_definition", "document_upload", "parent_run",
     ).order_by("-created_at")
     if tenant is not None:
         qs = qs.filter(tenant=tenant)
@@ -1925,6 +1925,14 @@ def agent_run_detail(request, pk):
     except Exception:
         pass
 
+    # Child runs (spawned by supervisor delegation tools)
+    child_runs = AgentRun.objects.filter(
+        parent_run=run,
+    ).select_related("agent_definition").order_by("created_at")
+
+    # Parent run (if this run was spawned by a supervisor)
+    parent_run_obj = run.parent_run if run.parent_run_id else None
+
     return render(request, "agents/agent_run_detail.html", {
         "run": run,
         "steps": steps,
@@ -1933,6 +1941,8 @@ def agent_run_detail(request, pk):
         "recommendations": recommendations,
         "linked_invoice": linked_invoice,
         "eval_field_outcomes": eval_field_outcomes,
+        "child_runs": child_runs,
+        "parent_run": parent_run_obj,
     })
 
 

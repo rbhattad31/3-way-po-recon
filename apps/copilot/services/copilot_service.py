@@ -728,15 +728,50 @@ class APCopilotService:
         }
 
         if inv:
+            vendor_name = (inv.vendor.name if inv.vendor else inv.raw_vendor_name) or ""
             ctx["invoice"] = {
                 "id": inv.pk,
                 "invoice_number": inv.invoice_number,
                 "amount": str(inv.total_amount) if inv.total_amount else None,
+                "total_amount": str(inv.total_amount) if inv.total_amount else None,
+                "subtotal": str(inv.subtotal) if inv.subtotal else None,
+                "tax_amount": str(inv.tax_amount) if inv.tax_amount else None,
+                "tax_percentage": float(inv.tax_percentage) if inv.tax_percentage is not None else None,
+                "tax_breakdown": inv.tax_breakdown if inv.tax_breakdown else {},
                 "currency": inv.currency,
                 "invoice_date": inv.invoice_date.isoformat() if inv.invoice_date else None,
+                "due_date": inv.due_date.isoformat() if inv.due_date else None,
+                "po_number": inv.po_number or None,
+                "vendor_name": vendor_name,
+                "raw_vendor_name": inv.raw_vendor_name or None,
+                "vendor_tax_id": inv.vendor_tax_id or None,
+                "buyer_name": inv.buyer_name or None,
                 "status": inv.get_status_display() if hasattr(inv, "get_status_display") else inv.status,
                 "extraction_confidence": inv.extraction_confidence,
             }
+            # Include line items for copilot panels
+            try:
+                from apps.documents.models import InvoiceLineItem
+                inv_lines = InvoiceLineItem.objects.filter(
+                    invoice=inv,
+                ).order_by("line_number").values(
+                    "line_number", "description", "item_category",
+                    "quantity", "unit_price", "tax_amount", "line_amount",
+                )
+                ctx["invoice"]["line_items"] = [
+                    {
+                        "line_number": li["line_number"],
+                        "description": li["description"] or "-",
+                        "item_code": li["item_category"] or "-",
+                        "quantity": float(li["quantity"]) if li["quantity"] is not None else None,
+                        "unit_price": float(li["unit_price"]) if li["unit_price"] is not None else None,
+                        "tax_amount": float(li["tax_amount"]) if li["tax_amount"] is not None else None,
+                        "amount": float(li["line_amount"]) if li["line_amount"] is not None else None,
+                    }
+                    for li in inv_lines
+                ]
+            except Exception:
+                ctx["invoice"]["line_items"] = []
             # Include extraction result ID for console link
             try:
                 from apps.extraction.models import ExtractionResult
@@ -883,45 +918,114 @@ class APCopilotService:
 
         evidence: List[Dict[str, Any]] = []
 
-        # Invoice evidence
+        # Invoice evidence (with line items)
         if case.invoice:
             inv = case.invoice
+            vendor_name = (inv.vendor.name if inv.vendor else inv.raw_vendor_name) or ""
+            from apps.documents.models import InvoiceLineItem
+            inv_lines = InvoiceLineItem.objects.filter(
+                invoice=inv,
+            ).order_by("line_number").values(
+                "line_number", "description", "item_category",
+                "quantity", "unit_price", "tax_percentage", "tax_amount", "line_amount",
+            )
             evidence.append({
                 "type": "invoice",
                 "label": f"Invoice {inv.invoice_number}",
-                "data": {
-                    "amount": str(inv.total_amount) if inv.total_amount else None,
+                "details": {
+                    "total_amount": str(inv.total_amount) if inv.total_amount else None,
+                    "subtotal": str(inv.subtotal) if inv.subtotal else None,
+                    "tax_amount": str(inv.tax_amount) if inv.tax_amount else None,
+                    "tax_percentage": float(inv.tax_percentage) if inv.tax_percentage is not None else None,
+                    "tax_breakdown": inv.tax_breakdown if inv.tax_breakdown else {},
                     "currency": inv.currency,
+                    "vendor_name": vendor_name,
+                    "vendor_tax_id": inv.vendor_tax_id or None,
+                    "buyer_name": inv.buyer_name or None,
+                    "due_date": inv.due_date.isoformat() if inv.due_date else None,
+                    "po_number": inv.po_number or None,
                     "date": inv.invoice_date.isoformat() if inv.invoice_date else None,
                     "confidence": inv.extraction_confidence,
+                    "line_items": [
+                        {
+                            "line_number": li["line_number"],
+                            "description": li["description"] or "-",
+                            "item_code": li["item_category"] or "-",
+                            "quantity": float(li["quantity"]) if li["quantity"] is not None else None,
+                            "uom": "",
+                            "unit_price": float(li["unit_price"]) if li["unit_price"] is not None else None,
+                            "tax_percentage": float(li["tax_percentage"]) if li["tax_percentage"] is not None else None,
+                            "tax_amount": float(li["tax_amount"]) if li["tax_amount"] is not None else None,
+                            "amount": float(li["line_amount"]) if li["line_amount"] is not None else None,
+                        }
+                        for li in inv_lines
+                    ],
                 },
             })
 
-        # PO evidence
+        # PO evidence (with line items)
         if case.purchase_order:
             po = case.purchase_order
+            from apps.documents.models import PurchaseOrderLineItem
+            po_lines = PurchaseOrderLineItem.objects.filter(
+                purchase_order=po,
+            ).order_by("line_number").values(
+                "line_number", "description", "item_code",
+                "quantity", "unit_price", "line_amount", "unit_of_measure",
+            )
             evidence.append({
                 "type": "purchase_order",
                 "label": f"PO {po.po_number}",
-                "data": {
-                    "amount": str(po.total_amount) if po.total_amount else None,
+                "details": {
+                    "total_amount": str(po.total_amount) if po.total_amount else None,
+                    "vendor_name": po.vendor.name if po.vendor else "",
+                    "currency": po.currency or "",
                     "status": po.status,
+                    "line_items": [
+                        {
+                            "line_number": li["line_number"],
+                            "description": li["description"] or "-",
+                            "item_code": li["item_code"] or "-",
+                            "quantity": float(li["quantity"]) if li["quantity"] is not None else None,
+                            "uom": li["unit_of_measure"] or "",
+                            "unit_price": float(li["unit_price"]) if li["unit_price"] is not None else None,
+                            "amount": float(li["line_amount"]) if li["line_amount"] is not None else None,
+                        }
+                        for li in po_lines
+                    ],
                 },
             })
 
-        # GRN evidence
+        # GRN evidence (with line items)
         if case.purchase_order:
-            from apps.documents.models import GoodsReceiptNote
+            from apps.documents.models import GoodsReceiptNote, GRNLineItem
             grns = GoodsReceiptNote.objects.filter(
                 purchase_order=case.purchase_order,
-            ).values("grn_number", "receipt_date", "status")[:5]
-            for g in grns:
+            )[:5]
+            for grn_obj in grns:
+                grn_lines = GRNLineItem.objects.filter(
+                    grn=grn_obj,
+                ).order_by("line_number").values(
+                    "line_number", "description", "item_code",
+                    "quantity_received", "unit_of_measure",
+                )
                 evidence.append({
                     "type": "grn",
-                    "label": f"GRN {g['grn_number']}",
-                    "data": {
-                        "status": g["status"] or None,
-                        "date": g["receipt_date"].isoformat() if g["receipt_date"] else None,
+                    "label": f"GRN {grn_obj.grn_number}",
+                    "details": {
+                        "status": grn_obj.status or None,
+                        "date": grn_obj.receipt_date.isoformat() if grn_obj.receipt_date else None,
+                        "line_items": [
+                            {
+                                "grn_number": grn_obj.grn_number,
+                                "date": grn_obj.receipt_date.isoformat() if grn_obj.receipt_date else "-",
+                                "description": li["description"] or "-",
+                                "item_code": li["item_code"] or "-",
+                                "quantity_received": float(li["quantity_received"]) if li["quantity_received"] is not None else None,
+                                "uom": li["unit_of_measure"] or "",
+                            }
+                            for li in grn_lines
+                        ],
                     },
                 })
 
@@ -935,7 +1039,7 @@ class APCopilotService:
                 evidence.append({
                     "type": "exception",
                     "label": exc["exception_type"],
-                    "data": {
+                    "details": {
                         "severity": exc["severity"],
                         "message": exc["message"],
                     },
@@ -947,7 +1051,7 @@ class APCopilotService:
             evidence.append({
                 "type": "decision",
                 "label": d.get_decision_type_display(),
-                "data": {
+                "details": {
                     "value": d.decision_value,
                     "confidence": d.confidence,
                     "rationale": d.rationale,

@@ -129,7 +129,7 @@ def _make_agent_run(recon_result=None, agent_type=None, status=None, **kwargs):
 
 
 def _make_review_assignment(recon_result=None, status=None, assigned_to=None):
-    from apps.reviews.models import ReviewAssignment
+    from apps.cases.models import ReviewAssignment
     from apps.core.enums import ReviewStatus
     rr = recon_result or _make_recon_result()
     return ReviewAssignment.objects.create(

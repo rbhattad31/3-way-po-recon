@@ -170,6 +170,66 @@
 </div>
 {% endif %}
 
+{# ── Parent Run Link ── #}
+{% if parent_run %}
+<div class="alert alert-info py-2 mb-3 d-flex align-items-center gap-2 small">
+  <i class="bi bi-diagram-2"></i>
+  Spawned by supervisor run
+  <a href="{% url 'agents:agent_run_detail' parent_run.pk %}" class="fw-semibold">#{{ parent_run.pk }} ({{ parent_run.get_agent_type_display }})</a>
+</div>
+{% endif %}
+
+{# ── Child Agent Runs (Delegated) ── #}
+{% if child_runs %}
+<div class="ap-card mb-3">
+  <div class="ap-card-header"><i class="bi bi-diagram-3 me-2"></i>Delegated Agent Runs ({{ child_runs|length }})</div>
+  <div class="ap-card-body p-0 table-responsive">
+    <table class="ap-table mb-0">
+      <thead>
+        <tr>
+          <th>Run</th>
+          <th>Agent Type</th>
+          <th>Status</th>
+          <th>Confidence</th>
+          <th>Duration</th>
+          <th>Tokens</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for child in child_runs %}
+        <tr>
+          <td><a href="{% url 'agents:agent_run_detail' child.pk %}" class="fw-semibold">#{{ child.pk }}</a></td>
+          <td><span class="ap-badge ap-badge-info">{{ child.get_agent_type_display }}</span></td>
+          <td>
+            <span class="ap-badge
+              {% if child.status == 'COMPLETED' %}ap-badge-success
+              {% elif child.status == 'FAILED' %}ap-badge-danger
+              {% elif child.status == 'RUNNING' %}ap-badge-info
+              {% elif child.status == 'SKIPPED' %}ap-badge-muted
+              {% else %}ap-badge-partial{% endif %}">
+              {{ child.get_status_display }}
+            </span>
+          </td>
+          <td>
+            {% if child.confidence is not None %}
+              {% widthratio child.confidence 1 100 as conf_pct %}
+              <span class="{% if child.confidence >= 0.8 %}text-success{% elif child.confidence >= 0.5 %}text-warning{% else %}text-danger{% endif %} fw-semibold">{{ conf_pct }}%</span>
+            {% else %}
+              <small class="text-muted">--</small>
+            {% endif %}
+          </td>
+          <td>{% if child.duration_ms is not None %}<small>{{ child.duration_ms|floatformat:0 }}ms</small>{% else %}<small class="text-muted">--</small>{% endif %}</td>
+          <td>{% if child.total_tokens %}<small>{{ child.total_tokens|floatformat:0 }}</small>{% else %}<small class="text-muted">--</small>{% endif %}</td>
+          <td><small class="text-muted">{{ child.created_at|date:"M d, H:i:s" }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 {# ── Error Message ── #}
 {% if run.error_message %}
 <div class="ap-card mb-3 border-danger">

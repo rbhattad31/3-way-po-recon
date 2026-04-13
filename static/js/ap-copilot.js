@@ -1135,8 +1135,8 @@
         + '<td>' + esc(li.description || '-') + '</td>'
         + '<td>' + esc(li.item_code || '-') + '</td>'
         + '<td class="text-end">' + (li.quantity != null ? li.quantity : '-') + '</td>'
-        + '<td>' + esc(li.uom || '-') + '</td>'
         + '<td class="text-end">' + (li.unit_price != null ? li.unit_price : '-') + '</td>'
+        + '<td class="text-end">' + (li.tax_amount != null ? li.tax_amount : (li.tax_percentage != null ? li.tax_percentage + '%' : '-')) + '</td>'
         + '<td class="text-end">' + (li.amount != null ? li.amount : '-') + '</td>'
         + '</tr>';
     }).join('');

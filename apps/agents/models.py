@@ -162,6 +162,11 @@ class AgentRun(BaseModel):
     completion_tokens = models.PositiveIntegerField(null=True, blank=True)
     total_tokens = models.PositiveIntegerField(null=True, blank=True)
 
+    # Parent run (set when a supervisor agent delegates to a sub-agent)
+    parent_run = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="child_runs"
+    )
+
     # Handoff
     handed_off_to = models.ForeignKey(
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="handed_off_from"

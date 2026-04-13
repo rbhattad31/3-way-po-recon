@@ -1243,12 +1243,15 @@ def _build_delegate_context(
     po_number: str = "",
     reconciliation_mode: str = "",
     extra: dict | None = None,
+    trace_id: str = "",
+    langfuse_trace=None,
 ):
     """Build an AgentContext suitable for running a real sub-agent.
 
     Reuses the same ``build_supervisor_context`` helper that the task layer
     uses so the delegated agent gets full invoice metadata, memory, and
-    tenant scoping.
+    tenant scoping.  Accepts ``trace_id`` and ``langfuse_trace`` so child
+    agent runs are linked to the supervisor's Langfuse trace tree.
     """
     from apps.agents.services.supervisor_context_builder import build_supervisor_context
     return build_supervisor_context(
@@ -1259,6 +1262,8 @@ def _build_delegate_context(
         actor_primary_role="SYSTEM_AGENT",
         tenant=tenant,
         extra=extra or {},
+        trace_id=trace_id,
+        langfuse_trace=langfuse_trace,
     )
 
 
@@ -1320,6 +1325,30 @@ def _agent_run_to_result(agent_run, agent_label: str) -> ToolResult:
     )
 
 
+def _link_parent_run(agent_run, parent_run_id):
+    """Set parent_run on a child AgentRun created by a delegation tool."""
+    if parent_run_id and agent_run and hasattr(agent_run, "parent_run_id"):
+        try:
+            agent_run.parent_run_id = parent_run_id
+            agent_run.save(update_fields=["parent_run_id"])
+        except Exception:
+            logger.debug("Could not link parent_run_id=%s to child run %s",
+                         parent_run_id, getattr(agent_run, "pk", None))
+
+
+def _resolve_parent_trace_id(parent_run_id):
+    """Look up trace_id from the parent AgentRun for Langfuse continuity."""
+    if not parent_run_id:
+        return ""
+    try:
+        from apps.agents.models import AgentRun
+        return AgentRun.objects.filter(pk=parent_run_id).values_list(
+            "trace_id", flat=True,
+        ).first() or ""
+    except Exception:
+        return ""
+
+
 @register_tool
 class InvokePORetrievalAgentTool(BaseTool):
     name = "invoke_po_retrieval_agent"
@@ -1366,17 +1395,20 @@ class InvokePORetrievalAgentTool(BaseTool):
 
         ctx = _build_delegate_context(
             invoice_id=invoice_id,
-            tenant=kwargs.get("tenant"),
+            tenant=self._tenant,
             po_number=po_hint,
             extra={
                 "vendor_name": vendor,
                 "total_amount": _safe_str(invoice.total_amount),
             },
+            trace_id=_resolve_parent_trace_id(self._parent_run_id),
+            langfuse_trace=self._lf_parent_span,
         )
 
         try:
             agent = PORetrievalAgent()
             agent_run = agent.run(ctx)
+            _link_parent_run(agent_run, self._parent_run_id)
             return _agent_run_to_result(agent_run, "PO_RETRIEVAL")
         except Exception as exc:
             logger.exception("PO Retrieval Agent failed for invoice %s", invoice_id)
@@ -1430,15 +1462,18 @@ class InvokeGRNRetrievalAgentTool(BaseTool):
 
         ctx = _build_delegate_context(
             invoice_id=invoice_id,
-            tenant=kwargs.get("tenant"),
+            tenant=self._tenant,
             po_number=po_num,
             reconciliation_mode=reconciliation_mode,
             extra={"grn_available": "unknown", "grn_fully_received": "unknown"},
+            trace_id=_resolve_parent_trace_id(self._parent_run_id),
+            langfuse_trace=self._lf_parent_span,
         )
 
         try:
             agent = GRNRetrievalAgent()
             agent_run = agent.run(ctx)
+            _link_parent_run(agent_run, self._parent_run_id)
             return _agent_run_to_result(agent_run, "GRN_RETRIEVAL")
         except Exception as exc:
             logger.exception("GRN Retrieval Agent failed for invoice %s", invoice_id)
@@ -1489,24 +1524,34 @@ class InvokeExceptionAnalysisAgentTool(BaseTool):
 
         # Load exceptions
         from apps.reconciliation.models import ReconciliationException
-        exceptions = list(
-            ReconciliationException.objects.filter(
-                reconciliation_result=rr,
-            ).values("exception_type", "severity", "field_name", "description")
-        )
+        raw_exceptions = ReconciliationException.objects.filter(
+            result=rr,
+        ).values("exception_type", "severity", "message", "details")
+        exceptions = []
+        for exc in raw_exceptions:
+            details = exc.get("details") if isinstance(exc.get("details"), dict) else {}
+            exceptions.append({
+                "exception_type": exc.get("exception_type"),
+                "severity": exc.get("severity"),
+                "field_name": details.get("field_name") or details.get("field") or "",
+                "description": exc.get("message") or "",
+            })
 
         ctx = _build_delegate_context(
             invoice_id=invoice_id,
-            tenant=kwargs.get("tenant"),
+            tenant=self._tenant,
             reconciliation_result=rr,
             po_number=rr.purchase_order.po_number if rr.purchase_order else "",
             reconciliation_mode=getattr(rr, "reconciliation_mode", ""),
+            trace_id=_resolve_parent_trace_id(self._parent_run_id),
+            langfuse_trace=self._lf_parent_span,
         )
         ctx.exceptions = exceptions
 
         try:
             agent = ExceptionAnalysisAgent()
             agent_run = agent.run(ctx)
+            _link_parent_run(agent_run, self._parent_run_id)
             return _agent_run_to_result(agent_run, "EXCEPTION_ANALYSIS")
         except Exception as exc:
             logger.exception(
@@ -1559,24 +1604,34 @@ class InvokeReconciliationAssistAgentTool(BaseTool):
             )
 
         from apps.reconciliation.models import ReconciliationException
-        exceptions = list(
-            ReconciliationException.objects.filter(
-                reconciliation_result=rr,
-            ).values("exception_type", "severity", "field_name", "description")
-        )
+        raw_exceptions = ReconciliationException.objects.filter(
+            result=rr,
+        ).values("exception_type", "severity", "message", "details")
+        exceptions = []
+        for exc in raw_exceptions:
+            details = exc.get("details") if isinstance(exc.get("details"), dict) else {}
+            exceptions.append({
+                "exception_type": exc.get("exception_type"),
+                "severity": exc.get("severity"),
+                "field_name": details.get("field_name") or details.get("field") or "",
+                "description": exc.get("message") or "",
+            })
 
         ctx = _build_delegate_context(
             invoice_id=invoice_id,
-            tenant=kwargs.get("tenant"),
+            tenant=self._tenant,
             reconciliation_result=rr,
             po_number=rr.purchase_order.po_number if rr.purchase_order else "",
             reconciliation_mode=getattr(rr, "reconciliation_mode", ""),
+            trace_id=_resolve_parent_trace_id(self._parent_run_id),
+            langfuse_trace=self._lf_parent_span,
         )
         ctx.exceptions = exceptions
 
         try:
             agent = ReconciliationAssistAgent()
             agent_run = agent.run(ctx)
+            _link_parent_run(agent_run, self._parent_run_id)
             return _agent_run_to_result(agent_run, "RECONCILIATION_ASSIST")
         except Exception as exc:
             logger.exception(
@@ -1629,24 +1684,34 @@ class InvokeReviewRoutingAgentTool(BaseTool):
             )
 
         from apps.reconciliation.models import ReconciliationException
-        exceptions = list(
-            ReconciliationException.objects.filter(
-                reconciliation_result=rr,
-            ).values("exception_type", "severity", "field_name", "description")
-        )
+        raw_exceptions = ReconciliationException.objects.filter(
+            result=rr,
+        ).values("exception_type", "severity", "message", "details")
+        exceptions = []
+        for exc in raw_exceptions:
+            details = exc.get("details") if isinstance(exc.get("details"), dict) else {}
+            exceptions.append({
+                "exception_type": exc.get("exception_type"),
+                "severity": exc.get("severity"),
+                "field_name": details.get("field_name") or details.get("field") or "",
+                "description": exc.get("message") or "",
+            })
 
         ctx = _build_delegate_context(
             invoice_id=invoice_id,
-            tenant=kwargs.get("tenant"),
+            tenant=self._tenant,
             reconciliation_result=rr,
             po_number=rr.purchase_order.po_number if rr.purchase_order else "",
             reconciliation_mode=getattr(rr, "reconciliation_mode", ""),
+            trace_id=_resolve_parent_trace_id(self._parent_run_id),
+            langfuse_trace=self._lf_parent_span,
         )
         ctx.exceptions = exceptions
 
         try:
             agent = ReviewRoutingAgent()
             agent_run = agent.run(ctx)
+            _link_parent_run(agent_run, self._parent_run_id)
             return _agent_run_to_result(agent_run, "REVIEW_ROUTING")
         except Exception as exc:
             logger.exception(
@@ -1700,24 +1765,34 @@ class InvokeCaseSummaryAgentTool(BaseTool):
             )
 
         from apps.reconciliation.models import ReconciliationException
-        exceptions = list(
-            ReconciliationException.objects.filter(
-                reconciliation_result=rr,
-            ).values("exception_type", "severity", "field_name", "description")
-        )
+        raw_exceptions = ReconciliationException.objects.filter(
+            result=rr,
+        ).values("exception_type", "severity", "message", "details")
+        exceptions = []
+        for exc in raw_exceptions:
+            details = exc.get("details") if isinstance(exc.get("details"), dict) else {}
+            exceptions.append({
+                "exception_type": exc.get("exception_type"),
+                "severity": exc.get("severity"),
+                "field_name": details.get("field_name") or details.get("field") or "",
+                "description": exc.get("message") or "",
+            })
 
         ctx = _build_delegate_context(
             invoice_id=invoice_id,
-            tenant=kwargs.get("tenant"),
+            tenant=self._tenant,
             reconciliation_result=rr,
             po_number=rr.purchase_order.po_number if rr.purchase_order else "",
             reconciliation_mode=getattr(rr, "reconciliation_mode", ""),
+            trace_id=_resolve_parent_trace_id(self._parent_run_id),
+            langfuse_trace=self._lf_parent_span,
         )
         ctx.exceptions = exceptions
 
         try:
             agent = CaseSummaryAgent()
             agent_run = agent.run(ctx)
+            _link_parent_run(agent_run, self._parent_run_id)
             return _agent_run_to_result(agent_run, "CASE_SUMMARY")
         except Exception as exc:
             logger.exception(
