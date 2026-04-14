@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, TypedDict
 
-from langgraph.graph import END, START, StateGraph
-
 from apps.core.decorators import observed_service
 from apps.core.enums import PrefillStatus
 from apps.procurement.agents.hvac_recommendation_agent import HVACRecommendationAgent
@@ -62,6 +60,13 @@ class RecommendationGraphService:
     @classmethod
     def _get_graph(cls):
         if cls._compiled_graph is None:
+            try:
+                from langgraph.graph import END, START, StateGraph
+            except ModuleNotFoundError as exc:
+                raise RuntimeError(
+                    "langgraph dependency is not installed; recommendation graph is unavailable"
+                ) from exc
+
             graph = StateGraph(RecommendationGraphState)
             graph.add_node("collect_request_context", cls._collect_request_context)
             graph.add_node("collect_validation_context", cls._collect_validation_context)
