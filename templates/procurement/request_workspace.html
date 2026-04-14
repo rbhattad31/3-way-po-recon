@@ -340,10 +340,16 @@
     <div class="ws-card">
       <div class="ws-card-title d-flex align-items-center gap-2">
         <span><i class="bi bi-stars text-warning me-1"></i>Recommended System</span>
-        <button type="button" class="btn btn-sm btn-outline-primary ms-auto"
-                data-bs-toggle="modal" data-bs-target="#rfqModal">
-          <i class="bi bi-file-earmark-spreadsheet me-1"></i>{% if rfq_record %}Re-generate RFQ{% else %}Generate RFQ{% endif %}
-        </button>
+        <div class="ms-auto d-flex gap-2 align-items-center">
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="ws-rec-btn-refresh"
+                  title="Re-run AI recommendation analysis">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-primary"
+                  data-bs-toggle="modal" data-bs-target="#rfqModal">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>{% if rfq_record %}Re-generate RFQ{% else %}Generate RFQ{% endif %}
+          </button>
+        </div>
       </div>
       <div class="table-responsive mb-0">
         <table class="table table-bordered rec-summary-table mb-0">
@@ -490,13 +496,13 @@
         {% if reason_summary.rules_table %}
         <div class="accordion-item">
           <h2 class="accordion-header" id="rsHead-rules">
-            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
-                    data-bs-target="#rsPanel-rules" aria-expanded="false" aria-controls="rsPanel-rules">
+            <button class="accordion-button{% if not reason_summary.from_db_rule %} collapsed{% endif %}" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-rules" aria-expanded="{% if reason_summary.from_db_rule %}true{% else %}false{% endif %}" aria-controls="rsPanel-rules">
               <i class="bi bi-gear-wide-connected me-2 text-info"></i>Rules Engine Analysis
               <span class="badge bg-info ms-2" style="font-size:.65rem;">{{ reason_summary.rules_table|length }} rule{% if reason_summary.rules_table|length != 1 %}s{% endif %} fired</span>
             </button>
           </h2>
-          <div id="rsPanel-rules" class="accordion-collapse collapse" aria-labelledby="rsHead-rules" data-bs-parent="#rsAccordion">
+          <div id="rsPanel-rules" class="accordion-collapse collapse{% if reason_summary.from_db_rule %} show{% endif %}" aria-labelledby="rsHead-rules">
             <div class="accordion-body p-0">
               <div class="table-responsive">
                 <table class="table table-sm rs-table mb-0">
@@ -531,13 +537,13 @@
         {% if reason_summary.conditions_table %}
         <div class="accordion-item">
           <h2 class="accordion-header" id="rsHead-cond">
-            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
-                    data-bs-target="#rsPanel-cond" aria-expanded="false" aria-controls="rsPanel-cond">
+            <button class="accordion-button{% if not reason_summary.from_db_rule %} collapsed{% endif %}" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#rsPanel-cond" aria-expanded="{% if reason_summary.from_db_rule %}true{% else %}false{% endif %}" aria-controls="rsPanel-cond">
               <i class="bi bi-sliders me-2 text-purple" style="color:#7c3aed;"></i>Matched Input Conditions
               <span class="badge bg-secondary ms-2" style="font-size:.65rem;">{{ reason_summary.conditions_table|length }} factor{% if reason_summary.conditions_table|length != 1 %}s{% endif %}</span>
             </button>
           </h2>
-          <div id="rsPanel-cond" class="accordion-collapse collapse" aria-labelledby="rsHead-cond" data-bs-parent="#rsAccordion">
+          <div id="rsPanel-cond" class="accordion-collapse collapse{% if reason_summary.from_db_rule %} show{% endif %}" aria-labelledby="rsHead-cond">
             <div class="accordion-body p-0">
               <div class="table-responsive">
                 <table class="table table-sm rs-table mb-0">
@@ -700,6 +706,9 @@
       <i class="bi bi-robot fs-2 mb-2 d-block text-muted"></i>
       <div class="text-muted small">No AI recommendation generated yet.</div>
       <div class="text-muted" style="font-size:.75rem;margin-top:.3rem;">Run a Recommendation analysis to get AI-powered product suggestions.</div>
+      <button type="button" class="btn btn-sm btn-primary mt-3" id="ws-rec-btn-refresh">
+        <i class="bi bi-cpu me-1"></i>Run Analysis
+      </button>
     </div>
     {% endif %}
 
@@ -1123,9 +1132,9 @@
       {% if mi_record and mi_record.perplexity_citations_json %}
       <div id="ws-mi-citations" class="px-3 py-2" style="border-top:1px solid #e5e7eb;background:#f9fafb;">
         <div class="text-muted fw-semibold mb-1" style="font-size:.67rem;text-transform:uppercase;letter-spacing:.05em;">
-          <i class="bi bi-link-45deg me-1"></i>Perplexity Source References
+          <i class="bi bi-link-45deg me-1"></i><span id="ws-mi-citations-title">{{ mi_record.source_reference_label|default:"Perplexity Source References" }}</span>
         </div>
-        <div class="d-flex flex-wrap gap-1">
+        <div id="ws-mi-citations-list" class="d-flex flex-wrap gap-1">
           {% for cit_url in mi_record.perplexity_citations_json %}
           <a href="{{ cit_url }}" target="_blank" rel="noopener noreferrer"
              class="btn btn-sm btn-outline-secondary py-0 px-2 d-inline-flex align-items-center gap-1"
@@ -1140,7 +1149,7 @@
       {% else %}
       <div id="ws-mi-citations" class="px-3 py-2 d-none" style="border-top:1px solid #e5e7eb;background:#f9fafb;">
         <div class="text-muted fw-semibold mb-1" style="font-size:.67rem;text-transform:uppercase;letter-spacing:.05em;">
-          <i class="bi bi-link-45deg me-1"></i>Perplexity Source References
+          <i class="bi bi-link-45deg me-1"></i><span id="ws-mi-citations-title">Perplexity Source References</span>
         </div>
         <div id="ws-mi-citations-list" class="d-flex flex-wrap gap-1"></div>
       </div>
@@ -1779,6 +1788,7 @@
 {% if mi_record %}
 <script>window._WS_MI_SAVED = {{ mi_record.suggestions_json|safe }};</script>
 <script>window._WS_MI_SAVED_CITATIONS = {{ mi_record.perplexity_citations_json|safe }};</script>
+<script>window._WS_MI_SOURCE_LABEL = "{{ mi_record.source_reference_label|default:'Perplexity Source References'|escapejs }}";</script>
 {% endif %}
 <script>
 (function () {
@@ -1921,11 +1931,15 @@
     });
   }
 
-  function renderCitations(citations) {
+  function renderCitations(citations, sourceLabel) {
     var box = document.getElementById("ws-mi-citations");
     var list = document.getElementById("ws-mi-citations-list");
+    var title = document.getElementById("ws-mi-citations-title");
     if (!box || !list || !citations || !citations.length) {
       if (box) box.classList.add("d-none"); return;
+    }
+    if (title) {
+      title.textContent = sourceLabel || "Perplexity Source References";
     }
     list.innerHTML = "";
     citations.forEach(function(url) {
@@ -1950,7 +1964,10 @@
     if (mc) mc.textContent = data.market_context || "";
     buildRows(data.suggestions || []);
     buildChart(data.suggestions || []);
-    renderCitations(data.perplexity_citations || []);
+    renderCitations(
+      data.perplexity_citations || [],
+      data.source_reference_label || "Perplexity Source References"
+    );
     showState(elRes);
   }
 
@@ -1988,7 +2005,12 @@
       } else if (_HAS_SAVED && window._WS_MI_SAVED && Array.isArray(window._WS_MI_SAVED)) {
         setTimeout(function() {
           buildChart(window._WS_MI_SAVED);
-          if (window._WS_MI_SAVED_CITATIONS) renderCitations(window._WS_MI_SAVED_CITATIONS);
+          if (window._WS_MI_SAVED_CITATIONS) {
+            renderCitations(
+              window._WS_MI_SAVED_CITATIONS,
+              window._WS_MI_SOURCE_LABEL || "Perplexity Source References"
+            );
+          }
         }, 50);
       }
     });
@@ -2004,6 +2026,59 @@
       new bootstrap.Tab(tabEl).show();
     }
   }
+
+}());
+</script>
+
+{# -- Internal Recommendation refresh button JS -- #}
+<script>
+(function () {
+  "use strict";
+
+  var _REC_URL  = "{% url 'procurement:api_rerun_internal_recommendation' pk=proc_request.pk %}";
+  var _CSRF     = "{{ csrf_token }}";
+
+  var elBtns = document.querySelectorAll("#ws-rec-btn-refresh");
+
+  function doRerun(btn) {
+    elBtns.forEach(function(b) {
+      b.disabled = true;
+      b.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...';
+    });
+
+    fetch(_REC_URL, {
+      method: "POST",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        "X-CSRFToken": _CSRF,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === "ok") {
+        window.location.reload();
+      } else {
+        alert("Recommendation failed: " + (data.error || "Unknown error"));
+        elBtns.forEach(function(b) {
+          b.disabled = false;
+          b.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Refresh';
+        });
+      }
+    })
+    .catch(function(err) {
+      alert("Network error: " + err.message);
+      elBtns.forEach(function(b) {
+        b.disabled = false;
+        b.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Refresh';
+      });
+    });
+  }
+
+  elBtns.forEach(function(b) {
+    b.addEventListener("click", function() { doRerun(b); });
+  });
 
 }());
 </script>

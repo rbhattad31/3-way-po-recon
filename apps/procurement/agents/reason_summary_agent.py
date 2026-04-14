@@ -289,6 +289,10 @@ class ReasonSummaryAgent:
                 "reasoning_summary": ai_summary or fallback_summary,
                 "top_drivers":       ai_drivers or fallback_drivers,
                 "ai_generated":      True,
+                "llm_model_used":    llm.model,
+                "prompt_tokens":     response.prompt_tokens,
+                "completion_tokens": response.completion_tokens,
+                "total_tokens":      response.total_tokens,
             }
 
         except Exception as exc:
@@ -298,6 +302,10 @@ class ReasonSummaryAgent:
                 "reasoning_summary": fallback_summary,
                 "top_drivers":       fallback_drivers,
                 "ai_generated":      False,
+                "llm_model_used":    "",
+                "prompt_tokens":     None,
+                "completion_tokens": None,
+                "total_tokens":      None,
             }
 
     @staticmethod
@@ -531,6 +539,10 @@ class ReasonSummaryAgent:
                 "thought_steps":      thought_steps,
                 "standards":          applicable_standards,
                 "ai_generated":       ai_result.get("ai_generated", False),
+                "llm_model_used":     ai_result.get("llm_model_used", ""),
+                "prompt_tokens":      ai_result.get("prompt_tokens"),
+                "completion_tokens":  ai_result.get("completion_tokens"),
+                "total_tokens":       ai_result.get("total_tokens"),
                 # DB-rule fields (populated only for HVAC_RULES_DB engine matches)
                 "rule_code":          db_rule_code,
                 "rule_name":          db_rule_name,
@@ -561,6 +573,10 @@ class ReasonSummaryAgent:
                 "thought_steps":      [],
                 "standards":          [],
                 "ai_generated":       False,
+                "llm_model_used":     "",
+                "prompt_tokens":      None,
+                "completion_tokens":  None,
+                "total_tokens":       None,
             }
 
     # ------------------------------------------------------------------

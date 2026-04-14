@@ -67,6 +67,11 @@ def run_reconciliation_task(
         if not invoices:
             return {"status": "error", "message": "No matching invoices found"}
 
+    if config is None:
+        config = ReconciliationConfig.objects.filter(is_default=True, tenant=tenant).first()
+        if config is None:
+            config = ReconciliationConfig.objects.filter(is_default=True, tenant__isnull=True).first()
+
     runner = ReconciliationRunnerService(config=config)
 
     # Open a task-level Langfuse root trace BEFORE the runner executes so that

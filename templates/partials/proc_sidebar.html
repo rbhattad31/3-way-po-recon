@@ -130,9 +130,9 @@
 
 
 <!-- Always Visible -->
-<a class="proc-nav-link {% if request.resolver_match.url_name == 'agent_reference' %}active{% endif %}"
-   href="{% url 'agents:agent_reference' %}">
-  <i class="bi bi-journal-code {% if request.resolver_match.url_name != 'agent_reference' %}inactive{% endif %}"></i>
+<a class="proc-nav-link {% if request.resolver_match.url_name == 'procurement_agent_reference' %}active{% endif %}"
+   href="{% url 'agents:procurement_agent_reference' %}">
+  <i class="bi bi-journal-code {% if request.resolver_match.url_name != 'procurement_agent_reference' %}inactive{% endif %}"></i>
   Platform Reference
 </a>
 

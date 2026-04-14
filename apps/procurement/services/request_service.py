@@ -1,147 +1,142 @@
-"""ProcurementRequestService — CRUD and lifecycle for ProcurementRequest."""
+"""ProcurementRequest/Attribute helper services.
+
+Agent-first compatible: these helpers manage persistence only.
+Decision-making remains in agents/orchestrators.
+"""
 from __future__ import annotations
 
-import logging
-from typing import Any, Dict, List, Optional
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, Iterable, Optional
 
-from django.db import transaction
-from django.utils import timezone
-
-from apps.auditlog.services import AuditService
-from apps.core.decorators import observed_service
-from apps.core.enums import ProcurementRequestStatus
-from apps.core.trace import TraceContext
+from apps.core.enums import (
+    AttributeDataType,
+    ExtractionSourceType,
+    ProcurementRequestStatus,
+)
 from apps.procurement.models import ProcurementRequest, ProcurementRequestAttribute
 
-logger = logging.getLogger(__name__)
+
+class AttributeService:
+    """Attribute persistence and normalization helpers."""
+
+    @staticmethod
+    def bulk_set_attributes(proc_request: ProcurementRequest, attributes: Iterable[Dict[str, Any]]) -> None:
+        for row in attributes or []:
+            code = str(row.get("attribute_code", "") or "").strip()
+            if not code:
+                continue
+
+            label = str(row.get("attribute_label", code) or code)
+            data_type = str(row.get("data_type", AttributeDataType.TEXT) or AttributeDataType.TEXT)
+            value_text = str(row.get("value_text", "") or "")
+            value_json = row.get("value_json", None)
+            is_required = bool(row.get("is_required", False))
+
+            value_number = None
+            raw_number = row.get("value_number", None)
+            if raw_number not in (None, ""):
+                try:
+                    value_number = Decimal(str(raw_number))
+                except (InvalidOperation, TypeError, ValueError):
+                    value_number = None
+
+            normalized_value = value_text.strip().upper() if value_text else ""
+            if value_number is not None:
+                normalized_value = str(value_number)
+
+            defaults = {
+                "tenant": proc_request.tenant,
+                "attribute_label": label,
+                "data_type": data_type,
+                "value_text": value_text,
+                "value_number": value_number,
+                "value_json": value_json,
+                "is_required": is_required,
+                "normalized_value": normalized_value,
+                "extraction_source": row.get("extraction_source", ExtractionSourceType.MANUAL),
+                "confidence_score": row.get("confidence_score", None),
+            }
+
+            ProcurementRequestAttribute.objects.update_or_create(
+                request=proc_request,
+                attribute_code=code,
+                defaults=defaults,
+            )
+
+    @staticmethod
+    def get_attributes_dict(proc_request: ProcurementRequest) -> Dict[str, Any]:
+        attrs: Dict[str, Any] = {}
+
+        for item in proc_request.attributes.all():
+            if item.value_number is not None:
+                attrs[item.attribute_code] = float(item.value_number)
+            elif item.value_text:
+                attrs[item.attribute_code] = item.value_text
+            elif item.value_json is not None:
+                attrs[item.attribute_code] = item.value_json
+
+        if proc_request.geography_country and "country" not in attrs:
+            attrs["country"] = proc_request.geography_country
+        if proc_request.geography_city and "city" not in attrs:
+            attrs["city"] = proc_request.geography_city
+
+        return attrs
 
 
 class ProcurementRequestService:
-    """Stateless service for managing procurement requests."""
+    """Request CRUD helpers with light validation."""
 
     @staticmethod
-    @observed_service("procurement.request.create", audit_event="PROCUREMENT_REQUEST_CREATED")
     def create_request(
         *,
         title: str,
-        description: str = "",
+        description: str,
         domain_code: str,
-        schema_code: str = "",
+        schema_code: str,
         request_type: str,
         priority: str = "MEDIUM",
         geography_country: str = "",
         geography_city: str = "",
         currency: str = "USD",
         created_by=None,
-        assigned_to=None,
-        attributes: Optional[List[Dict[str, Any]]] = None,
         tenant=None,
+        attributes: Optional[Iterable[Dict[str, Any]]] = None,
     ) -> ProcurementRequest:
-        ctx = TraceContext.get_current()
-        with transaction.atomic():
-            request = ProcurementRequest.objects.create(
-                title=title,
-                description=description,
-                domain_code=domain_code,
-                schema_code=schema_code,
-                request_type=request_type,
-                status=ProcurementRequestStatus.DRAFT,
-                priority=priority,
-                geography_country=geography_country,
-                geography_city=geography_city,
-                currency=currency,
-                created_by=created_by,
-                assigned_to=assigned_to,
-                trace_id=ctx.trace_id if ctx else "",
-                tenant=tenant,
-            )
-            if attributes:
-                AttributeService.bulk_set_attributes(request, attributes)
-
-        AuditService.log_event(
-            entity_type="ProcurementRequest",
-            entity_id=request.pk,
-            event_type="PROCUREMENT_REQUEST_CREATED",
-            description=f"Procurement request '{title}' created",
-            user=created_by,
-            trace_ctx=ctx,
-            status_after=ProcurementRequestStatus.DRAFT,
-        )
-        return request
-
-    @staticmethod
-    def update_status(request: ProcurementRequest, new_status: str, user=None) -> ProcurementRequest:
-        old_status = request.status
-        request.status = new_status
-        request.updated_by = user
-        request.save(update_fields=["status", "updated_by", "updated_at"])
-
-        AuditService.log_event(
-            entity_type="ProcurementRequest",
-            entity_id=request.pk,
-            event_type="PROCUREMENT_REQUEST_STATUS_CHANGED",
-            description=f"Status changed from {old_status} to {new_status}",
-            user=user,
-            trace_ctx=TraceContext.get_current(),
-            status_before=old_status,
-            status_after=new_status,
-        )
-        return request
-
-    @staticmethod
-    def mark_ready(request: ProcurementRequest, user=None) -> ProcurementRequest:
-        """Validate attributes and transition to READY."""
-        required_attrs = request.attributes.filter(is_required=True)
-        for attr in required_attrs:
-            if not attr.value_text and attr.value_number is None and not attr.value_json:
-                raise ValueError(f"Required attribute '{attr.attribute_code}' is missing a value.")
-        return ProcurementRequestService.update_status(
-            request, ProcurementRequestStatus.READY, user=user,
+        proc_request = ProcurementRequest.objects.create(
+            tenant=tenant or getattr(created_by, "company", None),
+            title=title,
+            description=description or "",
+            domain_code=domain_code,
+            schema_code=schema_code or "",
+            request_type=request_type,
+            status=ProcurementRequestStatus.DRAFT,
+            priority=priority or "MEDIUM",
+            geography_country=geography_country or "",
+            geography_city=geography_city or "",
+            currency=currency or "USD",
+            created_by=created_by,
         )
 
-    @staticmethod
-    def get_request(request_id) -> ProcurementRequest:
-        """Fetch request by PK or UUID."""
-        if isinstance(request_id, str) and len(request_id) > 10:
-            return ProcurementRequest.objects.get(request_id=request_id)
-        return ProcurementRequest.objects.get(pk=request_id)
+        if attributes:
+            AttributeService.bulk_set_attributes(proc_request, attributes)
 
-
-class AttributeService:
-    """Manage dynamic attributes for a procurement request."""
+        return proc_request
 
     @staticmethod
-    def bulk_set_attributes(
-        request: ProcurementRequest,
-        attributes: List[Dict[str, Any]],
-    ) -> List[ProcurementRequestAttribute]:
-        created = []
-        for attr_data in attributes:
-            obj, _ = ProcurementRequestAttribute.objects.update_or_create(
-                request=request,
-                attribute_code=attr_data["attribute_code"],
-                defaults={
-                    "attribute_label": attr_data.get("attribute_label", attr_data["attribute_code"]),
-                    "data_type": attr_data.get("data_type", "TEXT"),
-                    "value_text": attr_data.get("value_text", ""),
-                    "value_number": attr_data.get("value_number"),
-                    "value_json": attr_data.get("value_json"),
-                    "is_required": attr_data.get("is_required", False),
-                    "normalized_value": attr_data.get("normalized_value", ""),
-                },
-            )
-            created.append(obj)
-        return created
+    def update_status(proc_request: ProcurementRequest, status_value: str, user=None) -> ProcurementRequest:
+        proc_request.status = status_value
+        proc_request.save(update_fields=["status", "updated_at"])
+        return proc_request
 
     @staticmethod
-    def get_attributes_dict(request: ProcurementRequest) -> Dict[str, Any]:
-        """Return attributes as a simple dict keyed by attribute_code."""
-        result = {}
-        for attr in request.attributes.all():
-            if attr.data_type == "NUMBER" and attr.value_number is not None:
-                result[attr.attribute_code] = float(attr.value_number)
-            elif attr.data_type == "JSON" and attr.value_json is not None:
-                result[attr.attribute_code] = attr.value_json
-            else:
-                result[attr.attribute_code] = attr.value_text
-        return result
+    def mark_ready(proc_request: ProcurementRequest, user=None) -> ProcurementRequest:
+        required_missing = []
+        for attr in proc_request.attributes.filter(is_required=True):
+            has_value = bool(attr.value_text or attr.value_number is not None or attr.value_json not in (None, {}, []))
+            if not has_value:
+                required_missing.append(attr.attribute_label or attr.attribute_code)
+
+        if required_missing:
+            raise ValueError("Missing required attributes: " + ", ".join(required_missing))
+
+        return ProcurementRequestService.update_status(proc_request, ProcurementRequestStatus.READY, user=user)

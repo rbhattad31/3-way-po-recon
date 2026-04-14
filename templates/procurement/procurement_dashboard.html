@@ -97,6 +97,49 @@
   </div>
 </div>
 
+<div class="row g-3 mb-3">
+  <div class="col-xl-12">
+    <div class="ap-card h-100">
+      <div class="ap-card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-2"></i>Procurement Timeline</span>
+        <span class="small text-muted">Latest request activity</span>
+      </div>
+      <div class="ap-card-body">
+        {% if procurement_timeline %}
+        <div class="proc-dashboard-timeline">
+          {% for item in procurement_timeline %}
+          <div class="proc-dashboard-timeline-item">
+            <div class="proc-dashboard-timeline-marker proc-dashboard-timeline-marker--{{ item.tone }}">
+              <i class="bi {{ item.icon }}"></i>
+            </div>
+            <div class="proc-dashboard-timeline-content">
+              <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                  <div class="proc-dashboard-timeline-title">{{ item.title }}</div>
+                  <div class="proc-dashboard-timeline-meta">{{ item.detail }}</div>
+                </div>
+                <span class="badge text-bg-{{ item.tone }}">{{ item.status_label }}</span>
+              </div>
+              <div class="proc-dashboard-timeline-desc">{{ item.action_text }}</div>
+              <div class="proc-dashboard-timeline-time">
+                {{ item.timestamp|date:"d M Y, H:i" }}
+                <span class="text-muted">({{ item.timestamp|timesince }} ago)</span>
+              </div>
+              <div class="mt-2">
+                <a href="{% url 'procurement:request_workspace' item.pk %}" class="btn btn-xs btn-outline-primary">Open request</a>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-muted small">No procurement activity yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- RECENT -->
 <div class="ap-card">
   <div class="ap-card-header">Recent Requests</div>
@@ -152,161 +195,6 @@
 
 {{ status_chart|json_script:"status-chart-data" }}
 {{ domain_chart|json_script:"domain-chart-data" }}
-{{ bench_by_geo|json_script:"bench-geo-data" }}
-
-<!-- ===================================================================== -->
-<!-- BENCHMARKING SECTION                                                    -->
-<!-- ===================================================================== -->
-<hr class="my-4" style="border-color:rgba(255,255,255,.12);">
-
-<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
-  <h5 class="mb-0 fw-bold" style="color:#d4a017;">
-    <i class="bi bi-bar-chart-steps me-2"></i>Should-Cost Benchmarking
-  </h5>
-  <a href="{% url 'benchmarking:request_create' %}" class="btn btn-warning text-dark btn-sm fw-semibold">
-    <i class="bi bi-plus-lg me-1"></i>New Benchmark
-  </a>
-</div>
-
-<!-- Benchmarking KPI row -->
-<div class="stat-row mb-4">
-  <div class="proc-kpi">
-    <div class="val">{{ bq_kpi.total }}</div>
-    <div class="lbl">Total Requests</div>
-    <div class="sub">All time</div>
-  </div>
-  <div class="proc-kpi">
-    <div class="val text-success">{{ bq_kpi.completed }}</div>
-    <div class="lbl">Completed</div>
-    <div class="sub">With results</div>
-  </div>
-  <div class="proc-kpi">
-    <div class="val text-warning">{{ bq_kpi.pending }}</div>
-    <div class="lbl">In Progress</div>
-    <div class="sub">Pending / Processing</div>
-  </div>
-  <div class="proc-kpi">
-    <div class="val text-danger">{{ bq_kpi.failed }}</div>
-    <div class="lbl">Failed</div>
-    <div class="sub">Needs retry</div>
-  </div>
-  <div class="proc-kpi">
-    <div class="val text-danger">{{ bq_kpi.lines_high }}</div>
-    <div class="lbl">High Variance</div>
-    <div class="sub">Lines &gt;15%</div>
-  </div>
-  <div class="proc-kpi">
-    <div class="val text-success">{{ bq_kpi.lines_within_range }}</div>
-    <div class="lbl">Within Range</div>
-    <div class="sub">Lines &lt;5%</div>
-  </div>
-</div>
-
-<!-- Benchmarking charts row -->
-<div class="row g-3 mb-3">
-  <div class="col-lg-5">
-    <div class="ap-card h-100">
-      <div class="ap-card-header">Line Variance Distribution</div>
-      <div class="ap-card-body d-flex align-items-center justify-content-center" style="min-height:220px;">
-        <canvas id="varianceChart" style="max-height:200px;"></canvas>
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-7">
-    <div class="ap-card h-100">
-      <div class="ap-card-header">Benchmarks by Geography</div>
-      <div class="ap-card-body">
-        <canvas id="benchGeoChart" style="max-height:200px;"></canvas>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Recent Benchmarks table -->
-<div class="ap-card">
-  <div class="ap-card-header d-flex justify-content-between align-items-center">
-    <span>Recent Benchmark Requests</span>
-    <a href="{% url 'benchmarking:request_list' %}" class="btn btn-xs btn-outline-warning" style="font-size:.75rem;padding:2px 10px;">
-      View All
-    </a>
-  </div>
-  <div class="ap-card-body p-0">
-    <table class="table mb-0" style="font-size:.84rem;">
-      <thead>
-        <tr>
-          <th>Title</th>
-          <th>Geography</th>
-          <th>Scope</th>
-          <th>Status</th>
-          <th>Overall Variance</th>
-          <th>Deviation</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for br in recent_benchmarks %}
-        <tr>
-          <td>{{ br.title|truncatechars:45 }}</td>
-          <td>{{ br.geography }}</td>
-          <td><span class="badge bg-dark">{{ br.scope_type }}</span></td>
-          <td>
-            {% if br.status == 'COMPLETED' %}
-              <span class="badge bg-success">Completed</span>
-            {% elif br.status == 'PROCESSING' %}
-              <span class="badge bg-warning text-dark">Processing</span>
-            {% elif br.status == 'PENDING' %}
-              <span class="badge bg-secondary">Pending</span>
-            {% elif br.status == 'FAILED' %}
-              <span class="badge bg-danger">Failed</span>
-            {% else %}
-              <span class="badge bg-light text-dark">{{ br.status }}</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if br.result %}
-              {% if br.result.overall_status == 'WITHIN_RANGE' %}
-                <span class="badge bg-success">Within Range</span>
-              {% elif br.result.overall_status == 'MODERATE' %}
-                <span class="badge bg-warning text-dark">Moderate</span>
-              {% elif br.result.overall_status == 'HIGH' %}
-                <span class="badge bg-danger">High</span>
-              {% else %}
-                <span class="badge bg-secondary">Needs Review</span>
-              {% endif %}
-            {% else %}
-              <span class="text-muted small">--</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if br.result and br.result.overall_deviation_pct is not None %}
-              {% if br.result.overall_deviation_pct > 15 %}
-                <span class="text-danger fw-bold">{{ br.result.overall_deviation_pct|floatformat:1 }}%</span>
-              {% elif br.result.overall_deviation_pct > 5 %}
-                <span class="text-warning fw-bold">{{ br.result.overall_deviation_pct|floatformat:1 }}%</span>
-              {% else %}
-                <span class="text-success fw-bold">{{ br.result.overall_deviation_pct|floatformat:1 }}%</span>
-              {% endif %}
-            {% else %}
-              <span class="text-muted small">--</span>
-            {% endif %}
-          </td>
-          <td>
-            <a href="{% url 'benchmarking:request_detail' br.pk %}" class="btn btn-xs btn-outline-primary" style="font-size:.75rem;padding:2px 8px;">
-              View
-            </a>
-          </td>
-        </tr>
-        {% empty %}
-        <tr>
-          <td colspan="7" class="text-center text-muted py-3">No benchmark requests yet &mdash;
-            <a href="{% url 'benchmarking:request_create' %}">create one</a>.
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
 
 {% endblock %}
 
@@ -355,55 +243,6 @@
           data: domainData.map(function(d) { return d.total; }),
           backgroundColor: '#d4a017'
         }]
-      }
-    });
-  }
-
-  // Variance distribution doughnut
-  var varianceCtx = document.getElementById('varianceChart');
-  if (varianceCtx) {
-    new Chart(varianceCtx, {
-      type: 'doughnut',
-      data: {
-        labels: ['Within Range', 'Moderate', 'High', 'Needs Review'],
-        datasets: [{
-          data: [
-            {{ bq_kpi.lines_within_range }},
-            {{ bq_kpi.lines_moderate }},
-            {{ bq_kpi.lines_high }},
-            {{ bq_kpi.lines_needs_review }}
-          ],
-          backgroundColor: ['#16a34a', '#f59e0b', '#ef4444', '#6b7280']
-        }]
-      },
-      options: {
-        plugins: {
-          legend: { position: 'bottom', labels: { color: '#ccc', font: { size: 11 } } }
-        }
-      }
-    });
-  }
-
-  // Benchmarks by geography bar
-  var benchGeoData = JSON.parse(document.getElementById('bench-geo-data').textContent);
-  var benchGeoCtx = document.getElementById('benchGeoChart');
-  if (benchGeoCtx && benchGeoData.length) {
-    new Chart(benchGeoCtx, {
-      type: 'bar',
-      data: {
-        labels: benchGeoData.map(function(d) { return d.geography; }),
-        datasets: [{
-          label: 'Requests',
-          data: benchGeoData.map(function(d) { return d.total; }),
-          backgroundColor: '#d4a017'
-        }]
-      },
-      options: {
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: '#ccc' }, grid: { color: 'rgba(255,255,255,.07)' } },
-          y: { ticks: { color: '#ccc', stepSize: 1 }, grid: { color: 'rgba(255,255,255,.07)' } }
-        }
       }
     });
   }

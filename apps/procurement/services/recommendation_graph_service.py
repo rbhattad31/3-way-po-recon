@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 
 from apps.core.decorators import observed_service
 from apps.core.enums import PrefillStatus
-from apps.procurement.agents.recommendation_agent import RecommendationAgent
+from apps.procurement.agents.hvac_recommendation_agent import HVACRecommendationAgent
 from apps.procurement.models import AnalysisRun, ProcurementRequest, SupplierQuotation, ValidationResult
 from apps.procurement.services.prefill.quotation_prefill_service import QuotationDocumentPrefillService
 
@@ -283,7 +283,22 @@ class RecommendationGraphService:
     @staticmethod
     def _call_recommendation_agent(state: RecommendationGraphState) -> Dict[str, Any]:
         ai_payload = state.get("ai_payload") or {}
-        return {"ai_result": RecommendationAgent.execute_from_payload(ai_payload)}
+        attrs = ai_payload.get("attributes") or {}
+        rule_result = ai_payload.get("rule_result") or {}
+
+        if rule_result.get("confident", False):
+            ai_result = HVACRecommendationAgent.explain(
+                attrs=attrs,
+                rule_result=rule_result,
+            )
+        else:
+            ai_result = HVACRecommendationAgent.recommend(
+                attrs=attrs,
+                no_match_context=rule_result.get("reasoning_details") or {},
+                procurement_request_pk=state["request"].pk,
+            )
+
+        return {"ai_result": ai_result}
 
     @staticmethod
     def _quotation_needs_extraction(quotation: SupplierQuotation) -> bool:

@@ -145,6 +145,7 @@ class ProcurementRequestViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
             request=proc_request,
             run_type=run_type,
             triggered_by=request.user,
+            tenant=proc_request.tenant,
         )
         # Fire Celery task
         run_analysis_task.delay(request.tenant.pk if request.tenant else None, run.pk)
@@ -188,6 +189,7 @@ class ProcurementRequestViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
             request=proc_request,
             run_type=AnalysisRunType.VALIDATION,
             triggered_by=request.user,
+            tenant=proc_request.tenant,
         )
         run_validation_task.delay(request.tenant.pk if request.tenant else None, run.pk, agent_enabled=agent_enabled)
 
@@ -220,7 +222,7 @@ class ProcurementRequestViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="prefill")
     def prefill(self, request):
         """Upload an RFQ / requirement PDF, create a draft request, and trigger prefill extraction."""
-        from apps.documents.models import DocumentUpload
+        from apps.extraction.services.upload_service import InvoiceUploadService
         from apps.procurement.tasks import run_request_prefill_task
 
         serializer = RequestPrefillUploadSerializer(data=request.data)
@@ -245,23 +247,11 @@ class ProcurementRequestViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Compute hash
-        sha = hashlib.sha256()
-        for chunk in uploaded_file.chunks():
-            sha.update(chunk)
-        uploaded_file.seek(0)
-        file_hash = sha.hexdigest()
-
-        # Create DocumentUpload
-        doc = DocumentUpload.objects.create(
-            file=uploaded_file,
-            original_filename=uploaded_file.name,
-            file_size=uploaded_file.size,
-            file_hash=file_hash,
-            content_type=getattr(uploaded_file, "content_type", ""),
-            document_type=DocumentType.PROCUREMENT_RFQ,
-            processing_state=FileProcessingState.QUEUED,
+        doc = InvoiceUploadService.upload(
+            uploaded_file,
             uploaded_by=request.user,
+            tenant=getattr(request, "tenant", None),
+            document_type=DocumentType.PROCUREMENT_RFQ,
         )
 
         # Create draft ProcurementRequest
@@ -355,14 +345,13 @@ class SupplierQuotationViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="prefill")
     def quotation_prefill(self, request):
         """Upload a proposal / quotation PDF, create a draft quotation, and trigger prefill."""
-        from apps.documents.models import DocumentUpload
+        from apps.extraction.services.upload_service import InvoiceUploadService
         from apps.procurement.tasks import run_quotation_prefill_task
 
         serializer = QuotationPrefillUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         uploaded_file = serializer.validated_data["file"]
-        vendor_name = serializer.validated_data.get("vendor_name", "") or "TBD"
 
         # The quotation must belong to a request — check for request_id in query params
         request_id = request.query_params.get("request_id") or request.data.get("request_id")
@@ -388,29 +377,17 @@ class SupplierQuotationViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Compute hash
-        sha = hashlib.sha256()
-        for chunk in uploaded_file.chunks():
-            sha.update(chunk)
-        uploaded_file.seek(0)
-        file_hash = sha.hexdigest()
-
-        # Create DocumentUpload
-        doc = DocumentUpload.objects.create(
-            file=uploaded_file,
-            original_filename=uploaded_file.name,
-            file_size=uploaded_file.size,
-            file_hash=file_hash,
-            content_type=getattr(uploaded_file, "content_type", ""),
-            document_type=DocumentType.PROCUREMENT_QUOTATION,
-            processing_state=FileProcessingState.QUEUED,
+        doc = InvoiceUploadService.upload(
+            uploaded_file,
             uploaded_by=request.user,
+            tenant=getattr(request, "tenant", None),
+            document_type=DocumentType.PROCUREMENT_QUOTATION,
         )
 
         # Create draft SupplierQuotation
         quotation = SupplierQuotation.objects.create(
             request=proc_request,
-            vendor_name=vendor_name,
+            vendor_name="",
             uploaded_document=doc,
             prefill_status=PrefillStatus.NOT_STARTED,
             created_by=request.user,

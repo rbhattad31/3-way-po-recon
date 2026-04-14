@@ -68,6 +68,9 @@ class AgentContext:
     memory: Optional[AgentMemory] = None
     _langfuse_trace: Any = None
     tenant: Any = None
+    # Human-readable trigger reason stamped on every AgentRun for observability.
+    # Format: "<mode>:<match_status>" e.g. "auto:PARTIAL_MATCH", "manual:UNMATCHED"
+    invocation_reason: str = ""
 
 
 @dataclass
@@ -133,10 +136,11 @@ class BaseAgent(ABC):
             status=AgentRunStatus.RUNNING,
             input_payload=self._serialise_context(ctx),
             started_at=timezone.now(),
-            llm_model_used=self.llm.model,
+            llm_model_used=(self.llm.model or "unknown"),
+            confidence=0.0,
             # RBAC metadata from context
             actor_user_id=ctx.actor_user_id,
-            actor_primary_role=ctx.actor_primary_role,
+            actor_primary_role=(ctx.actor_primary_role or ("SYSTEM_AGENT" if not ctx.actor_user_id else "USER")),
             actor_roles_snapshot_json=ctx.actor_roles_snapshot or None,
             permission_checked=ctx.permission_checked,
             permission_source=ctx.permission_source,
@@ -144,6 +148,7 @@ class BaseAgent(ABC):
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
             tenant=ctx.tenant,
+            invocation_reason=(getattr(ctx, "invocation_reason", "") or f"{self.agent_type}:run"),
         )
 
         # Stamp the current prompt version on the run for auditability.
@@ -733,7 +738,8 @@ class BaseAgent(ABC):
                 arguments["tenant"] = self._agent_context.tenant
             # Inject parent_run_id so delegation tools can link child runs.
             arguments["parent_run_id"] = agent_run.pk
-            result = tool.execute(**arguments)
+            from apps.agents.plugins.plugin_router import PluginToolRouter
+            result = PluginToolRouter.execute(tool_name, **arguments)
             # Remove non-serialisable span before audit persistence.
             arguments.pop("lf_parent_span", None)
             arguments.pop("tenant", None)
@@ -817,7 +823,13 @@ class BaseAgent(ABC):
             "tools_used": output.tools_used,
         }
         agent_run.summarized_reasoning = self._sanitise_text(output.reasoning)[:2000]
-        agent_run.confidence = output.confidence
+        agent_run.confidence = output.confidence if output.confidence is not None else 0.0
+        if not (agent_run.llm_model_used or "").strip():
+            agent_run.llm_model_used = "unknown"
+        if not (agent_run.actor_primary_role or "").strip():
+            agent_run.actor_primary_role = "SYSTEM_AGENT" if not agent_run.actor_user_id else "USER"
+        if not (agent_run.invocation_reason or "").strip():
+            agent_run.invocation_reason = f"{self.agent_type}:run"
         self._calculate_actual_cost(agent_run)
         agent_run.save()
 

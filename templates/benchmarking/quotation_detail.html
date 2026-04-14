@@ -103,7 +103,11 @@
     <div class="card border-0 shadow-sm" style="border-radius:10px;">
       <div class="card-body py-2 px-3">
         <div style="font-size:.68rem;font-weight:600;color:#6b7280;text-transform:uppercase;">Document</div>
-        {% if quotation.document %}
+        {% if quotation.blob_url %}
+          <a href="{{ quotation.blob_url }}" target="_blank" class="text-primary" style="font-size:.78rem;">
+            <i class="bi bi-file-pdf me-1"></i>View PDF
+          </a>
+        {% elif quotation.document %}
           <a href="{{ quotation.document.url }}" target="_blank" class="text-primary" style="font-size:.78rem;">
             <i class="bi bi-file-pdf me-1"></i>View PDF
           </a>

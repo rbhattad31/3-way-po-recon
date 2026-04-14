@@ -16,17 +16,24 @@
 {% endblock %}
 
 {% block content %}
+<div class="dashboard-modern">
 {# PAGE HEADER #}
-<div class="ap-page-header d-flex justify-content-between align-items-center">
-  <div>
-    <h4 class="mb-0 fw-semibold">Operations Dashboard</h4>
-    <small style="color:var(--ap-text-muted)">Real-time overview of AP processing</small>
+<div class="ap-page-header dash-hero d-flex justify-content-between align-items-center flex-wrap gap-3">
+  <div class="d-flex align-items-center gap-3">
+    <div class="dash-hero-logo-wrap">
+      <img src="{% static 'images/landmark-logo.svg' %}" alt="LMG" class="dash-hero-logo">
+    </div>
+    <div>
+      <div class="dash-eyebrow">LMG AP Intelligence</div>
+      <h4 class="mb-0 fw-semibold">Operations Dashboard</h4>
+      <small class="dash-subtitle">Real-time overview of AP processing and reconciliations</small>
+    </div>
   </div>
-  <div class="d-flex gap-2">
+  <div class="d-flex gap-2 flex-wrap">
     <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
       <i class="bi bi-arrow-clockwise me-1"></i>Refresh
     </button>
-    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
+    <button class="btn btn-sm btn-primary dash-upload-btn" data-bs-toggle="modal" data-bs-target="#uploadInvoiceModal">
       <i class="bi bi-cloud-arrow-up me-1"></i>Upload Invoice
     </button>
   </div>
@@ -34,35 +41,35 @@
 
 {# KPI STRIP #}
 <div class="ap-kpi-strip">
-  <div class="ap-kpi-card">
+  <div class="ap-kpi-card dash-kpi-card">
     <div class="ap-kpi-value text-success">{{ summary.matched_pct }}%</div>
     <div class="ap-kpi-label">Match Rate</div>
     <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
       <i class="bi bi-check-circle text-success"></i> Auto-resolved
     </div>
   </div>
-  <div class="ap-kpi-card">
+  <div class="ap-kpi-card dash-kpi-card">
     <div class="ap-kpi-value" style="color:var(--ap-primary)">{{ summary.total_invoices }}</div>
     <div class="ap-kpi-label">Total Invoices</div>
     <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
       <i class="bi bi-file-earmark-text"></i> All documents
     </div>
   </div>
-  <div class="ap-kpi-card">
+  <div class="ap-kpi-card dash-kpi-card">
     <div class="ap-kpi-value text-warning">{{ summary.pending_reviews }}</div>
     <div class="ap-kpi-label">Pending Reviews</div>
     <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
       <i class="bi bi-person-check"></i> Awaiting action
     </div>
   </div>
-  <div class="ap-kpi-card">
+  <div class="ap-kpi-card dash-kpi-card">
     <div class="ap-kpi-value text-danger">{{ summary.open_exceptions }}</div>
     <div class="ap-kpi-label">Open Exceptions</div>
     <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
       <i class="bi bi-exclamation-triangle"></i> Need resolution
     </div>
   </div>
-  <div class="ap-kpi-card">
+  <div class="ap-kpi-card dash-kpi-card">
     <div class="ap-kpi-value" style="color:var(--ap-primary)">{{ summary.avg_confidence|default:"—" }}%</div>
     <div class="ap-kpi-label">Avg Confidence</div>
     <div style="font-size:var(--ap-font-size-xs);color:var(--ap-text-muted);margin-top:.25rem">
@@ -74,7 +81,7 @@
 {# LANDMARK GROUP PROCUREMENT QUICK VIEW #}
 {% has_permission "procurement.view" as dash_can_view_proc %}
 {% if dash_can_view_proc %}
-<div class="ap-card mb-3" style="border-left:4px solid #d4a017;">
+<div class="ap-card mb-3 dash-procurement-card">
   <div class="ap-card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
     <span>
       <i class="bi bi-building-fill-gear me-1" style="color:#d4a017"></i>
@@ -124,7 +131,7 @@
 {# CHARTS ROW 1 — Match Status + Daily Volume #}
 <div class="row g-3 mb-3">
   <div class="col-lg-5">
-    <div class="ap-card h-100">
+    <div class="ap-card h-100 dash-section-card">
       <div class="ap-card-header">
         <i class="bi bi-pie-chart"></i> Match Status Distribution
       </div>
@@ -134,7 +141,7 @@
     </div>
   </div>
   <div class="col-lg-7">
-    <div class="ap-card h-100">
+    <div class="ap-card h-100 dash-section-card">
       <div class="ap-card-header">
         <i class="bi bi-graph-up"></i> Daily Volume (30 days)
       </div>
@@ -148,7 +155,7 @@
 {# CHARTS ROW 2 — Exceptions + Agent Performance #}
 <div class="row g-3 mb-3">
   <div class="col-lg-6">
-    <div class="ap-card h-100">
+    <div class="ap-card h-100 dash-section-card">
       <div class="ap-card-header">
         <i class="bi bi-exclamation-triangle"></i> Open Exceptions by Type
       </div>
@@ -158,7 +165,7 @@
     </div>
   </div>
   <div class="col-lg-6">
-    <div class="ap-card h-100">
+    <div class="ap-card h-100 dash-section-card">
       <div class="ap-card-header">
         <i class="bi bi-robot"></i> Agent Performance
       </div>
@@ -170,7 +177,7 @@
 </div>
 
 {# RECENT ACTIVITY #}
-<div class="ap-card">
+<div class="ap-card dash-section-card">
   <div class="ap-card-header">
     <i class="bi bi-activity"></i> Recent Activity
     <a href="{% url 'governance:audit_event_list' %}" class="btn btn-sm btn-outline-secondary ms-auto"
@@ -209,7 +216,7 @@
 {% include "partials/upload_modal.html" %}
 
 {# PLATFORM PIPELINE DIAGRAM #}
-<div class="ap-card mb-3" id="platform-flow-diagram">
+<div class="ap-card mb-3 dash-section-card" id="platform-flow-diagram">
   <div class="ap-card-header d-flex align-items-center justify-content-between">
     <span><i class="bi bi-diagram-3 me-1"></i> End-to-End Platform Flow</span>
     <a href="{% url 'agents:agent_reference' %}" class="btn btn-sm btn-outline-secondary"
@@ -259,6 +266,7 @@ flowchart LR
     Touchless invoices (high confidence, no exceptions) skip directly to the Posting Pipeline.
     <a href="{% url 'agents:agent_reference' %}#agent-diagrams" class="ms-1">View detailed diagrams</a>
   </div>
+</div>
 </div>
 {% endblock %}
 

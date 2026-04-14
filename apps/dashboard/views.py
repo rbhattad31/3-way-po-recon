@@ -5,8 +5,9 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Avg, Count, F, Q, Sum
 from django.shortcuts import render
 from django.utils import timezone
+from django.utils.timesince import timesince
 
-from apps.agents.models import AgentRun
+from apps.agents.models import AgentDefinition, AgentRun
 from apps.cases.models import APCase, APCaseStage
 from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import (
@@ -26,8 +27,106 @@ from apps.core.tenant_utils import get_tenant_or_none
 def command_center(request):
     """Agentic LMG  Command Center — AI Operations dashboard."""
     user_role = getattr(request.user, "role", "")
+    procurement_timeline = []
+    proc_summary = {}
+    try:
+        from apps.procurement.models import ProcurementRequest
+
+        pqs = ProcurementRequest.objects.all()
+        tenant = get_tenant_or_none(request)
+        if tenant is not None:
+            pqs = pqs.filter(tenant=tenant)
+        proc_summary = {
+            "total_requests": pqs.count(),
+            "pending_approval": pqs.filter(status="REVIEW_REQUIRED").count(),
+            "hvac_requests": pqs.filter(domain_code="HVAC").count(),
+            "ready_requests": pqs.filter(status="READY").count(),
+        }
+
+        proc_timeline_meta = {
+            "DRAFT": {"dot": "pending", "action": "Draft saved"},
+            "PROCESSING": {"dot": "active", "action": "AI analysis running"},
+            "READY": {"dot": "complete", "action": "Ready for sourcing"},
+            "REVIEW_REQUIRED": {"dot": "error", "action": "Needs review"},
+            "COMPLETED": {"dot": "complete", "action": "Request completed"},
+            "FAILED": {"dot": "error", "action": "Processing failed"},
+        }
+        for proc_request in pqs.select_related("created_by", "assigned_to").order_by("-updated_at", "-created_at")[:8]:
+            meta = proc_timeline_meta.get(proc_request.status, {"dot": "pending", "action": "Status updated"})
+            actor = proc_request.assigned_to or proc_request.created_by
+            actor_label = ""
+            if actor:
+                actor_label = actor.get_short_name() or actor.get_full_name() or actor.email or ""
+            detail_parts = [meta["action"]]
+            if proc_request.domain_code:
+                detail_parts.append(proc_request.domain_code)
+            if actor_label:
+                detail_parts.append(actor_label)
+            event_time = getattr(proc_request, "updated_at", None) or proc_request.created_at
+            procurement_timeline.append({
+                "pk": proc_request.pk,
+                "title": proc_request.title,
+                "detail": " | ".join(detail_parts),
+                "dot": meta["dot"],
+                "time": event_time.strftime("%H:%M:%S") if event_time else "--",
+                "time_ago": f"{timesince(event_time)} ago" if event_time else "",
+            })
+    except Exception:
+        proc_summary = {"total_requests": 0, "pending_approval": 0, "hvac_requests": 0, "ready_requests": 0}
+
+    benchmark_timeline = []
+    bench_summary = {}
+    try:
+        from apps.benchmarking.models import BenchmarkRequest
+
+        bqs = BenchmarkRequest.objects.filter(is_active=True)
+        tenant = get_tenant_or_none(request)
+        if tenant is not None:
+            bqs = bqs.filter(tenant=tenant)
+        bench_summary = {
+            "total_requests": bqs.count(),
+            "completed": bqs.filter(status="COMPLETED").count(),
+            "processing": bqs.filter(status="PROCESSING").count(),
+            "failed": bqs.filter(status="FAILED").count(),
+        }
+
+        bench_timeline_meta = {
+            "PENDING": {"dot": "pending", "action": "Queued for run"},
+            "PROCESSING": {"dot": "active", "action": "Benchmark analysis running"},
+            "COMPLETED": {"dot": "complete", "action": "Benchmark completed"},
+            "FAILED": {"dot": "error", "action": "Benchmark failed"},
+        }
+        for bench_request in bqs.select_related("submitted_by", "result").order_by("-updated_at", "-created_at")[:8]:
+            meta = bench_timeline_meta.get(bench_request.status, {"dot": "pending", "action": "Status updated"})
+            actor = bench_request.submitted_by
+            actor_label = ""
+            if actor:
+                actor_label = actor.get_short_name() or actor.get_full_name() or actor.email or ""
+            detail_parts = [meta["action"]]
+            if bench_request.geography:
+                detail_parts.append(bench_request.geography)
+            if bench_request.scope_type:
+                detail_parts.append(bench_request.scope_type)
+            if actor_label:
+                detail_parts.append(actor_label)
+            event_time = getattr(bench_request, "updated_at", None) or bench_request.created_at
+            benchmark_timeline.append({
+                "pk": bench_request.pk,
+                "title": bench_request.title,
+                "detail": " | ".join(detail_parts),
+                "dot": meta["dot"],
+                "time": event_time.strftime("%H:%M:%S") if event_time else "--",
+                "time_ago": f"{timesince(event_time)} ago" if event_time else "",
+            })
+    except Exception:
+        bench_summary = {"total_requests": 0, "completed": 0, "processing": 0, "failed": 0}
+
     return render(request, "dashboard/agentic_command_center.html", {
         "user_role": user_role,
+        "proc_summary": proc_summary,
+        "bench_summary": bench_summary,
+        "procurement_timeline": procurement_timeline,
+        "benchmark_timeline": benchmark_timeline,
     })
 
 
@@ -50,10 +149,28 @@ def analytics(request):
     except Exception:
         proc_summary = {"total_requests": 0, "pending_approval": 0, "hvac_requests": 0, "ready_requests": 0}
 
+    bench_summary = {}
+    try:
+        from apps.benchmarking.models import BenchmarkRequest
+
+        bqs = BenchmarkRequest.objects.filter(is_active=True)
+        tenant = get_tenant_or_none(request)
+        if tenant is not None:
+            bqs = bqs.filter(tenant=tenant)
+        bench_summary = {
+            "total_requests": bqs.count(),
+            "completed": bqs.filter(status="COMPLETED").count(),
+            "processing": bqs.filter(status="PROCESSING").count(),
+            "failed": bqs.filter(status="FAILED").count(),
+        }
+    except Exception:
+        bench_summary = {"total_requests": 0, "completed": 0, "processing": 0, "failed": 0}
+
     return render(request, "dashboard/index.html", {
         "summary": summary,
         "recent_activity": recent_activity,
         "proc_summary": proc_summary,
+        "bench_summary": bench_summary,
     })
 
 
@@ -211,6 +328,38 @@ def agent_performance(request):
     tenant = get_tenant_or_none(request)
     if tenant is not None:
         agent_run_qs = agent_run_qs.filter(tenant=tenant)
+
+    # Build agent filter options from DB records (definitions + historical runs),
+    # then map to enum labels for display.
+    runs_scope_qs = AgentRun.objects.exclude(agent_type="")
+    if tenant is not None:
+        runs_scope_qs = runs_scope_qs.filter(tenant=tenant)
+    used_agent_type_values = set(
+        runs_scope_qs.values_list("agent_type", flat=True).distinct()
+    )
+
+    defs_qs = AgentDefinition.objects.all()
+    if tenant is not None:
+        defs_qs = defs_qs.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
+    configured_agent_type_values = set(
+        defs_qs.values_list("agent_type", flat=True).distinct()
+    )
+    definition_name_map = {
+        row["agent_type"]: row["name"]
+        for row in defs_qs.exclude(agent_type="").values("agent_type", "name")
+    }
+
+    available_agent_types = used_agent_type_values | configured_agent_type_values
+    used_agent_types = [
+        (
+            value,
+            definition_name_map.get(value)
+            or value.replace("_", " ").title(),
+        )
+        for value in sorted(available_agent_types)
+        if value
+    ]
+
     plan_rows = (
         agent_run_qs
         .filter(input_payload__plan_source__isnull=False)
@@ -224,7 +373,7 @@ def agent_performance(request):
 
     return render(request, "dashboard/agent_performance.html", {
         "user_role": user_role,
-        "agent_types": AgentType.choices,
+        "agent_types": used_agent_types,
         "agent_statuses": AgentRunStatus.choices,
         "plan_comparison": list(plan_rows),
     })

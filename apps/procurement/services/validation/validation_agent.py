@@ -13,6 +13,7 @@ import json
 import logging
 from typing import Any, Dict, List
 
+from apps.agents.services.base_agent import BaseAgent
 from apps.core.enums import ValidationItemStatus, ValidationSeverity, ValidationSourceType
 from apps.procurement.models import AnalysisRun, ProcurementRequest
 
@@ -39,7 +40,7 @@ class ValidationAgentService:
         """
         from apps.agents.models import AgentRun as AgentRunModel, AgentStep
         from apps.agents.services.llm_client import LLMClient, LLMMessage
-        from apps.core.enums import AgentRunStatus
+        from apps.core.enums import AgentRunStatus, AgentType
         from apps.core.trace import TraceContext
 
         ambiguous_items = [f for f in findings if f["status"] == ValidationItemStatus.AMBIGUOUS]
@@ -50,14 +51,18 @@ class ValidationAgentService:
 
         # Create AgentRun for traceability
         agent_run = AgentRunModel.objects.create(
-            agent_type="VALIDATION_AGENT",
+            tenant=getattr(request, "tenant", None) or getattr(run, "tenant", None),
+            agent_type=AgentType.PROCUREMENT_VALIDATION,
             status=AgentRunStatus.RUNNING,
             input_payload={
                 "request_id": str(request.request_id),
+                "analysis_run_id": str(getattr(run, "run_id", "")),
                 "ambiguous_count": len(ambiguous_items),
             },
             trace_id=ctx.trace_id if ctx else "",
             invocation_reason="Ambiguity resolution for validation",
+            actor_user_id=getattr(run, "triggered_by_id", None),
+            started_at=run.started_at,
         )
 
         try:
@@ -89,7 +94,28 @@ class ValidationAgentService:
 
             agent_run.status = AgentRunStatus.COMPLETED
             agent_run.output_payload = {"resolved_count": len(resolved)}
-            agent_run.save(update_fields=["status", "output_payload", "updated_at"])
+            agent_run.llm_model_used = client.model
+            agent_run.prompt_tokens = response.prompt_tokens
+            agent_run.completion_tokens = response.completion_tokens
+            agent_run.total_tokens = response.total_tokens
+            BaseAgent._calculate_actual_cost(agent_run)
+            agent_run.save(
+                update_fields=[
+                    "status",
+                    "output_payload",
+                    "llm_model_used",
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "actual_cost_usd",
+                    "updated_at",
+                ]
+            )
+            try:
+                from apps.agents.services.eval_adapter import AgentEvalAdapter
+                AgentEvalAdapter.sync_for_agent_run(agent_run)
+            except Exception:
+                logger.debug("ValidationAgent: AgentEvalAdapter sync failed (non-fatal)", exc_info=True)
 
         except Exception:
             logger.warning(
@@ -99,6 +125,11 @@ class ValidationAgentService:
             )
             agent_run.status = AgentRunStatus.FAILED
             agent_run.save(update_fields=["status", "updated_at"])
+            try:
+                from apps.agents.services.eval_adapter import AgentEvalAdapter
+                AgentEvalAdapter.sync_for_agent_run(agent_run)
+            except Exception:
+                logger.debug("ValidationAgent: AgentEvalAdapter sync failed after failure", exc_info=True)
 
         return findings
 
@@ -170,7 +201,8 @@ def _apply_resolutions(
                 finding["status"] = new_status
             explanation = res.get("explanation", "")
             if explanation:
-                finding["remarks"] = f"{finding.get('remarks', '')} [Agent: {explanation}]"
+                safe_explanation = BaseAgent._sanitise_text(str(explanation))
+                finding["remarks"] = f"{finding.get('remarks', '')} [Agent: {safe_explanation}]"
             finding["source_type"] = ValidationSourceType.AGENT
 
     return findings

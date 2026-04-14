@@ -13,6 +13,7 @@ urlpatterns = [
     path("<int:pk>/", views.request_detail, name="request_detail"),
     # Reprocess
     path("<int:pk>/reprocess/", views.request_reprocess, name="request_reprocess"),
+    path("<int:pk>/quotations/add/", views.request_add_quotations, name="request_add_quotations"),
     # Export CSV
     path("<int:pk>/export/", views.request_export, name="request_export"),
     # Status JSON
@@ -31,4 +32,6 @@ urlpatterns = [
     path("configurations/api/corridors/", views.api_bench_corridors, name="api_bench_corridors"),
     path("configurations/api/corridors/<int:pk>/", views.api_bench_corridor_detail, name="api_bench_corridor_detail"),
     path("configurations/api/thresholds/", views.api_bench_thresholds, name="api_bench_thresholds"),
+    # End-to-End lifecycle timeline
+    path("<int:pk>/e2e-timeline/", views.benchmark_e2e_timeline, name="e2e_timeline"),
 ]

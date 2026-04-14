@@ -39,6 +39,10 @@ class AgentTraceService:
         input_payload: Optional[Dict[str, Any]] = None,
         tenant=None,
         trace_id: str = "",
+        actor_user_id: Optional[int] = None,
+        actor_primary_role: str = "",
+        invocation_reason: str = "",
+        llm_model_used: str = "",
     ) -> AgentRun:
         """Begin a new agent run and return the persisted AgentRun."""
         agent_def = AgentDefinition.objects.filter(
@@ -50,10 +54,15 @@ class AgentTraceService:
             agent_type=agent_type,
             reconciliation_result_id=reconciliation_result_id,
             status=AgentRunStatus.RUNNING,
+            confidence=0.0,
             input_payload=input_payload,
             started_at=timezone.now(),
             trace_id=trace_id,
             tenant=tenant,
+            actor_user_id=actor_user_id,
+            actor_primary_role=(actor_primary_role or ("SYSTEM_AGENT" if not actor_user_id else "USER")),
+            invocation_reason=(invocation_reason or f"{agent_type}:trace_service"),
+            llm_model_used=(llm_model_used or "unknown"),
         )
         logger.info(
             "Agent run started: run=%s type=%s result=%s",
@@ -168,10 +177,16 @@ class AgentTraceService:
         agent_run = AgentRun.objects.get(pk=agent_run_id)
         agent_run.status = AgentRunStatus.FAILED if error_message else AgentRunStatus.COMPLETED
         agent_run.completed_at = timezone.now()
-        agent_run.confidence = confidence_score
+        agent_run.confidence = confidence_score if confidence_score is not None else 0.0
         agent_run.summarized_reasoning = summarized_reasoning[:2000]
         agent_run.output_payload = output_payload
         agent_run.error_message = error_message[:2000]
+        if not (agent_run.actor_primary_role or "").strip():
+            agent_run.actor_primary_role = "SYSTEM_AGENT" if not agent_run.actor_user_id else "USER"
+        if not (agent_run.invocation_reason or "").strip():
+            agent_run.invocation_reason = f"{agent_run.agent_type}:trace_service"
+        if not (agent_run.llm_model_used or "").strip():
+            agent_run.llm_model_used = "unknown"
         if agent_run.started_at:
             delta = (agent_run.completed_at - agent_run.started_at).total_seconds()
             agent_run.duration_ms = int(delta * 1000)

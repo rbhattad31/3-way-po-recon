@@ -20,10 +20,10 @@ class BenchmarkQuotationInline(admin.TabularInline):
 
 @admin.register(BenchmarkRequest)
 class BenchmarkRequestAdmin(admin.ModelAdmin):
-    list_display = ("title", "geography", "scope_type", "store_type", "status", "submitted_by", "created_at")
+    list_display = ("title", "geography", "scope_type", "store_type", "status", "rfq_source", "rfq_ref", "submitted_by", "created_at")
     list_filter = ("status", "geography", "scope_type")
     search_fields = ("title", "project_name")
-    readonly_fields = ("created_at", "updated_at")
+    readonly_fields = ("rfq_document", "created_at", "updated_at")
     inlines = [BenchmarkQuotationInline]
 
 

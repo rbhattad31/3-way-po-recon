@@ -304,6 +304,16 @@ class HVACRecommendationAgent:
                     "inputs": no_match_context.get("inputs", {}),
                 },
                 "source_classes_used": ["HVACRecommendationAgent"],
+                "llm_model_used": llm.model,
+                "prompt_tokens": response.prompt_tokens,
+                "completion_tokens": response.completion_tokens,
+                "total_tokens": response.total_tokens,
+                "llm_usage": {
+                    "model": llm.model,
+                    "prompt_tokens": response.prompt_tokens,
+                    "completion_tokens": response.completion_tokens,
+                    "total_tokens": response.total_tokens,
+                },
             }
 
         except Exception as exc:
@@ -528,6 +538,16 @@ class HVACRecommendationAgent:
                     "ai_reasoning_used": True,
                     "source": "hvac_agent_explain",
                     "tradeoffs": parsed.get("tradeoffs") or [],
+                },
+                "llm_model_used": llm.model,
+                "prompt_tokens": response.prompt_tokens,
+                "completion_tokens": response.completion_tokens,
+                "total_tokens": response.total_tokens,
+                "llm_usage": {
+                    "model": llm.model,
+                    "prompt_tokens": response.prompt_tokens,
+                    "completion_tokens": response.completion_tokens,
+                    "total_tokens": response.total_tokens,
                 },
             }
         except Exception as exc:

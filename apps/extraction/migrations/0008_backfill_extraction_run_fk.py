@@ -36,7 +36,7 @@ def noop(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("extraction", "0007_seed_extraction_correct_permission"),
+        ("extraction", "0006_add_extraction_run_fk"),
         ("extraction_core", "0004_add_prompt_template_routing_rule_settings_fields"),
     ]
 

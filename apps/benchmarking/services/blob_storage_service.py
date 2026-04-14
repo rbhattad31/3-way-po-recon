@@ -91,6 +91,19 @@ class BlobStorageService:
             return False
 
     @classmethod
+    def download_blob_bytes(cls, blob_name: str) -> bytes:
+        """Download a blob and return its bytes."""
+        if not blob_name:
+            raise ValueError("blob_name is required")
+        try:
+            container_client = cls._get_container_client()
+            blob_client = container_client.get_blob_client(blob_name)
+            return blob_client.download_blob().readall()
+        except Exception:
+            logger.exception("BlobStorageService: Download failed for '%s'", blob_name)
+            raise
+
+    @classmethod
     def get_sas_url(cls, blob_name: str, expiry_hours: int = 24) -> str:
         """Return a time-limited SAS URL for the given blob (read-only).
 

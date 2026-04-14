@@ -3,8 +3,17 @@ Benchmarking app models -- Should-Cost benchmarking for HVAC quotations.
 """
 from django.conf import settings
 from django.db import models
+from django.utils.text import slugify
 
 from apps.core.models import BaseModel
+
+
+def benchmark_quotation_upload_to(instance, filename):
+    """Store quotation files under benchmarking/<request-title>/quotations/."""
+    request_obj = getattr(instance, "request", None)
+    title = getattr(request_obj, "title", "request") if request_obj else "request"
+    title_slug = slugify(title) or "request"
+    return f"benchmarking/{title_slug}/quotations/{filename}"
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +96,15 @@ class VarianceStatus:
 class BenchmarkRequest(BaseModel):
     """Top-level should-cost benchmarking request."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+
     title = models.CharField(max_length=255, help_text="Short label for this request")
     project_name = models.CharField(max_length=255, blank=True, default="")
     geography = models.CharField(
@@ -116,6 +134,26 @@ class BenchmarkRequest(BaseModel):
     notes = models.TextField(blank=True, default="")
     error_message = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True)
+    rfq_document = models.FileField(
+        upload_to="benchmarking/rfq_uploads/",
+        blank=True,
+        null=True,
+        help_text="Externally uploaded RFQ document (PDF) provided by the user.",
+    )
+    rfq_source = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="Source of the RFQ: 'system', 'upload', or 'manual'.",
+    )
+    rfq_ref = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="RFQ reference string (system ref or filename from uploaded RFQ).",
+    )
+    rfq_blob_path = models.CharField(max_length=512, blank=True, default="", help_text="Azure Blob path for uploaded external RFQ document.")
+    rfq_blob_url = models.URLField(max_length=1024, blank=True, default="", help_text="Azure Blob URL for uploaded external RFQ document.")
     submitted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -145,6 +183,15 @@ class BenchmarkRequest(BaseModel):
 class BenchmarkQuotation(BaseModel):
     """Uploaded supplier quotation PDF attached to a BenchmarkRequest."""
 
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
+    )
+
     request = models.ForeignKey(
         BenchmarkRequest,
         on_delete=models.CASCADE,
@@ -157,7 +204,7 @@ class BenchmarkQuotation(BaseModel):
         default="",
         help_text="Supplier quotation reference number",
     )
-    document = models.FileField(upload_to="benchmarking/quotations/%Y/%m/")
+    document = models.FileField(upload_to=benchmark_quotation_upload_to, blank=True, null=True)
     blob_url = models.URLField(
         max_length=512,
         blank=True,
@@ -207,6 +254,14 @@ class BenchmarkLineItem(BaseModel):
         BenchmarkQuotation,
         on_delete=models.CASCADE,
         related_name="line_items",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     # Raw extracted fields
     description = models.TextField()
@@ -469,6 +524,14 @@ class BenchmarkResult(BaseModel):
         BenchmarkRequest,
         on_delete=models.CASCADE,
         related_name="result",
+    )
+    tenant = models.ForeignKey(
+        "accounts.CompanyProfile",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_index=True,
+        related_name="+",
     )
     total_quoted = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
     total_benchmark_mid = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)

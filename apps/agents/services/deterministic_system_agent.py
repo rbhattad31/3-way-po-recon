@@ -103,12 +103,13 @@ class DeterministicSystemAgent(BaseAgent):
             input_payload=self._build_input_payload(ctx),
             started_at=now,
             llm_model_used="deterministic",
+            confidence=0.0,
             prompt_tokens=0,
             completion_tokens=0,
             total_tokens=0,
             # RBAC metadata
             actor_user_id=ctx.actor_user_id,
-            actor_primary_role=ctx.actor_primary_role,
+            actor_primary_role=(ctx.actor_primary_role or "SYSTEM_AGENT"),
             actor_roles_snapshot_json=ctx.actor_roles_snapshot or None,
             permission_checked=ctx.permission_checked,
             permission_source=ctx.permission_source,
@@ -116,6 +117,7 @@ class DeterministicSystemAgent(BaseAgent):
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
             tenant=ctx.tenant,
+            invocation_reason=(getattr(ctx, "invocation_reason", "") or f"{self.agent_type}:deterministic"),
         )
 
         # Langfuse span

@@ -13,6 +13,7 @@ import json
 import logging
 from typing import Any, Dict, List
 
+from apps.agents.services.base_agent import BaseAgent
 from apps.agents.services.llm_client import LLMClient, LLMMessage
 from apps.procurement.models import ProcurementRequest
 
@@ -169,7 +170,20 @@ class ComplianceAgent:
             logger.warning("ComplianceAgent: LLM call failed: %s", exc)
             return ComplianceAgent._fallback("LLM call failed", str(exc))
 
-        return ComplianceAgent._normalise(parsed)
+        normalized = ComplianceAgent._normalise(parsed)
+        normalized.update({
+            "llm_model_used": llm.model,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "total_tokens": response.total_tokens,
+            "llm_usage": {
+                "model": llm.model,
+                "prompt_tokens": response.prompt_tokens,
+                "completion_tokens": response.completion_tokens,
+                "total_tokens": response.total_tokens,
+            },
+        })
+        return normalized
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -191,9 +205,15 @@ class ComplianceAgent:
             "status": status,
             "rules_checked": _coerce_list(parsed.get("rules_checked")),
             "violations": _coerce_list(parsed.get("violations")),
-            "recommendations": _coerce_list(parsed.get("recommendations")),
-            "domain_flags": _coerce_list(parsed.get("domain_flags")),
-            "geography_flags": _coerce_list(parsed.get("geography_flags")),
+            "recommendations": [
+                BaseAgent._sanitise_text(str(v)) for v in _coerce_list(parsed.get("recommendations"))
+            ],
+            "domain_flags": [
+                BaseAgent._sanitise_text(str(v)) for v in _coerce_list(parsed.get("domain_flags"))
+            ],
+            "geography_flags": [
+                BaseAgent._sanitise_text(str(v)) for v in _coerce_list(parsed.get("geography_flags"))
+            ],
             "ai_augmented": True,
         }
 
@@ -204,7 +224,7 @@ class ComplianceAgent:
             "status": "NOT_CHECKED",
             "rules_checked": [],
             "violations": [],
-            "recommendations": [f"AI compliance check skipped ({reason}): {detail}"],
+            "recommendations": [BaseAgent._sanitise_text(f"AI compliance check skipped ({reason}): {detail}")],
             "domain_flags": [],
             "geography_flags": [],
             "ai_augmented": False,

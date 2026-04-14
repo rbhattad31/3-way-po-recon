@@ -24,10 +24,13 @@ from apps.reconciliation.serializers import (
 )
 
 
-class ReconciliationConfigViewSet(viewsets.ModelViewSet):
+class ReconciliationConfigViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     queryset = ReconciliationConfig.objects.all()
     serializer_class = ReconciliationConfigSerializer
     permission_classes = [IsAdminOrReadOnly]
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=getattr(self.request, "tenant", None))
 
 
 class ReconciliationRunViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):
@@ -86,7 +89,7 @@ class ReconciliationResultViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelVie
         return ReconciliationResultDetailSerializer
 
 
-class ReconciliationPolicyViewSet(viewsets.ModelViewSet):
+class ReconciliationPolicyViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     queryset = (
         ReconciliationPolicy.objects
         .select_related("vendor")
@@ -99,3 +102,6 @@ class ReconciliationPolicyViewSet(viewsets.ModelViewSet):
     search_fields = ["policy_code", "policy_name"]
     ordering_fields = ["priority", "policy_code", "created_at"]
     ordering = ["priority"]
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=getattr(self.request, "tenant", None))

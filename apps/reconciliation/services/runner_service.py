@@ -110,6 +110,11 @@ class ReconciliationRunnerService:
                 .select_related("vendor", "document_upload")
             )
 
+        if tenant is None and invoices:
+            tenant = getattr(invoices[0], "tenant", None)
+
+        self._ensure_tenant_config(tenant)
+
         recon_run = ReconciliationRun.objects.create(
             status=ReconciliationRunStatus.RUNNING,
             config=self.config,
@@ -652,9 +657,18 @@ class ReconciliationRunnerService:
         invoice.save(update_fields=["status", "updated_at"])
 
     @staticmethod
-    def _default_config() -> ReconciliationConfig:
+    def _default_config(tenant=None) -> ReconciliationConfig:
         """Get or create a default ReconciliationConfig."""
-        config = ReconciliationConfig.objects.filter(is_default=True).first()
+        config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant=tenant,
+        ).first()
+        if config:
+            return config
+        config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant__isnull=True,
+        ).first()
         if config:
             return config
         return ReconciliationConfig.objects.create(
@@ -663,4 +677,26 @@ class ReconciliationRunnerService:
             price_tolerance_pct=1.0,
             amount_tolerance_pct=1.0,
             is_default=True,
+            tenant=tenant,
+        )
+
+    def _ensure_tenant_config(self, tenant) -> None:
+        if tenant is None:
+            return
+        if getattr(self.config, "tenant_id", None) == tenant.pk:
+            return
+
+        tenant_config = ReconciliationConfig.objects.filter(
+            is_default=True,
+            tenant=tenant,
+        ).first()
+        if not tenant_config:
+            return
+
+        self.config = tenant_config
+        self.tolerance = ToleranceEngine(self.config)
+        self.mode_resolver = ReconciliationModeResolver(self.config)
+        self.router = ReconciliationExecutionRouter(
+            self.tolerance,
+            partial_invoice_threshold_pct=getattr(self.config, 'partial_invoice_threshold_pct', 95.0),
         )

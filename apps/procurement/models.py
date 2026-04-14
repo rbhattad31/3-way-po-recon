@@ -1444,6 +1444,12 @@ class MarketIntelligenceSuggestion(BaseModel):
         help_text="Raw citations list returned by Perplexity API (top-level field). "
                   "These are the real URLs Perplexity fetched during live search.",
     )
+    source_reference_label = models.CharField(
+        max_length=120,
+        blank=True,
+        default="Perplexity Source References",
+        help_text="Display label for citations source, e.g. Perplexity or Azure OpenAI.",
+    )
 
     class Meta:
         db_table = "procurement_market_intelligence_suggestion"

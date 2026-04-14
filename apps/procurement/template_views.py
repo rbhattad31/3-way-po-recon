@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import requests
+import time
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -16,10 +17,14 @@ from django.views.decorators.http import require_POST, require_http_methods
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 
 from apps.auditlog.services import AuditService
 from apps.core.permissions import permission_required_code
+from apps.core.tenant_utils import get_tenant_or_none
 from apps.core.enums import (
+    AgentRunStatus,
+    AgentType,
     AnalysisRunType,
     ProcurementRequestStatus,
     ProcurementRequestType,
@@ -39,9 +44,81 @@ from apps.procurement.models import (
 )
 
 from apps.procurement.agents.reason_summary_agent import ReasonSummaryAgent
+from apps.procurement.services.agent_run_tracking import run_procurement_component_with_tracking
 from apps.agents.services.llm_client import LLMClient, LLMMessage
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_reason_summary_with_tracking(*, recommendation, proc_request, request_user):
+    """Run ReasonSummaryAgent and persist an AgentRun row for observability."""
+    return run_procurement_component_with_tracking(
+        agent_type=AgentType.PROCUREMENT_REASON_SUMMARY,
+        invocation_reason="ReasonSummaryAgent.generate",
+        tenant=getattr(proc_request, "tenant", None),
+        actor_user=request_user,
+        input_payload={
+            "source": "procurement_reason_summary",
+            "procurement_request_id": str(getattr(proc_request, "request_id", "")),
+            "procurement_request_pk": getattr(proc_request, "pk", None),
+            "recommendation_result_id": getattr(recommendation, "pk", None),
+        },
+        execute_fn=lambda: ReasonSummaryAgent.generate(recommendation),
+    )
+
+
+_PROCUREMENT_TIMELINE_META = {
+    "DRAFT": {"label": "Draft", "tone": "secondary", "icon": "bi-pencil-square", "action": "Draft saved"},
+    "PROCESSING": {"label": "Processing", "tone": "info", "icon": "bi-cpu", "action": "AI analysis running"},
+    "READY": {"label": "Ready", "tone": "primary", "icon": "bi-check2-circle", "action": "Ready for sourcing"},
+    "REVIEW_REQUIRED": {"label": "Review", "tone": "warning", "icon": "bi-exclamation-circle", "action": "Needs buyer review"},
+    "COMPLETED": {"label": "Completed", "tone": "success", "icon": "bi-check-circle-fill", "action": "Workflow completed"},
+    "FAILED": {"label": "Failed", "tone": "danger", "icon": "bi-x-octagon", "action": "Processing failed"},
+}
+
+def _person_label(user) -> str:
+    if not user:
+        return ""
+    try:
+        return user.get_short_name() or user.get_full_name() or user.email or ""
+    except Exception:
+        return getattr(user, "email", "") or ""
+
+
+def _build_procurement_timeline_entries(requests):
+    entries = []
+    for proc_request in requests:
+        meta = _PROCUREMENT_TIMELINE_META.get(
+            proc_request.status,
+            {"label": proc_request.status, "tone": "secondary", "icon": "bi-clock-history", "action": "Status updated"},
+        )
+        detail_bits = []
+        if proc_request.domain_code:
+            detail_bits.append(proc_request.domain_code)
+        request_type_label = ""
+        try:
+            request_type_label = proc_request.get_request_type_display()
+        except Exception:
+            request_type_label = getattr(proc_request, "request_type", "")
+        if request_type_label:
+            detail_bits.append(request_type_label)
+        if proc_request.geography_country:
+            detail_bits.append(proc_request.geography_country)
+        owner_label = _person_label(getattr(proc_request, "assigned_to", None) or getattr(proc_request, "created_by", None))
+        action_text = meta["action"]
+        if owner_label:
+            action_text = f"{action_text} by {owner_label}"
+        entries.append({
+            "pk": proc_request.pk,
+            "title": proc_request.title,
+            "detail": " | ".join(detail_bits) or "Procurement request",
+            "status_label": meta["label"],
+            "tone": meta["tone"],
+            "icon": meta["icon"],
+            "action_text": action_text,
+            "timestamp": getattr(proc_request, "updated_at", None) or proc_request.created_at,
+        })
+    return entries
 
 
 HVAC_MANDATORY_FIELDS = [
@@ -127,6 +204,7 @@ def procurement_home(request):
 @permission_required_code("procurement.view")
 def request_list(request):
     """List all procurement requests with filters."""
+    tenant = getattr(request, "tenant", None)
     # Subquery: latest recommendation_option for each request
     latest_recommendation_sq = Subquery(
         RecommendationResult.objects.filter(
@@ -232,6 +310,7 @@ def request_create(request):
                 geography_city=request.POST.get("geography_city", ""),
                 currency=request.POST.get("currency", "USD"),
                 created_by=request.user,
+                tenant=request.user.company,
                 attributes=attrs_data if attrs_data else None,
             )
             messages.success(request, f"Procurement request '{proc_request.title}' created successfully.")
@@ -298,6 +377,7 @@ def hvac_create(request):
                 geography_city=request.POST.get("geography_city", ""),
                 currency=request.POST.get("currency", "AED"),
                 created_by=request.user,
+                tenant=request.user.company,
                 attributes=attrs_data if attrs_data else None,
             )
 
@@ -317,16 +397,51 @@ def hvac_create(request):
                 request=proc_request,
                 run_type=AnalysisRunType.RECOMMENDATION,
                 triggered_by=request.user,
+                tenant=proc_request.tenant,
             )
-            run_analysis_task.delay(run.pk)
+
+            # Queue analysis task (best-effort; fails gracefully if Redis not available on Windows dev)
+            try:
+                from django.db import transaction
+                transaction.on_commit(
+                    lambda: run_analysis_task.delay(tenant_id=request.tenant.pk, run_id=run.pk)
+                )
+            except Exception as _ra_exc:
+                logger.warning("Could not queue analysis task for run_id=%s: %s", run.pk, _ra_exc)
 
             # Generate market intelligence in parallel (best-effort, non-blocking)
             try:
+                from django.conf import settings as _dj_settings
                 from apps.procurement.tasks import generate_market_intelligence_task
-                generate_market_intelligence_task.apply_async(
-                    args=[proc_request.pk],
-                    countdown=20,  # give recommendation a 20s head start
-                )
+                if getattr(_dj_settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+                    # In EAGER dev mode apply_async runs synchronously and would block the
+                    # HTTP thread for the full Perplexity timeout (60 s+). Fire a daemon
+                    # thread instead so the redirect is immediate.
+                    import threading as _threading
+                    import django.db as _django_db
+                    _mi_tenant_pk = request.tenant.pk
+                    _mi_request_pk = proc_request.pk
+                    def _run_mi_background():
+                        try:
+                            generate_market_intelligence_task.apply(
+                                args=[_mi_tenant_pk, _mi_request_pk],
+                            )
+                        except Exception as _bg_exc:
+                            logger.warning(
+                                "Background MI task failed for pk=%s: %s",
+                                _mi_request_pk, _bg_exc,
+                            )
+                        finally:
+                            try:
+                                _django_db.connection.close()
+                            except Exception:
+                                pass
+                    _threading.Thread(target=_run_mi_background, daemon=True).start()
+                else:
+                    generate_market_intelligence_task.apply_async(
+                        args=[request.tenant.pk, proc_request.pk],
+                        countdown=20,  # give recommendation a 20s head start
+                    )
             except Exception as _mi_exc:
                 logger.warning("Could not queue market intelligence task for pk=%s: %s", proc_request.pk, _mi_exc)
 
@@ -686,10 +801,22 @@ def hvac_analyze_document(request):
         # Full Azure DI + GPT extraction
         try:
             from apps.procurement.agents.Azure_Document_Intelligence_Extractor_Agent import AzureDIExtractorAgent
-            result = AzureDIExtractorAgent.extract(
-                file_bytes=file_bytes,
-                mime_type=mime_type,
-                doc_type_hint="hvac_request_form",
+            result = run_procurement_component_with_tracking(
+                agent_type=AgentType.PROCUREMENT_AZURE_DI_EXTRACTION,
+                invocation_reason="AzureDIExtractorAgent.extract",
+                tenant=get_tenant_or_none(request),
+                actor_user=request.user,
+                input_payload={
+                    "source": "procurement_hvac_form_extract",
+                    "mime_type": mime_type,
+                    "filename": getattr(uploaded_file, "name", ""),
+                    "doc_type_hint": "hvac_request_form",
+                },
+                execute_fn=lambda: AzureDIExtractorAgent.extract(
+                    file_bytes=file_bytes,
+                    mime_type=mime_type,
+                    doc_type_hint="hvac_request_form",
+                ),
             )
         except Exception as exc:
             logger.warning("AzureDIExtractorAgent call failed: %s", exc)
@@ -871,7 +998,11 @@ def request_workspace(request, pk):
             reason_summary = _cached
         else:
             try:
-                reason_summary = ReasonSummaryAgent.generate(recommendation)
+                reason_summary = _generate_reason_summary_with_tracking(
+                    recommendation=recommendation,
+                    proc_request=proc_request,
+                    request_user=request.user,
+                )
                 if reason_summary:
                     recommendation.reason_summary_json = reason_summary
                     recommendation.save(update_fields=["reason_summary_json"])
@@ -1057,7 +1188,11 @@ def regenerate_reason_summary(request, pk):
         recommendation.reason_summary_json = None
         recommendation.save(update_fields=["reason_summary_json"])
         try:
-            new_summary = ReasonSummaryAgent.generate(recommendation)
+            new_summary = _generate_reason_summary_with_tracking(
+                recommendation=recommendation,
+                proc_request=proc_request,
+                request_user=request.user,
+            )
             if new_summary:
                 recommendation.reason_summary_json = new_summary
                 recommendation.save(update_fields=["reason_summary_json"])
@@ -1163,12 +1298,25 @@ def generate_rfq(request, pk):
     # -----------------------------------------------------------------------
     from apps.procurement.agents.RFQ_Generator_Agent import RFQGeneratorAgent
 
-    rfq_result = RFQGeneratorAgent.run(
-        proc_request,
-        selection_mode=product_param,        # "RECOMMENDED" or a system code
-        qty_overrides=qty_overrides,
-        generated_by=request.user,
-        save_record=_is_generate_post,       # only persist on POST action=generate
+    rfq_result = run_procurement_component_with_tracking(
+        agent_type=AgentType.PROCUREMENT_RFQ_GENERATOR,
+        invocation_reason="RFQGeneratorAgent.run",
+        tenant=getattr(proc_request, "tenant", None),
+        actor_user=request.user,
+        input_payload={
+            "source": "procurement_rfq_generator",
+            "procurement_request_id": str(getattr(proc_request, "request_id", "")),
+            "procurement_request_pk": getattr(proc_request, "pk", None),
+            "selection_mode": product_param,
+            "is_generate_post": bool(_is_generate_post),
+        },
+        execute_fn=lambda: RFQGeneratorAgent.run(
+            proc_request,
+            selection_mode=product_param,        # "RECOMMENDED" or a system code
+            qty_overrides=qty_overrides,
+            generated_by=request.user,
+            save_record=_is_generate_post,       # only persist on POST action=generate
+        ),
     )
 
     if rfq_result.error and not rfq_result.xlsx_bytes:
@@ -2054,8 +2202,16 @@ def trigger_analysis(request, pk):
         request=proc_request,
         run_type=run_type,
         triggered_by=request.user,
+        tenant=proc_request.tenant,
     )
-    run_analysis_task.delay(run.pk)
+    # Queue analysis task (best-effort; fails gracefully if Redis not available on Windows dev)
+    try:
+        from django.db import transaction
+        transaction.on_commit(
+            lambda: run_analysis_task.delay(tenant_id=request.tenant.pk, run_id=run.pk)
+        )
+    except Exception as _ra_exc:
+        logger.warning("Could not queue analysis task for run_id=%s: %s", run.pk, _ra_exc)
     messages.success(request, f"{run_type} analysis queued (Run {run.run_id}).")
     return redirect("procurement:request_workspace", pk=pk)
 
@@ -2085,18 +2241,17 @@ def upload_quotation(request, pk):
         return redirect("procurement:request_workspace", pk=pk)
 
     proc_request = get_object_or_404(ProcurementRequest, pk=pk)
-    from apps.procurement.services.quotation_service import QuotationService
+    from apps.procurement.services.create_rfq_service import QuotationService
 
     try:
         quotation = QuotationService.create_quotation(
             request=proc_request,
-            vendor_name=request.POST.get("vendor_name", ""),
             quotation_number=request.POST.get("quotation_number", ""),
             total_amount=request.POST.get("total_amount") or None,
             currency=request.POST.get("currency", "USD"),
             created_by=request.user,
         )
-        messages.success(request, f"Quotation from '{quotation.vendor_name}' added.")
+        messages.success(request, "Quotation uploaded. Vendor name will be auto-extracted.")
     except Exception as exc:
         messages.error(request, f"Failed to add quotation: {exc}")
     return redirect("procurement:request_workspace", pk=pk)
@@ -2122,8 +2277,18 @@ def trigger_validation(request, pk):
         request=proc_request,
         run_type=AnalysisRunType.VALIDATION,
         triggered_by=request.user,
+        tenant=proc_request.tenant,
     )
-    run_validation_task.delay(request.tenant.pk if request.tenant else None, run.pk)
+    # Queue via transaction.on_commit so the run record is committed before the task reads it
+    try:
+        from django.db import transaction
+        _t_id = request.tenant.pk if request.tenant else None
+        _r_id = run.pk
+        transaction.on_commit(
+            lambda: run_validation_task.delay(_t_id, _r_id)
+        )
+    except Exception as _rv_exc:
+        logger.warning("Could not queue validation task for run_id=%s: %s", run.pk, _rv_exc)
     messages.success(request, f"Validation queued (Run {run.run_id}).")
     return redirect("procurement:request_workspace", pk=pk)
 
@@ -2158,6 +2323,9 @@ def procurement_dashboard(request):
     from django.db.models import Count
 
     qs = ProcurementRequest.objects.all()
+    tenant = get_tenant_or_none(request)
+    if tenant is not None:
+        qs = qs.filter(tenant=tenant)
 
     # KPI counts
     status_counts = {item["status"]: item["total"] for item in qs.values("status").annotate(total=Count("id"))}
@@ -2212,54 +2380,9 @@ def procurement_dashboard(request):
     ]
 
     # Recent requests
-    recent_requests = (
-        qs.select_related("created_by")
-        .order_by("-created_at")[:10]
-    )
-
-    # ------------------------------------------------------------------
-    # Benchmarking KPIs
-    # ------------------------------------------------------------------
-    from apps.benchmarking.models import BenchmarkRequest, BenchmarkResult
-
-    bq_total = BenchmarkRequest.objects.count()
-    bq_completed = BenchmarkRequest.objects.filter(status="COMPLETED").count()
-    bq_pending = BenchmarkRequest.objects.filter(status__in=["PENDING", "PROCESSING"]).count()
-    bq_failed = BenchmarkRequest.objects.filter(status="FAILED").count()
-
-    # Variance distribution across all completed results
-    from django.db.models import Sum
-    variance_agg = BenchmarkResult.objects.aggregate(
-        within=Sum("lines_within_range"),
-        moderate=Sum("lines_moderate"),
-        high=Sum("lines_high"),
-        needs_review=Sum("lines_needs_review"),
-    )
-    bq_kpi = {
-        "total": bq_total,
-        "completed": bq_completed,
-        "pending": bq_pending,
-        "failed": bq_failed,
-        "lines_within_range": variance_agg["within"] or 0,
-        "lines_moderate": variance_agg["moderate"] or 0,
-        "lines_high": variance_agg["high"] or 0,
-        "lines_needs_review": variance_agg["needs_review"] or 0,
-    }
-
-    # Geography breakdown for benchmark requests
-    bench_by_geo = list(
-        BenchmarkRequest.objects
-        .exclude(geography="")
-        .values("geography")
-        .annotate(total=Count("id"))
-        .order_by("-total")
-    )
-
-    # Recent benchmark requests with their result
-    recent_benchmarks = (
-        BenchmarkRequest.objects
-        .select_related("submitted_by", "result")
-        .order_by("-created_at")[:10]
+    recent_requests = qs.select_related("created_by").order_by("-created_at")[:10]
+    procurement_timeline = _build_procurement_timeline_entries(
+        qs.select_related("created_by", "assigned_to").order_by("-updated_at", "-created_at")[:8]
     )
 
     return render(request, "procurement/procurement_dashboard.html", {
@@ -2269,10 +2392,7 @@ def procurement_dashboard(request):
         "by_country": by_country,
         "hvac_by_type": hvac_by_type,
         "recent_requests": recent_requests,
-        # benchmarking
-        "bq_kpi": bq_kpi,
-        "bench_by_geo": bench_by_geo,
-        "recent_benchmarks": recent_benchmarks,
+        "procurement_timeline": procurement_timeline,
     })
 
 
@@ -2482,6 +2602,7 @@ def hvac_request_form(request):
                 geography_city=request.POST.get("geography_city", ""),
                 currency="AED",
                 created_by=request.user,
+                tenant=request.user.company,
                 attributes=attrs_data if attrs_data else None,
             )
             action = request.POST.get("action", "save")
@@ -2490,8 +2611,16 @@ def hvac_request_form(request):
                     request=proc_request,
                     run_type=AnalysisRunType.RECOMMENDATION,
                     triggered_by=request.user,
+                    tenant=proc_request.tenant,
                 )
-                run_analysis_task.delay(run.pk)
+                # Queue analysis task (best-effort; fails gracefully if Redis not available on Windows dev)
+                try:
+                    from django.db import transaction
+                    transaction.on_commit(
+                        lambda: run_analysis_task.delay(tenant_id=request.tenant.pk, run_id=run.pk)
+                    )
+                except Exception as _ra_exc:
+                    logger.warning("Could not queue analysis task for run_id=%s: %s", run.pk, _ra_exc)
                 messages.success(request, "HVAC request created and analysis queued.")
             else:
                 messages.success(request, f"HVAC request '{proc_request.title}' saved.")
@@ -2506,12 +2635,12 @@ def hvac_request_form(request):
 
 
 # ---------------------------------------------------------------------------
-# H4. Benchmarking List
+# H4. Cost Analysis List
 # ---------------------------------------------------------------------------
 @login_required
 @permission_required_code("procurement.view")
-def hvac_benchmark_list(request):
-    """List all HVAC benchmarking runs."""
+def hvac_cost_list(request):
+    """List all HVAC cost-analysis runs."""
     qs = BenchmarkResult.objects.filter(
         run__request__domain_code="HVAC",
     ).select_related("run", "run__request", "quotation").prefetch_related("lines").order_by("-created_at")
@@ -2522,7 +2651,7 @@ def hvac_benchmark_list(request):
     paginator = Paginator(qs, 20)
     page = paginator.get_page(request.GET.get("page"))
 
-    return render(request, "procurement/hvac_benchmark_list.html", {
+    return render(request, "procurement/hvac_cost_list.html", {
         "page_obj": page,
         "kpi": {"total": total, "completed": completed},
     })
@@ -3582,6 +3711,51 @@ def api_external_suggestions(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# AJAX: Re-run internal recommendation and return result as JSON
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.run_analysis")
+def api_rerun_internal_recommendation(request, pk):
+    """POST /procurement/<pk>/rerun-recommendation/
+    Re-runs the RECOMMENDATION analysis synchronously and returns JSON so the
+    JS refresh button can show a spinner and reload the page on completion.
+    """
+    if request.method not in ("POST", "GET"):
+        return JsonResponse({"status": "error", "error": "Method not allowed."}, status=405)
+
+    proc_request = get_object_or_404(ProcurementRequest, pk=pk)
+
+    from apps.procurement.services.analysis_run_service import AnalysisRunService
+    from apps.procurement.services.recommendation_service import RecommendationService
+
+    run = AnalysisRunService.create_run(
+        request=proc_request,
+        run_type="RECOMMENDATION",
+        triggered_by=request.user if request.user.is_authenticated else None,
+        tenant=proc_request.tenant,
+    )
+    try:
+        result = RecommendationService.run_recommendation(
+            proc_request,
+            run,
+            request_user=request.user if request.user.is_authenticated else None,
+        )
+    except Exception as exc:
+        logger.error(
+            "api_rerun_internal_recommendation failed for pk=%s: %s",
+            pk, exc, exc_info=True,
+        )
+        return JsonResponse({"status": "error", "error": str(exc)}, status=200)
+
+    return JsonResponse({
+        "status": "ok",
+        "run_id": run.pk,
+        "recommended_option": getattr(result, "recommended_option", ""),
+        "confidence_score": float(getattr(result, "confidence_score", 0) or 0),
+    })
+
+
+# ---------------------------------------------------------------------------
 # Market Intelligence page
 # ---------------------------------------------------------------------------
 
@@ -4065,3 +4239,288 @@ def api_store_management_detail(request, pk):
             return JsonResponse({"error": str(exc)}, status=500)
 
     return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
+# ---------------------------------------------------------------------------
+# E2E Timeline view for Procurement Requests
+# ---------------------------------------------------------------------------
+@login_required
+@permission_required_code("procurement.view")
+def procurement_e2e_timeline(request, pk):
+    """
+    End-to-end lifecycle timeline for a single ProcurementRequest.
+    Shows every event from request creation -> form fill -> document upload ->
+    analysis run queued -> each AI agent invoked -> LLM reasoning steps ->
+    recommendation generated -> compliance checked -> current status.
+    """
+    from apps.procurement.models import ProcurementAgentExecutionRecord  # noqa: F401
+
+    proc_request = get_object_or_404(
+        ProcurementRequest.objects.select_related("created_by", "assigned_to", "uploaded_document"),
+        pk=pk,
+    )
+
+    attributes = list(proc_request.attributes.order_by("attribute_code"))
+
+    runs = list(
+        proc_request.analysis_runs.select_related("triggered_by")
+        .prefetch_related("agent_execution_records", "benchmark_results__quotation")
+        .order_by("created_at")
+    )
+
+    recommendation = (
+        RecommendationResult.objects.filter(run__request=proc_request)
+        .select_related("run")
+        .order_by("-created_at")
+        .first()
+    )
+    compliance = (
+        ComplianceResult.objects.filter(run__request=proc_request)
+        .select_related("run")
+        .order_by("-created_at")
+        .first()
+    )
+    validation = (
+        ValidationResult.objects.filter(run__request=proc_request)
+        .select_related("run")
+        .prefetch_related("items")
+        .order_by("-created_at")
+        .first()
+    )
+
+    _events = []
+
+    # REQUEST CREATED
+    actor_label = _person_label(proc_request.created_by)
+    _req_type_label = ""
+    try:
+        _req_type_label = proc_request.get_request_type_display()
+    except Exception:
+        _req_type_label = proc_request.request_type
+    _events.append({
+        "stage": "REQUEST_CREATED",
+        "icon": "bi-person-plus-fill",
+        "tone": "primary",
+        "title": "Procurement Request Created",
+        "actor": actor_label or "System",
+        "timestamp": proc_request.created_at,
+        "detail": (
+            "Domain: {} | Type: {} | Priority: {} | Location: {}".format(
+                proc_request.domain_code or "N/A",
+                _req_type_label,
+                proc_request.priority,
+                " ".join(filter(None, [proc_request.geography_city, proc_request.geography_country])) or "N/A",
+            )
+        ),
+        "extra": None,
+    })
+
+    # FORM ATTRIBUTES FILLED
+    if attributes:
+        top_attrs = attributes[:10]
+        attr_detail = " | ".join(
+            "{}: {}".format(
+                a.attribute_label,
+                a.value_text or (str(a.value_number) if a.value_number is not None else "N/A"),
+            )
+            for a in top_attrs
+        )
+        _events.append({
+            "stage": "FORM_FILLED",
+            "icon": "bi-ui-checks-grid",
+            "tone": "info",
+            "title": "{} attribute(s) captured in the form".format(len(attributes)),
+            "actor": actor_label or "System",
+            "timestamp": proc_request.created_at,
+            "detail": attr_detail,
+            "extra": {"attributes": [
+                {
+                    "label": a.attribute_label,
+                    "code": a.attribute_code,
+                    "value": a.value_text or (str(a.value_number) if a.value_number is not None else ""),
+                    "data_type": a.data_type,
+                    "source": a.extraction_source,
+                    "confidence": a.confidence_score,
+                }
+                for a in top_attrs
+            ]},
+        })
+
+    # DOCUMENT UPLOADED / PREFILL
+    if proc_request.uploaded_document:
+        doc = proc_request.uploaded_document
+        doc_ts = getattr(doc, "created_at", None) or proc_request.created_at
+        _events.append({
+            "stage": "DOCUMENT_UPLOADED",
+            "icon": "bi-file-earmark-arrow-up-fill",
+            "tone": "secondary",
+            "title": "Source Document Uploaded ({})".format(proc_request.source_document_type or "Unknown"),
+            "actor": actor_label or "System",
+            "timestamp": doc_ts,
+            "detail": "Prefill: {} | AI Confidence: {}".format(
+                proc_request.prefill_status,
+                "{:.0%}".format(proc_request.prefill_confidence) if proc_request.prefill_confidence else "N/A",
+            ),
+            "extra": None,
+        })
+
+    # PER ANALYSIS RUN
+    for run in runs:
+        triggered_label = _person_label(run.triggered_by) or "System"
+
+        _events.append({
+            "stage": "ANALYSIS_QUEUED",
+            "icon": "bi-cpu",
+            "tone": "secondary",
+            "title": "Analysis Run Queued ({})".format(run.run_type),
+            "actor": triggered_label,
+            "timestamp": run.created_at,
+            "detail": "Run ID: {}... | Status: {}".format(str(run.run_id)[:8], run.status),
+            "extra": None,
+        })
+
+        if run.started_at:
+            _events.append({
+                "stage": "ANALYSIS_STARTED",
+                "icon": "bi-play-circle-fill",
+                "tone": "primary",
+                "title": "AI Analysis Pipeline Started",
+                "actor": "AI Orchestrator",
+                "timestamp": run.started_at,
+                "detail": "Run type: {} | Invoking AI agents...".format(run.run_type),
+                "extra": None,
+            })
+
+        for ae in run.agent_execution_records.order_by("started_at"):
+            dur_s = None
+            if ae.completed_at and ae.started_at:
+                dur_s = (ae.completed_at - ae.started_at).total_seconds()
+            _ae_tone = {"COMPLETED": "success", "FAILED": "danger", "RUNNING": "warning"}.get(ae.status, "info")
+            _events.append({
+                "stage": "AGENT_EXECUTED",
+                "icon": "bi-robot",
+                "tone": _ae_tone,
+                "title": "AI Agent: {}".format(ae.agent_type.replace("_", " ").title()),
+                "actor": "LLM Engine",
+                "timestamp": ae.started_at,
+                "detail": "Status: {} | Confidence: {} | Duration: {}".format(
+                    ae.status,
+                    "{:.0%}".format(ae.confidence_score) if ae.confidence_score else "N/A",
+                    "{:.1f}s".format(dur_s) if dur_s is not None else "N/A",
+                ),
+                "extra": {
+                    "reasoning": ae.reasoning_summary or "",
+                    "output_snapshot": ae.output_snapshot,
+                    "duration_s": dur_s,
+                    "agent_type": ae.agent_type,
+                    "error_message": ae.error_message or "",
+                    "trace_id": ae.trace_id or "",
+                },
+            })
+
+        if run.thought_process_log:
+            _steps = run.thought_process_log if isinstance(run.thought_process_log, list) else []
+            _events.append({
+                "stage": "THOUGHT_PROCESS",
+                "icon": "bi-lightbulb-fill",
+                "tone": "warning",
+                "title": "LLM Thought Process Logged ({} step(s))".format(len(_steps)),
+                "actor": "LLM",
+                "timestamp": run.started_at or run.created_at,
+                "detail": "Step-by-step AI reasoning trace from the analysis run",
+                "extra": {"thought_steps": _steps},
+            })
+
+        try:
+            _rec = run.recommendation_result
+            _rec_conf = "{:.0%}".format(_rec.confidence_score) if _rec.confidence_score else "N/A"
+            _events.append({
+                "stage": "RECOMMENDATION_GENERATED",
+                "icon": "bi-trophy-fill",
+                "tone": "success",
+                "title": "AI Recommendation Generated",
+                "actor": "AI System",
+                "timestamp": _rec.created_at,
+                "detail": "Option: {} | Confidence: {} | Compliance: {}".format(
+                    (_rec.recommended_option or "")[:120],
+                    _rec_conf,
+                    _rec.compliance_status,
+                ),
+                "extra": {
+                    "recommended_option": _rec.recommended_option or "",
+                    "reasoning_summary": _rec.reasoning_summary or "",
+                    "confidence_score": _rec.confidence_score,
+                },
+            })
+        except Exception:
+            pass
+
+        try:
+            _comp = run.compliance_result
+            _comp_tone = {"COMPLIANT": "success", "NON_COMPLIANT": "danger", "PARTIAL": "warning"}.get(_comp.compliance_status, "secondary")
+            _events.append({
+                "stage": "COMPLIANCE_CHECKED",
+                "icon": "bi-shield-check",
+                "tone": _comp_tone,
+                "title": "Compliance Check: {}".format(_comp.compliance_status.replace("_", " ").title()),
+                "actor": "AI System",
+                "timestamp": _comp.created_at,
+                "detail": "Status: {}".format(_comp.compliance_status),
+                "extra": {
+                    "violations": _comp.violations_json,
+                    "rules_checked": _comp.rules_checked_json,
+                },
+            })
+        except Exception:
+            pass
+
+        if run.completed_at:
+            _run_ok = run.status == "COMPLETED"
+            _events.append({
+                "stage": "ANALYSIS_COMPLETED",
+                "icon": "bi-check-circle-fill" if _run_ok else "bi-x-octagon-fill",
+                "tone": "success" if _run_ok else "danger",
+                "title": "Analysis Run {} ({})".format("Completed" if _run_ok else "Failed", run.run_type),
+                "actor": "AI System",
+                "timestamp": run.completed_at,
+                "detail": "Duration: {} | {}".format(
+                    "{}ms".format(run.duration_ms) if run.duration_ms else "N/A",
+                    (run.output_summary or "")[:120],
+                ),
+                "extra": None,
+            })
+
+    # CURRENT STATUS
+    _st_tone = {"DRAFT": "secondary", "PROCESSING": "info", "READY": "primary", "REVIEW_REQUIRED": "warning", "COMPLETED": "success", "FAILED": "danger"}.get(proc_request.status, "secondary")
+    _events.append({
+        "stage": "CURRENT_STATUS",
+        "icon": "bi-flag-fill",
+        "tone": _st_tone,
+        "title": "Current Status: {}".format(proc_request.status.replace("_", " ").title()),
+        "actor": "System",
+        "timestamp": proc_request.updated_at or proc_request.created_at,
+        "detail": proc_request.title,
+        "extra": None,
+    })
+
+    _events.sort(key=lambda e: (e["timestamp"] is None, e["timestamp"] or proc_request.created_at))
+
+    _total_duration_s = max(
+        0,
+        ((proc_request.updated_at or proc_request.created_at) - proc_request.created_at).total_seconds(),
+    )
+    _total_agents = sum(r.agent_execution_records.count() for r in runs)
+    _total_llm_steps = sum(len(r.thought_process_log or []) for r in runs)
+
+    return render(request, "procurement/e2e_timeline.html", {
+        "proc_request": proc_request,
+        "timeline_events": _events,
+        "total_duration_s": _total_duration_s,
+        "total_agents": _total_agents,
+        "total_llm_steps": _total_llm_steps,
+        "runs": runs,
+        "attributes": attributes,
+        "recommendation": recommendation,
+        "compliance": compliance,
+        "validation": validation,
+    })

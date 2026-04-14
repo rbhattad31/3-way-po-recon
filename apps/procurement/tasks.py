@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("procurement.run_analysis", audit_event="ANALYSIS_RUN_STARTED", entity_type="AnalysisRun")
 def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
-    """Execute an analysis run (recommendation or benchmark).
+    """Execute an analysis run (recommendation or cost analysis).
 
     Dispatches to the appropriate service based on run_type.
     """
@@ -21,68 +21,136 @@ def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
     tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
     from apps.core.enums import AnalysisRunType, ProcurementRequestStatus
     from apps.procurement.models import AnalysisRun
+    from apps.procurement.services.eval_adapter import ProcurementEvalAdapter
     from apps.procurement.services.analysis_run_service import AnalysisRunService
-    from apps.procurement.services.benchmark_service import BenchmarkService
+    from apps.benchmarking.services.procurement_cost_service import ProcurementCostService
     from apps.procurement.services.recommendation_service import RecommendationService
     from apps.procurement.services.request_service import ProcurementRequestService
 
-    run = AnalysisRun.objects.select_related("request").get(pk=run_id)
+    # Tenant-scoped query -- filter via request__tenant so legacy AnalysisRun records
+    # that have tenant=NULL (created before the auto-derive fix) are still found.
+    qs = AnalysisRun.objects.select_related("request", "triggered_by")
+    if tenant:
+        qs = qs.filter(request__tenant=tenant)
+    run = qs.get(pk=run_id)
     request = run.request
+    # Use the user who triggered the run so RBAC checks reflect the real actor.
+    # Falls back to SYSTEM_AGENT (None) when triggered_by is null.
+    request_user = run.triggered_by if run.triggered_by_id else None
+
+    # Phase 6: Langfuse root trace for task-level observability
+    _lf_trace = None
+    _lf_trace_id = (getattr(run, "trace_id", "") or "").replace("-", "") or str(run.run_id).replace("-", "")
+    try:
+        from apps.core.langfuse_client import start_trace_safe
+        _lf_trace = start_trace_safe(
+            _lf_trace_id,
+            "procurement_analysis_task",
+            metadata={
+                "run_id": str(run.run_id),
+                "run_type": str(run.run_type),
+                "task_id": str(self.request.id or ""),
+                "tenant_id": tenant_id,
+            },
+        )
+    except Exception:
+        pass
 
     # Mark request as PROCESSING
     ProcurementRequestService.update_status(request, ProcurementRequestStatus.PROCESSING)
 
+    _task_result: dict = {"status": "failed"}
     try:
         if run.run_type == AnalysisRunType.RECOMMENDATION:
-            result = RecommendationService.run_recommendation(request, run, tenant=tenant)
-            return {
+            result = RecommendationService.run_recommendation(request, run, request_user=request_user)
+            
+            # Auto-generate external suggestions for HVAC requests
+            try:
+                if request.domain_code == "HVAC":
+                    from apps.procurement.services.market_intelligence_service import MarketIntelligenceService
+                    MarketIntelligenceService.generate_auto(
+                        request,
+                        generated_by=None,
+                        run=run,
+                        request_user=request_user,
+                    )
+            except Exception as _mi_exc:
+                logger.warning("Auto-generation of market intelligence failed for request %s: %s", request.pk, _mi_exc)
+            
+            _task_result = {
                 "status": "completed",
                 "run_id": str(run.run_id),
                 "run_type": "RECOMMENDATION",
                 "recommended_option": result.recommended_option,
                 "confidence": result.confidence_score,
             }
+            ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
+            return _task_result
 
         elif run.run_type == AnalysisRunType.BENCHMARK:
-            # Find the quotation to benchmark
+            # Find the quotation for cost analysis
             quotation = request.quotations.first()
             if not quotation:
-                AnalysisRunService.fail_run(run, "No quotation found for benchmarking")
+                AnalysisRunService.fail_run(run, "No quotation found for cost analysis")
                 ProcurementRequestService.update_status(
                     request, ProcurementRequestStatus.FAILED,
                 )
                 return {"status": "failed", "error": "No quotation available"}
 
-            result = BenchmarkService.run_benchmark(request, run, quotation, tenant=tenant)
-            return {
+            result = ProcurementCostService.run_cost_analysis(request, run, quotation)
+            ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
+            _task_result = {
                 "status": "completed",
                 "run_id": str(run.run_id),
-                "run_type": "BENCHMARK",
+                "run_type": "COST_ANALYSIS",
                 "risk_level": result.risk_level,
                 "variance_pct": str(result.variance_pct),
             }
+            return _task_result
 
         elif run.run_type == AnalysisRunType.VALIDATION:
             from apps.procurement.services.validation.orchestrator_service import (
                 ValidationOrchestratorService,
             )
 
-            result = ValidationOrchestratorService.run_validation(request, run, tenant=tenant)
-            return {
+            result = ValidationOrchestratorService.run_validation(request, run)
+            ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
+            _task_result = {
                 "status": "completed",
                 "run_id": str(run.run_id),
                 "run_type": "VALIDATION",
                 "overall_status": result.overall_status,
                 "completeness_score": result.completeness_score,
             }
+            return _task_result
 
         else:
             AnalysisRunService.fail_run(run, f"Unknown run_type: {run.run_type}")
-            return {"status": "failed", "error": f"Unknown run_type: {run.run_type}"}
+            ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
+            _task_result = {"status": "failed", "error": f"Unknown run_type: {run.run_type}"}
+            return _task_result
 
     except Exception as exc:
         logger.exception("Analysis run %s failed: %s", run_id, exc)
-        return {"status": "failed", "error": str(exc)}
+        try:
+            run.refresh_from_db()
+            ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
+        except Exception:
+            pass
+        _task_result = {"status": "failed", "error": str(exc)}
+        return _task_result
+    finally:
+        try:
+            from apps.core.langfuse_client import end_span_safe, score_trace_safe
+            end_span_safe(_lf_trace, output=_task_result, is_root=True)
+            score_trace_safe(
+                _lf_trace_id,
+                "procurement_analysis_success",
+                1.0 if _task_result.get("status") == "completed" else 0.0,
+                span=_lf_trace,
+            )
+        except Exception:
+            pass
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
@@ -98,17 +166,37 @@ def run_validation_task(self, tenant_id: int = None, run_id: int = 0, *, agent_e
     from apps.core.enums import ProcurementRequestStatus, ValidationOverallStatus
     from apps.procurement.models import AnalysisRun
     from apps.procurement.services.request_service import ProcurementRequestService
+    from apps.procurement.services.eval_adapter import ProcurementEvalAdapter
     from apps.procurement.services.validation.orchestrator_service import (
         ValidationOrchestratorService,
     )
 
-    run = AnalysisRun.objects.select_related("request").get(pk=run_id)
+    # Tenant-scoped query -- filter via request__tenant so legacy records are still found.
+    qs = AnalysisRun.objects.select_related("request")
+    if tenant:
+        qs = qs.filter(request__tenant=tenant)
+    run = qs.get(pk=run_id)
     request = run.request
 
+    # Phase 6: Langfuse root trace
+    _lf_trace_v = None
+    _lf_trace_id_v = (getattr(run, "trace_id", "") or "").replace("-", "") or str(run.run_id).replace("-", "")
+    try:
+        from apps.core.langfuse_client import start_trace_safe
+        _lf_trace_v = start_trace_safe(
+            _lf_trace_id_v,
+            "procurement_validation_task",
+            metadata={"run_id": str(run.run_id), "task_id": str(self.request.id or ""), "tenant_id": tenant_id},
+        )
+    except Exception:
+        pass
+
+    _val_result: dict = {"status": "failed"}
     try:
         result = ValidationOrchestratorService.run_validation(
-            request, run, tenant=tenant, agent_enabled=agent_enabled,
+            request, run, agent_enabled=agent_enabled,
         )
+        ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
 
         # Update request status based on validation outcome
         status_map = {
@@ -120,17 +208,36 @@ def run_validation_task(self, tenant_id: int = None, run_id: int = 0, *, agent_e
         new_status = status_map.get(result.overall_status, ProcurementRequestStatus.REVIEW_REQUIRED)
         ProcurementRequestService.update_status(request, new_status)
 
-        return {
+        _val_result = {
             "status": "completed",
             "run_id": str(run.run_id),
             "run_type": "VALIDATION",
             "overall_status": result.overall_status,
             "completeness_score": result.completeness_score,
         }
+        return _val_result
 
     except Exception as exc:
         logger.exception("Validation run %s failed: %s", run_id, exc)
-        return {"status": "failed", "error": str(exc)}
+        try:
+            run.refresh_from_db()
+            ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
+        except Exception:
+            pass
+        _val_result = {"status": "failed", "error": str(exc)}
+        return _val_result
+    finally:
+        try:
+            from apps.core.langfuse_client import end_span_safe, score_trace_safe
+            end_span_safe(_lf_trace_v, output=_val_result, is_root=True)
+            score_trace_safe(
+                _lf_trace_id_v,
+                "procurement_validation_success",
+                1.0 if _val_result.get("status") == "completed" else 0.0,
+                span=_lf_trace_v,
+            )
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +252,11 @@ def run_request_prefill_task(self, tenant_id: int = None, request_id: int = 0) -
     from apps.procurement.models import ProcurementRequest
     from apps.procurement.services.prefill.request_prefill_service import RequestDocumentPrefillService
 
-    proc_request = ProcurementRequest.objects.select_related("uploaded_document").get(pk=request_id)
+    # Tenant-scoped query to avoid multi-tenant isolation issues
+    qs = ProcurementRequest.objects.select_related("uploaded_document")
+    if tenant:
+        qs = qs.filter(tenant=tenant)
+    proc_request = qs.get(pk=request_id)
 
     try:
         payload = RequestDocumentPrefillService.run_prefill(proc_request, tenant=tenant)
@@ -171,7 +282,11 @@ def run_quotation_prefill_task(self, tenant_id: int = None, quotation_id: int = 
     from apps.procurement.models import SupplierQuotation
     from apps.procurement.services.prefill.quotation_prefill_service import QuotationDocumentPrefillService
 
-    quotation = SupplierQuotation.objects.select_related("uploaded_document", "request").get(pk=quotation_id)
+    # Tenant-scoped query to avoid multi-tenant isolation issues
+    qs = SupplierQuotation.objects.select_related("uploaded_document", "request")
+    if tenant:
+        qs = qs.filter(tenant=tenant)
+    quotation = qs.get(pk=quotation_id)
 
     try:
         payload = QuotationDocumentPrefillService.run_prefill(quotation, tenant=tenant)
@@ -198,7 +313,7 @@ def run_quotation_prefill_task(self, tenant_id: int = None, quotation_id: int = 
     audit_event="MARKET_INTELLIGENCE_STARTED",
     entity_type="ProcurementRequest",
 )
-def generate_market_intelligence_task(self, request_id: int) -> dict:
+def generate_market_intelligence_task(self, tenant_id: int = None, request_id: int = 0) -> dict:
     """Generate and persist AI market intelligence for a ProcurementRequest.
 
     Called automatically (with ~20s countdown) when a new HVAC request is created,
@@ -206,32 +321,68 @@ def generate_market_intelligence_task(self, request_id: int) -> dict:
 
     Can also be queued manually via the seed_market_intelligence management command.
     """
+    from apps.accounts.models import CompanyProfile
     from apps.procurement.models import ProcurementRequest
     from apps.procurement.services.market_intelligence_service import MarketIntelligenceService
 
+    tenant = CompanyProfile.objects.filter(pk=tenant_id).first() if tenant_id else None
+
     try:
-        proc_request = ProcurementRequest.objects.get(pk=request_id)
+        qs = ProcurementRequest.objects.all()
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        proc_request = qs.get(pk=request_id)
     except ProcurementRequest.DoesNotExist:
         logger.warning("generate_market_intelligence_task: request pk=%s not found", request_id)
         return {"status": "skipped", "reason": "Request not found"}
 
+    # Phase 6: Langfuse root trace
+    _lf_trace_mi = None
+    _lf_trace_id_mi = str(request_id)
+    try:
+        from apps.core.langfuse_client import start_trace_safe
+        _lf_trace_mi = start_trace_safe(
+            _lf_trace_id_mi,
+            "procurement_market_intelligence_task",
+            metadata={"request_id": request_id, "task_id": str(self.request.id or ""), "tenant_id": tenant_id},
+        )
+    except Exception:
+        pass
+
+    _mi_result: dict = {"status": "failed"}
     try:
         result = MarketIntelligenceService.generate_auto(proc_request, generated_by=None)
         logger.info(
             "generate_market_intelligence_task: completed for pk=%s, %d suggestions",
             request_id, len(result.get("suggestions", [])),
         )
-        return {
+        _mi_result = {
             "status": "completed",
             "request_id": request_id,
             "suggestion_count": len(result.get("suggestions", [])),
         }
+        return _mi_result
     except Exception as exc:
         logger.warning(
             "generate_market_intelligence_task: failed for pk=%s: %s", request_id, exc,
         )
         try:
             self.retry(exc=exc)
-        except self.MaxRetriesExceededError:
+        except Exception:
+            # Catches both MaxRetriesExceededError and celery.exceptions.Retry
+            # (the latter propagates in CELERY_TASK_ALWAYS_EAGER dev mode).
             pass
-        return {"status": "failed", "error": str(exc)}
+        _mi_result = {"status": "failed", "error": str(exc)}
+        return _mi_result
+    finally:
+        try:
+            from apps.core.langfuse_client import end_span_safe, score_trace_safe
+            end_span_safe(_lf_trace_mi, output=_mi_result, is_root=True)
+            score_trace_safe(
+                _lf_trace_id_mi,
+                "procurement_market_intel_success",
+                1.0 if _mi_result.get("status") == "completed" else 0.0,
+                span=_lf_trace_mi,
+            )
+        except Exception:
+            pass

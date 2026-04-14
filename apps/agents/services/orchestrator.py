@@ -381,6 +381,11 @@ class AgentOrchestrator:
         ctx.memory.facts["vendor_name"] = getattr(result, "vendor_name", "") or ""
         ctx.memory.facts["match_status"] = str(getattr(result, "match_status", "") or "")
         ctx._langfuse_trace = _lf_trace
+        # Stamp invocation reason so every AgentRun in this pipeline has a non-blank trigger field.
+        # Format: "<trigger_mode>:<match_status>" e.g. "auto:PARTIAL_MATCH", "manual:UNMATCHED"
+        _trigger_mode = "manual" if request_user is not None else "auto"
+        _match_status = str(getattr(result, "match_status", "") or "unknown")
+        ctx.invocation_reason = f"{_trigger_mode}:{_match_status}"
 
         # 4. Execute LLM agents in sequence
         last_output = None

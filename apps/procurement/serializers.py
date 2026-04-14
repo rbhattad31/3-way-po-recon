@@ -220,6 +220,7 @@ class ProcurementRequestWriteSerializer(serializers.ModelSerializer):
         user = self.context["request"].user
         return ProcurementRequestService.create_request(
             created_by=user,
+            tenant=getattr(user, "company", None),
             attributes=attrs,
             **validated_data,
         )
@@ -321,7 +322,6 @@ class RequestPrefillConfirmSerializer(serializers.Serializer):
 class QuotationPrefillUploadSerializer(serializers.Serializer):
     """Upload a proposal / quotation PDF to create a draft quotation and trigger prefill."""
     file = serializers.FileField()
-    vendor_name = serializers.CharField(max_length=300, required=False, default="")
 
 
 class QuotationPrefillConfirmSerializer(serializers.Serializer):
