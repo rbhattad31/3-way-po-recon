@@ -32,7 +32,7 @@ urlpatterns = [
     path("hvac/requests/", template_views.hvac_request_list, name="hvac_request_list"),
     path("hvac/requests/new/", template_views.hvac_request_form, name="hvac_request_create"),
     path("hvac/requests/<int:pk>/", template_views.hvac_request_detail, name="hvac_request_detail"),
-    path("hvac/benchmarks/", template_views.hvac_benchmark_list, name="benchmark_list"),
+    path("hvac/cost-rates/", template_views.hvac_cost_list, name="cost_list"),
     path("hvac/config/", template_views.hvac_config, name="hvac_config"),
     # -----------------------------------------------------------------------
     # Stores Management (list + CRUD)

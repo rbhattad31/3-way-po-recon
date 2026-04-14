@@ -308,6 +308,11 @@ class PerplexityMarketResearchAnalystAgent:
             "suggestions": suggestions,
             "perplexity_citations": perplexity_citations,
             "source_reference_label": "Perplexity Source References",
+            "llm_model_used": raw_response.get("model") or model,
+            "llm_usage": raw_response.get("usage") or {},
+            "prompt_tokens": (raw_response.get("usage") or {}).get("prompt_tokens"),
+            "completion_tokens": (raw_response.get("usage") or {}).get("completion_tokens"),
+            "total_tokens": (raw_response.get("usage") or {}).get("total_tokens"),
         }
 
     # ------------------------------------------------------------------
@@ -469,7 +474,7 @@ class PerplexityMarketResearchAnalystAgent:
             "https://api.perplexity.ai/chat/completions",
             headers=headers,
             json=payload,
-            timeout=60,
+            timeout=30,  # 30 s is enough; fail fast so retries are not painfully slow
         )
         resp.raise_for_status()
         resp_data = resp.json()
@@ -501,7 +506,13 @@ class PerplexityMarketResearchAnalystAgent:
             "PerplexityMarketResearchAnalystAgent._call_perplexity: "
             "%d citations returned", len(citations),
         )
-        return {"content": content, "citations": citations}
+        usage = resp_data.get("usage") or {}
+        return {
+            "content": content,
+            "citations": citations,
+            "usage": usage,
+            "model": model,
+        }
 
     @staticmethod
     def _parse_json(raw_text: str, model: str) -> dict:

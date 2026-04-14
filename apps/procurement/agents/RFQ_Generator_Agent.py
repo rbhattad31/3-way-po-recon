@@ -75,95 +75,6 @@ _SYSTEM_LABELS: Dict[str, str] = {
     "DUCTING":      "Ducting & Accessories",
 }
 
-# ---------------------------------------------------------------------------
-# Hardcoded fallback scope (used only when DB HVACServiceScope row is absent)
-# ---------------------------------------------------------------------------
-_FALLBACK_SCOPE: Dict[str, Dict] = {
-    "VRF": {
-        "capacity": "As per heat load calculation (TR)",
-        "scope": [
-            ("Equipment",    "VRF Outdoor Unit(s)",                              "Nos",  ""),
-            ("Equipment",    "VRF Indoor Units (Ceiling / Wall type per layout)", "Nos",  ""),
-            ("Piping",       "Refrigerant Copper Piping & Fittings",              "RM",   ""),
-            ("Piping",       "Thermal Insulation for Refrigerant Pipes",          "RM",   ""),
-            ("Electrical",   "Power Cabling & Distribution Boards",               "LS",   1),
-            ("Controls",     "Central Controller / BMS Integration",              "LS",   1),
-            ("Civil & MEP",  "Structural Support, Drainage, Penetrations",        "LS",   1),
-            ("Installation", "Complete Installation Works",                       "LS",   1),
-            ("Testing",      "Testing, Commissioning & Handover",                 "LS",   1),
-        ],
-    },
-    "SPLIT_AC": {
-        "capacity": "As per heat load calculation (TR)",
-        "scope": [
-            ("Equipment",    "Split AC Outdoor Condensing Units",                 "Nos",  ""),
-            ("Equipment",    "Split AC Indoor Units",                             "Nos",  ""),
-            ("Piping",       "Refrigerant Copper Piping & Fittings",              "RM",   ""),
-            ("Piping",       "Condensate Drain Piping",                           "RM",   ""),
-            ("Electrical",   "Power Cabling & MCB Distribution",                  "LS",   1),
-            ("Civil & MEP",  "Structural Support & Wall Penetrations",            "LS",   1),
-            ("Installation", "Complete Installation Works",                       "LS",   1),
-            ("Testing",      "Testing, Commissioning & Handover",                 "LS",   1),
-        ],
-    },
-    "PACKAGED_DX": {
-        "capacity": "As per heat load calculation (TR)",
-        "scope": [
-            ("Equipment",    "Packaged DX Unit(s) (Roof-Top / Split Packaged)",  "Nos",  ""),
-            ("Ducting",      "GI Ducting (Supply & Return)",                      "Sqm",  ""),
-            ("Ducting",      "Flexible Duct Connectors",                          "RM",   ""),
-            ("Diffusers",    "Supply / Return Air Diffusers & Grilles",           "Nos",  ""),
-            ("Insulation",   "Duct Thermal & Acoustic Insulation",                "Sqm",  ""),
-            ("Electrical",   "Power Cabling & Distribution Boards",               "LS",   1),
-            ("Civil & MEP",  "Roof Curb, Support Structure, Penetrations",        "LS",   1),
-            ("Installation", "Complete Installation Works",                       "LS",   1),
-            ("Testing",      "Testing, Commissioning & Handover",                 "LS",   1),
-        ],
-    },
-    "CHILLER": {
-        "capacity": "As per heat load calculation (TR)",
-        "scope": [
-            ("Equipment",    "Water-Cooled / Air-Cooled Chiller Plant",           "Nos",  ""),
-            ("Equipment",    "Cooling Towers (if water-cooled)",                  "Nos",  ""),
-            ("Equipment",    "Air Handling Units (AHUs) / Fan Coil Units",        "Nos",  ""),
-            ("Piping",       "Chilled Water & Condenser Water Piping",            "RM",   ""),
-            ("Piping",       "Thermal Insulation for Chilled Water Pipes",        "RM",   ""),
-            ("Pumps",        "Primary & Secondary Chilled Water Pumps",           "Nos",  ""),
-            ("Electrical",   "LV Panels, Cabling & MCC",                          "LS",   1),
-            ("Controls",     "BMS / DDC Control System",                          "LS",   1),
-            ("Installation", "Complete Installation Works",                       "LS",   1),
-            ("Testing",      "Testing, Commissioning & Handover",                 "LS",   1),
-        ],
-    },
-    "FCU": {
-        "capacity": "As per heat load calculation (TR)",
-        "scope": [
-            ("Equipment",    "Fan Coil Units (2-pipe or 4-pipe)",                 "Nos",  ""),
-            ("Piping",       "Chilled Water Supply & Return Piping",              "RM",   ""),
-            ("Piping",       "Condensate Drain Piping",                           "RM",   ""),
-            ("Insulation",   "Pipe Thermal Insulation",                           "RM",   ""),
-            ("Electrical",   "Power Cabling & Wiring",                            "LS",   1),
-            ("Controls",     "Thermostat & Zone Controls",                        "LS",   1),
-            ("Civil & MEP",  "Ceiling Works & Support Structures",                "LS",   1),
-            ("Installation", "Complete Installation Works",                       "LS",   1),
-            ("Testing",      "Testing, Commissioning & Handover",                 "LS",   1),
-        ],
-    },
-    "CASSETTE": {
-        "capacity": "As per heat load calculation (TR)",
-        "scope": [
-            ("Equipment",    "Cassette Type Indoor Units (4-way blow)",           "Nos",  ""),
-            ("Equipment",    "Outdoor Condensing Units",                          "Nos",  ""),
-            ("Piping",       "Refrigerant Copper Piping & Fittings",              "RM",   ""),
-            ("Piping",       "Condensate Drain Piping",                           "RM",   ""),
-            ("Electrical",   "Power Cabling & Distribution",                      "LS",   1),
-            ("Civil & MEP",  "Ceiling Cutouts, Diffuser Frames, Supports",        "LS",   1),
-            ("Installation", "Complete Installation Works",                       "LS",   1),
-            ("Testing",      "Testing, Commissioning & Handover",                 "LS",   1),
-        ],
-    },
-}
-
 # Keyword -> canonical system_type code resolution table
 _SCOPE_CODE_MAP: List[Tuple[str, str]] = [
     ("VRF",               "VRF"),
@@ -440,7 +351,9 @@ class RFQGeneratorAgent:
                     or str(rec.recommended_option or "").split("(")[0].strip()
                 )
                 system_code = cls._normalize_system_code(_raw)
-                rationale = rec.reasoning_summary or "Based on store profile and site conditions."
+                rationale = rec.reasoning_summary or (
+                    f"Auto-selected from latest recommendation ({system_code})."
+                )
                 confidence_pct = round(float(rec.confidence_score or 0) * 100)
                 logger.info(
                     "RFQGeneratorAgent: RECOMMENDED mode -- system_code=%s confidence=%s%% "
@@ -448,14 +361,10 @@ class RFQGeneratorAgent:
                     system_code, confidence_pct, rec.pk,
                 )
             else:
-                # No recommendation exists yet -- fall back to default
-                system_code = "PACKAGED_DX"
-                rationale = "Default recommendation -- no AI analysis run yet. Please run an analysis first."
-                confidence_pct = 0
-                logger.warning(
-                    "RFQGeneratorAgent: RECOMMENDED mode but no RecommendationResult found "
-                    "for request pk=%s -- defaulting to PACKAGED_DX",
-                    proc_request.pk,
+                raise ValueError(
+                    "RFQ generation requires a completed recommendation when selection_mode="
+                    "'RECOMMENDED'. No RecommendationResult was found for request "
+                    f"pk={proc_request.pk}."
                 )
             selection_basis = "AI / Rules Engine Recommendation"
         else:
@@ -464,7 +373,7 @@ class RFQGeneratorAgent:
             # in the Step 1 dropdown of the RFQ modal).
             # ----------------------------------------------------------
             system_code = cls._normalize_system_code(param)
-            rationale = "Manually selected based on project requirements."
+            rationale = f"Manual system selection: {system_code}."
             confidence_pct = 0
             selection_basis = "Manual Selection"
             logger.info(
@@ -485,8 +394,7 @@ class RFQGeneratorAgent:
     ) -> Tuple[List[ScopeRow], str, str]:
         """Return (scope_rows, system_label, capacity_note).
 
-        DB HVACServiceScope rows always take priority.  Falls back to the
-        hardcoded _FALLBACK_SCOPE table when no DB row is present.
+        DB HVACServiceScope rows are mandatory.
         """
         from apps.procurement.models import HVACServiceScope
 
@@ -514,24 +422,20 @@ class RFQGeneratorAgent:
                         raw_rows.append((cat, line, "LS", 1))
                         added += 1
                 if added == 0:
-                    raw_rows.append((cat, "(As per site conditions)", "LS", 1))
+                    raise ValueError(
+                        "RFQ scope is incomplete in HVACServiceScope for system "
+                        f"'{system_code}' (missing entries in category '{cat}')."
+                    )
             capacity_note = "As per heat load calculation (TR)"
             logger.info(
                 "RFQGeneratorAgent: loaded %d scope rows from DB (system=%s request pk=%s)",
                 len(raw_rows), system_code, proc_request.pk,
             )
             return raw_rows, system_label, capacity_note
-        else:
-            # Fallback to hardcoded table
-            system_label = _SYSTEM_LABELS.get(system_code, system_code)
-            scope_data = _FALLBACK_SCOPE.get(system_code, _FALLBACK_SCOPE["PACKAGED_DX"])
-            capacity_note = scope_data["capacity"]
-            logger.info(
-                "RFQGeneratorAgent: DB scope not found for system=%s -- using hardcoded fallback "
-                "(request pk=%s)",
-                system_code, proc_request.pk,
-            )
-            return list(scope_data["scope"]), system_label, capacity_note
+        raise ValueError(
+            "RFQ scope configuration is missing. No active HVACServiceScope found for "
+            f"system '{system_code}' (request pk={proc_request.pk})."
+        )
 
     # ------------------------------------------------------------------
     # 3. Attribute gathering
@@ -1207,7 +1111,7 @@ class RFQGeneratorAgent:
         Falls back to returning the input uppercased when no known keyword matches.
         """
         if not raw:
-            return "PACKAGED_DX"
+            raise ValueError("HVAC system code is required for RFQ generation.")
         _u = raw.strip().upper()
         # 1. Exact match
         for _kw, _code in _SCOPE_CODE_MAP:

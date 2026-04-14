@@ -65,6 +65,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "apps.core.middleware.DatabaseConnectionRecoveryMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -115,7 +116,10 @@ DATABASES = {
             "charset": "utf8mb4",
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
             "ssl_mode": "REQUIRED",
+            "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "15")),
         },
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+        "CONN_HEALTH_CHECKS": os.getenv("DB_CONN_HEALTH_CHECKS", "true").lower() == "true",
     }
 }
 

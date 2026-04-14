@@ -369,88 +369,39 @@ def extraction_upload(request):
     except Exception as case_exc:
         logger.warning("Pre-extraction case creation failed (non-fatal): %s", case_exc)
 
-    # If blob upload succeeded, dispatch via Celery task (async on server)
-    # Credit consume/refund happens inside the Celery task
-    if doc_upload.blob_path:
-        from apps.extraction.tasks import process_invoice_upload_task
-        from apps.core.utils import dispatch_task
-        dispatch_task(
-            process_invoice_upload_task,
-            upload_id=doc_upload.pk,
-            case_id=case_id,
-            case_number=case_number,
+    if not doc_upload.blob_path:
+        CreditService.refund(
+            request.user, credits=1,
+            reference_type="document_upload",
+            reference_id=str(doc_upload.pk),
+            remarks=f"Refund: Azure Blob upload failed for {uploaded_file.name}",
         )
+        doc_upload.delete()
         _invalidate_extraction_caches(request.user)
-        messages.success(
-            request,
-            f"'{uploaded_file.name}' uploaded successfully. "
-            f"Extraction agent is processing — refresh to see results."
-        )
+        messages.error(request, "Azure Blob upload failed. File was not stored.")
         return redirect("extraction:workbench")
 
-    # Fallback: no blob storage — run extraction synchronously with local file
-    tmp_fd, tmp_path = tempfile.mkstemp(
-        suffix=os.path.splitext(uploaded_file.name)[1]
+    from apps.extraction.tasks import process_invoice_upload_task
+    from apps.core.utils import dispatch_task
+    dispatch_task(
+        process_invoice_upload_task,
+        upload_id=doc_upload.pk,
+        case_id=case_id,
+        case_number=case_number,
     )
-    try:
-        with os.fdopen(tmp_fd, "wb") as tmp_f:
-            for chunk in uploaded_file.chunks():
-                tmp_f.write(chunk)
-
-        result = _run_extraction_pipeline(doc_upload, tmp_path)
-
-        if result["success"]:
-            # Consume the reserved credit — extraction succeeded
-            CreditService.consume(
-                request.user, credits=1,
-                reference_type="document_upload",
-                reference_id=str(doc_upload.pk),
-                remarks=f"Consumed for successful extraction: {uploaded_file.name}",
-            )
-            _invalidate_extraction_caches(request.user)
-            messages.success(
-                request,
-                f"Extraction completed for '{uploaded_file.name}' — "
-                f"confidence {result['confidence']:.0%}."
-            )
-            return redirect("extraction:console", pk=result["extraction_result_id"])
-        else:
-            # Extraction attempted but failed — refund credit (OCR failure)
-            CreditService.refund(
-                request.user, credits=1,
-                reference_type="document_upload",
-                reference_id=str(doc_upload.pk),
-                remarks=f"Refund (extraction failed): {uploaded_file.name}",
-            )
-            _invalidate_extraction_caches(request.user)
-            messages.error(
-                request,
-                f"Extraction failed for '{uploaded_file.name}': {result['error']}"
-            )
-            return redirect("extraction:workbench")
-    except Exception as exc:
-        # Technical failure before pipeline truly started — refund
-        try:
-            CreditService.refund(
-                request.user, credits=1,
-                reference_type="document_upload",
-                reference_id=str(doc_upload.pk),
-                remarks=f"Refund: sync extraction setup failed — {exc}",
-            )
-        except Exception:
-            logger.exception("Credit refund failed during sync extraction error")
-        raise
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+    _invalidate_extraction_caches(request.user)
+    messages.success(
+        request,
+        f"'{uploaded_file.name}' uploaded successfully. "
+        f"Extraction agent is processing — refresh to see results."
+    )
+    return redirect("extraction:workbench")
 
 
 def _try_blob_upload(doc_upload: DocumentUpload, uploaded_file) -> None:
     """Attempt Azure Blob upload — non-fatal if blob storage is not configured."""
     try:
-        from apps.documents.blob_service import is_blob_storage_enabled, upload_to_blob, build_blob_path
+        from apps.documents.blob_service import is_blob_storage_enabled, upload_to_blob, build_blob_path, build_blob_url
         if not is_blob_storage_enabled():
             return
 
@@ -463,9 +414,10 @@ def _try_blob_upload(doc_upload: DocumentUpload, uploaded_file) -> None:
         doc_upload.blob_path = blob_path
         doc_upload.blob_container = container_name
         doc_upload.blob_name = blob_path
+        doc_upload.blob_url = build_blob_url(blob_path)
         doc_upload.blob_uploaded_at = tz.now()
         doc_upload.save(update_fields=[
-            "blob_path", "blob_container", "blob_name",
+            "blob_path", "blob_container", "blob_name", "blob_url",
             "blob_uploaded_at", "updated_at",
         ])
     except Exception as exc:

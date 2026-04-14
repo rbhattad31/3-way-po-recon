@@ -344,29 +344,108 @@
     </div>
   </div>
 
-  <div class="card mb-4">
-    <div class="card-header fw-semibold">Plan Comparison: Deterministic vs LLM Planner</div>
-    <div class="card-body p-0">
-      <table class="table table-sm table-hover mb-0">
-        <thead class="table-light">
-          <tr>
-            <th>Planner</th>
-            <th>Runs</th>
-            <th>Avg Agent Confidence</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in plan_comparison %}
-          <tr>
-            <td>{{ row.input_payload__plan_source|default:"-" }}</td>
-            <td>{{ row.count }}</td>
-            <td>{{ row.avg_confidence|floatformat:2 }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="3" class="text-muted text-center py-3">No plan data yet.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  {# =========== Section 10: Deterministic vs LLM Planner Comparison =========== #}
+  <div class="ap-section-card mb-4" id="plannerCompSection">
+    <div class="ap-section-header d-flex align-items-center justify-content-between">
+      <span><i class="bi bi-diagram-3 text-primary me-2"></i>Plan Comparison: Deterministic vs LLM Planner</span>
+      <span id="plannerCompRefreshing" class="text-muted" style="font-size:.72rem;display:none">
+        <span class="spinner-border spinner-border-sm me-1"></span>Loading...
+      </span>
+    </div>
+    <div class="ap-section-body">
+      <p class="text-muted mb-3" style="font-size:.8rem">
+        Compares how often the <strong>LLM ReasoningPlanner</strong> vs the <strong>deterministic PolicyEngine</strong>
+        chose the agent sequence, and whether the agents that actually ran matched what was planned.
+      </p>
+
+      {# KPI mini-strip #}
+      <div class="row g-3 mb-4" id="plannerKpis">
+        <div class="col-6 col-md col-lg">
+          <div class="ap-mini-stat">
+            <span class="ap-mini-val" id="pcTotalRuns">--</span>
+            <span class="ap-mini-label">Orch Runs</span>
+          </div>
+        </div>
+        <div class="col-6 col-md col-lg">
+          <div class="ap-mini-stat">
+            <span class="ap-mini-val text-primary" id="pcLlmRuns">--</span>
+            <span class="ap-mini-label">LLM Plans</span>
+          </div>
+        </div>
+        <div class="col-6 col-md col-lg">
+          <div class="ap-mini-stat">
+            <span class="ap-mini-val text-success" id="pcDetRuns">--</span>
+            <span class="ap-mini-label">Deterministic Plans</span>
+          </div>
+        </div>
+        <div class="col-6 col-md col-lg">
+          <div class="ap-mini-stat">
+            <span class="ap-mini-val text-info" id="pcLlmRate">--</span>
+            <span class="ap-mini-label">LLM Plan Rate</span>
+          </div>
+        </div>
+        <div class="col-6 col-md col-lg">
+          <div class="ap-mini-stat">
+            <span class="ap-mini-val text-warning" id="pcDivRate">--</span>
+            <span class="ap-mini-label">Plan Divergence</span>
+          </div>
+        </div>
+      </div>
+
+      {# Side-by-side chart + per-source table #}
+      <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+          <div style="position:relative;height:240px">
+            <canvas id="chartPlannerComparison"></canvas>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 ap-dense-table">
+              <thead>
+                <tr>
+                  <th>Planner</th>
+                  <th class="text-center">Runs</th>
+                  <th class="text-center">Success %</th>
+                  <th class="text-center">Avg Confidence</th>
+                  <th class="text-center">Divergence %</th>
+                  <th class="text-center">Avg Runtime</th>
+                </tr>
+              </thead>
+              <tbody id="plannerSourceTableBody">
+                <tr><td colspan="6" class="text-center text-muted py-3">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {# Recent orchestration runs detail #}
+      <div class="ap-section-header mt-2" style="font-size:.78rem;border-bottom:0;padding-bottom:4px">
+        <i class="bi bi-list-check text-secondary me-1"></i>Recent Orchestration Runs
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 ap-dense-table">
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th class="text-center">Planner</th>
+              <th>Planned Agents</th>
+              <th>Executed Agents</th>
+              <th class="text-center">Diverged</th>
+              <th class="text-center">Status</th>
+              <th class="text-end">Confidence</th>
+              <th class="text-center">When</th>
+            </tr>
+          </thead>
+          <tbody id="plannerRecentBody">
+            <tr><td colspan="8" class="text-center text-muted py-3">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-muted text-center mb-0 py-2" style="font-size:.75rem">
+        Diverged = planned agent sequence differed from what actually executed.
+      </p>
     </div>
   </div>
 
@@ -374,5 +453,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/agent-performance-dashboard.js' %}?v=3"></script>
+<script src="{% static 'js/agent-performance-dashboard.js' %}?v=4"></script>
 {% endblock %}

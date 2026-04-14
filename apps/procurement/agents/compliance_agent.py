@@ -170,7 +170,20 @@ class ComplianceAgent:
             logger.warning("ComplianceAgent: LLM call failed: %s", exc)
             return ComplianceAgent._fallback("LLM call failed", str(exc))
 
-        return ComplianceAgent._normalise(parsed)
+        normalized = ComplianceAgent._normalise(parsed)
+        normalized.update({
+            "llm_model_used": llm.model,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "total_tokens": response.total_tokens,
+            "llm_usage": {
+                "model": llm.model,
+                "prompt_tokens": response.prompt_tokens,
+                "completion_tokens": response.completion_tokens,
+                "total_tokens": response.total_tokens,
+            },
+        })
+        return normalized
 
     # ------------------------------------------------------------------
     # Private helpers

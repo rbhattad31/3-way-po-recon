@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 @observed_task("procurement.run_analysis", audit_event="ANALYSIS_RUN_STARTED", entity_type="AnalysisRun")
 def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
-    """Execute an analysis run (recommendation or benchmark).
+    """Execute an analysis run (recommendation or cost analysis).
 
     Dispatches to the appropriate service based on run_type.
     """
@@ -23,7 +23,7 @@ def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
     from apps.procurement.models import AnalysisRun
     from apps.procurement.services.eval_adapter import ProcurementEvalAdapter
     from apps.procurement.services.analysis_run_service import AnalysisRunService
-    from apps.procurement.services.benchmark_service import BenchmarkService
+    from apps.benchmarking.services.procurement_cost_service import ProcurementCostService
     from apps.procurement.services.recommendation_service import RecommendationService
     from apps.procurement.services.request_service import ProcurementRequestService
 
@@ -88,21 +88,21 @@ def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
             return _task_result
 
         elif run.run_type == AnalysisRunType.BENCHMARK:
-            # Find the quotation to benchmark
+            # Find the quotation for cost analysis
             quotation = request.quotations.first()
             if not quotation:
-                AnalysisRunService.fail_run(run, "No quotation found for benchmarking")
+                AnalysisRunService.fail_run(run, "No quotation found for cost analysis")
                 ProcurementRequestService.update_status(
                     request, ProcurementRequestStatus.FAILED,
                 )
                 return {"status": "failed", "error": "No quotation available"}
 
-            result = BenchmarkService.run_benchmark(request, run, quotation, tenant=tenant)
+            result = ProcurementCostService.run_cost_analysis(request, run, quotation)
             ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
             _task_result = {
                 "status": "completed",
                 "run_id": str(run.run_id),
-                "run_type": "BENCHMARK",
+                "run_type": "COST_ANALYSIS",
                 "risk_level": result.risk_level,
                 "variance_pct": str(result.variance_pct),
             }
@@ -113,7 +113,7 @@ def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
                 ValidationOrchestratorService,
             )
 
-            result = ValidationOrchestratorService.run_validation(request, run, tenant=tenant)
+            result = ValidationOrchestratorService.run_validation(request, run)
             ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
             _task_result = {
                 "status": "completed",
@@ -194,7 +194,7 @@ def run_validation_task(self, tenant_id: int = None, run_id: int = 0, *, agent_e
     _val_result: dict = {"status": "failed"}
     try:
         result = ValidationOrchestratorService.run_validation(
-            request, run, tenant=tenant, agent_enabled=agent_enabled,
+            request, run, agent_enabled=agent_enabled,
         )
         ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
 
@@ -368,7 +368,9 @@ def generate_market_intelligence_task(self, tenant_id: int = None, request_id: i
         )
         try:
             self.retry(exc=exc)
-        except self.MaxRetriesExceededError:
+        except Exception:
+            # Catches both MaxRetriesExceededError and celery.exceptions.Retry
+            # (the latter propagates in CELERY_TASK_ALWAYS_EAGER dev mode).
             pass
         _mi_result = {"status": "failed", "error": str(exc)}
         return _mi_result

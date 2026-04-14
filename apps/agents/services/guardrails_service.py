@@ -55,6 +55,10 @@ AGENT_PERMISSIONS: Dict[str, str] = {
     "PROCUREMENT_VALIDATION": "agents.run_procurement_validation",
     "PROCUREMENT_COMPLIANCE": "agents.run_procurement_compliance",
     "PROCUREMENT_MARKET_INTELLIGENCE": "agents.run_procurement_market_intelligence",
+    "PROCUREMENT_REASON_SUMMARY": "agents.run_procurement_recommendation",
+    "PROCUREMENT_REQUEST_EXTRACTION": "agents.run_procurement_recommendation",
+    "PROCUREMENT_AZURE_DI_EXTRACTION": "agents.run_procurement_recommendation",
+    "PLATFORM_REASONING_PLANNER": "agents.orchestrate",
 }
 
 TOOL_PERMISSIONS: Dict[str, str] = {

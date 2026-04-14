@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -51,6 +52,15 @@ def build_blob_path(folder: str, original_filename: str, upload_id: int) -> str:
     now = datetime.now(timezone.utc)
     safe_name = original_filename.replace(" ", "_")
     return f"{folder}/{now.year}/{now.month:02d}/{upload_id}_{safe_name}"
+
+
+def build_blob_url(blob_path: str) -> str:
+    """Build a canonical blob URL from connection settings and blob path."""
+    conn_str, container = _get_blob_settings()
+    parts = dict(part.split("=", 1) for part in conn_str.split(";") if "=" in part)
+    account_name = parts.get("AccountName", "")
+    blob_endpoint = parts.get("BlobEndpoint", f"https://{account_name}.blob.core.windows.net")
+    return f"{blob_endpoint.rstrip('/')}/{container}/{blob_path}"
 
 
 def upload_to_blob(file_obj, blob_path: str, content_type: str = "") -> str:
@@ -107,6 +117,28 @@ def download_blob_to_tempfile(blob_path: str) -> str:
         if os.path.exists(tmp.name):
             os.unlink(tmp.name)
         raise
+
+
+@contextmanager
+def document_upload_temp_path(upload):
+    """Yield a local temp file path for a DocumentUpload, preferring Blob storage."""
+    tmp_path = None
+    try:
+        if getattr(upload, "blob_path", ""):
+            tmp_path = download_blob_to_tempfile(upload.blob_path)
+            yield tmp_path
+            return
+        file_field = getattr(upload, "file", None)
+        if file_field:
+            yield file_field.path
+            return
+        raise ValueError("No blob_path or file available for document upload")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def generate_blob_sas_url(

@@ -170,7 +170,7 @@ def upload_invoice(request):
     try:
         from django.conf import settings as django_settings
         from django.utils import timezone as tz
-        from apps.documents.blob_service import build_blob_path, upload_to_blob
+        from apps.documents.blob_service import build_blob_path, build_blob_url, upload_to_blob
         container_name = getattr(django_settings, "AZURE_BLOB_CONTAINER_NAME", "")
         blob_path = build_blob_path("input", uploaded_file.name, doc_upload.pk)
         uploaded_file.seek(0)
@@ -178,7 +178,7 @@ def upload_invoice(request):
         doc_upload.blob_path = blob_path
         doc_upload.blob_container = container_name
         doc_upload.blob_name = blob_path
-        doc_upload.blob_url = f"https://bradblob.blob.core.windows.net/{container_name}/{blob_path}"
+        doc_upload.blob_url = build_blob_url(blob_path)
         doc_upload.blob_uploaded_at = tz.now()
         doc_upload.save(update_fields=[
             "blob_path", "blob_container", "blob_name", "blob_url",

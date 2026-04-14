@@ -1,152 +1,72 @@
-"""AnalysisRunService — create and manage analysis run lifecycle."""
-from __future__ import annotations
+"""AnalysisRunService -- lightweight run lifecycle helpers.
 
-import logging
-from typing import Any, Dict, Optional
+Agent-first compatible: keeps AnalysisRun state transitions centralized while
+actual business decisions are produced by agents.
+"""
+from __future__ import annotations
 
 from django.utils import timezone
 
-from apps.auditlog.services import AuditService
-from apps.core.decorators import observed_service
-from apps.core.enums import AnalysisRunStatus, ProcurementRequestStatus
-from apps.core.trace import TraceContext
-from apps.procurement.models import AnalysisRun, ProcurementRequest
-from apps.procurement.services.request_service import AttributeService
-
-logger = logging.getLogger(__name__)
+from apps.core.enums import AnalysisRunStatus
+from apps.procurement.models import AnalysisRun
 
 
 class AnalysisRunService:
-    """Manage the lifecycle of analysis runs."""
+    """Create and manage AnalysisRun lifecycle records."""
 
     @staticmethod
-    @observed_service("procurement.analysis_run.create", audit_event="ANALYSIS_RUN_CREATED")
-    def create_run(
-        *,
-        request: ProcurementRequest,
-        run_type: str,
-        triggered_by=None,
-        tenant=None,
-    ) -> AnalysisRun:
-        ctx = TraceContext.get_current()
-
-        latest_validation = (
-            request.analysis_runs
-            .filter(run_type="VALIDATION", validation_result__isnull=False)
-            .select_related("validation_result")
-            .order_by("-created_at")
-            .first()
-        )
-        quotation_snapshot = [
-            {
-                "quotation_id": quotation.pk,
-                "vendor_name": quotation.vendor_name,
-                "quotation_number": quotation.quotation_number,
-                "total_amount": str(quotation.total_amount) if quotation.total_amount is not None else None,
-                "currency": quotation.currency,
-                "prefill_status": quotation.prefill_status,
-                "extraction_status": quotation.extraction_status,
-                "line_item_count": quotation.line_items.count(),
-            }
-            for quotation in request.quotations.all()[:10]
-        ]
-
-        # Build input snapshot
-        input_snapshot = {
-            "request_id": str(request.request_id),
-            "request_type": request.request_type,
-            "domain_code": request.domain_code,
-            "attributes": AttributeService.get_attributes_dict(request),
-            "quotation_count": request.quotations.count(),
-            "quotations": quotation_snapshot,
-            "latest_validation": {
-                "overall_status": latest_validation.validation_result.overall_status,
-                "completeness_score": latest_validation.validation_result.completeness_score,
-                "recommended_next_action": latest_validation.validation_result.recommended_next_action,
-            } if latest_validation and getattr(latest_validation, "validation_result", None) else None,
-        }
-
-        run = AnalysisRun.objects.create(
+    def create_run(*, request, run_type: str, triggered_by=None, tenant=None) -> AnalysisRun:
+        return AnalysisRun.objects.create(
+            tenant=tenant or getattr(request, "tenant", None),
             request=request,
             run_type=run_type,
             status=AnalysisRunStatus.QUEUED,
             triggered_by=triggered_by,
-            input_snapshot_json=input_snapshot,
-            trace_id=ctx.trace_id if ctx else "",
-            # Auto-derive tenant from the request when not explicitly passed
-            tenant=tenant if tenant is not None else request.tenant,
+            started_at=None,
+            completed_at=None,
+            input_snapshot_json={},
+            output_summary="",
+            error_message="",
+            trace_id=getattr(request, "trace_id", "") or "",
         )
-
-        AuditService.log_event(
-            entity_type="AnalysisRun",
-            entity_id=run.pk,
-            event_type="ANALYSIS_RUN_CREATED",
-            description=f"{run_type} run created for request {request.request_id}",
-            user=triggered_by,
-            trace_ctx=ctx,
-            status_after=AnalysisRunStatus.QUEUED,
-        )
-        return run
 
     @staticmethod
     def start_run(run: AnalysisRun) -> AnalysisRun:
         run.status = AnalysisRunStatus.RUNNING
-        run.started_at = timezone.now()
-        run.save(update_fields=["status", "started_at", "updated_at"])
-
-        AuditService.log_event(
-            entity_type="AnalysisRun",
-            entity_id=run.pk,
-            event_type="ANALYSIS_RUN_STARTED",
-            description=f"Run {run.run_id} started",
-            trace_ctx=TraceContext.get_current(),
-            status_before=AnalysisRunStatus.QUEUED,
-            status_after=AnalysisRunStatus.RUNNING,
-        )
+        if not run.started_at:
+            run.started_at = timezone.now()
+        run.error_message = ""
+        run.save(update_fields=["status", "started_at", "error_message", "updated_at"])
         return run
 
     @staticmethod
-    def complete_run(
-        run: AnalysisRun,
-        *,
-        output_summary: str = "",
-        confidence_score: float | None = None,
-    ) -> AnalysisRun:
+    def complete_run(run: AnalysisRun, *, output_summary: str = "", confidence_score=None) -> AnalysisRun:
         run.status = AnalysisRunStatus.COMPLETED
+        if not run.started_at:
+            run.started_at = timezone.now()
         run.completed_at = timezone.now()
-        run.output_summary = output_summary
-        run.confidence_score = confidence_score
-        run.save(update_fields=[
-            "status", "completed_at", "output_summary", "confidence_score", "updated_at",
-        ])
-
-        AuditService.log_event(
-            entity_type="AnalysisRun",
-            entity_id=run.pk,
-            event_type="ANALYSIS_RUN_COMPLETED",
-            description=f"Run {run.run_id} completed",
-            trace_ctx=TraceContext.get_current(),
-            status_before=AnalysisRunStatus.RUNNING,
-            status_after=AnalysisRunStatus.COMPLETED,
-            output_snapshot={"confidence": confidence_score, "summary": output_summary[:500]},
+        if output_summary:
+            run.output_summary = output_summary
+        if confidence_score is not None:
+            run.confidence_score = confidence_score
+        run.save(
+            update_fields=[
+                "status",
+                "started_at",
+                "completed_at",
+                "output_summary",
+                "confidence_score",
+                "updated_at",
+            ],
         )
         return run
 
     @staticmethod
-    def fail_run(run: AnalysisRun, error_message: str = "") -> AnalysisRun:
+    def fail_run(run: AnalysisRun, error_message: str) -> AnalysisRun:
         run.status = AnalysisRunStatus.FAILED
+        if not run.started_at:
+            run.started_at = timezone.now()
         run.completed_at = timezone.now()
-        run.error_message = error_message
-        run.save(update_fields=["status", "completed_at", "error_message", "updated_at"])
-
-        AuditService.log_event(
-            entity_type="AnalysisRun",
-            entity_id=run.pk,
-            event_type="ANALYSIS_RUN_FAILED",
-            description=f"Run {run.run_id} failed: {error_message[:200]}",
-            trace_ctx=TraceContext.get_current(),
-            status_before=AnalysisRunStatus.RUNNING,
-            status_after=AnalysisRunStatus.FAILED,
-            error_code="ANALYSIS_RUN_FAILURE",
-        )
+        run.error_message = str(error_message or "")[:4000]
+        run.save(update_fields=["status", "started_at", "completed_at", "error_message", "updated_at"])
         return run

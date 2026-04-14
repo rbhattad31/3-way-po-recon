@@ -12,9 +12,9 @@ from apps.tools.registry.base import BaseTool, ToolResult, register_tool
 
 
 @register_tool
-class MarketBenchmarkLookupTool(BaseTool):
-    name = "market_benchmark_lookup"
-    description = "Resolve indicative benchmark pricing for an equipment description."
+class MarketPriceLookupTool(BaseTool):
+    name = "market_price_lookup"
+    description = "Resolve indicative market pricing for an equipment description."
     required_permission = "procurement.view_results"
     parameters_schema = {
         "type": "object",
@@ -30,7 +30,7 @@ class MarketBenchmarkLookupTool(BaseTool):
     def run(self, **kwargs) -> ToolResult:
         from apps.procurement.services.web_search_service import WebSearchService
 
-        data = WebSearchService.search_benchmark(
+        data = WebSearchService.search_market_rate(
             description=str(kwargs.get("description", "") or ""),
             geography=str(kwargs.get("geography", "") or "UAE"),
             uom=str(kwargs.get("uom", "") or ""),

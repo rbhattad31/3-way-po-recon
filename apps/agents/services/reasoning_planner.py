@@ -25,8 +25,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import List
 
+from django.utils import timezone
+
+from apps.agents.models import AgentRun
+from apps.agents.services.base_agent import BaseAgent
+from apps.core.enums import AgentRunStatus
 from apps.agents.services.llm_client import LLMClient, LLMMessage
 from apps.agents.services.policy_engine import AgentPlan, PolicyEngine
 from apps.core.enums import AgentType
@@ -94,14 +100,29 @@ class ReasoningPlanner:
             AgentPlan with the ordered list of agents to execute.
         """
         quick_plan = self._fallback.plan(result)
+        planner_run = self._start_planner_run(result, quick_plan)
+        start_ts = time.monotonic()
 
         # Skip agent execution for clean matches or auto-close cases.
         if quick_plan.skip_agents:
+            self._complete_planner_run(
+                planner_run,
+                plan=quick_plan,
+                duration_ms=int((time.monotonic() - start_ts) * 1000),
+                planner_error="",
+            )
             return quick_plan
 
         # Attempt LLM-driven plan; fall back to deterministic on any error.
         try:
-            return self._llm_plan(result)
+            llm_plan = self._llm_plan(result)
+            self._complete_planner_run(
+                planner_run,
+                plan=llm_plan,
+                duration_ms=int((time.monotonic() - start_ts) * 1000),
+                planner_error="",
+            )
+            return llm_plan
         except Exception as exc:
             logger.warning(
                 "ReasoningPlanner LLM plan failed for result %s (%s); "
@@ -109,7 +130,74 @@ class ReasoningPlanner:
                 getattr(result, "pk", "?"),
                 exc,
             )
+            self._complete_planner_run(
+                planner_run,
+                plan=quick_plan,
+                duration_ms=int((time.monotonic() - start_ts) * 1000),
+                planner_error=str(exc),
+            )
             return quick_plan
+
+    def _start_planner_run(self, result, quick_plan: AgentPlan):
+        """Best-effort AgentRun creation for planner observability."""
+        try:
+            return AgentRun.objects.create(
+                tenant=getattr(result, "tenant", None),
+                agent_type=AgentType.PLATFORM_REASONING_PLANNER,
+                reconciliation_result=result,
+                status=AgentRunStatus.RUNNING,
+                confidence=0.0,
+                llm_model_used=(self._llm.model or "unknown"),
+                input_payload={
+                    "source": "reasoning_planner",
+                    "result_id": getattr(result, "pk", None),
+                    "match_status": str(getattr(result, "match_status", "") or ""),
+                    "reconciliation_mode": str(getattr(result, "reconciliation_mode", "") or ""),
+                    "deterministic_fallback_agents": list(quick_plan.agents or []),
+                    "deterministic_fallback_reason": quick_plan.reason,
+                },
+                invocation_reason="ReasoningPlanner.plan",
+                started_at=timezone.now(),
+            )
+        except Exception:
+            return None
+
+    def _complete_planner_run(self, planner_run, *, plan: AgentPlan, duration_ms: int, planner_error: str) -> None:
+        """Best-effort completion update for the planner AgentRun."""
+        if not planner_run:
+            return
+        try:
+            output_payload = {
+                "agents": list(plan.agents or []),
+                "reason": plan.reason,
+                "skip_agents": bool(plan.skip_agents),
+                "auto_close": bool(plan.auto_close),
+                "reconciliation_mode": plan.reconciliation_mode,
+                "plan_source": plan.plan_source,
+                "plan_confidence": plan.plan_confidence,
+            }
+            if planner_error:
+                output_payload["planner_error"] = planner_error
+
+            planner_run.status = AgentRunStatus.COMPLETED
+            planner_run.output_payload = output_payload
+            planner_run.summarized_reasoning = BaseAgent._sanitise_text(plan.reason or "")[:2000]
+            planner_run.confidence = max(0.0, min(1.0, float(plan.plan_confidence or 0.0)))
+            planner_run.error_message = planner_error or ""
+            planner_run.completed_at = timezone.now()
+            planner_run.duration_ms = duration_ms
+            planner_run.save(update_fields=[
+                "status",
+                "output_payload",
+                "summarized_reasoning",
+                "confidence",
+                "error_message",
+                "completed_at",
+                "duration_ms",
+                "updated_at",
+            ])
+        except Exception:
+            logger.debug("ReasoningPlanner AgentRun update failed", exc_info=True)
 
     def should_auto_close(self, recommendation_type, confidence: float) -> bool:
         """Delegate to the underlying PolicyEngine."""

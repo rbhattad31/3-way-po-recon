@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import requests
+import time
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -16,11 +17,14 @@ from django.views.decorators.http import require_POST, require_http_methods
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 
 from apps.auditlog.services import AuditService
 from apps.core.permissions import permission_required_code
 from apps.core.tenant_utils import get_tenant_or_none
 from apps.core.enums import (
+    AgentRunStatus,
+    AgentType,
     AnalysisRunType,
     ProcurementRequestStatus,
     ProcurementRequestType,
@@ -40,9 +44,27 @@ from apps.procurement.models import (
 )
 
 from apps.procurement.agents.reason_summary_agent import ReasonSummaryAgent
+from apps.procurement.services.agent_run_tracking import run_procurement_component_with_tracking
 from apps.agents.services.llm_client import LLMClient, LLMMessage
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_reason_summary_with_tracking(*, recommendation, proc_request, request_user):
+    """Run ReasonSummaryAgent and persist an AgentRun row for observability."""
+    return run_procurement_component_with_tracking(
+        agent_type=AgentType.PROCUREMENT_REASON_SUMMARY,
+        invocation_reason="ReasonSummaryAgent.generate",
+        tenant=getattr(proc_request, "tenant", None),
+        actor_user=request_user,
+        input_payload={
+            "source": "procurement_reason_summary",
+            "procurement_request_id": str(getattr(proc_request, "request_id", "")),
+            "procurement_request_pk": getattr(proc_request, "pk", None),
+            "recommendation_result_id": getattr(recommendation, "pk", None),
+        },
+        execute_fn=lambda: ReasonSummaryAgent.generate(recommendation),
+    )
 
 
 _PROCUREMENT_TIMELINE_META = {
@@ -53,14 +75,6 @@ _PROCUREMENT_TIMELINE_META = {
     "COMPLETED": {"label": "Completed", "tone": "success", "icon": "bi-check-circle-fill", "action": "Workflow completed"},
     "FAILED": {"label": "Failed", "tone": "danger", "icon": "bi-x-octagon", "action": "Processing failed"},
 }
-
-_BENCHMARK_TIMELINE_META = {
-    "PENDING": {"label": "Pending", "tone": "secondary", "icon": "bi-hourglass-split", "action": "Queued for benchmark run"},
-    "PROCESSING": {"label": "Processing", "tone": "info", "icon": "bi-gear-wide-connected", "action": "Cost model in progress"},
-    "COMPLETED": {"label": "Completed", "tone": "success", "icon": "bi-graph-up-arrow", "action": "Benchmark completed"},
-    "FAILED": {"label": "Failed", "tone": "danger", "icon": "bi-exclamation-octagon", "action": "Benchmark failed"},
-}
-
 
 def _person_label(user) -> str:
     if not user:
@@ -103,44 +117,6 @@ def _build_procurement_timeline_entries(requests):
             "icon": meta["icon"],
             "action_text": action_text,
             "timestamp": getattr(proc_request, "updated_at", None) or proc_request.created_at,
-        })
-    return entries
-
-
-def _build_benchmark_timeline_entries(requests):
-    entries = []
-    for bench_request in requests:
-        meta = _BENCHMARK_TIMELINE_META.get(
-            bench_request.status,
-            {"label": bench_request.status, "tone": "secondary", "icon": "bi-clock-history", "action": "Status updated"},
-        )
-        detail_bits = []
-        if bench_request.geography:
-            detail_bits.append(bench_request.geography)
-        if bench_request.scope_type:
-            detail_bits.append(bench_request.scope_type)
-        if bench_request.store_type:
-            detail_bits.append(bench_request.store_type)
-        action_text = meta["action"]
-        result = getattr(bench_request, "result", None)
-        if result and result.overall_deviation_pct is not None:
-            action_text = f"{action_text} - deviation {result.overall_deviation_pct:.1f}%"
-        elif result and result.overall_status:
-            action_text = f"{action_text} - {result.overall_status.replace('_', ' ').title()}"
-        elif bench_request.error_message:
-            action_text = f"{action_text} - {bench_request.error_message[:60]}"
-        owner_label = _person_label(getattr(bench_request, "submitted_by", None))
-        if owner_label:
-            action_text = f"{action_text} by {owner_label}"
-        entries.append({
-            "pk": bench_request.pk,
-            "title": bench_request.title,
-            "detail": " | ".join(detail_bits) or "Benchmark request",
-            "status_label": meta["label"],
-            "tone": meta["tone"],
-            "icon": meta["icon"],
-            "action_text": action_text,
-            "timestamp": getattr(bench_request, "updated_at", None) or bench_request.created_at,
         })
     return entries
 
@@ -435,11 +411,37 @@ def hvac_create(request):
 
             # Generate market intelligence in parallel (best-effort, non-blocking)
             try:
+                from django.conf import settings as _dj_settings
                 from apps.procurement.tasks import generate_market_intelligence_task
-                generate_market_intelligence_task.apply_async(
-                    args=[request.tenant.pk, proc_request.pk],
-                    countdown=20,  # give recommendation a 20s head start
-                )
+                if getattr(_dj_settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+                    # In EAGER dev mode apply_async runs synchronously and would block the
+                    # HTTP thread for the full Perplexity timeout (60 s+). Fire a daemon
+                    # thread instead so the redirect is immediate.
+                    import threading as _threading
+                    import django.db as _django_db
+                    _mi_tenant_pk = request.tenant.pk
+                    _mi_request_pk = proc_request.pk
+                    def _run_mi_background():
+                        try:
+                            generate_market_intelligence_task.apply(
+                                args=[_mi_tenant_pk, _mi_request_pk],
+                            )
+                        except Exception as _bg_exc:
+                            logger.warning(
+                                "Background MI task failed for pk=%s: %s",
+                                _mi_request_pk, _bg_exc,
+                            )
+                        finally:
+                            try:
+                                _django_db.connection.close()
+                            except Exception:
+                                pass
+                    _threading.Thread(target=_run_mi_background, daemon=True).start()
+                else:
+                    generate_market_intelligence_task.apply_async(
+                        args=[request.tenant.pk, proc_request.pk],
+                        countdown=20,  # give recommendation a 20s head start
+                    )
             except Exception as _mi_exc:
                 logger.warning("Could not queue market intelligence task for pk=%s: %s", proc_request.pk, _mi_exc)
 
@@ -799,10 +801,22 @@ def hvac_analyze_document(request):
         # Full Azure DI + GPT extraction
         try:
             from apps.procurement.agents.Azure_Document_Intelligence_Extractor_Agent import AzureDIExtractorAgent
-            result = AzureDIExtractorAgent.extract(
-                file_bytes=file_bytes,
-                mime_type=mime_type,
-                doc_type_hint="hvac_request_form",
+            result = run_procurement_component_with_tracking(
+                agent_type=AgentType.PROCUREMENT_AZURE_DI_EXTRACTION,
+                invocation_reason="AzureDIExtractorAgent.extract",
+                tenant=get_tenant_or_none(request),
+                actor_user=request.user,
+                input_payload={
+                    "source": "procurement_hvac_form_extract",
+                    "mime_type": mime_type,
+                    "filename": getattr(uploaded_file, "name", ""),
+                    "doc_type_hint": "hvac_request_form",
+                },
+                execute_fn=lambda: AzureDIExtractorAgent.extract(
+                    file_bytes=file_bytes,
+                    mime_type=mime_type,
+                    doc_type_hint="hvac_request_form",
+                ),
             )
         except Exception as exc:
             logger.warning("AzureDIExtractorAgent call failed: %s", exc)
@@ -984,7 +998,11 @@ def request_workspace(request, pk):
             reason_summary = _cached
         else:
             try:
-                reason_summary = ReasonSummaryAgent.generate(recommendation)
+                reason_summary = _generate_reason_summary_with_tracking(
+                    recommendation=recommendation,
+                    proc_request=proc_request,
+                    request_user=request.user,
+                )
                 if reason_summary:
                     recommendation.reason_summary_json = reason_summary
                     recommendation.save(update_fields=["reason_summary_json"])
@@ -1170,7 +1188,11 @@ def regenerate_reason_summary(request, pk):
         recommendation.reason_summary_json = None
         recommendation.save(update_fields=["reason_summary_json"])
         try:
-            new_summary = ReasonSummaryAgent.generate(recommendation)
+            new_summary = _generate_reason_summary_with_tracking(
+                recommendation=recommendation,
+                proc_request=proc_request,
+                request_user=request.user,
+            )
             if new_summary:
                 recommendation.reason_summary_json = new_summary
                 recommendation.save(update_fields=["reason_summary_json"])
@@ -1276,12 +1298,25 @@ def generate_rfq(request, pk):
     # -----------------------------------------------------------------------
     from apps.procurement.agents.RFQ_Generator_Agent import RFQGeneratorAgent
 
-    rfq_result = RFQGeneratorAgent.run(
-        proc_request,
-        selection_mode=product_param,        # "RECOMMENDED" or a system code
-        qty_overrides=qty_overrides,
-        generated_by=request.user,
-        save_record=_is_generate_post,       # only persist on POST action=generate
+    rfq_result = run_procurement_component_with_tracking(
+        agent_type=AgentType.PROCUREMENT_RFQ_GENERATOR,
+        invocation_reason="RFQGeneratorAgent.run",
+        tenant=getattr(proc_request, "tenant", None),
+        actor_user=request.user,
+        input_payload={
+            "source": "procurement_rfq_generator",
+            "procurement_request_id": str(getattr(proc_request, "request_id", "")),
+            "procurement_request_pk": getattr(proc_request, "pk", None),
+            "selection_mode": product_param,
+            "is_generate_post": bool(_is_generate_post),
+        },
+        execute_fn=lambda: RFQGeneratorAgent.run(
+            proc_request,
+            selection_mode=product_param,        # "RECOMMENDED" or a system code
+            qty_overrides=qty_overrides,
+            generated_by=request.user,
+            save_record=_is_generate_post,       # only persist on POST action=generate
+        ),
     )
 
     if rfq_result.error and not rfq_result.xlsx_bytes:
@@ -2206,18 +2241,17 @@ def upload_quotation(request, pk):
         return redirect("procurement:request_workspace", pk=pk)
 
     proc_request = get_object_or_404(ProcurementRequest, pk=pk)
-    from apps.procurement.services.quotation_service import QuotationService
+    from apps.procurement.services.create_rfq_service import QuotationService
 
     try:
         quotation = QuotationService.create_quotation(
             request=proc_request,
-            vendor_name=request.POST.get("vendor_name", ""),
             quotation_number=request.POST.get("quotation_number", ""),
             total_amount=request.POST.get("total_amount") or None,
             currency=request.POST.get("currency", "USD"),
             created_by=request.user,
         )
-        messages.success(request, f"Quotation from '{quotation.vendor_name}' added.")
+        messages.success(request, "Quotation uploaded. Vendor name will be auto-extracted.")
     except Exception as exc:
         messages.error(request, f"Failed to add quotation: {exc}")
     return redirect("procurement:request_workspace", pk=pk)
@@ -2351,61 +2385,6 @@ def procurement_dashboard(request):
         qs.select_related("created_by", "assigned_to").order_by("-updated_at", "-created_at")[:8]
     )
 
-    # ------------------------------------------------------------------
-    # Benchmarking KPIs
-    # ------------------------------------------------------------------
-    from apps.benchmarking.models import BenchmarkRequest, BenchmarkResult
-
-    benchmark_qs = BenchmarkRequest.objects.filter(is_active=True)
-    if tenant is not None:
-        benchmark_qs = benchmark_qs.filter(tenant=tenant)
-
-    bq_total = benchmark_qs.count()
-    bq_completed = benchmark_qs.filter(status="COMPLETED").count()
-    bq_pending = benchmark_qs.filter(status__in=["PENDING", "PROCESSING"]).count()
-    bq_failed = benchmark_qs.filter(status="FAILED").count()
-
-    # Variance distribution across all completed results
-    from django.db.models import Sum
-    variance_result_qs = BenchmarkResult.objects.filter(request__is_active=True)
-    if tenant is not None:
-        variance_result_qs = variance_result_qs.filter(request__tenant=tenant)
-    variance_agg = variance_result_qs.aggregate(
-        within=Sum("lines_within_range"),
-        moderate=Sum("lines_moderate"),
-        high=Sum("lines_high"),
-        needs_review=Sum("lines_needs_review"),
-    )
-    bq_kpi = {
-        "total": bq_total,
-        "completed": bq_completed,
-        "pending": bq_pending,
-        "failed": bq_failed,
-        "lines_within_range": variance_agg["within"] or 0,
-        "lines_moderate": variance_agg["moderate"] or 0,
-        "lines_high": variance_agg["high"] or 0,
-        "lines_needs_review": variance_agg["needs_review"] or 0,
-    }
-
-    # Geography breakdown for benchmark requests
-    bench_by_geo = list(
-        benchmark_qs
-        .exclude(geography="")
-        .values("geography")
-        .annotate(total=Count("id"))
-        .order_by("-total")
-    )
-
-    # Recent benchmark requests with their result
-    recent_benchmarks = (
-        benchmark_qs
-        .select_related("submitted_by", "result")
-        .order_by("-created_at")[:10]
-    )
-    benchmark_timeline = _build_benchmark_timeline_entries(
-        benchmark_qs.select_related("submitted_by", "result").order_by("-updated_at", "-created_at")[:8]
-    )
-
     return render(request, "procurement/procurement_dashboard.html", {
         "kpi": kpi,
         "status_chart": status_chart,
@@ -2414,11 +2393,6 @@ def procurement_dashboard(request):
         "hvac_by_type": hvac_by_type,
         "recent_requests": recent_requests,
         "procurement_timeline": procurement_timeline,
-        # benchmarking
-        "bq_kpi": bq_kpi,
-        "bench_by_geo": bench_by_geo,
-        "recent_benchmarks": recent_benchmarks,
-        "benchmark_timeline": benchmark_timeline,
     })
 
 
@@ -2661,12 +2635,12 @@ def hvac_request_form(request):
 
 
 # ---------------------------------------------------------------------------
-# H4. Benchmarking List
+# H4. Cost Analysis List
 # ---------------------------------------------------------------------------
 @login_required
 @permission_required_code("procurement.view")
-def hvac_benchmark_list(request):
-    """List all HVAC benchmarking runs."""
+def hvac_cost_list(request):
+    """List all HVAC cost-analysis runs."""
     qs = BenchmarkResult.objects.filter(
         run__request__domain_code="HVAC",
     ).select_related("run", "run__request", "quotation").prefetch_related("lines").order_by("-created_at")
@@ -2677,7 +2651,7 @@ def hvac_benchmark_list(request):
     paginator = Paginator(qs, 20)
     page = paginator.get_page(request.GET.get("page"))
 
-    return render(request, "procurement/hvac_benchmark_list.html", {
+    return render(request, "procurement/hvac_cost_list.html", {
         "page_obj": page,
         "kpi": {"total": total, "completed": completed},
     })

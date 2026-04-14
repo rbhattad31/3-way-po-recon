@@ -4,6 +4,7 @@ from apps.dashboard.api_views_performance import (
     PerfLatencyView,
     PerfLiveFeedView,
     PerfPlanComparisonView,
+    PerfPlannerComparisonView,
     PerfRecommendationsView,
     PerfReliabilityView,
     PerfSummaryView,
@@ -24,4 +25,5 @@ urlpatterns = [
     path("recommendations/", PerfRecommendationsView.as_view(), name="perf-recommendations"),
     path("live-feed/", PerfLiveFeedView.as_view(), name="perf-live-feed"),
     path("plan-comparison/", PerfPlanComparisonView.as_view(), name="perf_plan_comparison"),
+    path("planner-comparison/", PerfPlannerComparisonView.as_view(), name="perf_planner_comparison"),
 ]

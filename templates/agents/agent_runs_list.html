@@ -1,5 +1,46 @@
-{% extends "base.html" %}
-{% block title %}Agent Runs – AP Ops{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}Agent Runs - AP Ops{% endblock %}
+
+{% block extra_css %}
+<style>
+.ar-kpi { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:.75rem 1.25rem; }
+.ar-kpi-val { font-size:1.4rem; font-weight:700; line-height:1.2; }
+.ar-kpi-lbl { font-size:.7rem; color:#64748b; text-transform:uppercase; letter-spacing:.05em; }
+.ar-table { font-size:.82rem; }
+.ar-table thead th { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; color:#64748b; background:#f8fafc; border-bottom:2px solid #e2e8f0; padding:.5rem .75rem; white-space:nowrap; }
+.ar-table tbody td { padding:.5rem .75rem; vertical-align:middle; border-bottom:1px solid #f1f5f9; }
+.ar-table tbody tr:hover > td { background:#fafbff; }
+.ar-row-toggle { cursor:pointer; }
+.ar-detail-row { display:none; }
+.ar-detail-row.show { display:table-row; }
+.ar-detail-cell { background:#f8fafc; border-bottom:2px solid #e2e8f0; padding:0 !important; }
+.ar-detail-inner { padding:.85rem 1.1rem; display:grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap:.85rem; }
+.ar-detail-block { background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:.65rem .85rem; }
+.ar-detail-block-title { font-size:.67rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#64748b; margin-bottom:.4rem; }
+.ar-token-bar { height:5px; border-radius:3px; background:#dbeafe; margin-top:.25rem; }
+.ar-token-bar-fill { height:100%; border-radius:3px; background:#3b82f6; }
+.conf-bar { height:4px; border-radius:2px; background:#e2e8f0; margin-top:.2rem; }
+.conf-bar-fill { height:100%; border-radius:2px; }
+.at-badge { display:inline-block; font-size:.65rem; font-weight:700; padding:.15em .55em; border-radius:4px; }
+.at-llm    { background:#dbeafe; color:#1d4ed8; }
+.at-system { background:#f1f5f9; color:#475569; }
+.st-completed { background:#dcfce7; color:#15803d; }
+.st-failed    { background:#fee2e2; color:#991b1b; }
+.st-running   { background:#e0f2fe; color:#0369a1; }
+.st-skipped   { background:#f1f5f9; color:#475569; }
+.st-pending   { background:#fef3c7; color:#92400e; }
+.rec-badge { display:inline-block; font-size:.65rem; font-weight:600; padding:.15em .55em; border-radius:4px; background:#ede9fe; color:#6d28d9; }
+.tool-chip { display:inline-block; font-size:.65rem; background:#f1f5f9; color:#374151; padding:.1em .45em; border-radius:4px; margin:.1em .1em 0 0; }
+.access-ok { color:#15803d; }
+.access-no { color:#991b1b; }
+.ar-expand-indicator { display:inline-block; width:.65rem; height:.65rem; border:1.5px solid #94a3b8; border-radius:2px; vertical-align:middle; margin-right:.4rem; transition:background .15s; }
+.ar-row-toggle.expanded .ar-expand-indicator { background:#3b82f6; border-color:#3b82f6; }
+.mand-ok { color:#15803d; font-weight:600; }
+.mand-miss { color:#b91c1c; font-weight:700; }
+.ar-scroll-x { overflow-x:auto; overflow-y:hidden; }
+.ar-table-wide { min-width:1500px; }
+</style>
+{% endblock %}
 
 {% block breadcrumb %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb">
@@ -10,277 +51,313 @@
 
 {% block content %}
 
-{# ── KPI Cards ── #}
+{# KPI Strip #}
 <div class="row g-2 mb-3">
-  <div class="col-6 col-lg-3">
-    <div class="ap-card text-center py-2">
-      <div class="ap-font-size-xs text-muted">Total Runs</div>
-      <div class="fw-bold fs-5">{{ total_count|default:"0" }}</div>
-    </div>
+  <div class="col-6 col-xl-2 col-lg-4">
+    <div class="ar-kpi text-center"><div class="ar-kpi-val">{{ total_count|default:"0" }}</div><div class="ar-kpi-lbl">Total Runs</div></div>
   </div>
-  <div class="col-6 col-lg-3">
-    <div class="ap-card text-center py-2">
-      <div class="ap-font-size-xs text-muted">Completed</div>
-      <div class="fw-bold fs-5 text-success">{{ completed_count|default:"0" }}</div>
-    </div>
+  <div class="col-6 col-xl-2 col-lg-4">
+    <div class="ar-kpi text-center"><div class="ar-kpi-val text-success">{{ completed_count|default:"0" }}</div><div class="ar-kpi-lbl">Completed</div></div>
   </div>
-  <div class="col-6 col-lg-3">
-    <div class="ap-card text-center py-2">
-      <div class="ap-font-size-xs text-muted">Failed</div>
-      <div class="fw-bold fs-5 text-danger">{{ failed_count|default:"0" }}</div>
-    </div>
+  <div class="col-6 col-xl-2 col-lg-4">
+    <div class="ar-kpi text-center"><div class="ar-kpi-val text-danger">{{ failed_count|default:"0" }}</div><div class="ar-kpi-lbl">Failed</div></div>
   </div>
-  <div class="col-6 col-lg-3">
-    <div class="ap-card text-center py-2">
-      <div class="ap-font-size-xs text-muted">Avg Confidence</div>
-      <div class="fw-bold fs-5">{% if avg_confidence is not None %}{{ avg_confidence|floatformat:0 }}%{% else %}--{% endif %}</div>
+  <div class="col-6 col-xl-2 col-lg-4">
+    <div class="ar-kpi text-center"><div class="ar-kpi-val">{% if avg_confidence is not None %}{{ avg_confidence|floatformat:0 }}%{% else %}--{% endif %}</div><div class="ar-kpi-lbl">Avg Confidence</div></div>
+  </div>
+  <div class="col-6 col-xl-2 col-lg-4">
+    <div class="ar-kpi text-center"><div class="ar-kpi-val text-primary">{{ total_tokens|default:"0"|floatformat:0 }}</div><div class="ar-kpi-lbl">Total Tokens</div></div>
+  </div>
+  <div class="col-6 col-xl-2 col-lg-4">
+    <div class="ar-kpi text-center"><div class="ar-kpi-val text-warning">{{ page_obj.paginator.count }}</div><div class="ar-kpi-lbl">Filtered Results</div></div>
+  </div>
+</div>
+
+
+
+
+  
+      
+
+    
+  </div>
+</div>
+
+{# Full LLM catalog including components not directly tracked as AgentRun #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body py-2 px-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <div>
+        <div class="fw-semibold" style="font-size:.9rem"><i class="bi bi-list-check me-1"></i>All LLM Agents / Components</div>
+        <div class="text-muted" style="font-size:.74rem">Includes Perplexity, ReasonSummary, Benchmark, Supervisor, and every known LLM-using path.</div>
+      </div>
+      <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#llmCatalogPanel" aria-expanded="false" aria-controls="llmCatalogPanel">
+        <i class="bi bi-list-ul me-1"></i>Catalogue
+      </button>
+    </div>
+    <div id="llmCatalogPanel" class="collapse">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0" style="font-size:.76rem">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Group</th>
+            <th>Status</th>
+            <th>Priority</th>
+            <th>Functionality / Task</th>
+            <th>Tracked in /agents/runs/</th>
+            <th>Run Count</th>
+           
+        </thead>
+        <tbody>
+          {% for row in llm_component_catalog %}
+          <tr>
+            <td class="fw-semibold">{{ row.name }}</td>
+            <td>{{ row.group }}</td>
+            <td>
+              {% if row.is_active %}
+              <span class="badge bg-success">Active</span>
+              {% else %}
+              <span class="badge bg-secondary">Not Active</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.priority == "MANDATORY" %}
+              <span class="badge bg-danger">Mandatory</span>
+              {% elif row.priority == "IMPORTANT" %}
+              <span class="badge bg-warning text-dark">Important</span>
+              {% else %}
+              <span class="badge bg-light text-dark border">Optional</span>
+              {% endif %}
+            </td>
+            <td class="text-muted">{{ row.functionality|default:"--" }}</td>
+            <td>
+              {% if row.tracked %}
+              <span class="badge bg-primary">Yes</span>
+              {% else %}
+              <span class="badge bg-secondary">No (service-level only)</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.run_count is not None %}
+              <span class="badge {% if row.run_count %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ row.run_count }}</span>
+              {% else %}
+              <span class="text-muted">--</span>
+              {% endif %}
+            </td>
+            
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
     </div>
   </div>
 </div>
 
-{# ── Header + Filter Toggle ── #}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>Agent Runs</h4>
-  <div class="d-flex align-items-center gap-2">
-    <span class="text-muted">{{ page_obj.paginator.count }} run{{ page_obj.paginator.count|pluralize }}</span>
-    {% if total_tokens %}<span class="ap-badge ap-badge-muted"><i class="bi bi-lightning-charge me-1"></i>{{ total_tokens|floatformat:0 }} tokens</span>{% endif %}
-    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#filterPanel"
-            aria-expanded="{% if current_agent_type or current_status or current_role or current_trace_id or current_model_used or current_date_from or current_date_to or current_min_confidence or current_max_confidence or current_invoice_number %}true{% else %}false{% endif %}">
-      <i class="bi bi-funnel me-1"></i>Filters{% if current_agent_type or current_status or current_role or current_trace_id or current_model_used or current_date_from or current_date_to or current_min_confidence or current_max_confidence or current_invoice_number %} <span class="badge bg-primary ms-1">active</span>{% endif %}
-    </button>
-  </div>
-</div>
-
+{# Filters #}
 <div class="collapse {% if current_agent_type or current_status or current_role or current_trace_id or current_model_used or current_date_from or current_date_to or current_min_confidence or current_max_confidence or current_invoice_number %}show{% endif %}" id="filterPanel">
   <div class="ap-card mb-3">
     <div class="ap-card-body py-2 px-3">
       <form method="get" class="row g-2 align-items-end">
-
-        {# Row 1 #}
         <div class="col-lg-2 col-md-4">
           <label class="form-label form-label-sm mb-0">Agent Type</label>
           <select name="agent_type" class="form-select form-select-sm">
             <option value="">All Types</option>
-            {% for val, label in agent_type_choices %}
-            <option value="{{ val }}" {% if val == current_agent_type %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
+            {% for val, label in agent_type_choices %}<option value="{{ val }}" {% if val == current_agent_type %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
         </div>
-
         <div class="col-lg-2 col-md-4">
           <label class="form-label form-label-sm mb-0">Status</label>
           <select name="status" class="form-select form-select-sm">
             <option value="">All Statuses</option>
-            {% for val, label in status_choices %}
-            <option value="{{ val }}" {% if val == current_status %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
+            {% for val, label in status_choices %}<option value="{{ val }}" {% if val == current_status %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
         </div>
-
         <div class="col-lg-2 col-md-4">
           <label class="form-label form-label-sm mb-0">Role</label>
           <select name="role" class="form-select form-select-sm">
             <option value="">All Roles</option>
-            {% for r in roles %}
-            <option value="{{ r }}" {% if r == current_role %}selected{% endif %}>{{ r }}</option>
-            {% endfor %}
+            {% for r in roles %}<option value="{{ r }}" {% if r == current_role %}selected{% endif %}>{{ r }}</option>{% endfor %}
           </select>
         </div>
-
         <div class="col-lg-2 col-md-4">
           <label class="form-label form-label-sm mb-0">LLM Model</label>
           <select name="model_used" class="form-select form-select-sm">
             <option value="">All Models</option>
-            {% for m in models_used %}
-            <option value="{{ m }}" {% if m == current_model_used %}selected{% endif %}>{{ m }}</option>
-            {% endfor %}
+            {% for m in models_used %}<option value="{{ m }}" {% if m == current_model_used %}selected{% endif %}>{{ m }}</option>{% endfor %}
           </select>
         </div>
-
         <div class="col-lg-2 col-md-4">
           <label class="form-label form-label-sm mb-0">Invoice #</label>
           <input type="text" name="invoice_number" class="form-control form-control-sm" value="{{ current_invoice_number }}" placeholder="Search...">
         </div>
-
         <div class="col-lg-2 col-md-4">
           <label class="form-label form-label-sm mb-0">Trace ID</label>
           <input type="text" name="trace_id" class="form-control form-control-sm" value="{{ current_trace_id }}" placeholder="trace-id...">
         </div>
-
-        {# Row 2 #}
         <div class="col-lg-2 col-md-3">
           <label class="form-label form-label-sm mb-0">Date From</label>
           <input type="date" name="date_from" class="form-control form-control-sm" value="{{ current_date_from }}">
         </div>
-
         <div class="col-lg-2 col-md-3">
           <label class="form-label form-label-sm mb-0">Date To</label>
           <input type="date" name="date_to" class="form-control form-control-sm" value="{{ current_date_to }}">
         </div>
-
         <div class="col-lg-1 col-md-2">
           <label class="form-label form-label-sm mb-0">Min Conf%</label>
           <input type="number" name="min_confidence" class="form-control form-control-sm" min="0" max="100" step="1" value="{{ current_min_confidence }}" placeholder="0">
         </div>
-
         <div class="col-lg-1 col-md-2">
           <label class="form-label form-label-sm mb-0">Max Conf%</label>
           <input type="number" name="max_confidence" class="form-control form-control-sm" min="0" max="100" step="1" value="{{ current_max_confidence }}" placeholder="100">
         </div>
-
         <div class="col-lg-2 col-md-4 d-flex gap-1 align-items-end">
           <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search me-1"></i>Search</button>
           <a href="{% url 'agents:agent_runs_list' %}" class="btn btn-sm btn-outline-secondary" title="Clear filters"><i class="bi bi-x-lg"></i></a>
         </div>
-
       </form>
     </div>
   </div>
 </div>
 
-{# ── Runs Table ── #}
-<div class="ap-card">
-  <div class="ap-card-body p-0 table-responsive">
-    <table class="ap-table mb-0">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Agent Type</th>
-          <th>Status</th>
-          <th>Invoice</th>
-          <th>Confidence</th>
-          <th>Duration</th>
-          <th>Tokens</th>
-          <th>Role</th>
-          <th>Model</th>
-          <th>Trigger</th>
-          <th style="width:130px">Created</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for run in runs %}
-        <tr{% if run.parent_run_id %} class="table-light"{% endif %}>
-          <td>
-            <a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a>
-            {% if run.parent_run_id %}
-              <a href="{% url 'agents:agent_run_detail' run.parent_run_id %}" class="badge bg-info bg-opacity-25 text-info ms-1" title="Spawned by supervisor run #{{ run.parent_run_id }}" style="font-size:.6em;text-decoration:none">
-                <i class="bi bi-diagram-2"></i> #{{ run.parent_run_id }}
-              </a>
-            {% endif %}
-          </td>
-          <td>
-            <span class="ap-badge {% if 'SYSTEM_' in run.agent_type %}ap-badge-muted{% else %}ap-badge-info{% endif %}">
-              {{ run.get_agent_type_display }}
-            </span>
-          </td>
-          <td>
-            <span class="ap-badge
-              {% if run.status == 'COMPLETED' %}ap-badge-success
-              {% elif run.status == 'FAILED' %}ap-badge-danger
-              {% elif run.status == 'RUNNING' %}ap-badge-info
-              {% elif run.status == 'SKIPPED' %}ap-badge-muted
-              {% else %}ap-badge-partial{% endif %}">
-              {{ run.get_status_display }}
-            </span>
-          </td>
-          <td>
-            {% if run.resolved_invoice %}
-              <a href="{% url 'governance:invoice_governance' run.resolved_invoice.pk %}" class="small">
-                {{ run.resolved_invoice.invoice_number|default:"-"|truncatechars:20 }}
-              </a>
-            {% elif run.document_upload %}
-              <small class="text-muted" title="Upload #{{ run.document_upload_id }}">Upload #{{ run.document_upload_id }}</small>
-            {% else %}
-              <small class="text-muted">--</small>
-            {% endif %}
-          </td>
-          <td>
-            {% if run.confidence is not None %}
-              {% widthratio run.confidence 1 100 as conf_pct %}
-              <span class="{% if run.confidence >= 0.8 %}text-success{% elif run.confidence >= 0.5 %}text-warning{% else %}text-danger{% endif %} fw-semibold">
-                {{ conf_pct }}%
-              </span>
-            {% else %}
-              <small class="text-muted">--</small>
-            {% endif %}
-          </td>
-          <td>
-            {% if run.duration_ms is not None %}
-              <small>{{ run.duration_ms|floatformat:0 }}ms</small>
-            {% else %}
-              <small class="text-muted">--</small>
-            {% endif %}
-          </td>
-          <td>
-            {% if run.total_tokens %}
-              <small>{{ run.total_tokens|floatformat:0 }}</small>
-            {% else %}
-              <small class="text-muted">--</small>
-            {% endif %}
-          </td>
-          <td>
-            {% if run.actor_primary_role %}
-              <span class="badge bg-secondary" style="font-size:.65em">{{ run.actor_primary_role }}</span>
-            {% else %}
-              <small class="text-muted">--</small>
-            {% endif %}
-          </td>
-          <td>
-            {% if run.llm_model_used %}
-              <small class="text-muted">{{ run.llm_model_used|truncatechars:15 }}</small>
-            {% else %}
-              <small class="text-muted">deterministic</small>
-            {% endif %}
-          </td>
-          <td>
-            {% if run.invocation_reason %}
-              <span class="ap-badge ap-badge-partial" title="{{ run.invocation_reason }}">{{ run.invocation_reason }}</span>
-              {% if run.recovery_trigger_codes %}
-                <br><small class="text-muted">{{ run.recovery_trigger_codes|join:", " }}</small>
-              {% endif %}
-            {% else %}
-              <small class="text-muted">--</small>
-            {% endif %}
-          </td>
-          <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="11" class="text-center text-muted py-4">No agent runs found.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{# AP Runs #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body p-0">
+    <div class="px-3 py-2 border-bottom"><strong>AP Agent Runs</strong> <small class="text-muted ms-2">Invoice-oriented agents</small></div>
+    <div class="table-responsive ar-scroll-x">
+      <table class="ar-table w-100 ar-table-wide">
+        <thead>
+          <tr>
+            <th>ID</th><th>Agent</th><th>Status</th><th>Invoice</th><th>Confidence*</th><th>Model*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in ap_runs %}
+          <tr>
+            <td><a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a></td>
+            <td><span class="at-badge {% if 'SYSTEM_' in run.agent_type %}at-system{% else %}at-llm{% endif %}">{{ run.agent_display_name|default:run.get_agent_type_display }}</span></td>
+            <td><span class="at-badge {% if run.status == 'COMPLETED' %}st-completed{% elif run.status == 'FAILED' %}st-failed{% elif run.status == 'RUNNING' %}st-running{% elif run.status == 'SKIPPED' %}st-skipped{% else %}st-pending{% endif %}">{{ run.get_status_display }}</span></td>
+            <td>{% if run.resolved_invoice %}<a href="{% url 'governance:invoice_governance' run.resolved_invoice.pk %}" class="small">{{ run.resolved_invoice.invoice_number|default:"-"|truncatechars:18 }}</a>{% else %}<small class="text-muted">--</small>{% endif %}</td>
+            <td>{% if run.has_confidence %}<span class="mand-ok">{% widthratio run.confidence 1 100 %}%</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.has_model %}<span class="mand-ok">{{ run.llm_model_used|truncatechars:18 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.prompt_tokens is not None %}<span class="mand-ok">{{ run.prompt_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.completion_tokens is not None %}<span class="mand-ok">{{ run.completion_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.total_tokens is not None %}<span class="mand-ok">{{ run.total_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.has_trigger %}<span class="mand-ok">{{ run.invocation_reason|truncatechars:26 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="11" class="text-center text-muted py-4">No AP runs in this page/filter.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
-{# ── Pagination ── #}
+{# Procurement Runs #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body p-0">
+    <div class="px-3 py-2 border-bottom"><strong>Procurement Agent Runs</strong> <small class="text-muted ms-2">Procurement-request-oriented agents</small></div>
+    <div class="table-responsive ar-scroll-x">
+      <table class="ar-table w-100 ar-table-wide">
+        <thead>
+          <tr>
+            <th>ID</th><th>Agent</th><th>Status</th><th>Procurement Request</th><th>Confidence*</th><th>Model*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in procurement_runs %}
+          <tr>
+            <td><a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a></td>
+            <td><span class="at-badge at-llm">{{ run.agent_display_name|default:run.get_agent_type_display }}</span></td>
+            <td><span class="at-badge {% if run.status == 'COMPLETED' %}st-completed{% elif run.status == 'FAILED' %}st-failed{% elif run.status == 'RUNNING' %}st-running{% elif run.status == 'SKIPPED' %}st-skipped{% else %}st-pending{% endif %}">{{ run.get_status_display }}</span></td>
+            <td>{% if run.procurement_request_ref %}<span class="mand-ok">{{ run.procurement_request_ref }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.has_confidence %}<span class="mand-ok">{% widthratio run.confidence 1 100 %}%</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.has_model %}<span class="mand-ok">{{ run.llm_model_used|truncatechars:18 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.prompt_tokens is not None %}<span class="mand-ok">{{ run.prompt_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.completion_tokens is not None %}<span class="mand-ok">{{ run.completion_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.total_tokens is not None %}<span class="mand-ok">{{ run.total_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.has_trigger %}<span class="mand-ok">{{ run.invocation_reason|truncatechars:26 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="11" class="text-center text-muted py-4">No procurement runs in this page/filter.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{# Benchmark Runs #}
+<div class="ap-card mb-3">
+  <div class="ap-card-body p-0">
+    <div class="px-3 py-2 border-bottom"><strong>Benchmark Agent Runs</strong> <small class="text-muted ms-2">Benchmarking orchestration (separate from Procurement)</small></div>
+    <div class="table-responsive ar-scroll-x">
+      <table class="ar-table w-100 ar-table-wide">
+        <thead>
+          <tr>
+            <th>ID</th><th>Agent</th><th>Status</th><th>Quotation</th><th>Confidence*</th><th>Model*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in benchmark_runs %}
+          <tr>
+            <td><a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a></td>
+            <td><span class="at-badge at-llm">{{ run.agent_display_name|default:run.get_agent_type_display }}</span></td>
+            <td><span class="at-badge {% if run.status == 'COMPLETED' %}st-completed{% elif run.status == 'FAILED' %}st-failed{% elif run.status == 'RUNNING' %}st-running{% elif run.status == 'SKIPPED' %}st-skipped{% else %}st-pending{% endif %}">{{ run.get_status_display }}</span></td>
+            <td>{% if run.quotation_ref %}<span class="mand-ok">{{ run.quotation_ref }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.has_confidence %}<span class="mand-ok">{% widthratio run.confidence 1 100 %}%</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.has_model %}<span class="mand-ok">{{ run.llm_model_used|truncatechars:18 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.prompt_tokens is not None %}<span class="mand-ok">{{ run.prompt_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.completion_tokens is not None %}<span class="mand-ok">{{ run.completion_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.total_tokens is not None %}<span class="mand-ok">{{ run.total_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td>{% if run.has_trigger %}<span class="mand-ok">{{ run.invocation_reason|truncatechars:26 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+            <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="11" class="text-center text-muted py-4">No benchmark runs in this page/filter.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{# Pagination #}
 {% if page_obj.has_other_pages %}
 <nav class="mt-3">
   <ul class="pagination pagination-sm justify-content-center" id="runPagination">
-    {% if page_obj.has_previous %}
-    <li class="page-item"><a class="page-link" data-page="{{ page_obj.previous_page_number }}">&laquo;</a></li>
-    {% endif %}
+    {% if page_obj.has_previous %}<li class="page-item"><a class="page-link" data-page="{{ page_obj.previous_page_number }}">&laquo;</a></li>{% endif %}
     {% for num in page_obj.paginator.page_range %}
-      {% if page_obj.number == num %}
-      <li class="page-item active"><span class="page-link">{{ num }}</span></li>
-      {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
-      <li class="page-item"><a class="page-link" data-page="{{ num }}">{{ num }}</a></li>
+      {% if page_obj.number == num %}<li class="page-item active"><span class="page-link">{{ num }}</span></li>
+      {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}<li class="page-item"><a class="page-link" data-page="{{ num }}">{{ num }}</a></li>
       {% endif %}
     {% endfor %}
-    {% if page_obj.has_next %}
-    <li class="page-item"><a class="page-link" data-page="{{ page_obj.next_page_number }}">&raquo;</a></li>
-    {% endif %}
+    {% if page_obj.has_next %}<li class="page-item"><a class="page-link" data-page="{{ page_obj.next_page_number }}">&raquo;</a></li>{% endif %}
   </ul>
 </nav>
-<script>
-document.getElementById('runPagination').addEventListener('click', function(e) {
-  var link = e.target.closest('a[data-page]');
-  if (!link) return;
-  e.preventDefault();
-  var params = new URLSearchParams(window.location.search);
-  params.set('page', link.dataset.page);
-  window.location.search = params.toString();
-});
-</script>
 {% endif %}
 
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+  var pg = document.getElementById('runPagination');
+  if (pg) {
+    pg.addEventListener('click', function (e) {
+      var link = e.target.closest('a[data-page]');
+      if (!link) return;
+      e.preventDefault();
+      var params = new URLSearchParams(window.location.search);
+      params.set('page', link.dataset.page);
+      window.location.search = params.toString();
+    });
+  }
+})();
+</script>
 {% endblock %}

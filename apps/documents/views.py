@@ -23,6 +23,7 @@ from apps.documents.serializers import (
     PurchaseOrderDetailSerializer,
     PurchaseOrderListSerializer,
 )
+from apps.extraction.services.upload_service import InvoiceUploadService
 
 
 class DocumentUploadViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
@@ -35,14 +36,20 @@ class DocumentUploadViewSet(TenantQuerysetMixin, viewsets.ModelViewSet):
     ordering_fields = ["created_at", "file_size"]
     ordering = ["-created_at"]
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
         uploaded_file = self.request.FILES.get("file")
-        serializer.save(
-            uploaded_by=self.request.user,
-            original_filename=uploaded_file.name if uploaded_file else "",
-            file_size=uploaded_file.size if uploaded_file else 0,
-            content_type=uploaded_file.content_type if uploaded_file else "",
+        if not uploaded_file:
+            return Response({"detail": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        document_type = request.data.get("document_type") or "INVOICE"
+        upload = InvoiceUploadService.upload(
+            uploaded_file,
+            uploaded_by=request.user,
+            tenant=getattr(request, "tenant", None),
+            document_type=document_type,
         )
+        serializer = self.get_serializer(upload)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class InvoiceViewSet(TenantQuerysetMixin, viewsets.ReadOnlyModelViewSet):

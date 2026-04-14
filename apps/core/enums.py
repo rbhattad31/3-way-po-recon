@@ -94,10 +94,14 @@ class AgentType(models.TextChoices):
     SUPERVISOR = "SUPERVISOR", "Supervisor"
     # Procurement runtime convergence agents
     PROCUREMENT_RECOMMENDATION = "PROCUREMENT_RECOMMENDATION", "Procurement Recommendation"
-    PROCUREMENT_BENCHMARK = "PROCUREMENT_BENCHMARK", "Procurement Benchmark"
     PROCUREMENT_VALIDATION = "PROCUREMENT_VALIDATION", "Procurement Validation"
     PROCUREMENT_COMPLIANCE = "PROCUREMENT_COMPLIANCE", "Procurement Compliance"
     PROCUREMENT_MARKET_INTELLIGENCE = "PROCUREMENT_MARKET_INTELLIGENCE", "Procurement Market Intelligence"
+    PROCUREMENT_REASON_SUMMARY = "PROCUREMENT_REASON_SUMMARY", "Procurement Reason Summary"
+    PROCUREMENT_AZURE_DI_EXTRACTION = "PROCUREMENT_AZURE_DI_EXTRACTION", "Procurement Azure DI Extraction"
+    PROCUREMENT_FORM_FILLING = "PROCUREMENT_FORM_FILLING", "Procurement Form Filling"
+    PROCUREMENT_RFQ_GENERATOR = "PROCUREMENT_RFQ_GENERATOR", "Procurement RFQ Generator"
+    PLATFORM_REASONING_PLANNER = "PLATFORM_REASONING_PLANNER", "Platform Reasoning Planner"
 
 
 class ToolCallStatus(models.TextChoices):

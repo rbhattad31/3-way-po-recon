@@ -152,6 +152,8 @@ class BenchmarkRequest(BaseModel):
         default="",
         help_text="RFQ reference string (system ref or filename from uploaded RFQ).",
     )
+    rfq_blob_path = models.CharField(max_length=512, blank=True, default="", help_text="Azure Blob path for uploaded external RFQ document.")
+    rfq_blob_url = models.URLField(max_length=1024, blank=True, default="", help_text="Azure Blob URL for uploaded external RFQ document.")
     submitted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -202,7 +204,7 @@ class BenchmarkQuotation(BaseModel):
         default="",
         help_text="Supplier quotation reference number",
     )
-    document = models.FileField(upload_to=benchmark_quotation_upload_to)
+    document = models.FileField(upload_to=benchmark_quotation_upload_to, blank=True, null=True)
     blob_url = models.URLField(
         max_length=512,
         blank=True,

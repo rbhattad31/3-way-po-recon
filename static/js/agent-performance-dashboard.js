@@ -12,16 +12,8 @@
   let _cacheCounter = 0;
 
   // ── Agent type labels & colors ──
-  const AGENT_LABELS = {
-    INVOICE_EXTRACTION: "Extraction",
-    INVOICE_UNDERSTANDING: "Understanding",
-    PO_RETRIEVAL: "PO Retrieval",
-    GRN_RETRIEVAL: "GRN Retrieval",
-    RECONCILIATION_ASSIST: "Recon Assist",
-    EXCEPTION_ANALYSIS: "Exception",
-    REVIEW_ROUTING: "Review Routing",
-    CASE_SUMMARY: "Case Summary",
-  };
+    // ── Agent labels are sourced dynamically from the server-rendered filter options ──
+    const AGENT_LABELS = {};
   const AGENT_COLORS = [
     "#0d6efd", "#6610f2", "#6f42c1", "#d63384",
     "#fd7e14", "#198754", "#20c997", "#0dcaf0",
@@ -68,7 +60,24 @@
   }
 
   function shortLabel(agentType) {
-    return AGENT_LABELS[agentType] || agentType;
+     return AGENT_LABELS[agentType] || _humanizeAgentType(agentType) || agentType;
+  }
+  function _humanizeAgentType(agentType) {
+    if (!agentType) return "";
+    return String(agentType)
+      .toLowerCase()
+      .split("_")
+      .map(function(part) { return part ? part.charAt(0).toUpperCase() + part.slice(1) : ""; })
+      .join(" ");
+  }
+
+  function _hydrateAgentLabelsFromFilter() {
+    var select = document.getElementById("filterAgentType");
+    if (!select) return;
+    Array.from(select.options || []).forEach(function(opt) {
+      if (!opt || !opt.value) return;
+      AGENT_LABELS[opt.value] = (opt.textContent || "").trim() || opt.value;
+    });
   }
 
   function statusBadge(status) {
@@ -399,6 +408,125 @@
     }).join("");
   }
 
+  // ── 10. Planner Comparison: Deterministic vs LLM ──
+  async function loadPlannerComparison() {
+    var spinEl = document.getElementById("plannerCompRefreshing");
+    if (spinEl) spinEl.style.display = "";
+    var d = await apiFetch(BASE + "/planner-comparison/" + qs(_filters));
+    if (spinEl) spinEl.style.display = "none";
+    if (!d) return;
+
+    // KPI strip
+    var _set = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+    _set("pcTotalRuns", fmt(d.total_runs));
+    _set("pcLlmRuns", fmt(d.llm_runs));
+    _set("pcDetRuns", fmt(d.deterministic_runs));
+    _set("pcLlmRate", d.llm_rate != null ? d.llm_rate + "%" : "--");
+    _set("pcDivRate", d.divergence_rate != null ? d.divergence_rate + "%" : "--");
+
+    // Grouped bar chart
+    destroyChart("plannerComp");
+    var ctx = document.getElementById("chartPlannerComparison");
+    if (ctx && d.chart_labels && d.chart_labels.length) {
+      var CHART_COLORS = ["rgba(25,135,84,.75)", "rgba(13,110,253,.75)", "rgba(253,126,20,.75)"];
+      _charts.plannerComp = new Chart(ctx.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels: d.chart_labels,
+          datasets: (d.chart_datasets || []).map(function(ds, i) {
+            return {
+              label: ds.label,
+              data: ds.data,
+              backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
+              borderRadius: 4,
+              maxBarThickness: 32,
+            };
+          }),
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+            tooltip: { callbacks: { label: function(ctx2) { return ctx2.dataset.label + ": " + ctx2.parsed.y + "%"; } } },
+          },
+          scales: {
+            y: { beginAtZero: true, max: 100, ticks: { callback: function(v) { return v + "%"; } } },
+          },
+        },
+      });
+    }
+
+    // Per-source breakdown table
+    var srcBody = document.getElementById("plannerSourceTableBody");
+    if (srcBody) {
+      var srcs = d.by_source || [];
+      if (!srcs.length) {
+        srcBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No orchestration runs in period.</td></tr>';
+      } else {
+        srcBody.innerHTML = srcs.map(function(r) {
+          var srcBadge = r.plan_source === "llm"
+            ? '<span class="badge bg-primary">LLM</span>'
+            : r.plan_source === "deterministic"
+              ? '<span class="badge bg-success">Deterministic</span>'
+              : '<span class="badge bg-secondary">' + r.plan_source + '</span>';
+          var divClass = r.divergence_rate > 20 ? "text-danger" : (r.divergence_rate > 5 ? "text-warning" : "text-success");
+          return '<tr>' +
+            '<td>' + srcBadge + ' <small class="text-muted">' + r.label + '</small></td>' +
+            '<td class="text-center">' + fmt(r.run_count) + '</td>' +
+            '<td class="text-center">' + r.success_rate + '%</td>' +
+            '<td class="text-center">' + r.avg_confidence + '%</td>' +
+            '<td class="text-center ' + divClass + '">' + r.divergence_rate + '%</td>' +
+            '<td class="text-center">' + fmtMs(r.avg_duration_ms) + '</td>' +
+          '</tr>';
+        }).join("");
+      }
+    }
+
+    // Recent orchestration runs table
+    var recBody = document.getElementById("plannerRecentBody");
+    if (recBody) {
+      var runs = d.recent_runs || [];
+      if (!runs.length) {
+        recBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No orchestration runs in period.</td></tr>';
+      } else {
+        recBody.innerHTML = runs.map(function(r) {
+          var invCell = r.invoice_id
+            ? '<a href="/governance/invoices/' + r.invoice_id + '/">' + (r.invoice_number || r.result_id) + '</a>'
+            : (r.invoice_number || String(r.result_id || "-"));
+
+          var plannerBadge = r.plan_source === "llm"
+            ? '<span class="badge bg-primary" style="font-size:.68rem">LLM</span>'
+            : r.plan_source === "deterministic"
+              ? '<span class="badge bg-success" style="font-size:.68rem">Det.</span>'
+              : '<span class="badge bg-secondary" style="font-size:.68rem">' + r.plan_source + '</span>';
+
+          var _fmtAgents = function(arr) {
+            if (!arr || !arr.length) return '<span class="text-muted">—</span>';
+            return arr.map(function(a) { return '<span class="badge bg-light text-dark border me-1" style="font-size:.63rem">' + _humanizeAgentType(a) + '</span>'; }).join("");
+          };
+
+          var divergedCell = r.diverged
+            ? '<i class="bi bi-exclamation-triangle-fill text-warning" title="Planned != Executed"></i>'
+            : '<i class="bi bi-check-circle-fill text-success" title="No divergence"></i>';
+
+          var statusBadgeCell = statusBadge(r.status);
+
+          return '<tr>' +
+            '<td>' + invCell + '</td>' +
+            '<td class="text-center">' + plannerBadge + '</td>' +
+            '<td style="font-size:.7rem">' + _fmtAgents(r.planned_agents) + '</td>' +
+            '<td style="font-size:.7rem">' + _fmtAgents(r.executed_agents) + '</td>' +
+            '<td class="text-center">' + divergedCell + '</td>' +
+            '<td class="text-center">' + statusBadgeCell + '</td>' +
+            '<td class="text-end">' + (r.final_confidence ? r.final_confidence + '%' : '--') + '</td>' +
+            '<td class="text-center">' + timeAgo(r.started_at) + '</td>' +
+          '</tr>';
+        }).join("");
+      }
+    }
+  }
+
   // ── Refresh all ──
   async function refreshAll() {
     readFilters();
@@ -414,11 +542,13 @@
       loadRecommendationCharts(),
       loadLiveFeed(),
       loadPlanComparison(),
+      loadPlannerComparison(),
     ]);
   }
 
   // ── Init ──
   function init() {
+    _hydrateAgentLabelsFromFilter();
     refreshAll();
     _feedInterval = setInterval(loadLiveFeed, 10000);
   }

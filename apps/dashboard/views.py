@@ -7,7 +7,7 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.utils.timesince import timesince
 
-from apps.agents.models import AgentRun
+from apps.agents.models import AgentDefinition, AgentRun
 from apps.cases.models import APCase, APCaseStage
 from apps.cases.selectors.case_selectors import CaseSelectors
 from apps.core.enums import (
@@ -328,6 +328,38 @@ def agent_performance(request):
     tenant = get_tenant_or_none(request)
     if tenant is not None:
         agent_run_qs = agent_run_qs.filter(tenant=tenant)
+
+    # Build agent filter options from DB records (definitions + historical runs),
+    # then map to enum labels for display.
+    runs_scope_qs = AgentRun.objects.exclude(agent_type="")
+    if tenant is not None:
+        runs_scope_qs = runs_scope_qs.filter(tenant=tenant)
+    used_agent_type_values = set(
+        runs_scope_qs.values_list("agent_type", flat=True).distinct()
+    )
+
+    defs_qs = AgentDefinition.objects.all()
+    if tenant is not None:
+        defs_qs = defs_qs.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
+    configured_agent_type_values = set(
+        defs_qs.values_list("agent_type", flat=True).distinct()
+    )
+    definition_name_map = {
+        row["agent_type"]: row["name"]
+        for row in defs_qs.exclude(agent_type="").values("agent_type", "name")
+    }
+
+    available_agent_types = used_agent_type_values | configured_agent_type_values
+    used_agent_types = [
+        (
+            value,
+            definition_name_map.get(value)
+            or value.replace("_", " ").title(),
+        )
+        for value in sorted(available_agent_types)
+        if value
+    ]
+
     plan_rows = (
         agent_run_qs
         .filter(input_payload__plan_source__isnull=False)
@@ -341,7 +373,7 @@ def agent_performance(request):
 
     return render(request, "dashboard/agent_performance.html", {
         "user_role": user_role,
-        "agent_types": AgentType.choices,
+        "agent_types": used_agent_types,
         "agent_statuses": AgentRunStatus.choices,
         "plan_comparison": list(plan_rows),
     })

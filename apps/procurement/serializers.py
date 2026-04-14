@@ -322,7 +322,6 @@ class RequestPrefillConfirmSerializer(serializers.Serializer):
 class QuotationPrefillUploadSerializer(serializers.Serializer):
     """Upload a proposal / quotation PDF to create a draft quotation and trigger prefill."""
     file = serializers.FileField()
-    vendor_name = serializers.CharField(max_length=300, required=False, default="")
 
 
 class QuotationPrefillConfirmSerializer(serializers.Serializer):

@@ -104,3 +104,18 @@ class PerfPlanComparisonView(APIView):
             filters=_get_perf_filters(request), user=request.user, tenant=getattr(request, 'tenant', None), limit=20,
         )
         return Response(data)
+
+
+class PerfPlannerComparisonView(APIView):
+    """Deterministic vs LLM planner aggregate breakdown."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        limit = min(int(request.query_params.get("limit", 20)), 50)
+        data = AgentPerformanceDashboardService.get_planner_comparison(
+            filters=_get_perf_filters(request),
+            user=request.user,
+            tenant=getattr(request, 'tenant', None),
+            limit=limit,
+        )
+        return Response(data)

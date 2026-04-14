@@ -29,10 +29,11 @@ Future hooks (NOT implemented in Phase 1):
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from django.utils import timezone
 from django.core.exceptions import PermissionDenied
@@ -450,7 +451,7 @@ class ProcurementAgentOrchestrator:
     def _resolve_guardrail_agent_type(agent_type: str) -> str:
         """Map procurement runtime labels to centralized guardrail agent names."""
         lowered = (agent_type or "").lower()
-        if lowered.startswith("benchmark_item_"):
+        if lowered.startswith("cost_item_"):
             return "PROCUREMENT_BENCHMARK"
         if "recommendation" in lowered:
             return "PROCUREMENT_RECOMMENDATION"
@@ -637,6 +638,8 @@ class ProcurementAgentOrchestrator:
                 tenant=getattr(run, "tenant", None) or getattr(getattr(run, "request", None), "tenant", None),
                 agent_type=mapped_agent_type,
                 status=AgentRunStatus.RUNNING,
+                confidence=0.0,
+                llm_model_used="unknown",
                 input_payload={
                     "source": "procurement_orchestrator",
                     "analysis_run_id": str(getattr(run, "run_id", "")),
@@ -648,7 +651,7 @@ class ProcurementAgentOrchestrator:
                 span_id=ctx.span_id,
                 invocation_reason=f"Procurement orchestrator: {requested_agent_type}",
                 actor_user_id=ctx.actor_user_id,
-                actor_primary_role=ctx.actor_primary_role,
+                actor_primary_role=(ctx.actor_primary_role or "SYSTEM_AGENT"),
                 access_granted=True,
                 started_at=timezone.now(),
             )
@@ -665,15 +668,104 @@ class ProcurementAgentOrchestrator:
             from apps.agents.models import AgentRun
             from apps.core.enums import AgentRunStatus
 
-            AgentRun.objects.filter(pk=agent_run_id).update(
-                status=AgentRunStatus.COMPLETED,
-                confidence=result.confidence,
-                output_payload=result.output,
-                summarized_reasoning=BaseAgent._sanitise_text(result.reasoning_summary)[:2000],
-                completed_at=timezone.now(),
-            )
+            llm_model_used = ProcurementAgentOrchestrator._extract_llm_model(result.output)
+            prompt_tokens, completion_tokens, total_tokens = ProcurementAgentOrchestrator._extract_token_usage(result.output)
+
+            update_kwargs: Dict[str, Any] = {
+                "status": AgentRunStatus.COMPLETED,
+                "confidence": result.confidence if result.confidence is not None else 0.0,
+                "output_payload": ProcurementAgentOrchestrator._json_safe(result.output),
+                "summarized_reasoning": BaseAgent._sanitise_text(result.reasoning_summary)[:2000],
+                "completed_at": timezone.now(),
+            }
+            if llm_model_used:
+                update_kwargs["llm_model_used"] = llm_model_used
+            else:
+                update_kwargs["llm_model_used"] = "unknown"
+            if prompt_tokens is not None:
+                update_kwargs["prompt_tokens"] = prompt_tokens
+            if completion_tokens is not None:
+                update_kwargs["completion_tokens"] = completion_tokens
+            if total_tokens is not None:
+                update_kwargs["total_tokens"] = total_tokens
+
+            AgentRun.objects.filter(pk=agent_run_id).update(**update_kwargs)
+
+            agent_run = AgentRun.objects.filter(pk=agent_run_id).first()
+            if agent_run:
+                BaseAgent._calculate_actual_cost(agent_run)
+                agent_run.save(update_fields=["actual_cost_usd", "updated_at"])
         except Exception as exc:
             logger.debug("Could not complete AgentRun mirror %s: %s", agent_run_id, exc)
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        try:
+            return json.loads(json.dumps(value, default=str))
+        except Exception:
+            return value
+
+    @staticmethod
+    def _extract_llm_model(output: Optional[Dict[str, Any]]) -> str:
+        """Best-effort model extraction from agent output payload."""
+        if not isinstance(output, dict):
+            return ""
+
+        for key in ("llm_model_used", "model_used", "llm_model", "model_name", "model"):
+            value = output.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        usage = output.get("llm_usage")
+        if isinstance(usage, dict):
+            for key in ("model", "model_name"):
+                value = usage.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        return ""
+
+    @staticmethod
+    def _extract_token_usage(output: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+        """Best-effort token usage extraction from agent output payload."""
+        if not isinstance(output, dict):
+            return None, None, None
+
+        def _to_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            try:
+                parsed = int(value)
+                return parsed if parsed >= 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        prompt_tokens = _to_int(output.get("prompt_tokens"))
+        completion_tokens = _to_int(output.get("completion_tokens"))
+        total_tokens = _to_int(output.get("total_tokens"))
+
+        usage = output.get("llm_usage")
+        if isinstance(usage, dict):
+            if prompt_tokens is None:
+                prompt_tokens = _to_int(usage.get("prompt_tokens"))
+            if completion_tokens is None:
+                completion_tokens = _to_int(usage.get("completion_tokens"))
+            if total_tokens is None:
+                total_tokens = _to_int(usage.get("total_tokens"))
+
+        usage_alt = output.get("usage")
+        if isinstance(usage_alt, dict):
+            if prompt_tokens is None:
+                prompt_tokens = _to_int(usage_alt.get("prompt_tokens"))
+            if completion_tokens is None:
+                completion_tokens = _to_int(usage_alt.get("completion_tokens"))
+            if total_tokens is None:
+                total_tokens = _to_int(usage_alt.get("total_tokens"))
+
+        if total_tokens is None and (prompt_tokens is not None or completion_tokens is not None):
+            total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+
+        return prompt_tokens, completion_tokens, total_tokens
 
     @staticmethod
     def _fail_agent_run_mirror(*, agent_run_id: Optional[int], error: str) -> None:
@@ -685,6 +777,8 @@ class ProcurementAgentOrchestrator:
 
             AgentRun.objects.filter(pk=agent_run_id).update(
                 status=AgentRunStatus.FAILED,
+                confidence=0.0,
+                llm_model_used="unknown",
                 error_message=error,
                 completed_at=timezone.now(),
             )
@@ -718,7 +812,7 @@ class ProcurementAgentOrchestrator:
                 status=AnalysisRunStatus.COMPLETED,
                 confidence_score=result.confidence,
                 reasoning_summary=BaseAgent._sanitise_text(result.reasoning_summary)[:2000],
-                output_snapshot=result.output,
+                output_snapshot=ProcurementAgentOrchestrator._json_safe(result.output),
                 completed_at=timezone.now(),
             )
         except Exception as exc:
@@ -879,7 +973,7 @@ class _ProcurementPlannerStub:
 
     PLAN_BY_ANALYSIS_TYPE: Dict[str, List[str]] = {
         "RECOMMENDATION": ["recommendation", "compliance", "market_intelligence"],
-        "BENCHMARK": ["benchmark"],
+        "BENCHMARK": ["cost_analysis"],
         "VALIDATION": ["validation_augmentation"],
     }
 
@@ -917,14 +1011,14 @@ class _ProcurementToolRegistryStub:
     through the shared ToolRegistry (apps.tools.registry.base.ToolRegistry).
 
     Available extension points identified in Phase 1:
-    - market_benchmark_lookup  : resolve benchmark prices for a line item
+    - market_price_lookup      : resolve market prices for a line item
     - vendor_catalog_lookup    : search vendor product catalog
     - standards_compliance_lookup : check domain regulatory standards
     - erp_reference_lookup     : use shared ERPResolutionService facade
     """
 
     REGISTERED_TOOLS: List[str] = [
-        "market_benchmark_lookup",
+        "market_price_lookup",
         "vendor_catalog_lookup",
         "standards_compliance_lookup",
         "erp_reference_lookup",

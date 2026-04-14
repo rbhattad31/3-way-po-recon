@@ -1,8 +1,71 @@
 """Custom middleware for the PO Reconciliation application."""
 import uuid
 
+from django.db import close_old_connections, connections
+from django.db.utils import InterfaceError, OperationalError
+from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
+
+
+class DatabaseConnectionRecoveryMiddleware:
+    """Best-effort recovery for transient database connection failures.
+
+    This middleware must run before session/auth middleware so it can catch
+    connection failures raised while Django is loading the session or user.
+    For safe/idempotent requests, it retries once after closing all DB
+    connections. If the retry also fails, it returns a concise 503 response
+    instead of a large 500 traceback page.
+    """
+
+    SAFE_RETRY_METHODS = {"GET", "HEAD", "OPTIONS"}
+    RETRYABLE_FRAGMENTS = (
+        "lost connection",
+        "server has gone away",
+        "reading authorization packet",
+        "can't connect",
+        "connection was killed",
+    )
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        close_old_connections()
+        try:
+            return self.get_response(request)
+        except (OperationalError, InterfaceError) as exc:
+            if not self._is_retryable(exc):
+                raise
+
+            if request.method not in self.SAFE_RETRY_METHODS:
+                return self._service_unavailable_response()
+
+            self._reset_connections()
+            try:
+                return self.get_response(request)
+            except (OperationalError, InterfaceError) as retry_exc:
+                if self._is_retryable(retry_exc):
+                    return self._service_unavailable_response()
+                raise
+
+    def _reset_connections(self):
+        try:
+            close_old_connections()
+            connections.close_all()
+        except Exception:
+            pass
+
+    def _is_retryable(self, exc):
+        message = str(exc).lower()
+        return any(fragment in message for fragment in self.RETRYABLE_FRAGMENTS)
+
+    def _service_unavailable_response(self):
+        return HttpResponse(
+            "Database temporarily unavailable. Please refresh in a few seconds.",
+            status=503,
+            content_type="text/plain; charset=utf-8",
+        )
 
 
 class TenantMiddleware:

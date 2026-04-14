@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import zipfile
+from datetime import datetime, timezone
 from io import BytesIO
+from uuid import uuid4
 
 from django.conf import settings
 from django.contrib import messages
@@ -28,8 +30,10 @@ from apps.benchmarking.models import (
     VarianceStatus,
 )
 from apps.benchmarking.services.benchmark_service import BenchmarkEngine
+from apps.benchmarking.services.blob_storage_service import BlobStorageService
 from apps.benchmarking.services.export_service import ExportService
-from apps.benchmarking.services.vendor_recommendation_agent import BenchmarkVendorRecommendationAgent
+from apps.benchmarking.agents.Vendor_Recommendation_Agent_BM import BenchmarkVendorRecommendationAgent
+from apps.documents.blob_service import build_blob_url, upload_to_blob
 
 try:
     from apps.procurement.models import GeneratedRFQ as _GeneratedRFQ
@@ -114,8 +118,11 @@ def _scope_quotations(request, qs=None):
     return scoped
 
 
-def _create_quotations_from_upload(*, bench_request, upload, supplier_name: str, quotation_ref: str, user):
-    """Create one or many BenchmarkQuotation rows from PDF/ZIP upload."""
+def _create_quotations_from_upload(*, bench_request, upload, quotation_ref: str, user):
+    """Create one or many BenchmarkQuotation rows from PDF/ZIP upload.
+
+    Blob is the source of truth. Local file storage is not used for new uploads.
+    """
     extracted_files, upload_error = _extract_pdf_files_from_upload(upload)
     if upload_error:
         return [], upload_error
@@ -126,14 +133,26 @@ def _create_quotations_from_upload(*, bench_request, upload, supplier_name: str,
         if len(extracted_files) > 1:
             per_file_ref = f"{quotation_ref or 'ZIP'}-{idx}"
 
+        pdf_content.seek(0)
+        pdf_bytes = pdf_content.read()
+        request_ref = (bench_request.title or "benchmark").strip()[:40].replace(" ", "_")
+        blob_name, blob_url = BlobStorageService.upload_quotation(
+            pdf_bytes,
+            filename=pdf_name,
+            request_ref=request_ref,
+        )
+        if not blob_url:
+            return [], f"Failed to upload quotation '{pdf_name}' to Azure Blob Storage."
+
         quotation = BenchmarkQuotation(
             request=bench_request,
-            supplier_name=supplier_name,
+            supplier_name="",
             quotation_ref=per_file_ref,
+            blob_name=blob_name,
+            blob_url=blob_url,
             tenant=bench_request.tenant,
             created_by=user,
         )
-        quotation.document.save(pdf_name, pdf_content, save=False)
         quotation.save()
         created.append(quotation)
 
@@ -261,6 +280,10 @@ def request_create(request):
         if not title:
             errors.append("Request title is required.")
         upload = request.FILES.get("quotation_pdf")
+        if upload:
+            _, upload_validation_error = _extract_pdf_files_from_upload(upload)
+            if upload_validation_error:
+                errors.append(upload_validation_error)
 
         if errors:
             for err in errors:
@@ -301,19 +324,27 @@ def request_create(request):
             rfq_upload_file = request.FILES.get("rfq_upload_file")
             if rfq_upload_file:
                 try:
-                    bench_request.rfq_document.save(
-                        rfq_upload_file.name,
-                        ContentFile(rfq_upload_file.read()),
-                        save=True,
-                    )
+                    safe_name = os.path.basename(rfq_upload_file.name).replace(" ", "_")
+                    stamp = datetime.now(timezone.utc).strftime("%Y/%m")
+                    rfq_blob_path = f"benchmarking/rfq/{stamp}/{uuid4().hex}_{safe_name}"
+                    rfq_upload_file.seek(0)
+                    upload_to_blob(rfq_upload_file, rfq_blob_path, content_type=getattr(rfq_upload_file, "content_type", "application/pdf"))
+                    bench_request.rfq_blob_path = rfq_blob_path
+                    bench_request.rfq_blob_url = build_blob_url(rfq_blob_path)
+                    bench_request.save(update_fields=["rfq_blob_path", "rfq_blob_url", "updated_at"])
                 except Exception as _rfq_exc:
-                    logger.warning("Failed to save uploaded RFQ document: %s", _rfq_exc)
+                    bench_request.delete()
+                    messages.error(request, f"Failed to upload RFQ document to Azure Blob Storage: {_rfq_exc}")
+                    return render(request, "benchmarking/request_create.html", _base_ctx(
+                        posted=request.POST,
+                        page_title="New Benchmarking Request",
+                        generated_rfq_list=_get_generated_rfqs(getattr(request, "tenant", None)),
+                    ))
 
         if upload:
             created_quotes, upload_error = _create_quotations_from_upload(
                 bench_request=bench_request,
                 upload=upload,
-                supplier_name="",
                 quotation_ref=quotation_ref,
                 user=request.user,
             )
@@ -486,7 +517,6 @@ def request_add_quotations(request, pk):
     """Add one or many vendor quotations (PDF/ZIP) to an existing benchmark request."""
     bench_request = get_object_or_404(_scope_requests(request, BenchmarkRequest.objects.filter(is_active=True)), pk=pk)
 
-    supplier_name = request.POST.get("supplier_name", "").strip()
     quotation_ref = request.POST.get("quotation_ref", "").strip()
     upload = request.FILES.get("quotation_pdf")
 
@@ -497,7 +527,6 @@ def request_add_quotations(request, pk):
     created_quotes, upload_error = _create_quotations_from_upload(
         bench_request=bench_request,
         upload=upload,
-        supplier_name=supplier_name,
         quotation_ref=quotation_ref,
         user=request.user,
     )
@@ -1109,7 +1138,7 @@ def benchmark_e2e_timeline(request, pk):
     })
 
     # RFQ document upload
-    if bench_request.rfq_document or bench_request.rfq_ref:
+    if bench_request.rfq_blob_path or bench_request.rfq_document or bench_request.rfq_ref:
         _events.append({
             "stage": "RFQ_UPLOADED",
             "icon": "bi-file-earmark-text-fill",

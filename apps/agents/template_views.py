@@ -1,4 +1,6 @@
 """Agent template views -- reference pages and agent run explorer."""
+from pathlib import Path
+
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -8,7 +10,7 @@ from apps.core.prompt_registry import PromptRegistry
 from apps.core.permissions import permission_required_code
 from apps.core.tenant_utils import TenantQuerysetMixin, require_tenant
 
-from apps.agents.models import AgentRun, DecisionLog, AgentRecommendation
+from apps.agents.models import AgentRun, DecisionLog, AgentRecommendation, AgentDefinition
 from apps.agents.services.agent_classes import AGENT_CLASS_REGISTRY
 from apps.agents.services.guardrails_service import (
     AGENT_PERMISSIONS,
@@ -1716,13 +1718,18 @@ def _render_agent_reference_page(request, template_name):
 @permission_required_code("agents.view")
 def agent_runs_list(request):
     """Browsable agent run log with filtering."""
+    procurement_benchmark_type = getattr(AgentType, "PROCUREMENT_BENCHMARK", "PROCUREMENT_BENCHMARK")
+    procurement_validation_type = getattr(AgentType, "PROCUREMENT_VALIDATION", "PROCUREMENT_VALIDATION")
+
     tenant = require_tenant(request)
-    qs = AgentRun.objects.select_related(
+    base_qs = AgentRun.objects.select_related(
         "reconciliation_result", "reconciliation_result__invoice",
         "agent_definition", "document_upload", "parent_run",
     ).order_by("-created_at")
     if tenant is not None:
-        qs = qs.filter(tenant=tenant)
+        base_qs = base_qs.filter(tenant=tenant)
+
+    qs = base_qs
 
     # ---- Filters ----
     agent_type = request.GET.get("agent_type", "").strip()
@@ -1775,6 +1782,119 @@ def agent_runs_list(request):
         meta = payload.get("_recovery_meta") or {}
         run.recovery_trigger_codes = meta.get("trigger_codes", [])
 
+        # Live usage hydration (best-effort): backfill model/tokens from output payload
+        # so cost visibility improves for historical rows that already carry usage metadata.
+        output_payload = run.output_payload or {}
+        usage = output_payload.get("llm_usage") or output_payload.get("usage") or {}
+        changed_fields = []
+
+        inferred_model = run.llm_model_used or ""
+        if not inferred_model:
+            inferred_model = (
+                output_payload.get("llm_model_used")
+                or output_payload.get("model_used")
+                or output_payload.get("model")
+                or usage.get("model")
+                or ""
+            )
+            if not inferred_model and run.agent_type == AgentType.PROCUREMENT_MARKET_INTELLIGENCE:
+                if output_payload.get("source_reference_label") == "Perplexity Source References":
+                    inferred_model = getattr(settings, "PERPLEXITY_MODEL", "sonar-pro")
+            if inferred_model:
+                run.llm_model_used = str(inferred_model)
+                changed_fields.append("llm_model_used")
+
+        def _to_int(value):
+            try:
+                if value is None:
+                    return None
+                parsed = int(value)
+                return parsed if parsed >= 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        if run.prompt_tokens is None:
+            prompt_tokens = _to_int(output_payload.get("prompt_tokens"))
+            if prompt_tokens is None:
+                prompt_tokens = _to_int(usage.get("prompt_tokens"))
+            if prompt_tokens is not None:
+                run.prompt_tokens = prompt_tokens
+                changed_fields.append("prompt_tokens")
+
+        if run.completion_tokens is None:
+            completion_tokens = _to_int(output_payload.get("completion_tokens"))
+            if completion_tokens is None:
+                completion_tokens = _to_int(usage.get("completion_tokens"))
+            if completion_tokens is not None:
+                run.completion_tokens = completion_tokens
+                changed_fields.append("completion_tokens")
+
+        if run.total_tokens is None:
+            total_tokens = _to_int(output_payload.get("total_tokens"))
+            if total_tokens is None:
+                total_tokens = _to_int(usage.get("total_tokens"))
+            if total_tokens is None and (run.prompt_tokens is not None or run.completion_tokens is not None):
+                total_tokens = (run.prompt_tokens or 0) + (run.completion_tokens or 0)
+            if total_tokens is not None:
+                run.total_tokens = total_tokens
+                changed_fields.append("total_tokens")
+
+        if run.actual_cost_usd is None and run.llm_model_used and run.total_tokens:
+            try:
+                from apps.agents.services.base_agent import BaseAgent
+                BaseAgent._calculate_actual_cost(run)
+                changed_fields.append("actual_cost_usd")
+            except Exception:
+                pass
+
+        if changed_fields:
+            try:
+                run.save(update_fields=list(dict.fromkeys(changed_fields + ["updated_at"])))
+            except Exception:
+                pass
+
+        run.model_display = run.llm_model_used or ""
+        run.cost_live_ready = bool(run.llm_model_used and run.total_tokens)
+
+        run.agent_display_name = run.get_agent_type_display()
+        if run.agent_type == AgentType.PROCUREMENT_MARKET_INTELLIGENCE:
+            if output_payload.get("source_reference_label") == "Perplexity Source References":
+                run.agent_display_name = "Perplexity Market Research Agent"
+            else:
+                run.agent_display_name = "Market Intelligence (Fallback Webscraper)"
+        elif run.agent_type == AgentType.PROCUREMENT_RECOMMENDATION:
+            inv = (run.invocation_reason or "").lower()
+            if "reasonsummaryagent" in inv:
+                run.agent_display_name = "ReasonSummaryAgent"
+            elif "recommendation" in inv:
+                run.agent_display_name = "HVACRecommendationAgent"
+        elif run.agent_type == procurement_benchmark_type:
+            inv = (run.invocation_reason or "").lower()
+            if "benchmarkingmarketdataanalyzer" in inv:
+                run.agent_display_name = "BenchmarkingMarketDataAnalyzer"
+            elif "benchmarkingcomplianceagent" in inv:
+                run.agent_display_name = "BenchmarkingComplianceAgent"
+            elif "benchmarkingvendorrecommendationagent" in inv:
+                run.agent_display_name = "BenchmarkingVendorRecommendationAgent"
+            elif "benchmarkinganalystagent" in inv:
+                run.agent_display_name = "BenchmarkingAnalystAgent"
+            elif "benchmark_item_market_data_analyzer" in inv:
+                run.agent_display_name = "BenchmarkingMarketDataAnalyzer"
+            elif "benchmark_item_compliance_agent" in inv:
+                run.agent_display_name = "BenchmarkingComplianceAgent"
+            elif "benchmark_item_vendor_recommendation" in inv:
+                run.agent_display_name = "BenchmarkingVendorRecommendationAgent"
+            elif "benchmark_item_analyst_agent" in inv:
+                run.agent_display_name = "BenchmarkingAnalystAgent"
+            elif "decision_maker" in inv or "benchmarkingdecisionmakeragent" in inv:
+                run.agent_display_name = "BenchmarkingDecisionMakerAgent"
+            else:
+                run.agent_display_name = "BenchmarkAgent"
+        elif run.agent_type == AgentType.PROCUREMENT_COMPLIANCE:
+            run.agent_display_name = "ComplianceAgent (Procurement)"
+        elif run.agent_type == procurement_validation_type:
+            run.agent_display_name = "ValidationAgentService"
+
     # Resolve invoice for runs that lack reconciliation_result (e.g. extraction/case runs)
     upload_ids = [
         r.document_upload_id for r in page_obj
@@ -1820,8 +1940,36 @@ def agent_runs_list(request):
             _inv_id = (run.input_payload or {}).get("invoice_id")
             run.resolved_invoice = _payload_invoice_map.get(_inv_id) if _inv_id else None
 
-    # Dropdown choices
-    agent_type_choices = AgentType.choices
+    # Dropdown choices (DB-driven): keep in sync with performance dashboard
+    used_agent_type_values = set(
+        base_qs.exclude(agent_type="")
+        .values_list("agent_type", flat=True)
+        .distinct()
+    )
+
+    defs_qs = AgentDefinition.objects.all()
+    if tenant is not None:
+        defs_qs = defs_qs.filter(tenant=tenant) | AgentDefinition.objects.filter(tenant__isnull=True)
+        defs_qs = defs_qs.distinct()
+
+    configured_agent_type_values = set(
+        defs_qs.exclude(agent_type="").values_list("agent_type", flat=True).distinct()
+    )
+    definition_name_map = {
+        row["agent_type"]: row["name"]
+        for row in defs_qs.exclude(agent_type="").values("agent_type", "name")
+    }
+
+    available_agent_types = used_agent_type_values | configured_agent_type_values
+    agent_type_choices = [
+        (
+            value,
+            definition_name_map.get(value)
+            or value.replace("_", " ").title(),
+        )
+        for value in sorted(available_agent_types)
+        if value
+    ]
     status_choices = AgentRunStatus.choices
     roles = (
         AgentRun.objects.exclude(actor_primary_role="")
@@ -1848,9 +1996,286 @@ def agent_runs_list(request):
     )["avg"]
     total_tokens = kpi_qs.aggregate(tokens=Sum("total_tokens"))["tokens"] or 0
 
+    # LLM agent coverage (tenant-scoped, not filter-scoped)
+    deterministic_agent_types = {
+        AgentType.SYSTEM_REVIEW_ROUTING,
+        AgentType.SYSTEM_CASE_SUMMARY,
+        AgentType.SYSTEM_BULK_EXTRACTION_INTAKE,
+        AgentType.SYSTEM_CASE_INTAKE,
+        AgentType.SYSTEM_POSTING_PREPARATION,
+    }
+    type_counts = {
+        row["agent_type"]: row["count"]
+        for row in base_qs.values("agent_type").annotate(count=Count("id"))
+    }
+    llm_agent_catalog = []
+    for agent_value, agent_label in AgentType.choices:
+        if agent_value in deterministic_agent_types:
+            continue
+        llm_agent_catalog.append({
+            "value": agent_value,
+            "label": agent_label,
+            "count": int(type_counts.get(agent_value, 0) or 0),
+        })
+    missing_llm_agents = [row for row in llm_agent_catalog if row["count"] == 0]
+
+    # Full LLM inventory
+    # - AP rows remain explicit.
+    # - Procurement + Benchmarking rows are discovered dynamically from their agent folders.
+    llm_component_catalog = [
+        {"name": "SupervisorAgent", "group": "AP", "tracked_agent_type": AgentType.SUPERVISOR, "tracked": True, "functionality": "Coordinates agent sequence, delegates specialist tasks, and consolidates final recommendation."},
+        {"name": "ExceptionAnalysisAgent", "group": "AP", "tracked_agent_type": AgentType.EXCEPTION_ANALYSIS, "tracked": True, "functionality": "Analyzes reconciliation exceptions, identifies root cause patterns, and proposes next actions."},
+        {"name": "InvoiceExtractionAgent", "group": "AP", "tracked_agent_type": AgentType.INVOICE_EXTRACTION, "tracked": True, "functionality": "Extracts structured invoice header and line-item fields from OCR text."},
+        {"name": "InvoiceUnderstandingAgent", "group": "AP", "tracked_agent_type": AgentType.INVOICE_UNDERSTANDING, "tracked": True, "functionality": "Improves low-confidence extraction by reasoning over ambiguous invoice fields."},
+        {"name": "PORetrievalAgent", "group": "AP", "tracked_agent_type": AgentType.PO_RETRIEVAL, "tracked": True, "functionality": "Finds and validates candidate purchase orders for the invoice context."},
+        {"name": "GRNRetrievalAgent", "group": "AP", "tracked_agent_type": AgentType.GRN_RETRIEVAL, "tracked": True, "functionality": "Finds and validates goods receipt notes for three-way matching."},
+        {"name": "ReviewRoutingAgent", "group": "AP", "tracked_agent_type": AgentType.REVIEW_ROUTING, "tracked": True, "functionality": "Routes cases to the correct review queue based on risk and exception type."},
+        {"name": "CaseSummaryAgent", "group": "AP", "tracked_agent_type": AgentType.CASE_SUMMARY, "tracked": True, "functionality": "Generates concise case summary for reviewers with key findings and evidence."},
+        {"name": "ReconciliationAssistAgent", "group": "AP", "tracked_agent_type": AgentType.RECONCILIATION_ASSIST, "tracked": True, "functionality": "Provides reconciliation guidance and suggested remediation for partial or unmatched cases."},
+        {"name": "ComplianceAgent (AP)", "group": "AP", "tracked_agent_type": AgentType.COMPLIANCE_AGENT, "tracked": True, "functionality": "Checks AP transaction against policy/compliance signals and flags control risks."},
+    ]
+
+    def _normalised_keywords(file_stem: str) -> list:
+        raw = (file_stem or "").replace(".py", "")
+        lowered = raw.lower()
+        compact = lowered.replace("_", "")
+        without_bm = lowered.replace("_bm", "")
+        without_agent = without_bm.replace("_agent", "")
+        return list(dict.fromkeys([lowered, compact, without_bm, without_agent]))
+
+    def _extract_module_summary(file_path: Path) -> str:
+        try:
+            text = file_path.read_text(encoding="utf-8", errors="ignore")
+            lines = text.splitlines()
+            if not lines:
+                return "No description available."
+            first = lines[0].strip().strip('"')
+            if first:
+                return first[:160]
+        except Exception:
+            pass
+        return "No description available."
+
+    def _count_component_runs(*, tracked_type, keywords: list) -> int:
+        from django.db.models import Q
+        run_qs = base_qs
+        if tracked_type:
+            run_qs = run_qs.filter(agent_type=tracked_type)
+        query = Q()
+        for kw in keywords:
+            if kw:
+                query |= Q(invocation_reason__icontains=kw)
+        if query:
+            count = run_qs.filter(query).count()
+            if count > 0:
+                return count
+        if tracked_type:
+            return run_qs.count()
+        return 0
+
+    procurement_file_map = {
+        "hvac_recommendation_agent": {"tracked_agent_type": AgentType.PROCUREMENT_RECOMMENDATION, "priority": "MANDATORY"},
+        "compliance_agent": {"tracked_agent_type": AgentType.PROCUREMENT_COMPLIANCE, "priority": "MANDATORY"},
+        "perplexity_market_research_analyst_agent": {"tracked_agent_type": AgentType.PROCUREMENT_MARKET_INTELLIGENCE, "priority": "MANDATORY"},
+        "fallback_webscraper_agent": {"tracked_agent_type": AgentType.PROCUREMENT_MARKET_INTELLIGENCE, "priority": "MANDATORY"},
+        "reason_summary_agent": {"tracked_agent_type": AgentType.PROCUREMENT_REASON_SUMMARY, "priority": "MANDATORY"},
+        "azure_document_intelligence_extractor_agent": {"tracked_agent_type": AgentType.PROCUREMENT_AZURE_DI_EXTRACTION, "priority": "MANDATORY"},
+        "rfq_generator_agent": {"tracked_agent_type": AgentType.PROCUREMENT_RFQ_GENERATOR, "priority": "MANDATORY"},
+    }
+
+    procurement_agents_dir = Path(settings.BASE_DIR) / "apps" / "procurement" / "agents"
+    if procurement_agents_dir.exists():
+        for file_path in sorted(procurement_agents_dir.glob("*.py")):
+            if file_path.name.startswith("__"):
+                continue
+            stem = file_path.stem
+            key = stem.lower()
+            config = procurement_file_map.get(key, {})
+            tracked_type = config.get("tracked_agent_type")
+            keywords = _normalised_keywords(stem)
+            run_count = _count_component_runs(tracked_type=tracked_type, keywords=keywords)
+            llm_component_catalog.append({
+                "name": stem.replace("_", " ").strip(),
+                "group": "Procurement",
+                "tracked_agent_type": tracked_type,
+                "tracked": config.get("tracked", True),
+                "priority": config.get("priority", "OPTIONAL"),
+                "functionality": _extract_module_summary(file_path),
+                "run_count": run_count,
+                "is_active": run_count > 0,
+                "run_section_label": "Procurement Agent Runs",
+            })
+
+    benchmarking_agents_dir = Path(settings.BASE_DIR) / "apps" / "benchmarking" / "agents"
+    if benchmarking_agents_dir.exists():
+        for file_path in sorted(benchmarking_agents_dir.glob("*.py")):
+            if file_path.name.startswith("__"):
+                continue
+            stem = file_path.stem
+            keywords = _normalised_keywords(stem)
+            run_count = _count_component_runs(tracked_type=procurement_benchmark_type, keywords=keywords)
+            llm_component_catalog.append({
+                "name": stem.replace("_", " ").strip(),
+                "group": "Benchmarking",
+                "tracked_agent_type": procurement_benchmark_type,
+                "tracked": True,
+                "priority": "OPTIONAL",
+                "functionality": _extract_module_summary(file_path),
+                "run_count": run_count,
+                "is_active": run_count > 0,
+                "run_section_label": "Benchmark Agent Runs",
+            })
+
+    llm_component_catalog.append({
+        "name": "ReasoningPlanner",
+        "group": "Platform",
+        "tracked_agent_type": AgentType.PLATFORM_REASONING_PLANNER,
+        "tracked": True,
+        "priority": "MANDATORY",
+        "functionality": "Plans which agents to run and in what order for each orchestration request.",
+    })
+    mandatory_agent_types = {
+        AgentType.PROCUREMENT_RECOMMENDATION,
+        AgentType.PROCUREMENT_COMPLIANCE,
+        AgentType.PROCUREMENT_MARKET_INTELLIGENCE,
+        AgentType.PROCUREMENT_REASON_SUMMARY,
+        AgentType.PROCUREMENT_AZURE_DI_EXTRACTION,
+        AgentType.PROCUREMENT_RFQ_GENERATOR,
+        AgentType.PLATFORM_REASONING_PLANNER,
+    }
+
+    # DB-driven catalog flags (enabled/lifecycle + optional mandatory config).
+    agent_def_map = {
+        row.agent_type: row
+        for row in AgentDefinition.objects.all()
+    }
+
+    for row in llm_component_catalog:
+        tracked_type = row.get("tracked_agent_type")
+        row["tracked_label"] = dict(AgentType.choices).get(tracked_type, tracked_type) if tracked_type else "--"
+        if row.get("group") == "Benchmarking":
+            row["tracked_label"] = "Benchmarking"
+            row["run_section_label"] = "Benchmark Agent Runs"
+        elif row.get("group") == "Procurement":
+            row["run_section_label"] = "Procurement Agent Runs"
+        elif row.get("group") == "AP":
+            row["run_section_label"] = "AP Agent Runs"
+        else:
+            row["run_section_label"] = "Platform / System"
+        alias_types = row.get("alias_agent_types") or []
+        all_types = [tracked_type] + list(alias_types) if tracked_type else []
+        if row.get("run_count") is None:
+            row["run_count"] = sum(int(type_counts.get(t, 0) or 0) for t in all_types) if all_types else None
+        if tracked_type:
+            row["cost_ready_count"] = base_qs.filter(
+                agent_type__in=all_types,
+            ).exclude(
+                llm_model_used="",
+            ).exclude(
+                total_tokens__isnull=True,
+            ).count()
+        else:
+            row["cost_ready_count"] = None
+        agent_def = agent_def_map.get(tracked_type) if tracked_type else None
+
+        # Active status: DB definition first; fallback to process defaults.
+        if agent_def is not None:
+            row["is_active"] = bool(agent_def.enabled and agent_def.lifecycle_status == "active")
+        else:
+            if row.get("group") in {"Procurement", "Benchmarking"} and tracked_type:
+                row["is_active"] = True
+            else:
+                row["is_active"] = bool(row.get("is_active") or ((row.get("run_count") or 0) > 0))
+
+        # Mandatory priority: DB config_json flag first, then fallback defaults.
+        if agent_def is not None and isinstance(agent_def.config_json, dict):
+            cfg = agent_def.config_json
+            if "mandatory" in cfg or "is_mandatory" in cfg:
+                row["priority"] = "MANDATORY" if bool(cfg.get("mandatory", cfg.get("is_mandatory"))) else "OPTIONAL"
+            elif tracked_type in mandatory_agent_types:
+                row["priority"] = "MANDATORY"
+            elif row.get("group") in {"Procurement", "Benchmarking"}:
+                row["priority"] = "MANDATORY"
+            else:
+                row["priority"] = row.get("priority", "OPTIONAL")
+        else:
+            if tracked_type in mandatory_agent_types or row.get("group") in {"Procurement", "Benchmarking"}:
+                row["priority"] = "MANDATORY"
+            else:
+                row["priority"] = row.get("priority", "OPTIONAL")
+
+    # Show only AP + dynamic folder-backed Procurement/Benchmarking + mandatory Platform rows.
+    llm_component_catalog = [
+        row for row in llm_component_catalog
+        if row.get("group") in {"AP", "Procurement", "Benchmarking", "Platform"}
+    ]
+
+    procurement_agent_types = {
+        AgentType.PROCUREMENT_RECOMMENDATION,
+        procurement_validation_type,
+        AgentType.PROCUREMENT_COMPLIANCE,
+        AgentType.PROCUREMENT_MARKET_INTELLIGENCE,
+        AgentType.PROCUREMENT_REASON_SUMMARY,
+        AgentType.PROCUREMENT_AZURE_DI_EXTRACTION,
+        AgentType.PROCUREMENT_RFQ_GENERATOR,
+    }
+    benchmark_agent_types = {
+        procurement_benchmark_type,
+    }
+
+    def _first_nonempty(*values):
+        for value in values:
+            if value is not None and str(value).strip() != "":
+                return value
+        return ""
+
+    ap_runs = []
+    procurement_runs = []
+    benchmark_runs = []
+
+    for run in page_obj:
+        input_payload = run.input_payload or {}
+        output_payload = run.output_payload or {}
+
+        run.procurement_request_ref = str(_first_nonempty(
+            input_payload.get("procurement_request_id"),
+            input_payload.get("procurement_request_pk"),
+            input_payload.get("request_id"),
+            input_payload.get("request_pk"),
+            output_payload.get("procurement_request_id"),
+            output_payload.get("request_id"),
+        ))
+        run.quotation_ref = str(_first_nonempty(
+            input_payload.get("quotation_id"),
+            input_payload.get("supplier_quotation_id"),
+            input_payload.get("benchmark_quotation_id"),
+            output_payload.get("quotation_id"),
+            output_payload.get("supplier_quotation_id"),
+            output_payload.get("benchmark_quotation_id"),
+        ))
+
+        run.has_confidence = run.confidence is not None
+        run.has_role = bool((run.actor_primary_role or "").strip())
+        run.has_model = bool((run.llm_model_used or "").strip())
+        run.has_trigger = bool((run.invocation_reason or "").strip())
+        run.missing_mandatory_count = int(not run.has_confidence) + int(not run.has_role) + int(not run.has_model) + int(not run.has_trigger)
+
+        if run.agent_type in benchmark_agent_types or "BENCHMARK" in str(run.agent_type):
+            run.classification = "benchmark"
+            benchmark_runs.append(run)
+        elif run.agent_type in procurement_agent_types:
+            run.classification = "procurement"
+            procurement_runs.append(run)
+        else:
+            run.classification = "ap"
+            ap_runs.append(run)
+
     return render(request, "agents/agent_runs_list.html", {
         "page_obj": page_obj,
         "runs": page_obj,
+        "ap_runs": ap_runs,
+        "procurement_runs": procurement_runs,
+        "benchmark_runs": benchmark_runs,
         # Filter choices
         "agent_type_choices": agent_type_choices,
         "status_choices": status_choices,
@@ -1873,6 +2298,12 @@ def agent_runs_list(request):
         "failed_count": failed_count,
         "avg_confidence": avg_confidence,
         "total_tokens": total_tokens,
+        "llm_agent_catalog": llm_agent_catalog,
+        "missing_llm_agents": missing_llm_agents,
+        "llm_component_catalog": llm_component_catalog,
+        "ap_count": len(ap_runs),
+        "procurement_count": len(procurement_runs),
+        "benchmark_count": len(benchmark_runs),
     })
 
 

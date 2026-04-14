@@ -94,7 +94,23 @@ class ValidationAgentService:
 
             agent_run.status = AgentRunStatus.COMPLETED
             agent_run.output_payload = {"resolved_count": len(resolved)}
-            agent_run.save(update_fields=["status", "output_payload", "updated_at"])
+            agent_run.llm_model_used = client.model
+            agent_run.prompt_tokens = response.prompt_tokens
+            agent_run.completion_tokens = response.completion_tokens
+            agent_run.total_tokens = response.total_tokens
+            BaseAgent._calculate_actual_cost(agent_run)
+            agent_run.save(
+                update_fields=[
+                    "status",
+                    "output_payload",
+                    "llm_model_used",
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "actual_cost_usd",
+                    "updated_at",
+                ]
+            )
             try:
                 from apps.agents.services.eval_adapter import AgentEvalAdapter
                 AgentEvalAdapter.sync_for_agent_run(agent_run)
