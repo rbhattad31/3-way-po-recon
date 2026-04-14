@@ -1,5 +1,5 @@
 ﻿{% extends "procurement/proc_base.html" %}
-{% load static %}
+{% load static rbac_tags %}
 
 {% block title %}{{ proc_request.title }} -- HVAC Intelligence{% endblock %}
 
@@ -341,10 +341,13 @@
       <div class="ws-card-title d-flex align-items-center gap-2">
         <span><i class="bi bi-stars text-warning me-1"></i>Recommended System</span>
         <div class="ms-auto d-flex gap-2 align-items-center">
+          {% has_permission "procurement.run_analysis" as can_run_proc_analysis %}
+          {% if can_run_proc_analysis %}
           <button type="button" class="btn btn-sm btn-outline-secondary" id="ws-rec-btn-refresh"
                   title="Re-run AI recommendation analysis">
             <i class="bi bi-arrow-clockwise me-1"></i>Refresh
           </button>
+          {% endif %}
           <button type="button" class="btn btn-sm btn-outline-primary"
                   data-bs-toggle="modal" data-bs-target="#rfqModal">
             <i class="bi bi-file-earmark-spreadsheet me-1"></i>{% if rfq_record %}Re-generate RFQ{% else %}Generate RFQ{% endif %}
@@ -2055,7 +2058,20 @@
       },
       body: JSON.stringify({})
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      var contentType = (r.headers.get("content-type") || "").toLowerCase();
+      if (!r.ok) {
+        return r.text().then(function(t) {
+          throw new Error("Request failed (" + r.status + "): " + (t || r.statusText || "Unexpected error"));
+        });
+      }
+      if (contentType.indexOf("application/json") === -1) {
+        return r.text().then(function(t) {
+          throw new Error("Server returned non-JSON response.");
+        });
+      }
+      return r.json();
+    })
     .then(function(data) {
       if (data.status === "ok") {
         window.location.reload();
