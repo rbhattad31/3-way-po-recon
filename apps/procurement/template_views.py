@@ -221,7 +221,9 @@ def request_list(request):
         .values("confidence_score")[:1]
     )
 
-    qs = ProcurementRequest.objects.select_related("created_by", "assigned_to").annotate(
+    qs = ProcurementRequest.objects.select_related("created_by", "assigned_to").filter(
+        is_duplicate=False,
+    ).annotate(
         attribute_count=Count("attributes"),
         quotation_count=Count("quotations"),
         run_count=Count("analysis_runs"),
@@ -251,7 +253,7 @@ def request_list(request):
     page = paginator.get_page(request.GET.get("page"))
 
     # Distinct domain codes for filter dropdown
-    domains_qs = ProcurementRequest.objects.all()
+    domains_qs = ProcurementRequest.objects.filter(is_duplicate=False)
     if tenant is not None:
         domains_qs = domains_qs.filter(tenant=tenant)
     domains = (
@@ -2349,7 +2351,7 @@ def procurement_dashboard(request):
     """Landmark Group Procurement Manager Dashboard with KPIs, charts, and quick actions."""
     from django.db.models import Count
 
-    qs = ProcurementRequest.objects.all()
+    qs = ProcurementRequest.objects.filter(is_duplicate=False)
     tenant = get_tenant_or_none(request)
     if tenant is not None:
         qs = qs.filter(tenant=tenant)
@@ -2434,7 +2436,7 @@ def procurement_dashboard(request):
 @permission_required_code("procurement.view")
 def hvac_request_list(request):
     """List all HVAC procurement requests with KPIs, search, and filters."""
-    base_qs = ProcurementRequest.objects.filter(domain_code="HVAC")
+    base_qs = ProcurementRequest.objects.filter(domain_code="HVAC", is_duplicate=False)
 
     # KPI totals
     total = base_qs.count()
