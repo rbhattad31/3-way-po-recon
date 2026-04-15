@@ -393,6 +393,30 @@ def hvac_create(request):
                     profile.created_by = request.user
                     profile.save(update_fields=["created_by"])
 
+            # --- Duplicate detection -------------------------------------------
+            # Check BEFORE triggering any pipeline tasks.  If an existing
+            # non-duplicate request with the same tenant/domain/type/country/title
+            # exists within the last 30 days we mark this one as a duplicate
+            # and redirect the user straight to the original workspace.
+            try:
+                from apps.procurement.services.duplicate_detection_service import (
+                    DuplicateDetectionService,
+                )
+                _original = DuplicateDetectionService.find_original(proc_request)
+                if _original:
+                    DuplicateDetectionService.mark_as_duplicate(proc_request, _original)
+                    messages.warning(
+                        request,
+                        (
+                            f"A very similar request already exists (Request #{_original.pk}). "
+                            "Your submission has been linked to that existing request below."
+                        ),
+                    )
+                    return redirect("procurement:request_workspace", pk=_original.pk)
+            except Exception as _dup_exc:
+                logger.warning("Duplicate detection failed (continuing as normal): %s", _dup_exc)
+            # --- End duplicate detection ---------------------------------------
+
             run = AnalysisRunService.create_run(
                 request=proc_request,
                 run_type=AnalysisRunType.RECOMMENDATION,
@@ -1160,6 +1184,9 @@ def request_workspace(request, pk):
         "rfq_record": rfq_record,
         "rfq_xlsx_view_url": rfq_xlsx_view_url,
         "rfq_pdf_view_url": rfq_pdf_view_url,
+        # Duplicate detection context
+        "is_duplicate_of": proc_request.duplicate_of if proc_request.is_duplicate else None,
+        "duplicate_requests": list(proc_request.duplicates.select_related("created_by").order_by("-created_at")) if not proc_request.is_duplicate else [],
     })
 
 

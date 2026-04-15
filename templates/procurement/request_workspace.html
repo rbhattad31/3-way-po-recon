@@ -146,6 +146,43 @@
 
 {% block content %}
 
+{# -- Duplicate detection banners -- #}
+{% if is_duplicate_of %}
+<div class="alert alert-warning alert-dismissible fade show d-flex align-items-start gap-3 mb-3" role="alert">
+  <i class="bi bi-copy fs-5 flex-shrink-0 mt-1"></i>
+  <div>
+    <strong>Duplicate Request Detected</strong><br>
+    This submission was identified as a duplicate of an existing request.
+    No new analysis pipeline was started.
+    <a href="{% url 'procurement:request_workspace' pk=is_duplicate_of.pk %}" class="alert-link ms-1">
+      View original request &rarr; &ldquo;{{ is_duplicate_of.title }}&rdquo; (#{{ is_duplicate_of.pk }})
+    </a>
+  </div>
+  <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+{% if duplicate_requests %}
+<div class="alert alert-info alert-dismissible fade show d-flex align-items-start gap-3 mb-3" role="alert">
+  <i class="bi bi-info-circle fs-5 flex-shrink-0 mt-1"></i>
+  <div>
+    <strong>{{ duplicate_requests|length }} duplicate request{{ duplicate_requests|length|pluralize }} linked to this workspace</strong><br>
+    <ul class="mb-0 mt-1 ps-3">
+      {% for dup in duplicate_requests %}
+      <li>
+        <a href="{% url 'procurement:request_workspace' pk=dup.pk %}" class="alert-link">
+          #{{ dup.pk }} &mdash; {{ dup.title }}
+        </a>
+        <span class="text-muted small">(submitted {{ dup.created_at|date:"d M Y H:i" }}
+        {% if dup.created_by %} by {{ dup.created_by.get_full_name|default:dup.created_by.email }}{% endif %})</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
 {# -- Request Header -- #}
 <div class="ws-header mb-4">
   <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">

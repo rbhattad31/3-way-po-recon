@@ -121,6 +121,20 @@ class ProcurementRequest(BaseModel):
         help_text="Raw extracted prefill payload before user confirmation",
     )
 
+    # Duplicate detection fields
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+        help_text="Points to the original request if this is a detected duplicate",
+    )
+    is_duplicate = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="True if this request was detected as a duplicate of another",
+    )
+
     class Meta:
         db_table = "procurement_request"
         ordering = ["-created_at"]
