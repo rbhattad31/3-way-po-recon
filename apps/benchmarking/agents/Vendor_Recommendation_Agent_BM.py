@@ -27,6 +27,8 @@ class BenchmarkVendorRecommendationAgent:
             review_count = int(status_counts.get("NEEDS_REVIEW", 0) or 0)
             live_refs = int(card.get("live_reference_count", 0) or 0)
             line_count = max(int(card.get("line_count", 0) or 0), 1)
+            benchmarked_line_count = max(int(card.get("benchmarked_line_count", 0) or 0), 0)
+            ratio_base = max(benchmarked_line_count, 1)
 
             score = 100.0
             if deviation is not None:
@@ -38,9 +40,10 @@ class BenchmarkVendorRecommendationAgent:
             score -= review_count * 3.0
             score += min(live_refs, 8) * 1.5
 
-            high_ratio = high_count / float(line_count)
+            high_ratio = high_count / float(ratio_base)
             eligible = (
                 deviation is not None
+                and benchmarked_line_count > 0
                 and abs(float(deviation)) <= 15.0
                 and high_ratio <= 0.25
             )
@@ -75,11 +78,13 @@ class BenchmarkVendorRecommendationAgent:
         moderate_count = int(status_counts.get("MODERATE", 0) or 0)
         high_count = int(status_counts.get("HIGH", 0) or 0)
         line_count = int(card.get("line_count", 0) or 0)
+        benchmarked_line_count = int(card.get("benchmarked_line_count", 0) or 0)
+        summary_line_count = benchmarked_line_count or line_count
         live_refs = int(card.get("live_reference_count", 0) or 0)
 
         summary = (
             f"Recommended vendor '{card.get('supplier_name')}' because deviation is "
-            f"{deviation:.2f}% with {within_count + moderate_count}/{line_count} lines "
+            f"{deviation:.2f}% with {within_count + moderate_count}/{summary_line_count} lines "
             "within acceptable market bands and "
             f"{live_refs} live market reference citation(s). "
             f"High-variance lines: {high_count}."

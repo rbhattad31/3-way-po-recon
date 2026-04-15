@@ -18,8 +18,6 @@ from apps.benchmarking.models import BenchmarkCorridorRule, CategoryMaster
 class BenchmarkDecisionMakerAgentBM:
 	"""Classify and route benchmark source for each line item."""
 
-	MARKET_FIRST_CATEGORIES = {"EQUIPMENT"}
-
 	@classmethod
 	def decide_for_line_items(
 		cls,
@@ -38,10 +36,12 @@ class BenchmarkDecisionMakerAgentBM:
 			description = getattr(item, "description", "") or ""
 			category_info = cls._classify_from_db(description)
 			category = category_info.get("category", "UNCATEGORIZED")
+			pricing_type = category_info.get("pricing_type", "BENCHMARK")
 			source_decision = cls._choose_source(
 				category=category,
 				geography=geography,
 				scope_type=scope_type,
+				pricing_type=pricing_type,
 			)
 
 			if category != "UNCATEGORIZED":
@@ -57,8 +57,10 @@ class BenchmarkDecisionMakerAgentBM:
 
 			decisions.append({
 				"line_number": getattr(item, "line_number", 0),
+				"line_pk": getattr(item, "pk", None),
 				"description": description[:200],
 				"category": category,
+				"pricing_type": pricing_type,
 				"classification_confidence": category_info.get("confidence", 0.0),
 				"source": source,
 				"source_reason": source_decision.get("reason", ""),
@@ -98,19 +100,28 @@ class BenchmarkDecisionMakerAgentBM:
 				if keyword and keyword in text:
 					return {
 						"category": row.code,
+						"pricing_type": row.pricing_type,
 						"confidence": 0.9,
 					}
 
 			if row.code.lower() in text or row.name.lower() in text:
 				return {
 					"category": row.code,
+					"pricing_type": row.pricing_type,
 					"confidence": 0.75,
 				}
 
-		return {"category": "UNCATEGORIZED", "confidence": 0.0}
+		return {"category": "UNCATEGORIZED", "pricing_type": "BENCHMARK", "confidence": 0.0}
 
 	@classmethod
-	def _choose_source(cls, *, category: str, geography: str, scope_type: str) -> Dict[str, Any]:
+	def _choose_source(
+		cls,
+		*,
+		category: str,
+		geography: str,
+		scope_type: str,
+		pricing_type: str,
+	) -> Dict[str, Any]:
 		corridor_exists = BenchmarkCorridorRule.objects.filter(
 			is_active=True,
 			category=category,
@@ -118,10 +129,10 @@ class BenchmarkDecisionMakerAgentBM:
 			scope_type__in=[scope_type, "ALL"],
 		).exists()
 
-		if category in cls.MARKET_FIRST_CATEGORIES:
+		if pricing_type == "MARKET":
 			return {
 				"source": "MARKET_DATA",
-				"reason": "Dynamic equipment category uses live market pricing first.",
+				"reason": "Category pricing type is MARKET and requires live market research.",
 				"corridor_rule_found": corridor_exists,
 			}
 

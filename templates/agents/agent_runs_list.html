@@ -156,10 +156,19 @@
 </div>
 
 {# Filters #}
-<div class="collapse {% if current_agent_type or current_status or current_role or current_trace_id or current_model_used or current_date_from or current_date_to or current_min_confidence or current_max_confidence or current_invoice_number %}show{% endif %}" id="filterPanel">
+<div id="filterPanel">
   <div class="ap-card mb-3">
     <div class="ap-card-body py-2 px-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="fw-semibold" style="font-size:.85rem;"><i class="bi bi-funnel me-1"></i>Filters</div>
+      </div>
       <form method="get" class="row g-2 align-items-end">
+        <div class="col-lg-2 col-md-4">
+          <label class="form-label form-label-sm mb-0">Domain</label>
+          <select name="domain" class="form-select form-select-sm">
+            {% for val, label in domain_choices %}<option value="{{ val }}" {% if val == current_domain %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </div>
         <div class="col-lg-2 col-md-4">
           <label class="form-label form-label-sm mb-0">Agent Type</label>
           <select name="agent_type" class="form-select form-select-sm">
@@ -221,26 +230,42 @@
   </div>
 </div>
 
-{# AP Runs #}
+{# Unified Runs #}
 <div class="ap-card mb-3">
   <div class="ap-card-body p-0">
-    <div class="px-3 py-2 border-bottom"><strong>AP Agent Runs</strong> <small class="text-muted ms-2">Invoice-oriented agents</small></div>
+    <div class="px-3 py-2 border-bottom"><strong>All Agent Runs</strong> <small class="text-muted ms-2">Unified AP, Procurement, and Benchmarking runs</small></div>
     <div class="table-responsive ar-scroll-x">
       <table class="ar-table w-100 ar-table-wide">
         <thead>
           <tr>
-            <th>ID</th><th>Agent</th><th>Status</th><th>Invoice</th><th>Confidence*</th><th>Model*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
+            <th>ID</th><th>Scope</th><th>Agent</th><th>Status</th><th>Reference</th><th>Confidence*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
           </tr>
         </thead>
         <tbody>
-          {% for run in ap_runs %}
+          {% for run in runs %}
           <tr>
             <td><a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a></td>
+            <td>
+              {% if run.classification == 'benchmarking' %}
+              <span class="badge bg-warning text-dark">Benchmarking</span>
+              {% elif run.classification == 'procurement' %}
+              <span class="badge bg-info text-dark">Procurement</span>
+              {% else %}
+              <span class="badge bg-secondary">AP</span>
+              {% endif %}
+            </td>
             <td><span class="at-badge {% if 'SYSTEM_' in run.agent_type %}at-system{% else %}at-llm{% endif %}">{{ run.agent_display_name|default:run.get_agent_type_display }}</span></td>
             <td><span class="at-badge {% if run.status == 'COMPLETED' %}st-completed{% elif run.status == 'FAILED' %}st-failed{% elif run.status == 'RUNNING' %}st-running{% elif run.status == 'SKIPPED' %}st-skipped{% else %}st-pending{% endif %}">{{ run.get_status_display }}</span></td>
-            <td>{% if run.resolved_invoice %}<a href="{% url 'governance:invoice_governance' run.resolved_invoice.pk %}" class="small">{{ run.resolved_invoice.invoice_number|default:"-"|truncatechars:18 }}</a>{% else %}<small class="text-muted">--</small>{% endif %}</td>
+            <td>
+              {% if run.classification == 'benchmarking' %}
+                {% if run.quotation_ref %}<span class="mand-ok">{{ run.quotation_ref }}</span>{% else %}<small class="text-muted">--</small>{% endif %}
+              {% elif run.classification == 'procurement' %}
+                {% if run.procurement_request_ref %}<span class="mand-ok">{{ run.procurement_request_ref }}</span>{% else %}<small class="text-muted">--</small>{% endif %}
+              {% else %}
+                {% if run.resolved_invoice %}<a href="{% url 'governance:invoice_governance' run.resolved_invoice.pk %}" class="small">{{ run.resolved_invoice.invoice_number|default:"-"|truncatechars:18 }}</a>{% else %}<small class="text-muted">--</small>{% endif %}
+              {% endif %}
+            </td>
             <td>{% if run.has_confidence %}<span class="mand-ok">{% widthratio run.confidence 1 100 %}%</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.has_model %}<span class="mand-ok">{{ run.llm_model_used|truncatechars:18 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
             <td>{% if run.prompt_tokens is not None %}<span class="mand-ok">{{ run.prompt_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
             <td>{% if run.completion_tokens is not None %}<span class="mand-ok">{{ run.completion_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
             <td>{% if run.total_tokens is not None %}<span class="mand-ok">{{ run.total_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
@@ -248,77 +273,7 @@
             <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
           </tr>
           {% empty %}
-          <tr><td colspan="11" class="text-center text-muted py-4">No AP runs in this page/filter.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-{# Procurement Runs #}
-<div class="ap-card mb-3">
-  <div class="ap-card-body p-0">
-    <div class="px-3 py-2 border-bottom"><strong>Procurement Agent Runs</strong> <small class="text-muted ms-2">Procurement-request-oriented agents</small></div>
-    <div class="table-responsive ar-scroll-x">
-      <table class="ar-table w-100 ar-table-wide">
-        <thead>
-          <tr>
-            <th>ID</th><th>Agent</th><th>Status</th><th>Procurement Request</th><th>Confidence*</th><th>Model*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for run in procurement_runs %}
-          <tr>
-            <td><a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a></td>
-            <td><span class="at-badge at-llm">{{ run.agent_display_name|default:run.get_agent_type_display }}</span></td>
-            <td><span class="at-badge {% if run.status == 'COMPLETED' %}st-completed{% elif run.status == 'FAILED' %}st-failed{% elif run.status == 'RUNNING' %}st-running{% elif run.status == 'SKIPPED' %}st-skipped{% else %}st-pending{% endif %}">{{ run.get_status_display }}</span></td>
-            <td>{% if run.procurement_request_ref %}<span class="mand-ok">{{ run.procurement_request_ref }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.has_confidence %}<span class="mand-ok">{% widthratio run.confidence 1 100 %}%</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.has_model %}<span class="mand-ok">{{ run.llm_model_used|truncatechars:18 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.prompt_tokens is not None %}<span class="mand-ok">{{ run.prompt_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.completion_tokens is not None %}<span class="mand-ok">{{ run.completion_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.total_tokens is not None %}<span class="mand-ok">{{ run.total_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.has_trigger %}<span class="mand-ok">{{ run.invocation_reason|truncatechars:26 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="11" class="text-center text-muted py-4">No procurement runs in this page/filter.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-{# Benchmark Runs #}
-<div class="ap-card mb-3">
-  <div class="ap-card-body p-0">
-    <div class="px-3 py-2 border-bottom"><strong>Benchmark Agent Runs</strong> <small class="text-muted ms-2">Benchmarking orchestration (separate from Procurement)</small></div>
-    <div class="table-responsive ar-scroll-x">
-      <table class="ar-table w-100 ar-table-wide">
-        <thead>
-          <tr>
-            <th>ID</th><th>Agent</th><th>Status</th><th>Quotation</th><th>Confidence*</th><th>Model*</th><th>Prompt*</th><th>Completion*</th><th>Total Tokens*</th><th>Trigger*</th><th>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for run in benchmark_runs %}
-          <tr>
-            <td><a href="{% url 'agents:agent_run_detail' run.pk %}" class="fw-semibold">#{{ run.pk }}</a></td>
-            <td><span class="at-badge at-llm">{{ run.agent_display_name|default:run.get_agent_type_display }}</span></td>
-            <td><span class="at-badge {% if run.status == 'COMPLETED' %}st-completed{% elif run.status == 'FAILED' %}st-failed{% elif run.status == 'RUNNING' %}st-running{% elif run.status == 'SKIPPED' %}st-skipped{% else %}st-pending{% endif %}">{{ run.get_status_display }}</span></td>
-            <td>{% if run.quotation_ref %}<span class="mand-ok">{{ run.quotation_ref }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.has_confidence %}<span class="mand-ok">{% widthratio run.confidence 1 100 %}%</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.has_model %}<span class="mand-ok">{{ run.llm_model_used|truncatechars:18 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.prompt_tokens is not None %}<span class="mand-ok">{{ run.prompt_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.completion_tokens is not None %}<span class="mand-ok">{{ run.completion_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.total_tokens is not None %}<span class="mand-ok">{{ run.total_tokens }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td>{% if run.has_trigger %}<span class="mand-ok">{{ run.invocation_reason|truncatechars:26 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
-            <td><small class="text-muted">{{ run.created_at|date:"M d, H:i:s" }}</small></td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="11" class="text-center text-muted py-4">No benchmark runs in this page/filter.</td></tr>
+          <tr><td colspan="12" class="text-center text-muted py-4">No agent runs in this page/filter.</td></tr>
           {% endfor %}
         </tbody>
       </table>

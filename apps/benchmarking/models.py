@@ -89,6 +89,15 @@ class VarianceStatus:
     ]
 
 
+class PricingType:
+    MARKET = "MARKET"
+    BENCHMARK = "BENCHMARK"
+    CHOICES = [
+        ("MARKET", "Market (live external research)"),
+        ("BENCHMARK", "Benchmark (internal configured corridor)"),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -438,6 +447,13 @@ class CategoryMaster(BaseModel):
         blank=True,
         default="",
         help_text="Comma-separated classification keywords (augments built-in rules)",
+    )
+    pricing_type = models.CharField(
+        max_length=20,
+        choices=PricingType.CHOICES,
+        default=PricingType.BENCHMARK,
+        db_index=True,
+        help_text="Pricing source type: MARKET uses live external research, BENCHMARK uses corridor table",
     )
     sort_order = models.PositiveSmallIntegerField(default=100)
     is_active = models.BooleanField(default=True)

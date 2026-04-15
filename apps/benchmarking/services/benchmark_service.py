@@ -25,6 +25,7 @@ from apps.core.trace import TraceContext
 
 from apps.benchmarking.models import (
     BenchmarkLineItem,
+    BenchmarkQuotation,
     BenchmarkRequest,
     BenchmarkResult,
     VarianceStatus,
@@ -191,6 +192,13 @@ class BenchmarkEngine:
                 parent_agent_run_id=agent_run_id,
             )
 
+            final_line_count = int(outputs.get("line_item_count", 0) or 0)
+            if final_line_count <= 0:
+                raise ValueError(
+                    "Benchmarking extraction produced zero line items. "
+                    "Please verify quotation quality or Azure DI configuration and reprocess."
+                )
+
             bench_request.refresh_from_db()
             bench_request.status = "COMPLETED"
             bench_request.save(update_fields=["status", "updated_at"])
@@ -208,7 +216,12 @@ class BenchmarkEngine:
                 agent_run_id,
                 confidence=0.8,
                 summary=f"Benchmarking pipeline completed for request {bench_request.pk}",
-                output={"request_pk": bench_request.pk, "status": bench_request.status, "agents_executed": len(outputs)},
+                output={
+                    "request_pk": bench_request.pk,
+                    "status": bench_request.status,
+                    "agents_executed": len(outputs),
+                    "line_item_count": final_line_count,
+                },
             )
 
             return {"success": True, "error": None}
@@ -249,6 +262,16 @@ class BenchmarkEngine:
         )
 
         outputs = {}
+
+        # Stage 1: Extract quotations (Azure DI)
+        extraction_output = cls._run_extraction_stage(
+            bench_request=bench_request,
+            user=user,
+            trace_id=trace_id,
+            parent_agent_run_id=parent_agent_run_id,
+        )
+        outputs["extraction"] = extraction_output
+
         line_items = list(
             BenchmarkLineItem.objects.filter(
                 quotation__request=bench_request,
@@ -256,6 +279,7 @@ class BenchmarkEngine:
                 is_active=True,
             )
         )
+        vendor_cards = cls._build_vendor_cards(bench_request=bench_request)
 
         request_context = {
             "benchmark_request_pk": bench_request.pk,
@@ -263,9 +287,12 @@ class BenchmarkEngine:
             "scope_type": bench_request.scope_type,
             "line_item_count": len(line_items),
         }
+        outputs["request_context"] = request_context
 
-        # Stage 1: Extract quotations (Azure DI) - assumed completed in _process_request
-        logger.info("BenchmarkEngine: Stage 1 (Azure DI extraction) - assumed completed")
+        if not line_items:
+            logger.warning("BenchmarkEngine: no line items available after extraction stage")
+            outputs["line_item_count"] = 0
+            return outputs
 
         # Stage 2: Decision Maker - RUNS SECOND, decides what data to fetch
         stage_name = "Decision_Maker"
@@ -305,7 +332,7 @@ class BenchmarkEngine:
             # Pass Decision Maker output to Market Data Analyzer so it knows what to fetch
             market_output = BenchmarkMarketDataAnalyzerAgentBM.analyze(
                 line_items=line_items,
-                vendor_cards=[],
+                vendor_cards=vendor_cards,
                 result=None,
                 decision_guidance=decision_output,  # Uses decision output to guide data collection
             )
@@ -315,6 +342,16 @@ class BenchmarkEngine:
         except Exception as exc:
             logger.exception("Market Data Analyzer failed: %s", exc)
             cls._fail_agent_run(stage_run_id, error=str(exc))
+
+        # Stage 3.25: Apply market prices for lines routed to MARKET_DATA
+        try:
+            cls._apply_market_prices(
+                line_items=line_items,
+                decision_output=decision_output,
+                market_output=outputs.get("market_data", {}),
+            )
+        except Exception as exc:
+            logger.exception("Market price application failed (non-fatal): %s", exc)
 
         # Stage 3.5: Apply Benchmark Corridor Rules to Lines
         # (based on Decision Maker's routing)
@@ -345,7 +382,7 @@ class BenchmarkEngine:
                 market_analysis=outputs.get("market_data", {}),
                 compliance_assessment={},
                 vendor_recommendation={},
-                vendor_cards=[],
+                vendor_cards=vendor_cards,
             )
             outputs["analyst"] = analyst_output
             cls._complete_agent_run(stage_run_id, confidence=0.8, summary="Analyst synthesis completed", output=analyst_output)
@@ -387,7 +424,7 @@ class BenchmarkEngine:
             input_payload_extra={"agent_stage": stage_name},
         )
         try:
-            vendor_output = BenchmarkVendorRecommendationAgent.recommend(vendor_cards=[])
+            vendor_output = BenchmarkVendorRecommendationAgent.recommend(vendor_cards=vendor_cards)
             outputs["vendor_recommendation"] = vendor_output
             cls._complete_agent_run(stage_run_id, confidence=0.8, summary="Vendor recommendation completed", output=vendor_output)
             logger.info("Vendor Recommendation: %s", vendor_output.get("summary", "completed"))
@@ -395,8 +432,176 @@ class BenchmarkEngine:
             logger.exception("Vendor Recommendation failed: %s", exc)
             cls._fail_agent_run(stage_run_id, error=str(exc))
 
+        outputs["line_item_count"] = len(line_items)
         logger.info("BenchmarkEngine: Pipeline completed with %d agent stages", len(outputs))
         return outputs
+
+    @classmethod
+    def _run_extraction_stage(
+        cls,
+        *,
+        bench_request: BenchmarkRequest,
+        user,
+        trace_id: str,
+        parent_agent_run_id: Optional[int],
+    ) -> dict:
+        """Run Azure DI extraction for all active quotations in a request."""
+        stage_name = "Azure_DI_Extraction"
+        stage_run_id = cls._start_agent_run(
+            bench_request,
+            user=user,
+            trace_id=trace_id,
+            invocation_reason=f"{stage_name}:execute",
+            parent_run_id=parent_agent_run_id,
+            input_payload_extra={"agent_stage": stage_name},
+        )
+
+        try:
+            from apps.benchmarking.agents.Azure_Document_Intelligence_Agent_BM import (
+                AzureDocumentIntelligenceAgentBM,
+            )
+
+            quotations = list(
+                BenchmarkQuotation.objects.filter(
+                    request=bench_request,
+                    is_active=True,
+                )
+            )
+
+            outputs = []
+            total_lines = 0
+            success_count = 0
+            for quotation in quotations:
+                # Re-extract when status is not DONE or when line items are missing.
+                active_line_count = quotation.line_items.filter(is_active=True).count()
+                if quotation.extraction_status == "DONE" and active_line_count > 0:
+                    outputs.append(
+                        {
+                            "quotation_id": quotation.pk,
+                            "skipped": True,
+                            "line_count": active_line_count,
+                            "status": "DONE",
+                        }
+                    )
+                    total_lines += active_line_count
+                    success_count += 1
+                    continue
+
+                result = AzureDocumentIntelligenceAgentBM.extract_quotation(quotation=quotation)
+                line_count = int(result.get("line_count", 0) or 0)
+                total_lines += line_count
+                if result.get("success"):
+                    success_count += 1
+                outputs.append(
+                    {
+                        "quotation_id": quotation.pk,
+                        "skipped": False,
+                        "line_count": line_count,
+                        "status": quotation.extraction_status,
+                        "error": result.get("error", ""),
+                    }
+                )
+
+            stage_output = {
+                "total_quotations": len(quotations),
+                "successful_quotations": success_count,
+                "line_item_count": total_lines,
+                "details": outputs,
+            }
+
+            confidence = 0.9 if total_lines > 0 else 0.3
+            summary = (
+                f"Azure DI extraction processed {len(quotations)} quotation(s); "
+                f"success={success_count}, lines={total_lines}."
+            )
+            cls._complete_agent_run(
+                stage_run_id,
+                confidence=confidence,
+                summary=summary,
+                output=stage_output,
+            )
+            return stage_output
+        except Exception as exc:
+            cls._fail_agent_run(stage_run_id, error=str(exc))
+            logger.exception("BenchmarkEngine extraction stage failed: %s", exc)
+            return {
+                "total_quotations": 0,
+                "successful_quotations": 0,
+                "line_item_count": 0,
+                "details": [],
+                "error": str(exc),
+            }
+
+    @classmethod
+    def _build_vendor_cards(cls, *, bench_request: BenchmarkRequest) -> list:
+        """Build vendor cards from active quotation line items."""
+        vendor_cards = []
+        quotations = list(
+            BenchmarkQuotation.objects.filter(
+                request=bench_request,
+                is_active=True,
+            ).prefetch_related("line_items")
+        )
+
+        for quotation in quotations:
+            q_items = list(quotation.line_items.filter(is_active=True))
+            q_total = 0.0
+            q_bench = 0.0
+            q_total_bench_covered = 0.0
+            benchmarked_line_count = 0
+            status_counts = {
+                "WITHIN_RANGE": 0,
+                "MODERATE": 0,
+                "HIGH": 0,
+                "NEEDS_REVIEW": 0,
+            }
+            live_reference_count = 0
+
+            for line in q_items:
+                q_total += float(line.line_amount or 0)
+                if line.benchmark_mid is not None and line.quantity is not None:
+                    q_bench += float(line.benchmark_mid) * float(line.quantity)
+                    q_total_bench_covered += float(line.line_amount or 0)
+                    benchmarked_line_count += 1
+                elif line.benchmark_mid is not None:
+                    q_bench += float(line.benchmark_mid)
+                    q_total_bench_covered += float(line.line_amount or 0)
+                    benchmarked_line_count += 1
+                status_counts[line.variance_status] = status_counts.get(line.variance_status, 0) + 1
+                live_reference_count += len((line.live_price_json or {}).get("citations", []) or [])
+
+            q_dev = None
+            if q_bench > 0:
+                q_dev = ((q_total_bench_covered - q_bench) / q_bench) * 100
+
+            q_status = "NEEDS_REVIEW"
+            if q_dev is not None:
+                if abs(q_dev) < 5:
+                    q_status = "WITHIN_RANGE"
+                elif abs(q_dev) < 15:
+                    q_status = "MODERATE"
+                else:
+                    q_status = "HIGH"
+
+            vendor_cards.append(
+                {
+                    "quotation_id": quotation.pk,
+                    "supplier_name": quotation.supplier_name or "Unnamed Vendor",
+                    "quotation_ref": quotation.quotation_ref,
+                    "line_items": q_items,
+                    "line_count": len(q_items),
+                    "benchmarked_line_count": benchmarked_line_count,
+                    "total_quoted": q_total,
+                    "total_benchmark": q_bench if q_bench > 0 else None,
+                    "total_quoted_benchmark_covered": q_total_bench_covered if q_bench > 0 else None,
+                    "deviation_pct": q_dev,
+                    "status": q_status,
+                    "status_counts": status_counts,
+                    "live_reference_count": live_reference_count,
+                }
+            )
+
+        return vendor_cards
 
     @classmethod
     def _apply_benchmark_corridors(
@@ -434,6 +639,40 @@ class BenchmarkEngine:
 
             source = decision.get("source", "NEEDS_REVIEW")
             category = decision.get("category", "UNCATEGORIZED")
+
+            if source == "MARKET_DATA":
+                fields_to_reset = []
+                if line_item.corridor_rule_code:
+                    line_item.corridor_rule_code = ""
+                    fields_to_reset.append("corridor_rule_code")
+
+                has_live_market_benchmark = (
+                    line_item.benchmark_source == "PERPLEXITY_LIVE"
+                    and line_item.benchmark_mid is not None
+                )
+
+                if not has_live_market_benchmark:
+                    if line_item.benchmark_min is not None:
+                        line_item.benchmark_min = None
+                        fields_to_reset.append("benchmark_min")
+                    if line_item.benchmark_mid is not None:
+                        line_item.benchmark_mid = None
+                        fields_to_reset.append("benchmark_mid")
+                    if line_item.benchmark_max is not None:
+                        line_item.benchmark_max = None
+                        fields_to_reset.append("benchmark_max")
+                    if line_item.benchmark_source != "NONE":
+                        line_item.benchmark_source = "NONE"
+                        fields_to_reset.append("benchmark_source")
+                    if line_item.variance_pct is not None:
+                        line_item.variance_pct = None
+                        fields_to_reset.append("variance_pct")
+                    if line_item.variance_status != "NEEDS_REVIEW":
+                        line_item.variance_status = "NEEDS_REVIEW"
+                        fields_to_reset.append("variance_status")
+                if fields_to_reset:
+                    line_item.save(update_fields=fields_to_reset + ["updated_at"])
+                continue
             
             # Only apply corridors for lines routed to DB_BENCHMARK
             if source != "DB_BENCHMARK" or category == "UNCATEGORIZED":
@@ -507,6 +746,93 @@ class BenchmarkEngine:
                     f"Applied corridor {corridor.rule_code} to line {line_item.line_number}: "
                     f"min={corridor.min_rate}, mid={corridor.mid_rate}, max={corridor.max_rate}"
                 )
+
+    @classmethod
+    def _apply_market_prices(
+        cls,
+        *,
+        line_items: list,
+        decision_output: dict,
+        market_output: dict,
+    ) -> None:
+        line_decisions = decision_output.get("line_decisions", [])
+        market_line_ids = {
+            int(d.get("line_pk"))
+            for d in line_decisions
+            if d.get("source") == "MARKET_DATA" and d.get("line_pk") is not None
+        }
+
+        updates_by_id = {}
+        for payload in market_output.get("market_price_updates", []) or []:
+            line_pk = payload.get("line_pk")
+            if line_pk is None:
+                continue
+            updates_by_id[int(line_pk)] = payload
+
+        for line_item in line_items:
+            if market_line_ids and int(line_item.pk) not in market_line_ids:
+                continue
+
+            payload = updates_by_id.get(int(line_item.pk))
+            if not payload:
+                continue
+
+            benchmark_mid = Decimal(str(payload.get("benchmark_mid") or "0"))
+            if benchmark_mid <= 0:
+                continue
+
+            benchmark_min = Decimal(str(payload.get("benchmark_min") or benchmark_mid))
+            benchmark_max = Decimal(str(payload.get("benchmark_max") or benchmark_mid))
+
+            line_item.benchmark_min = benchmark_min
+            line_item.benchmark_mid = benchmark_mid
+            line_item.benchmark_max = benchmark_max
+            line_item.corridor_rule_code = ""
+            line_item.benchmark_source = "PERPLEXITY_LIVE"
+
+            if line_item.quoted_unit_rate:
+                variance_pct = (
+                    (float(line_item.quoted_unit_rate) - float(benchmark_mid))
+                    / float(benchmark_mid)
+                    * 100.0
+                )
+                line_item.variance_pct = round(variance_pct, 2)
+                abs_variance = abs(variance_pct)
+                if abs_variance <= 5.0:
+                    line_item.variance_status = "WITHIN_RANGE"
+                elif abs_variance <= 15.0:
+                    line_item.variance_status = "MODERATE"
+                else:
+                    line_item.variance_status = "HIGH"
+            else:
+                line_item.variance_pct = None
+                line_item.variance_status = "NEEDS_REVIEW"
+
+            existing_payload = line_item.live_price_json or {}
+            citations = payload.get("citations") or []
+            merged_payload = {
+                **existing_payload,
+                "benchmark_min": float(benchmark_min),
+                "benchmark_mid": float(benchmark_mid),
+                "benchmark_max": float(benchmark_max),
+                "currency": payload.get("currency") or existing_payload.get("currency") or "AED",
+                "confidence": payload.get("confidence"),
+                "source_note": payload.get("source_note") or existing_payload.get("source_note") or "perplexity_live",
+                "citations": citations,
+            }
+            line_item.live_price_json = merged_payload
+
+            line_item.save(update_fields=[
+                "benchmark_min",
+                "benchmark_mid",
+                "benchmark_max",
+                "corridor_rule_code",
+                "benchmark_source",
+                "variance_pct",
+                "variance_status",
+                "live_price_json",
+                "updated_at",
+            ])
 
     @classmethod
     def run_live_enrichment(cls, request_pk: int, user=None, tenant=None) -> dict:

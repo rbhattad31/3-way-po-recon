@@ -7,6 +7,7 @@ app_name = "benchmarking"
 urlpatterns = [
     # All Requests
     path("", views.request_list, name="request_list"),
+    path("<int:pk>/delete/", views.request_delete, name="request_delete"),
     # New Request
     path("new/", views.request_create, name="request_create"),
     # Detail / Results
