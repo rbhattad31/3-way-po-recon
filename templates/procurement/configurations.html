@@ -278,7 +278,6 @@
     </div>
   </div>
 </div>
-
 <div class="modal fade" id="modalRuleset" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content" style="border-radius:12px;border:1px solid #e5e7eb;">
@@ -337,6 +336,11 @@
         </div>
       </div>
       <div class="modal-footer" style="border-top:1px solid #f3f4f6;padding:.75rem 1.25rem;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-outline-danger me-auto d-none" id="rsDeleteBtn"
+                style="font-size:.82rem;"
+                onclick="deleteRulesetFromModal()">
+          <i class="bi bi-trash3 me-1"></i> Delete Rule Set
+        </button>
         <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;">Cancel</button>
         <button type="button" class="btn btn-sm"
                 style="background:#1665D8;color:#fff;font-size:.82rem;font-weight:500;"
@@ -769,6 +773,11 @@
         </div>
       </div>
       <div class="modal-footer" style="border-top:1px solid #f3f4f6;padding:.75rem 1.25rem;gap:.5rem;">
+        <button type="button" class="btn btn-sm btn-outline-danger me-auto d-none" id="hrDeleteBtn"
+                style="font-size:.82rem;"
+                onclick="deleteHvacRuleFromModal()">
+          <i class="bi bi-trash3 me-1"></i> Delete Rule
+        </button>
         <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;">Cancel</button>
         <button type="button" class="btn btn-sm"
                 style="background:#7c3aed;color:#fff;font-size:.82rem;font-weight:500;"
@@ -1248,6 +1257,7 @@ function editRuleset(id) {
     $('#rsType').val(d.validation_type); $('#rsPriority').val(d.priority);
     $('#rsDescription').val(d.description);
     $('#rsActive').prop('checked', d.is_active);
+    $('#rsDeleteBtn').removeClass('d-none').data('ruleId', d.id).data('ruleLabel', d.rule_set_code);
     $('#modalRulesetTitle').text('Edit: ' + d.rule_set_code);
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRuleset')).show();
   });
@@ -1329,6 +1339,7 @@ function editHvacRule(id) {
     $('#hrSystem').val(d.recommended_system); $('#hrAltSystem').val(d.alternate_system);
     $('#hrRationale').val(d.rationale); $('#hrPriority').val(d.priority);
     $('#hrNotes').val(d.notes); $('#hrActive').prop('checked', d.is_active);
+    $('#hrDeleteBtn').removeClass('d-none').data('ruleId', d.id).data('ruleLabel', d.rule_code);
     $('#modalHvacRuleTitle').text('Edit: ' + d.rule_code);
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHvacRule')).show();
   });
@@ -1389,6 +1400,14 @@ function saveRuleset() {
     bootstrap.Modal.getInstance(document.getElementById('modalRuleset')).hide();
     reloadTab('rulesets');
   });
+}
+
+function deleteRulesetFromModal() {
+  var id = $('#rsDeleteBtn').data('ruleId') || $('#rsId').val();
+  var label = $('#rsDeleteBtn').data('ruleLabel') || $('#rsCode').val() || 'this rule set';
+  if (!id) return;
+  bootstrap.Modal.getInstance(document.getElementById('modalRuleset')).hide();
+  confirmDelete('rulesets', id, label);
 }
 
 function saveProduct() {
@@ -1518,6 +1537,14 @@ function saveHvacRule() {
   });
 }
 
+function deleteHvacRuleFromModal() {
+  var id = $('#hrDeleteBtn').data('ruleId') || $('#hrId').val();
+  var label = $('#hrDeleteBtn').data('ruleLabel') || $('#hrCode').val() || 'this HVAC rule';
+  if (!id) return;
+  bootstrap.Modal.getInstance(document.getElementById('modalHvacRule')).hide();
+  confirmDelete('hvacrules', id, label);
+}
+
 function _parseComparatorToken(token) {
   var m = String(token || '').trim().match(/^(<=|>=|<|>)?\s*(-?\d+(?:\.\d+)?)$/);
   if (!m) return null;
@@ -1631,6 +1658,14 @@ setupSearch('prod-search', 'products');
 setupSearch('vend-search', 'vendors');
 setupSearch('room-search', 'rooms');
 setupSearch('hvac-search', 'hvacrules');
+
+$('#modalRuleset').on('hidden.bs.modal', function() {
+  $('#rsDeleteBtn').addClass('d-none').removeData('ruleId').removeData('ruleLabel');
+});
+
+$('#modalHvacRule').on('hidden.bs.modal', function() {
+  $('#hrDeleteBtn').addClass('d-none').removeData('ruleId').removeData('ruleLabel');
+});
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 $(document).ready(function() {
