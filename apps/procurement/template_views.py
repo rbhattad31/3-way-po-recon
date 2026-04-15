@@ -3696,15 +3696,31 @@ def api_external_suggestions(request, pk):
             "api_external_suggestions LLM call failed for pk=%s: %s",
             pk, exc, exc_info=True,
         )
+        exc_str = str(exc)
+        exc_lower = exc_str.lower()
+        if "timed out" in exc_lower or "timeout" in exc_lower or "read timeout" in exc_lower:
+            user_msg = (
+                "Market analysis timed out. The Perplexity API is taking longer than expected "
+                "to respond. Please click Refresh to try again in a moment."
+            )
+        elif "connection" in exc_lower or "network" in exc_lower:
+            user_msg = (
+                "Could not reach the market intelligence service. "
+                "Please check the server network and try again."
+            )
+        elif "perplexity_api_key" in exc_lower or "not configured" in exc_lower:
+            user_msg = "PERPLEXITY_API_KEY is not configured on this server. Contact the administrator."
+        else:
+            user_msg = f"Analysis failed: {exc_str}"
         _, system_code, system_name = MarketIntelligenceService.get_rec_context(proc_request)
         return JsonResponse({
             "system_code": system_code,
             "system_name": system_name,
-            "rephrased_query": f"Market data for {system_name or 'HVAC system'} in {proc_request.geography_country or 'UAE'}",
-            "ai_summary": f"Analysis failed: {exc}",
+            "rephrased_query": "",
+            "ai_summary": "",
             "market_context": "",
             "suggestions": [],
-            "error": str(exc),
+            "error": user_msg,
         }, status=200)
 
     return JsonResponse(result)

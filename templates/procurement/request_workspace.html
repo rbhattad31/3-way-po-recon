@@ -1978,11 +1978,29 @@
     if (elBtnR) { elBtnR.disabled = true; elBtnR.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...'; }
     showState(elSpin);
     fetch(_SURL, { headers: { "X-Requested-With": "XMLHttpRequest" } })
-      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        var ct = (r.headers.get("content-type") || "").toLowerCase();
+        if (!r.ok) {
+          return r.text().then(function(t) {
+            throw new Error("Request failed (" + r.status + "): " + (t || r.statusText || "Unexpected error"));
+          });
+        }
+        if (ct.indexOf("application/json") === -1) {
+          return r.text().then(function(t) {
+            throw new Error("Server returned a non-JSON response. You may need to log in again.");
+          });
+        }
+        return r.json();
+      })
       .then(function(data) {
-        if (data.error && !(data.ai_summary || (data.suggestions && data.suggestions.length))) {
+        // If the server signals an error, always show the error panel -- even if ai_summary is present
+        if (data.error) {
           var em = document.getElementById("ws-mi-error-msg");
-          if (em) em.textContent = data.error;
+          var msg = data.error;
+          if (msg.indexOf("timed out") !== -1 || msg.indexOf("timeout") !== -1 || msg.indexOf("Timeout") !== -1) {
+            msg = "Market analysis timed out. The Perplexity API is taking longer than expected to respond. Please click Refresh to try again in a moment.";
+          }
+          if (em) em.textContent = msg;
           showState(elErr); return;
         }
         renderData(data);
@@ -2095,6 +2113,12 @@
   elBtns.forEach(function(b) {
     b.addEventListener("click", function() { doRerun(b); });
   });
+
+  // Auto-run recommendation on first workspace load when no recommendation exists yet
+  var _HAS_REC = {{ recommendation|yesno:"true,false" }};
+  if (!_HAS_REC && elBtns.length) {
+    setTimeout(function() { doRerun(elBtns[0]); }, 600);
+  }
 
 }());
 </script>

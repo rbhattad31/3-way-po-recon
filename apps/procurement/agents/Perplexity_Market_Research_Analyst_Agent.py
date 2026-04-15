@@ -470,13 +470,40 @@ class PerplexityMarketResearchAnalystAgent:
             model, len(user_prompt),
         )
 
-        resp = _requests.post(
-            "https://api.perplexity.ai/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=30,  # 30 s is enough; fail fast so retries are not painfully slow
-        )
-        resp.raise_for_status()
+        import time as _time
+        _last_exc = None
+        for _attempt in range(2):
+            try:
+                resp = _requests.post(
+                    "https://api.perplexity.ai/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=90,  # sonar-pro performs live web searches; allow 90s
+                )
+                resp.raise_for_status()
+                break
+            except (
+                _requests.exceptions.Timeout,
+                _requests.exceptions.ConnectionError,
+            ) as exc:
+                _last_exc = exc
+                if _attempt == 0:
+                    logger.warning(
+                        "PerplexityMarketResearchAnalystAgent: attempt 1 failed "
+                        "(%s: %s); retrying in 5s",
+                        type(exc).__name__, exc,
+                    )
+                    _time.sleep(5)
+                else:
+                    logger.error(
+                        "PerplexityMarketResearchAnalystAgent: attempt 2 also failed "
+                        "(%s: %s); giving up",
+                        type(exc).__name__, exc,
+                    )
+                    raise
+        else:
+            if _last_exc:
+                raise _last_exc
         resp_data = resp.json()
 
         choices = resp_data.get("choices") or []
