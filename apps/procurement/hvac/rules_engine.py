@@ -176,9 +176,16 @@ class HVACRulesEngine:
         rules_evaluated = 0
         for rule in active_rules:
             rules_evaluated += 1
-            if rule.matches(attrs):
-                matched_rule = rule
-                break
+            try:
+                if rule.matches(attrs):
+                    matched_rule = rule
+                    break
+            except Exception:
+                logger.warning(
+                    "HVACRulesEngine: rule evaluation failed for rule_code=%s; skipping",
+                    getattr(rule, "rule_code", ""),
+                    exc_info=True,
+                )
 
         if matched_rule is None:
             return {
