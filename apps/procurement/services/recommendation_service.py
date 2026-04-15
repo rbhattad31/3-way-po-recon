@@ -5,8 +5,9 @@ import logging
 from typing import Any
 
 from apps.agents.services.base_agent import BaseAgent
-from apps.core.enums import AnalysisRunStatus, ComplianceStatus, ProcurementRequestStatus
+from apps.core.enums import AgentType, AnalysisRunStatus, ComplianceStatus, ProcurementRequestStatus
 from apps.procurement.hvac.rules_engine import HVACRulesEngine
+from apps.procurement.services.agent_run_tracking import run_procurement_component_with_tracking
 from apps.procurement.models import ComplianceResult, RecommendationResult
 from apps.procurement.services.analysis_run_service import AnalysisRunService
 from apps.procurement.services.recommendation_graph_service import RecommendationGraphService
@@ -138,19 +139,33 @@ class RecommendationService:
                     compliance_output.get("status") in {ComplianceStatus.PARTIAL, ComplianceStatus.FAIL}
                     or confidence < 0.75
                 ):
-                    ai_compliance_output = ComplianceAgent.check(
-                        request,
-                        {
+                    _compliance_input = {
+                        "recommended_option": recommended_option,
+                        "confidence": confidence,
+                        "estimated_cost": final_payload.get("estimated_cost"),
+                        "reasoning_summary": final_payload.get("reasoning_summary"),
+                        "constraints": final_payload.get("constraints") or [],
+                        "notes": final_payload.get("notes") or [],
+                        "standards_notes": attrs.get("required_standards_local_notes") or "",
+                        "violations": compliance_output.get("violations") or [],
+                    }
+                    ai_compliance_output = run_procurement_component_with_tracking(
+                        agent_type=AgentType.PROCUREMENT_COMPLIANCE,
+                        invocation_reason="ComplianceAgent.check",
+                        tenant=getattr(request, "tenant", None),
+                        actor_user=request_user,
+                        input_payload={
+                            "source": "compliance_check",
+                            "procurement_request_id": str(getattr(request, "request_id", "")),
+                            "procurement_request_pk": getattr(request, "pk", None),
                             "recommended_option": recommended_option,
                             "confidence": confidence,
-                            "estimated_cost": final_payload.get("estimated_cost"),
-                            "reasoning_summary": final_payload.get("reasoning_summary"),
-                            "constraints": final_payload.get("constraints") or [],
-                            "notes": final_payload.get("notes") or [],
-                            "standards_notes": attrs.get("required_standards_local_notes") or "",
-                            "violations": compliance_output.get("violations") or [],
                         },
-                        attrs=attrs,
+                        execute_fn=lambda: ComplianceAgent.check(
+                            request,
+                            _compliance_input,
+                            attrs=attrs,
+                        ),
                     ) or {}
                     compliance_output = RecommendationService._merge_compliance_outputs(
                         compliance_output,
