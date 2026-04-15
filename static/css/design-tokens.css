@@ -379,9 +379,10 @@ body {
 .ap-topbar-brand-logo {
   display: block;
   width: auto;
-  max-width: none;
-  height: 40px;
-  max-height: calc(var(--ap-topbar-height) - 8px);
+  max-width: 124px;
+  height: 28px;
+  max-height: calc(var(--ap-topbar-height) - 18px);
+  object-fit: contain;
 }
 .ap-topbar-search {
   flex: 1;
