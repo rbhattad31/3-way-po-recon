@@ -5,9 +5,8 @@
   {# Brand #}
   <a class="ap-topbar-brand" href="{% url 'procurement:home' %}">
     <span class="ap-topbar-brand-logo-wrap">
-      <img src="{% static 'images/landmark-logo.svg' %}" alt="Bradsol" class="ap-topbar-brand-logo">
+      <img src="{% static 'images/bradsol-logo.png' %}" alt="Bradsol" class="ap-topbar-brand-logo">
     </span>
-    Bradsol ProcureAI
   </a>
 
   {# ── Main Navigation (dropdowns) ── #}
@@ -24,6 +23,14 @@
        href="{% url 'dashboard:invoice_pipeline' %}">
       <i class="bi bi-kanban me-1"></i>Pipeline
     </a>
+
+    {% has_permission "procurement.view" as can_view_procurement_top %}
+    {% if can_view_procurement_top %}
+    <a class="ap-nav-link {% if request.resolver_match.app_name == 'procurement' %}active{% endif %}"
+       href="{% url 'procurement:request_list' %}">
+      <i class="bi bi-cart4 me-1"></i>Procurement Agents
+    </a>
+    {% endif %}
 
     {# Extraction #}
     {% has_permission "invoices.view" as can_view_extraction %}
