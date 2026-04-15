@@ -422,11 +422,12 @@ class VerifyVendorTool(BaseTool):
     name = "verify_vendor"
     required_permission = "vendors.view"
     description = (
-        "Verify a vendor by tax ID against the vendor master data. "
-        "Returns match status and vendor details."
+        "Verify a vendor by tax ID or name against the vendor master data. "
+        "Uses tax ID (exact), normalized name (exact), and fuzzy name matching "
+        "(token similarity, containment, rapidfuzz) with confidence scores."
     )
     when_to_use = "During validation to confirm vendor identity."
-    when_not_to_use = "Do not use name-only matching -- always prefer tax ID."
+    when_not_to_use = "Do not skip tax ID when available -- always pass it for highest confidence."
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -442,6 +443,12 @@ class VerifyVendorTool(BaseTool):
         "required": [],
     }
 
+    # Fuzzy matching thresholds
+    _FUZZY_TOKEN_CONTAINMENT_THRESHOLD = 0.85   # shorter name fully in longer
+    _FUZZY_TOKEN_SIMILARITY_THRESHOLD = 0.65     # Jaccard token overlap
+    _FUZZY_RAPIDFUZZ_THRESHOLD = 80.0            # rapidfuzz token_set_ratio
+    _FUZZY_CANDIDATE_LIMIT = 5                   # max candidates returned
+
     def run(self, *, tax_id: str = "", vendor_name: str = "", **kwargs) -> ToolResult:
         from apps.vendors.models import Vendor
 
@@ -450,38 +457,126 @@ class VerifyVendorTool(BaseTool):
 
         qs = self._scoped(Vendor.objects.filter(is_active=True))
 
-        # Primary: match by tax ID
+        # Tier 1: exact tax ID match (highest confidence)
         if tax_id:
             vendor = qs.filter(tax_id__iexact=tax_id.strip()).first()
             if vendor:
                 return ToolResult(success=True, data={
                     "verified": True,
                     "match_method": "tax_id",
+                    "confidence": 1.0,
                     "vendor_id": vendor.pk,
                     "vendor_name": vendor.name,
                     "vendor_tax_id": vendor.tax_id or "",
                 })
 
-        # Fallback: name match (lower confidence)
         if vendor_name:
             from apps.core.utils import normalize_string
             norm_name = normalize_string(vendor_name)
-            for v in qs.all()[:500]:  # Safety limit
+
+            # Tier 2: exact normalized name match
+            for v in qs.all()[:500]:
                 if normalize_string(v.name) == norm_name:
                     return ToolResult(success=True, data={
                         "verified": True,
-                        "match_method": "name",
+                        "match_method": "exact_name",
+                        "confidence": 0.95,
                         "vendor_id": v.pk,
                         "vendor_name": v.name,
                         "vendor_tax_id": v.tax_id or "",
                         "warning": "Matched by name only -- tax ID verification recommended",
                     })
 
+            # Tier 3: fuzzy name matching (token similarity + rapidfuzz)
+            match = self._fuzzy_match_vendor(vendor_name, qs)
+            if match:
+                return ToolResult(success=True, data=match)
+
         return ToolResult(success=True, data={
             "verified": False,
             "tax_id": tax_id,
             "vendor_name": vendor_name,
+            "suggestion": "No vendor matched. Consider creating this vendor or adding an alias.",
         })
+
+    def _fuzzy_match_vendor(self, vendor_name: str, qs) -> dict | None:
+        """Score all active vendors using multi-signal fuzzy matching.
+
+        Signals used (from reconciliation line_match_helpers):
+        - token_containment: shorter name fully contained in longer (handles suffixes)
+        - token_similarity: Jaccard token overlap
+        - fuzzy_similarity: rapidfuzz token_set_ratio (handles abbreviations)
+
+        Returns the best match dict if above threshold, or top candidates.
+        """
+        from apps.reconciliation.services.line_match_helpers import (
+            token_similarity,
+            token_containment,
+            fuzzy_similarity,
+        )
+
+        candidates = []
+        for v in qs.all()[:500]:
+            t_contain = token_containment(vendor_name, v.name)
+            t_sim = token_similarity(vendor_name, v.name)
+            f_sim = fuzzy_similarity(vendor_name, v.name)
+
+            # Weighted composite: containment matters most for vendor names
+            # (handles "ACME Corp 25-26" matching "ACME Corp")
+            composite = (t_contain * 0.45) + (t_sim * 0.25) + ((f_sim / 100.0) * 0.30)
+
+            if (t_contain >= self._FUZZY_TOKEN_CONTAINMENT_THRESHOLD
+                    or t_sim >= self._FUZZY_TOKEN_SIMILARITY_THRESHOLD
+                    or f_sim >= self._FUZZY_RAPIDFUZZ_THRESHOLD):
+                candidates.append({
+                    "vendor_id": v.pk,
+                    "vendor_name": v.name,
+                    "vendor_tax_id": v.tax_id or "",
+                    "scores": {
+                        "token_containment": round(t_contain, 3),
+                        "token_similarity": round(t_sim, 3),
+                        "fuzzy_similarity": round(f_sim, 1),
+                        "composite": round(composite, 3),
+                    },
+                })
+
+        if not candidates:
+            return None
+
+        # Sort by composite score descending
+        candidates.sort(key=lambda c: c["scores"]["composite"], reverse=True)
+        best = candidates[0]
+
+        # Single strong match
+        if best["scores"]["composite"] >= 0.75:
+            return {
+                "verified": True,
+                "match_method": "fuzzy_name",
+                "confidence": round(best["scores"]["composite"], 3),
+                "vendor_id": best["vendor_id"],
+                "vendor_name": best["vendor_name"],
+                "vendor_tax_id": best["vendor_tax_id"],
+                "scores": best["scores"],
+                "warning": "Matched by fuzzy name similarity -- tax ID verification recommended",
+            }
+
+        # Multiple weak candidates -- return top N for agent to decide
+        top = candidates[:self._FUZZY_CANDIDATE_LIMIT]
+        return {
+            "verified": False,
+            "match_method": "fuzzy_candidates",
+            "confidence": round(best["scores"]["composite"], 3),
+            "candidates": [
+                {
+                    "vendor_id": c["vendor_id"],
+                    "vendor_name": c["vendor_name"],
+                    "vendor_tax_id": c["vendor_tax_id"],
+                    "composite_score": c["scores"]["composite"],
+                }
+                for c in top
+            ],
+            "warning": "No single strong match found. Top candidates listed for review.",
+        }
 
 
 @register_tool

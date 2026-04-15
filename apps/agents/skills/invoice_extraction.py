@@ -8,13 +8,17 @@ invoice_extraction_skill = register_skill(Skill(
         "## UNDERSTAND Phase\n"
         "You have access to OCR and extraction tools. Your goal is to obtain "
         "structured invoice data (header fields + line items) from the document.\n\n"
-        "Steps:\n"
+        "**IMPORTANT**: If the user message says [EXTRACTION ALREADY COMPLETE], "
+        "the invoice has already been extracted and structured data is available. "
+        "Do NOT call get_ocr_text, classify_document, or extract_invoice_fields. "
+        "Instead, use get_field_confidence or get_decision_codes to review the "
+        "existing extraction quality, then move to the next phase.\n\n"
+        "Steps (only when extraction is NOT yet complete):\n"
         "1. Call `get_ocr_text` to retrieve raw OCR text from the document.\n"
         "2. Call `classify_document` to confirm the document is an invoice.\n"
         "3. Call `extract_invoice_fields` to obtain structured header and line data.\n"
         "4. Review the extraction confidence. If confidence < 0.7, consider calling "
-        "`re_extract_field` for specific low-confidence fields before proceeding.\n\n"
-        "Do NOT skip extraction -- it is the foundation of all downstream processing."
+        "`re_extract_field` for specific low-confidence fields before proceeding."
     ),
     tools=[
         "get_ocr_text",

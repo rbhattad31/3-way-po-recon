@@ -1241,10 +1241,13 @@ class APCopilotService:
                 }
 
             # Build case-specific summary (question-aware)
+            topic = APCopilotService._classify_case_question(message)
             summary = APCopilotService._build_summary(
                 message, context_data, evidence_data, primary_role,
             )
-            topic = APCopilotService._classify_case_question(message)
+            evidence_data = APCopilotService._filter_evidence_by_topic(
+                evidence_data, topic,
+            )
             follow_ups = APCopilotService.build_follow_up_prompts(
                 user, context_data, topic=topic,
             )
@@ -1486,6 +1489,32 @@ class APCopilotService:
                 return topic
         return "overview"
 
+    # Maps each case topic to the evidence card types relevant for it.
+    # "overview" shows everything; other topics show only related cards.
+    _TOPIC_EVIDENCE_MAP: Dict[str, Optional[List[str]]] = {
+        "overview": None,  # None means keep all
+        "invoice": ["invoice"],
+        "vendor": ["invoice"],  # vendor info lives on the invoice card
+        "reconciliation": ["invoice", "purchase_order", "grn", "exception"],
+        "exceptions": ["exception"],
+        "recommendation": ["decision"],
+        "review": ["decision"],
+        "agents": ["decision"],
+        "governance": None,  # governance needs full picture
+        "next_steps": None,
+    }
+
+    @staticmethod
+    def _filter_evidence_by_topic(
+        evidence: List[Dict[str, Any]],
+        topic: str,
+    ) -> List[Dict[str, Any]]:
+        """Return only the evidence cards relevant to *topic*."""
+        allowed = APCopilotService._TOPIC_EVIDENCE_MAP.get(topic)
+        if allowed is None:
+            return evidence
+        return [e for e in evidence if e.get("type") in allowed]
+
     @staticmethod
     def _case_summary_overview(case_ref: str, ctx: Dict) -> str:
         case = ctx.get("case", {})
@@ -1543,7 +1572,7 @@ class APCopilotService:
         inv = ctx.get("invoice")
         if not inv:
             return f"{case_ref} has no invoice data available."
-        vendor = ctx.get("vendor", {})
+        vendor = ctx.get("vendor") or {}
         vendor_name = vendor.get("name") or inv.get("vendor_name") or "Unknown Vendor"
         parts = [f"**Invoice Details** for {case_ref}"]
         parts.append(

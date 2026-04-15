@@ -1,4 +1,7 @@
-"""Supervisor context builder -- prepares AgentContext for supervisor runs."""
+"""Supervisor context builder -- prepares AgentContext for supervisor runs.
+
+Enhanced with system-wide dashboard analytics and query routing support.
+"""
 from __future__ import annotations
 
 import logging
@@ -59,6 +62,16 @@ def build_supervisor_context(
                 invoice.extraction_confidence or 0
             )
             memory.facts["invoice_status"] = str(invoice.status)
+            # Flag whether extraction is already complete
+            _POST_EXTRACTION_STATUSES = {
+                "EXTRACTED", "VALIDATED", "PENDING_APPROVAL",
+                "READY_FOR_RECON", "RECONCILED",
+            }
+            memory.facts["extraction_done"] = (
+                str(invoice.status) in _POST_EXTRACTION_STATUSES
+            )
+            memory.facts["total_amount"] = float(invoice.total_amount or 0)
+            memory.facts["currency"] = invoice.currency or ""
             if not po_number:
                 po_number = invoice.po_number
             if not document_upload_id:
@@ -70,10 +83,17 @@ def build_supervisor_context(
     exceptions = []
     if reconciliation_result:
         try:
+            memory.facts["match_status"] = str(
+                getattr(reconciliation_result, "match_status", "")
+            )
+            memory.facts["reconciliation_done"] = True
+        except Exception:
+            pass
+        try:
             from apps.reconciliation.models import ReconciliationException
             exc_qs = ReconciliationException.objects.filter(
-                reconciliation_result=reconciliation_result
-            ).values("exception_type", "severity", "field_name", "description")
+                result=reconciliation_result
+            ).values("exception_type", "severity", "message", "details")
             exceptions = list(exc_qs)
         except Exception:
             logger.debug("Failed to load exceptions (non-fatal)", exc_info=True)
@@ -98,3 +118,71 @@ def build_supervisor_context(
         _langfuse_trace=langfuse_trace,
         tenant=tenant,
     )
+
+
+def enrich_context_with_dashboard(
+    ctx: AgentContext,
+    *,
+    user: Any = None,
+    tenant: Any = None,
+) -> AgentContext:
+    """Enrich an existing AgentContext with system-wide dashboard analytics.
+
+    Adds dashboard summary, match breakdown, exception breakdown, and
+    extraction approval analytics to ctx.extra so the supervisor can
+    reference system-wide data without extra tool calls.
+
+    This is called when the query router determines AP_INSIGHTS or HYBRID
+    mode, providing pre-loaded context that reduces tool-call overhead.
+    """
+    dashboard_data: Dict[str, Any] = {}
+
+    # Dashboard summary KPIs
+    try:
+        from apps.dashboard.services import DashboardService
+        dashboard_data["ap_summary"] = DashboardService.get_summary(
+            user=user, tenant=tenant,
+        )
+    except Exception:
+        logger.debug("Failed to load dashboard summary (non-fatal)", exc_info=True)
+
+    # Match status breakdown
+    try:
+        from apps.dashboard.services import DashboardService
+        dashboard_data["match_breakdown"] = DashboardService.get_match_status_breakdown(
+            user=user, tenant=tenant,
+        )
+    except Exception:
+        logger.debug("Failed to load match breakdown (non-fatal)", exc_info=True)
+
+    # Exception breakdown
+    try:
+        from apps.dashboard.services import DashboardService
+        dashboard_data["exception_breakdown"] = DashboardService.get_exception_breakdown(
+            user=user, tenant=tenant,
+        )
+    except Exception:
+        logger.debug("Failed to load exception breakdown (non-fatal)", exc_info=True)
+
+    # Extraction approval analytics
+    try:
+        from apps.extraction.services.approval_service import ExtractionApprovalService
+        dashboard_data["extraction_analytics"] = ExtractionApprovalService.get_approval_analytics(
+            tenant=tenant,
+        )
+    except Exception:
+        logger.debug("Failed to load extraction analytics (non-fatal)", exc_info=True)
+
+    # Agent performance KPIs
+    try:
+        from apps.dashboard.agent_performance_service import AgentPerformanceDashboardService
+        dashboard_data["agent_performance"] = AgentPerformanceDashboardService.get_summary(
+            user=user, tenant=tenant,
+        )
+    except Exception:
+        logger.debug("Failed to load agent performance (non-fatal)", exc_info=True)
+
+    if dashboard_data:
+        ctx.extra["dashboard"] = dashboard_data
+
+    return ctx

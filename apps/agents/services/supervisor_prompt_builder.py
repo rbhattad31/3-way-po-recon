@@ -5,7 +5,7 @@ import logging
 from typing import List, Optional
 
 from apps.agents.skills.base import SkillRegistry
-from apps.core.prompt_registry import PromptRegistry
+from apps.core.prompt_registry import PromptRegistry, register_default
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,7 @@ DEFAULT_SKILLS = [
     "ap_3way_matching",
     "ap_investigation",
     "ap_review_routing",
+    "ap_insights",
 ]
 
 _BASE_SYSTEM_PROMPT = """You are the AP Lifecycle Supervisor -- an expert accounts-payable agent that owns
@@ -83,7 +84,27 @@ Valid recommendation_type values:
 - If you exceed the limit, submit your best recommendation with current evidence.
 - Do not fabricate tool outputs -- if a tool fails, report the failure.
 - Do not attempt to bypass RBAC or tenant restrictions.
+
+# QUERY ROUTING
+You support three operating modes, indicated by [MODE: ...] in the user message:
+
+1. [MODE: CASE_ANALYSIS] (default) -- Process a specific invoice through the
+   full lifecycle (UNDERSTAND -> VALIDATE -> MATCH -> INVESTIGATE -> DECIDE).
+   You MUST call submit_recommendation before finishing.
+
+2. [MODE: AP_INSIGHTS] -- Answer system-wide analytics/performance questions.
+   Use the AP insights tools (get_ap_dashboard_summary, get_match_status_breakdown,
+   get_agent_performance_summary, etc.). You do NOT need to call
+   submit_recommendation. Provide specific numbers and actionable observations.
+
+3. [MODE: HYBRID] -- The query involves both a specific case and system-wide
+   context. Analyze the invoice AND pull system metrics for comparison.
+   You MUST call submit_recommendation for the case-specific aspect.
+
+If no mode is indicated, default to CASE_ANALYSIS behavior.
 """
+
+register_default("agent.supervisor_ap_lifecycle", _BASE_SYSTEM_PROMPT)
 
 
 def build_supervisor_prompt(

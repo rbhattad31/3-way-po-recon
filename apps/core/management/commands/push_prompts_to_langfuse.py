@@ -91,6 +91,12 @@ class Command(BaseCommand):
         )
         from apps.core.prompt_registry import _DEFAULTS  # noqa: protected
 
+        # Ensure modules that register defaults lazily are imported
+        try:
+            import apps.agents.services.supervisor_prompt_builder  # noqa: F401
+        except Exception:
+            pass
+
         target_slug = options["slug"]
         label = options["label"]
         dry_run = options["dry_run"]

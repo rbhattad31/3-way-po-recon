@@ -841,6 +841,125 @@ _TOOL_LABELS = {
 }
 
 
+def _summarize_tool_input(tool_name: str, inp: dict) -> str:
+    """Build a human-readable one-liner from tool input arguments."""
+    if not inp:
+        return ""
+    if tool_name == "verify_vendor":
+        parts = []
+        if inp.get("tax_id"):
+            parts.append("tax_id=%s" % inp["tax_id"])
+        if inp.get("vendor_name"):
+            parts.append("name=%s" % inp["vendor_name"])
+        return ", ".join(parts) if parts else ""
+    if tool_name in ("po_lookup", "grn_lookup"):
+        if inp.get("po_number"):
+            return "PO %s" % inp["po_number"]
+        if inp.get("grn_number"):
+            return "GRN %s" % inp["grn_number"]
+    if tool_name == "vendor_search":
+        return inp.get("query", "")
+    if tool_name == "invoice_details":
+        return "invoice #%s" % inp.get("invoice_id", "?")
+    if tool_name == "verify_tax_computation":
+        return "invoice #%s" % inp.get("invoice_id", "?")
+    if tool_name == "run_header_match":
+        return "invoice #%s" % inp.get("invoice_id", "?")
+    if tool_name == "check_duplicate":
+        parts = []
+        if inp.get("invoice_number"):
+            parts.append(inp["invoice_number"])
+        if inp.get("vendor_tax_id"):
+            parts.append("tax_id=%s" % inp["vendor_tax_id"])
+        return ", ".join(parts) if parts else ""
+    if tool_name == "submit_recommendation":
+        parts = []
+        if inp.get("recommendation_type"):
+            parts.append(inp["recommendation_type"])
+        if inp.get("confidence"):
+            parts.append("conf=%s" % inp["confidence"])
+        return ", ".join(parts) if parts else ""
+    # Generic: show first few key=value pairs
+    pairs = []
+    for k, v in list(inp.items())[:3]:
+        if v is not None and v != "":
+            pairs.append("%s=%s" % (k, str(v)[:60]))
+    return ", ".join(pairs)
+
+
+def _summarize_tool_output_for_card(tool_name: str, out: dict, success: bool) -> str:
+    """Build a human-readable one-liner from tool output for the evidence card."""
+    if not success:
+        err = out.get("error", "") if isinstance(out, dict) else ""
+        return "Failed" + (": %s" % str(err)[:100] if err else "")
+    if not out:
+        return "OK"
+    data = out.get("data", out) if isinstance(out, dict) else out
+
+    if tool_name == "verify_vendor":
+        if isinstance(data, dict):
+            if data.get("verified"):
+                method = data.get("match_method", "")
+                name = data.get("vendor_name", "")
+                conf = data.get("confidence")
+                s = "Verified"
+                if name:
+                    s += " as %s" % name
+                if method:
+                    s += " (via %s" % method
+                    if conf:
+                        s += ", confidence %.0f%%" % (float(conf) * 100)
+                    s += ")"
+                return s
+            else:
+                return "Not verified"
+    if tool_name == "verify_tax_computation":
+        if isinstance(data, dict):
+            if data.get("valid"):
+                return "Tax verified OK"
+            issues = data.get("issues", [])
+            if issues:
+                return "Issues: %s" % "; ".join(str(i)[:80] for i in issues[:2])
+    if tool_name == "check_duplicate":
+        if isinstance(data, dict):
+            if data.get("is_duplicate"):
+                return "Duplicate found"
+            return "No duplicate"
+    if tool_name in ("po_lookup", "grn_lookup"):
+        if isinstance(data, dict):
+            num = data.get("po_number") or data.get("grn_number") or ""
+            status = data.get("status", "")
+            if num:
+                return "%s (status: %s)" % (num, status) if status else str(num)
+    if tool_name == "run_header_match":
+        if isinstance(data, dict):
+            ms = data.get("match_status") or data.get("header_match_status", "")
+            if ms:
+                return ms
+    if tool_name == "submit_recommendation":
+        if isinstance(data, dict):
+            return data.get("recommendation_type", "Submitted")
+    # Generic: show first meaningful value
+    if isinstance(data, dict):
+        for k in ("summary", "message", "status", "match_status", "result"):
+            if data.get(k):
+                return str(data[k])[:120]
+        parts = []
+        for k, v in list(data.items())[:4]:
+            if v is not None and not isinstance(v, (dict, list)):
+                parts.append("%s=%s" % (k, str(v)[:40]))
+        return ", ".join(parts) if parts else "OK"
+    return str(data)[:120] if data else "OK"
+
+
+def _get_tool_result(tool_details: list, tool_name: str) -> dict | None:
+    """Return the last tool_details entry for a given tool name."""
+    for td in reversed(tool_details):
+        if td.get("name") == tool_name:
+            return td
+    return None
+
+
 def _build_supervisor_summary(agent_run):
     """Build a structured summary dict from the supervisor agent run.
 
@@ -857,20 +976,34 @@ def _build_supervisor_summary(agent_run):
     # Collect tool steps
     steps = AgentStep.objects.filter(
         agent_run=agent_run,
-    ).order_by("step_number").values("action", "success", "output_data")
+    ).order_by("step_number").values(
+        "action", "success", "output_data", "input_data", "duration_ms",
+    )
 
     tools_ok = 0
     tools_failed_list = []
+    tool_details = []  # rich per-tool info for UI
     for s in steps:
         action = s.get("action", "")
         tool_name = action.replace("tool_call:", "").split(":")[0]
         if not tool_name:
             continue
         label = _TOOL_LABELS.get(tool_name, tool_name.replace("_", " "))
-        if s.get("success"):
+        inp = s.get("input_data") or {}
+        out = s.get("output_data") or {}
+        ok = bool(s.get("success"))
+        if ok:
             tools_ok += 1
         else:
             tools_failed_list.append(label)
+        tool_details.append({
+            "name": tool_name,
+            "label": label,
+            "success": ok,
+            "duration_ms": s.get("duration_ms"),
+            "input_summary": _summarize_tool_input(tool_name, inp),
+            "output_summary": _summarize_tool_output_for_card(tool_name, out, ok),
+        })
 
     # Recommendation label
     rec_label = _RECOMMENDATION_LABELS.get(rec_type, rec_type.replace("_", " ").title())
@@ -908,9 +1041,18 @@ def _build_supervisor_summary(agent_run):
 
     vendor_verified = evidence.get("vendor_verified")
     if vendor_verified is True:
-        findings.append({"label": "Vendor verified", "value": "Yes", "severity": "success"})
+        # Enrich with details from verify_vendor tool output
+        vendor_detail = _get_tool_result(tool_details, "verify_vendor")
+        match_method = ""
+        if vendor_detail:
+            match_method = vendor_detail.get("output_summary", "")
+        findings.append({"label": "Vendor verified", "value": "Yes" + (" (" + match_method + ")" if match_method else ""), "severity": "success"})
     elif vendor_verified is False:
-        findings.append({"label": "Vendor verified", "value": "No", "severity": "danger"})
+        vendor_detail = _get_tool_result(tool_details, "verify_vendor")
+        extra = ""
+        if vendor_detail:
+            extra = vendor_detail.get("input_summary", "")
+        findings.append({"label": "Vendor verified", "value": "No" + (" -- " + extra if extra else ""), "severity": "danger"})
 
     tax_valid = evidence.get("tax_valid") or evidence.get("tax_verified")
     if tax_valid is True:
@@ -950,6 +1092,7 @@ def _build_supervisor_summary(agent_run):
         "issues": issues,
         "tools_ok": tools_ok,
         "tools_failed": len(tools_failed_list),
+        "tool_details": tool_details,
         "analysis_text": case_summary,
     }
 
@@ -1038,6 +1181,20 @@ def _persist_supervisor_messages(session, summary_dict, agent_run):
             "data": {"description": issue},
         })
 
+    # Build standalone tool_details array for separate UI section
+    tool_details_payload = []
+    for td in summary_dict.get("tool_details", []):
+        status_str = "OK" if td.get("success") else "FAILED"
+        dur = td.get("duration_ms")
+        tool_details_payload.append({
+            "name": td.get("name", ""),
+            "label": td.get("label", td.get("name", "Tool")),
+            "success": td.get("success", True),
+            "duration_ms": dur,
+            "input_summary": td.get("input_summary", ""),
+            "output_summary": td.get("output_summary", ""),
+        })
+
     follow_ups = [
         "Summarize this case",
         "What are the exceptions?",
@@ -1056,6 +1213,7 @@ def _persist_supervisor_messages(session, summary_dict, agent_run):
             "read_only": True,
         } if rec else None,
         "governance": {},
+        "tool_details": tool_details_payload,
         "supervisor_summary": summary_dict,
         "agent_run_id": agent_run.pk if agent_run else None,
     }
