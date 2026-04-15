@@ -135,7 +135,7 @@ def analytics(request):
     summary = DashboardService.get_summary(user=request.user)
     recent_activity = DashboardService.get_recent_activity(limit=15, user=request.user)
 
-    # Procurement quick-view for Landmark Group KPI strip
+    # Procurement quick-view for Bradsol Group KPI strip
     proc_summary = {}
     try:
         from apps.procurement.models import ProcurementRequest

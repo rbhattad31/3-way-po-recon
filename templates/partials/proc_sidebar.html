@@ -1,6 +1,7 @@
 {% load rbac_tags %}
 
 <div id="procSidebar">
+{% with current_url=request.resolver_match.url_name current_app=request.resolver_match.app_name %}
 
 {% has_permission "procurement.view" as can_view_procurement %}
 {% if can_view_procurement %}
@@ -25,27 +26,27 @@
 <div class="proc-nav-divider"></div>
 
 <!-- HVAC Requests -->
-<a class="proc-nav-link"
+<a class="proc-nav-link {% if current_app == 'procurement' and current_url == 'request_list' or current_app == 'procurement' and current_url == 'configurations' or current_app == 'procurement' and current_url == 'stores_management' %}active{% endif %}"
    data-bs-toggle="collapse"
    href="#hvacMenu"
    role="button"
-   aria-expanded="{% if request.resolver_match.url_name in 'request_list configurations stores_management' %}true{% else %}false{% endif %}">
+  aria-expanded="{% if current_app == 'procurement' and current_url == 'request_list' or current_app == 'procurement' and current_url == 'configurations' or current_app == 'procurement' and current_url == 'stores_management' %}true{% else %}false{% endif %}">
    
   <i class="bi bi-tools"></i>
   HVAC Requests
 </a>
 
-<div class="collapse {% if request.resolver_match.url_name in 'request_list configurations stores_management' %}show{% endif %}" 
+<div class="collapse {% if current_app == 'procurement' and current_url == 'request_list' or current_app == 'procurement' and current_url == 'configurations' or current_app == 'procurement' and current_url == 'stores_management' %}show{% endif %}" 
      id="hvacMenu"
      data-bs-parent="#procSidebar"  style="padding: 15px; gap: 10px; display: flex; flex-direction: column; gap: 15px;">
 
-  <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'request_list' %}active{% endif %}"
+  <a class="proc-nav-sublink {% if current_app == 'procurement' and current_url == 'request_list' %}active{% endif %}"
      href="{% url 'procurement:request_list' %}" style=" text-decoration: none;">
     <i class="bi bi-list-task me-2"></i>
     All Requests
   </a>
 
-  <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'stores_management' %}active{% endif %}"
+  <a class="proc-nav-sublink {% if current_app == 'procurement' and current_url == 'stores_management' %}active{% endif %}"
      href="{% url 'procurement:stores_management' %}" style=" text-decoration: none;">
     <i class="bi bi-shop me-2"></i>
     Stores Management
@@ -56,7 +57,7 @@
     Reports
   </a>
 
-  <a class="proc-nav-sublink {% if request.resolver_match.url_name == 'configurations' %}active{% endif %}"
+  <a class="proc-nav-sublink {% if current_app == 'procurement' and current_url == 'configurations' %}active{% endif %}"
      href="{% url 'procurement:configurations' %}" style=" text-decoration: none;">
     <i class="bi bi-gear me-2"></i>
     Configurations
@@ -65,20 +66,20 @@
 </div>
 
 <!-- Benchmarking Requests -->
-<a class="proc-nav-link"
+<a class="proc-nav-link {% if current_app == 'benchmarking' %}active{% endif %}"
    data-bs-toggle="collapse"
    href="#costMenu"
    role="button"
-   aria-expanded="{% if request.resolver_match.app_name == 'benchmarking' %}true{% else %}false{% endif %}">
+  aria-expanded="{% if current_app == 'benchmarking' %}true{% else %}false{% endif %}">
   <i class="bi bi-boxes"></i>
   Bench Marking Requests
 </a>
 
-<div class="collapse {% if request.resolver_match.app_name == 'benchmarking' %}show{% endif %}"
+<div class="collapse {% if current_app == 'benchmarking' %}show{% endif %}"
      id="costMenu"
      data-bs-parent="#procSidebar" style="padding: 15px; gap: 10px; display: flex; flex-direction: column; gap: 15px;">
 
-  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name in 'request_list request_create request_detail request_reprocess request_export' %}active{% endif %}"
+  <a class="proc-nav-sublink {% if current_app == 'benchmarking' and current_url == 'request_list' or current_app == 'benchmarking' and current_url == 'request_create' or current_app == 'benchmarking' and current_url == 'request_detail' or current_app == 'benchmarking' and current_url == 'request_reprocess' or current_app == 'benchmarking' and current_url == 'request_export' or current_app == 'benchmarking' and current_url == 'request_add_quotations' or current_app == 'benchmarking' and current_url == 'request_status' or current_app == 'benchmarking' and current_url == 'request_live_enrich' or current_app == 'benchmarking' and current_url == 'request_live_enrich_ajax' or current_app == 'benchmarking' and current_url == 'e2e_timeline' %}active{% endif %}"
      href="{% url 'benchmarking:request_list' %}"
      style=" text-decoration: none;">
     <i class="bi bi-list-columns me-2"></i>
@@ -86,21 +87,21 @@
   </a>
   <!-- <br> -->
 
-  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'quotation_list' %}active{% endif %}"
+  <a class="proc-nav-sublink {% if current_app == 'benchmarking' and current_url == 'quotation_list' or current_app == 'benchmarking' and current_url == 'quotation_detail' %}active{% endif %}"
      href="{% url 'benchmarking:quotation_list' %}" style="text-decoration: none;">
     <i class="bi bi-currency-dollar me-2"></i>
     Quotations
   </a>
   <!-- <br> -->
 
-  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'reports' %}active{% endif %}"
+  <a class="proc-nav-sublink {% if current_app == 'benchmarking' and current_url == 'reports' %}active{% endif %}"
      href="{% url 'benchmarking:reports' %}" style="text-decoration: none;">
     <i class="bi bi-bar-chart me-2"></i>
     Reports
   </a>
   <!-- <br> -->
 
-  <a class="proc-nav-sublink {% if request.resolver_match.app_name == 'benchmarking' and request.resolver_match.url_name == 'configurations' %}active{% endif %}"
+  <a class="proc-nav-sublink {% if current_app == 'benchmarking' and current_url == 'configurations' or current_app == 'benchmarking' and current_url == 'api_bench_categories' or current_app == 'benchmarking' and current_url == 'api_bench_corridors' or current_app == 'benchmarking' and current_url == 'api_bench_corridor_detail' or current_app == 'benchmarking' and current_url == 'api_bench_thresholds' %}active{% endif %}"
      href="{% url 'benchmarking:configurations' %}" style="text-decoration: none;">
     <i class="bi bi-sliders me-2"></i>
     Configurations
@@ -137,3 +138,4 @@
 </a>
 
 </div>
+{% endwith %}

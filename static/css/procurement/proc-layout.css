@@ -7,9 +7,10 @@
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
-  font-family: 'Inter', system-ui, sans-serif;
-  background: #f4f5f7;
-  color: #1f2937;
+  font-family: var(--ap-font, 'Inter', system-ui, sans-serif);
+  background: var(--ap-bg, #f8fafc);
+  color: var(--ap-text, #0f172a);
+  padding-top: 0;
   margin: 0;
 }
 
@@ -17,15 +18,15 @@ body {
 .proc-topbar {
   position: fixed;
   top: 0; left: 0; right: 0;
-  height: 52px;
+  height: var(--ap-topbar-height, 56px);
   z-index: 1040;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--ap-bg-topbar, #ffffff);
+  border-bottom: 1px solid var(--ap-border, #e2e8f0);
   display: flex;
   align-items: center;
   padding: 0 1.25rem;
   gap: 1rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  box-shadow: var(--ap-shadow-sm, 0 1px 2px rgba(0,0,0,.05));
 }
 .proc-topbar-brand {
   display: flex;
@@ -48,7 +49,7 @@ body {
 .proc-topbar-brand-name {
   font-size: .92rem;
   font-weight: 700;
-  color: #111827;
+  color: var(--ap-text, #0f172a);
   letter-spacing: -.01em;
 }
 .proc-topbar-brand-sep {
@@ -59,7 +60,7 @@ body {
 .proc-topbar-module {
   font-size: .8rem;
   font-weight: 500;
-  color: #6b7280;
+  color: var(--ap-text-secondary, #475569);
 }
 .proc-topbar-spacer { flex: 1; }
 
@@ -84,18 +85,18 @@ body {
 .proc-layout {
   display: flex;
   min-height: 100vh;
-  padding-top: 52px;
+  padding-top: var(--ap-topbar-height, 56px);
 }
 
 /* ---- Sidebar ---- */
 .proc-sidebar {
   width: 230px;
   flex-shrink: 0;
-  background: #fff;
-  border-right: 1px solid #e5e7eb;
+  background: var(--ap-bg-card, #ffffff);
+  border-right: 1px solid var(--ap-border, #e2e8f0);
   position: fixed;
-  top: 52px;
-  height: calc(100vh - 52px);
+  top: var(--ap-topbar-height, 56px);
+  height: calc(100vh - var(--ap-topbar-height, 56px));
   overflow-y: auto;
   z-index: 1030;
   display: flex;
@@ -107,7 +108,7 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .08em;
-  color: #9ca3af;
+  color: var(--ap-text-muted, #94a3b8);
   padding: .85rem .75rem .35rem;
 }
 .proc-nav-link {
@@ -118,20 +119,22 @@ body {
   border-radius: 6px;
   font-size: .84rem;
   font-weight: 500;
-  color: #4b5563;
+  color: #1e293b;
   text-decoration: none;
-  transition: background .12s, color .12s;
+  transition: background .12s, color .12s, box-shadow .12s;
   position: relative;
 }
 .proc-nav-link:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: linear-gradient(90deg, rgba(22,101,216,.12), rgba(14,165,233,.05));
+  color: #1248a0;
   text-decoration: none;
+  box-shadow: inset 0 0 0 1px rgba(22,101,216,.08);
 }
 .proc-nav-link.active {
-  background: #eff6ff;
+  background: linear-gradient(90deg, rgba(22,101,216,.18), rgba(14,165,233,.08));
   color: #1665D8;
   font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(22,101,216,.14);
 }
 .proc-nav-link.active::before {
   content: '';
@@ -139,14 +142,51 @@ body {
   left: 0; top: 4px; bottom: 4px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: #1665D8;
+  background: linear-gradient(180deg, #1665D8, #0ea5e9);
 }
 .proc-nav-link i { font-size: .95rem; flex-shrink: 0; }
-.proc-nav-link i.inactive { color: #9ca3af; }
+.proc-nav-link i.inactive { color: #64748b; }
+.proc-nav-link:hover i,
+.proc-nav-link:hover i.inactive { color: #1665D8; }
 .proc-nav-link.active i { color: #1665D8; }
+
+.proc-nav-sublink {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .46rem .62rem;
+  border-radius: 6px;
+  font-size: .84rem;
+  font-weight: 500;
+  color: #334155;
+  text-decoration: none;
+  transition: background .12s, color .12s, box-shadow .12s;
+}
+.proc-nav-sublink:hover {
+  background: linear-gradient(90deg, rgba(22,101,216,.10), rgba(14,165,233,.04));
+  color: #1248a0;
+  text-decoration: none;
+  box-shadow: inset 0 0 0 1px rgba(22,101,216,.07);
+}
+.proc-nav-sublink.active {
+  background: linear-gradient(90deg, rgba(22,101,216,.16), rgba(14,165,233,.07));
+  color: #1665D8;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(22,101,216,.12);
+}
+.proc-nav-sublink i {
+  font-size: .9rem;
+  color: #64748b;
+}
+.proc-nav-sublink:hover i {
+  color: #1665D8;
+}
+.proc-nav-sublink.active i {
+  color: #1665D8;
+}
 .proc-nav-divider {
   height: 1px;
-  background: #f3f4f6;
+  background: var(--ap-border-light, #f1f5f9);
   margin: .5rem .75rem;
 }
 .proc-nav-badge {
@@ -169,7 +209,7 @@ body {
   min-width: 0;
   margin-left: 230px;
   padding: 1.75rem 2rem;
-  background: #f0f4fa;
+  background: var(--ap-bg, #f8fafc);
 }
 
 /* ---- Responsive ---- */

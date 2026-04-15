@@ -96,7 +96,7 @@
 
 {% with total=page_obj.paginator.count %}
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3">
+  <div class="col-12 col-lg-6">
     <div class="kpi-card kpi-blue d-flex align-items-center gap-3">
       <div class="kpi-icon"><i class="bi bi-collection-fill"></i></div>
       <div>
@@ -106,27 +106,7 @@
       <div class="kpi-bar"></div>
     </div>
   </div>
-  <div class="col-6 col-lg-3">
-    <div class="kpi-card kpi-cyan d-flex align-items-center gap-3">
-      <div class="kpi-icon"><img src="{% static 'images/procurement-robot.png' %}" alt="AI Agent" style="width:28px;height:28px;object-fit:contain;"></div>
-      <div>
-        <div class="kpi-value">HVAC</div>
-        <div class="kpi-label">Active Domain</div>
-      </div>
-      <div class="kpi-bar"></div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="kpi-card kpi-green d-flex align-items-center gap-3">
-      <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
-      <div>
-        <div class="kpi-value">AED</div>
-        <div class="kpi-label">Base Currency</div>
-      </div>
-      <div class="kpi-bar"></div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-3">
+  <div class="col-12 col-lg-6">
     <div class="kpi-card kpi-amber d-flex align-items-center gap-3">
       <div class="kpi-icon"><i class="bi bi-globe-asia-australia"></i></div>
       <div>
@@ -143,7 +123,7 @@
 <div class="filter-panel mb-4">
   <form method="get">
     <div class="row g-2 align-items-end">
-      <div class="col-12 col-md-2">
+      <div class="col-12 col-md-3">
         <label class="form-label">Status</label>
         <select name="status" class="form-select form-select-sm">
           <option value="">All Statuses</option>
@@ -152,25 +132,7 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-12 col-md-2">
-        <label class="form-label">Type</label>
-        <select name="request_type" class="form-select form-select-sm">
-          <option value="">All Types</option>
-          {% for val, label in type_choices %}
-          <option value="{{ val }}" {% if current_type == val %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-12 col-md-2">
-        <label class="form-label">Domain</label>
-        <select name="domain_code" class="form-select form-select-sm">
-          <option value="">All Domains</option>
-          {% for d in domains %}
-          <option value="{{ d }}" {% if current_domain == d %}selected{% endif %}>{{ d }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-12 col-md-4">
+      <div class="col-12 col-md-7">
         <label class="form-label">Search</label>
         <div class="input-group input-group-sm">
           <span class="input-group-text" style="background:#f8fafc;border-color:#cbd5e1;">
@@ -184,7 +146,7 @@
         <button type="submit" class="btn-filter flex-grow-1">
           <i class="bi bi-funnel me-1"></i>Filter
         </button>
-        {% if current_status or current_type or current_domain or search_query %}
+        {% if current_status or search_query %}
         <a href="{% url 'procurement:request_list' %}" class="btn-clear" title="Clear filters">
           <i class="bi bi-x-lg"></i>
         </a>
@@ -210,11 +172,9 @@
     <a href="{% url 'procurement:request_workspace' pk=req.pk %}" class="req-card h-100">
 
       {# Accent bar by status #}
-      {% if req.status == "DRAFT" %}<div class="rc-accent rc-accent-draft"></div>
-      {% elif req.status == "READY" %}<div class="rc-accent rc-accent-ready"></div>
-      {% elif req.status == "PROCESSING" %}<div class="rc-accent rc-accent-processing"></div>
+      {% if req.status == "PENDING_RFQ" %}<div class="rc-accent rc-accent-review"></div>
+      {% elif req.status == "READY_RFQ" %}<div class="rc-accent rc-accent-ready"></div>
       {% elif req.status == "COMPLETED" %}<div class="rc-accent rc-accent-completed"></div>
-      {% elif req.status == "REVIEW_REQUIRED" %}<div class="rc-accent rc-accent-review"></div>
       {% elif req.status == "FAILED" %}<div class="rc-accent rc-accent-failed"></div>
       {% else %}<div class="rc-accent rc-accent-default"></div>{% endif %}
 
@@ -223,16 +183,12 @@
         {# Title + Status #}
         <div class="d-flex justify-content-between align-items-start mb-2">
           <div class="rc-title">{{ req.title|truncatechars:62 }}</div>
-          {% if req.status == "DRAFT" %}
-            <span class="status-pill sp-draft"><span class="sp-dot" style="background:#94a3b8;"></span>Draft</span>
-          {% elif req.status == "READY" %}
-            <span class="status-pill sp-ready"><span class="sp-dot" style="background:#0ea5e9;"></span>Ready</span>
-          {% elif req.status == "PROCESSING" %}
-            <span class="status-pill sp-processing"><span class="sp-dot" style="background:#6366f1;animation:pulse-blue 1.5s infinite;"></span>Processing</span>
+          {% if req.status == "PENDING_RFQ" %}
+            <span class="status-pill sp-review"><span class="sp-dot" style="background:#f59e0b;"></span>Pending RFQ</span>
+          {% elif req.status == "READY_RFQ" %}
+            <span class="status-pill sp-ready"><span class="sp-dot" style="background:#0ea5e9;"></span>Ready RFQ</span>
           {% elif req.status == "COMPLETED" %}
             <span class="status-pill sp-completed"><span class="sp-dot" style="background:#22c55e;"></span>Completed</span>
-          {% elif req.status == "REVIEW_REQUIRED" %}
-            <span class="status-pill sp-review"><span class="sp-dot" style="background:#f59e0b;"></span>Review</span>
           {% elif req.status == "FAILED" %}
             <span class="status-pill sp-failed"><span class="sp-dot" style="background:#ef4444;"></span>Failed</span>
           {% else %}
@@ -247,8 +203,15 @@
 
         {# Meta tags #}
         <div class="rc-meta">
-          <span class="rc-tag domain-tag"><i class="bi bi-snow2"></i> {{ req.domain_code }}</span>
-          <span class="rc-tag"><i class="bi bi-tag"></i> {{ req.request_type }}</span>
+          {% if req.status == "PENDING_RFQ" or req.status == "READY_RFQ" or req.status == "COMPLETED" %}
+          <span class="rc-tag" style="background:#ecfdf5;color:#166534;border-color:#bbf7d0;">
+            <i class="bi bi-check-circle-fill"></i> Recommendation Success
+          </span>
+          {% elif req.status == "FAILED" %}
+          <span class="rc-tag" style="background:#fef2f2;color:#991b1b;border-color:#fecaca;">
+            <i class="bi bi-x-octagon-fill"></i> Recommendation Failed
+          </span>
+          {% endif %}
           {% if req.geography_country %}
           <span class="rc-tag geo-tag"><i class="bi bi-geo-alt-fill"></i> {{ req.geography_country }}</span>
           {% endif %}
@@ -315,7 +278,7 @@
   <ul class="pagination pager gap-1 mb-0">
     {% if page_obj.has_previous %}
     <li class="page-item">
-      <a class="page-link" href="?page={{ page_obj.previous_page_number }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">
+      <a class="page-link" href="?page={{ page_obj.previous_page_number }}&status={{ current_status }}&q={{ search_query }}">
         <i class="bi bi-chevron-left" style="font-size:.7rem;"></i>
       </a>
     </li>
@@ -327,13 +290,13 @@
       </li>
       {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
       <li class="page-item">
-        <a class="page-link" href="?page={{ num }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">{{ num }}</a>
+        <a class="page-link" href="?page={{ num }}&status={{ current_status }}&q={{ search_query }}">{{ num }}</a>
       </li>
       {% endif %}
     {% endfor %}
     {% if page_obj.has_next %}
     <li class="page-item">
-      <a class="page-link" href="?page={{ page_obj.next_page_number }}&status={{ current_status }}&request_type={{ current_type }}&domain_code={{ current_domain }}&q={{ search_query }}">
+      <a class="page-link" href="?page={{ page_obj.next_page_number }}&status={{ current_status }}&q={{ search_query }}">
         <i class="bi bi-chevron-right" style="font-size:.7rem;"></i>
       </a>
     </li>
@@ -350,14 +313,14 @@
   </div>
   <h5 class="fw-bold mb-1" style="color:#1e293b;">No HVAC Requests Found</h5>
   <p class="mb-4" style="color:#64748b;font-size:.85rem;max-width:380px;margin:0 auto .2rem;">
-    {% if current_status or current_type or current_domain or search_query %}
+    {% if current_status or search_query %}
       No requests match your current filters.
       <a href="{% url 'procurement:request_list' %}" class="text-primary fw-semibold">Clear filters</a> to see all requests.
     {% else %}
       Begin by creating your first AI-powered HVAC procurement request and let the intelligence engine do the sourcing.
     {% endif %}
   </p>
-  {% if not current_status and not current_type and not current_domain and not search_query %}
+  {% if not current_status and not search_query %}
   <button type="button" class="btn btn-primary rounded-pill px-4 py-2 fw-semibold mt-2"
      style="background:linear-gradient(135deg,#1d4ed8,#2563eb);border:none;
             box-shadow:0 4px 14px rgba(37,99,235,.35);font-size:.85rem;"

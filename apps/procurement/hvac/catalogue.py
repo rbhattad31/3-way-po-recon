@@ -1,4 +1,4 @@
-"""HVAC Product Reference Catalogue -- Landmark Group GCC Operations.
+"""HVAC Product Reference Catalogue -- Bradsol Group GCC Operations.
 
 Full product catalogue with product codes, technical specs, market rates,
 and brand information. Used by:
@@ -10,7 +10,7 @@ and brand information. Used by:
 Geography: UAE, KSA, Oman, Qatar, Kuwait, Bahrain (GCC)
 Currency: AED (primary), with conversion helpers
 Rates updated: 2025-Q1
-Data source: Landmark Group Procurement historical + GCC market surveys
+Data source: Bradsol Group Procurement historical + GCC market surveys
 """
 from __future__ import annotations
 
@@ -746,10 +746,10 @@ FACILITY_TYPES = [
 ]
 
 # ---------------------------------------------------------------------------
-# Landmark Group Store Brands (for tagging requests by business unit)
+# Bradsol Group Store Brands (for tagging requests by business unit)
 # ---------------------------------------------------------------------------
 
-LANDMARK_BRANDS = [
+Bradsol_BRANDS = [
     {"code": "MAX_FASHION", "label": "Max Fashion", "category": "Retail / Apparel"},
     {"code": "HOME_CENTRE", "label": "Home Centre", "category": "Retail / Home"},
     {"code": "SPLASH", "label": "Splash", "category": "Retail / Apparel"},
@@ -758,7 +758,7 @@ LANDMARK_BRANDS = [
     {"code": "SHOEMART", "label": "Shoemart (SM)", "category": "Retail / Footwear"},
     {"code": "ICONIC", "label": "The Iconic", "category": "Retail / Premium"},
     {"code": "EMAX", "label": "Emax Electronics", "category": "Retail / Electronics"},
-    {"code": "L_MEGA", "label": "LMega / Landmark Mega Store", "category": "Large Format"},
+    {"code": "L_MEGA", "label": "LMega / Bradsol Mega Store", "category": "Large Format"},
     {"code": "BABYSHOP", "label": "Babyshop", "category": "Retail / Kids"},
     {"code": "DISTRIBUTION", "label": "Distribution Centre (DC)", "category": "Logistics"},
     {"code": "HQ_OFFICE", "label": "HQ / Regional Office", "category": "Corporate"},

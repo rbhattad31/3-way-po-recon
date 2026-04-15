@@ -81,7 +81,7 @@
     <i class="bi bi-info-circle me-1"></i>
     Sources are grouped by HVAC product type. Perplexity will search <strong>only these sites</strong> when generating market intelligence for each product category.
   </p>
-  <div class="cfg-table-wrap">
+  <div class="cfg-table-wrap cfg-table-wrap-scroll-both">
     <table class="cfg-table" id="src-matrix-table">
       <thead>
         <tr>
@@ -705,18 +705,16 @@
         </div>
         <div class="cfg-form-row mb-3">
           <div>
-            <label class="form-label-cfg">Area Min (sq ft) <small class="text-muted">(optional)</small></label>
-            <input id="hrAreaMin" class="form-control-cfg" type="number" step="1" min="0" placeholder="e.g. 2000">
-          </div>
-          <div>
-            <label class="form-label-cfg">Area Max (sq ft) <small class="text-muted">(optional)</small></label>
-            <input id="hrAreaMax" class="form-control-cfg" type="number" step="1" min="0" placeholder="e.g. 5000">
+            <label class="form-label-cfg">Area Condition (sq ft) <small class="text-muted">(optional)</small></label>
+            <input id="hrAreaCondition" class="form-control-cfg" type="text" placeholder="e.g. &gt;=2000, &lt;5000, 2000-5000">
+            <div class="form-text" style="font-size:.72rem;color:#9ca3af;">Allowed: &gt;, &gt;=, &lt;, &lt;= and ranges.</div>
           </div>
         </div>
         <div class="cfg-form-row mb-3">
           <div>
-            <label class="form-label-cfg">Ambient Temp Min (C) <small class="text-muted">(optional)</small></label>
-            <input id="hrAmbientTemp" class="form-control-cfg" type="number" step="0.5" placeholder="e.g. 45">
+            <label class="form-label-cfg">Ambient Temp Condition (C) <small class="text-muted">(optional)</small></label>
+            <input id="hrAmbientTemp" class="form-control-cfg" type="text" placeholder="e.g. &gt;=45">
+            <div class="form-text" style="font-size:.72rem;color:#9ca3af;">Allowed: number, &gt;, &gt;=. Uses existing min-threshold logic.</div>
           </div>
           <div>
             <label class="form-label-cfg">Budget Level <small class="text-muted">(blank = Any)</small></label>
@@ -1146,7 +1144,7 @@ function openAddModal(tab) {
     $('#modalRoomTitle').text(titleMap[tab]);
   } else if (tab === 'hvacrules') {
     $('#hrId').val(''); $('#hrCode').val(''); $('#hrName').val('');
-    $('#hrStoreType').val(''); $('#hrAreaMin').val(''); $('#hrAreaMax').val('');
+    $('#hrStoreType').val(''); $('#hrAreaCondition').val('');
     $('#hrAmbientTemp').val(''); $('#hrBudget').val(''); $('#hrEnergyPriority').val('');
     $('#hrSystem').val(''); $('#hrAltSystem').val('');
     $('#hrRationale').val(''); $('#hrPriority').val('100');
@@ -1312,13 +1310,21 @@ function editRoom(id) {
 
 function editHvacRule(id) {
   $.get(urlDetailMap.hvacrules + id + '/', function(d) {
+    var areaExpr = '';
+    if (d.area_sq_ft_min !== null && d.area_sq_ft_max !== null) {
+      areaExpr = '>= ' + d.area_sq_ft_min + ' <= ' + d.area_sq_ft_max;
+    } else if (d.area_sq_ft_min !== null) {
+      areaExpr = '>= ' + d.area_sq_ft_min;
+    } else if (d.area_sq_ft_max !== null) {
+      areaExpr = '<= ' + d.area_sq_ft_max;
+    }
+
     $('#hrId').val(d.id);
     $('#hrCode').val(d.rule_code); $('#hrName').val(d.rule_name);
     $('#hrCountryFilter').val(d.country_filter || ''); $('#hrCityFilter').val(d.city_filter || '');
     $('#hrStoreType').val(d.store_type_filter);
-    $('#hrAreaMin').val(d.area_sq_ft_min !== null ? d.area_sq_ft_min : '');
-    $('#hrAreaMax').val(d.area_sq_ft_max !== null ? d.area_sq_ft_max : '');
-    $('#hrAmbientTemp').val(d.ambient_temp_min_c !== null ? d.ambient_temp_min_c : '');
+    $('#hrAreaCondition').val(areaExpr);
+    $('#hrAmbientTemp').val(d.ambient_temp_min_c !== null ? ('>= ' + d.ambient_temp_min_c) : '');
     $('#hrBudget').val(d.budget_level_filter); $('#hrEnergyPriority').val(d.energy_priority_filter);
     $('#hrSystem').val(d.recommended_system); $('#hrAltSystem').val(d.alternate_system);
     $('#hrRationale').val(d.rationale); $('#hrPriority').val(d.priority);
@@ -1469,15 +1475,29 @@ function saveRoom() {
 
 function saveHvacRule() {
   var id = $('#hrId').val();
+  var areaParsed = parseAreaCondition($('#hrAreaCondition').val());
+  if (!areaParsed.ok) {
+    toast(areaParsed.message, 'error');
+    $('#hrAreaCondition').focus();
+    return;
+  }
+
+  var ambientParsed = parseAmbientCondition($('#hrAmbientTemp').val());
+  if (!ambientParsed.ok) {
+    toast(ambientParsed.message, 'error');
+    $('#hrAmbientTemp').focus();
+    return;
+  }
+
   var payload = {
     rule_code: $('#hrCode').val().trim(),
     rule_name: $('#hrName').val().trim(),
     country_filter: $('#hrCountryFilter').val().trim(),
     city_filter: $('#hrCityFilter').val().trim(),
     store_type_filter: $('#hrStoreType').val(),
-    area_sq_ft_min: $('#hrAreaMin').val() || null,
-    area_sq_ft_max: $('#hrAreaMax').val() || null,
-    ambient_temp_min_c: $('#hrAmbientTemp').val() || null,
+    area_sq_ft_min: areaParsed.min,
+    area_sq_ft_max: areaParsed.max,
+    ambient_temp_min_c: ambientParsed.min,
     budget_level_filter: $('#hrBudget').val(),
     energy_priority_filter: $('#hrEnergyPriority').val(),
     recommended_system: $('#hrSystem').val(),
@@ -1496,6 +1516,74 @@ function saveHvacRule() {
     bootstrap.Modal.getInstance(document.getElementById('modalHvacRule')).hide();
     reloadTab('hvacrules');
   });
+}
+
+function _parseComparatorToken(token) {
+  var m = String(token || '').trim().match(/^(<=|>=|<|>)?\s*(-?\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  return { op: m[1] || '', value: parseFloat(m[2]) };
+}
+
+var _HVAC_RULE_EPSILON = 0.000001;
+
+function parseAreaCondition(raw) {
+  var input = String(raw || '').trim();
+  if (!input) return { ok: true, min: null, max: null };
+
+  var range = input.match(/^\s*(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (range) {
+    var rMin = parseFloat(range[1]);
+    var rMax = parseFloat(range[2]);
+    if (rMin > rMax) {
+      return { ok: false, message: 'Area range is invalid. Min must be less than or equal to max.' };
+    }
+    return { ok: true, min: rMin, max: rMax };
+  }
+
+  var parts = input.split(/(?:&&|,|\band\b)/i).map(function(s) { return s.trim(); }).filter(Boolean);
+  if (!parts.length) {
+    return { ok: true, min: null, max: null };
+  }
+
+  var minVal = null;
+  var maxVal = null;
+  for (var i = 0; i < parts.length; i++) {
+    var parsed = _parseComparatorToken(parts[i]);
+    if (!parsed) {
+      return { ok: false, message: 'Invalid area condition. Examples: >=2000, <5000, 2000-5000.' };
+    }
+    if (parsed.op === '<') {
+      maxVal = parsed.value;
+    } else if (parsed.op === '<=') {
+      maxVal = parsed.value + _HVAC_RULE_EPSILON;
+    } else if (parsed.op === '>') {
+      minVal = parsed.value + _HVAC_RULE_EPSILON;
+    } else {
+      minVal = parsed.value;
+    }
+  }
+
+  if (minVal !== null && maxVal !== null && minVal > maxVal) {
+    return { ok: false, message: 'Area condition is invalid. Min must be less than or equal to max.' };
+  }
+  return { ok: true, min: minVal, max: maxVal };
+}
+
+function parseAmbientCondition(raw) {
+  var input = String(raw || '').trim();
+  if (!input) return { ok: true, min: null };
+
+  var parsed = _parseComparatorToken(input);
+  if (!parsed) {
+    return { ok: false, message: 'Invalid ambient temp condition. Examples: >=45 or 45.' };
+  }
+  if (parsed.op === '<' || parsed.op === '<=') {
+    return { ok: false, message: 'Ambient Temp supports only >= or > with current rule logic.' };
+  }
+  if (parsed.op === '>') {
+    return { ok: true, min: parsed.value + _HVAC_RULE_EPSILON };
+  }
+  return { ok: true, min: parsed.value };
 }
 
 // ── Toggle active ────────────────────────────────────────────────────────────

@@ -1,0 +1,58 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1684 >>
+stream
+BT
+/F1 8 Tf
+40 800 Td
+(QUOTATION DOCUMENT) Tj T*
+() Tj T*
+(Supplier  : Saudi HVAC Corporation \(Alt 3\)) Tj T*
+(Reference : SHC/Q/2026/KSA/0311-D3) Tj T*
+(Subject   : Lulu Hypermarket Riyadh - Chiller Plant ITC) Tj T*
+(Currency  : AED) Tj T*
+() Tj T*
+(No.   Description                                   UOM      Qty     Unit Rate    Amount      ) Tj T*
+(-----------------------------------------------------------------------------------------------) Tj T*
+(1     Chilled Water Piping GMS Class C 100mm dia    m        280     95           26600       ) Tj T*
+(2     GIS 200mm Butterfly Valve with Actuator       No       12      1850         22200       ) Tj T*
+(3     GI Sheet Metal Ducting Supply and Return      m2       1200    85           102000      ) Tj T*
+(4     Armaflex AF 32mm Pipe Insulation              m        560     32           17920       ) Tj T*
+(5     FCU Installation Labour Cassette Type         No       48      750          36000       ) Tj T*
+(6     Chiller Installation Heavy Lift and Rigging   No       3       15000        45000       ) Tj T*
+(7     BMS Honeywell Lyric Integration Panel         Lot      1       28000        28000       ) Tj T*
+(8     Commissioning Water and Air Balancing         Lot      1       18000        18000       ) Tj T*
+(9     Pipe Supports and Trapeze Hangers             Lot      1       9500         9500        ) Tj T*
+(-----------------------------------------------------------------------------------------------) Tj T*
+(                                                                           TOTAL: AED     305,220.00) Tj T*
+() Tj T*
+(Geography: KSA | Scope: ITC | Project: Lulu KSA Phase 2 Expansion) Tj T*
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001977 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2045
+%%EOF

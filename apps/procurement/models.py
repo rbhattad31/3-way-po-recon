@@ -78,7 +78,7 @@ class ProcurementRequest(BaseModel):
     status = models.CharField(
         max_length=20,
         choices=ProcurementRequestStatus.choices,
-        default=ProcurementRequestStatus.DRAFT,
+        default=ProcurementRequestStatus.PENDING_RFQ,
         db_index=True,
     )
     priority = models.CharField(

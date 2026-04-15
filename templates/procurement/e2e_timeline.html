@@ -215,8 +215,8 @@
     <div class="d-flex gap-2 flex-wrap">
       <span class="badge bg-light text-dark">{{ proc_request.domain_code }}</span>
       <span class="badge bg-light text-dark">{{ proc_request.request_type }}</span>
-      <span class="badge bg-{% if proc_request.status == 'COMPLETED' %}success{% elif proc_request.status == 'FAILED' %}danger{% elif proc_request.status == 'PROCESSING' %}info{% else %}secondary{% endif %}">
-        {{ proc_request.status }}
+      <span class="badge bg-{% if proc_request.status == 'COMPLETED' %}success{% elif proc_request.status == 'FAILED' %}danger{% elif proc_request.status == 'READY_RFQ' %}primary{% elif proc_request.status == 'PENDING_RFQ' %}warning text-dark{% else %}secondary{% endif %}">
+        {{ proc_request.get_status_display }}
       </span>
       {% if proc_request.priority == 'HIGH' or proc_request.priority == 'CRITICAL' %}
       <span class="badge bg-warning text-dark">{{ proc_request.priority }}</span>

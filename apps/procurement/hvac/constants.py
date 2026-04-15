@@ -97,7 +97,7 @@ SYSTEM_TYPES = {
 #
 # Prices are supply + installation (turnkey) unless noted as "supply only"
 # Sources: Regional distributor rates, DEWA-approved contractor quotes,
-#          Landmark Group historical procurement data
+#          Bradsol Group historical procurement data
 # ---------------------------------------------------------------------------
 HVAC_BENCHMARK_CATALOG: Dict[str, Dict[str, Any]] = {
     # ── Split Systems ──────────────────────────────────────────────────────
