@@ -223,6 +223,7 @@ def request_list(request):
 
     qs = ProcurementRequest.objects.select_related("created_by", "assigned_to").filter(
         is_duplicate=False,
+        duplicate_of__isnull=True,
     ).annotate(
         attribute_count=Count("attributes"),
         quotation_count=Count("quotations"),
@@ -253,7 +254,10 @@ def request_list(request):
     page = paginator.get_page(request.GET.get("page"))
 
     # Distinct domain codes for filter dropdown
-    domains_qs = ProcurementRequest.objects.filter(is_duplicate=False)
+    domains_qs = ProcurementRequest.objects.filter(
+        is_duplicate=False,
+        duplicate_of__isnull=True,
+    )
     if tenant is not None:
         domains_qs = domains_qs.filter(tenant=tenant)
     domains = (
@@ -327,12 +331,12 @@ def request_create(request):
 
 
 # ---------------------------------------------------------------------------
-# 2b. Create HVAC Request (Landmark Group HVAC-specific form)
+# 2b. Create HVAC Request (Bradsol HVAC-specific form)
 # ---------------------------------------------------------------------------
 @login_required
 @permission_required_code("procurement.create")
 def hvac_create(request):
-    """Create a new HVAC procurement request using the Landmark Group HVAC form."""
+    """Create a new HVAC procurement request using the Bradsol HVAC form."""
     if request.method == "POST":
         from apps.procurement.services.request_service import ProcurementRequestService
         from apps.procurement.services.analysis_run_service import AnalysisRunService
@@ -2343,12 +2347,12 @@ def quotation_prefill_review(request, pk):
 
 
 # ---------------------------------------------------------------------------
-# Procurement Manager Dashboard — Landmark Group
+# Procurement Manager Dashboard — Bradsol
 # ---------------------------------------------------------------------------
 @login_required
 @permission_required_code("procurement.view")
 def procurement_dashboard(request):
-    """Landmark Group Procurement Manager Dashboard with KPIs, charts, and quick actions."""
+    """Bradsol Procurement Manager Dashboard with KPIs, charts, and quick actions."""
     from django.db.models import Count
 
     qs = ProcurementRequest.objects.filter(is_duplicate=False)
