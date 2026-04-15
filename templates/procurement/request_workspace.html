@@ -2015,15 +2015,21 @@
       });
   }
 
-  // When external tab becomes visible: auto-fetch if no saved data, else build chart
+  // Auto-fetch once on page load when no saved data,
+  // so external suggestions are ready without waiting for tab click.
   var _wsTriggered = _HAS_SAVED;
+  if (!_wsTriggered) {
+    _wsTriggered = true;
+    setTimeout(function() {
+      doFetch();
+    }, 900);
+  }
+
+  // When external tab becomes visible: if already fetched/saved, just build chart.
   var extTab = document.getElementById("external-tab");
   if (extTab) {
     extTab.addEventListener("shown.bs.tab", function() {
-      if (!_wsTriggered) {
-        _wsTriggered = true;
-        doFetch();
-      } else if (_HAS_SAVED && window._WS_MI_SAVED && Array.isArray(window._WS_MI_SAVED)) {
+      if (_HAS_SAVED && window._WS_MI_SAVED && Array.isArray(window._WS_MI_SAVED)) {
         setTimeout(function() {
           buildChart(window._WS_MI_SAVED);
           if (window._WS_MI_SAVED_CITATIONS) {
