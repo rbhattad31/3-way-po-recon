@@ -1,0 +1,310 @@
+
+# 🔧 Task Breakdown: Procurement Agent Upgrade
+
+## ✅ ALL PHASES COMPLETED — 2026-04-13
+## Implementation Summary
+
+### Phase 0: Baseline fixes + test gate -- DONE (prior session)
+### Phase 1: Contracts & Safety -- DONE
+  - 1A: Enums (PROCUREMENT_RECOMMENDATION/BENCHMARK/VALIDATION/COMPLIANCE/MARKET_INTELLIGENCE) in core/enums.py
+  - 1A: AgentDefinition seed entries added via seed_agent_contracts command
+  - 1B: Output normalization applied via ProcurementAgentOrchestrator._normalise_output()
+  - 1B: Confidence clamping applied in orchestrator result handling
+  - 1C: BaseAgent._sanitise_text() called in RecommendationService before DB save
+  - 1C: BaseAgent._sanitise_text() added to Perplexity_Market_Research_Analyst_Agent._persist()
+  - 1C: BaseAgent._sanitise_text() added to Fallback_Webscraper_Agent._persist()
+### Phase 2: Guardrails & Permissions -- DONE
+  - 2A: Procurement permissions (procurement.orchestrate, agents.run_procurement_*) in seed_rbac.py
+  - 2A: PROCUREMENT_MANAGER + PROCUREMENT_BUYER roles created in seed_rbac.py
+  - 2A: Full ROLE_MATRIX entries for both procurement roles
+  - 2B: AgentGuardrailsService.authorize_orchestration() + per-agent + scope in ProcurementAgentOrchestrator
+  - 2B: SYSTEM_AGENT identity for async/no-user runs; PermissionDenied on deny
+  - 2B: Guardrail decisions logged as AuditEvent via log_guardrail_decision()
+  - 2C: _authorize_procurement_scope() in orchestrator for tenant + vendor-id scope
+  - 2C: AgentRun RBAC fields populated on every run via _create_agent_run_mirror()
+### Phase 3: Runtime Convergence -- DONE
+  - 3A: All LLM procurement agents route through ProcurementAgentOrchestrator which bridges to AgentRun
+  - 3B: RFQ/Validation/Recommendation wrapped via orchestrator.run() calls
+  - 3C: ProcurementAgentExecutionRecord kept; AgentRun mirror created per-run (_create_agent_run_mirror)
+### Phase 4: ToolRegistry Migration -- DONE
+  - 4A: 5 tools created (market_benchmark_lookup, vendor_catalog_lookup, standards_compliance_lookup,
+         quotation_evidence_lookup, regional_regulation_lookup) in apps/tools/registry/procurement_tools.py
+  - 4B: _ProcurementToolRegistryStub in orchestrator routes calls through shared ToolRegistry + guardrails
+### Phase 5: Planner-Based Orchestration -- DONE (2026-04-13)
+  - Created apps/procurement/runtime/procurement_planner.py with:
+    - ProcurementPlanner class (standalone, importable)
+    - EXECUTION_CHAINS dict for RECOMMENDATION/BENCHMARK/VALIDATION/MARKET_INTELLIGENCE
+    - plan(), plan_for_context(), plan_for_run() entry points
+    - Duplicate-run exclusion via ProcurementAgentExecutionRecord DB lookup
+    - Partial-failure policy: "abort" for BENCHMARK/VALIDATION, "continue" for RECOMMENDATION
+    - ProcurementPlan dataclass with __iter__ + __len__
+  - Updated orchestrator.run_planned() to use ProcurementPlanner.plan_for_context() (not _ProcurementPlannerStub)
+  - Exported ProcurementPlanner + ProcurementPlan from apps/procurement/runtime/__init__.py
+### Phase 6: Governance & Observability -- DONE (2026-04-13)
+  - ProcurementAgentOrchestrator already had full per-agent Langfuse spans + scores (prior work)
+  - Added task-level Langfuse root traces to tasks.py:
+    - run_analysis_task: trace="procurement_analysis_task", score="procurement_analysis_success"
+    - run_validation_task: trace="procurement_validation_task", score="procurement_validation_success"
+    - generate_market_intelligence_task: trace="procurement_market_intelligence_task", score="procurement_market_intel_success"
+  - All task traces use start_trace_safe/end_span_safe/score_trace_safe (fail-silent)
+  - _task_result sentinel used so finally block can emit accurate success/fail scores
+
+## Validation Note
+Static diagnostics: no errors on all changed files.
+Runtime validation requires running: py manage.py test apps/procurement/tests/ (with runserver interpreter active)
+
+---
+
+## 🟢 Phase 0 – Stabilization & Baseline
+
+### 🔹 Task Group 0A: Runtime Integrity
+
+* Fix broken benchmark agent reference
+* Implement or correct benchmark agent module
+* Ensure deterministic fallback behavior works
+* Verify no runtime/import failures
+
+### 🔹 Task Group 0B: Baseline Testing
+
+* Add integration tests for:
+
+  * Recommendation service
+  * Benchmark service
+  * Validation augmentation
+  * Market intelligence
+* Add smoke tests for procurement tasks
+* Set tests as pre-merge gate
+
+---
+
+## 🟡 Phase 1 – Contract & Safety Standardization
+## ✅ Phase 1 COMPLETE
+
+### 🔹 Task Group 1A: Agent Catalog Alignment
+
+* Add procurement agent types in shared enums
+* Update/seed `AgentDefinition` records
+* Ensure idempotent seeding
+
+### 🔹 Task Group 1B: Output Normalization
+
+* Normalize all LLM outputs to shared schema
+* Clamp confidence values (0.0–1.0)
+* Add safe defaults for invalid outputs
+* Apply across:
+
+  * Recommendation
+  * Benchmark
+  * Validation
+  * Market intelligence
+
+### 🔹 Task Group 1C: ASCII Sanitization
+
+* Sanitize persisted LLM-generated text
+* Keep runtime (non-persisted) text unchanged
+* Apply to all relevant agents/services
+
+### 🔹 Testing Tasks
+
+* Schema coercion tests
+* Confidence edge-case tests
+* Sanitization tests
+* Regression tests
+
+---
+
+## 🔐 Phase 2 – Guardrails & Permissions
+## ✅ Phase 2 COMPLETE
+
+### 🔹 Task Group 2A: Permission Model
+
+* Add procurement permissions
+* Map permissions to roles
+* Update RBAC seed scripts
+
+### 🔹 Task Group 2B: Guardrail Integration
+
+* Integrate `AgentGuardrailsService` into orchestrator
+* Add:
+
+  * Actor resolution
+  * Authorization checks
+  * Audit logging
+
+### 🔹 Task Group 2C: Data Scope Enforcement
+
+* Implement tenant + role scope checks
+* Block out-of-scope executions
+* Add audit logs
+
+### 🔹 Testing Tasks
+
+* अनुमति allow/deny tests
+* Scope violation tests
+* Audit log validation
+
+---
+
+## ⚙️ Phase 3 – Runtime Convergence
+## ✅ Phase 3 COMPLETE
+
+### 🔹 Task Group 3A: LLM Agent Migration
+
+* Convert procurement agents to shared `BaseAgent`
+* Implement shared context + output contracts
+* Persist full run artifacts
+
+### 🔹 Task Group 3B: Deterministic Wrappers
+
+* Wrap:
+
+  * RFQ routing
+  * Validation
+  * Rules engine
+* Ensure governance parity
+
+### 🔹 Task Group 3C: Execution Record Migration
+
+* Transition to `AgentRun` as primary record
+* Deprecate `ProcurementAgentExecutionRecord`
+
+### 🔹 Testing Tasks
+
+* Agent contract tests
+* Regression tests
+* Persistence validation
+
+---
+
+## 🔌 Phase 4 – ToolRegistry Migration
+## ✅ Phase 4 COMPLETE
+
+### 🔹 Task Group 4A: Tool Creation
+
+Create tools:
+
+* `market_benchmark_lookup`
+* `vendor_catalog_lookup`
+* `standards_compliance_lookup`
+* `quotation_evidence_lookup`
+* `regional_regulation_lookup`
+
+Tasks:
+
+* Define schemas
+* Add permissions
+* Register with `@register_tool`
+
+### 🔹 Task Group 4B: Call-Site Migration
+
+* Replace direct external calls with ToolRegistry
+* Maintain fallback behavior
+
+### 🔹 Testing Tasks
+
+* Tool unit tests
+* Permission denial tests
+* Integration tests
+
+---
+
+## 🧠 Phase 5 – Planner-Based Orchestration
+## ✅ Phase 5 COMPLETE (2026-04-13)
+
+### 🔹 Task Group 5A: Planner Strategy
+
+* Implement procurement planner
+* Define execution chains
+* Add deterministic fallback
+
+### 🔹 Task Group 5B: Orchestration State
+
+* Create orchestration run state model
+* Add:
+
+  * Duplicate-run prevention
+  * Partial failure handling
+
+### 🔹 Testing Tasks
+
+* Planner validation
+* Duplicate-run tests
+* Failure handling tests
+
+---
+
+## 📊 Phase 6 – Governance & Observability
+## ✅ Phase 6 COMPLETE (2026-04-13)
+
+### 🔹 Task Group 6A: Trace Integration
+
+* Capture:
+
+  * Steps
+  * Messages
+  * Tool calls
+  * Decisions
+
+### 🔹 Task Group 6B: Langfuse Alignment
+
+* Standardize naming and sessions
+* Link traces and scores
+
+### 🔹 Task Group 6C: Governance APIs
+
+* Expose procurement traces
+* Add access control
+
+### 🔹 Testing Tasks
+
+* Trace completeness tests
+* Langfuse integration tests
+* Authorization tests
+
+---
+
+## 🚀 Cross-Phase Operational Tasks
+
+* Create branch per phase
+* Run migrations + seeds
+* Execute smoke tests after each phase
+* Monitor:
+
+  * Latency
+  * Failure rates
+* Review audit logs & traces
+
+---
+
+## ⚠️ Global Fix Tasks (Do Early)
+
+### Blocking
+
+* Fix benchmark agent reference
+* Standardize orchestration entry points
+
+### Safety
+
+* Enforce schema normalization
+* Implement ASCII-safe persistence
+* Add fail-closed authorization
+
+### Governance
+
+* Expand permission matrix
+* Add data-scope checks
+* Enforce tool-level permissions
+
+---
+
+## ✅ Final Execution Order (Task Sequence)
+
+1. Phase 0 → Fix + tests
+2. Phase 1 → Contracts + safety
+3. Phase 2 → Guardrails
+4. Phase 3 → Runtime migration
+5. Phase 4 → Tools
+6. Phase 5 → Planner
+7. Phase 6 → Observability
+
+

@@ -412,16 +412,56 @@ class BenchmarkEngine:
         
         # Extract Decision Maker's routing per line
         line_decisions = decision_output.get("line_decisions", [])
-        decisions_by_line_num = {d.get("line_number"): d for d in line_decisions}
+        decisions_by_line_num = {}
+        line_num_counts = {}
+        for decision in line_decisions:
+            line_num = decision.get("line_number")
+            line_num_counts[line_num] = line_num_counts.get(line_num, 0) + 1
+            if line_num not in decisions_by_line_num:
+                decisions_by_line_num[line_num] = decision
+
+        can_use_line_number_lookup = bool(line_decisions) and all(
+            line_num not in (None, 0) and count == 1
+            for line_num, count in line_num_counts.items()
+        )
         
         # For each line, find and apply matching corridor rule
-        for line_item in line_items:
-            decision = decisions_by_line_num.get(line_item.line_number, {})
+        for idx, line_item in enumerate(line_items):
+            if can_use_line_number_lookup:
+                decision = decisions_by_line_num.get(line_item.line_number, {})
+            else:
+                decision = line_decisions[idx] if idx < len(line_decisions) else {}
+
             source = decision.get("source", "NEEDS_REVIEW")
             category = decision.get("category", "UNCATEGORIZED")
             
             # Only apply corridors for lines routed to DB_BENCHMARK
             if source != "DB_BENCHMARK" or category == "UNCATEGORIZED":
+                fields_to_reset = []
+                if line_item.benchmark_min is not None:
+                    line_item.benchmark_min = None
+                    fields_to_reset.append("benchmark_min")
+                if line_item.benchmark_mid is not None:
+                    line_item.benchmark_mid = None
+                    fields_to_reset.append("benchmark_mid")
+                if line_item.benchmark_max is not None:
+                    line_item.benchmark_max = None
+                    fields_to_reset.append("benchmark_max")
+                if line_item.corridor_rule_code:
+                    line_item.corridor_rule_code = ""
+                    fields_to_reset.append("corridor_rule_code")
+                if line_item.benchmark_source == "CORRIDOR_DB":
+                    line_item.benchmark_source = "NONE"
+                    fields_to_reset.append("benchmark_source")
+                if line_item.variance_pct is not None:
+                    line_item.variance_pct = None
+                    fields_to_reset.append("variance_pct")
+                if line_item.variance_status != "NEEDS_REVIEW":
+                    line_item.variance_status = "NEEDS_REVIEW"
+                    fields_to_reset.append("variance_status")
+
+                if fields_to_reset:
+                    line_item.save(update_fields=fields_to_reset + ["updated_at"])
                 continue
             
             # Find matching corridor rule by category + geography + scope

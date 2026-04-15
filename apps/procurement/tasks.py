@@ -56,8 +56,8 @@ def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
     except Exception:
         pass
 
-    # Mark request as PROCESSING
-    ProcurementRequestService.update_status(request, ProcurementRequestStatus.PROCESSING)
+    # Keep the request in Pending RFQ while background analysis runs.
+    ProcurementRequestService.update_status(request, ProcurementRequestStatus.PENDING_RFQ)
 
     _task_result: dict = {"status": "failed"}
     try:
@@ -200,12 +200,12 @@ def run_validation_task(self, tenant_id: int = None, run_id: int = 0, *, agent_e
 
         # Update request status based on validation outcome
         status_map = {
-            ValidationOverallStatus.PASS: ProcurementRequestStatus.READY,
-            ValidationOverallStatus.PASS_WITH_WARNINGS: ProcurementRequestStatus.READY,
-            ValidationOverallStatus.REVIEW_REQUIRED: ProcurementRequestStatus.REVIEW_REQUIRED,
+            ValidationOverallStatus.PASS: ProcurementRequestStatus.PENDING_RFQ,
+            ValidationOverallStatus.PASS_WITH_WARNINGS: ProcurementRequestStatus.PENDING_RFQ,
+            ValidationOverallStatus.REVIEW_REQUIRED: ProcurementRequestStatus.PENDING_RFQ,
             ValidationOverallStatus.FAIL: ProcurementRequestStatus.FAILED,
         }
-        new_status = status_map.get(result.overall_status, ProcurementRequestStatus.REVIEW_REQUIRED)
+        new_status = status_map.get(result.overall_status, ProcurementRequestStatus.PENDING_RFQ)
         ProcurementRequestService.update_status(request, new_status)
 
         _val_result = {

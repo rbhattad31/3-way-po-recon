@@ -1,6 +1,6 @@
 {% extends "procurement/proc_base.html" %}
 {% load static %}
-{% block title %}Procurement Dashboard — Landmark Group{% endblock %}
+{% block title %}Procurement Dashboard — Bradsol Group{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/procurement/procurement-dashboard.css' %}">
@@ -14,7 +14,7 @@
     <div class="fw-bold mb-2 d-flex align-items-center gap-3">
        <img src="{% static 'images/bradsol-logo.png' %}?v=3" alt="Bradsol" width="132" height="34"
          style="width:132px;height:34px;max-width:132px;max-height:34px;object-fit:contain;background:#fff;border-radius:8px;padding:4px 10px;">
-      <span style="font-size:1.05rem;letter-spacing:.5px;opacity:.9;">Procurement Intelligence for Landmark Group</span>
+      <span style="font-size:1.05rem;letter-spacing:.5px;opacity:.9;">Procurement Intelligence for Bradsol Group</span>
     </div>
 
     <div class="lmg-brand-pills mb-2">
@@ -52,21 +52,27 @@
   </div>
 
   <div class="proc-kpi">
-    <div class="val text-secondary">{{ kpi.draft }}</div>
-    <div class="lbl">Draft</div>
-    <div class="sub">In preparation</div>
+    <div class="val text-warning">{{ kpi.pending_rfq }}</div>
+    <div class="lbl">Pending RFQ</div>
+    <div class="sub">Awaiting RFQ</div>
   </div>
 
   <div class="proc-kpi">
-    <div class="val text-warning">{{ kpi.pending_approval }}</div>
-    <div class="lbl">Review</div>
-    <div class="sub">Needs action</div>
+    <div class="val text-primary">{{ kpi.ready_rfq }}</div>
+    <div class="lbl">Ready RFQ</div>
+    <div class="sub">Ready to download</div>
   </div>
 
   <div class="proc-kpi">
-    <div class="val text-success">{{ kpi.approved }}</div>
+    <div class="val text-success">{{ kpi.completed }}</div>
     <div class="lbl">Completed</div>
     <div class="sub">Processed</div>
+  </div>
+
+  <div class="proc-kpi">
+    <div class="val text-danger">{{ kpi.failed }}</div>
+    <div class="lbl">Failed</div>
+    <div class="sub">Needs retry</div>
   </div>
 
   <div class="proc-kpi">
@@ -162,14 +168,10 @@
           <td>
             {% if req.status == 'COMPLETED' %}
               <span class="badge" style="background:#16a34a;color:#fff;">Completed</span>
-            {% elif req.status == 'PROCESSING' %}
-              <span class="badge bg-warning text-dark">Processing</span>
-            {% elif req.status == 'REVIEW_REQUIRED' %}
-              <span class="badge" style="background:#ea580c;color:#fff;">Review Required</span>
-            {% elif req.status == 'DRAFT' %}
-              <span class="badge bg-secondary">Draft</span>
-            {% elif req.status == 'READY' %}
-              <span class="badge bg-primary">Ready</span>
+            {% elif req.status == 'PENDING_RFQ' %}
+              <span class="badge bg-warning text-dark">Pending RFQ</span>
+            {% elif req.status == 'READY_RFQ' %}
+              <span class="badge bg-primary">Ready RFQ</span>
             {% elif req.status == 'FAILED' %}
               <span class="badge bg-danger">Failed</span>
             {% else %}
@@ -209,10 +211,8 @@
   if (statusCtx) {
     var STATUS_COLORS = {
       'COMPLETED':       '#16a34a',
-      'PROCESSING':      '#f59e0b',
-      'REVIEW_REQUIRED': '#ea580c',
-      'READY':           '#3b82f6',
-      'DRAFT':           '#6b7280',
+      'PENDING_RFQ':     '#f59e0b',
+      'READY_RFQ':       '#3b82f6',
       'FAILED':          '#ef4444'
     };
     var FALLBACK_COLORS = ['#8b5cf6', '#ec4899', '#0ea5e9', '#14b8a6', '#f97316'];

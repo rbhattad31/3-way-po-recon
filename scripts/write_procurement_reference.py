@@ -85,7 +85,7 @@ pre code {{ background: none; padding: 0; color: inherit; font-size: inherit; }}
     <div id="overview" class="docs-section" style="padding-top:.25rem;border-top:none">
       <h1 class="docs-section-title">
         <i class="bi bi-building-fill-gear me-2 text-warning"></i>Procurement Intelligence Platform
-        <span style="font-size:.65rem;font-weight:700;background:#fef3c7;color:#92400e;padding:.2rem .5rem;border-radius:4px;vertical-align:middle;margin-left:.5rem;">Landmark Group</span>
+        <span style="font-size:.65rem;font-weight:700;background:#fef3c7;color:#92400e;padding:.2rem .5rem;border-radius:4px;vertical-align:middle;margin-left:.5rem;">Bradsol Group</span>
       </h1>
       <p class="text-muted mb-4" style="max-width:720px">
         End-to-end procurement intelligence covering request management, AI-powered quotation extraction,
@@ -534,7 +534,7 @@ flowchart TD
     <div id="hvac-intelligence" class="docs-section">
       <h2 class="docs-section-title"><i class="bi bi-wind me-2 text-info"></i>HVAC Intelligence</h2>
       <p class="text-muted mb-3">
-        HVAC is the primary domain for Landmark Group. The platform contains GCC-calibrated selection logic,
+        HVAC is the primary domain for Bradsol Group. The platform contains GCC-calibrated selection logic,
         2025 AED market benchmarks, and site-specific engineering rules for all six GCC countries.
       </p>
 
@@ -650,7 +650,7 @@ flowchart TD
           <tbody>
             <tr><td>Procurement Dashboard</td><td><code>procurement:procurement_dashboard</code></td><td>KPI cards (total, by status, HVAC count), status doughnut chart, domain bar chart, recent requests table</td></tr>
             <tr><td>All Requests</td><td><code>procurement:request_list</code></td><td>Filterable list with status badges, domain tags, priority, quick Open action</td></tr>
-            <tr><td>New HVAC Request</td><td><code>procurement:hvac_create</code></td><td>Comprehensive HVAC site parameters form. Landmark Group dark-theme. JS converts f_* fields to attr_code[]/attr_value[] arrays on submit. Optional quotation upload triggers extraction pipeline.</td></tr>
+            <tr><td>New HVAC Request</td><td><code>procurement:hvac_create</code></td><td>Comprehensive HVAC site parameters form. Bradsol Group dark-theme. JS converts f_* fields to attr_code[]/attr_value[] arrays on submit. Optional quotation upload triggers extraction pipeline.</td></tr>
             <tr><td>New Request (Generic)</td><td><code>procurement:request_create</code></td><td>Domain-agnostic request form for non-HVAC use cases</td></tr>
             <tr><td>Request Workspace</td><td><code>procurement:request_workspace pk</code></td><td>Deep-dive per request. Tabs: Overview, Attributes, Quotations, Analysis Results, Reference Catalogue. Run Analysis + Mark Ready actions.</td></tr>
             <tr><td>Prefill Review</td><td><code>quotation_prefill_review</code></td><td>Field-by-field review of LLM-extracted quotation data before DB persistence</td></tr>

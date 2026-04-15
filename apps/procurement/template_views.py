@@ -68,10 +68,8 @@ def _generate_reason_summary_with_tracking(*, recommendation, proc_request, requ
 
 
 _PROCUREMENT_TIMELINE_META = {
-    "DRAFT": {"label": "Draft", "tone": "secondary", "icon": "bi-pencil-square", "action": "Draft saved"},
-    "PROCESSING": {"label": "Processing", "tone": "info", "icon": "bi-cpu", "action": "AI analysis running"},
-    "READY": {"label": "Ready", "tone": "primary", "icon": "bi-check2-circle", "action": "Ready for sourcing"},
-    "REVIEW_REQUIRED": {"label": "Review", "tone": "warning", "icon": "bi-exclamation-circle", "action": "Needs buyer review"},
+    "PENDING_RFQ": {"label": "Pending RFQ", "tone": "warning", "icon": "bi-hourglass-split", "action": "Awaiting RFQ generation"},
+    "READY_RFQ": {"label": "Ready RFQ", "tone": "primary", "icon": "bi-file-earmark-arrow-down", "action": "RFQ is ready for download"},
     "COMPLETED": {"label": "Completed", "tone": "success", "icon": "bi-check-circle-fill", "action": "Workflow completed"},
     "FAILED": {"label": "Failed", "tone": "danger", "icon": "bi-x-octagon", "action": "Processing failed"},
 }
@@ -205,6 +203,12 @@ def procurement_home(request):
 def request_list(request):
     """List all procurement requests with filters."""
     tenant = getattr(request, "tenant", None)
+    status_choices = [
+        (ProcurementRequestStatus.PENDING_RFQ, "Pending RFQ"),
+        (ProcurementRequestStatus.READY_RFQ, "Ready RFQ"),
+        ("RECOMMENDATION_SUCCESS", "Recommendation Success"),
+        ("RECOMMENDATION_FAILED", "Recommendation Failed"),
+    ]
     # Subquery: latest recommendation_option for each request
     latest_recommendation_sq = Subquery(
         RecommendationResult.objects.filter(
@@ -235,17 +239,29 @@ def request_list(request):
         qs = qs.filter(tenant=tenant)
 
     # Filters
-    status_filter = request.GET.get("status")
-    type_filter = request.GET.get("request_type")
-    domain_filter = request.GET.get("domain_code")
+    status_filter = (request.GET.get("status") or "").strip()
     search = request.GET.get("q")
 
-    if status_filter:
+    if status_filter == "RECOMMENDATION_SUCCESS":
+        qs = qs.filter(
+            status__in=[
+                ProcurementRequestStatus.PENDING_RFQ,
+                ProcurementRequestStatus.READY_RFQ,
+                ProcurementRequestStatus.COMPLETED,
+            ]
+        )
+    elif status_filter == "RECOMMENDATION_FAILED":
+        qs = qs.filter(status=ProcurementRequestStatus.FAILED)
+    elif status_filter in {
+        ProcurementRequestStatus.PENDING_RFQ,
+        ProcurementRequestStatus.READY_RFQ,
+        ProcurementRequestStatus.COMPLETED,
+        ProcurementRequestStatus.FAILED,
+    }:
         qs = qs.filter(status=status_filter)
-    if type_filter:
-        qs = qs.filter(request_type=type_filter)
-    if domain_filter:
-        qs = qs.filter(domain_code=domain_filter)
+    else:
+        status_filter = ""
+
     if search:
         qs = qs.filter(Q(title__icontains=search) | Q(description__icontains=search))
 
@@ -253,27 +269,10 @@ def request_list(request):
     paginator = Paginator(qs, 25)
     page = paginator.get_page(request.GET.get("page"))
 
-    # Distinct domain codes for filter dropdown
-    domains_qs = ProcurementRequest.objects.filter(
-        is_duplicate=False,
-        duplicate_of__isnull=True,
-    )
-    if tenant is not None:
-        domains_qs = domains_qs.filter(tenant=tenant)
-    domains = (
-        domains_qs.values_list("domain_code", flat=True)
-        .distinct()
-        .order_by("domain_code")
-    )
-
     return render(request, "procurement/request_list.html", {
         "page_obj": page,
-        "status_choices": ProcurementRequestStatus.choices,
-        "type_choices": ProcurementRequestType.choices,
-        "domains": domains,
+        "status_choices": status_choices,
         "current_status": status_filter or "",
-        "current_type": type_filter or "",
-        "current_domain": domain_filter or "",
         "search_query": search or "",
     })
 
@@ -1086,10 +1085,17 @@ def request_workspace(request, pk):
                         return _ss
         return None
 
+    def _reason_summary_value(summary, key, default=""):
+        if not summary:
+            return default
+        if isinstance(summary, dict):
+            return summary.get(key, default)
+        return getattr(summary, key, default)
+
     if recommendation:
         # Step 1: try reason_summary.system_code (startswith / contains match)
         if reason_summary:
-            _sys_code = (getattr(reason_summary, "system_code", "") or "").upper()
+            _sys_code = (_reason_summary_value(reason_summary, "system_code", "") or "").upper()
             if _sys_code:
                 matched_service_scope = _find_scope_by_code(_sys_code, all_service_scopes)
 
@@ -1123,6 +1129,26 @@ def request_workspace(request, pk):
         if _rows:
             rfq_scope_json[_ss.system_type] = _rows
 
+    rfq_scope_codes = {str(_k).strip().upper() for _k in rfq_scope_json.keys()}
+
+    def _resolve_rfq_system_code(*candidates):
+        for _cand in candidates:
+            _raw = str(_cand or "").strip().upper()
+            if not _raw:
+                continue
+            if _raw in rfq_scope_codes:
+                return _raw
+
+            _scope_by_code = _find_scope_by_code(_raw, _all_scopes_for_rfq)
+            if _scope_by_code and getattr(_scope_by_code, "system_type", ""):
+                return str(_scope_by_code.system_type).strip().upper()
+
+            _scope_by_text = _find_scope_by_text(_raw, _all_scopes_for_rfq)
+            if _scope_by_text and getattr(_scope_by_text, "system_type", ""):
+                return str(_scope_by_text.system_type).strip().upper()
+
+        return ""
+
     # --- Products from DB for RFQ manual product selection (Step 2 cards) ---
     from apps.procurement.models import Product as _HVACProduct
     rfq_db_products = {}
@@ -1144,12 +1170,62 @@ def request_workspace(request, pk):
 
     # --- Latest GeneratedRFQ for this request (for persistent download panel) ---
     from apps.procurement.models import GeneratedRFQ as _GeneratedRFQ
-    rfq_record = (
+    rfq_records = list(
         _GeneratedRFQ.objects
         .filter(request=proc_request)
+        .select_related("generated_by")
         .order_by("-created_at")
-        .first()
     )
+    rfq_record = rfq_records[0] if rfq_records else None
+
+    def _parse_generation_number(_rfq_ref):
+        _raw = str(_rfq_ref or "")
+        if "-G" in _raw:
+            try:
+                return int(_raw.rsplit("-G", 1)[1])
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    _history_rows = []
+    _fallback_gen = len(rfq_records)
+    for _rec in rfq_records:
+        _gen_no = _parse_generation_number(getattr(_rec, "rfq_ref", ""))
+        if _gen_no is None:
+            _gen_no = _fallback_gen
+            _fallback_gen -= 1
+        _history_rows.append({
+            "record": _rec,
+            "generation_no": _gen_no,
+            "generation_label": f"G{_gen_no:02d}",
+        })
+
+    _reason_system_code = _reason_summary_value(reason_summary, "system_code", "") if reason_summary else ""
+    _reason_system_type_code = _reason_summary_value(reason_summary, "system_type_code", "") if reason_summary else ""
+    _payload_system_code = ""
+    _recommended_text = ""
+    if recommendation:
+        _payload_system_code = str(
+            (recommendation.output_payload_json or {}).get("system_type_code", "")
+        )
+        _recommended_text = recommendation.recommended_option or ""
+    _matched_scope_code = str(matched_service_scope.system_type or "") if matched_service_scope else ""
+
+    rfq_recommended_system_code = _resolve_rfq_system_code(
+        _reason_system_code,
+        _reason_system_type_code,
+        _payload_system_code,
+        _recommended_text,
+        _matched_scope_code,
+    )
+
+    if not rfq_recommended_system_code:
+        if "PACKAGED_DX" in rfq_scope_codes:
+            rfq_recommended_system_code = "PACKAGED_DX"
+        elif rfq_scope_codes:
+            rfq_recommended_system_code = sorted(rfq_scope_codes)[0]
+        else:
+            rfq_recommended_system_code = "PACKAGED_DX"
 
     # Generate 2-hour SAS URLs for in-browser preview (fail silent)
     rfq_xlsx_view_url = ""
@@ -1188,6 +1264,9 @@ def request_workspace(request, pk):
         "rfq_scope_json": rfq_scope_json,
         "rfq_db_products": rfq_db_products,
         "rfq_record": rfq_record,
+        "rfq_records": rfq_records,
+        "rfq_history_rows": _history_rows,
+        "rfq_recommended_system_code": rfq_recommended_system_code,
         "rfq_xlsx_view_url": rfq_xlsx_view_url,
         "rfq_pdf_view_url": rfq_pdf_view_url,
         # Duplicate detection context
@@ -1271,6 +1350,7 @@ def generate_rfq(request, pk):
     if request.method == "GET" and request.GET.get("action") == "download":
         from apps.procurement.models import GeneratedRFQ as _GRFQ
         from apps.documents.blob_service import generate_blob_sas_url, is_blob_storage_enabled
+        from apps.procurement.services.request_service import ProcurementRequestService
         rfq_id = request.GET.get("rfq_id", "")
         dl_fmt = request.GET.get("format", "xlsx").strip().lower()
         try:
@@ -1280,6 +1360,7 @@ def generate_rfq(request, pk):
             raise Http404("RFQ record not found.")
         blob_path = _grfq.xlsx_blob_path if dl_fmt == "xlsx" else _grfq.pdf_blob_path
         if blob_path and is_blob_storage_enabled():
+            ProcurementRequestService.mark_ready_rfq(_grfq.request, user=request.user)
             # Force download (not inline preview) by setting Content-Disposition via SAS rscd
             _rfq_ref = f"RFQ-{pk:04d}"
             if dl_fmt == "pdf":
@@ -1371,6 +1452,9 @@ def generate_rfq(request, pk):
 
     if _is_generate_post:
         _rfq_rec = rfq_result.rfq_record
+        from apps.procurement.services.request_service import ProcurementRequestService
+        if _rfq_rec:
+            ProcurementRequestService.mark_ready_rfq(proc_request, user=request.user)
         return JsonResponse({
             "status": "ok",
             "rfq_ref": rfq_ref,
@@ -2364,10 +2448,10 @@ def procurement_dashboard(request):
     status_counts = {item["status"]: item["total"] for item in qs.values("status").annotate(total=Count("id"))}
     kpi = {
         "total": qs.count(),
-        "draft": status_counts.get("DRAFT", 0),
-        "ready": status_counts.get("READY", 0),
-        "pending_approval": status_counts.get("REVIEW_REQUIRED", 0),
-        "approved": status_counts.get("COMPLETED", 0),
+        "pending_rfq": status_counts.get("PENDING_RFQ", 0),
+        "ready_rfq": status_counts.get("READY_RFQ", 0),
+        "completed": status_counts.get("COMPLETED", 0),
+        "failed": status_counts.get("FAILED", 0),
         "hvac": qs.filter(domain_code="HVAC").count(),
     }
 

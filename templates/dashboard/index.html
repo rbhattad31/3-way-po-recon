@@ -24,7 +24,7 @@
       <img src="{% static 'images/bradsol-logo.png' %}?v=3" alt="Bradsol" class="dash-hero-logo" width="140" height="36" style="width:140px;height:36px;max-width:140px;max-height:36px;object-fit:contain;">
     </div>
     <div>
-      <div class="dash-eyebrow">Landmark Group AP Intelligence</div>
+      <div class="dash-eyebrow">Bradsol Group AP Intelligence</div>
       <h4 class="mb-0 fw-semibold">Operations Dashboard</h4>
       <small class="dash-subtitle">Real-time overview of AP processing and reconciliations</small>
     </div>
@@ -78,14 +78,14 @@
   </div>
 </div>
 
-{# LANDMARK GROUP PROCUREMENT QUICK VIEW #}
+{# Bradsol GROUP PROCUREMENT QUICK VIEW #}
 {% has_permission "procurement.view" as dash_can_view_proc %}
 {% if dash_can_view_proc %}
 <div class="ap-card mb-3 dash-procurement-card">
   <div class="ap-card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
     <span>
       <i class="bi bi-building-fill-gear me-1" style="color:#d4a017"></i>
-      <strong>Landmark Group — Procurement</strong>
+      <strong>Bradsol Group — Procurement</strong>
       <span class="badge bg-warning text-dark ms-2" style="font-size:.63rem">HVAC &amp; Facilities</span>
     </span>
     <div class="d-flex gap-2">

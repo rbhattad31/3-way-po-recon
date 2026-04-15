@@ -18,9 +18,8 @@ def pending_reviews(request):
         ).count()
         procurement_count = ProcurementRequest.objects.filter(
             status__in=[
-                ProcurementRequestStatus.DRAFT,
-                ProcurementRequestStatus.READY,
-                ProcurementRequestStatus.REVIEW_REQUIRED,
+                ProcurementRequestStatus.PENDING_RFQ,
+                ProcurementRequestStatus.READY_RFQ,
             ]
         ).count()
         return {

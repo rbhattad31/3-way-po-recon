@@ -109,7 +109,7 @@ class ProcurementRequestService:
             domain_code=domain_code,
             schema_code=schema_code or "",
             request_type=request_type,
-            status=ProcurementRequestStatus.DRAFT,
+            status=ProcurementRequestStatus.PENDING_RFQ,
             priority=priority or "MEDIUM",
             geography_country=geography_country or "",
             geography_city=geography_city or "",
@@ -129,6 +129,22 @@ class ProcurementRequestService:
         return proc_request
 
     @staticmethod
+    def mark_pending_rfq(proc_request: ProcurementRequest, user=None) -> ProcurementRequest:
+        return ProcurementRequestService.update_status(
+            proc_request,
+            ProcurementRequestStatus.PENDING_RFQ,
+            user=user,
+        )
+
+    @staticmethod
+    def mark_ready_rfq(proc_request: ProcurementRequest, user=None) -> ProcurementRequest:
+        return ProcurementRequestService.update_status(
+            proc_request,
+            ProcurementRequestStatus.READY_RFQ,
+            user=user,
+        )
+
+    @staticmethod
     def mark_ready(proc_request: ProcurementRequest, user=None) -> ProcurementRequest:
         required_missing = []
         for attr in proc_request.attributes.filter(is_required=True):
@@ -139,4 +155,4 @@ class ProcurementRequestService:
         if required_missing:
             raise ValueError("Missing required attributes: " + ", ".join(required_missing))
 
-        return ProcurementRequestService.update_status(proc_request, ProcurementRequestStatus.READY, user=user)
+        return ProcurementRequestService.mark_pending_rfq(proc_request, user=user)

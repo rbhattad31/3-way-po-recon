@@ -542,11 +542,9 @@ class ProcurementRequestType(models.TextChoices):
 
 
 class ProcurementRequestStatus(models.TextChoices):
-    DRAFT = "DRAFT", "Draft"
-    READY = "READY", "Ready"
-    PROCESSING = "PROCESSING", "Processing"
+    PENDING_RFQ = "PENDING_RFQ", "Pending RFQ"
+    READY_RFQ = "READY_RFQ", "Ready RFQ"
     COMPLETED = "COMPLETED", "Completed"
-    REVIEW_REQUIRED = "REVIEW_REQUIRED", "Review Required"
     FAILED = "FAILED", "Failed"
 
 

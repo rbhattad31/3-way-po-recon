@@ -219,9 +219,9 @@ class RecommendationService:
 
         ProcurementRequestService.update_status(
             request,
-            ProcurementRequestStatus.REVIEW_REQUIRED
+            ProcurementRequestStatus.FAILED
             if compliance_status == ComplianceStatus.FAIL
-            else ProcurementRequestStatus.COMPLETED,
+            else ProcurementRequestStatus.PENDING_RFQ,
             user=request_user,
         )
 

@@ -1,0 +1,54 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1283 >>
+stream
+BT
+/F1 8 Tf
+40 800 Td
+(QUOTATION DOCUMENT) Tj T*
+() Tj T*
+(Supplier  : Zamil Industrial HVAC) Tj T*
+(Reference : ZAM/Q/2026/DXB/0228) Tj T*
+(Subject   : JAFZA Logistics Hub - Packaged DX Units Equipment Only) Tj T*
+(Currency  : AED) Tj T*
+() Tj T*
+(No.   Description                                   UOM      Qty     Unit Rate    Amount      ) Tj T*
+(-----------------------------------------------------------------------------------------------) Tj T*
+(1     Zamil Packaged Rooftop DX Unit 25TR Class A   No       3       24500        73500       ) Tj T*
+(2     Zamil Packaged DX Unit 20TR R410A Inverter    No       4       20500        82000       ) Tj T*
+(3     GI Ducting Supply 1.0mm Galvanised            m2       320     86           27520       ) Tj T*
+(4     Linear Bar Grilles 600x200mm Anodized         No       85      195          16575       ) Tj T*
+(5     Volume Control Dampers 600x400mm              No       14      1100         15400       ) Tj T*
+(-----------------------------------------------------------------------------------------------) Tj T*
+(                                                                           TOTAL: AED     214,995.00) Tj T*
+() Tj T*
+(Geography: UAE | Scope: EQUIPMENT_ONLY | Project: JAFZA Dubai Logistics Phase 1) Tj T*
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001576 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1644
+%%EOF

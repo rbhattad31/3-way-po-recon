@@ -51,6 +51,7 @@ import datetime
 import io
 import json as _json
 import logging
+from django.db.models import Max
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -226,7 +227,11 @@ class RFQGeneratorAgent:
         budget       = attrs.get("budget_level", "")
 
         today = datetime.date.today().strftime("%d-%b-%Y")
-        rfq_ref = f"RFQ-{proc_request.pk:04d}-{datetime.date.today().strftime('%Y%m%d')}"
+        generation_no = cls._next_generation_number(proc_request)
+        rfq_ref = (
+            f"RFQ-{proc_request.pk:04d}-{datetime.date.today().strftime('%Y%m%d')}"
+            f"-G{generation_no:02d}"
+        )
         capacity_display = f"{cooling_tr} TR" if cooling_tr else capacity_note
         safe_title = cls._safe_title(proc_request)
         filename_xlsx = f"RFQ_{rfq_ref}_{safe_title}.xlsx"
@@ -1052,8 +1057,8 @@ class RFQGeneratorAgent:
 
         xlsx_blob_path = ""
         pdf_blob_path = ""
-        _date_str = datetime.date.today().strftime("%Y%m%d")
-        _base_name = f"RFQ-{proc_request.pk:04d}-{_date_str}_{safe_title}"
+        _timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        _base_name = f"{rfq_ref}_{safe_title}_{_timestamp}"
         _folder = f"rfq/{safe_title}"
 
         try:
@@ -1099,6 +1104,35 @@ class RFQGeneratorAgent:
             rfq_record.pk, proc_request.pk,
         )
         return rfq_record
+
+    @staticmethod
+    def _next_generation_number(proc_request: Any) -> int:
+        """Return the next RFQ generation sequence number for a request."""
+        from apps.procurement.models import GeneratedRFQ
+
+        prefix = f"RFQ-{proc_request.pk:04d}-"
+        refs = list(
+            GeneratedRFQ.objects
+            .filter(request=proc_request, rfq_ref__startswith=prefix)
+            .values_list("rfq_ref", flat=True)
+        )
+
+        max_generation = 0
+        for _ref in refs:
+            _raw = str(_ref or "")
+            if "-G" not in _raw:
+                continue
+            try:
+                _gen = int(_raw.rsplit("-G", 1)[1])
+            except (TypeError, ValueError):
+                continue
+            if _gen > max_generation:
+                max_generation = _gen
+
+        if max_generation > 0:
+            return max_generation + 1
+
+        return GeneratedRFQ.objects.filter(request=proc_request).count() + 1
 
     # ------------------------------------------------------------------
     # Helpers

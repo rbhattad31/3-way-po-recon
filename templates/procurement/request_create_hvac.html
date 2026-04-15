@@ -306,15 +306,23 @@
             <div class="card-body">
               <div class="row g-3">
                 <div class="col-md-4">
+                  <label class="form-label fw-medium">Would You like to Select Similar Store from Existing? <span class="text-danger">*</span></label>
+                  <select id="f_use_existing_store" name="f_use_existing_store" class="form-select" required>
+                    <option value="">-- Select --</option>
+                    <option value="YES">Yes</option>
+                    <option value="NO">No</option>
+                  </select>
+                </div>
+                <div class="col-md-4 d-none" id="store-id-block">
                   <label class="form-label fw-medium">Store ID <span class="text-danger">*</span></label>
-                  <select id="f_store_id_select" style="width:100%;"></select>
+                  <div id="store-id-existing-wrap">
+                    <select id="f_store_id_select" style="width:100%;"></select>
+                  </div>
+                  <div id="store-id-manual-wrap" class="d-none">
+                    <input type="text" id="f_store_id_manual" class="form-control" placeholder="Enter Store ID">
+                  </div>
                   <input type="hidden" name="f_store_id" id="f_store_id_value" value="">
                   <div class="form-text mt-1" id="store-id-hint" style="min-height:1.4em;">Select an existing store or type a new Store ID.</div>
-                </div>
-                <div class="col-md-4">
-                  <label class="form-label fw-medium">Brand</label>
-                  <input type="text" name="f_brand" class="form-control"
-                    placeholder="e.g. Max, Home Centre, Splash">
                 </div>
               </div>
             </div>
@@ -672,6 +680,89 @@ function syncLandlordCustom(val) {
 // -- Store ID Select2: searchable + create-new ---------------------------
 const storeProfilesById = {};
 
+function syncStoreModeUI() {
+  var modeEl = document.getElementById('f_use_existing_store');
+  var block = document.getElementById('store-id-block');
+  var existingWrap = document.getElementById('store-id-existing-wrap');
+  var manualWrap = document.getElementById('store-id-manual-wrap');
+  var manualInput = document.getElementById('f_store_id_manual');
+  var hidden = document.getElementById('f_store_id_value');
+  var hint = document.getElementById('store-id-hint');
+  var mode = modeEl ? modeEl.value : '';
+  var isModeSelected = mode === 'YES' || mode === 'NO';
+  var useExisting = mode === 'YES';
+
+  if (block) {
+    block.classList.toggle('d-none', !isModeSelected);
+  }
+
+  if (existingWrap) {
+    existingWrap.classList.toggle('d-none', !isModeSelected || !useExisting);
+  }
+  if (manualWrap) {
+    manualWrap.classList.toggle('d-none', !isModeSelected || useExisting);
+  }
+
+  if (manualInput) {
+    manualInput.required = isModeSelected && !useExisting;
+  }
+
+  if (!isModeSelected) {
+    if (hint) {
+      hint.textContent = 'Please select Yes or No first.';
+    }
+    if (manualInput) {
+      manualInput.value = '';
+    }
+    if (hidden) {
+      hidden.value = '';
+    }
+    if (window.$ && $('#f_store_id_select').length) {
+      $('#f_store_id_select').val(null).trigger('change');
+    }
+    return;
+  }
+
+  if (useExisting) {
+    if (hint) {
+      hint.textContent = 'Select an existing store or type a new Store ID.';
+    }
+    if (manualInput) {
+      manualInput.value = '';
+    }
+    if (hidden) {
+      hidden.value = '';
+    }
+    if (window.$ && $('#f_store_id_select').length) {
+      $('#f_store_id_select').val(null).trigger('change');
+    }
+  } else {
+    if (hint) {
+      hint.textContent = 'Enter Store ID manually.';
+    }
+    if (hidden) {
+      hidden.value = (manualInput && manualInput.value ? manualInput.value.trim() : '');
+    }
+    clearStoreFields();
+  }
+}
+
+function bindStoreModeEvents() {
+  var modeEl = document.getElementById('f_use_existing_store');
+  var manualInput = document.getElementById('f_store_id_manual');
+  if (modeEl) {
+    modeEl.addEventListener('change', syncStoreModeUI);
+  }
+  if (manualInput) {
+    manualInput.addEventListener('input', function() {
+      var hidden = document.getElementById('f_store_id_value');
+      if (hidden) {
+        hidden.value = manualInput.value.trim();
+      }
+    });
+  }
+}
+
 function setFieldValue(fieldName, value) {
   const field = document.querySelector('[name="' + fieldName + '"]');
   if (!field || value === null || value === undefined) return;
@@ -794,6 +885,10 @@ function initStoreSelect2(results) {
   $('#f_store_id_select').val(null).trigger('change');
 
   $('#f_store_id_select').on('select2:select', function(e) {
+    var modeEl = document.getElementById('f_use_existing_store');
+    if (modeEl && modeEl.value === 'NO') {
+      return;
+    }
     var val   = e.params.data.id;
     var isNew = e.params.data.newTag === true || !storeProfilesById[val];
     var hidden = document.getElementById('f_store_id_value');
@@ -810,6 +905,10 @@ function initStoreSelect2(results) {
   });
 
   $('#f_store_id_select').on('select2:unselect select2:clear', function() {
+    var modeEl = document.getElementById('f_use_existing_store');
+    if (modeEl && modeEl.value === 'NO') {
+      return;
+    }
     var hidden = document.getElementById('f_store_id_value');
     var hint   = document.getElementById('store-id-hint');
     if (hidden) hidden.value = '';
@@ -838,6 +937,9 @@ function initStoreSelect2(results) {
   });
 })();
 
+bindStoreModeEvents();
+syncStoreModeUI();
+
 // Pre-populate city dropdown based on default selected country (UAE)
 onCountryChange();
 
@@ -847,6 +949,7 @@ document.getElementById('hvac-form').addEventListener('submit', function(e) {
   const form = this;
 
   const mandatoryFields = [
+    { name: 'f_use_existing_store', label: 'Select Similar Store from Existing (Yes/No)' },
     { name: 'f_country', label: 'Country' },
     { name: 'f_city', label: 'City' },
     { name: 'f_store_type', label: 'Store Type' },
@@ -862,6 +965,14 @@ document.getElementById('hvac-form').addEventListener('submit', function(e) {
       return !element || !String(element.value || '').trim();
     })
     .map(function(field) { return field.label; });
+
+  const storeModeEl = document.getElementById('f_use_existing_store');
+  const hiddenStoreEl = document.getElementById('f_store_id_value');
+  const modeValue = storeModeEl ? storeModeEl.value : '';
+  const useExistingStore = modeValue === 'YES';
+  if ((modeValue === 'YES' || modeValue === 'NO') && (!hiddenStoreEl || !String(hiddenStoreEl.value || '').trim())) {
+    missingLabels.push(useExistingStore ? 'Store ID (existing/new)' : 'Store ID');
+  }
 
   if (missingLabels.length) {
     Swal.fire({

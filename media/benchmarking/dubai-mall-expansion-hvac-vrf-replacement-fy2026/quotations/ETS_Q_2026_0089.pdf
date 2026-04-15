@@ -1,0 +1,58 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1517 >>
+stream
+BT
+/F1 8 Tf
+40 800 Td
+(QUOTATION DOCUMENT) Tj T*
+() Tj T*
+(Supplier  : Emirates Technical Services) Tj T*
+(Reference : ETS/Q/2026/0089) Tj T*
+(Subject   : Dubai Mall Expansion - HVAC VRF Replacement FY2026) Tj T*
+(Currency  : AED) Tj T*
+() Tj T*
+(No.   Description                                   UOM      Qty     Unit Rate    Amount      ) Tj T*
+(-----------------------------------------------------------------------------------------------) Tj T*
+(1     Mitsubishi Electric VRF Outdoor Unit 22HP     No       4       19200        76800       ) Tj T*
+(2     Mitsubishi Electric VRF Cassette Indoor       No       24      2950         70800       ) Tj T*
+(      2.5HP) Tj T*
+(3     Schneider Electric EcoStruxure BMS System     Lot      1       42000        42000       ) Tj T*
+(4     GI Sheet Metal Ductwork Including Fittings    m2       850     88           74800       ) Tj T*
+(5     Nitrile Foam Pipe Insulation 19mm wall        m        420     24           10080       ) Tj T*
+(6     Installation Labour Including Structural      Lot      1       48000        48000       ) Tj T*
+(      Supports) Tj T*
+(7     T&C and Air Balancing by Certified Engineer   Lot      1       11000        11000       ) Tj T*
+(-----------------------------------------------------------------------------------------------) Tj T*
+(                                                                           TOTAL: AED     333,480.00) Tj T*
+() Tj T*
+(Geography: UAE | Scope: SITC | Project: Dubai Mall Phase 3 Fit-Out) Tj T*
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001810 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1878
+%%EOF
