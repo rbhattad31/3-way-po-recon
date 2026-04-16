@@ -7,6 +7,7 @@ from typing import Any
 from apps.agents.services.base_agent import BaseAgent
 from apps.core.enums import AgentType, AnalysisRunStatus, ComplianceStatus, ProcurementRequestStatus
 from apps.procurement.hvac.rules_engine import HVACRulesEngine
+from apps.procurement.agents.hvac_recommendation_agent import HVACRecommendationAgent
 from apps.procurement.services.agent_run_tracking import run_procurement_component_with_tracking
 from apps.procurement.models import ComplianceResult, RecommendationResult
 from apps.procurement.services.analysis_run_service import AnalysisRunService
@@ -84,7 +85,26 @@ class RecommendationService:
                 ) or {}
             except Exception:
                 logger.exception("RecommendationGraphService.run failed; falling back to deterministic rule result")
-                ai_result = {}
+                # Production-safe fallback when langgraph is unavailable:
+                # call HVACRecommendationAgent directly so we still produce
+                # a concrete recommendation instead of "pending review".
+                try:
+                    if bool(rule_result.get("confident")):
+                        ai_result = HVACRecommendationAgent.explain(
+                            attrs=attrs,
+                            rule_result=rule_result,
+                        ) or {}
+                    else:
+                        ai_result = HVACRecommendationAgent.recommend(
+                            attrs=attrs,
+                            no_match_context=rule_result.get("reasoning_details") or {},
+                            procurement_request_pk=getattr(request, "pk", None),
+                        ) or {}
+                except Exception:
+                    logger.exception(
+                        "Direct HVACRecommendationAgent fallback failed; using deterministic rule result only"
+                    )
+                    ai_result = {}
 
         final_payload = dict(rule_result or {})
         if isinstance(ai_result, dict):
