@@ -133,6 +133,14 @@ def run_analysis_task(self, tenant_id: int = None, run_id: int = 0) -> dict:
     except Exception as exc:
         logger.exception("Analysis run %s failed: %s", run_id, exc)
         try:
+            AnalysisRunService.fail_run(run, str(exc))
+            ProcurementRequestService.update_status(
+                request,
+                ProcurementRequestStatus.FAILED,
+            )
+        except Exception:
+            logger.debug("Could not persist failure state for analysis run_id=%s", run_id, exc_info=True)
+        try:
             run.refresh_from_db()
             ProcurementEvalAdapter.sync_for_analysis_run(run, trace_id=getattr(run, "trace_id", ""))
         except Exception:

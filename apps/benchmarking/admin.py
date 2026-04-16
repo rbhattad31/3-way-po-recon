@@ -69,8 +69,8 @@ class BenchmarkResultAdmin(admin.ModelAdmin):
 
 @admin.register(CategoryMaster)
 class CategoryMasterAdmin(admin.ModelAdmin):
-    list_display = ("code", "name", "sort_order", "is_active")
-    list_filter = ("is_active",)
+    list_display = ("code", "name", "pricing_type", "sort_order", "is_active")
+    list_filter = ("pricing_type", "is_active")
     search_fields = ("code", "name", "keywords_csv")
     ordering = ("sort_order", "code")
 

@@ -14,6 +14,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.files.base import ContentFile
+from django.db import transaction
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
@@ -24,6 +25,7 @@ from apps.benchmarking.models import (
     BenchmarkLineItem,
     BenchmarkQuotation,
     BenchmarkRequest,
+    BenchmarkResult,
     Geography,
     LineCategory,
     ScopeType,
@@ -33,7 +35,7 @@ from apps.benchmarking.services.benchmark_service import BenchmarkEngine
 from apps.benchmarking.services.blob_storage_service import BlobStorageService
 from apps.benchmarking.services.export_service import ExportService
 from apps.benchmarking.agents.Vendor_Recommendation_Agent_BM import BenchmarkVendorRecommendationAgent
-from apps.documents.blob_service import build_blob_url, upload_to_blob
+from apps.documents.blob_service import build_blob_url, delete_blob, upload_to_blob
 
 try:
     from apps.procurement.models import GeneratedRFQ as _GeneratedRFQ
@@ -254,6 +256,52 @@ def request_list(request):
 # 2. New Request (upload form)
 # --------------------------------------------------------------------------- #
 
+
+@login_required
+@require_http_methods(["POST"])
+def request_delete(request, pk):
+    """Soft-delete a benchmarking request and its active child records."""
+    bench_request = get_object_or_404(
+        _scope_requests(request, BenchmarkRequest.objects.filter(is_active=True)),
+        pk=pk,
+    )
+
+    active_quotations = bench_request.quotations.filter(is_active=True)
+    quotation_ids = list(active_quotations.values_list("id", flat=True))
+    quotation_blob_names = [
+        name for name in active_quotations.values_list("blob_name", flat=True)
+        if name
+    ]
+    rfq_blob_path = (bench_request.rfq_blob_path or "").strip()
+    request_title = bench_request.title
+
+    with transaction.atomic():
+        if quotation_ids:
+            BenchmarkLineItem.objects.filter(
+                quotation_id__in=quotation_ids,
+                is_active=True,
+            ).update(is_active=False)
+        active_quotations.update(is_active=False)
+        BenchmarkResult.objects.filter(request=bench_request, is_active=True).update(is_active=False)
+        bench_request.is_active = False
+        bench_request.save(update_fields=["is_active", "updated_at"])
+
+    for blob_name in quotation_blob_names:
+        BlobStorageService.delete_blob(blob_name)
+
+    if rfq_blob_path:
+        try:
+            delete_blob(rfq_blob_path)
+        except Exception:
+            logger.exception(
+                "Failed to delete RFQ blob '%s' while deleting benchmark request %s",
+                rfq_blob_path,
+                bench_request.pk,
+            )
+
+    messages.success(request, f"Benchmark request '{request_title}' deleted.")
+    return redirect("benchmarking:request_list")
+
 @login_required
 def request_create(request):
     """Create a new benchmarking request; quotation upload is optional."""
@@ -407,7 +455,9 @@ def request_detail(request, pk):
         q_items = list(q.line_items.filter(is_active=True))
         line_items.extend(q_items)
         q_total = 0.0
+        q_total_bench_covered = 0.0
         q_bench = 0.0
+        benchmarked_line_count = 0
         status_counts = {
             "WITHIN_RANGE": 0,
             "MODERATE": 0,
@@ -419,25 +469,31 @@ def request_detail(request, pk):
             line_amt = float(li.line_amount or 0)
             q_total += line_amt
             if li.benchmark_mid is not None and li.quantity is not None:
+                q_total_bench_covered += line_amt
                 q_bench += float(li.benchmark_mid) * float(li.quantity)
+                benchmarked_line_count += 1
             elif li.benchmark_mid is not None:
+                q_total_bench_covered += line_amt
                 q_bench += float(li.benchmark_mid)
+                benchmarked_line_count += 1
             status_counts[li.variance_status] = status_counts.get(li.variance_status, 0) + 1
             lp_json = li.live_price_json or {}
             live_reference_count += len(lp_json.get("citations", []) or [])
         q_dev = None
         if q_bench > 0:
-            q_dev = ((q_total - q_bench) / q_bench) * 100
+            q_dev = ((q_total_bench_covered - q_bench) / q_bench) * 100
         q_status = "NEEDS_REVIEW"
         if q_dev is not None:
             q_status = "WITHIN_RANGE" if abs(q_dev) < 5 else ("MODERATE" if abs(q_dev) < 15 else "HIGH")
         quotation_summaries.append({
             "quotation": q,
             "total_quoted": q_total,
+            "total_quoted_benchmark_covered": q_total_bench_covered if q_bench > 0 else None,
             "total_benchmark": q_bench if q_bench > 0 else None,
             "deviation_pct": q_dev,
             "status": q_status,
             "line_count": len(q_items),
+            "benchmarked_line_count": benchmarked_line_count,
         })
         vendor_cards.append({
             "quotation_id": q.pk,
@@ -445,7 +501,9 @@ def request_detail(request, pk):
             "quotation_ref": q.quotation_ref,
             "line_items": q_items,
             "line_count": len(q_items),
+            "benchmarked_line_count": benchmarked_line_count,
             "total_quoted": q_total,
+            "total_quoted_benchmark_covered": q_total_bench_covered if q_bench > 0 else None,
             "total_benchmark": q_bench if q_bench > 0 else None,
             "deviation_pct": q_dev,
             "status": q_status,

@@ -134,10 +134,21 @@
           </td>
           <td class="py-2" style="color:#9ca3af;">{{ req.created_at|date:"d M Y" }}</td>
           <td class="py-2">
-            <a href="{% url 'benchmarking:request_detail' req.pk %}"
-               class="btn btn-xs btn-outline-primary" style="font-size:.72rem;padding:2px 8px;">
-              View
-            </a>
+            <div class="d-flex gap-2 justify-content-end flex-wrap">
+              <a href="{% url 'benchmarking:request_detail' req.pk %}"
+                 class="btn btn-xs btn-outline-primary" style="font-size:.72rem;padding:2px 8px;">
+                View
+              </a>
+              <button
+                type="button"
+                class="btn btn-xs btn-outline-danger js-delete-request"
+                style="font-size:.72rem;padding:2px 8px;"
+                data-delete-url="{% url 'benchmarking:request_delete' req.pk %}"
+                data-request-title="{{ req.title|escapejs }}"
+              >
+                Delete
+              </button>
+            </div>
           </td>
         </tr>
         {% empty %}
@@ -153,4 +164,56 @@
     </table>
   </div>
 </div>
+
+<form id="deleteRequestForm" method="post" class="d-none">
+  {% csrf_token %}
+</form>
+
+<div class="modal fade" id="deleteRequestModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content" style="border-radius:12px;">
+      <div class="modal-body text-center px-4 pt-4 pb-2">
+        <i class="bi bi-trash3-fill text-danger" style="font-size:1.8rem;"></i>
+        <p class="mb-0 mt-3" id="deleteRequestText">
+          Are you sure you want to delete this benchmarking request?
+        </p>
+      </div>
+      <div class="modal-footer justify-content-center border-0 pt-0 pb-4 gap-2">
+        <button type="button" class="btn btn-sm btn-light" data-bs-dismiss="modal" style="font-size:.82rem;min-width:80px;">Cancel</button>
+        <button type="button" id="deleteRequestConfirmBtn" class="btn btn-sm btn-danger" style="font-size:.82rem;min-width:100px;">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function() {
+    const deleteForm = document.getElementById('deleteRequestForm');
+    const deleteText = document.getElementById('deleteRequestText');
+    const deleteButtons = document.querySelectorAll('.js-delete-request');
+    const confirmBtn = document.getElementById('deleteRequestConfirmBtn');
+    const modalEl = document.getElementById('deleteRequestModal');
+    const deleteModal = modalEl ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+
+    deleteButtons.forEach(function(button) {
+      button.addEventListener('click', function() {
+        const deleteUrl = button.getAttribute('data-delete-url');
+        const requestTitle = button.getAttribute('data-request-title') || 'this benchmarking request';
+        deleteForm.setAttribute('action', deleteUrl);
+        deleteText.innerHTML = 'Delete <strong>' + requestTitle + '</strong>?<br><span style="font-size:.78rem;color:#9ca3af;">This action cannot be undone.</span>';
+        deleteModal.show();
+      });
+    });
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', function() {
+        if (deleteForm.getAttribute('action')) {
+          deleteForm.submit();
+        }
+      });
+    }
+  })();
+</script>
 {% endblock %}

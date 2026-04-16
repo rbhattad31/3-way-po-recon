@@ -1344,12 +1344,20 @@ class HVACRecommendationRule(BaseModel):
           country, city, store_type, area_sqft, ambient_temp_max,
           budget_level, energy_efficiency_priority
         """
+        def _safe_float(value, default=0.0):
+            try:
+                if value in (None, ""):
+                    return default
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
         country = str(attrs.get("country") or attrs.get("geography_country") or "").strip()
         city = str(attrs.get("city") or attrs.get("geography_city") or "").strip()
         store_type = str(attrs.get("store_type") or "").upper()
         # Support both spellings used across the codebase
-        area = float(attrs.get("area_sqft") or attrs.get("area_sq_ft") or 0)
-        ambient = float(attrs.get("ambient_temp_max") or attrs.get("ambient_temp_max_c") or 0)
+        area = _safe_float(attrs.get("area_sqft") or attrs.get("area_sq_ft") or 0)
+        ambient = _safe_float(attrs.get("ambient_temp_max") or attrs.get("ambient_temp_max_c") or 0)
         budget = str(attrs.get("budget_level") or "").upper()
         energy = str(attrs.get("energy_efficiency_priority") or "").upper()
 

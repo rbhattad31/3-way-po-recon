@@ -5,6 +5,7 @@ from .Compliance_Agent_BM import BenchmarkComplianceAgentBM
 from .Decision_Maker_Agent_BM import BenchmarkDecisionMakerAgentBM
 from .Market_Data_Analyzer_BM import BenchmarkMarketDataAnalyzerAgentBM
 from .Vendor_Recommendation_Agent_BM import BenchmarkVendorRecommendationAgent
+from .Azure_Document_Intelligence_Agent_BM import AzureDocumentIntelligenceAgentBM
 
 __all__ = [
     "BenchmarkingAnalystAgentBM",
@@ -12,4 +13,5 @@ __all__ = [
     "BenchmarkDecisionMakerAgentBM",
     "BenchmarkMarketDataAnalyzerAgentBM",
     "BenchmarkVendorRecommendationAgent",
+    "AzureDocumentIntelligenceAgentBM",
 ]
