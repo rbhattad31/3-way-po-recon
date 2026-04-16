@@ -7,6 +7,9 @@ Two public entry points:
                  market intelligence data.
   - explain():   called when a DB rule DID match (existing behaviour).
                  Provides procurement-facing tradeoff reasoning for the deterministic result.
+
+
+                 give the db rules for references and exisiting systems 
 """
 from __future__ import annotations
 
@@ -73,46 +76,69 @@ class HVACRecommendationAgent:
         "You are a senior HVAC systems engineer and procurement advisor with 20+ years of "
         "experience in GCC (UAE, KSA, Qatar, Kuwait, Bahrain, Oman) retail and commercial "
         "HVAC design and specification.\n\n"
-        "The deterministic rules engine found NO matching rule for the provided parameters. "
-        "Your task is to independently analyse the project attributes and recommend the most "
-        "appropriate HVAC system type.\n\n"
-        "You will receive:\n"
-        "  - project_attributes: key input parameters for this request\n"
-        "  - no_match_context: why the rules engine did not match (parameter summary)\n"
-        "  - available_systems: HVAC system types configured in the database\n"
-        "  - similar_stores: profiles of comparable stores (may be empty)\n"
-        "  - market_intelligence: any available AI market intel for this region (may be empty)\n\n"
-        "Instructions:\n"
-        "1. Select the single best-fit HVAC system type from available_systems.\n"
-        "2. Provide an honest confidence score (0.0-1.0). Be conservative -- if key data is "
-        "missing, reduce confidence and set human_validation_required=true.\n"
-        "3. List 2-4 concrete decision drivers that led to your selection.\n"
-        "4. List 1-3 procurement constraints relevant to this project.\n"
-        "5. Suggest one alternate option.\n"
-        "6. Estimate indicative cooling load in TR based on area (use 130 W/m2 as a base "
-        "rule of thumb for GCC retail; adjust for heat load category HIGH +20%, LOW -15%).\n\n"
+        "CONTEXT: The deterministic rules engine evaluated multiple rules but NONE matched completely.\n\n"
+        "Your task: Analyse why the rules failed and recommend the most appropriate HVAC system "
+        "by understanding the attribute patterns that nearly matched.\n\n"
+        "INPUT DATA:\n"
+        "  - project_attributes: the request parameters that caused rule mismatches\n"
+        "  - rules_failed: rules that were evaluated but FAILED (with reason for each failure)\n"
+        "  - rules_near_miss: rules that ALMOST matched (closest candidates)\n"
+        "  - no_match_context: summary of why no rule matched (inputs, mismatches)\n"
+        "  - available_systems: all HVAC system types configured in database\n"
+        "  - db_rules_reference: sample of rules showing decision patterns\n"
+        "  - similar_stores: comparable stores in same region/type\n"
+        "  - market_intelligence: current market context (may be empty)\n\n"
+        "ANALYSIS APPROACH:\n"
+        "1. Review rules_failed to understand why each rule rejected this request.\n"
+        "2. Study rules_near_miss - these are candidates that ALMOST matched.\n"
+        "   If a rule failed only on area or budget, the system type may still be appropriate.\n"
+        "3. Look at available_systems recommended by near-miss rules.\n"
+        "4. Cross-reference with db_rules_reference pattern matching.\n"
+        "5. Select best-fit system type based on project attributes.\n\n"
+        "RECOMMENDATION PROCESS:\n"
+        "1. Study the near-miss rules - which systems did they recommend?\n"
+        "2. Identify which attribute mismatch caused rejection (area? budget? ambient?).\n"
+        "3. Select the system that best fits the ACTUAL attributes (not just rule proxies).\n"
+        "4. Provide confidence based on:\n"
+        "   - How close the near-miss rules were (0.9+ confidence if very close match)\n"
+        "   - How consistent the near-miss recommendations are (multiple rules >> one rule)\n"
+        "   - Data completeness (missing attributes >> lower confidence)\n"
+        "5. Set human_validation_required=true if:\n"
+        "   - Confidence < 0.70\n"
+        "   - Multiple contradictory near-miss rules\n"
+        "   - Key attributes missing\n\n"
+        "RESPONSE FORMAT:\n"
         "Return ONLY valid JSON. No markdown. No extra keys.\n"
         "{\n"
         '  "recommended_system_type": "SYSTEM_CODE",\n'
-        '  "recommended_option": "Full system name and one-line description",\n'
-        '  "reasoning_summary": "Concise expert rationale (2-4 sentences)",\n'
+        '  "recommended_option": "Full system name and description",\n'
+        '  "reasoning_summary": "Why this system fits (2-4 sentences, reference near-miss rules and attribute logic)",\n'
         '  "confidence": 0.75,\n'
-        '  "decision_drivers": ["...", "..."],\n'
+        '  "decision_drivers": ["Near-miss rule X recommended VRF; your area matches that pattern", "..."],\n'
         '  "tradeoffs": ["...", "..."],\n'
-        '  "constraints": [{"type": "TYPE_CODE", "detail": "..."}, ...],\n'
-        '  "alternate_option": {"system_type": "CODE", "reason": "..."},\n'
+        '  "constraints": [{"type": "TYPE", "detail": "..."}, ...],\n'
+        '  "alternate_option": {"system_type": "CODE", "reason": "...from other near-miss rule..."},\n'
         '  "indicative_capacity_tr": 12.5,\n'
         '  "human_validation_required": true,\n'
-        '  "market_notes": "relevant product/market context",\n'
-        '  "compliance_notes": "applicable GCC standards"\n'
+        '  "market_notes": "market context",\n'
+        '  "compliance_notes": "GCC standards"\n'
         "}"
     )
 
     # Tradeoff explanation prompt (rule-matched path)
     EXPLAIN_SYSTEM_PROMPT = (
         "You are an HVAC solution advisor for procurement pre-design. "
-        "You receive a deterministic recommendation result and the original request attributes. "
-        "Return JSON with concise reasoning, tradeoffs, decision_drivers, and alternate_option.\n\n"
+        "A deterministic rule matched and recommended a system. "
+        "Your task is to provide procurement-facing reasoning, tradeoffs, and alternatives.\n\n"
+        "You receive:\n"
+        "  - The matched rule and recommendation result\n"
+        "  - Original request attributes\n"
+        "  - Database rules reference (to identify alternative patterns)\n\n"
+        "Generate a professional explanation that:\n"
+        "  - Justifies the matched rule's recommendation\n"
+        "  - Lists 2-3 key tradeoffs (cost, efficiency, complexity)\n"
+        "  - References similar rules or patterns as alternatives\n"
+        "  - Identifies any constraints or special conditions\n\n"
         "Return ONLY valid JSON:\n"
         "{\n"
         '  "reasoning_summary": "...",\n'
@@ -165,12 +191,15 @@ class HVACRecommendationAgent:
 
         payload: Dict[str, Any] = {
             "project_attributes": attrs,
+            "rules_failed": db_ctx["rules_failed"],  # NEW: rules that failed
+            "rules_near_miss": db_ctx["rules_near_miss"],  # NEW: rules that almost matched
             "no_match_context": no_match_context,
             "available_systems": db_ctx["available_systems"],
+            "db_rules_reference": db_ctx["db_rules_reference"],
             "similar_stores": db_ctx["similar_stores"],
             "market_intelligence": db_ctx["market_intelligence"],
             "instruction": (
-                "Select the best HVAC system for this project. "
+                "Analyse why rules failed and recommend the best system based on near-miss patterns. "
                 "Return structured JSON only."
             ),
         }
@@ -260,7 +289,7 @@ class HVACRecommendationAgent:
 
             reasoning_summary = str(
                 parsed.get("reasoning_summary")
-                or f"AI-recommended {system_code} based on project profile analysis."
+                or f"AI-recommended {system_code} based on project profile analysis and rule pattern matching."
             )
 
             logger.info(
@@ -298,9 +327,28 @@ class HVACRecommendationAgent:
                     "trigger": "no_rule_match",
                     "rules_evaluated": no_match_context.get("rules_evaluated", 0),
                     "rules_loaded": no_match_context.get("rules_loaded", 0),
+                    "rules_failed_count": len(db_ctx["rules_failed"]),
+                    "rules_near_miss_count": len(db_ctx["rules_near_miss"]),
                     "db_systems_available": len(db_ctx["available_systems"]),
+                    "db_rules_reference_used": len(db_ctx["db_rules_reference"]),
                     "similar_stores_found": len(db_ctx["similar_stores"]),
                     "market_intel_available": bool(db_ctx["market_intelligence"]),
+                    "rules_failed_summary": [
+                        {
+                            "rule_code": r.get("rule_code"),
+                            "recommended_system": r.get("recommended_system"),
+                            "failure_reasons": r.get("failure_reasons", [])[:2],  # Top 2 reasons
+                        }
+                        for r in db_ctx["rules_failed"][:3]  # Top 3 failures
+                    ],
+                    "rules_near_miss_summary": [
+                        {
+                            "rule_code": r.get("rule_code"),
+                            "recommended_system": r.get("recommended_system"),
+                            "failure_reasons": r.get("failure_reasons", [])[:1],
+                        }
+                        for r in db_ctx["rules_near_miss"][:3]  # Top 3 near-misses
+                    ],
                     "inputs": no_match_context.get("inputs", {}),
                 },
                 "source_classes_used": ["HVACRecommendationAgent"],
@@ -351,12 +399,18 @@ class HVACRecommendationAgent:
         Loads:
           - available_systems: all active HVACServiceScope rows (system catalogue)
           - system_code_to_label: mapping of system codes to human names
+          - db_rules_reference: up to 10 active rules showing decision patterns
+          - rules_failed: rules evaluated that did NOT match (with failure reasons)
+          - rules_near_miss: rules that ALMOST matched (closest candidates)
           - similar_stores: up to 5 HVACStoreProfile rows with same store_type/country
           - market_intelligence: latest MarketIntelligenceSuggestion for the request
         """
         context: Dict[str, Any] = {
             "available_systems": [],
             "system_code_to_label": {},
+            "db_rules_reference": [],
+            "rules_failed": [],  # NEW: rules that failed evaluation
+            "rules_near_miss": [],  # NEW: near-miss rules
             "similar_stores": [],
             "market_intelligence": {},
         }
@@ -370,20 +424,16 @@ class HVACRecommendationAgent:
                 .values(
                     "system_type",
                     "display_name",
-                    "description",
-                    "typical_applications",
-                    "capex_band",
-                    "opex_band",
+                    "equipment_scope",
+                    "installation_services",
                 )
             )
             for s in scopes:
                 context["available_systems"].append({
                     "system_type": s.get("system_type", ""),
                     "name": s.get("display_name") or s.get("system_type", ""),
-                    "description": s.get("description") or "",
-                    "typical_applications": s.get("typical_applications") or "",
-                    "capex_band": s.get("capex_band") or "",
-                    "opex_band": s.get("opex_band") or "",
+                    "equipment_scope": s.get("equipment_scope") or "",
+                    "installation_services": s.get("installation_services") or "",
                 })
                 context["system_code_to_label"][s.get("system_type", "")] = (
                     s.get("display_name") or s.get("system_type", "")
@@ -397,10 +447,8 @@ class HVACRecommendationAgent:
                 context["available_systems"].append({
                     "system_type": code,
                     "name": label,
-                    "description": "",
-                    "typical_applications": "",
-                    "capex_band": "",
-                    "opex_band": "",
+                    "equipment_scope": "",
+                    "installation_services": "",
                 })
                 context["system_code_to_label"][code] = label
 
@@ -421,14 +469,133 @@ class HVACRecommendationAgent:
                     context["available_systems"].append({
                         "system_type": code,
                         "name": label,
-                        "description": "",
-                        "typical_applications": "(referenced in DB rules)",
-                        "capex_band": "",
-                        "opex_band": "",
+                        "equipment_scope": "",
+                        "installation_services": "(referenced in DB rules)",
                     })
                     context["system_code_to_label"][code] = label
         except Exception as exc:
             logger.debug("HVACRecommendationAgent: rule systems load failed: %s", exc)
+
+        # -- Database rules reference ----------------------------------------
+        # Fetch up to 10 active rules to show the LLM how decisions are made
+        try:
+            from apps.procurement.models import HVACRecommendationRule
+            active_rules = list(
+                HVACRecommendationRule.objects
+                .filter(is_active=True)
+                .order_by("priority", "rule_code")[:10]
+            )
+            for rule in active_rules:
+                rule_summary = {
+                    "rule_code": rule.rule_code,
+                    "rule_name": rule.rule_name,
+                    "priority": rule.priority,
+                    "recommended_system": rule.recommended_system,
+                    "conditions": [],
+                }
+                # Build human-readable conditions
+                if rule.store_type_filter:
+                    rule_summary["conditions"].append(f"store_type: {rule.store_type_filter}")
+                if rule.area_sq_ft_min is not None:
+                    rule_summary["conditions"].append(f"area >= {rule.area_sq_ft_min} sqft")
+                if rule.area_sq_ft_max is not None:
+                    rule_summary["conditions"].append(f"area < {rule.area_sq_ft_max} sqft")
+                if rule.ambient_temp_min_c is not None:
+                    rule_summary["conditions"].append(f"ambient >= {rule.ambient_temp_min_c}C")
+                if rule.budget_level_filter:
+                    rule_summary["conditions"].append(f"budget: {rule.budget_level_filter}")
+                if rule.energy_priority_filter:
+                    rule_summary["conditions"].append(f"energy_priority: {rule.energy_priority_filter}")
+                if rule.country_filter:
+                    rule_summary["conditions"].append(f"country: {rule.country_filter}")
+                if rule.city_filter:
+                    rule_summary["conditions"].append(f"city: {rule.city_filter}")
+                
+                context["db_rules_reference"].append(rule_summary)
+        except Exception as exc:
+            logger.debug("HVACRecommendationAgent: DB rules reference load failed: %s", exc)
+
+        # -- Evaluate rules to find failures and near-misses ----------------------
+        # Dynamically check which rules almost matched
+        try:
+            from apps.procurement.models import HVACRecommendationRule
+            all_rules = list(
+                HVACRecommendationRule.objects
+                .filter(is_active=True)
+                .order_by("priority", "rule_code")
+            )
+            
+            for rule in all_rules:
+                try:
+                    matched = rule.matches(attrs)
+                    if not matched:
+                        # Rule failed: analyse why
+                        failure_reasons = []
+                        
+                        # Check each condition
+                        if rule.store_type_filter and str(attrs.get("store_type", "")).upper() != rule.store_type_filter:
+                            failure_reasons.append(f"store_type mismatch (rule: {rule.store_type_filter}, actual: {attrs.get('store_type')})")
+                        
+                        area_val = float(attrs.get("area_sqft", 0)) if attrs.get("area_sqft") else 0
+                        if rule.area_sq_ft_min is not None and area_val < rule.area_sq_ft_min:
+                            failure_reasons.append(f"area too small (rule min: {rule.area_sq_ft_min}, actual: {area_val:.0f})")
+                        if rule.area_sq_ft_max is not None and area_val >= rule.area_sq_ft_max:
+                            failure_reasons.append(f"area too large (rule max: {rule.area_sq_ft_max}, actual: {area_val:.0f})")
+                        
+                        ambient_val = float(attrs.get("ambient_temp_max", 0)) if attrs.get("ambient_temp_max") else 0
+                        if rule.ambient_temp_min_c is not None and ambient_val < rule.ambient_temp_min_c:
+                            failure_reasons.append(f"ambient too cool (rule min: {rule.ambient_temp_min_c}C, actual: {ambient_val}C)")
+                        
+                        if rule.budget_level_filter and str(attrs.get("budget_level", "")).upper() != rule.budget_level_filter:
+                            failure_reasons.append(f"budget mismatch (rule: {rule.budget_level_filter}, actual: {attrs.get('budget_level')})")
+                        
+                        if rule.energy_priority_filter and str(attrs.get("energy_efficiency_priority", "")).upper() != rule.energy_priority_filter:
+                            failure_reasons.append(f"energy priority mismatch (rule: {rule.energy_priority_filter}, actual: {attrs.get('energy_efficiency_priority')})")
+                        
+                        if rule.country_filter and str(attrs.get("country", "")).upper() not in [c.strip().upper() for c in rule.country_filter.split("|")]:
+                            failure_reasons.append(f"country mismatch (rule: {rule.country_filter}, actual: {attrs.get('country')})")
+                        
+                        if rule.city_filter and str(attrs.get("city", "")).upper() != rule.city_filter.upper():
+                            failure_reasons.append(f"city mismatch (rule: {rule.city_filter}, actual: {attrs.get('city')})")
+                        
+                        # Count how many conditions failed
+                        failure_count = len(failure_reasons)
+                        total_conditions = sum(1 for x in [
+                            rule.store_type_filter,
+                            rule.area_sq_ft_min or rule.area_sq_ft_max,
+                            rule.ambient_temp_min_c,
+                            rule.budget_level_filter,
+                            rule.energy_priority_filter,
+                            rule.country_filter,
+                            rule.city_filter,
+                        ] if x)
+                        
+                        failed_rule = {
+                            "rule_code": rule.rule_code,
+                            "rule_name": rule.rule_name,
+                            "recommended_system": rule.recommended_system,
+                            "priority": rule.priority,
+                            "failure_reasons": failure_reasons,
+                            "conditions_failed": failure_count,
+                            "total_conditions": total_conditions,
+                        }
+                        
+                        # Near-miss if only 1-2 conditions failed OR all conditions match but something else failed
+                        if failure_count <= 2 and total_conditions > 0:
+                            context["rules_near_miss"].append(failed_rule)
+                        else:
+                            context["rules_failed"].append(failed_rule)
+                except Exception as e:
+                    logger.debug("HVACRecommendationAgent: rule evaluation error for rule %s: %s", rule.rule_code, e)
+            
+            # Sort near-miss rules by closeness (fewest failures first)
+            context["rules_near_miss"] = sorted(
+                context["rules_near_miss"],
+                key=lambda x: (x["conditions_failed"], x["priority"])
+            )[:5]  # Top 5 near-miss candidates
+            
+        except Exception as exc:
+            logger.debug("HVACRecommendationAgent: rule evaluation failed: %s", exc)
 
         # -- Similar store profiles ----------------------------------------
         try:
