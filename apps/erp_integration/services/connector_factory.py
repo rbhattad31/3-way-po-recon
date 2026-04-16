@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from django.db import models
+
 from apps.erp_integration.enums import ERPConnectionStatus, ERPConnectorType
 from apps.erp_integration.models import ERPConnection
 from apps.erp_integration.services.connectors.base import BaseERPConnector
@@ -76,15 +78,15 @@ class ConnectorFactory:
         return connector_cls(config)
 
     @staticmethod
-    def get_default_connector() -> Optional[BaseERPConnector]:
+    def get_default_connector(tenant=None) -> Optional[BaseERPConnector]:
         """Return the default active ERP connector, or None if none configured."""
-        connection = (
-            ERPConnection.objects.filter(
-                is_default=True,
-                status=ERPConnectionStatus.ACTIVE,
-            )
-            .first()
+        qs = ERPConnection.objects.filter(
+            is_default=True,
+            status=ERPConnectionStatus.ACTIVE,
         )
+        if tenant is not None:
+            qs = qs.filter(models.Q(tenant=tenant) | models.Q(tenant__isnull=True))
+        connection = qs.first()
         if connection is None:
             logger.debug("No default active ERP connection configured")
             return None

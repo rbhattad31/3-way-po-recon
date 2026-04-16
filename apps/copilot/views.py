@@ -425,14 +425,18 @@ def invoice_upload(request):
     except Exception as case_exc:
         logger.warning("Pre-extraction case creation failed (non-fatal): %s", case_exc)
 
-    # Start pipeline in a background thread -- returns immediately
-    thread = threading.Thread(
-        target=_copilot_pipeline_worker,
-        args=(doc_upload.pk, request.user.pk, has_blob),
-        kwargs={"case_id": case_id, "case_number": case_number},
-        daemon=True,
-    )
-    thread.start()
+    # If supervisor_driven=true, the SSE supervisor endpoint will orchestrate
+    # extraction + reconciliation + analysis itself. Skip background pipeline.
+    supervisor_driven = request.POST.get("supervisor_driven") or request.data.get("supervisor_driven")
+    if not supervisor_driven:
+        # Legacy path: start pipeline in a background thread -- returns immediately
+        thread = threading.Thread(
+            target=_copilot_pipeline_worker,
+            args=(doc_upload.pk, request.user.pk, has_blob),
+            kwargs={"case_id": case_id, "case_number": case_number},
+            daemon=True,
+        )
+        thread.start()
 
     # Audit log
     try:
@@ -1249,19 +1253,35 @@ def supervisor_run_stream(request):
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
     invoice_id = body.get("invoice_id")
+    upload_id = body.get("upload_id")
     reconciliation_result_id = body.get("reconciliation_result_id")
     case_id = body.get("case_id")
     session_id = body.get("session_id")
 
-    if not invoice_id:
-        return JsonResponse({"error": "invoice_id is required"}, status=400)
+    # At least one identifier is required
+    if not invoice_id and not upload_id and not case_id:
+        return JsonResponse({"error": "invoice_id, upload_id, or case_id is required"}, status=400)
 
-    # Resolve reconciliation_result_id from case if not provided
-    if not reconciliation_result_id and case_id:
+    # Resolve IDs from case if not directly provided
+    if case_id and (not invoice_id or not reconciliation_result_id or not upload_id):
         from apps.cases.models import APCase
         _case = APCase.objects.filter(pk=case_id, is_active=True).first()
-        if _case and _case.reconciliation_result_id:
-            reconciliation_result_id = _case.reconciliation_result_id
+        if _case:
+            if not reconciliation_result_id and _case.reconciliation_result_id:
+                reconciliation_result_id = _case.reconciliation_result_id
+            if not invoice_id and _case.invoice_id:
+                invoice_id = _case.invoice_id
+            if not upload_id and _case.document_upload_id:
+                upload_id = _case.document_upload_id
+
+    # Fallback: resolve reconciliation_result_id from invoice if still missing
+    if not reconciliation_result_id and invoice_id:
+        from apps.reconciliation.models import ReconciliationResult as _RR
+        _latest = _RR.objects.filter(
+            invoice_id=invoice_id,
+        ).order_by("-created_at").values_list("pk", flat=True).first()
+        if _latest:
+            reconciliation_result_id = _latest
 
     # Resolve reconciliation mode
     recon_mode = ""
@@ -1290,6 +1310,17 @@ def supervisor_run_stream(request):
     if recon_result and recon_result.purchase_order:
         _po_number = recon_result.purchase_order.po_number
 
+    # Resolve case_number for Langfuse session linkage
+    _case_number = None
+    if case_id:
+        try:
+            from apps.cases.models import APCase as _APCNum
+            _case_number = _APCNum.objects.filter(
+                pk=case_id, is_active=True,
+            ).values_list("case_number", flat=True).first()
+        except Exception:
+            pass
+
     # Resolve copilot session for message persistence
     _copilot_session = None
     _copilot_user = request.user
@@ -1306,15 +1337,198 @@ def supervisor_run_stream(request):
     def on_progress(event):
         event_queue.put(event)
 
+    def _emit(evt):
+        """Push an SSE event dict to the queue."""
+        event_queue.put(evt)
+
+    # ── Determine whether we need to orchestrate the full pipeline ──
+    # If upload_id is set but no invoice exists yet, this is a fresh upload
+    # and the supervisor must drive extraction + reconciliation first.
+    needs_pipeline = False
+    if upload_id and not invoice_id:
+        needs_pipeline = True
+    elif upload_id and invoice_id:
+        # Invoice ID provided -- check if reconciliation exists
+        if not reconciliation_result_id:
+            needs_pipeline = True
+
+    def _run_extraction(upload_pk, case_pk, case_num):
+        """Run the extraction pipeline synchronously, return invoice or None."""
+        from apps.documents.models import DocumentUpload, Invoice
+        upload = DocumentUpload.objects.get(pk=upload_pk)
+        has_blob = bool(upload.blob_path)
+
+        if has_blob:
+            from apps.extraction.tasks import process_invoice_upload_task
+            process_invoice_upload_task.apply(
+                kwargs={
+                    "upload_id": upload_pk,
+                    "case_id": case_pk,
+                    "case_number": case_num,
+                    "skip_agent_pipeline": True,
+                },
+                throw=True,
+            )
+        else:
+            _copilot_local_pipeline(upload_pk, user_pk, case_id=case_pk, case_number=case_num)
+
+        return (
+            Invoice.objects
+            .filter(document_upload_id=upload_pk)
+            .order_by("-created_at")
+            .select_related("vendor")
+            .first()
+        )
+
+    def _run_reconciliation(invoice):
+        """Run reconciliation for a single invoice, return (run, result)."""
+        from apps.reconciliation.services.runner_service import ReconciliationRunnerService
+
+        runner = ReconciliationRunnerService()
+        run = runner.run(
+            invoices=[invoice],
+            triggered_by=None,
+            tenant=getattr(invoice, "tenant", None),
+        )
+        result = run.results.filter(invoice=invoice).first()
+        # Link result to the AP case
+        if result and case_id:
+            from apps.cases.models import APCase
+            APCase.objects.filter(pk=case_id, is_active=True).update(
+                reconciliation_result=result,
+            )
+        return run, result
+
     def run_agent():
-        """Background thread: run the supervisor agent pipeline."""
+        """Background thread: orchestrate full pipeline then run supervisor."""
+        nonlocal invoice_id, reconciliation_result_id, recon_result, recon_mode
+        nonlocal _po_number, needs_pipeline
+
         try:
             from django.db import connection
+
+            # ── Phase 1: Extraction (if needed) ──
+            if needs_pipeline and upload_id:
+                _emit({"type": "pipeline_stage", "stage": "extraction", "status": "running",
+                       "message": "Extracting invoice data..."})
+                try:
+                    _case_num = None
+                    if case_id:
+                        from apps.cases.models import APCase as _APC
+                        _c = _APC.objects.filter(pk=case_id).values_list("case_number", flat=True).first()
+                        _case_num = _c
+
+                    invoice = _run_extraction(upload_id, case_id, _case_num)
+                    if invoice:
+                        invoice_id = invoice.pk
+                        inv_label = invoice.invoice_number or "Invoice"
+                        conf = float(invoice.extraction_confidence or 0)
+                        _emit({"type": "pipeline_stage", "stage": "extraction", "status": "done",
+                               "message": f"Extracted {inv_label} ({round(conf * 100)}% confidence)"})
+                    else:
+                        _emit({"type": "pipeline_stage", "stage": "extraction", "status": "failed",
+                               "message": "Extraction did not produce an invoice."})
+                        _emit({"type": "error", "message": "Extraction failed. No invoice was created."})
+                        return
+                except Exception as ext_err:
+                    logger.exception("Supervisor pipeline: extraction failed")
+                    _emit({"type": "pipeline_stage", "stage": "extraction", "status": "failed",
+                           "message": f"Extraction failed: {str(ext_err)[:120]}"})
+                    _emit({"type": "error", "message": f"Extraction failed: {str(ext_err)[:120]}"})
+                    return
+
+            # ── Phase 2: Reconciliation (if needed) ──
+            # The extraction task may have already triggered case pipeline
+            # (which includes reconciliation). Check before running again.
+            if not reconciliation_result_id and invoice_id:
+                from apps.reconciliation.models import ReconciliationResult as _RRCheck
+                _existing = _RRCheck.objects.filter(
+                    invoice_id=invoice_id,
+                ).order_by("-created_at").select_related("purchase_order").first()
+                if _existing:
+                    reconciliation_result_id = _existing.pk
+                    recon_result = _existing
+                    recon_mode = getattr(_existing, "reconciliation_mode", "") or ""
+                    if _existing.purchase_order:
+                        _po_number = _existing.purchase_order.po_number
+                    match_display = str(_existing.match_status).replace("_", " ").title()
+                    _emit({"type": "pipeline_stage", "stage": "reconciliation", "status": "done",
+                           "message": f"Match result: {match_display}"})
+
+            if not reconciliation_result_id and invoice_id:
+                _emit({"type": "pipeline_stage", "stage": "reconciliation", "status": "running",
+                       "message": "Matching invoice against PO and receipts..."})
+                try:
+                    from apps.documents.models import Invoice
+                    inv = Invoice.objects.select_related("vendor").get(pk=invoice_id)
+                    run, result = _run_reconciliation(inv)
+                    if result:
+                        reconciliation_result_id = result.pk
+                        recon_result = result
+                        recon_mode = getattr(result, "reconciliation_mode", "") or ""
+                        if result.purchase_order:
+                            _po_number = result.purchase_order.po_number
+                        match_display = str(result.match_status).replace("_", " ").title()
+                        _emit({"type": "pipeline_stage", "stage": "reconciliation", "status": "done",
+                               "message": f"Match result: {match_display}"})
+                    else:
+                        _emit({"type": "pipeline_stage", "stage": "reconciliation", "status": "done",
+                               "message": "Reconciliation completed (no result produced)."})
+                except Exception as rec_err:
+                    logger.exception("Supervisor pipeline: reconciliation failed")
+                    _emit({"type": "pipeline_stage", "stage": "reconciliation", "status": "failed",
+                           "message": f"Reconciliation failed: {str(rec_err)[:120]}"})
+                    # Continue to supervisor anyway -- it can still analyze the invoice
+
+            # ── Phase 3: Supervisor Analysis ──
+            _emit({"type": "pipeline_stage", "stage": "analysis", "status": "running",
+                   "message": "Running AI analysis..."})
 
             from apps.agents.services.supervisor_agent import SupervisorAgent
             from apps.agents.services.supervisor_context_builder import (
                 build_supervisor_context,
             )
+
+            # ── Langfuse: root trace with session linkage ──
+            _lf_trace = None
+            _trace_id = None
+            try:
+                import uuid as _uuid
+                from apps.core.langfuse_client import start_trace_safe
+                from apps.core.observability_helpers import (
+                    derive_session_id, build_observability_context,
+                )
+                from apps.core.evaluation_constants import TRACE_SUPERVISOR_PIPELINE
+
+                _trace_id = _uuid.uuid4().hex
+                _lf_trace = start_trace_safe(
+                    _trace_id,
+                    TRACE_SUPERVISOR_PIPELINE,
+                    invoice_id=invoice_id,
+                    result_id=reconciliation_result_id,
+                    user_id=user_pk,
+                    session_id=derive_session_id(
+                        case_number=_case_number,
+                        invoice_id=invoice_id,
+                        document_upload_id=upload_id,
+                        case_id=case_id,
+                    ),
+                    metadata=build_observability_context(
+                        tenant_id=tenant.pk if tenant else None,
+                        invoice_id=invoice_id,
+                        document_upload_id=upload_id,
+                        reconciliation_result_id=reconciliation_result_id,
+                        case_id=case_id,
+                        case_number=_case_number,
+                        actor_user_id=user_pk,
+                        reconciliation_mode=recon_mode,
+                        po_number=_po_number,
+                        trigger="copilot_stream",
+                        source="supervisor_run_stream",
+                    ),
+                )
+            except Exception:
+                logger.debug("Langfuse trace start failed for supervisor stream (non-fatal)", exc_info=True)
 
             ctx = build_supervisor_context(
                 invoice_id=invoice_id,
@@ -1323,12 +1537,29 @@ def supervisor_run_stream(request):
                 reconciliation_mode=recon_mode,
                 actor_user_id=user_pk,
                 actor_primary_role=user_role or "SYSTEM_AGENT",
-                trace_id="",
+                permission_source="copilot:supervisor_run_stream",
+                access_granted=True,
+                trace_id=_trace_id or "",
                 tenant=tenant,
+                langfuse_trace=_lf_trace,
             )
 
             agent = SupervisorAgent()
             agent_run = agent.run(ctx, progress_callback=on_progress)
+
+            # Post-run: backfill reconciliation_result if it was missing at
+            # start but now exists (race between supervisor and recon pipeline).
+            if not agent_run.reconciliation_result_id and invoice_id:
+                try:
+                    from apps.reconciliation.models import ReconciliationResult as _RRPost
+                    _rr_post = _RRPost.objects.filter(
+                        invoice_id=invoice_id,
+                    ).order_by("-created_at").first()
+                    if _rr_post:
+                        agent_run.reconciliation_result = _rr_post
+                        agent_run.save(update_fields=["reconciliation_result"])
+                except Exception:
+                    pass
 
             # Post-run: eval + learning (best-effort)
             try:
@@ -1336,6 +1567,9 @@ def supervisor_run_stream(request):
                 AgentEvalAdapter.sync_for_agent_run(agent_run)
             except Exception:
                 pass
+
+            _emit({"type": "pipeline_stage", "stage": "analysis", "status": "done",
+                   "message": "Analysis complete"})
 
             # Build complete event with human-readable summary
             out = agent_run.output_payload or {}
@@ -1347,6 +1581,8 @@ def supervisor_run_stream(request):
                 "summary": summary,
                 "agent_run_id": agent_run.pk,
                 "status": str(agent_run.status),
+                "invoice_id": invoice_id,
+                "reconciliation_result_id": reconciliation_result_id,
             })
 
             # Persist supervisor messages to copilot session
@@ -1357,8 +1593,51 @@ def supervisor_run_stream(request):
                     )
                 except Exception:
                     logger.warning("Failed to persist supervisor messages to session", exc_info=True)
+
+            # ── Langfuse: close root trace on success ──
+            try:
+                if _lf_trace is not None:
+                    from apps.core.langfuse_client import end_span_safe, score_trace_safe
+                    from apps.core.evaluation_constants import SUPERVISOR_CONFIDENCE
+                    end_span_safe(
+                        _lf_trace,
+                        output={
+                            "status": str(agent_run.status),
+                            "recommendation": out.get("recommendation_type", ""),
+                            "confidence": out.get("confidence", 0),
+                        },
+                        is_root=True,
+                    )
+                    if _trace_id:
+                        score_trace_safe(
+                            _trace_id, SUPERVISOR_CONFIDENCE,
+                            float(out.get("confidence", 0)),
+                            comment="copilot_stream",
+                            span=_lf_trace,
+                        )
+            except Exception:
+                pass
         except Exception as exc:
             logger.exception("Supervisor stream agent failed")
+            # ── Langfuse: close root trace on error ──
+            try:
+                if _lf_trace is not None:
+                    from apps.core.langfuse_client import end_span_safe, score_trace_safe
+                    from apps.core.evaluation_constants import SUPERVISOR_CONFIDENCE
+                    end_span_safe(
+                        _lf_trace,
+                        output={"error": str(exc)[:200]},
+                        level="ERROR",
+                        is_root=True,
+                    )
+                    if _trace_id:
+                        score_trace_safe(
+                            _trace_id, SUPERVISOR_CONFIDENCE, 0.0,
+                            comment="copilot_stream_error",
+                            span=_lf_trace,
+                        )
+            except Exception:
+                pass
             event_queue.put({
                 "type": "error",
                 "message": str(exc)[:200],
