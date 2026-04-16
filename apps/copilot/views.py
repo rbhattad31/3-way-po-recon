@@ -1699,25 +1699,32 @@ def case_action(request, case_id):
     user = request.user
 
     try:
-        if action == "approve":
+        if action in ("approve", "reject"):
             if not _has_permission_code(user, "reviews.decide"):
                 return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
             from apps.cases.services.review_workflow_service import ReviewWorkflowService
             ra = case.review_assignment
-            if ra:
+            if not ra and case.reconciliation_result:
+                ra = ReviewWorkflowService.create_assignment(
+                    result=case.reconciliation_result,
+                    assigned_to=user,
+                    tenant=getattr(request, "tenant", None),
+                )
+                case.review_assignment = ra
+                case.save(update_fields=["review_assignment", "updated_at"])
+            if not ra:
+                return Response({"error": "No review assignment found"}, status=status.HTTP_400_BAD_REQUEST)
+            # Ensure review is in IN_REVIEW state before finalising
+            if ra.status in ("PENDING", "ASSIGNED"):
+                if not ra.assigned_to:
+                    ra.assigned_to = user
+                    ra.save(update_fields=["assigned_to", "updated_at"])
+                ReviewWorkflowService.start_review(ra, user)
+                ra.refresh_from_db()
+            if action == "approve":
                 ReviewWorkflowService.approve(ra, user)
             else:
-                return Response({"error": "No review assignment found"}, status=status.HTTP_400_BAD_REQUEST)
-
-        elif action == "reject":
-            if not _has_permission_code(user, "reviews.decide"):
-                return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
-            from apps.cases.services.review_workflow_service import ReviewWorkflowService
-            ra = case.review_assignment
-            if ra:
                 ReviewWorkflowService.reject(ra, user, reason=request.data.get("reason", ""))
-            else:
-                return Response({"error": "No review assignment found"}, status=status.HTTP_400_BAD_REQUEST)
 
         elif action == "escalate":
             if not _has_permission_code(user, "cases.edit"):

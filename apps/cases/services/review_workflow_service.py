@@ -163,20 +163,20 @@ class ReviewWorkflowService:
     def assign_reviewer(assignment: ReviewAssignment, user) -> ReviewAssignment:
         _lf_span = None
         try:
-            from apps.core.langfuse_client import get_client
-            _lf = get_client()
-            if _lf:
-                _lf_span = _lf.span(
-                    trace_id=f"review-{assignment.pk}",
-                    name="review_assign_reviewer",
-                    metadata={
-                        "tenant_id": getattr(assignment, "tenant_id", None),
-                        "reviewer_id": getattr(user, "pk", None),
-                        "reviewer_email": getattr(user, "email", ""),
-                        "assignment_id": assignment.pk,
-                        "status_before": assignment.status or "",
-                    },
-                )
+            from apps.core.langfuse_client import start_trace_safe, start_span_safe
+            _lf_trace = start_trace_safe(
+                f"review-{assignment.pk}", "review_assign_reviewer",
+                metadata={
+                    "tenant_id": getattr(assignment, "tenant_id", None),
+                    "reviewer_id": getattr(user, "pk", None),
+                    "reviewer_email": getattr(user, "email", ""),
+                    "assignment_id": assignment.pk,
+                    "status_before": assignment.status or "",
+                },
+            )
+            _lf_span = start_span_safe(_lf_trace, "review_assign_reviewer", metadata={
+                "assignment_id": assignment.pk,
+            }) if _lf_trace else None
         except Exception:
             logger.debug("Langfuse span creation failed in assign_reviewer", exc_info=True)
 
@@ -220,19 +220,19 @@ class ReviewWorkflowService:
             if getattr(user, "role", None) not in {"FINANCE_MANAGER", "ADMIN"}:
                 raise PermissionDenied("Only the assigned reviewer can start this review.")
         try:
-            from apps.core.langfuse_client import get_client
-            _lf = get_client()
-            if _lf:
-                _lf_span = _lf.span(
-                    trace_id=f"review-{assignment.pk}",
-                    name="review_start",
-                    metadata={
-                        "tenant_id": getattr(assignment, "tenant_id", None),
-                        "assignment_id": assignment.pk,
-                        "reviewer_id": getattr(assignment.assigned_to, "pk", None),
-                        "status_before": assignment.status or "",
-                    },
-                )
+            from apps.core.langfuse_client import start_trace_safe, start_span_safe
+            _lf_trace = start_trace_safe(
+                f"review-{assignment.pk}", "review_start",
+                metadata={
+                    "tenant_id": getattr(assignment, "tenant_id", None),
+                    "assignment_id": assignment.pk,
+                    "reviewer_id": getattr(assignment.assigned_to, "pk", None),
+                    "status_before": assignment.status or "",
+                },
+            )
+            _lf_span = start_span_safe(_lf_trace, "review_start", metadata={
+                "assignment_id": assignment.pk,
+            }) if _lf_trace else None
         except Exception:
             logger.debug("Langfuse span creation failed in start_review", exc_info=True)
 
@@ -289,20 +289,19 @@ class ReviewWorkflowService:
 
         # -- Langfuse: record action span
         try:
-            from apps.core.langfuse_client import get_client, end_span_safe, score_trace_safe
-            _lf = get_client()
-            _lf_span = None
-            if _lf:
-                _lf_span = _lf.span(
-                    trace_id=f"review-{assignment.pk}",
-                    name="review_record_action",
-                    metadata={
-                        "tenant_id": getattr(assignment, "tenant_id", None),
-                        "action_type": action_type,
-                        "field_name": field_name,
-                        "user_id": getattr(user, "pk", None),
-                    },
-                )
+            from apps.core.langfuse_client import start_trace_safe, start_span_safe, end_span_safe, score_trace_safe
+            _lf_trace = start_trace_safe(
+                f"review-{assignment.pk}", "review_record_action",
+                metadata={
+                    "tenant_id": getattr(assignment, "tenant_id", None),
+                    "action_type": action_type,
+                    "field_name": field_name,
+                    "user_id": getattr(user, "pk", None),
+                },
+            )
+            _lf_span = start_span_safe(_lf_trace, "review_record_action", metadata={
+                "assignment_id": assignment.pk,
+            }) if _lf_trace else None
             end_span_safe(_lf_span, output={
                 "action_id": action.pk,
                 "action_type": action_type,
@@ -355,19 +354,18 @@ class ReviewWorkflowService:
             tenant=tenant or getattr(assignment, "tenant", None),
         )
         try:
-            from apps.core.langfuse_client import get_client, end_span_safe
-            _lf = get_client()
-            _lf_span = None
-            if _lf:
-                _lf_span = _lf.span(
-                    trace_id=f"review-{assignment.pk}",
-                    name="review_add_comment",
-                    metadata={
-                        "tenant_id": getattr(assignment, "tenant_id", None),
-                        "user_id": getattr(user, "pk", None),
-                        "is_internal": is_internal,
-                    },
-                )
+            from apps.core.langfuse_client import start_trace_safe, start_span_safe, end_span_safe
+            _lf_trace = start_trace_safe(
+                f"review-{assignment.pk}", "review_add_comment",
+                metadata={
+                    "tenant_id": getattr(assignment, "tenant_id", None),
+                    "user_id": getattr(user, "pk", None),
+                    "is_internal": is_internal,
+                },
+            )
+            _lf_span = start_span_safe(_lf_trace, "review_add_comment", metadata={
+                "assignment_id": assignment.pk,
+            }) if _lf_trace else None
             end_span_safe(_lf_span, output={"comment_id": comment.pk})
         except Exception:
             logger.debug("Langfuse tracing failed in add_comment", exc_info=True)
@@ -422,23 +420,23 @@ class ReviewWorkflowService:
         ).count()
 
         try:
-            from apps.core.langfuse_client import get_client
-            _lf = get_client()
-            if _lf:
-                _lf_span = _lf.span(
-                    trace_id=_trace_id,
-                    name="review_finalise",
-                    metadata={
-                        "tenant_id": getattr(assignment, "tenant_id", None),
-                        "decision_status": decision_status,
-                        "user_id": getattr(user, "pk", None),
-                        "status_before": assignment.status or "",
-                        "action_count": _action_count,
-                        "comment_count": _comment_count,
-                        "fields_corrected_count": _corrections_count,
-                        "invoice_id": getattr(assignment.reconciliation_result, "invoice_id", None),
-                    },
-                )
+            from apps.core.langfuse_client import start_trace_safe, start_span_safe
+            _lf_trace = start_trace_safe(
+                _trace_id, "review_finalise",
+                metadata={
+                    "tenant_id": getattr(assignment, "tenant_id", None),
+                    "decision_status": decision_status,
+                    "user_id": getattr(user, "pk", None),
+                    "status_before": assignment.status or "",
+                    "action_count": _action_count,
+                    "comment_count": _comment_count,
+                    "fields_corrected_count": _corrections_count,
+                    "invoice_id": getattr(assignment.reconciliation_result, "invoice_id", None),
+                },
+            )
+            _lf_span = start_span_safe(_lf_trace, "review_finalise", metadata={
+                "assignment_id": assignment.pk,
+            }) if _lf_trace else None
         except Exception:
             logger.debug("Langfuse span creation failed in _finalise", exc_info=True)
 
