@@ -32,9 +32,13 @@ def _build_fallback_summary(case, decisions, validation_issues):
     invoice = case.invoice
 
     # Basic case info
+    vendor_name = (
+        invoice.vendor.name if invoice.vendor
+        else invoice.raw_vendor_name or "unknown vendor"
+    )
     parts.append(
         f"Case {case.case_number} for invoice {invoice.invoice_number or 'N/A'}"
-        f" from {invoice.raw_vendor_name or 'unknown vendor'}."
+        f" from {vendor_name}."
     )
     parts.append(f"Processing path: {case.get_processing_path_display()}.")
 
@@ -45,16 +49,35 @@ def _build_fallback_summary(case, decisions, validation_issues):
     if path_decision and path_decision.rationale:
         parts.append(f"Path rationale: {path_decision.rationale}.")
 
-    # Validation outcome
+    # Validation outcome -- list specific issues, not just counts
     if validation_issues:
         fails = [i for i in validation_issues if i["status"] == "FAIL"]
         warns = [i for i in validation_issues if i["status"] == "WARNING"]
-        issue_parts = []
         if fails:
-            issue_parts.append(f"{len(fails)} failed check(s)")
+            fail_names = [f['check_name'] for f in fails]
+            fail_msgs = [f['message'] for f in fails if f.get('message')]
+            parts.append(f"Failed checks: {', '.join(fail_names)}.")
+            for msg in fail_msgs[:3]:
+                parts.append(f"  - {msg}")
         if warns:
-            issue_parts.append(f"{len(warns)} warning(s)")
-        parts.append(f"Non-PO validation: {', '.join(issue_parts)}.")
+            warn_msgs = [w['message'] for w in warns if w.get('message')]
+            for msg in warn_msgs[:3]:
+                parts.append(f"  - {msg}")
+
+    # Reconciliation exceptions (specific details)
+    recon_result = case.reconciliation_result
+    if recon_result:
+        exceptions = list(
+            recon_result.exceptions.filter(resolved=False)
+            .values("exception_type", "severity", "message", "details")
+            .order_by("-severity")[:5]
+        )
+        if exceptions:
+            parts.append(f"Reconciliation: {len(exceptions)} unresolved exception(s):")
+            for exc in exceptions:
+                msg = exc.get("message", exc["exception_type"])
+                sev = exc.get("severity", "MEDIUM")
+                parts.append(f"  - [{sev}] {msg}")
 
     # Match decision
     match_decision = next(
@@ -63,14 +86,16 @@ def _build_fallback_summary(case, decisions, validation_issues):
     if match_decision and match_decision.rationale:
         parts.append(match_decision.rationale)
 
-    # Recommendation
+    # Recommendation with specific detail
     recommendation = None
     if case.status == "FAILED":
         recommendation = "Case processing failed. Review exceptions and consider reprocessing."
     elif validation_issues:
         fails = [i for i in validation_issues if i["status"] == "FAIL"]
         if fails:
-            recommendation = f"Resolve failed checks: {', '.join(i['check_name'] for i in fails)}."
+            recommendation = "Resolve: " + "; ".join(
+                f"{i['check_name']} -- {i['message']}" for i in fails[:3]
+            ) + "."
 
     if not parts:
         return None

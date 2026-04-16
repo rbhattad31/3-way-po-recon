@@ -479,6 +479,9 @@ class StageExecutor:
             "duplicate": (ExceptionType.DUPLICATE_INVOICE, ExceptionSeverity.HIGH),
             "mandatory_fields": (ExceptionType.MISSING_MANDATORY_FIELDS, ExceptionSeverity.HIGH),
             "tax": (ExceptionType.TAX_MISMATCH, ExceptionSeverity.MEDIUM),
+            "supporting_documents": (ExceptionType.MISSING_MANDATORY_FIELDS, ExceptionSeverity.MEDIUM),
+            "policy": (ExceptionType.AMOUNT_MISMATCH, ExceptionSeverity.MEDIUM),
+            "budget": (ExceptionType.AMOUNT_MISMATCH, ExceptionSeverity.LOW),
         }
 
         for check_name, check_result in validation_result.checks.items():
@@ -489,12 +492,11 @@ class StageExecutor:
             if exc_info:
                 exc_type, severity = exc_info
             else:
-                exc_type = ExceptionType.AMOUNT_MISMATCH
-                severity = (
-                    ExceptionSeverity.HIGH
-                    if check_result.status == "FAIL"
-                    else ExceptionSeverity.LOW
-                )
+                # Informational checks (spend_category, cost_center) --
+                # preserve the original message but use a low-severity
+                # catch-all so they are not misclassified as AMOUNT_MISMATCH.
+                exc_type = ExceptionType.MISSING_MANDATORY_FIELDS
+                severity = ExceptionSeverity.LOW
 
             ReconciliationException.objects.create(
                 result=recon_result,
