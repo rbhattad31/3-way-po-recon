@@ -31,6 +31,9 @@ def credit_account_list(request):
         .select_related("user")
         .order_by("-updated_at")
     )
+    tenant = getattr(request, "tenant", None)
+    if tenant and not getattr(request.user, "is_platform_admin", False):
+        qs = qs.filter(user__company=tenant)
 
     q = request.GET.get("q", "").strip()
     if q:
@@ -55,7 +58,11 @@ def credit_account_list(request):
 @observed_action("credits.view_detail", permission="credits.manage", entity_type="UserCreditAccount")
 def credit_account_detail(request, user_id):
     """Detail page for a user's credit account with ledger history."""
-    target_user = get_object_or_404(User, pk=user_id)
+    user_qs = User.objects.all()
+    tenant = getattr(request, "tenant", None)
+    if tenant and not getattr(request.user, "is_platform_admin", False):
+        user_qs = user_qs.filter(company=tenant)
+    target_user = get_object_or_404(user_qs, pk=user_id)
     account = CreditService.get_or_create_account(target_user)
     CreditService.reset_monthly_if_due(account)
     account.refresh_from_db()
@@ -87,7 +94,11 @@ def credit_account_adjust(request, user_id):
     if request.method != "POST":
         return redirect("extraction:credit_account_detail", user_id=user_id)
 
-    target_user = get_object_or_404(User, pk=user_id)
+    user_qs = User.objects.all()
+    tenant = getattr(request, "tenant", None)
+    if tenant and not getattr(request.user, "is_platform_admin", False):
+        user_qs = user_qs.filter(company=tenant)
+    target_user = get_object_or_404(user_qs, pk=user_id)
     account = CreditService.get_or_create_account(target_user)
     form = CreditAdjustmentForm(request.POST)
 

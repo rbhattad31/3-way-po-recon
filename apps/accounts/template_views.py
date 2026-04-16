@@ -148,6 +148,15 @@ class UserCreateView(PermissionRequiredMixin, TemplateView):
                     )
                     RBACEventService.log_role_assigned(user, initial_role, request.user, is_primary=True)
                 RBACEventService.log_user_created(user, request.user)
+                # Bootstrap extraction credit account with 100 initial credits
+                try:
+                    from apps.extraction.credit_models import UserCreditAccount
+                    UserCreditAccount.objects.get_or_create(
+                        user=user,
+                        defaults={"balance_credits": 100, "monthly_limit": 0},
+                    )
+                except Exception:
+                    pass  # fail-silent; credits can be allocated later
             messages.success(request, f"User '{user.email}' created.")
             return redirect("accounts:user_detail", pk=user.pk)
         return self.render_to_response({"form": form})
