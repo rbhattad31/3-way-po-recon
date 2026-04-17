@@ -132,7 +132,7 @@ class ReconciliationPolicy(BaseModel):
     (lower = higher precedence) and returns the first match.
     """
 
-    policy_code = models.CharField(max_length=50, unique=True, db_index=True)
+    policy_code = models.CharField(max_length=50, db_index=True)
     tenant = models.ForeignKey(
         "accounts.CompanyProfile",
         on_delete=models.CASCADE,
@@ -176,6 +176,12 @@ class ReconciliationPolicy(BaseModel):
         indexes = [
             models.Index(fields=["priority"], name="idx_recon_pol_priority"),
             models.Index(fields=["reconciliation_mode"], name="idx_recon_pol_mode"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["policy_code", "tenant"],
+                name="uq_recon_policy_code_tenant",
+            ),
         ]
 
     def __str__(self) -> str:

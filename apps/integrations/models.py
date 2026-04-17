@@ -15,7 +15,7 @@ class IntegrationConfig(BaseModel):
         db_index=True,
         related_name="+",
     )
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100, db_index=True)
     integration_type = models.CharField(
         max_length=30,
         choices=[
@@ -36,6 +36,12 @@ class IntegrationConfig(BaseModel):
         ordering = ["name"]
         verbose_name = "Integration Config"
         verbose_name_plural = "Integration Configs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["name", "tenant"],
+                name="uq_integration_config_name_tenant",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.name} ({self.integration_type})"

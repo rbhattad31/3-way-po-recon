@@ -44,7 +44,7 @@ class APCase(BaseModel, SoftDeleteMixin):
     """
 
     case_number = models.CharField(
-        max_length=50, unique=True, db_index=True,
+        max_length=50, db_index=True,
         help_text="Auto-generated case identifier, e.g. AP-000123",
     )
 
@@ -175,6 +175,12 @@ class APCase(BaseModel, SoftDeleteMixin):
             models.Index(fields=["priority", "-created_at"]),
             models.Index(fields=["assigned_to", "status"]),
             models.Index(fields=["tenant", "status"], name="idx_apcase_tenant_status"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["case_number", "tenant"],
+                name="uq_case_number_tenant",
+            ),
         ]
 
     def __str__(self):
