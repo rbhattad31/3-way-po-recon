@@ -184,23 +184,7 @@ class AgentFeedbackService:
 
     @staticmethod
     def _default_config(tenant=None) -> ReconciliationConfig:
-        config = ReconciliationConfig.objects.filter(
-            is_default=True,
-            tenant=tenant,
-        ).first()
-        if config:
-            return config
-        config = ReconciliationConfig.objects.filter(
-            is_default=True,
-            tenant__isnull=True,
-        ).first()
-        if config:
-            return config
-        return ReconciliationConfig.objects.create(
-            name="Default",
-            is_default=True,
-            tenant=tenant,
-        )
+        return ReconciliationConfig.get_or_create_default(tenant=tenant)
 
     def _ensure_tenant_config(self, tenant) -> None:
         if tenant is None:

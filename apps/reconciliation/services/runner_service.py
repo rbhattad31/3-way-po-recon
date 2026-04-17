@@ -659,26 +659,7 @@ class ReconciliationRunnerService:
     @staticmethod
     def _default_config(tenant=None) -> ReconciliationConfig:
         """Get or create a default ReconciliationConfig."""
-        config = ReconciliationConfig.objects.filter(
-            is_default=True,
-            tenant=tenant,
-        ).first()
-        if config:
-            return config
-        config = ReconciliationConfig.objects.filter(
-            is_default=True,
-            tenant__isnull=True,
-        ).first()
-        if config:
-            return config
-        return ReconciliationConfig.objects.create(
-            name="Default",
-            quantity_tolerance_pct=2.0,
-            price_tolerance_pct=1.0,
-            amount_tolerance_pct=1.0,
-            is_default=True,
-            tenant=tenant,
-        )
+        return ReconciliationConfig.get_or_create_default(tenant=tenant)
 
     def _ensure_tenant_config(self, tenant) -> None:
         if tenant is None:
