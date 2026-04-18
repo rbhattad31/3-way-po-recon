@@ -13,5 +13,12 @@
     "accessibility.signals.chatResponseReceived": {
         "sound": "off"
     },
-    "python.terminal.activateEnvironment": false
+    "python.terminal.activateEnvironment": false,
+    "chat.mcp.serverSampling": {
+        "3-way-po-recon/.vscode/mcp.json: microsoft/playwright-mcp": {
+            "allowedModels": [
+                "copilot/auto"
+            ]
+        }
+    }
 }
