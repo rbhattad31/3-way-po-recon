@@ -6,59 +6,79 @@
 
 ## 1. Executive Summary
 
-The **SupervisorAgent** is a full AP lifecycle orchestrator that extends the platform's existing `BaseAgent` with a larger tool budget, dynamic skill-based prompt assembly, and end-to-end invoice processing capability. Unlike the existing pipeline of 8 specialized LLM agents (each handling a single concern), the Supervisor owns the entire invoice lifecycle in a single ReAct loop — from document ingestion to final recommendation.
+The **SupervisorAgent** is a full AP lifecycle orchestrator that extends the platform's existing `BaseAgent` with a larger tool budget, dynamic skill-based prompt assembly, and end-to-end invoice processing capability. Unlike the existing pipeline of 8 specialized LLM agents (each handling a single concern), the Supervisor owns the entire invoice lifecycle in a single ReAct loop -- from document ingestion to final recommendation.
+
+The Supervisor also supports **smart query routing** -- incoming queries are classified as `CASE_ANALYSIS` (default invoice lifecycle), `AP_INSIGHTS` (system-wide analytics), or `HYBRID` (both). AP Insights queries use 12 dedicated analytics tools and dashboard-enriched context, bypassing the case analysis phases entirely.
 
 **Key design principles:**
-- **Skill-based composition** — prompt and toolset assembled dynamically from registered skills
-- **Non-linear phase progression** — five phases (UNDERSTAND → VALIDATE → MATCH → INVESTIGATE → DECIDE) with backtracking
-- **Deterministic tool delegation** — LLM reasons over tool outputs; tools wrap existing deterministic services
-- **ERP-aware routing** — PluginToolRouter routes tools through ERP connectors when available
-- **Guardrailed output** — mandatory `submit_recommendation` call; fallback to safe defaults
+- **Skill-based composition** -- prompt and toolset assembled dynamically from 6 registered skills
+- **Non-linear phase progression** -- five phases (UNDERSTAND -> VALIDATE -> MATCH -> INVESTIGATE -> DECIDE) with backtracking
+- **Smart query routing** -- heuristic-based classification into CASE_ANALYSIS / AP_INSIGHTS / HYBRID modes
+- **Dashboard-enriched context** -- pre-loaded KPIs for insights/hybrid queries reduce tool-call overhead
+- **Deterministic tool delegation** -- LLM reasons over tool outputs; tools wrap existing deterministic services
+- **ERP-aware routing** -- PluginToolRouter routes tools through ERP connectors when available
+- **Guardrailed output** -- mandatory `submit_recommendation` call (relaxed for AP_INSIGHTS mode); fallback to safe defaults
+- **Real-time progress streaming** -- SSE endpoint streams tool-call progress events for live UI updates
 
-**Evidence**: `apps/agents/services/supervisor_agent.py`, `apps/agents/skills/`, `apps/tools/registry/supervisor_tools.py`
+**Evidence**: `apps/agents/services/supervisor_agent.py`, `apps/agents/services/supervisor_query_router.py`, `apps/agents/skills/`, `apps/tools/registry/supervisor_tools.py`, `apps/tools/registry/ap_insights_tools.py`
 
 ---
 
 ## 2. Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    SupervisorAgent                          │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │ SkillRegistry│  │PromptBuilder     │  │ContextBuilder│  │
-│  │  5 skills    │  │ base + skills    │  │ invoice facts│  │
-│  │  24+ tools   │  │ + hints          │  │ + exceptions │  │
-│  └──────┬───────┘  └────────┬─────────┘  └──────┬───────┘  │
-│         │                   │                    │          │
-│         ▼                   ▼                    ▼          │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │              BaseAgent ReAct Loop                    │   │
-│  │  (system_prompt + user_message → LLM → tool calls)  │   │
-│  │  Max 15 tool rounds (vs 10 default)                  │   │
-│  └──────────────────────┬───────────────────────────────┘   │
-│                         │                                   │
-│  ┌──────────────────────▼───────────────────────────────┐   │
-│  │           OutputInterpreter                          │   │
-│  │  JSON parse → AgentOutputSchema → guardrail checks   │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Tool Execution Layer                      │
-│                                                             │
-│  ┌──────────────────┐       ┌───────────────────────────┐  │
-│  │PluginToolRouter  │──────▶│ ERP Connector (if active) │  │
-│  │ 5 ERP-routable   │       └───────────────────────────┘  │
-│  └────────┬─────────┘                                      │
-│           │ fallback                                        │
-│           ▼                                                 │
-│  ┌──────────────────┐                                      │
-│  │  ToolRegistry    │  24 supervisor tools                 │
-│  │  (BaseTool)      │  + 6 existing agent tools            │
-│  └──────────────────┘                                      │
-└─────────────────────────────────────────────────────────────┘
+                    +-------------------+
+                    |   User Query /    |
+                    |   Copilot Chat    |
+                    +--------+----------+
+                             |
+                    +--------v----------+
+                    |   QueryRouter     |
+                    | (classify_query)  |
+                    +--+----+----+------+
+         CASE_ANALYSIS |    |    | AP_INSIGHTS
+                       |  HYBRID |
+                       v    v    v
++-------------------------------------------------------------+
+|                    SupervisorAgent                           |
+|                                                             |
+|  +--------------+  +------------------+  +--------------+   |
+|  | SkillRegistry|  | PromptBuilder    |  | ContextBuilder|  |
+|  |  6 skills    |  | base + skills    |  | invoice facts|   |
+|  |  36+ tools   |  | + hints + mode   |  | + dashboard  |   |
+|  +------+-------+  +--------+---------+  +------+-------+   |
+|         |                   |                    |           |
+|         v                   v                    v           |
+|  +------------------------------------------------------+   |
+|  |              BaseAgent ReAct Loop                     |   |
+|  |  (system_prompt + user_message -> LLM -> tool calls)  |   |
+|  |  Max 15 tool rounds (vs 10 default)                   |   |
+|  |  progress_callback for SSE streaming                  |   |
+|  +------------------------+-----------------------------+   |
+|                           |                                  |
+|  +------------------------v-----------------------------+   |
+|  |           OutputInterpreter (mode-aware)              |   |
+|  |  JSON parse -> AgentOutputSchema -> guardrail checks  |   |
+|  |  AP_INSIGHTS: relaxes submit_recommendation rule      |   |
+|  +------------------------------------------------------+   |
++-------------------------------------------------------------+
+         |
+         v
++-------------------------------------------------------------+
+|                    Tool Execution Layer                       |
+|                                                              |
+|  +------------------+       +---------------------------+    |
+|  | PluginToolRouter |------>| ERP Connector (if active) |    |
+|  | 5 ERP-routable   |       +---------------------------+    |
+|  +--------+---------+                                        |
+|           | fallback                                         |
+|           v                                                  |
+|  +------------------+  +--------------------+                |
+|  |  ToolRegistry    |  | AP Insights Tools  |                |
+|  |  24 supervisor   |  | 12 analytics tools |                |
+|  |  + 6 base tools  |  | (dashboard.view)   |                |
+|  +------------------+  +--------------------+                |
++-------------------------------------------------------------+
 ```
 
 ---
@@ -75,15 +95,30 @@ class SupervisorAgent(BaseAgent):
     enforce_json_response = True
 ```
 
+**Constructor:**
+
+```python
+def __init__(self, skill_names=None, query_mode=None):
+```
+
+- `skill_names`: Override default skills (defaults to 6 DEFAULT_SKILLS). `ap_insights` is always force-included.
+- `query_mode`: One of `CASE_ANALYSIS`, `AP_INSIGHTS`, `HYBRID` (set by `route_and_run()` or manually).
+
 **Key overrides from BaseAgent:**
 
 | Method / Property | Purpose |
 |---|---|
 | `system_prompt` | Lazy-built from `build_supervisor_prompt()` with skill composition |
-| `allowed_tools` | Merged from all active skills + 6 existing base tools |
-| `build_user_message()` | Rich context with reconciliation mode, invoice facts, exceptions |
-| `interpret_response()` | Delegates to `interpret_supervisor_output()` + enforces `submit_recommendation` |
-| `run()` | Temporarily patches `MAX_TOOL_ROUNDS` from 10 → 15 |
+| `allowed_tools` | Merged from all active skills (incl. `ap_insights`) + 6 existing base tools |
+| `build_user_message()` | Mode-aware: rich context with recon mode, invoice facts, exceptions; AP_INSIGHTS/HYBRID adds pre-loaded dashboard data |
+| `interpret_response()` | Mode-aware: delegates to `interpret_supervisor_output()`; AP_INSIGHTS relaxes `submit_recommendation` requirement |
+| `run(ctx, progress_callback=None)` | Temporarily patches `MAX_TOOL_ROUNDS` from 10 -> 15; passes `progress_callback` for SSE streaming |
+
+**Class method:**
+
+| Method | Purpose |
+|---|---|
+| `route_and_run(ctx, *, user_query, user, progress_callback)` | Primary entry point: classifies query via `classify_query()`, enriches context with dashboard data for AP_INSIGHTS/HYBRID, creates agent with determined mode, then runs |
 
 **Registration points** (confirmed in code and tests):
 - `AgentType.SUPERVISOR` enum value in `apps/core/enums.py`
@@ -125,15 +160,62 @@ class Skill:
 #### Loading Mechanism
 
 Skills are loaded via `_ensure_skills_loaded()` in `supervisor_agent.py`:
-1. Imports all 5 skill modules (triggers `register_skill()` at module level)
+1. Imports all 6 skill modules (triggers `register_skill()` at module level), including `ap_insights`
 2. If SkillRegistry is empty (e.g., after test `clear()`), reloads modules
-3. Also imports `supervisor_tools` to ensure tool registration
+3. Also imports `supervisor_tools` and `ap_insights_tools` to ensure tool registration
+
+### 3.3 Query Router
+
+**File**: `apps/agents/services/supervisor_query_router.py`
+
+The query router classifies incoming queries to determine whether the supervisor should run case-specific analysis, system-wide analytics, or both.
+
+#### QueryMode Enum
+
+```python
+class QueryMode(str, Enum):
+    CASE_ANALYSIS = "CASE_ANALYSIS"   # Default: full invoice lifecycle
+    AP_INSIGHTS = "AP_INSIGHTS"       # System-wide analytics questions
+    HYBRID = "HYBRID"                 # Both case + system context
+```
+
+#### RoutingDecision Dataclass
+
+```python
+@dataclass
+class RoutingDecision:
+    mode: QueryMode
+    confidence: float      # 0.0-1.0
+    reason: str
+    has_case_context: bool  # Whether invoice/case was referenced
+```
+
+#### Classification Heuristic (`classify_query()`)
+
+Uses two sets of regex patterns:
+
+| Pattern Set | Count | Examples |
+|---|---|---|
+| `_INSIGHTS_PATTERNS` | 17 | dashboard, KPI, how many, total, trend, performance, token usage, review queue, touchless, comparison, this week |
+| `_CASE_PATTERNS` | 11 | invoice #123, PO #..., this invoice, investigate, validate, vendor verify, duplicate, approve, reject |
+
+**Scoring logic:**
+1. Count keyword matches for both insight and case patterns
+2. If case context exists (invoice_id, reconciliation_result, case_id), boost case score by +3
+3. Both signals >= 2 -> `HYBRID`
+4. Stronger insights signal without case context -> `AP_INSIGHTS`
+5. Insights signal with case context -> `HYBRID`
+6. Default: `CASE_ANALYSIS` if case context present, `AP_INSIGHTS` otherwise
+
+Confidence is capped at 0.95, scaled by keyword count.
 
 ---
 
 ## 4. Five-Phase Lifecycle
 
-The Supervisor operates through five non-linear phases. Unlike a fixed pipeline, the agent can **backtrack** between phases based on findings.
+The Supervisor operates through five non-linear phases for **CASE_ANALYSIS** mode. Unlike a fixed pipeline, the agent can **backtrack** between phases based on findings.
+
+For **AP_INSIGHTS** mode, the agent skips all five phases and uses analytics tools directly. For **HYBRID** mode, the agent addresses both system-wide questions (using AP insights tools) and case-specific analysis (using the phase-based lifecycle).
 
 ### Phase Diagram
 
@@ -186,7 +268,7 @@ The Supervisor operates through five non-linear phases. Unlike a fixed pipeline,
 
 ---
 
-## 5. Tool Inventory (30 Total)
+## 5. Tool Inventory (42 Total)
 
 ### 5.1 Supervisor-Specific Tools (24)
 
@@ -252,7 +334,26 @@ All defined in `apps/tools/registry/supervisor_tools.py`. Each extends `BaseTool
 Always included regardless of skill selection:
 `po_lookup`, `grn_lookup`, `vendor_search`, `invoice_details`, `exception_list`, `reconciliation_summary`
 
-### 5.3 Tool Design Patterns
+### 5.3 AP Insights Tools (12)
+
+All defined in `apps/tools/registry/ap_insights_tools.py`. Used for system-wide analytics queries (AP_INSIGHTS and HYBRID modes). Registered via the `ap_insights` skill.
+
+| Tool | Permission | Description |
+|------|-----------|-------------|
+| `get_ap_dashboard_summary` | `dashboard.view` | Overall AP KPIs: total invoices, matched %, pending reviews, open exceptions, avg confidence |
+| `get_match_status_breakdown` | `dashboard.view` | Distribution of match statuses (MATCHED, PARTIAL, UNMATCHED, etc.) |
+| `get_exception_breakdown` | `dashboard.view` | Exception counts by type (PRICE_VARIANCE, QTY_MISMATCH, etc.) |
+| `get_mode_breakdown` | `dashboard.view` | 2-way vs 3-way vs non-PO reconciliation mode distribution |
+| `get_daily_volume_trend` | `dashboard.view` | Invoice processing volume over last N days (default 30) |
+| `get_recent_activity` | `dashboard.view` | Last N processing events (invoices, reconciliations, reviews) |
+| `get_agent_performance_summary` | `dashboard.view` | Agent success rates, avg confidence, tool call counts |
+| `get_agent_reliability_matrix` | `dashboard.view` | Per-agent reliability metrics (success rate, avg duration) |
+| `get_agent_token_cost` | `dashboard.view` | Token usage and estimated cost per agent type |
+| `get_recommendation_intelligence` | `dashboard.view` | Recommendation type distribution and acceptance rates |
+| `get_extraction_approval_analytics` | `extraction.view` | Touchless rate, most-corrected fields, approval breakdown |
+| `get_review_queue_status` | `reviews.view` | Open review counts by status (pending, assigned, in-review), oldest pending |
+
+### 5.4 Tool Design Patterns
 
 - **All tools extend `BaseTool`** with `@register_tool` decorator
 - **Tenant scoping** via `self._scoped(queryset)` — inherited from BaseTool
@@ -349,6 +450,10 @@ The `_BASE_SYSTEM_PROMPT` establishes:
 - **Output format**: Structured JSON with recommendation_type, confidence, reasoning, evidence, decisions, tools_used, case_summary
 - **Valid recommendation types**: AUTO_CLOSE, SEND_TO_AP_REVIEW, SEND_TO_PROCUREMENT, SEND_TO_VENDOR_CLARIFICATION, REPROCESS_EXTRACTION, ESCALATE_TO_MANAGER
 - **Guardrails**: Max tool rounds, no fabricated outputs, no RBAC bypass
+- **Query routing**: Three operating modes indicated by `[MODE: ...]` in user message:
+  - `CASE_ANALYSIS` (default): Full invoice lifecycle, must call `submit_recommendation`
+  - `AP_INSIGHTS`: System-wide analytics, use AP insights tools, no `submit_recommendation` required
+  - `HYBRID`: Both case-specific and system-wide analysis
 
 ### Default Skills
 
@@ -359,8 +464,11 @@ DEFAULT_SKILLS = [
     "ap_3way_matching",       # MATCH
     "ap_investigation",       # INVESTIGATE
     "ap_review_routing",      # DECIDE
+    "ap_insights",            # AP Analytics (always force-included)
 ]
 ```
+
+Note: Even if `ap_insights` is omitted from the list, `SupervisorAgent.__init__()` force-appends it.
 
 ---
 
@@ -372,31 +480,66 @@ DEFAULT_SKILLS = [
 
 1. **Initializing AgentMemory** with reconciliation mode facts (`is_two_way`, `reconciliation_mode`)
 2. **Loading Invoice metadata** from DB (invoice_number, vendor_name, vendor_id, extraction_confidence, invoice_status)
-3. **Inferring PO number** from Invoice if not provided
-4. **Gathering existing ReconciliationExceptions** (type, severity, field_name, description)
-5. **Assembling RBAC context** (actor_user_id, actor_primary_role, actor_roles_snapshot, permission_checked, permission_source, access_granted)
-6. **Attaching observability** (trace_id, span_id, Langfuse trace)
+3. **Detecting extraction state** -- sets `extraction_done` flag based on invoice status (EXTRACTED, VALIDATED, PENDING_APPROVAL, READY_FOR_RECON, RECONCILED)
+4. **Inferring PO number** from Invoice if not provided
+5. **Gathering existing ReconciliationExceptions** (type, severity, field_name, description)
+6. **Assembling RBAC context** (actor_user_id, actor_primary_role, actor_roles_snapshot, permission_checked, permission_source, access_granted)
+7. **Attaching observability** (trace_id, span_id, Langfuse trace)
+
+### Dashboard Enrichment
+
+**Function**: `enrich_context_with_dashboard(ctx, *, user, tenant)`
+
+Called by `route_and_run()` when query mode is `AP_INSIGHTS` or `HYBRID`. Pre-loads system-wide metrics into `ctx.extra["dashboard"]` to reduce tool-call overhead:
+
+| Key | Source | Data |
+|-----|--------|------|
+| `ap_summary` | `DashboardService.get_summary()` | Total invoices, matched %, pending reviews, open exceptions, avg confidence |
+| `match_breakdown` | `DashboardService.get_match_status_breakdown()` | Distribution of match statuses |
+| `exception_breakdown` | `DashboardService.get_exception_breakdown()` | Exception type counts |
+| `extraction_analytics` | `ExtractionApprovalService.get_approval_analytics()` | Touchless rate, corrected fields |
+| `agent_performance` | `AgentPerformanceDashboardService.get_summary()` | Agent success rates and performance |
+
+All loads are fail-silent -- individual failures do not block the supervisor run.
 
 ### User Message Assembly
 
-`SupervisorAgent.build_user_message()` constructs a rich context string:
+`SupervisorAgent.build_user_message()` constructs a mode-aware context string:
 
+**For CASE_ANALYSIS (default):**
 ```
 Reconciliation Mode: {mode description}
-
 Invoice ID: {id}
 PO Number (from invoice): {po_number}
-Document Upload ID: {upload_id}
 Invoice Number: {number}
 Vendor Name: {name}
 Extraction Confidence: {score}
 Current Status: {status}
+
+[EXTRACTION ALREADY COMPLETE -- skip UNDERSTAND phase...]  (if applicable)
+[RECONCILIATION ALREADY COMPLETE -- skip MATCH phase...]   (if applicable)
 
 Existing Exceptions ({count}):
   - [SEVERITY] TYPE: description
 
 Process this invoice through the full lifecycle...
 ```
+
+**For AP_INSIGHTS:**
+```
+User Query: {query}
+[MODE: AP_INSIGHTS] Answer the user's analytics/performance question...
+
+--- Pre-loaded Dashboard Context ---
+AP Summary: X invoices, Y% matched, Z pending reviews...
+Extraction: X% touchless rate
+--- End Dashboard Context ---
+
+Answer the analytics question above using available AP insights tools...
+```
+
+**For HYBRID:**
+Includes both dashboard context and invoice facts, instructs the agent to address both aspects.
 
 **Mode-specific guidance:**
 - `TWO_WAY`: "GRN/receipt data is NOT part of this reconciliation. Do NOT flag GRN-related issues."
@@ -431,10 +574,18 @@ Scans tool call history in reverse for the `submit_recommendation` tool call. Ex
 
 ### Guardrail: submit_recommendation Enforcement
 
-In `SupervisorAgent.interpret_response()`:
+In `SupervisorAgent.interpret_response()` (mode-aware):
+
+**AP_INSIGHTS mode:**
+- `submit_recommendation` is **not required**
+- If recommendation_type is missing, defaults to `SEND_TO_AP_REVIEW`
+- Sets `_recommendation_submitted = True` and `_query_mode = "AP_INSIGHTS"` in evidence
+
+**CASE_ANALYSIS / HYBRID mode:**
 - If `_recommendation_submitted` flag is absent in evidence:
-  - Check if `recommendation_type` was set via structured output → mark as submitted
+  - Check if `recommendation_type` was set via structured output -> mark as submitted
   - Otherwise: default to `SEND_TO_AP_REVIEW`, cap confidence at 0.3, add warning
+- Query mode is recorded in `evidence._query_mode`
 
 ---
 
@@ -480,13 +631,14 @@ In `SupervisorAgent.interpret_response()`:
 - **Permission**: `agents.run_supervisor`
 - **Enforced by**: `AgentGuardrailsService` (pre-flight check in BaseAgent)
 
-### Tool Permissions (24 supervisor tools)
+### Tool Permissions (24 supervisor tools + 12 AP insights tools)
 
 | Permission | Tools |
 |-----------|-------|
 | `invoices.view` | `get_ocr_text`, `classify_document`, `verify_tax_computation` |
 | `invoices.edit` | `persist_invoice` |
 | `extraction.run` | `extract_invoice_fields`, `validate_extraction`, `repair_extraction`, `re_extract_field` |
+| `extraction.view` | `get_extraction_approval_analytics` |
 | `vendors.view` | `verify_vendor`, `get_vendor_history` |
 | `reconciliation.run` | `run_header_match`, `run_line_match`, `run_grn_match` |
 | `reconciliation.view` | `get_tolerance_config` |
@@ -498,6 +650,8 @@ In `SupervisorAgent.interpret_response()`:
 | `recommendations.route_review` | `submit_recommendation` |
 | `recommendations.auto_close` | `auto_close_case` |
 | `reviews.assign` | `assign_reviewer` |
+| `reviews.view` | `get_review_queue_status` |
+| `dashboard.view` | `get_ap_dashboard_summary`, `get_match_status_breakdown`, `get_exception_breakdown`, `get_mode_breakdown`, `get_daily_volume_trend`, `get_recent_activity`, `get_agent_performance_summary`, `get_agent_reliability_matrix`, `get_agent_token_cost`, `get_recommendation_intelligence` |
 
 ### Tenant Isolation
 
@@ -528,9 +682,9 @@ Each agent is a separate `BaseAgent` subclass with its own prompt, tools, and si
 
 ```
 SupervisorAgent (single ReAct loop)
-  ├── 5 skills compose into one prompt
-  ├── 30 tools available in one session
-  └── Non-linear phase progression
+  ├── 6 skills compose into one prompt
+  ├── 42 tools available in one session (24 supervisor + 12 AP insights + 6 base)
+  └── Non-linear phase progression + AP insights mode
 ```
 
 ### Key Differences
@@ -541,7 +695,7 @@ SupervisorAgent (single ReAct loop)
 | Tool budget | 10 rounds per agent | 15 rounds total |
 | Phase control | Orchestrator decides next agent | LLM decides next phase |
 | Backtracking | Not supported (linear) | Supported (non-linear) |
-| Tool access | Scoped per agent | All 30 tools available |
+| Tool access | Scoped per agent | All 42 tools available |
 | Prompt | Per-agent, static | Composed from skills |
 | Recovery | Limited (agent fails → escalate) | Investigation phase with recovery actions |
 | Output | Per-agent AgentOutput | Single comprehensive AgentOutput |
@@ -594,7 +748,7 @@ The Supervisor runs alongside the existing pipeline. It is registered as `AgentT
 2. Define a `Skill` dataclass with name, description, prompt_extension, tools, decision_hints
 3. Call `register_skill(skill)` at module level
 4. Add the skill name to `DEFAULT_SKILLS` in `supervisor_prompt_builder.py` (or pass custom list to `SupervisorAgent(skill_names=[...])`)
-5. Register corresponding tools in `supervisor_tools.py`
+5. Register corresponding tools in `supervisor_tools.py` or `ap_insights_tools.py`
 6. Add tool permissions to `TOOL_PERMISSIONS` dict
 7. Add import to `_ensure_skills_loaded()` in `supervisor_agent.py`
 
@@ -623,8 +777,8 @@ The supervisor prompt can be managed externally via:
 
 2. Initialization
    SupervisorAgent(skill_names=DEFAULT_SKILLS)
-     → Lazy-build system_prompt from skills
-     → Merge 30 tools from skills + base
+     -> Lazy-build system_prompt from 6 skills
+     -> Merge 42 tools from skills + base
 
 3. ReAct Loop (up to 15 rounds)
    Loop:
@@ -661,8 +815,10 @@ The supervisor prompt can be managed externally via:
 | 3 | Tool budget: Is 15 rounds sufficient for complex invoices with many line items? | Needs monitoring |
 | 4 | ERP routing: `verify_vendor` and `check_duplicate` are in ERP_ROUTABLE_TOOLS but have no ERP-specific implementation paths | Open |
 | 5 | Skill hot-loading: Can skills be enabled/disabled per tenant at runtime? | Not currently supported |
-| 6 | Concurrent supervisor runs: Is there locking to prevent two supervisors processing the same invoice? | Not visible in code |
-| 7 | Eval framework: Are there eval benchmarks comparing supervisor vs multi-agent pipeline accuracy? | Not visible |
+| 6 | ~~Concurrent supervisor runs: Is there locking to prevent two supervisors processing the same invoice?~~ | **Resolved**: Cache-based lock (`supervisor:run:{tenant}:{invoice}`, 600s TTL) in `run_supervisor_pipeline_task` prevents concurrent runs |
+| 7 | ~~Eval framework: Are there eval benchmarks comparing supervisor vs multi-agent pipeline accuracy?~~ | **Resolved**: `AgentEvalAdapter.sync_for_agent_run()` + `_record_supervisor_signals()` capture 4 learning signal types; eval framework active |
+| 8 | Query router: Should classification use LLM fallback for ambiguous queries (code has extension point but no implementation)? | Open |
+| 9 | AP Insights: Should dashboard enrichment be cached across queries within the same session? | Open |
 
 ---
 
@@ -670,16 +826,131 @@ The supervisor prompt can be managed externally via:
 
 | File | Purpose |
 |------|---------|
-| `apps/agents/services/supervisor_agent.py` | SupervisorAgent class, run() override, skill loading |
+| `apps/agents/services/supervisor_agent.py` | SupervisorAgent class, run() override, route_and_run(), skill loading |
 | `apps/agents/services/supervisor_prompt_builder.py` | Prompt assembly from base + skills + hints |
-| `apps/agents/services/supervisor_context_builder.py` | AgentContext factory with invoice/exception/RBAC data |
+| `apps/agents/services/supervisor_context_builder.py` | AgentContext factory with invoice/exception/RBAC data + dashboard enrichment |
 | `apps/agents/services/supervisor_output_interpreter.py` | JSON parsing, schema validation, guardrail enforcement |
+| `apps/agents/services/supervisor_query_router.py` | QueryMode classification (CASE_ANALYSIS / AP_INSIGHTS / HYBRID) |
 | `apps/agents/skills/base.py` | Skill dataclass and SkillRegistry singleton |
 | `apps/agents/skills/invoice_extraction.py` | UNDERSTAND phase skill |
 | `apps/agents/skills/ap_validation.py` | VALIDATE phase skill |
 | `apps/agents/skills/ap_matching.py` | MATCH phase skill |
 | `apps/agents/skills/ap_investigation.py` | INVESTIGATE phase skill |
 | `apps/agents/skills/ap_review_routing.py` | DECIDE phase skill |
+| `apps/agents/skills/ap_insights.py` | AP Analytics skill (12 tools for system-wide queries) |
 | `apps/agents/plugins/plugin_router.py` | PluginToolRouter with ERP connector routing |
 | `apps/tools/registry/supervisor_tools.py` | 24 supervisor-specific tool implementations |
+| `apps/tools/registry/ap_insights_tools.py` | 12 AP insights analytics tool implementations |
 | `apps/agents/tests/test_supervisor_agent.py` | ~40 tests covering all supervisor components |
+| `apps/copilot/views.py` | Copilot SSE integration: `supervisor_run`, `supervisor_run_stream`, `_build_supervisor_summary` |
+| `apps/agents/tasks.py` | `run_supervisor_pipeline_task` Celery task with Langfuse tracing + eval/learning signals |
+
+---
+
+## 18. Copilot Integration (SSE Streaming)
+
+The Supervisor is integrated into the Copilot chat interface via two endpoints:
+
+### Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v1/copilot/supervisor/run/` | POST | Synchronous (eager) supervisor run; returns JSON result |
+| `/api/v1/copilot/supervisor/stream/` | POST | SSE streaming supervisor run with real-time progress events |
+
+Both require `agents.use_copilot` permission.
+
+### SSE Streaming Architecture (`supervisor_run_stream`)
+
+The streaming endpoint orchestrates a full pipeline in a background thread:
+
+1. **Phase 1: Extraction** (if `upload_id` provided without existing invoice) -- runs `process_invoice_upload_task` synchronously
+2. **Phase 2: Reconciliation** (if no `reconciliation_result_id`) -- runs `ReconciliationRunnerService.run()` directly
+3. **Phase 3: Supervisor Analysis** -- runs `SupervisorAgent.run()` with `progress_callback`
+
+**SSE Event Types:**
+
+| Event Type | Payload | When |
+|-----------|---------|------|
+| `pipeline_stage` | `{stage, status, message}` | Extraction/reconciliation/analysis start/done/failed |
+| `tool_call` | `{tool, status, ...}` | Each tool call progress (via `progress_callback`) |
+| `complete` | `{recommendation, confidence, summary, agent_run_id, ...}` | Supervisor finished |
+| `error` | `{message}` | Unrecoverable failure |
+| `heartbeat` | `{}` | Every 180s to keep connection alive |
+
+### Summary Builder (`_build_supervisor_summary`)
+
+Transforms an `AgentRun` into a structured dict for the UI:
+- **Recommendation**: label, type, severity (success/warning/danger)
+- **Findings**: invoice number, vendor, extraction confidence, match status, duplicate check, vendor verification, tax computation, PO
+- **Issues**: failed tools, warnings, min_tool_calls not met
+- **Tool details**: per-tool label, success, duration, input/output summaries with human-readable formatting
+- **Analysis text**: case_summary from evidence (max 500 chars)
+
+### Message Persistence
+
+After completion, supervisor results are persisted as `CopilotMessage` records (user message "Run Supervisor Agent" + assistant message with markdown summary + evidence cards + follow-up chips).
+
+### Concurrent Run Protection
+
+`run_supervisor_pipeline_task` uses a cache-based lock (`supervisor:run:{tenant}:{invoice}`, 600s TTL) to prevent duplicate concurrent runs for the same invoice.
+
+### UI Integration (Copilot Case Hub)
+
+**Page**: `/copilot/cases/` (`copilot_case_hub` view)
+**Template**: `templates/copilot/ap_copilot.html`
+**JS**: `static/js/ap-copilot.js`
+
+The Copilot Case Hub is a ChatGPT-style interface (sidebar with sessions, main chat area) that serves as the primary UI for triggering the supervisor. Each session is optionally linked to an AP case.
+
+**Trigger points for the supervisor:**
+
+| Trigger | Context | Behavior |
+|---------|---------|----------|
+| "Run Supervisor Agent" chip button | Case-linked session (welcome chips) | Calls `runSupervisor()` -> SSE stream |
+| Supervisor icon button (`#btnRunSupervisor`) | Chat input bar (case mode) | Calls `runSupervisor()` -> SSE stream |
+| Auto-run on page load | `/copilot/session/<id>/?auto_run=1` | `CFG.autoRunSupervisor=true` triggers `runSupervisor()` after 500ms delay |
+| Post-upload auto-run | After invoice file upload completes | `waitForInvoiceThenRunSupervisor()` polls for invoice creation, then runs |
+| Chat message routing | User sends message in case session | `chipSend()` routes to `runSupervisor(text)` for supervisor-driven queries |
+
+**JS flow (`runSupervisor`):**
+
+1. Ensures a copilot session exists (`ensureSession()`)
+2. Appends user message bubble + animated progress indicator
+3. Opens SSE connection to `/api/v1/copilot/supervisor/stream/` with `{invoice_id, upload_id, case_id, session_id, reconciliation_result_id}`
+4. Renders real-time progress steps as SSE events arrive (pipeline stages, tool calls with labels, reasoning)
+5. On `complete` event: renders recommendation card with findings, evidence cards, tool execution timeline, and follow-up action chips
+6. On `error` event: displays error message in chat
+
+**Two UI modes:**
+- **Case mode** (`IS_CASE=true`): Full case workspace with header tabs (Overview, Lines, Exceptions, Chat). Supervisor results show rich streaming steps with tool input/output details
+- **Plain chat mode** (`IS_CASE=false`): Simpler progress steps; used for system-wide AP insights queries without a linked case
+
+---
+
+## 19. Eval & Learning Integration
+
+### Eval Adapter
+
+`AgentEvalAdapter.sync_for_agent_run(agent_run)` is called after every supervisor run (both task and SSE paths). Creates/updates `EvalRun` and `EvalMetric` records for the supervisor execution.
+
+### Learning Signals
+
+`_record_supervisor_signals(agent_run, invoice_id, tenant)` records 4 types of learning signals:
+
+| Signal Type | Condition | Purpose |
+|-------------|-----------|---------|
+| `supervisor_low_confidence` | COMPLETED with confidence < 0.5 | Flags uncertain decisions for prompt tuning |
+| `supervisor_tool_failure` | Any `AgentStep` with `success=False` | Tracks tool reliability issues |
+| `supervisor_recovery_used` | `evidence.recovery_actions` non-empty | Indicates quality issues requiring re-extraction |
+| `supervisor_fallback_recommendation` | `SEND_TO_AP_REVIEW` with confidence < 0.4 or no tool submission | Detects when supervisor could not make a confident decision |
+
+All signals are linked to `EvalRun` records and feed into the `LearningEngine` for pattern detection and corrective action proposals.
+
+### Langfuse Observability
+
+Both trigger paths create root Langfuse traces:
+- **Task**: trace_id = celery_task_id (hex), name = `TRACE_SUPERVISOR_PIPELINE`
+- **SSE stream**: trace_id = uuid4().hex, name = `TRACE_SUPERVISOR_PIPELINE`
+- **Score**: `SUPERVISOR_CONFIDENCE` emitted on completion and failure (0.0)
+- **Session linkage**: `derive_session_id()` links traces to case/invoice sessions
